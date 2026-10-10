@@ -13,9 +13,11 @@ use crate::server::SyncServer;
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest};
 use oneiron::reaction::{ReactionExternalId, ReactionIngress, ReactionInput};
 use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use oneiron::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 use oneiron::{EdgeKind, EntityId};
 use std::sync::Arc;
 use types::parse_optional;
@@ -29,6 +31,10 @@ fn appended_response(
     server: &SyncServer,
     appended: oneiron::conversation_dag::AppendedRecord,
 ) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
+    server.ai.turn_landed(
+        server.vault(),
+        oneiron::dreamer_wake::WakeTurnSubject::Vault,
+    );
     let Json(item) = project_core_entity(&server.vault, &appended.id, View::Full)?;
     Ok(Json(DagAppendResponse {
         entity: CoreEntityWriteResponse {
@@ -261,33 +267,56 @@ pub(crate) async fn list_core_sub_sessions(
     }))
 }
 
+/// Queues a declared summary for the Dreamer, which alone writes the body
+/// (ARCH-0006a). Refused up front when no Dreamer here writes summaries.
+fn declare_summary(
+    server: &SyncServer,
+    request: &ScopeSummaryRequest,
+) -> Result<(StatusCode, Json<DagSummaryQueuedResponse>), EnvelopedApiError> {
+    server
+        .ai
+        .summary_writer()
+        .map_err(ApiError::summary_writer_unavailable)?;
+    let queued = server
+        .vault
+        .request_scope_summary(request)
+        .map_err(|e| core_engine_error("summary declaration failed", e))?;
+    server.ai.attempt_queued();
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(DagSummaryQueuedResponse {
+            attempt: queued
+                .attempt
+                .as_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+            coalesced: queued.coalesced,
+        }),
+    ))
+}
+
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/summaries",
     params(("conversation_id" = String, Path)), request_body = DagSummaryRequest,
-    responses((status = 200, body = DagSummaryResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, body = ApiErrorEnvelope)))]
+    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
 pub(crate) async fn mint_core_scope_summary(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(conversation_id): Path<String>,
     payload: Result<Json<DagSummaryRequest>, JsonRejection>,
-) -> Result<Json<DagSummaryResponse>, EnvelopedApiError> {
+) -> Result<(StatusCode, Json<DagSummaryQueuedResponse>), EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = json_payload(payload)?;
-    let (summary, landed) = server
-        .vault
-        .mint_and_land_scope_summary(
-            &req.scope.parse(conversation)?,
-            &req.text,
-            req.actor.parse(&auth)?,
-            parse_optional(req.land_on.as_deref(), "land_on")?,
-            req.as_record,
-        )
-        .map_err(|e| core_engine_error("scope summary mint failed", e))?;
-    Ok(Json(DagSummaryResponse {
-        summary: summary.to_hex(),
-        claim: landed.as_ref().map(|l| l.claim.to_hex()),
-        record: landed.and_then(|l| l.record).map(|id| id.to_hex()),
-    }))
+    let request = ScopeSummaryRequest {
+        target: ScopeSummaryTarget::Scope {
+            scope: req.scope.parse(conversation)?,
+            land_on: parse_optional(req.land_on.as_deref(), "land_on")?,
+            as_record: req.as_record,
+        },
+        requester: req.actor.parse(&auth)?,
+    };
+    declare_summary(&server, &request)
 }
 
 #[utoipa::path(get, path = "/v1/core/summaries/{summary_id}/covers",
@@ -388,13 +417,13 @@ pub(crate) async fn get_thread(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records/{record}/thread/summary",
     params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagThreadSummaryRequest,
-    responses((status = 200, body = DagSummaryResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
 pub(crate) async fn summarize_thread(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path((conversation_id, record)): Path<(String, String)>,
     payload: Result<Json<DagThreadSummaryRequest>, JsonRejection>,
-) -> Result<Json<DagSummaryResponse>, EnvelopedApiError> {
+) -> Result<(StatusCode, Json<DagSummaryQueuedResponse>), EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
@@ -406,15 +435,11 @@ pub(crate) async fn summarize_thread(
     if thread.conversation != conversation {
         return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
     }
-    let (summary, landed) = server
-        .vault
-        .mint_and_land_thread_summary(record, &req.text, req.actor.parse(&auth)?)
-        .map_err(|e| core_engine_error("thread summary failed", e))?;
-    Ok(Json(DagSummaryResponse {
-        summary: summary.to_hex(),
-        claim: Some(landed.claim.to_hex()),
-        record: None,
-    }))
+    let request = ScopeSummaryRequest {
+        target: ScopeSummaryTarget::Thread { trunk: record },
+        requester: req.actor.parse(&auth)?,
+    };
+    declare_summary(&server, &request)
 }
 
 #[utoipa::path(get, path = "/v1/core/conversations/{conversation_id}/canonical",
