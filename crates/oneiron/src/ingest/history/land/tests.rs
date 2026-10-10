@@ -313,7 +313,10 @@ fn a_fill_in_needs_the_shared_vault_content_write_a_turn_needs() {
         .expect("a shared vault");
     for grant_ref in creation.grant_refs {
         let grant_id = EntityId::from_hex(&grant_ref).expect("grant id");
-        let raw = vault.get_raw(&grant_id).expect("read a grant").expect("grant");
+        let raw = vault
+            .get_raw(&grant_id)
+            .expect("read a grant")
+            .expect("grant");
         let mut grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])
             .expect("decode a grant");
         if grant.member_ref != owner.actor() {
