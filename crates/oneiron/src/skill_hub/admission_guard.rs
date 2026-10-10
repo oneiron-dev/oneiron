@@ -29,6 +29,8 @@ pub(crate) enum HubAdmissionKind {
     HeldOut,
     Bootstrap,
     Optimized,
+    Refined,
+    Rollback,
 }
 #[derive(Debug)]
 pub(crate) struct HubAdmissionProof {
@@ -63,6 +65,16 @@ impl HubAdmissionProof {
     }
     pub(in crate::skill_hub) fn optimized(id: EntityId, data: &[u8]) -> Self {
         Self::new(id, data, HubAdmissionKind::Optimized)
+    }
+    /// A shared merge's activation, minted only beside the refinement proof
+    /// that binds its useful-upstream yes and held-out win to these bytes.
+    pub(in crate::skill_hub) fn refined(id: EntityId, data: &[u8]) -> Self {
+        Self::new(id, data, HubAdmissionKind::Refined)
+    }
+    /// A rollback revision's activation, minted only by the rollback door
+    /// over the displaced revision's own content.
+    pub(in crate::skill_hub) fn rollback(id: EntityId, data: &[u8]) -> Self {
+        Self::new(id, data, HubAdmissionKind::Rollback)
     }
     pub(in crate::skill_hub) fn consent(
         store: &Store,

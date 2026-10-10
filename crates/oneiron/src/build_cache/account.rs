@@ -11,7 +11,7 @@ impl<'a> BuildCache<'a> {
         if account.is_empty() || account.len() > 1024 {
             return Err(BuildCacheError::InvalidAction("invalid account"));
         }
-        let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
+        let mut txn = vault.store.env.write_txn()?;
         match ACCOUNT.get(&vault.store, &txn, &())? {
             Some(existing) if existing != account => {
                 return Err(BuildCacheError::AccountMismatch);

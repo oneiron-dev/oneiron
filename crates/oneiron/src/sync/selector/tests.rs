@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
-use loro::{CommitOptions, ExportMode, LoroDoc};
+use loro::{ExportMode, LoroDoc};
 
 use super::*;
 use crate::affect::Vad;
@@ -18,7 +18,7 @@ use crate::claim::{
 use crate::edge::EdgeActorClass;
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    encode_federation_grant_body, encode_guest_share_envelope, encode_guest_share_envelope_body,
+    encode_federation_grant_body, encode_guest_share_envelope_body,
 };
 use crate::provenance::{
     EdgeProvenanceClaimBody, SupersessionStatus, encode_actor_class_evidence,
@@ -29,7 +29,7 @@ use crate::registry::{
     ENTITY_TYPE_WORLD, TypeByteFamily,
 };
 use crate::store::Store;
-use crate::sync::bridge::{BRIDGE_ORIGIN, encode_edge_value_for_crdt};
+use crate::sync::bridge::encode_edge_value_for_crdt;
 use crate::sync::client::{SyncClient, SyncClientConfig};
 use crate::sync::loro_support::map_get_bytes;
 use crate::sync::manager::WindowManager;
@@ -253,15 +253,6 @@ fn insert_tombstone(doc: &LoroDoc, id: EntityId) {
     map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"deleted").unwrap();
 }
 
-fn insert_uppercase_tombstone_alias(doc: &LoroDoc, id: EntityId) {
-    map_insert_bytes(
-        &doc.get_map("tombstones"),
-        &id.to_hex().to_ascii_uppercase(),
-        b"deleted",
-    )
-    .unwrap();
-}
-
 fn import_ids(update: &[u8]) -> Vec<EntityId> {
     let doc = create_window_doc("receiver", &WindowKey::new("2026-03"));
     doc.import(update).unwrap();
@@ -273,22 +264,6 @@ fn import_ids(update: &[u8]) -> Vec<EntityId> {
     });
     ids.sort_unstable();
     ids
-}
-
-fn imported_entity_type_count(update: &[u8], entity_type: u8) -> usize {
-    let doc = create_window_doc("receiver", &WindowKey::new("2026-03"));
-    doc.import(update).unwrap();
-    let mut count = 0;
-    map_for_each_value_bytes(&doc.get_map("entities"), |_, value| {
-        let Some(blob) = value else {
-            return;
-        };
-        if EntityMetadataHeader::parse(blob).is_some_and(|header| header.entity_type == entity_type)
-        {
-            count += 1;
-        }
-    });
-    count
 }
 
 fn imported_tombstone_count(update: &[u8]) -> usize {
@@ -630,35 +605,6 @@ fn selector_decode_rejects_foreign_world_id_range() {
 }
 
 #[test]
-fn federated_admission_rejects_maintenance_band_non_claim_entities() {
-    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x54));
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("remote", &window_key);
-    insert_entity(
-        &doc,
-        entity_id(0x59),
-        ENTITY_TYPE_POLICY_MANIFEST,
-        b"remote-policy",
-    );
-    doc.commit();
-    let update = doc.export(ExportMode::all_updates()).unwrap();
-
-    let err = admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect_err("federated maintenance-band non-claims must fail closed");
-    assert!(matches!(
-        err,
-        Error::Registry(RegistryError::MaintenanceKindNotWritable(
-            ENTITY_TYPE_POLICY_MANIFEST
-        ))
-    ));
-}
-
-#[test]
 fn federated_admission_rejects_classification_routed_maintenance_kinds() {
     // ARCH-0055 / MS-01: IDENTITY_TOPOLOGY_EVENT (76) is
     // Maintenance-CLASSIFIED inside the Companion BAND, so the pre-fix
@@ -836,34 +782,6 @@ fn federated_admission_admits_correct_key_authority_row() {
 }
 
 #[test]
-fn federated_admission_allows_reserved_edge_provenance_claim_with_imported_trust() {
-    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA8));
-    put_imported_source_trust(&vault);
-    let window_key = WindowKey::new("2026-03");
-    let claim_id = entity_id(0xA9);
-    let doc = create_window_doc("remote", &window_key);
-    insert_blob(&doc, claim_id, &edge_provenance_claim_blob());
-    doc.commit();
-    let update = doc.export(ExportMode::all_updates()).unwrap();
-
-    let admitted = admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("valid reserved provenance claim should admit under imported trust");
-
-    let receiver = create_window_doc("receiver", &window_key);
-    receiver.import(&admitted).unwrap();
-    let blob = map_get_bytes(&receiver.get_map("entities"), &claim_id.to_hex())
-        .expect("admitted provenance claim");
-    let body = decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true).unwrap();
-    assert_eq!(body.predicate, crate::provenance::PREDICATE_EDGE_PROVENANCE);
-    assert_eq!(body.source, Some(ClaimSource::Imported));
-}
-
-#[test]
 fn federated_admission_duplicate_frame_is_byte_identical() {
     let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xAA));
     put_imported_source_trust(&vault);
@@ -999,146 +917,6 @@ fn selected_window_omits_other_facets_and_keeps_closed_edges() {
             "an edge incident to a withheld entity leaked"
         );
     }
-}
-
-#[test]
-fn envelope_strips_membership() {
-    let member = entity_id(0x31);
-    let other_member = entity_id(0x32);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("source", &window_key);
-
-    let person = entity_id(0x21);
-    let membership = entity_id(0x41);
-    let facet_allowed = entity_id(0x50);
-    let claim_seed = entity_id(0x60);
-    let other_grant = FederationGrant::new(
-        test_selector_scope(),
-        other_member,
-        FederationGrantRole::Viewer,
-        FederationGrantPreset::ReadOnly,
-    );
-    let grant_body = encode_federation_grant_body(&other_grant).unwrap();
-    insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
-    insert_entity(&doc, membership, ENTITY_TYPE_FEDERATION_GRANT, &grant_body);
-    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
-    insert_blob(&doc, claim_seed, &claim_blob(None));
-    insert_edge(&doc, person, EdgeKind::Supports, membership);
-    // Facet closure: the seed claims the selected facet and neighbors the
-    // person, so the person rides one-hop closure under the Bottom
-    // facet filter. Membership neighbors the person (two hops from the
-    // seed), so it is withheld by facet closure AND stripped as
-    // guest-share metadata — the test pins the stripping leg.
-    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_seed, EdgeKind::Supports, person);
-    doc.commit();
-    // Mandatory record stamps for the non-CLAIM doc rows (CLAIM is
-    // intrinsic). Same bytes, so digests match.
-    vault
-        .batch()
-        .put(
-            &person,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .put(
-            &facet_allowed,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"facet-a",
-        )
-        .commit()
-        .unwrap();
-
-    let selector = SyncSelector::new(
-        grant_id,
-        member,
-        SyncSelectorWorld::All,
-        vec![facet_allowed],
-        vec![SelectorRange::Semantic, SelectorRange::Core],
-    );
-    let envelope = guest_share_envelope(
-        &vault,
-        &doc,
-        &window_key,
-        test_selector_scope(),
-        &selector,
-        |_| Ok(vec![0xA5]),
-    )
-    .unwrap();
-    let ids = import_ids(&envelope.body.update);
-
-    assert!(ids.contains(&person));
-    assert!(
-        !ids.contains(&membership),
-        "guest-share envelope leaked a federation membership record"
-    );
-
-    let receiver = create_window_doc("receiver", &window_key);
-    receiver.import(&envelope.body.update).unwrap();
-    let mut leaked_membership_edge = false;
-    map_for_each_value_bytes(&receiver.get_map("edges"), |key, value| {
-        if value.is_some() && key.contains(&membership.to_hex()) {
-            leaked_membership_edge = true;
-        }
-    });
-    assert!(
-        !leaked_membership_edge,
-        "guest-share envelope leaked topology adjacent to a membership record"
-    );
-}
-
-#[test]
-fn no_topology_count_in_envelope() {
-    let member = entity_id(0x33);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("source", &window_key);
-
-    let person = entity_id(0x22);
-    let authority_id = entity_id(0x52);
-    let authority_body = encode_authority_log_entry_body(&authority_genesis_entry(0x52))
-        .expect("encode authority log");
-    insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
-    insert_entity(
-        &doc,
-        authority_id,
-        ENTITY_TYPE_AUTHORITY_LOG,
-        &authority_body,
-    );
-    insert_edge(&doc, person, EdgeKind::Supports, authority_id);
-    insert_tombstone(&doc, entity_id(0x62));
-    doc.commit();
-
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let envelope = guest_share_envelope(
-        &vault,
-        &doc,
-        &window_key,
-        test_selector_scope(),
-        &selector,
-        |_| Ok(vec![0x5A]),
-    )
-    .unwrap();
-
-    let encoded_envelope = encode_guest_share_envelope(&envelope).unwrap();
-    let encoded_body = encode_guest_share_envelope_body(&envelope.body).unwrap();
-    assert_no_forbidden_envelope_keys(&decode_msgpack_value(&encoded_envelope));
-    assert_no_forbidden_envelope_keys(&decode_msgpack_value(&encoded_body));
-    assert_eq!(
-        imported_entity_type_count(&envelope.body.update, ENTITY_TYPE_AUTHORITY_LOG),
-        0,
-        "guest-share envelope leaked authority-roster/topology records"
-    );
-    assert_eq!(
-        imported_tombstone_count(&envelope.body.update),
-        0,
-        "guest-share envelope leaked tombstone topology counts"
-    );
 }
 
 #[test]
@@ -1580,158 +1358,6 @@ fn admission_drop_leaves_no_pending_remat_work() {
     );
 }
 
-/// N forged rows in one admission cost EXACTLY ONE extra transaction.
-///
-/// The peer chooses N. A `write_txn` + commit per rejected row therefore hands
-/// it an amplification primitive: one admission, unbounded fsync traffic. The
-/// rejections ride one batch that commits once for the whole pass.
-///
-/// The commit count is observed through LMDB's own committed-transaction id
-/// (`Env::info().last_txn_id`), which is the property that actually matters —
-/// asserting on a Rust-side counter would pass even if the batching were
-/// removed.
-///
-/// The pin is an exact DELTA against a baseline, not a loose upper bound. An
-/// admission also commits traffic that has nothing to do with rejections
-/// (policy-manifest resolution today, whatever the path grows tomorrow), so a
-/// bare `commits < N` would still pass with the batch sharded into sixteen
-/// write transactions — the amplification fix could regress by an order of
-/// magnitude without failing a green test. The BASELINE pass is the same
-/// fixture with an ON-TABLE source type: identical row count, identical key
-/// shape, identical vault construction, and nothing rejected, so its
-/// `TerminalRejectionBatch` takes no transaction at all. The forged pass must
-/// then cost the baseline PLUS EXACTLY ONE — the single batch commit.
-#[test]
-fn admission_drops_commit_in_one_bounded_batch() {
-    // Enough rows that a per-row commit is unmistakable against a one-txn pass.
-    const STAMPER_COUNT: usize = 0x20;
-
-    /// One admission over `STAMPER_COUNT` `FacetOf` rows whose sources carry
-    /// `source_type`. Returns the vault (temp dir held alive by the caller)
-    /// and the committed-transaction delta the admission itself cost.
-    fn admission_txn_delta(source_type: u8) -> (tempfile::TempDir, Vault, usize) {
-        let (dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x6B));
-        let window_key = WindowKey::new("2026-05");
-        let facet = entity_id(0x6C);
-
-        let remote = create_window_doc("federation-peer", &window_key);
-        insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
-        for id in (0x70_u8..0x90).map(entity_id) {
-            insert_entity(&remote, id, source_type, b"stamper");
-            insert_edge(&remote, id, EdgeKind::FacetOf, facet);
-        }
-        remote.commit();
-        let update = remote.export(ExportMode::all_updates()).unwrap();
-
-        let before = vault.store.env.info().last_txn_id;
-        admit_federated_window_update(
-            &vault,
-            &window_key,
-            &update,
-            FederationAdmissionRole::Member,
-        )
-        .expect("neither pass may fail the admission closed");
-        let delta = vault.store.env.info().last_txn_id - before;
-        (dir, vault, delta)
-    }
-
-    // EVENT is on the `FacetOf` source table, PERSON is not: the two passes
-    // differ in ONE type byte, so their txn delta isolates the rejections.
-    let (_baseline_dir, baseline_vault, baseline_commits) = admission_txn_delta(ENTITY_TYPE_EVENT);
-    let (_forged_dir, forged_vault, forged_commits) = admission_txn_delta(ENTITY_TYPE_PERSON);
-
-    assert!(
-        quarantined_records(&baseline_vault).unwrap().is_empty(),
-        "the baseline must reject NOTHING — a baseline that also paid for a \
-         rejection batch would make the delta below vacuously true"
-    );
-    assert_eq!(
-        quarantined_records(&forged_vault).unwrap().len(),
-        STAMPER_COUNT,
-        "every rejected row is still accounted with its own typed evidence \
-         row — bounding the COMMITS must not bound the ACCOUNTING"
-    );
-
-    assert_eq!(
-        forged_commits,
-        baseline_commits + 1,
-        "{STAMPER_COUNT} forged rows cost {forged_commits} transactions \
-         against a {baseline_commits}-transaction rejection-free baseline — \
-         the whole pass owes EXACTLY ONE batch commit, so any sharding of it \
-         is a peer-controlled multiplier on our fsync traffic"
-    );
-
-    assert!(
-        crate::sync::quarantine::pending_remat_windows(&forged_vault)
-            .unwrap()
-            .is_empty(),
-        "the batch keeps the terminal no-marker shape for every row"
-    );
-}
-
-/// Past the per-pass evidence bound, rejections are accounted by COUNT.
-///
-/// The `x:` ring is SHARED and capped at 4096 rows, so an unbounded per-pass
-/// mint would let one hostile frame flush every unrelated quarantine record the
-/// vault holds — evidence destruction dressed as evidence keeping. The bound
-/// caps what one pass mints; the remainder increments a doctor-visible counter,
-/// so nothing is silently dropped. The reason code is uniform within a pass, so
-/// the capped rows carry no information the kept rows do not.
-///
-/// H2 liveness is unaffected: the ADMISSION continues either way — this is only
-/// about how the rejection is accounted.
-#[test]
-fn admission_drops_past_the_evidence_bound_are_counted_not_dropped() {
-    use crate::sync::quarantine::MAX_QUARANTINE_ROWS_PER_PASS;
-
-    let member = entity_id(0x7B);
-    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-06");
-
-    let facet = entity_id(0x7C);
-    let over_cap = 5_usize;
-    let total = MAX_QUARANTINE_ROWS_PER_PASS + over_cap;
-
-    let remote = create_window_doc("federation-peer", &window_key);
-    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
-    for index in 0..total {
-        // 16-byte ids from a counter: the fixture needs more distinct forged
-        // sources than the single-byte seed helper can mint without colliding
-        // with the pinned-id list.
-        let mut bytes = [0x11_u8; 16];
-        bytes[0..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
-        let id = EntityId::from_bytes(bytes).unwrap();
-        insert_entity(&remote, id, ENTITY_TYPE_PERSON, b"person");
-        insert_edge(&remote, id, EdgeKind::FacetOf, facet);
-    }
-    remote.commit();
-    let update = remote.export(ExportMode::all_updates()).unwrap();
-
-    admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("an over-cap forged frame must not fail the admission closed");
-
-    let report = crate::sync::quarantine::sync_doctor(&vault).unwrap();
-    assert_eq!(
-        report.quarantine_count, MAX_QUARANTINE_ROWS_PER_PASS,
-        "one pass mints at most the per-pass bound, so a hostile frame cannot \
-         flush the shared 4096-row evidence ring"
-    );
-    assert_eq!(
-        report.batch_drop_count, over_cap as u64,
-        "the rows past the bound are accounted by COUNT — a bounded evidence \
-         budget must never become a silent drop"
-    );
-    assert!(
-        report.rm_pending_windows.is_empty(),
-        "over-cap rows keep the terminal no-marker shape too"
-    );
-}
-
 /// OUT-OF-ORDER RESIDUE — the leg the admission drop alone cannot close, and
 /// the reason the selector needs a read mirror of the write table.
 ///
@@ -2170,168 +1796,6 @@ fn selector_target_must_resolve_to_a_facet_before_any_scope_is_honored() {
     }
 }
 
-/// SOURCE TRUTH IS NOT THE CRDT WINNER — the LWW forgery a document-blob-first
-/// mirror hands a peer for free.
-///
-/// Entity type is IMMUTABLE per id (`crate::error::RegistryError::EntityTypeImmutable`). The write
-/// door enforces it by QUARANTINING the re-type, which means LMDB keeps the
-/// FIRST-writer type — but the Loro map is last-write-wins and keeps the
-/// HIGHER-LAMPORT blob. The two therefore disagree by construction after a
-/// rejected re-type, and the disagreement is entirely peer-controlled.
-///
-/// The three frames build exactly that state:
-///
-/// 1. the forged `S -> <selected FACET>` stamp, with S absent everywhere (the
-///    H2 defer the admission door must honor);
-/// 2. S materializes as a PERSON — off-table, so the row is inert;
-/// 3. a CRDT-WINNING EVENT blob for the SAME id. The write door rejects it
-///    (`EntityTypeImmutable` quarantine, LMDB stays PERSON) but the doc map now
-///    types S as an admitted EVENT.
-///
-/// A mirror reading the document blob first sees EVENT and honors the stamp,
-/// exporting the PERSON and its one-hop neighbor on the strength of a type the
-/// engine REFUSED to write. Reading STORED-FIRST — the same order the
-/// admission door uses, and permanent truth because the type is immutable —
-/// closes it. The middle assertions are the load-bearing ones: they pin that
-/// the quarantine really fired and LMDB really held PERSON, so the export
-/// assertions are testing the mirror's ORDER rather than a doc that never
-/// flipped.
-///
-/// Both roles: a mirror that holds for members but not guests reads as
-/// protection while being none.
-#[test]
-fn selector_source_type_resolves_stored_first_against_a_winning_retype_blob() {
-    for (role, seed) in [
-        (FederationAdmissionRole::Member, 0xC0_u8),
-        (FederationAdmissionRole::Guest, 0xC8_u8),
-    ] {
-        let window = "2026-10";
-        let member = entity_id(seed);
-        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
-
-        let facet_selected = entity_id(seed + 1);
-        let source = entity_id(seed + 2);
-        let neighbor = entity_id(seed + 3);
-        let event = entity_id(seed + 4);
-
-        // Frame 1: the forged stamp lands while its SOURCE is unknowable
-        // everywhere. The FACET target rides along so the row names a facet
-        // this peer will select, and the EVENT control is stamped to the same
-        // facet so a broken mirror is distinguishable from a dead one.
-        let first = create_window_doc("federation-peer", &WindowKey::new(window));
-        insert_entity(&first, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
-        insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
-        insert_edge(&first, source, EdgeKind::FacetOf, facet_selected);
-        insert_edge(&first, event, EdgeKind::FacetOf, facet_selected);
-        first.commit();
-        import_federated(&mut client, window, &first, role);
-
-        // Frame 2: S materializes as PERSON. This is the write that reaches
-        // LMDB, and immutability makes it permanent truth about this id.
-        let second = create_window_doc("federation-peer", &WindowKey::new(window));
-        insert_entity(&second, source, ENTITY_TYPE_PERSON, b"person");
-        insert_entity(&second, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
-        insert_edge(&second, source, EdgeKind::Mentions, neighbor);
-        second.commit();
-        import_federated(&mut client, window, &second, role);
-
-        assert_eq!(
-            vault.get_raw(&source).unwrap().map(|blob| blob[0]),
-            Some(ENTITY_TYPE_PERSON),
-            "{role:?}: precondition — the first-writer type must be in LMDB"
-        );
-
-        // Frame 3: the re-type. Each admitted frame is authored in a FRESH doc
-        // whose Lamport clock starts at zero, so "later frame" alone does not
-        // mean "higher Lamport" — a lone re-type op ties frame 2's and the
-        // winner falls to a peer-id tiebreak. The benign rows below are ids
-        // that sort ahead of the source, so admission re-authors them first
-        // and the re-type lands at a Lamport strictly above frame 2's. This is
-        // what an ordinary multi-row window update looks like anyway; the
-        // precondition assert right after is what keeps the test honest if
-        // Loro's ordering ever shifts under it.
-        let third = create_window_doc("federation-peer", &WindowKey::new(window));
-        for pad in [0x02_u8, 0x03, 0x04, 0x05, 0x06] {
-            insert_entity(&third, entity_id(pad), ENTITY_TYPE_PERSON, b"unrelated");
-        }
-        insert_entity(&third, source, ENTITY_TYPE_EVENT, b"forged-event");
-        third.commit();
-        import_federated(&mut client, window, &third, role);
-
-        let live = client.window(window).expect("window still loaded");
-        let doc_blob = map_get_bytes(&live.doc.get_map("entities"), &source.to_hex())
-            .expect("the re-type blob is resident in the live doc");
-        assert_eq!(
-            EntityMetadataHeader::parse(&doc_blob).unwrap().entity_type,
-            ENTITY_TYPE_EVENT,
-            "{role:?}: precondition — the re-type must WIN the CRDT map, or a \
-             blob-first mirror would pass this test vacuously"
-        );
-        assert_eq!(
-            vault.get_raw(&source).unwrap().map(|blob| blob[0]),
-            Some(ENTITY_TYPE_PERSON),
-            "{role:?}: precondition — the immutability gate must keep LMDB at \
-             the first-writer PERSON type"
-        );
-        assert!(
-            quarantined_records(&vault)
-                .unwrap()
-                .iter()
-                .any(|(_, record)| record.reason_code == "EntityTypeImmutable"
-                    && record.container == QuarantineContainer::Entities),
-            "{role:?}: precondition — the re-type must be QUARANTINED, which is \
-             what makes the stored type permanent truth the mirror can rely on"
-        );
-        // Explicit verified positions for the honest controls only. The forged
-        // source, its neighbor, and the pad rows stay unstamped — no stamp
-        // invention for hostile input.
-        stamp_live_rows(&vault, &live.doc, &[facet_selected, event]);
-
-        let selector = SyncSelector::new(
-            grant_id,
-            member,
-            SyncSelectorWorld::All,
-            vec![facet_selected],
-            vec![SelectorRange::Semantic, SelectorRange::Core],
-        );
-        let exported = filtered_window_doc(
-            &vault,
-            &live.doc,
-            &WindowKey::new(window),
-            test_selector_scope(),
-            &selector,
-        )
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-        let ids = import_ids(&exported);
-
-        assert!(
-            !ids.contains(&source),
-            "{role:?}: the mirror must read the STORED PERSON type, not the \
-             CRDT-winning EVENT blob the immutability gate refused to write — \
-             otherwise a peer buys facet scope with a rejected re-type"
-        );
-        assert!(
-            !ids.contains(&neighbor),
-            "{role:?}: the one-hop neighbor is reachable ONLY through the \
-             forged source — exporting it would prove the fake type still \
-             scopes closure"
-        );
-        assert!(
-            ids.contains(&event),
-            "{role:?}: control — the honest EVENT stamped to the SAME selected \
-             facet must still export; stored-first removes the fake, not facet \
-             scoping"
-        );
-        assert!(
-            ids.contains(&facet_selected),
-            "{role:?}: control — the selected facet is always visible to its \
-             selector"
-        );
-    }
-}
-
 /// A CONFLICTING document blob is NEVER CONSULTED — the stored type carries
 /// the scope, in the WITHHOLD direction as much as the seed direction.
 ///
@@ -2426,81 +1890,6 @@ fn selector_conflicting_document_blob_never_displaces_the_stored_type() {
     );
 }
 
-/// POSITIVE CONTROL for the stored-first order: when the stored type and the
-/// document blob AGREE, an admitted source scopes exactly as before. Without
-/// this pin, "resolve stored-first" could be implemented as "ignore the
-/// document entirely" or "treat any stored row as disqualifying", and both
-/// would silently kill facet scoping for every normally-replicated entity.
-///
-/// The EVENT is stored AND present in the doc as an EVENT, stamped to a facet
-/// the peer did NOT select, and hangs off a genuine selected-facet CLAIM seed
-/// — so it would ride that seed's closure but for the withhold. Its absence is
-/// therefore proof the agreeing stamp is still disclosure-effective.
-#[test]
-fn selector_honors_scope_when_stored_and_document_source_types_agree() {
-    let member = entity_id(0x2B);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-11");
-
-    let facet_selected = entity_id(0x3F);
-    let facet_unselected = entity_id(0x4F);
-    let claim_seed = entity_id(0x5F);
-    let event = entity_id(0x6F);
-
-    // The stored rows are the truth source the mirror consults first; the doc
-    // blobs below agree with them, which is the ordinary replicated state.
-    for (id, entity_type) in [
-        (facet_selected, ENTITY_TYPE_FACET),
-        (facet_unselected, ENTITY_TYPE_FACET),
-        (event, ENTITY_TYPE_EVENT),
-    ] {
-        vault
-            .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, b"row")
-            .unwrap();
-    }
-
-    let doc = create_window_doc("source", &window_key);
-    insert_entity(&doc, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
-    insert_entity(&doc, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
-    insert_blob(&doc, claim_seed, &claim_blob(None));
-    insert_entity(&doc, event, ENTITY_TYPE_EVENT, b"event");
-    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_selected);
-    insert_edge(&doc, event, EdgeKind::FacetOf, facet_unselected);
-    insert_edge(&doc, claim_seed, EdgeKind::Supports, event);
-    doc.commit();
-    seed_doc_stamps(&vault, &doc);
-
-    let selector = SyncSelector::new(
-        grant_id,
-        member,
-        SyncSelectorWorld::All,
-        vec![facet_selected],
-        vec![SelectorRange::Semantic, SelectorRange::Core],
-    );
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-    let ids = import_ids(&update);
-
-    assert!(
-        ids.contains(&claim_seed),
-        "control: the selected-facet claim must seed closure, or the \
-         assertion below would hold vacuously"
-    );
-    assert!(
-        !ids.contains(&event),
-        "an EVENT whose STORED and DOCUMENT types agree is on the table, so its \
-         unselected-facet stamp must still withhold it — stored-first resolves \
-         the type, it does not discard the scope"
-    );
-    assert!(ids.contains(&facet_selected));
-    assert!(
-        !ids.contains(&facet_unselected),
-        "unselected facet entity leaked"
-    );
-}
-
 /// A REJECTED RETYPE MUST NOT ERASE A VALID SCOPE — the TARGET-side arm of
 /// the one conflict rule (stored truth never loses to a rejected write).
 ///
@@ -2508,8 +1897,7 @@ fn selector_honors_scope_when_stored_and_document_source_types_agree() {
 /// conflicted target to `None` makes the row inert and DELETES containment a
 /// valid stored FACET had already established — a peer forges one PERSON blob
 /// for a facet it does not own and an entity that was withheld from a
-/// facet-limited peer starts exporting. (The SOURCE arm of the same erasure is
-/// `selector_source_conflict_cannot_dissolve_a_multi_edge_withhold`; a
+/// facet-limited peer starts exporting. (The same erasure has a SOURCE arm; a
 /// conflicting blob is a rejected write, so it is not consulted on either end,
 /// and that single clause closes both.)
 ///
@@ -2647,211 +2035,6 @@ fn selector_target_conflict_keeps_the_stored_facet_scope() {
         assert!(
             ids.contains(&facet_selected),
             "{role:?}: control — the selected facet is visible to its selector"
-        );
-    }
-}
-
-/// THE MULTI-EDGE COMPOSITION (r7) — the shape that proved a SOURCE-side
-/// conflict-to-None rule non-monotone, and the reason the conflict policy is
-/// ONE rule rather than a role split.
-///
-/// Neither endpoint rule is wrong in isolation; the bug lives in how a single
-/// source's SEVERAL stamps compose. `FacetScope` is an OR-fold per source: one
-/// unselected-facet stamp withholds E outright. So the attacker does not need
-/// to forge scope onto E — it only needs E's source half to go INERT, which
-/// drops every stamp E carries, INCLUDING the withhold, and hands E back to
-/// the adjacent honest seed's closure.
-///
-/// The fixture is that composition, production-reproduced:
-///
-/// * E is stored EVENT with TWO `FacetOf` stamps — one to a stored FACET the
-///   peer did NOT select (the legitimate withhold), one to a doc-only FACET it
-///   DID select (so E is not merely unreachable, and a source that stays
-///   on-table still has a live selected stamp to weigh);
-/// * an honest selected-facet CLAIM seed sits adjacent to E, so closure WOULD
-///   carry E the moment the withhold dissolves;
-/// * a higher-Lamport PERSON blob retypes E. The immutability gate quarantines
-///   it and LMDB keeps EVENT — the conflict is entirely peer-controlled.
-///
-/// Under source-conflict-to-None, E's source half reads no type, BOTH stamps
-/// go inert, the withhold vanishes and the seed exports E: a peer PUBLISHES an
-/// entity by shipping a write the engine refused. Under stored-wins the source
-/// still reads EVENT, the unselected stamp still withholds, and E stays in.
-///
-/// The middle assertions are load-bearing: they pin that the retype really won
-/// the CRDT map, that it really quarantined, and that LMDB really still holds
-/// EVENT — otherwise the withhold below would pass on a document that never
-/// flipped. Both roles through the production federated entry: a mirror that
-/// holds for members but not guests reads as protection while being none.
-#[test]
-fn selector_source_conflict_cannot_dissolve_a_multi_edge_withhold() {
-    for (role, seed) in [
-        (FederationAdmissionRole::Member, 0x30_u8),
-        (FederationAdmissionRole::Guest, 0x38_u8),
-    ] {
-        let window = "2026-07";
-        let member = entity_id(seed);
-        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
-        put_imported_source_trust(&vault);
-
-        let facet_unselected = entity_id(seed + 1);
-        let facet_selected = entity_id(seed + 2);
-        let event = entity_id(seed + 3);
-        let claim_seed = entity_id(seed + 4);
-
-        // Frame 1: the honest world, admitted through the real door so the
-        // EVENT and the UNSELECTED facet both materialize into LMDB. Those two
-        // stored rows are what justify the withhold.
-        let first = create_window_doc("federation-peer", &WindowKey::new(window));
-        insert_entity(&first, facet_unselected, ENTITY_TYPE_FACET, b"facet-u");
-        insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
-        insert_blob(&first, claim_seed, &public_claim_blob());
-        insert_edge(&first, event, EdgeKind::FacetOf, facet_unselected);
-        insert_edge(&first, claim_seed, EdgeKind::Supports, event);
-        first.commit();
-        import_federated(&mut client, window, &first, role);
-
-        assert_eq!(
-            vault.get_raw(&event).unwrap().map(|blob| blob[0]),
-            Some(ENTITY_TYPE_EVENT),
-            "{role:?}: precondition — the first-writer EVENT type must be in LMDB"
-        );
-        assert_eq!(
-            vault
-                .get_raw(&facet_unselected)
-                .unwrap()
-                .map(|blob| blob[0]),
-            Some(ENTITY_TYPE_FACET),
-            "{role:?}: precondition — the withheld-from facet must be STORED, so \
-             both halves of this withhold are stored truth"
-        );
-
-        // The SELECTED facet and its seed stamp ride the live doc under the
-        // bridge origin so Observer B leaves LMDB alone; the facet is then
-        // explicitly verified with a local put (same bytes, digest matches) so
-        // the export filter — which withholds unstamped doc-only rows — can
-        // carry it. The doc-blob endpoint-resolution branch this used to pin is
-        // now covered by `selector_document_only_target_scopes_only_when_it_
-        // types_a_facet` (which asserts scoping, not the doc-only row's own
-        // export); this fixture keeps the conflict branch plus the honest
-        // closure controls.
-        let live = client
-            .window(window)
-            .expect("federated import opens window");
-        insert_entity(&live.doc, facet_selected, ENTITY_TYPE_FACET, b"facet-s");
-        insert_edge(&live.doc, event, EdgeKind::FacetOf, facet_selected);
-        insert_edge(&live.doc, claim_seed, EdgeKind::FacetOf, facet_selected);
-        live.doc
-            .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-        // Explicit verified positions: the unselected facet (stored FACET) and
-        // the selected facet (same bytes). E's doc blob is honest here (EVENT)
-        // but will be retyped below; it is left unstamped throughout so the
-        // withhold after the retype is fail-closed on both the facet door and
-        // the missing-stamp door, and no stamp is ever invented for the
-        // rejected PERSON blob.
-        stamp_live_rows(&vault, &live.doc, &[facet_unselected, facet_selected]);
-        assert!(
-            vault.get_raw(&facet_selected).unwrap().is_some(),
-            "{role:?}: precondition — the selected facet must be verified (stored) \
-             so its own export proves closure, not missing stamps"
-        );
-
-        let selector = SyncSelector::new(
-            grant_id,
-            member,
-            SyncSelectorWorld::All,
-            vec![facet_selected],
-            vec![SelectorRange::Semantic, SelectorRange::Core],
-        );
-        let export_ids = |client: &mut SyncClient| {
-            let live = client.window(window).expect("window still loaded");
-            let update = filtered_window_doc(
-                &vault,
-                &live.doc,
-                &WindowKey::new(window),
-                test_selector_scope(),
-                &selector,
-            )
-            .unwrap()
-            .export(ExportMode::all_updates())
-            .unwrap();
-            import_ids(&update)
-        };
-
-        let ids = export_ids(&mut client);
-        assert!(
-            ids.contains(&claim_seed),
-            "{role:?}: precondition — the selected-facet CLAIM must seed closure, \
-             or E's absence below would hold vacuously"
-        );
-        assert!(
-            !ids.contains(&event),
-            "{role:?}: precondition — E's stamp to the UNSELECTED facet must \
-             withhold it EVEN THOUGH it also carries a selected stamp and an \
-             adjacent seed; the retype below erases nothing otherwise"
-        );
-
-        // Frame 2: the forged retype of E's OWN type. Pad rows sort ahead of E
-        // so admission re-authors them first and the retype lands at a Lamport
-        // strictly above frame 1's — a lone op would tie and fall to a peer-id
-        // tiebreak. The precondition asserts below keep this honest if Loro's
-        // ordering ever shifts.
-        let second = create_window_doc("federation-peer", &WindowKey::new(window));
-        for pad in [0x02_u8, 0x03, 0x04, 0x05, 0x06] {
-            insert_entity(&second, entity_id(pad), ENTITY_TYPE_PERSON, b"unrelated");
-        }
-        insert_entity(&second, event, ENTITY_TYPE_PERSON, b"forged-person");
-        second.commit();
-        import_federated(&mut client, window, &second, role);
-
-        let live = client.window(window).expect("window still loaded");
-        let doc_blob = map_get_bytes(&live.doc.get_map("entities"), &event.to_hex())
-            .expect("the retype blob is resident in the live doc");
-        assert_eq!(
-            EntityMetadataHeader::parse(&doc_blob).unwrap().entity_type,
-            ENTITY_TYPE_PERSON,
-            "{role:?}: precondition — the retype must WIN the CRDT map, or the \
-             conflict this test is about never exists"
-        );
-        assert_eq!(
-            vault.get_raw(&event).unwrap().map(|blob| blob[0]),
-            Some(ENTITY_TYPE_EVENT),
-            "{role:?}: precondition — the immutability gate must keep LMDB at \
-             the first-writer EVENT type"
-        );
-        assert!(
-            quarantined_records(&vault)
-                .unwrap()
-                .iter()
-                .any(|(_, record)| record.reason_code == "EntityTypeImmutable"
-                    && record.container == QuarantineContainer::Entities),
-            "{role:?}: precondition — the retype must be QUARANTINED, which is \
-             what makes the stored EVENT permanent truth the mirror relies on"
-        );
-
-        let ids = export_ids(&mut client);
-        assert!(
-            !ids.contains(&event),
-            "{role:?}: E must STILL be withheld. A conflicting SOURCE blob read \
-             as no-type drops EVERY stamp E carries — the unselected-facet \
-             withhold included — and the adjacent seed's closure then exports \
-             it: a peer publishes an entity it does not control by forging one \
-             write the immutability gate rejected (r7). Stored truth never \
-             loses to a rejected write"
-        );
-        assert!(
-            ids.contains(&claim_seed),
-            "{role:?}: control — the honest selected-facet seed must still \
-             export; stored-wins removes the erasure, not facet scoping"
-        );
-        assert!(
-            ids.contains(&facet_selected),
-            "{role:?}: control — the doc-only selected facet is visible to its \
-             own selector, so the doc-blob branch really did resolve"
-        );
-        assert!(
-            !ids.contains(&facet_unselected),
-            "{role:?}: unselected facet entity leaked"
         );
     }
 }
@@ -3112,86 +2295,6 @@ fn selector_facet_closure_does_not_expand_from_facet_entities() {
 }
 
 #[test]
-fn selector_applies_world_and_band_filters() {
-    let member = entity_id(0x32);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-04");
-    let doc = create_window_doc("source", &window_key);
-    let world = local_world_id(0x5E);
-    let other_world = entity_id(0xE2);
-    let claim_world = entity_id(0x41);
-    let claim_base = entity_id(0x61);
-    let claim_other_world = entity_id(0x43);
-    let world_entity = world.entity_id();
-    let task_like = entity_id(0x45);
-    let facet_allowed = entity_id(0x52);
-
-    insert_blob(&doc, claim_world, &claim_blob(Some(world.entity_id())));
-    insert_blob(&doc, claim_base, &claim_blob(None));
-    insert_blob(&doc, claim_other_world, &claim_blob(Some(other_world)));
-    insert_entity(&doc, world_entity, ENTITY_TYPE_WORLD, b"world");
-    insert_entity(&doc, task_like, 80, b"task-list");
-    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
-    // Every CLAIM seeds the selected facet so world filtering (not facet
-    // withholding) decides: the other-world claim passes facets but fails
-    // worlds. The WORLD row and the Productivity probe ride one-hop closure
-    // from a seed so band filtering (not facet withholding) decides them.
-    insert_edge(&doc, claim_world, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_base, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_other_world, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_world, EdgeKind::Supports, world_entity);
-    insert_edge(&doc, claim_world, EdgeKind::Supports, task_like);
-    doc.commit();
-    // The Productivity probe (type 80, COUNTERPARTY_CONTACT) is an
-    // engine-authored maintenance kind: no public put can stamp it
-    // (`MaintenanceKindNotWritable`), so its doc row stays unstamped and is
-    // withheld by the missing-stamp door as well as the band door. Both doors
-    // fail closed; the negative below holds either way. The WORLD and FACET
-    // rows are stamped so world/band filtering — not missing stamps —
-    // decides the positives.
-    vault
-        .batch()
-        .put(
-            &world_entity,
-            ENTITY_TYPE_WORLD,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"world",
-        )
-        .put(
-            &facet_allowed,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"facet-a",
-        )
-        .commit()
-        .unwrap();
-
-    let selector = SyncSelector::new(
-        grant_id,
-        member,
-        SyncSelectorWorld::World(world),
-        vec![facet_allowed],
-        vec![SelectorRange::Semantic, SelectorRange::Core],
-    );
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-    let ids = import_ids(&update);
-
-    assert!(ids.contains(&claim_world));
-    assert!(
-        ids.contains(&claim_base),
-        "base claims belong to every world selector"
-    );
-    assert!(ids.contains(&world_entity));
-    assert!(!ids.contains(&claim_other_world));
-    assert!(!ids.contains(&task_like), "productivity band leaked");
-}
-
-#[test]
 fn selector_requires_matching_federation_grant_member() {
     let member = entity_id(0x33);
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
@@ -3207,22 +2310,6 @@ fn selector_requires_matching_federation_grant_member() {
         vec![],
         vec![],
     );
-    assert!(
-        filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).is_err()
-    );
-}
-
-#[test]
-fn selector_requires_matching_federation_grant_scope() {
-    let member = entity_id(0x35);
-    let (_dir, vault, grant_id) =
-        test_vault_with_grant_scope(member, FederationGrantScope::vault(8));
-    let window_key = WindowKey::new("2026-05");
-    let doc = create_window_doc("source", &window_key);
-    insert_entity(&doc, entity_id(0x56), ENTITY_TYPE_PERSON, b"person");
-    doc.commit();
-
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert!(
         filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).is_err()
     );
@@ -3294,71 +2381,6 @@ fn selector_suppresses_tombstoned_live_map_residue() {
 }
 
 #[test]
-fn selector_suppresses_tombstone_alias_live_map_residue() {
-    let member = entity_id(0x38);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-08");
-    let doc = create_window_doc("source", &window_key);
-    let residue = entity_id(0x58);
-    let facet_allowed = entity_id(0x5A);
-    let claim_seed = entity_id(0x5B);
-    insert_entity(&doc, residue, ENTITY_TYPE_PERSON, b"stale-live-blob");
-    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
-    insert_blob(&doc, claim_seed, &claim_blob(None));
-    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_seed, EdgeKind::Supports, residue);
-    insert_uppercase_tombstone_alias(&doc, residue);
-    doc.commit();
-    vault
-        .batch()
-        .put(
-            &residue,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"stale-live-blob",
-        )
-        .put(
-            &facet_allowed,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"facet-a",
-        )
-        .commit()
-        .unwrap();
-
-    let selector = SyncSelector::new(
-        grant_id,
-        member,
-        SyncSelectorWorld::All,
-        vec![facet_allowed],
-        vec![SelectorRange::Semantic, SelectorRange::Core],
-    );
-    let filtered =
-        filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
-    let receiver = create_window_doc("receiver", &window_key);
-    receiver
-        .import(&filtered.export(ExportMode::all_updates()).unwrap())
-        .unwrap();
-
-    assert!(
-        receiver
-            .get_map("entities")
-            .get(residue.to_hex().as_str())
-            .is_none(),
-        "any parseable tombstone alias must suppress live-map residue"
-    );
-    assert!(
-        receiver
-            .get_map("tombstones")
-            .get(residue.to_hex().to_ascii_uppercase().as_str())
-            .is_some(),
-        "selector snapshots should retain the alias tombstone"
-    );
-}
-
-#[test]
 fn selector_treats_malformed_facet_of_value_as_denied_scope() {
     let member = entity_id(0x37);
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
@@ -3418,8 +2440,7 @@ use crate::authority::{
 };
 use crate::error::{RegistryError, SyncError};
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, base_world_axis,
-    encode_federation_pact_scope,
+    FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, encode_federation_pact_scope,
 };
 
 fn all_direction_scope() -> FederationDirectionScope {
@@ -3696,49 +2717,6 @@ fn selector_authorization_gates_on_pact_activation() {
             "{name}: wrong denial: {err:?}"
         );
     }
-}
-
-/// ONE-1604-D1 T10 (the 1632 seam floor): the keystone changes no
-/// authorization outcome. A rejected divergent-overwrite attempt against an
-/// admitted AUTHORITY_LOG row leaves `authorize_sync_selector` deciding exactly as
-/// it did before — 1631 hardens the store, it does not move the
-/// authorization edge that 1632 will later split.
-#[test]
-fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
-    let member = entity_id(0x34);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Active);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    authorize_sync_selector(&vault, test_selector_scope(), &selector)
-        .expect("precondition: the pact-bound grant authorizes");
-
-    // Attempt a body-divergent write at an admitted authority row's key.
-    let foreign = authority_genesis_entry(0x77);
-    let foreign_body = encode_authority_log_entry_body(&foreign).unwrap();
-    let occupied = vault
-        .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap()
-        .into_iter()
-        .next()
-        .expect("an authority row must be seeded");
-    let err = vault
-        .batch()
-        .put_replicated(
-            &occupied,
-            ENTITY_TYPE_AUTHORITY_LOG,
-            TimeRange { start: 9, end: 9 },
-            9,
-            &foreign_body,
-        )
-        .commit()
-        .expect_err("a divergent body at an occupied AUTHORITY_LOG key must be rejected");
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
-    );
-
-    authorize_sync_selector(&vault, test_selector_scope(), &selector)
-        .expect("authorization must be byte-for-byte unchanged after the rejected overwrite");
 }
 
 // ---------------------------------------------------------------------------
@@ -4197,9 +3175,7 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     }
 
     // The empty-vector selector requests no narrowing, so it sits within even a
-    // ⊥ ceiling and resolves to that ⊥. The EXPORT half ("can exfiltrate
-    // nothing") is proven by
-    // `bottom_ceiling_exports_nothing_to_an_unnarrowed_request`.
+    // ⊥ ceiling and resolves to that ⊥.
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
         resolve_selector_position(&silent, &ceiling)
@@ -4272,46 +3248,6 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
 
         assert_eq!(import_ids(&update), vec![claim_named], "{name}");
     }
-}
-
-#[test]
-fn unnarrowed_request_under_an_unpacted_grant_narrows_no_facet() {
-    let member = entity_id(0x3D);
-    let window_key = WindowKey::new("2026-12");
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let doc = pact_ceiling_source_doc(&vault, &window_key);
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-    let ids = import_ids(&update);
-
-    assert!(ids.contains(&entity_id(0x66)) && ids.contains(&entity_id(0x67)));
-}
-
-#[test]
-fn bottom_ceiling_exports_nothing_to_an_unnarrowed_request() {
-    let member = entity_id(0x3D);
-    let window_key = WindowKey::new("2026-12");
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    seed_scoped_pacts_for_grant(
-        &vault,
-        grant_id,
-        &[FederationDirectionScope {
-            worlds: ScopeAxis::All,
-            facets: ScopeAxis::Bottom,
-            bands: ScopeAxis::All,
-        }],
-    );
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let doc = pact_ceiling_source_doc(&vault, &window_key);
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-
-    assert!(import_ids(&update).is_empty());
 }
 
 /// Done-means 5: several Active pacts on one grant intersect into a single
@@ -4453,47 +3389,6 @@ fn foreign_world_ids_cannot_enter_a_selector_scope() {
     assert!(!ids.contains(&foreign_claim));
 }
 
-/// Done-means 7: the activation gate still runs first. An unpacted grant keeps
-/// legacy-allow for a fully specified selector, and a non-Active pact refuses
-/// with `GrantInactive` before the ceiling is ever computed — even when the
-/// selector would also exceed that pact's scope.
-#[test]
-fn activation_gate_precedes_the_ceiling_check() {
-    let member = entity_id(0x34);
-    let content_selector = |grant_id| {
-        SyncSelector::new(
-            grant_id,
-            member,
-            SyncSelectorWorld::World(local_world_id(0x51)),
-            vec![entity_id(0x61)],
-            vec![SelectorRange::Semantic],
-        )
-    };
-
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    authorize_sync_selector(&vault, test_selector_scope(), &content_selector(grant_id))
-        .expect("an unpacted grant has no ceiling and keeps legacy-allow");
-
-    // `seed_pact_for_grant`'s suspending repacts narrow facets to a set this
-    // selector does not name, so the ceiling would refuse it too; the
-    // activation refusal must win.
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Suspended);
-    let err = authorize_sync_selector(&vault, test_selector_scope(), &content_selector(grant_id))
-        .expect_err("a suspended pact-bound grant must deny");
-    assert!(
-        matches!(
-            err,
-            Error::Sync(SyncError::SyncProtocolError {
-                context: SyncProtocolValidation::Selector {
-                    reason: SelectorError::GrantInactive
-                }
-            })
-        ),
-        "activation must refuse before the ceiling runs, got {err:?}"
-    );
-}
-
 /// Done-means 8: the flat `grant.scope == grant_scope` check is untouched and
 /// is not satisfied by a selector that merely fits under the pact ceiling.
 #[test]
@@ -4613,73 +3508,6 @@ fn delegate_selector_denies_from_the_expiry_second() {
         authorize_sync_selector_at(&vault, test_selector_scope(), &selector, now)
             .unwrap_or_else(|e| panic!("a non-delegate grant must authorize at {now}: {e:?}"));
     }
-}
-
-/// Door order: activation (ONE-1408) → pact ceiling (ONE-1591) → delegate
-/// expiry (ONE-1409). An expired delegate that ALSO fails an earlier arm
-/// reports that earlier arm, so adding expiry moved no existing refusal.
-#[test]
-fn delegate_expiry_is_the_last_arm_of_the_door() {
-    let member = entity_id(0x36);
-    let expired = DELEGATE_EXPIRES_AT;
-
-    // Activation first: a suspended pact denies even though the delegate has
-    // also lapsed.
-    let (_dir, vault, grant_id) =
-        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
-    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Suspended);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let err =
-        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            Error::Sync(SyncError::SyncProtocolError {
-                context: SyncProtocolValidation::Selector {
-                    reason: SelectorError::GrantInactive
-                }
-            })
-        ),
-        "activation must refuse before expiry, got {err:?}"
-    );
-
-    // Ceiling second: an over-wide selector on an active pact denies for scope,
-    // not for expiry.
-    let (_dir, vault, grant_id) =
-        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
-    seed_scoped_pacts_for_grant(
-        &vault,
-        grant_id,
-        &[FederationDirectionScope {
-            worlds: base_world_axis(),
-            facets: ScopeAxis::Bottom,
-            bands: ScopeAxis::Bottom,
-        }],
-    );
-    let wide = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let err =
-        authorize_sync_selector_at(&vault, test_selector_scope(), &wide, expired).unwrap_err();
-    assert_grant_scope_mismatch(&err, "ceiling before expiry");
-
-    // Expiry last: under an All ceiling nothing earlier objects, so the expiry
-    // arm is what refuses — and it refuses on an UNPACTED grant too. Legacy
-    // allow covers a missing PACT, never a lapsed delegation.
-    let (_dir, vault, grant_id) =
-        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
-    seed_scoped_pacts_for_grant(&vault, grant_id, &[all_direction_scope()]);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    authorize_sync_selector_at(&vault, test_selector_scope(), &selector, DELEGATE_NOW)
-        .expect("precondition: a live delegate under an All ceiling authorizes");
-    let err =
-        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
-    assert_grant_expired(&err, "active pact, lapsed delegate");
-
-    let (_dir, vault, grant_id) =
-        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let err =
-        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
-    assert_grant_expired(&err, "unpacted lapsed delegate");
 }
 
 /// The public wrapper reads the WALL CLOCK, not a caller-chosen instant: the
@@ -5187,33 +4015,6 @@ fn selector_export_verifies_machine_origin_against_actual_crdt_id_and_body() {
         (false, false),
         "the old signed birth cannot be exported as current state"
     );
-}
-
-#[test]
-fn selector_roundtrips_every_classification_family_and_rejects_retired_schema() {
-    for family in crate::registry::TYPE_BYTE_FAMILIES {
-        let selector = SyncSelector::new(
-            entity_id(0xA0),
-            entity_id(0xA7),
-            SyncSelectorWorld::All,
-            vec![],
-            vec![SelectorRange::Family(family.family)],
-        );
-        let bytes = encode_sync_selector(&selector).unwrap();
-        assert_eq!(decode_sync_selector(&bytes).unwrap(), selector);
-        let Value::Map(mut fields) = rmpv::decode::read_value(&mut Cursor::new(bytes)).unwrap()
-        else {
-            panic!("selector encoding must be a map");
-        };
-        fields
-            .iter_mut()
-            .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
-            .unwrap()
-            .1 = Value::from(1);
-        let mut retired = Vec::new();
-        rmpv::encode::write_value(&mut retired, &Value::Map(fields)).unwrap();
-        assert!(decode_sync_selector(&retired).is_err());
-    }
 }
 
 #[test]

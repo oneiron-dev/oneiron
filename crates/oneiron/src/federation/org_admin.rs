@@ -118,7 +118,7 @@ impl Vault {
             policy.powers.clone(),
         )?;
         let key = HexId(policy.org_ref.0);
-        let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
+        let mut txn = self.store.env.write_txn()?;
         if ORG_ADMIN_POLICY.contains(&self.store, &txn, &key)? {
             return Err(OrgAdminError::AlreadyConfigured);
         }

@@ -122,29 +122,6 @@ pub(super) enum GateMetricReasonClass {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl GateMetricReasonClass {
-    #[must_use]
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::MissingActorClass => "missing_actor_class",
-            Self::MissingActorProvenance => "missing_actor_provenance",
-            Self::MissingPolicyManifestVersion => "missing_policy_manifest_version",
-            Self::PolicyFailClosed => "policy_fail_closed",
-            Self::ActorCeiling => "actor_ceiling",
-            Self::SourceTrust => "source_trust",
-            Self::CriticalityFloor => "criticality_floor",
-            Self::PolicyManifestAuthority => "policy_manifest_authority",
-            Self::ExternalEffectAuthority => "external_effect_authority",
-            Self::CounterpartyOptOut => "counterparty_opt_out",
-            Self::EffectorBudget => "effector_budget",
-            Self::CharterPolicy => "charter_policy",
-            Self::Consent => "consent",
-            Self::CampaignCompliance => "campaign_compliance",
-            Self::DreamerPrecommit => "dreamer_precommit",
-            Self::WitnessMessageCeiling => "witness_message_ceiling",
-        }
-    }
-
     const fn metric_index(self) -> usize {
         match self {
             Self::Allow => 0,
@@ -557,24 +534,6 @@ pub(super) struct GateMetricCounter {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-impl GateMetricCounter {
-    #[must_use]
-    pub(crate) fn outcome(&self) -> GateOutcome {
-        self.outcome
-    }
-
-    #[must_use]
-    pub(super) fn reason_class(&self) -> GateMetricReasonClass {
-        self.reason_class
-    }
-
-    #[must_use]
-    pub(crate) fn count(&self) -> u64 {
-        self.count
-    }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GateMetricsSnapshot {
     counters: Vec<GateMetricCounter>,
@@ -582,11 +541,6 @@ pub(super) struct GateMetricsSnapshot {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl GateMetricsSnapshot {
-    #[must_use]
-    pub(crate) fn counters(&self) -> &[GateMetricCounter] {
-        &self.counters
-    }
-
     #[must_use]
     pub(crate) fn count(&self, outcome: GateOutcome, reason_class: GateMetricReasonClass) -> u64 {
         self.counters

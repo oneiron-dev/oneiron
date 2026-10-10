@@ -671,6 +671,85 @@ fn an_authority_row_replayed_over_a_planted_fence_reads_live() -> Result<()> {
     Ok(())
 }
 
+/// #1324 follow-up (Greptile): the fence a peer's soft tombstone planted
+/// stays under the authority record the replay admitted. Canonical capture
+/// reads that stored record the way every read does, so the window holding
+/// it snapshots and recovers instead of being refused as a withdrawn delete.
+#[test]
+fn a_window_holding_an_authority_row_over_a_planted_fence_snapshots_and_recovers() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(50);
+    let genesis = authority_genesis_fixture(50);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let bind = authority_bind_owner_fixture(
+        vault_id,
+        &genesis,
+        &owner,
+        EntityId::from_bytes_unchecked([51; 16]),
+        1,
+    );
+    let id = crate::authority::authority_log_entity_id(&bind)?;
+    let mut soft = vec![1u8];
+    soft.extend_from_slice(&1_771_027_200u64.to_le_bytes());
+    soft.extend_from_slice(&[0x5A; 16]);
+    vault.with_write_txn(|wtxn| {
+        vault
+            .apply_replayed_tombstone_in_txn(wtxn, &id, &soft)
+            .map(|_| ())
+    })?;
+    crate::sync::replay::replay_entity(
+        &vault,
+        crate::sync::replay::ReplicatedEntity {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+            occurred: TimeRange { start: 2, end: 2 },
+            learned_at: 2,
+            body: &crate::authority::encode_authority_log_entry_body(&bind)?,
+        },
+        crate::sync::client::ImportTier::OwnDevice,
+    )?;
+    assert!(
+        crate::deletion::ROW_DELETION_FENCE.contains(
+            &vault.store,
+            &vault.store.env.read_txn()?,
+            &crate::side_table::HexId(id),
+        )?,
+        "the planted fence is still there"
+    );
+    assert!(vault.live_entity_row(&id)?.is_live());
+
+    let window = crate::deletion::window_label_from_timestamp(2);
+    let doc = LoroDoc::new();
+    for entity in [crate::authority::authority_log_entity_id(&genesis)?, id] {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &entity.to_hex(),
+            &vault.get_raw_unsealed(&entity)?.unwrap(),
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&vault, &window, &doc)?;
+    assert!(
+        snapshot
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *id.as_bytes())
+    );
+    let dir = tempfile::tempdir()?;
+    let recovered = crate::recovery::recover_vault_window(
+        &vault,
+        &Materializer::new(),
+        dir.path().join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(recovered.tier, crate::recovery::RecoveryTier::FullRebuild);
+    assert!(vault.live_entity_row(&id)?.is_live());
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(bind));
+    Ok(())
+}
+
 /// Bug repro (Astra access follow-ups finding 5): a peer's cleanup-archive
 /// tombstone for a live authority record is refused, and while it stays
 /// published in the record's snapshot-backed window the record still reads

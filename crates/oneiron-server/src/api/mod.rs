@@ -233,7 +233,18 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/org-admin/{org}/powers", get(org_admin::powers))
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
-        .route("/context-board", post(context_board_hydrate))
+        // Only a hydration that records its TURN's board is a keyed mutation.
+        .route(
+            "/context-board",
+            post(context_board_hydrate).route_layer(middleware::from_fn_with_state(
+                idempotency.clone(),
+                board_turn_idempotency,
+            )),
+        )
+        .route(
+            "/context-board/turns/{turn}",
+            get(context_board_turn_history),
+        )
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))

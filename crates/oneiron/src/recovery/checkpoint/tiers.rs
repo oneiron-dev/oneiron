@@ -28,6 +28,7 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"gate_pending:critical_confirm_expiry_cursor:v1",
                 b"gate_pending:critical_confirm_list_cursor:v1",
                 b"outbound:authorized_recovery_lease:v1",
+                b"vault_archived:v1",
             ]
             .iter()
             .any(|p| key.starts_with(p))
@@ -36,6 +37,10 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
             } else if [
                 b"provider_confidence/".as_slice(),
                 b"ppr_community_cache:",
+                // The thread projection is a cache over the reply chain; a
+                // restore folds it again from the restored edges (OF-296).
+                b"conversation_dag:thread_meta:v1:",
+                b"conversation_dag:thread_meta_dirty:v1:",
                 b"skill_hub/content_hash_index/v1\0",
                 b"skill_hub/content_hash_index_schema_version",
                 b"skill_convert/source_index/v1\0",

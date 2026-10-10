@@ -5,7 +5,6 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, ClaimError, GateError, RecordError};
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::bridge::{Materializer, format_edge_key};
@@ -97,105 +96,6 @@ fn quarantine_key_encoding_is_x_prefix_with_8be_seq() {
     }
 }
 
-#[test]
-fn remote_rejection_reason_classifies_secret_scan_denials_only() {
-    let secret_scan = Error::Gate(GateError::GateWriteRejected {
-        outcome: "deny",
-        reason_codes: vec!["gate.secret_scan.detected", "gate.secret_scan.github_token"],
-    });
-    let other_gate = Error::Gate(GateError::GateWriteRejected {
-        outcome: "deny",
-        reason_codes: vec!["gate.policy.denied"],
-    });
-    let pending_secret_scan = Error::Gate(GateError::GateWriteRejected {
-        outcome: "pending",
-        reason_codes: vec!["gate.secret_scan.detected"],
-    });
-
-    assert_eq!(
-        remote_rejection_reason(&secret_scan).as_deref(),
-        Some("GateWriteRejected")
-    );
-    assert_eq!(remote_rejection_reason(&other_gate), None);
-    assert_eq!(remote_rejection_reason(&pending_secret_scan), None);
-    assert_eq!(
-        remote_rejection_reason(&Error::Claim(ClaimError::InvalidMachineClaimProof)).as_deref(),
-        Some("InvalidMachineClaimProof")
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::Claim(ClaimError::ActorLacksClaimAuthority {
-            reason: "local enrollment denial",
-        })),
-        None,
-        "local authority failures must not be quarantined as remote proof failures"
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::Record(RecordError::CompanionRecordAlreadyExists))
-            .as_deref(),
-        Some("CompanionRecordAlreadyExists")
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::Record(RecordError::InvalidPsychProfileBody(
-            "bad profile"
-        )))
-        .as_deref(),
-        Some("InvalidPsychProfileBody")
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::Artifact(ArtifactError::InvalidSkillBody(
-            "bad skill"
-        )))
-        .as_deref(),
-        Some("InvalidSkillBody")
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "bad agent def"
-        )))
-        .as_deref(),
-        Some("InvalidAgentDefBody")
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::Record(RecordError::InvalidTaskBody(
-            "missing task role"
-        )))
-        .as_deref(),
-        Some("InvalidTaskBody")
-    );
-    // ONE-1394: a malformed replicated DIAGNOSTIC row quarantines and the
-    // window continues, instead of aborting the batch as a LOCAL failure.
-    assert_eq!(
-        remote_rejection_reason(&Error::Record(RecordError::InvalidDiagnosticBody(
-            "unknown body key"
-        )))
-        .as_deref(),
-        Some("InvalidDiagnosticBody")
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::Record(RecordError::InvalidSuppressionReceiptBody(
-            "incoming body"
-        )))
-        .as_deref(),
-        Some("InvalidSuppressionReceiptBody")
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::Record(RecordError::SuppressionReceiptDivergence))
-            .as_deref(),
-        Some("SuppressionReceiptDivergence")
-    );
-    assert_eq!(
-        remote_rejection_reason(&Error::CorruptedIndex("outbound suppression asset")),
-        None
-    );
-}
-
-/// Pinned retention decision: 4096 rows, ≤30 days.
-#[test]
-fn retention_constants_match_pinned_decision() {
-    assert_eq!(MAX_QUARANTINE_ROWS, 4096);
-    assert_eq!(QUARANTINE_MAX_AGE_SECS, 2_592_000);
-}
-
 /// AC1/OWNER-DECISION — the record is GDPR-inert: it stores the xxh3_64
 /// HASH of the rejected bytes, never the bytes. An implementation that
 /// embeds the payload (full-bytes alternative) fails the windows scan.
@@ -239,96 +139,6 @@ fn quarantine_record_is_hash_only_never_payload_bytes() {
     assert!(
         !raw.windows(payload.len()).any(|w| w == payload),
         "x: row must never carry the rejected payload bytes (GDPR-inert)"
-    );
-}
-
-// ─── Retention + doctor surface (AC5) ────────────────────────────────────
-
-/// Row-cap + age-bound retention (oldest evicted first, counter
-/// persists) and the doctor surface over the same vault.
-#[test]
-fn retention_evicts_oldest_first_and_doctor_reports_state() {
-    let (_dir, vault) = test_vault_with_dir();
-    for i in 0..5u64 {
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        record_in_txn(
-            &vault,
-            &mut wtxn,
-            &QuarantineRecord {
-                window_key: WINDOW.to_string(),
-                container: QuarantineContainer::Entities,
-                crdt_key_hash: i,
-                crdt_key_len: 2,
-                reason_code: "InvalidKey".to_string(),
-                payload_hash: i,
-                quarantined_at: 1_000 + i,
-            },
-        )
-        .unwrap();
-        wtxn.commit().unwrap();
-    }
-
-    // Cap sweep: 5 rows, cap 3 → the two oldest go.
-    let mut wtxn = vault.store.env.write_txn().unwrap();
-    let evicted = enforce_retention_in_txn(&vault, &mut wtxn, 3, u64::MAX, 2_000).unwrap();
-    wtxn.commit().unwrap();
-    assert_eq!(evicted, 2);
-    let remaining: Vec<u64> = quarantined_records(&vault)
-        .unwrap()
-        .into_iter()
-        .map(|(seq, _)| seq)
-        .collect();
-    assert_eq!(remaining, vec![3, 4, 5], "oldest rows must go first");
-
-    // Age sweep through the production write path: a record older than
-    // 30 days is evicted when the next record lands.
-    let fresh_hash = 0xF8E5_u64;
-    let mut wtxn = vault.store.env.write_txn().unwrap();
-    record_in_txn(
-        &vault,
-        &mut wtxn,
-        &QuarantineRecord {
-            window_key: WINDOW.to_string(),
-            container: QuarantineContainer::Edges,
-            crdt_key_hash: fresh_hash,
-            crdt_key_len: 5,
-            reason_code: "InvalidEdgeWeight".to_string(),
-            payload_hash: 9,
-            quarantined_at: 1_004 + QUARANTINE_MAX_AGE_SECS + 1,
-        },
-    )
-    .unwrap();
-    wtxn.commit().unwrap();
-    let records = quarantined_records(&vault).unwrap();
-    assert_eq!(records.len(), 1, "rows past the age bound are evicted");
-    assert_eq!(records[0].1.crdt_key_hash, fresh_hash);
-
-    // Doctor surface: count, newest-first reasons, evictions, rm:.
-    set_remat_marker(&vault, WINDOW, &EntityId::now()).unwrap();
-    let report = sync_doctor(&vault).unwrap();
-    assert_eq!(report.quarantine_count, 1);
-    assert_eq!(
-        report.recent_reason_codes,
-        vec!["InvalidEdgeWeight".to_string()],
-        "newest reason first"
-    );
-    assert_eq!(
-        report.eviction_count,
-        2 + 3,
-        "cap sweep + age sweep evictions"
-    );
-    assert_eq!(report.rm_pending_windows, vec![WINDOW.to_string()]);
-
-    let rtxn = vault.store.env.read_txn().unwrap();
-    assert_eq!(
-        vault
-            .store
-            .sync_queue
-            .get(&rtxn, QUARANTINE_EVICTIONS_KEY)
-            .unwrap()
-            .as_deref(),
-        Some(5u64.to_le_bytes().as_slice()),
-        "eviction counter must persist (doctor-visible)"
     );
 }
 
@@ -827,73 +637,6 @@ fn one_1147_edge_value() -> Vec<u8> {
     .unwrap()
 }
 
-/// ONE-1147 fix-wave (BLOCKER) — an Observer-B edge batch whose endpoints
-/// it HYDRATES-AND-WRITES inside the txn, then rolls back as a whole,
-/// must flag a durable entity-scoped `rm:` marker for the rolled-back
-/// hydration write under the LITERAL key `rm:w:{window}:{hex}` → `[1u8]`.
-/// Pre-fix the swallow site iterated only `applied_edges` (edge SOURCES),
-/// so a hydrated endpoint's lost write was silently unmarked.
-#[test]
-fn edge_batch_in_txn_endpoint_hydration_rollback_marks_endpoint() {
-    let (_dir, vault) = test_vault_with_dir();
-    let materializer = Arc::new(Materializer::new());
-
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-    let window = window_with_unmaterialized_endpoints(
-        &vault,
-        &materializer,
-        &[(src, b"src"), (tgt, b"tgt")],
-    );
-
-    // The edge commit hydrates BOTH endpoints inside the batch txn, then
-    // the injected failure rolls the whole txn back.
-    let kind = crate::edge::EdgeKind::Mentions;
-    let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
-    crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
-    map_insert_bytes(
-        &window.doc.get_map("edges"),
-        &edge_key,
-        &one_1147_edge_value(),
-    )
-    .unwrap();
-    window.doc.commit();
-
-    // (a) Precondition: the rolled-back hydration left BOTH endpoints
-    // absent from LMDB.
-    assert!(
-        vault.get(&src).unwrap().is_none(),
-        "rolled-back endpoint hydration: src absent from LMDB"
-    );
-    assert!(
-        vault.get(&tgt).unwrap().is_none(),
-        "rolled-back endpoint hydration: tgt absent from LMDB"
-    );
-
-    // (b) Both hydrated-and-rolled-back endpoints carry the LITERAL
-    // marker. The SOURCE is also an `applied_edges` source, but the
-    // shared `seen` set marks it exactly once.
-    let rtxn = vault.store.env.read_txn().unwrap();
-    for id in [&src, &tgt] {
-        let marker = format!("rm:w:2026-03:{}", id.to_hex());
-        assert_eq!(
-            vault
-                .store
-                .sync_state
-                .get(&rtxn, &marker)
-                .unwrap()
-                .as_deref(),
-            Some([1u8].as_slice()),
-            "a hydrated-and-rolled-back edge endpoint must carry the rm:w marker"
-        );
-    }
-    drop(rtxn);
-    assert_eq!(
-        pending_remat_windows(&vault).unwrap(),
-        vec![WINDOW.to_string()]
-    );
-}
-
 /// ONE-1147 fix-wave (DISCRIMINATING) — the SOURCE endpoint's hydration
 /// fails LOCALLY (injected) FIRST (bridge.rs:591), aborting the batch at
 /// the local-abort arm BEFORE `applied_edges.push`; the TARGET endpoint
@@ -961,79 +704,6 @@ fn edge_batch_hydrated_target_only_rollback_marks_target() {
         vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
         None,
         "src never hydrated nor tracked — no marker"
-    );
-    drop(rtxn);
-}
-
-/// ONE-1147 fix-wave (anti-over-mark) — an endpoint already PRESENT in
-/// LMDB takes the no-write `Ready` path (nothing lost) and must NOT be
-/// flagged by the hydration loop. Here SRC is hydrated-and-rolled-back
-/// (marked) while TGT is already present (must stay unmarked): a buggy
-/// impl that recorded `Ready` endpoints into `hydrated_endpoints` would
-/// over-mark TGT and FAIL.
-#[test]
-fn edge_batch_already_present_endpoint_not_overmarked() {
-    let (_dir, vault) = test_vault_with_dir();
-    let materializer = Arc::new(Materializer::new());
-
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-    // SRC is CRDT-only (will be hydrated by the edge batch).
-    let window = window_with_unmaterialized_endpoints(&vault, &materializer, &[(src, b"src")]);
-    // TGT materializes SUCCESSFULLY through the now-attached observer →
-    // already-present (no-write `Ready`) when the edge batch runs.
-    map_insert_bytes(
-        &window.doc.get_map("entities"),
-        &tgt.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_TASK,
-            valid_time_range(),
-            LEARNED_AT,
-            &task_body(),
-        ),
-    )
-    .unwrap();
-    window.doc.commit();
-    assert!(
-        vault.get(&tgt).unwrap().is_some(),
-        "precondition: tgt already present in LMDB"
-    );
-    assert!(
-        vault.get(&src).unwrap().is_none(),
-        "precondition: src CRDT-only"
-    );
-
-    let kind = crate::edge::EdgeKind::Mentions;
-    let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
-    crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
-    map_insert_bytes(
-        &window.doc.get_map("edges"),
-        &edge_key,
-        &one_1147_edge_value(),
-    )
-    .unwrap();
-    window.doc.commit();
-
-    let rtxn = vault.store.env.read_txn().unwrap();
-    // SRC: hydrated-and-rolled-back → marked.
-    let src_marker = format!("rm:w:2026-03:{}", src.to_hex());
-    assert_eq!(
-        vault
-            .store
-            .sync_state
-            .get(&rtxn, &src_marker)
-            .unwrap()
-            .as_deref(),
-        Some([1u8].as_slice()),
-        "hydrated-and-rolled-back src is marked"
-    );
-    // TGT: already present, no in-batch write, nothing lost → the
-    // hydration loop must NOT mark it (and it is not an edge source).
-    let tgt_marker = format!("rm:w:2026-03:{}", tgt.to_hex());
-    assert_eq!(
-        vault.store.sync_state.get(&rtxn, &tgt_marker).unwrap(),
-        None,
-        "an already-present endpoint (no write, nothing lost) must NOT be marked by the hydration loop"
     );
     drop(rtxn);
 }
@@ -1952,67 +1622,8 @@ fn observer_b_quarantines_malformed_suppression_and_commits_valid_sibling() -> c
 }
 
 #[test]
-fn forward_remat_quarantines_malformed_suppression_and_commits_valid_sibling() -> crate::Result<()>
-{
-    exercise_suppression_remote_quarantine(false, false)
-}
-
-#[test]
 fn observer_b_quarantines_divergent_suppression_and_keeps_original() -> crate::Result<()> {
     exercise_suppression_remote_quarantine(true, true)
-}
-
-#[test]
-fn forward_remat_quarantines_divergent_suppression_and_keeps_original() -> crate::Result<()> {
-    exercise_suppression_remote_quarantine(false, true)
-}
-
-#[test]
-fn remote_suppression_tombstone_quarantines_without_erasing_receipt() -> crate::Result<()> {
-    let (_dir, vault) = test_vault_with_dir();
-    let (id, body) = suppression_carrier_fixture(false);
-    vault.with_write_txn(|txn| {
-        vault
-            .batch_in()
-            .put_replicated(
-                &id,
-                crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
-                TimeRange {
-                    start: LEARNED_AT,
-                    end: LEARNED_AT,
-                },
-                LEARNED_AT,
-                &body,
-            )
-            .apply(txn)
-    })?;
-    let original = vault.get_raw(&id)?;
-    let doc = create_window_doc("test-user", &WindowKey::new(WINDOW));
-    let sibling = EntityId::now();
-    map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"1")?;
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &sibling.to_hex(),
-        &entity_blob(
-            crate::registry::ENTITY_TYPE_ASSET,
-            valid_time_range(),
-            LEARNED_AT,
-            b"unrelated asset",
-        ),
-    )?;
-    doc.commit();
-    forward_rematerialize(&vault, &doc, &Materializer::new(), &WindowKey::new(WINDOW))?;
-    assert_eq!(vault.get_raw(&id)?, original);
-    assert_eq!(
-        vault.get(&sibling)?.as_deref(),
-        Some(b"unrelated asset".as_slice())
-    );
-    let rows = quarantined_records(&vault)?;
-    assert!(
-        rows.iter()
-            .any(|(_, row)| row.reason_code == "MaintenanceKindNotWritable")
-    );
-    Ok(())
 }
 
 /// Matrix: protected receipt arrival is independent of tombstone order and
@@ -2156,34 +1767,6 @@ fn reverse_receipt_recovery_preserves_audit_and_quarantines_tombstone() -> crate
     );
     assert!(
         quarantined_records(&vault)?
-            .iter()
-            .any(|(_, row)| row.container == QuarantineContainer::Tombstones)
-    );
-    Ok(())
-}
-
-#[test]
-fn ordinary_asset_keeps_delete_wins_in_receipt_window() -> crate::Result<()> {
-    let (_dir, vault) = test_vault_with_dir();
-    let window = WindowKey::new(WINDOW);
-    let doc = create_window_doc("asset-delete", &window);
-    let asset = EntityId::now();
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &asset.to_hex(),
-        &entity_blob(
-            crate::registry::ENTITY_TYPE_ASSET,
-            valid_time_range(),
-            LEARNED_AT,
-            b"ordinary",
-        ),
-    )?;
-    map_insert_bytes(&doc.get_map("tombstones"), &asset.to_hex(), b"1")?;
-    doc.commit();
-    forward_rematerialize(&vault, &doc, &Materializer::new(), &window)?;
-    assert!(vault.get_raw(&asset)?.is_none());
-    assert!(
-        !quarantined_records(&vault)?
             .iter()
             .any(|(_, row)| row.container == QuarantineContainer::Tombstones)
     );

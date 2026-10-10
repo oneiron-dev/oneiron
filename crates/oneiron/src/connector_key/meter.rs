@@ -301,16 +301,6 @@ pub(super) fn delete_charter_usage_rows_in_txn(
     Ok(())
 }
 
-/// The full stored key of one usage row. Kept for test callers outside this
-/// module ([`crate::gate`]'s and [`crate::outbound`]'s budget tests) that
-/// still address the row by raw bytes; it now just spells [`USAGE`]'s own
-/// key encoding rather than a second copy of it. `cfg(test)` because those
-/// are its only remaining callers — production code goes through `USAGE`.
-#[cfg(test)]
-pub(crate) fn connector_key_usage_row_key(id: &EntityId, row_index: u16) -> Vec<u8> {
-    USAGE.key_bytes(&(*id, row_index.to_be_bytes()))
-}
-
 // --- Reads and charges --------------------------------------------------------
 
 /// Post-debit read of one budget row (the `self.*` echo shape; GOV-02 wires

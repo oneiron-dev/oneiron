@@ -209,6 +209,24 @@ pub(crate) fn recorded_at_in_txn(
         ),
         None => 0,
     };
+    persist_id_floor_in_txn(store, txn)?;
+    let now = store.clock().observe_floor(persisted)?;
+    if now != persisted {
+        store
+            .vault_meta()
+            .put(txn, CLOCK_FLOOR, &now.to_be_bytes())?;
+    }
+    Ok(now)
+}
+
+/// Persists the floor of the ids this store has allocated, in the caller's
+/// transaction, and leaves the clock floor where it is: a write that keeps
+/// an allocated id in a row no mutation stamps still keeps that id from
+/// being allocated again after a reopen.
+pub(crate) fn persist_id_floor_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
     let id_floor = match store.vault_meta().get(txn, ID_FLOOR)? {
         Some(bytes) => u128::from_be_bytes(
             bytes
@@ -224,13 +242,7 @@ pub(crate) fn recorded_at_in_txn(
             .vault_meta()
             .put(txn, ID_FLOOR, &observed_id_floor.to_be_bytes())?;
     }
-    let now = store.clock().observe_floor(persisted)?;
-    if now != persisted {
-        store
-            .vault_meta()
-            .put(txn, CLOCK_FLOOR, &now.to_be_bytes())?;
-    }
-    Ok(now)
+    Ok(())
 }
 
 #[cfg(test)]

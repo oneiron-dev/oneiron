@@ -26,6 +26,20 @@ impl<T: GeminiTransport> GeminiBackend<T> {
         })
     }
 }
+/// One request to the configured endpoint per call, when the host's transport
+/// sends once; retries stay with the host, above a run's gate.
+impl<T: GeminiTransport + oneiron::llm::SingleSend> oneiron::llm::SingleRouteBackend
+    for GeminiBackend<T>
+{
+    fn preflight(&self, request: &LlmRequest, stream: bool) -> oneiron::LlmResult<()> {
+        let entry = self
+            .models
+            .get(&request.model)
+            .ok_or(FatalLlmError::InvalidRequest)?;
+        build_request(entry, request, stream).map(drop)
+    }
+}
+
 impl<T: GeminiTransport> LlmBackend for GeminiBackend<T> {
     fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
         self.models
