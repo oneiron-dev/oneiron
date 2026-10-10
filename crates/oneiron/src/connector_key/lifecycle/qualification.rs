@@ -130,7 +130,7 @@ impl Vault {
             )
         };
         let report = qualify_connector_with_schemas(connector, plan, oracle, Some(&schemas))?;
-        let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
+        let mut wtxn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
         if record.status != ConnectorKeyStatus::Pending

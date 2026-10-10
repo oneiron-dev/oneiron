@@ -73,7 +73,8 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
     let later = person(&vault, b"after the backup");
     drop(vault);
 
-    let rehearsal = rehearse(&outcome.backup.path, VaultConfig::default(), None).unwrap();
+    let source = SideRestoreSource::read(&vault_path).unwrap();
+    let rehearsal = rehearse(&outcome.backup.path, VaultConfig::default(), None, &source).unwrap();
     assert!(rehearsal.verified);
     assert!(!rehearsal.kept);
     assert_eq!(rehearsal.checkpoint_id, outcome.checkpoint_id);
@@ -109,6 +110,7 @@ fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault
         &outcome.backup.path,
         &vault_path,
         VaultConfig::default(),
+        exchange,
         |_| Err(anyhow::anyhow!("fsync: input/output error")),
     )
     .expect("the swap happened, so the restore succeeded");
@@ -124,6 +126,95 @@ fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault
     drop(vault);
     let previous = Vault::open_owned(&restored.previous_vault, VaultConfig::default()).unwrap();
     assert!(previous.get(&later).unwrap().is_some());
+}
+
+/// A vault path that is a symlink to the vault's directory: the restore
+/// swaps that directory, so the path still names the live restored vault,
+/// and the vault set aside is the one archived.
+#[cfg(unix)]
+#[test]
+fn a_restore_over_a_symlinked_vault_path_swaps_the_directory_it_names() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("data").join("vault");
+    let vault = Vault::open_owned(&directory, VaultConfig::default()).unwrap();
+    let kept = person(&vault, b"in the backup");
+    let outcome = take(&vault, &plan(root.path(), 7)).unwrap();
+    let later = person(&vault, b"after the backup");
+    drop(vault);
+    let link = root.path().join("vault");
+    std::os::unix::fs::symlink(&directory, &link).unwrap();
+
+    let restored = restore_over(&outcome.backup.path, &link, VaultConfig::default()).unwrap();
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let vault = Vault::open_owned(&link, VaultConfig::default()).unwrap();
+    assert!(vault.get(&kept).unwrap().is_some());
+    assert!(vault.get(&later).unwrap().is_none());
+    person(&vault, b"the restored vault is live");
+    drop(vault);
+    let previous = Vault::open_owned(&restored.previous_vault, VaultConfig::default()).unwrap();
+    assert!(previous.get(&later).unwrap().is_some());
+    assert!(
+        previous
+            .put_entity(
+                &EntityId::now(),
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"the previous vault is archived",
+            )
+            .is_err()
+    );
+}
+
+/// A swap the engine cannot confirm once the directories were exchanged
+/// removes nothing: the staging directory may hold the previous vault, and
+/// the vault at the vault path stays the live one (Astra re-check: a failure
+/// after the exchange must not run the cleanup of a failure before it).
+#[test]
+fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+    let outcome = take(&vault, &plan(root.path(), 7)).unwrap();
+    let later = person(&vault, b"after the backup");
+    drop(vault);
+
+    // The exchange happens, and is undone before the engine checks it.
+    let error = restore_over_syncing(
+        &outcome.backup.path,
+        &vault_path,
+        VaultConfig::default(),
+        |a, b| {
+            exchange(a, b)?;
+            exchange(a, b)
+        },
+        |_| Ok(()),
+    )
+    .expect_err("the engine finds the replacement out of place");
+    assert!(
+        format!("{error:#}").contains("nothing was removed"),
+        "{error:#}"
+    );
+    let staging = std::fs::read_dir(root.path())
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".vault.restore-")
+        })
+        .count();
+    assert_eq!(staging, 1, "the staging directory is kept");
+    let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+    assert!(vault.get(&later).unwrap().is_some());
+    person(&vault, b"the vault in place is live");
 }
 
 #[test]
@@ -176,7 +267,9 @@ fn a_failed_rehearsal_removes_only_what_it_created() {
     std::fs::write(custody.join("key"), b"not ours").unwrap();
     let bogus = root.path().join("not-a-backup");
     std::fs::write(&bogus, b"garbage").unwrap();
-    assert!(rehearse(&bogus, VaultConfig::default(), Some(&scratch)).is_err());
+    drop(Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap());
+    let source = SideRestoreSource::read(&root.path().join("vault")).unwrap();
+    assert!(rehearse(&bogus, VaultConfig::default(), Some(&scratch), &source).is_err());
     assert!(!scratch.exists());
     assert_eq!(std::fs::read(custody.join("key")).unwrap(), b"not ours");
 }

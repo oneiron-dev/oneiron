@@ -226,6 +226,14 @@ impl VerifiedEvidenceSet {
     pub(crate) fn locators(&self) -> Vec<SwarmEvidenceRef> {
         self.rows.iter().map(|r| r.locator.reference()).collect()
     }
+    /// Every MESSAGE whose words a citation names.
+    pub(crate) fn cited_messages(&self) -> Vec<EntityId> {
+        self.rows
+            .iter()
+            .flat_map(|row| &row.messages)
+            .map(|span| span.message)
+            .collect()
+    }
     pub(crate) fn verified_locators(&self) -> Vec<super::provenance::VerifiedLocator> {
         self.rows
             .iter()

@@ -503,7 +503,9 @@ fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
 }
 
 /// Review repro: a refused SDK verb is a typed refusal the guest handles live,
-/// so replay hands back that same refusal, not an unrelated gate trap.
+/// so replay hands back that same refusal, not an unrelated gate trap. The
+/// guest gets the refusal's stable code alone, live and on replay: no English
+/// rides along as a reason (CodeRabbit on #1338).
 #[test]
 fn code_run_replay_returns_a_refused_agent_verb_as_the_live_refusal() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -519,10 +521,14 @@ fn code_run_replay_returns_a_refused_agent_verb_as_the_live_refusal() -> Result<
     });
     // No verb door is bound, so the live answer is a typed refusal.
     let live = dispatcher.dispatch(call.clone())?;
-    let SelfDispatchOutcome::Denied(refusal) = &live else {
-        panic!("expected a typed refusal, got {live:?}");
-    };
-    assert_eq!(refusal.outcome, "agent_verb_door_unbound");
+    assert_eq!(
+        live,
+        SelfDispatchOutcome::Denied(SelfDeniedResult {
+            effect: SelfEffect::AgentVerb,
+            outcome: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            reason_codes: Vec::new(),
+        })
+    );
 
     let determinism = CodeRunDeterminism::new(1_719_000_002_000, [0xAC; 32]);
     let run_id = EntityId::from_bytes([0x75; 16]).expect("run id");

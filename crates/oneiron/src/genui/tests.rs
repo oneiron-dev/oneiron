@@ -1,7 +1,6 @@
 use super::*;
 
 mod failure_integrity;
-mod project_proposal;
 
 fn ask_card() -> Result<ConsentAskCard> {
     ConsentAskCard::new(

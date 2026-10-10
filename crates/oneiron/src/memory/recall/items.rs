@@ -27,6 +27,16 @@ impl Memory<'_> {
             // pins them, both read in this snapshot. A pin at a text revision
             // reads the words it was served with.
             let turn = if entity_type == ENTITY_TYPE_TURN {
+                // Every message the turn reads its text from, a hidden or
+                // empty one too, which may show text after its next change.
+                let mut members = Vec::new();
+                for (message, _) in
+                    crate::tagging::turn_members_in_txn(self.vault, txn, id)?.unwrap_or_default()
+                {
+                    if lane.is_entity_readable_in(txn, &message)? {
+                        members.push(message);
+                    }
+                }
                 match crate::vault::entity_revision::served_turn_text_in_txn(
                     self.vault, txn, id, mode,
                 )? {
@@ -34,9 +44,9 @@ impl Memory<'_> {
                         let revision = text.revision;
                         let messages =
                             text.readable(|message| lane.is_entity_readable_in(txn, message))?;
-                        Some((messages, Some(revision)))
+                        Some((messages, Some(revision), members))
                     }
-                    None => Some((Vec::new(), None)),
+                    None => Some((Vec::new(), None, members)),
                 }
             } else {
                 None
@@ -48,8 +58,7 @@ impl Memory<'_> {
         let Some((entity_type, Some(body), Some(view), turn)) = admitted else {
             return Ok(None);
         };
-        let (turn_messages, turn_revision) = turn.unzip();
-        let turn_messages = turn_messages.unwrap_or_default();
+        let (turn_messages, turn_revision, turn_members) = turn.unwrap_or_default();
         let turn_text = crate::embed::joined_turn_text(&turn_messages);
         let ScopedReadResult {
             value: edges,
@@ -65,6 +74,25 @@ impl Memory<'_> {
                 .filter(|edge| edge.kind == EdgeKind::Supersedes)
                 .map(|edge| edge.target.to_hex()),
         );
+        // A TURN's words are its messages', so each message it reads them
+        // from, or quotes, is a source too: an edit, erase, archive or
+        // disclosure change of one changes the item. A live view depends on
+        // every source an item names.
+        let mut named = std::collections::HashSet::from([*id]);
+        named.extend(
+            edges
+                .iter()
+                .filter(|edge| edge.kind == EdgeKind::Supersedes)
+                .map(|edge| edge.target),
+        );
+        for message in turn_members
+            .iter()
+            .chain(turn_messages.iter().map(|(message, _)| message))
+        {
+            if named.insert(*message) {
+                source_revision_ids.push(message.to_hex());
+            }
+        }
         let facet = facet_hint.map(|facet| facet.to_hex()).or_else(|| {
             edges
                 .iter()
@@ -86,7 +114,7 @@ impl Memory<'_> {
         // revision of its row, which holds none of them.
         let source_revision_ref = match mode {
             crate::vault::ReadMode::Pinned(revision) => {
-                Some(turn_revision.flatten().unwrap_or(revision).to_hex())
+                Some(turn_revision.unwrap_or(revision).to_hex())
             }
             crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
         };

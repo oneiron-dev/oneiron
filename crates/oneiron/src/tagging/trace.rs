@@ -41,6 +41,17 @@ pub struct TaggingTrace {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum TaggingOutcome {
+    /// The answer passed every check, the marker completed, and the turn's
+    /// tags were saved in the same write.
+    Saved {
+        spans: usize,
+        links: usize,
+        mood: bool,
+        /// Spans linked to at least one entity, real or provisional.
+        linked: usize,
+        /// Provisional entities the save minted.
+        minted: usize,
+    },
     /// The answer passed every check and the marker completed. In shadow
     /// nothing else is written.
     Shadowed {

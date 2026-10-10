@@ -1,13 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 
 use super::definition::{SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord};
-use super::filter::{FilterAst, MatcherSpec};
+use super::filter::{FilterAst, MatcherSpec, filter_dependencies};
 use super::lifecycle::{next_version, validate_definition};
 use super::storage::{
     PACK_MIGRATION_MAPS, REPAIRS, RepairReceipt, load_record_in_txn, migration_map_key,
@@ -104,6 +105,39 @@ pub enum PackDriftResolution {
     },
 }
 
+/// One repair the drift ladder recorded: a migration, a rewrite and its
+/// notice, or a proposal the query's owner decides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackDriftRepair {
+    pub repair_ref: EntityId,
+    pub query_ref: EntityId,
+    pub summary: String,
+    pub recorded_at: u64,
+    pub drift: PackDrift,
+}
+
+/// Every repair the drift ladder recorded, in id order.
+///
+/// # Errors
+///
+/// Storage errors; a row that does not decode.
+pub fn pack_drift_repairs(vault: &Vault) -> Result<Vec<PackDriftRepair>> {
+    let rtxn = vault.store.env.read_txn()?;
+    REPAIRS
+        .iter_from(&vault.store, &rtxn, &[])?
+        .map(|row| {
+            let (repair_ref, receipt) = row?;
+            Ok(PackDriftRepair {
+                repair_ref,
+                query_ref: receipt.query_ref,
+                summary: receipt.summary,
+                recorded_at: receipt.recorded_at,
+                drift: receipt.drift,
+            })
+        })
+        .collect()
+}
+
 /// Records the migration map for one pack move.
 ///
 /// # Errors
@@ -148,6 +182,47 @@ pub fn repair_pack_drift(
     now: u64,
 ) -> Result<PackDriftResolution> {
     let map = load_migration_map(vault, drift)?.unwrap_or_default();
+    let kind = saved_query_type_byte(vault)?;
+    vault.with_write_txn_grouped(|wtxn| {
+        let record =
+            load_record_in_txn(vault, wtxn, query_ref, kind)?.ok_or(Error::EntityNotFound)?;
+        if record.definition.definition_version != definition.definition_version {
+            return Err(Error::ConcurrentWrite(
+                "saved query definition version is not current",
+            ));
+        }
+        if record.definition.lifecycle == SavedQueryLifecycle::Archived {
+            return Err(invalid(
+                "saved query is archived; pack drift repair does not reopen it",
+            ));
+        }
+        run_ladder_in_txn(vault, wtxn, record, kind, drift, &map, Resume::Yes, now)
+    })
+}
+
+/// Whether a successful rewrite makes the query active again.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Resume {
+    /// The caller is repairing this query: a viable rewrite resumes it.
+    Yes,
+    /// A pack moved under the query: its lifecycle stays as it was, so a
+    /// pause with another cause stays visible until its owner resolves it.
+    No,
+}
+
+/// The ladder over one loaded record, in the caller's write transaction.
+#[allow(clippy::too_many_arguments)]
+fn run_ladder_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    mut record: SavedQueryRecord,
+    kind: u8,
+    drift: &PackDrift,
+    map: &PackMigrationMap,
+    resume: Resume,
+    now: u64,
+) -> Result<PackDriftResolution> {
+    let query_ref = record.query_ref;
     let mut unmapped = Vec::new();
     let mut proposals = Vec::new();
     let mut renames = BTreeMap::new();
@@ -171,66 +246,150 @@ pub fn repair_pack_drift(
         "pack move {}@{} -> {}@{}",
         drift.from_pack_id, drift.from_version, drift.to_pack_id, drift.to_version
     );
-    let kind = saved_query_type_byte(vault)?;
-    vault.with_write_txn_grouped(|wtxn| {
-        let mut record =
-            load_record_in_txn(vault, wtxn, query_ref, kind)?.ok_or(Error::EntityNotFound)?;
-        if record.definition.definition_version != definition.definition_version {
-            return Err(Error::ConcurrentWrite(
-                "saved query definition version is not current",
-            ));
-        }
-        if record.definition.lifecycle == SavedQueryLifecycle::Archived {
-            return Err(invalid(
-                "saved query is archived; pack drift repair does not reopen it",
-            ));
-        }
-        if !unmapped.is_empty() {
-            let error = format!(
-                "{moved} has no rewrite for predicate(s) {}",
-                unmapped.join(", ")
-            );
-            return pause_in_txn(vault, wtxn, record, kind, error, unmapped, now);
-        }
-        if !proposals.is_empty() {
-            let summary = format!("proposal: {}", proposals.join("; "));
-            return record_repair_in_txn(vault, wtxn, query_ref, drift, &summary, now)
-                .map(|proposal_ref| PackDriftResolution::ProposalRequired { proposal_ref });
-        }
-        let migrated = SavedQueryDefinition {
-            filter: rewrite_predicates(&record.definition.filter, &renames),
-            matcher: rewrite_matcher(&record.definition.matcher, &renames),
-            definition_version: next_version(record.definition.definition_version)?,
-            lifecycle: SavedQueryLifecycle::Active,
-            ..record.definition.clone()
-        };
-        // The ladder's own last rung: a rewrite target the write door would
-        // never have accepted is no viable rewrite, so it PAUSES rather than
-        // being persisted as an active definition nobody could have authored.
-        if let Err(error) = validate_definition(&migrated) {
-            let error = format!("{moved} produced an invalid definition: {error}");
-            // The OTHER pause cause: every predicate mapped, so the unmapped
-            // list is empty and that emptiness is how a caller tells this rung
-            // from the no-rewrite one.
-            return pause_in_txn(vault, wtxn, record, kind, error, Vec::new(), now);
-        }
-        record.definition = migrated;
-        record.updated_at = now;
-        store_record_in_txn(vault, wtxn, &record, kind)?;
-        let summary = if notices.is_empty() {
-            format!("auto-migrated {} predicate(s)", renames.len())
-        } else {
-            format!("auto-rewritten with notices: {}", notices.join("; "))
-        };
-        let receipt_ref = record_repair_in_txn(vault, wtxn, query_ref, drift, &summary, now)?;
-        Ok(if notices.is_empty() {
-            PackDriftResolution::AutoMigrated { receipt_ref }
-        } else {
-            PackDriftResolution::AutoRewritten { receipt_ref }
-        })
+    if !unmapped.is_empty() {
+        let error = format!(
+            "{moved} has no rewrite for predicate(s) {}",
+            unmapped.join(", ")
+        );
+        return pause_in_txn(vault, wtxn, record, kind, error, unmapped, resume, now);
+    }
+    if !proposals.is_empty() {
+        let summary = format!("proposal: {}", proposals.join("; "));
+        return record_repair_in_txn(vault, wtxn, query_ref, drift, &summary, now)
+            .map(|proposal_ref| PackDriftResolution::ProposalRequired { proposal_ref });
+    }
+    let migrated = SavedQueryDefinition {
+        filter: rewrite_predicates(&record.definition.filter, &renames),
+        matcher: rewrite_matcher(&record.definition.matcher, &renames),
+        definition_version: next_version(record.definition.definition_version)?,
+        lifecycle: match resume {
+            Resume::Yes => SavedQueryLifecycle::Active,
+            Resume::No => record.definition.lifecycle.clone(),
+        },
+        ..record.definition.clone()
+    };
+    // The ladder's own last rung: a rewrite target the write door would
+    // never have accepted is no viable rewrite, so it PAUSES rather than
+    // being persisted as an active definition nobody could have authored.
+    if let Err(error) = validate_definition(&migrated) {
+        let error = format!("{moved} produced an invalid definition: {error}");
+        // The OTHER pause cause: every predicate mapped, so the unmapped
+        // list is empty and that emptiness is how a caller tells this rung
+        // from the no-rewrite one.
+        return pause_in_txn(vault, wtxn, record, kind, error, Vec::new(), resume, now);
+    }
+    record.definition = migrated;
+    record.updated_at = now;
+    store_record_in_txn(vault, wtxn, &record, kind)?;
+    let summary = if notices.is_empty() {
+        format!("auto-migrated {} predicate(s)", renames.len())
+    } else {
+        format!("auto-rewritten with notices: {}", notices.join("; "))
+    };
+    let receipt_ref = record_repair_in_txn(vault, wtxn, query_ref, drift, &summary, now)?;
+    Ok(if notices.is_empty() {
+        PackDriftResolution::AutoMigrated { receipt_ref }
+    } else {
+        PackDriftResolution::AutoRewritten { receipt_ref }
     })
 }
 
+/// One installed pack moving to another source, as the install door sees it.
+pub(crate) struct PackMove<'a> {
+    pub(crate) pack: &'a str,
+    pub(crate) from_version: &'a str,
+    pub(crate) to_version: &'a str,
+    /// Predicates the installed source declared.
+    pub(crate) from_predicates: &'a BTreeSet<String>,
+    /// Predicates the new source declares.
+    pub(crate) to_predicates: &'a BTreeSet<String>,
+}
+
+/// The pack-update rung of the drift ladder (ARCH-0059 §4), in the install's
+/// own write transaction, so the new pack and the repairs it forces commit
+/// together or not at all. Every saved query that is not archived and reads a
+/// predicate the move dropped, or one the move's migration map rewrites, runs
+/// the ladder. Its lifecycle is kept: a query paused for another cause stays
+/// paused.
+///
+/// # Errors
+///
+/// Storage errors propagate, and abort the install with them.
+pub(crate) fn repair_saved_queries_after_pack_move_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    moved: &PackMove<'_>,
+    now: u64,
+) -> Result<Vec<(EntityId, PackDriftResolution)>> {
+    let mut drift = PackDrift {
+        from_pack_id: moved.pack.to_owned(),
+        from_version: moved.from_version.to_owned(),
+        to_pack_id: moved.pack.to_owned(),
+        to_version: moved.to_version.to_owned(),
+        affected_predicates: Vec::new(),
+    };
+    // A migration map names a move between two versions. A source changed
+    // under the same version has no map of its own, so it never reuses one
+    // an earlier move recorded: what it drops pauses with no rewrite.
+    let mut map = if moved.from_version == moved.to_version {
+        PackMigrationMap::default()
+    } else {
+        PACK_MIGRATION_MAPS
+            .get(&vault.store, wtxn, &migration_map_key(&drift))?
+            .unwrap_or_default()
+    };
+    // A rewrite onto a predicate this very move drops is no rewrite.
+    map.rewrites.retain(|_, rewrite| {
+        let (PackPredicateRewrite::Rename { to }
+        | PackPredicateRewrite::Equivalent { to, .. }
+        | PackPredicateRewrite::SemanticsChanging { to, .. }) = rewrite;
+        moved.to_predicates.contains(to) || !moved.from_predicates.contains(to)
+    });
+    let touched: BTreeSet<&String> = moved
+        .from_predicates
+        .difference(moved.to_predicates)
+        .chain(
+            map.rewrites
+                .keys()
+                .filter(|predicate| moved.from_predicates.contains(*predicate)),
+        )
+        .collect();
+    if touched.is_empty() {
+        return Ok(Vec::new());
+    }
+    // A vault without the saved-query kind holds no saved queries.
+    let Ok(kind) = saved_query_type_byte(vault) else {
+        return Ok(Vec::new());
+    };
+    let query_refs = vault
+        .store
+        .port_entity_ids_by_type(wtxn, kind, None)?
+        .collect::<Result<Vec<_>>>()?;
+    let mut repaired = Vec::new();
+    for query_ref in query_refs {
+        let Some(record) = load_record_in_txn(vault, wtxn, query_ref, kind)? else {
+            continue;
+        };
+        if record.definition.lifecycle == SavedQueryLifecycle::Archived {
+            continue;
+        }
+        drift.affected_predicates =
+            filter_dependencies(&record.definition.filter, &record.definition.matcher)
+                .claim_predicates
+                .into_iter()
+                .filter(|predicate| touched.contains(predicate))
+                .collect();
+        if drift.affected_predicates.is_empty() {
+            continue;
+        }
+        let resolution =
+            run_ladder_in_txn(vault, wtxn, record, kind, &drift, &map, Resume::No, now)?;
+        repaired.push((query_ref, resolution));
+    }
+    Ok(repaired)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn pause_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -238,11 +397,18 @@ fn pause_in_txn(
     kind: u8,
     error: String,
     unmapped_predicates: Vec<String>,
+    resume: Resume,
     now: u64,
 ) -> Result<PackDriftResolution> {
-    record.definition.lifecycle = SavedQueryLifecycle::Paused {
-        error: error.clone(),
+    // Under a pack move, a query already paused keeps the cause it was
+    // paused for beside the new one.
+    let shown = match (&record.definition.lifecycle, resume) {
+        (SavedQueryLifecycle::Paused { error: earlier }, Resume::No) => {
+            format!("{earlier}; {error}")
+        }
+        _ => error.clone(),
     };
+    record.definition.lifecycle = SavedQueryLifecycle::Paused { error: shown };
     record.updated_at = now;
     store_record_in_txn(vault, wtxn, &record, kind)?;
     Ok(PackDriftResolution::Paused {

@@ -97,9 +97,10 @@ pub use self::membership::{
 };
 pub use self::memory_watch::{MemoryWatch, memory_watch, memory_watches, set_memory_watch};
 pub use self::pack_drift::{
-    PackDrift, PackDriftResolution, PackMigrationMap, PackPredicateRewrite, put_pack_migration_map,
-    repair_pack_drift,
+    PackDrift, PackDriftRepair, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
+    pack_drift_repairs, put_pack_migration_map, repair_pack_drift,
 };
+pub(crate) use self::pack_drift::{PackMove, repair_saved_queries_after_pack_move_in_txn};
 
 // The flat saved_query.rs module used to provide these names to the test
 // module through `use super::*`; after the directory split the seam re-imports

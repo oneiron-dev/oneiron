@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::affect::Vad;
 use crate::memory::extraction::{EncoderInput, EncoderOutput};
 
 const MAX_ROWS: usize = 4096;
@@ -30,46 +29,6 @@ pub enum OutputRefusal {
     BadLink,
 }
 
-/// The mood of an answer is a value today and optional once a spans-only
-/// tagger is admitted (ONE-2167); both shapes read the same here.
-pub(super) trait AnswerMood {
-    /// Whether an answer may come without a mood.
-    const OPTIONAL: bool;
-    fn present(&self) -> bool;
-    fn in_range(&self) -> bool;
-}
-
-impl AnswerMood for Vad {
-    const OPTIONAL: bool = false;
-    fn present(&self) -> bool {
-        true
-    }
-    fn in_range(&self) -> bool {
-        self.validate().is_ok()
-    }
-}
-
-impl AnswerMood for Option<Vad> {
-    const OPTIONAL: bool = true;
-    fn present(&self) -> bool {
-        self.is_some()
-    }
-    fn in_range(&self) -> bool {
-        self.as_ref().is_none_or(AnswerMood::in_range)
-    }
-}
-
-fn mood_optional<T: AnswerMood>(_field: fn(&EncoderOutput) -> &T) -> bool {
-    T::OPTIONAL
-}
-
-/// Whether the contract admits an answer with no mood, so a tagger that
-/// declares no mood head can be served. Read off the contract type itself.
-#[must_use]
-pub fn spans_only_answers_admitted() -> bool {
-    mood_optional(|output: &EncoderOutput| &output.vad)
-}
-
 /// The rules `Memory::witness_with_shadow` applies to an answer, applied to
 /// the same contract types.
 pub(super) fn check_output(
@@ -79,7 +38,7 @@ pub(super) fn check_output(
     if output.spans.len() > MAX_ROWS || output.links.len() > MAX_ROWS {
         return Err(OutputRefusal::TooManyRows);
     }
-    if !output.vad.in_range() {
+    if output.vad.is_some_and(|vad| vad.validate().is_err()) {
         return Err(OutputRefusal::MoodOutOfRange);
     }
     for span in &output.spans {

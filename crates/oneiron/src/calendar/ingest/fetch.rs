@@ -119,12 +119,7 @@ impl<T: IcsHttpTransport> IcsFeedFetcher for CustodyDoorIcsFeedFetcher<'_, T> {
         // `inject_secret_at_door` / `materialize_secret_lease` when that API
         // lands, with no signature change here.
         let value = {
-            let wtxn = self
-                .vault
-                .store
-                .env
-                .write_txn()
-                .map_err(crate::Error::from)?;
+            let wtxn = self.vault.store.env.write_txn()?;
             self.vault
                 .get_secret_value_in_txn(&wtxn, &custody_id, &self.effector)
                 .map_err(|err| credential("custody door refused the read", &err))?

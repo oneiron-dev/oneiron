@@ -1,0 +1,1419 @@
+//! `/v1/owner` surfaces wired from built engine doors: cleanup review,
+//! persona export, off-record sessions, the Graph-FS read, feedback and pack
+//! drift.
+use super::owner_routes::{call, owner_recipe, person, refused_recipes};
+use super::*;
+use oneiron::attempt_queue::AttemptId;
+use oneiron::{ClaimSource, EntityId, TimeRange};
+
+fn extraction_person(server: &SyncServer, body: &[u8]) -> EntityId {
+    let id = EntityId::now();
+    assert!(
+        server
+            .vault()
+            .put_extraction_minted_person(
+                &id,
+                ClaimSource::Generated,
+                TimeRange { start: 1, end: 1 },
+                1,
+                body
+            )
+            .unwrap()
+    );
+    id
+}
+
+fn hexes(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// ARCH-0073 propose-first: the cleanup job's proposal waits for the owner,
+/// accepting archives what is still empty, restoring brings the same record
+/// back, and the automatic posture stays refused while its teeth are open.
+#[tokio::test]
+async fn cleanup_proposals_wait_for_the_owner_and_archive_stays_restorable() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let husk = extraction_person(&server, b"a person nobody mentions again").to_hex();
+    let run = oneiron::vault_cleanup::run_vault_cleanup(server.vault(), &AttemptId::now()).unwrap();
+    let proposal = run
+        .proposal
+        .expect("propose-first opens a proposal")
+        .to_hex();
+    assert!(run.archived.is_empty());
+
+    let decide = json!({ "proposal": proposal });
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(&server, "GET", "/v1/owner/cleanup", recipe.clone(), None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = call(
+            &server,
+            "POST",
+            "/v1/owner/cleanup/accept",
+            recipe,
+            Some(&decide),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let (status, review) = call(&server, "GET", "/v1/owner/cleanup", owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(review["posture"], "propose_first");
+    assert_eq!(review["task_retention_days"], 90);
+    assert_eq!(review["proposals"].as_array().unwrap().len(), 1);
+    assert_eq!(review["proposals"][0]["id"], proposal);
+    assert!(
+        review["proposals"][0]["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate["entity"] == husk
+                && candidate["kind"] == "claimless_extraction_person")
+    );
+    assert!(review["archived"].as_array().unwrap().is_empty());
+
+    let (status, accepted) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/accept",
+        owner.clone(),
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert!(hexes(&accepted["archived"]).contains(&husk));
+    let husk_id = EntityId::from_hex(&husk).unwrap();
+    assert!(server.vault().archived_entity(&husk_id).unwrap().is_some());
+    let (_, review) = call(&server, "GET", "/v1/owner/cleanup", owner.clone(), None).await;
+    assert!(review["proposals"].as_array().unwrap().is_empty());
+    assert_eq!(review["digests"][0]["decision"], "proposal_accepted");
+    assert_eq!(review["digests"][0]["proposal"], proposal);
+    assert!(
+        review["archived"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["entity"] == husk)
+    );
+    // An answered proposal is gone; deciding it again changes nothing.
+    let (status, again) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/accept",
+        owner.clone(),
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+
+    // Restore brings the same record back.
+    let (status, review) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/restore",
+        owner.clone(),
+        Some(&json!({ "entity": husk })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert!(server.vault().archived_entity(&husk_id).unwrap().is_none());
+    assert!(server.vault().get(&husk_id).unwrap().is_some());
+
+    // Rejecting archives nothing.
+    let second = extraction_person(&server, b"another husk");
+    let run = oneiron::vault_cleanup::run_vault_cleanup(server.vault(), &AttemptId::now()).unwrap();
+    let rejected = json!({ "proposal": run.proposal.unwrap().to_hex() });
+    let (status, review) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/reject",
+        owner.clone(),
+        Some(&rejected),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert!(review["proposals"].as_array().unwrap().is_empty());
+    assert!(server.vault().archived_entity(&second).unwrap().is_none());
+
+    // The automatic arm stays off while ARCH-0066's teeth are open; the
+    // retention dial is the owner's.
+    let (status, refused) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup",
+        owner.clone(),
+        Some(&json!({ "posture": "auto_with_digest" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    let (status, review) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup",
+        owner,
+        Some(&json!({ "task_retention_days": 30 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(review["posture"], "propose_first");
+    assert_eq!(review["task_retention_days"], 30);
+}
+
+/// A completed attempt cleanup archives sits in the same restorable view as
+/// an archived record and comes back through the owner's restore, onto the
+/// queue listing again (ARCH-0073 §6, ARCH-0038; Astra P2 on #1341).
+#[tokio::test]
+async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
+    use oneiron::attempt_queue::{
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
+    };
+    // A queue record completes on the vault's clock; retention counts from it.
+    let finished = 1_800_000_000;
+    let clock = oneiron::store::ports::ManualClock::new(finished);
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some("secret".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let queue = AttemptQueue::new(server.vault());
+    queue
+        .enqueue(EnqueueAttempt {
+            kind: "owner-surface.finished".into(),
+            payload: vec![1, 2, 3],
+            dedupe_key: None,
+            run_id: None,
+            now: finished,
+        })
+        .unwrap();
+    let ClaimOutcome::Claimed(record) = queue
+        .claim(ClaimAttempt {
+            lease_owner: "owner-surface".into(),
+            now: finished,
+        })
+        .unwrap()
+    else {
+        panic!("the attempt is claimed");
+    };
+    queue
+        .complete(CompleteAttempt {
+            id: record.id,
+            lease_owner: "owner-surface".into(),
+            attempt_count: record.attempt_count,
+            now: finished,
+        })
+        .unwrap();
+    // Past the 90-day retention window.
+    clock.set(finished + 91 * 86_400);
+    let owner = owner_recipe(&server);
+    let attempt = EntityId::from_bytes(*record.id.as_bytes())
+        .unwrap()
+        .to_hex();
+    let listed =
+        |queue: &AttemptQueue<'_>| queue.list().unwrap().iter().any(|row| row.id == record.id);
+    assert!(listed(&queue));
+
+    let run = oneiron::vault_cleanup::run_vault_cleanup(server.vault(), &AttemptId::now()).unwrap();
+    let decide = json!({ "proposal": run.proposal.expect("a proposal").to_hex() });
+    let (status, accepted) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/accept",
+        owner.clone(),
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert!(
+        hexes(&accepted["archived"]).contains(&attempt),
+        "{accepted}"
+    );
+    assert!(
+        !listed(&queue),
+        "an archived attempt leaves the queue listing"
+    );
+
+    let (_, review) = call(&server, "GET", "/v1/owner/cleanup", owner.clone(), None).await;
+    let row = review["archived"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["entity"] == attempt.as_str())
+        .unwrap_or_else(|| panic!("the archived attempt is in the review: {review}"));
+    assert_eq!(row["kind"], "completed_attempt", "{row}");
+    assert!(row["archived_at"].is_string(), "{row}");
+
+    let restore = json!({ "entity": attempt, "kind": "completed_attempt" });
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(
+            &server,
+            "POST",
+            "/v1/owner/cleanup/restore",
+            recipe,
+            Some(&restore),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    // The kind names the table: no archived record has this id.
+    let (status, record) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/restore",
+        owner.clone(),
+        Some(&json!({ "entity": attempt })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{record}");
+    assert!(!listed(&queue));
+    let (status, restored) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/restore",
+        owner.clone(),
+        Some(&restore),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert!(listed(&queue), "the restored attempt is back on the queue");
+    assert!(
+        !restored["archived"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["entity"] == attempt.as_str()),
+        "{restored}"
+    );
+    // Restoring it again finds nothing archived.
+    let (status, again) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/restore",
+        owner,
+        Some(&restore),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+}
+
+fn claim_about(server: &SyncServer, subject: EntityId, predicate: &str, text: &str) -> EntityId {
+    let mut body = oneiron::ClaimBody::new(
+        predicate,
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from(text),
+        0.9,
+        oneiron::ClaimApprovalStatus::Approved,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.salience = Some(0.9);
+    body.source = Some(ClaimSource::UserStated);
+    let id = EntityId::now();
+    server
+        .vault()
+        .put_claim(&id, &body, TimeRange { start: 10, end: 10 }, 10)
+        .unwrap();
+    id
+}
+
+/// OF-325 mode A: the owner previews the card and strikes a row; the export
+/// carries exactly the rows left, in both renders, recorded as granted by the
+/// owner. A card that changed since its preview issues nothing.
+#[tokio::test]
+async fn persona_card_exports_only_what_the_owner_left_after_preview() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let subject = person(&server, b"Ada");
+    claim_about(&server, subject, "profile.name", "Ada Lovelace");
+    claim_about(
+        &server,
+        subject,
+        "profile.hobby",
+        "writes poems about engines",
+    );
+    let path = format!("/v1/owner/persona?subject={}", subject.to_hex());
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(&server, "GET", &path, recipe, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let (status, preview) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let hobby = preview["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["text"].as_str().unwrap().contains("poems"))
+        .unwrap_or_else(|| panic!("a row for the hobby claim: {preview}"))
+        .clone();
+    let request = json!({
+        "subject": subject.to_hex(),
+        "stamp": preview["stamp"],
+        "strike": [hobby["row_id"]],
+    });
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(
+            &server,
+            "POST",
+            "/v1/owner/persona/export",
+            recipe,
+            Some(&request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let (status, exported) = call(
+        &server,
+        "POST",
+        "/v1/owner/persona/export",
+        owner.clone(),
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{exported}");
+    assert!(!exported["markdown"].as_str().unwrap().contains("poems"));
+    assert!(!exported["memory_pack"].to_string().contains("poems"));
+    assert!(
+        exported["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("Ada Lovelace")
+    );
+    assert!(
+        exported["struck_row_ids"]
+            .as_array()
+            .unwrap()
+            .contains(&hobby["row_id"])
+    );
+    let export_id = EntityId::from_hex(exported["export_id"].as_str().unwrap()).unwrap();
+    let record = server
+        .vault()
+        .get_persona_snapshot_export(&export_id)
+        .unwrap()
+        .expect("the export is recorded");
+    assert_eq!(
+        record.granted_by,
+        server
+            .vault()
+            .ensure_embedded_owner_actor()
+            .unwrap()
+            .to_hex()
+    );
+
+    // A new claim changes the card: the old preview's stamp issues nothing.
+    claim_about(&server, subject, "profile.city", "lives in London");
+    let (status, stale) = call(
+        &server,
+        "POST",
+        "/v1/owner/persona/export",
+        owner,
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{stale}");
+}
+
+fn room_turn(session_ref: &str, text: &str) -> Value {
+    json!({
+        "session_ref": session_ref,
+        "turn": {
+            "conversation_ref": "",
+            "turn_ref": null,
+            "messages": [{
+                "id": null,
+                "author": "user",
+                "message_type": "utterance",
+                "content": text,
+                "metadata": null,
+                "is_visible": true,
+                "order": 0,
+            }],
+            "occurred_at": 100,
+        },
+    })
+}
+
+fn witnessed_turn(receipt: &Value) -> EntityId {
+    let turn = receipt["receipt_ref"]
+        .as_str()
+        .and_then(|reference| reference.strip_prefix("witness:"))
+        .unwrap_or_else(|| panic!("a witness receipt: {receipt}"));
+    EntityId::from_hex(turn).unwrap()
+}
+
+/// ARCH-0052: an off-record room keeps its turns out of the vault; the turn
+/// the owner promotes enters through the ordinary write door, and close drops
+/// the rest. An anonymous session keeps nothing and cannot be put on record.
+#[tokio::test]
+async fn off_record_room_keeps_turns_out_until_promoted_and_close_drops_the_rest() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let enter = json!({ "session_ref": "room-1", "mode": "off_record", "backend": "local" });
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(
+            &server,
+            "POST",
+            "/v1/owner/off-record",
+            recipe,
+            Some(&enter),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    assert!(
+        server
+            .vault()
+            .off_record_session("room-1")
+            .unwrap()
+            .is_none()
+    );
+    let (status, session) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record",
+        owner.clone(),
+        Some(&enter),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{session}");
+    assert_eq!(session["mode"], "off_record");
+
+    let (status, kept) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/witness",
+        owner.clone(),
+        Some(&room_turn("room-1", "save this one")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{kept}");
+    let (status, dropped) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/witness",
+        owner.clone(),
+        Some(&room_turn("room-1", "let this one go")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dropped}");
+    let (kept, dropped) = (witnessed_turn(&kept), witnessed_turn(&dropped));
+    // The vault itself holds neither turn while the room is live.
+    assert!(server.vault().get(&kept).unwrap().is_none());
+    assert!(server.vault().get(&dropped).unwrap().is_none());
+
+    let (status, promoted) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/promote",
+        owner.clone(),
+        Some(&json!({ "session_ref": "room-1", "turn": kept.to_hex() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{promoted}");
+    assert!(hexes(&promoted["replayed"]).contains(&kept.to_hex()));
+    assert!(server.vault().get(&kept).unwrap().is_some());
+
+    let close = json!({ "session_ref": "room-1" });
+    let (status, closed) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/close",
+        owner.clone(),
+        Some(&close),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
+    assert_eq!(closed["promoted_turns_kept"], 1);
+    assert!(closed["turns_dropped"].as_u64().unwrap() >= 1);
+    let (status, _) = call(
+        &server,
+        "GET",
+        "/v1/owner/off-record?session_ref=room-1",
+        owner.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(server.vault().get(&kept).unwrap().is_some());
+    assert!(server.vault().get(&dropped).unwrap().is_none());
+
+    // Anonymous keeps nothing: it can never be put on record.
+    let (status, session) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record",
+        owner.clone(),
+        Some(
+            &json!({ "session_ref": "room-2", "mode": "anonymous", "backend": "remote_provider" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{session}");
+    assert_eq!(session["mode"], "anonymous");
+    let (status, refused) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/mode",
+        owner.clone(),
+        Some(&json!({ "session_ref": "room-2", "mode": "on_record" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    let (status, _) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/close",
+        owner,
+        Some(&json!({ "session_ref": "room-2" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// OF-355: the owner reads the vault as a file tree. Paths resolve lazily,
+/// file reads return the stored bytes, and grep searches them.
+#[tokio::test]
+async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let ada = person(&server, b"Ada, who writes about engines").to_hex();
+    let ada_id = EntityId::from_hex(&ada).unwrap();
+    claim_about(
+        &server,
+        ada_id,
+        "profile.hobby",
+        "writes poems about engines",
+    );
+    // A sealed secret is absent from the tree, and the listing still works.
+    // The value field is crate-private, so the record goes through the one
+    // public body codec, as the manifest flow writes it.
+    let custody = {
+        use rmpv::Value;
+        let band = |min: u64, max: u64| {
+            Value::Map(vec![
+                (Value::from("min"), Value::from(min)),
+                (Value::from("max"), Value::from(max)),
+            ])
+        };
+        let floor = Value::Map(vec![
+            (Value::from("portable"), band(0, 2)),
+            (Value::from("device_bound"), band(0, 2)),
+            (Value::from("cross_vault"), band(0, 0)),
+            (Value::from("rotation_max_age_secs"), Value::Nil),
+            (Value::from("env_bindings"), Value::Map(vec![])),
+        ]);
+        let binding = Value::Map(vec![
+            (
+                Value::from("effector"),
+                Value::from("connector:graph-fs-test"),
+            ),
+            (Value::from("tier_ceiling"), Value::from(0_u64)),
+            (
+                Value::from("scopes"),
+                Value::Array(vec![Value::from("read")]),
+            ),
+        ]);
+        let body = Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1_u64)),
+            (Value::from("name"), Value::from("graph-fs-secret")),
+            (Value::from("class"), Value::from("custody-portable")),
+            (Value::from("device_only"), Value::from(false)),
+            (
+                Value::from("value_bytes"),
+                Value::Binary(b"never-in-the-tree".to_vec()),
+            ),
+            (Value::from("status"), Value::from("active")),
+            (Value::from("registered_at"), Value::from(1_u64)),
+            (Value::from("rotated_at"), Value::Nil),
+            (Value::from("rotation_generation"), Value::from(0_u64)),
+            (Value::from("bindings"), Value::Array(vec![binding])),
+            (Value::from("manifest_ref"), Value::from("")),
+            (Value::from("declared_paths"), Value::Array(vec![])),
+            (Value::from("policy_floor_snapshot"), floor),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &body).unwrap();
+        let record = oneiron::secret_custody::decode_secret_custody_body(&bytes).unwrap();
+        server.vault().register_secret(record).unwrap().to_hex()
+    };
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(
+            &server,
+            "GET",
+            "/v1/owner/graph-fs?path=/entities",
+            recipe,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let read = |query: String| {
+        let server = server.clone();
+        let owner = owner.clone();
+        async move {
+            let (status, reply) = call(
+                &server,
+                "GET",
+                &format!("/v1/owner/graph-fs?{query}"),
+                owner,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{query}: {reply}");
+            reply["output"].as_str().unwrap().to_owned()
+        }
+    };
+    let root = read("path=/".to_owned()).await;
+    for directory in ["worlds", "entities", "claims", "backlinks"] {
+        assert!(root.contains(directory), "{root}");
+    }
+    let entities = read("path=/entities".to_owned()).await;
+    assert!(entities.contains(&ada), "{entities}");
+    assert!(!entities.contains(&custody), "{entities}");
+    // Every other walk passes over it too, and none fails.
+    for query in [
+        "path=/backlinks",
+        "path=/claims/by-time",
+        "path=/claims/by-id",
+        "path=/claims&by_time=true",
+        "path=/&op=find",
+    ] {
+        let listing = read(query.to_owned()).await;
+        assert!(!listing.contains(&custody), "{query}: {listing}");
+    }
+    // A raw read of it still refuses, and its bytes never leave.
+    let (status, raw) = call(
+        &server,
+        "GET",
+        &format!("/v1/owner/graph-fs?path=/entities/{custody}/body&op=cat"),
+        owner.clone(),
+        None,
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "{raw}");
+    assert!(!raw.to_string().contains("never-in-the-tree"), "{raw}");
+    assert_eq!(
+        read(format!("path=/entities/{ada}/body&op=cat"))
+            .await
+            .trim_end(),
+        "Ada, who writes about engines"
+    );
+    let claims = read(format!("path=/entities/{ada}/claims")).await;
+    assert!(!claims.trim().is_empty(), "{claims}");
+    let found = read(format!("path=/entities/{ada}/body&op=grep&pattern=engines")).await;
+    assert!(found.contains("engines"), "{found}");
+    // grep needs something to look for.
+    let (status, _) = call(
+        &server,
+        "GET",
+        "/v1/owner/graph-fs?path=/claims&op=grep",
+        owner,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// `cat` hands back the stored bytes: a text body pages on character
+/// boundaries and stays text, a MessagePack body comes back as base64, and
+/// each body's pages, decoded by the encoding each names, join to exactly
+/// what the vault holds (Greptile on #1341).
+#[tokio::test]
+async fn graph_fs_cat_rejoins_to_the_stored_bytes() {
+    use base64::Engine;
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    // A page is 16 KiB: the two-byte `é` straddles the first page's end.
+    let mut text = "a".repeat(16 * 1024 - 1);
+    text.push_str("é, then the rest");
+    let mut packed = Vec::new();
+    rmpv::encode::write_value(
+        &mut packed,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("raw"),
+            rmpv::Value::Binary(vec![0xff, 0xfe, 0x00, 0xc3]),
+        )]),
+    )
+    .unwrap();
+    for (body, expected) in [
+        (text.into_bytes(), ["utf8", "utf8"].as_slice()),
+        (packed, ["base64"].as_slice()),
+    ] {
+        let id = person(&server, &body).to_hex();
+        let mut joined = Vec::new();
+        let mut encodings = Vec::new();
+        let mut cursor = String::new();
+        loop {
+            let (status, page) = call(
+                &server,
+                "GET",
+                &format!("/v1/owner/graph-fs?path=/entities/{id}/body&op=cat{cursor}"),
+                owner.clone(),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            let output = page["output"].as_str().unwrap();
+            let encoding = page["encoding"].as_str().unwrap().to_owned();
+            match encoding.as_str() {
+                "utf8" => joined.extend_from_slice(output.as_bytes()),
+                "base64" => joined.extend(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(output)
+                        .unwrap(),
+                ),
+                other => panic!("unknown encoding {other}"),
+            }
+            encodings.push(encoding);
+            let Some(next) = page["next_cursor"].as_str() else {
+                break;
+            };
+            cursor = format!("&cursor={next}");
+        }
+        assert_eq!(encodings, expected);
+        assert_eq!(joined, body);
+    }
+}
+
+/// Every page of one Graph-FS read, following `next_cursor` to the end:
+/// each page's output, and whether it handed out a cursor. Every page is
+/// text on its own.
+async fn graph_fs_pages(server: &Arc<SyncServer>, owner: &str, query: &str) -> Vec<(String, bool)> {
+    let mut pages = Vec::new();
+    let mut cursor = String::new();
+    loop {
+        assert!(pages.len() < 64, "{query}: paging must end");
+        let (status, page) = call(
+            server,
+            "GET",
+            &format!("/v1/owner/graph-fs?{query}{cursor}"),
+            owner.to_owned(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(page["encoding"], "utf8", "{query}: {page}");
+        let next = page["next_cursor"].as_str().map(str::to_owned);
+        pages.push((page["output"].as_str().unwrap().to_owned(), next.is_some()));
+        let Some(next) = next else {
+            return pages;
+        };
+        cursor = format!("&cursor={next}");
+    }
+}
+
+/// `find` walks every page of every directory: a tree past the 512 paths
+/// where the walk used to stop, in listings longer than one page, comes back
+/// with each visible path exactly once, and only the last page has no cursor
+/// (Greptile P1 on #1341).
+#[tokio::test]
+async fn graph_fs_find_pages_through_every_path_once() {
+    use std::collections::BTreeSet;
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let subject = person(&server, b"Ada");
+    let claims: BTreeSet<String> = (0..400)
+        .map(|at| claim_about(&server, subject, "profile.note", &format!("note {at}")).to_hex())
+        .collect();
+    let root = format!("/entities/{}", subject.to_hex());
+    let listing = |dir: &str| {
+        let (server, owner, dir) = (server.clone(), owner.clone(), dir.to_owned());
+        async move {
+            let pages = graph_fs_pages(&server, &owner, &format!("path={dir}")).await;
+            (
+                pages.len(),
+                pages
+                    .iter()
+                    .flat_map(|(output, _)| output.lines())
+                    .map(|name| format!("{dir}/{name}"))
+                    .collect::<Vec<_>>(),
+            )
+        }
+    };
+    // The subject's claims and backlinks each list over more than one page.
+    let (claim_pages, claim_paths) = listing(&format!("{root}/claims")).await;
+    let (backlink_pages, backlink_paths) = listing(&format!("{root}/backlinks")).await;
+    assert!(claim_pages > 1 && backlink_pages > 1);
+    let named = |paths: &[String], dir: &str| -> BTreeSet<String> {
+        paths
+            .iter()
+            .filter_map(|path| path.strip_prefix(&format!("{root}/{dir}/")))
+            .map(|name| name.rsplit('-').next().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(named(&claim_paths, "claims"), claims);
+    assert!(claims.is_subset(&named(&backlink_paths, "backlinks")));
+    let mut expected: BTreeSet<String> = [
+        root.clone(),
+        format!("{root}/backlinks"),
+        format!("{root}/body"),
+        format!("{root}/claims"),
+    ]
+    .into();
+    expected.extend(claim_paths);
+    expected.extend(backlink_paths);
+    assert!(expected.len() > 512, "{}", expected.len());
+
+    let pages = graph_fs_pages(&server, &owner, &format!("path={root}&op=find")).await;
+    assert!(pages.len() > 1);
+    let (last, cut) = pages.split_last().unwrap();
+    assert!(cut.iter().all(|(_, more)| *more) && !last.1);
+    let found: Vec<&str> = pages
+        .iter()
+        .flat_map(|(output, _)| output.lines())
+        .collect();
+    let unique: BTreeSet<String> = found.iter().map(|path| (*path).to_owned()).collect();
+    assert_eq!(unique.len(), found.len(), "a path came back twice");
+    assert_eq!(unique, expected);
+}
+
+/// `grep` in one file pages through its matches: 513 short matching lines
+/// come back over two pages, each once, in order; and a matching line longer
+/// than a page prints across pages, cut on a character boundary, so the
+/// pages rejoin exactly (Greptile P1 on #1341).
+#[tokio::test]
+async fn graph_fs_grep_pages_through_one_file() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let short: Vec<String> = (0..513).map(|at| format!("é match {at:03}")).collect();
+    let id = person(&server, short.join("\n").as_bytes()).to_hex();
+    let query = format!("path=/entities/{id}/body&op=grep&pattern=match");
+    let pages = graph_fs_pages(&server, &owner, &query).await;
+    assert_eq!(pages.len(), 2);
+    let matches: Vec<&str> = pages
+        .iter()
+        .flat_map(|(output, _)| output.lines())
+        .collect();
+    let expected: Vec<String> = short
+        .iter()
+        .map(|line| format!("/entities/{id}/body:{line}"))
+        .collect();
+    assert_eq!(matches, expected);
+
+    // A page is 16 KiB, and a rendered match starts with the 48-byte
+    // `/entities/<id>/body:`: the two-byte `é` straddles the first page's end.
+    let mut long = "match ".to_owned();
+    long.push_str(&"a".repeat(16 * 1024 - 1 - 48 - long.len()));
+    long.push_str("é, then the rest");
+    let id = person(&server, format!("{long}\nno hit\nmatch two").as_bytes()).to_hex();
+    let query = format!("path=/entities/{id}/body&op=grep&pattern=match");
+    let pages = graph_fs_pages(&server, &owner, &query).await;
+    assert_eq!(pages.len(), 2);
+    let joined: String = pages.iter().map(|(output, _)| output.as_str()).collect();
+    let prefix = format!("/entities/{id}/body:");
+    assert_eq!(joined, format!("{prefix}{long}\n{prefix}match two\n"));
+}
+
+fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncServer>) {
+    use crate::feedback_delivery::{FeedbackDeliveryConfig, FeedbackDestination, FeedbackHost};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let server = SyncServer::new(
+        vault,
+        SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_feedback(Some(FeedbackHost {
+        config: FeedbackDeliveryConfig {
+            destination: FeedbackDestination::Collector,
+            endpoint: endpoint.to_owned(),
+        },
+        bearer: None,
+    }));
+    (dir, Arc::new(server))
+}
+
+/// The vault's policy grants its owner `external:send` on the feedback
+/// collector channel.
+fn grant_feedback_sends(server: &SyncServer) {
+    let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
+    let mut effect = oneiron::federation::Scope::top();
+    effect.verbs = oneiron::federation::ScopeAxis::Some(["effect".to_owned()].into());
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        server.vault(),
+        oneiron::write_envelope::WriteActor::new(owner_id, oneiron::edge::EdgeActorClass::Human),
+        EntityId::now(),
+        &json!({
+            "schema_version": "1.2", "pack_id": "owner-feedback", "pack_version": "v1",
+            "min_engine_version": "0.0.0",
+            "defaults": { "criticality": "normal", "sensitivity": "normal" },
+            "rules": [],
+            "actor_ceilings": [{ "actor_class": "human", "actor_ref": owner_id.to_hex(), "ceiling": "auto" }],
+            "scoped_grants": [{ "actor_ref": owner_id.to_hex(), "effector": "external:send",
+                "scope": effect, "selectors": { "channel": "feedback_collector" } }],
+        }),
+    )
+    .unwrap();
+}
+
+/// Accepts one request on `listener` and returns its head and body as text.
+fn collect_one(listener: std::net::TcpListener) -> std::thread::JoinHandle<String> {
+    use std::io::{Read, Write};
+    std::thread::spawn(move || {
+        listener.set_nonblocking(false).unwrap();
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut buf = [0; 4096];
+        loop {
+            let n = socket.read(&mut buf).unwrap();
+            bytes.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&bytes).to_lowercase();
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                    .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+                if bytes.len() >= end + 4 + length {
+                    break;
+                }
+            }
+            assert_ne!(n, 0, "the request ended early");
+        }
+        write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        String::from_utf8_lossy(&bytes).to_lowercase()
+    })
+}
+
+/// OF-420: the owner previews a bundle with no vault text and sends exactly
+/// that bundle to the configured collector. The vault's policy still
+/// decides: with no grant for the feedback channel the send is held and
+/// nothing leaves; once the owner grants the channel, the previewed bundle
+/// arrives. A written note waits for in-vault redaction.
+#[tokio::test]
+async fn feedback_leaves_only_as_previewed_and_only_where_policy_allows() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://{}/ingest", listener.local_addr().unwrap());
+    let (_dir, server) = feedback_server(&endpoint);
+    let owner = owner_recipe(&server);
+    let bug = json!({ "category": "bug" });
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(
+            &server,
+            "POST",
+            "/v1/owner/feedback/preview",
+            recipe,
+            Some(&bug),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let (status, preview) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/preview",
+        owner.clone(),
+        Some(&bug),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["destination"], endpoint);
+    assert_eq!(preview["bundle"]["category"], "bug");
+    let send_body = |category: &str, preview: &Value| {
+        json!({
+            "category": category,
+            "digest": preview["digest"],
+            "approval": preview["approval"],
+            "previewed_at": preview["previewed_at"],
+        })
+    };
+
+    // A note is refused until the engine redacts in the vault.
+    let (status, refused) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/preview",
+        owner.clone(),
+        Some(&json!({ "category": "bug", "note": "the export button hangs" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    // Only the previewed bundle is sent.
+    let (status, changed) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/send",
+        owner.clone(),
+        Some(&send_body("papercut", &preview)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{changed}");
+
+    // No grant for the feedback channel: the gate holds it; nothing leaves.
+    let (status, held) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/send",
+        owner.clone(),
+        Some(&send_body("bug", &preview)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{held}");
+    assert_eq!(held["outcome"], "held", "{held}");
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+
+    // The owner grants sends on the feedback channel.
+    grant_feedback_sends(&server);
+    let wish = json!({ "category": "feature-wish" });
+    let (_, preview) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/preview",
+        owner.clone(),
+        Some(&wish),
+    )
+    .await;
+    let digest = preview["digest"].as_str().unwrap().to_owned();
+    let collector = collect_one(listener);
+    let send = send_body("feature-wish", &preview);
+    let (status, sent) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/send",
+        owner.clone(),
+        Some(&send),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    assert_eq!(sent["outcome"], "delivered_to_channel", "{sent}");
+    let request = collector.join().unwrap();
+    assert!(request.starts_with("post /ingest"), "{request}");
+    assert!(
+        request.contains(&format!(
+            "x-oneiron-bundle-digest: {}",
+            digest.to_lowercase()
+        )),
+        "{request}"
+    );
+    // The same request a second later is the same send, not a second one:
+    // the collector is gone, so a second delivery could not succeed.
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+    let (status, again) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/send",
+        owner,
+        Some(&send),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["logical_send_ref"], sent["logical_send_ref"]);
+    assert_eq!(again["outcome"], "delivered_to_channel", "{again}");
+}
+
+/// A send that passed the owner door and then waited for the writer while
+/// its slip was revoked admits nothing: no gate decision, no pending send,
+/// and the destination is never called. The same send with a live slip goes
+/// out (Astra P2 on #1341).
+#[tokio::test]
+async fn a_feedback_send_queued_behind_a_slip_revocation_admits_nothing() {
+    use crate::owner::{OwnerError, feedback};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://{}/ingest", listener.local_addr().unwrap());
+    let (_dir, server) = feedback_server(&endpoint);
+    grant_feedback_sends(&server);
+    let vault = server.vault();
+    let host = server.feedback.clone().unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let recipe = format!("principal_ref={};actor_class=human", owner_id.to_hex());
+    let request = slip_credentials::bind_request(
+        &server,
+        core_request_with_authz(
+            "POST",
+            "/v1/owner/feedback/send",
+            test_bearer(&recipe),
+            None,
+        ),
+    );
+    let auth = CoreAuth::from_headers(request.headers(), &server.config, vault.as_ref()).unwrap();
+    let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
+    let category = oneiron::feedback::FeedbackCategory::Bug;
+    let preview = feedback::preview(
+        vault,
+        &host,
+        &admitted,
+        &feedback::FeedbackRequest {
+            category,
+            note: None,
+        },
+    )
+    .unwrap();
+    let (digest, approval, previewed_at) = (preview.digest, preview.approval, preview.previewed_at);
+    let send = move || feedback::SendRequest {
+        category,
+        note: None,
+        digest: digest.clone(),
+        approval: approval.clone(),
+        previewed_at,
+    };
+
+    // The revocation commits after the send passed the door and every check
+    // before admission, while it waits for the writer.
+    let (slip, _) = slip_credentials::credential(&server, &recipe);
+    let refused = {
+        let (server, host, admitted, send) =
+            (server.clone(), host.clone(), admitted.clone(), send.clone());
+        tokio::task::spawn_blocking(move || {
+            let revoker = server.clone();
+            oneiron::outbound::before_next_admission_for_test(move || {
+                let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+                    revoker.config.auth_secret.as_deref().unwrap().as_bytes(),
+                )
+                .unwrap();
+                revoker
+                    .vault()
+                    .revoke_capability_slip(&issuer, slip.claims.slip_id)
+                    .unwrap();
+            });
+            feedback::send(server.vault(), &host, &admitted, &send())
+        })
+        .await
+        .unwrap()
+    };
+    match refused {
+        Err(OwnerError::Engine(error)) => assert_eq!(
+            error.kind(),
+            oneiron::ErrorKind::ConsentOwnerNotAuthenticated,
+            "{error}"
+        ),
+        other => panic!("the queued send was not refused for its proof: {other:?}"),
+    }
+    let ledger = oneiron::outbound_intent_ledger::intent_ledger_records(vault).unwrap();
+    assert!(ledger.records.is_empty(), "nothing admitted: {ledger:?}");
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+
+    // The same send on a live proof goes out.
+    let live = vault
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let collector = collect_one(listener);
+    let sent = {
+        let (server, host) = (server.clone(), host.clone());
+        tokio::task::spawn_blocking(move || feedback::send(server.vault(), &host, &live, &send()))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(sent.outcome, "delivered_to_channel");
+    assert!(collector.join().unwrap().starts_with("post /ingest"));
+}
+
+/// Two owners of one shared vault preview the same bundle and send it with the
+/// same preview second: each approval names its owner, so each send is its
+/// own, neither owner can send on the other's preview, and one owner's repeat
+/// is still that owner's one send.
+#[tokio::test]
+async fn two_owners_sending_one_bundle_are_two_sends() {
+    use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+    // A closed port: a send that tried to deliver would fail, not hang.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/ingest", closed.local_addr().unwrap());
+    drop(closed);
+    let (_dir, server) = feedback_server(&endpoint);
+    let vault = server.vault();
+    let first = vault.ensure_embedded_owner_actor().unwrap();
+    let second = person(&server, b"the other owner");
+    let proof = vault
+        .authenticate_owner(
+            first,
+            &first.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let owners = [first, second].map(|member_ref| InitialSharedMember {
+        member_ref,
+        role: Some(FederationGrantRole::Owner),
+    });
+    vault
+        .initialize_shared_vault(&proof, 42, None, &owners, 1)
+        .unwrap();
+    let recipes = [
+        owner_recipe(&server),
+        test_bearer(&format!(
+            "principal_ref={};actor_class=human",
+            second.to_hex()
+        )),
+    ];
+    let bug = json!({ "category": "bug" });
+    let mut previews = Vec::new();
+    for recipe in &recipes {
+        let (status, preview) = call(
+            &server,
+            "POST",
+            "/v1/owner/feedback/preview",
+            recipe.clone(),
+            Some(&bug),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{preview}");
+        previews.push(preview);
+    }
+    assert_eq!(previews[0]["digest"], previews[1]["digest"]);
+    assert_ne!(previews[0]["approval"], previews[1]["approval"]);
+    let previewed_at = previews[0]["previewed_at"].clone();
+    let send_body = |preview: &Value| {
+        json!({
+            "category": "bug",
+            "digest": preview["digest"],
+            "approval": preview["approval"],
+            "previewed_at": previewed_at,
+        })
+    };
+    let mut sent = Vec::new();
+    for (recipe, preview) in recipes.iter().zip(&previews) {
+        let (status, reply) = call(
+            &server,
+            "POST",
+            "/v1/owner/feedback/send",
+            recipe.clone(),
+            Some(&send_body(preview)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{reply}");
+        sent.push(reply);
+    }
+    assert_ne!(
+        sent[0]["approval_receipt_ref"],
+        sent[1]["approval_receipt_ref"]
+    );
+    assert_ne!(sent[0]["logical_send_ref"], sent[1]["logical_send_ref"]);
+    let (status, borrowed) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/send",
+        recipes[1].clone(),
+        Some(&send_body(&previews[0])),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{borrowed}");
+    for ((recipe, preview), sent) in recipes.iter().zip(&previews).zip(&sent) {
+        let (status, again) = call(
+            &server,
+            "POST",
+            "/v1/owner/feedback/send",
+            recipe.clone(),
+            Some(&send_body(preview)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{again}");
+        assert_eq!(again["logical_send_ref"], sent["logical_send_ref"]);
+    }
+}
+
+/// ARCH-0059 §4: what the pack-drift ladder did to a saved query reaches the
+/// owner.
+#[tokio::test]
+async fn pack_drift_repairs_reach_the_owner() {
+    use oneiron::saved_query::{
+        ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatcherSpec,
+        PackDrift, PackMigrationMap, PackPredicateRewrite, QueryScope, SAVED_QUERY_SCHEMA_VERSION,
+    };
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let vault = server.vault();
+    oneiron::campaign::register_crm_pack(
+        vault,
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
+    let term = FilterAst::Claim {
+        predicate: "profile.seniority".to_owned(),
+        cmp: ClaimComparison::Exists,
+        value: Value::Null,
+    };
+    let query = oneiron::saved_query::create_saved_query(
+        vault,
+        vault.ensure_embedded_owner_actor().unwrap(),
+        &CreateSavedQueryRequest {
+            schema_version: SAVED_QUERY_SCHEMA_VERSION,
+            scope: QueryScope::default(),
+            filter: term.clone(),
+            matcher: MatcherSpec::Hard { expression: term },
+            eval: EvalPolicy {
+                mode: EvalMode::Manual,
+                max_entities_per_wake: 8,
+                max_judges_per_wake: 4,
+            },
+        },
+        10,
+    )
+    .unwrap();
+    let drift = PackDrift {
+        from_pack_id: "hr".to_owned(),
+        from_version: "1".to_owned(),
+        to_pack_id: "hr".to_owned(),
+        to_version: "2".to_owned(),
+        affected_predicates: vec!["profile.seniority".to_owned()],
+    };
+    oneiron::saved_query::put_pack_migration_map(
+        vault,
+        &drift,
+        &PackMigrationMap {
+            rewrites: [(
+                "profile.seniority".to_owned(),
+                PackPredicateRewrite::Rename {
+                    to: "profile.headcount".to_owned(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        },
+    )
+    .unwrap();
+    oneiron::saved_query::repair_pack_drift(vault, query.query_ref, &query.definition, &drift, 100)
+        .unwrap();
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(&server, "GET", "/v1/owner/pack-drift", recipe, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let (status, repairs) = call(&server, "GET", "/v1/owner/pack-drift", owner, None).await;
+    assert_eq!(status, StatusCode::OK, "{repairs}");
+    let repair = &repairs.as_array().unwrap()[0];
+    assert_eq!(repair["query"], query.query_ref.to_hex());
+    assert_eq!(repair["pack"], "hr");
+    assert_eq!(repair["predicates"], json!(["profile.seniority"]));
+    assert!(
+        repair["summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("auto-migrated")
+    );
+}

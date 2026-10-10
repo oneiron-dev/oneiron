@@ -53,7 +53,8 @@
 //! HOST-TRUSTED FIELD INPUT. It is not authentication. The host authenticated
 //! the owner when it evaluated the consent action; this module only checks
 //! that the evaluation it was handed describes an approve-once decision on the
-//! exact component id derived from this bundle and this destination. A host
+//! exact component id derived from this bundle, this destination and the
+//! principal the evaluation names as its approver. A host
 //! that fabricates an evaluation is already inside its own trust boundary —
 //! the same boundary the persona-snapshot export consent sits behind.
 //!

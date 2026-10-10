@@ -218,6 +218,12 @@ pub enum StoreError {
     /// door refuses to write it rather than let an undeclared key land.
     #[error("sync_state key {key:?} is not declared in side_table")]
     SideTableKeyUndeclared { key: String },
+    /// This vault is the image a restore in its place set aside, archived.
+    /// It shares key custody with the vault that replaced it, so it reads
+    /// but refuses every write, erase and key retirement until an owner
+    /// activates it as a side vault with custody of its own.
+    #[error("this vault is archived: a restore replaced it; activate it as a side vault to write")]
+    ArchivedVault,
 }
 
 /// What was wrong with one side-table row.
@@ -273,6 +279,7 @@ impl StoreError {
             Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
             Self::SideTableRow { .. } => ErrorKind::SideTableRow,
             Self::SideTableKeyUndeclared { .. } => ErrorKind::SideTableKeyUndeclared,
+            Self::ArchivedVault => ErrorKind::ArchivedVault,
         }
     }
 }

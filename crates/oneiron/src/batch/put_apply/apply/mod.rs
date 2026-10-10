@@ -132,7 +132,21 @@ pub(in crate::batch) fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
-    validate_refinement_admission(store, wtxn, &id, entity_type, data, refinement_admission)?;
+    // A provisional entity's id is held for its confirmation, on the same
+    // choke point, so no local claim candidate lands under it either. A
+    // replicated row takes the id at the pre-write site below.
+    if !replicated {
+        crate::tagging::refuse_held_id_in_txn(store, wtxn, &id)?;
+    }
+    validate_refinement_admission(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        refinement_admission,
+        transition,
+    )?;
     crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
     // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:
     // public writes reject engine-authored system kinds, the sync
@@ -619,6 +633,12 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
+    // Past every check that can reject this row remotely: a replicated row
+    // under a provisional id retires the local provisional entity only when
+    // it lands (see `release_held_id_in_txn`).
+    if replicated {
+        crate::tagging::release_held_id_in_txn(store, wtxn, &id)?;
+    }
     crate::ingest::invalidate_docs_source_before_put(store, wtxn, &id, entity_type, data)?;
 
     // ONE-1449 MATERIAL-6 R1: staged in the SAME transaction as the body it

@@ -424,11 +424,20 @@ fn resolve_failure_policy(
 }
 
 fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &super::LlmUsage) {
-    if usage.input.total > 0 || usage.output.total > 0 {
-        let _ = guard.settle_per_call(lease, usage);
+    let settled = if usage.input.total > 0 || usage.output.total > 0 {
+        guard.settle_per_call(lease, usage)
     } else {
-        let _ = guard.abort(lease);
+        guard.abort(lease)
+    };
+    if let Err(denied) = settled {
+        report_unsettled(lease, denied);
     }
+}
+
+/// A settlement the meter refused once the provider was called. The step's
+/// own outcome still returns; the refusal is reported, never dropped.
+fn report_unsettled(lease: &super::BudgetLease, denied: BudgetDenied) {
+    tracing::error!(lease = lease.id(), %denied, "durable step settlement refused");
 }
 
 /// The wake-pass legibility envelope for this step's outcome: Some inside
@@ -474,8 +483,10 @@ impl<'a> LeaseSettleOnDrop<'a> {
 
 impl Drop for LeaseSettleOnDrop<'_> {
     fn drop(&mut self) {
-        if self.armed {
-            let _ = self.guard.settle_usage(self.lease, self.used_units);
+        if self.armed
+            && let Err(denied) = self.guard.settle_usage(self.lease, self.used_units)
+        {
+            report_unsettled(self.lease, denied);
         }
     }
 }

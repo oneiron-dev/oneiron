@@ -24,7 +24,7 @@ pub const FEEDBACK_CONTENT_REF_PREFIX: &str = "feedback:";
 pub const FEEDBACK_LOGICAL_SEND_PREFIX: &str = "feedback-send:";
 
 /// Domain separator for the approval component-id preimage.
-const FEEDBACK_APPROVAL_DOMAIN: &[u8] = b"oneiron.feedback.approval.v1\0";
+const FEEDBACK_APPROVAL_DOMAIN: &[u8] = b"oneiron.feedback.approval.v2\0";
 
 /// Scope tag opening a Send route preimage.
 const FEEDBACK_SCOPE_SEND_TAG: &[u8] = b"send\0";
@@ -155,18 +155,28 @@ impl FeedbackApprovalScope {
 }
 
 /// The content-addressed approval component id for one bundle at one
-/// destination.
+/// destination, approved by one principal.
 ///
-/// Binding the digest AND the destination into the component id is what makes
-/// an approval non-transferable: approving bundle A for route A produces an id
-/// that cannot validate bundle B, or bundle A for route B, or an export.
+/// Binding the digest, the destination AND the approving principal into the
+/// component id is what makes an approval non-transferable: approving bundle A
+/// for route A produces an id that cannot validate bundle B, or bundle A for
+/// route B, or an export, or another principal's approval of the same bundle.
+/// The consent receipt and the logical send are named from this id, so two
+/// owners approving the same bundle in the same second are two sends.
 #[must_use]
-pub fn feedback_approval_component_id(digest: &str, scope: &FeedbackApprovalScope) -> String {
+pub fn feedback_approval_component_id(
+    digest: &str,
+    scope: &FeedbackApprovalScope,
+    principal_ref: &str,
+) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(FEEDBACK_APPROVAL_DOMAIN);
     hasher.update(digest.as_bytes());
     hasher.update(&[0u8]);
     hasher.update(&scope.preimage());
+    let mut principal = Vec::new();
+    push_len_prefixed(&mut principal, principal_ref.as_bytes());
+    hasher.update(&principal);
     let component = hasher.finalize().to_hex();
     format!("{FEEDBACK_APPROVAL_COMPONENT_PREFIX}{component}")
 }
@@ -245,10 +255,15 @@ impl FeedbackPreview {
         feedback_content_ref(&self.digest)
     }
 
-    /// The approval component id for this bundle at one destination.
+    /// The approval component id for this bundle at one destination, approved
+    /// by `principal_ref`.
     #[must_use]
-    pub fn approval_component_id(&self, scope: &FeedbackApprovalScope) -> String {
-        feedback_approval_component_id(&self.digest, scope)
+    pub fn approval_component_id(
+        &self,
+        scope: &FeedbackApprovalScope,
+        principal_ref: &str,
+    ) -> String {
+        feedback_approval_component_id(&self.digest, scope, principal_ref)
     }
 
     /// Human-readable rendering of the redacted bundle contents.
@@ -363,7 +378,7 @@ pub fn feedback_approval_card(
         FeedbackApprovalScope::Export => None,
     };
     Ok(ConsentAskCard {
-        card_id: preview.approval_component_id(scope),
+        card_id: preview.approval_component_id(scope, principal_ref),
         principal_ref: principal_ref.to_owned(),
         prompt: prompt.to_owned(),
         preview: format!("{content}\n\n{disclosure}"),
@@ -402,8 +417,9 @@ impl FeedbackApproval {
 /// The evaluation is host-trusted field input, not authentication: the host
 /// authenticated the owner when it evaluated the action. What this function
 /// adds is the binding a host cannot get wrong by accident — the component id
-/// is derived here from the preview digest and the scope, so an approval for
-/// a different bundle or a different destination fails with
+/// is derived here from the preview digest, the scope and the receipt's
+/// approving principal, so an approval for a different bundle, a different
+/// destination or a different principal fails with
 /// [`FeedbackError::StalePreviewDigest`] before anything happens.
 pub fn validate_feedback_approval(
     preview: &FeedbackPreview,
@@ -424,7 +440,8 @@ pub fn validate_feedback_approval(
         "component_kind",
         Of336ComponentKind::ConsentAsk.as_str(),
     )?;
-    let expected = preview.approval_component_id(scope);
+    let principal_ref = approval_field(fields, "expected_principal_ref")?;
+    let expected = preview.approval_component_id(scope, principal_ref);
     let found = approval_field(fields, "component_id")?;
     if found != expected {
         return Err(FeedbackError::StalePreviewDigest {

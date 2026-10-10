@@ -84,6 +84,7 @@ use crate::error::{Error, Result};
 
 mod cleanup_types;
 mod codec_receipts;
+mod owner_doors;
 mod person_provenance;
 mod proposals_archive;
 mod retention;

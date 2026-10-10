@@ -6,11 +6,13 @@
 //! cumulative byte cap and stable cursor order.
 
 mod claim_grep;
+mod claim_ids;
 mod coreutils;
 mod coreutils_text;
 mod model;
 mod paging;
 mod readdir;
+mod walk;
 
 pub use self::readdir::GraphFsFileRead;
 

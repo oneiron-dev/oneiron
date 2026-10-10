@@ -55,6 +55,17 @@ pub(crate) use self::connector_task::{
 };
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
+/// Runs `hook` once, on this thread, when the next new outbound effect has
+/// passed every check before admission and has not yet taken the vault's
+/// writer: the window in which a concurrent write can land first.
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn before_next_admission_for_test(hook: impl FnOnce() + 'static) {
+    crate::outbound_chokepoint::BEFORE_NEW_ADMISSION.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
 // The flat outbound.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so
 // the sibling `tests.rs` resolves exactly as it did before.

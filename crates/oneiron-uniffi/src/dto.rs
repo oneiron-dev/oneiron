@@ -559,7 +559,8 @@ pub struct RecallScope {
 pub struct MemoryProvenance {
     /// Claim source string, or the structural-record marker.
     pub source: String,
-    /// This revision plus its superseded ancestors.
+    /// This revision plus its superseded ancestors; a turn's also names the
+    /// messages its text is read from.
     pub source_revision_ids: Vec<String>,
     /// Evidence turn ids.
     pub evidence_turn_ids: Vec<String>,
