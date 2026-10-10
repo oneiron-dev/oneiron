@@ -16,7 +16,6 @@ pub(crate) use self::actor_dispatch::{
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{mcp_credential_reads, mcp_scope_covers_entity, mcp_validated_call_args};
 pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup};
-pub(crate) use self::stream_reads::mcp_stream_reads_task;
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
@@ -29,6 +28,7 @@ pub(crate) use self::envelope::{
 };
 pub(crate) use self::exec_board_verbs::execute_mcp_execute_code;
 use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
+pub(crate) use self::stream_reads::mcp_stream_reads_task;
 // Test-only surface: `api/tests.rs` names these bare through the `api` glob,
 // but no production path does, so a plain `pub(crate)` re-export would warn as
 // unused in non-test builds.
