@@ -14,7 +14,7 @@ use super::read_lane::ReadTargetSlot;
 use super::*;
 
 use crate::batch::EntityMetadataHeader;
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
+use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -24,6 +24,10 @@ use crate::vault::ReadMode;
 
 /// The most turns one transcript page returns.
 pub const MAX_TRANSCRIPT_PAGE_TURNS: usize = 200;
+
+/// How many times a page is listed and read before a conversation whose turns
+/// keep moving in time is refused.
+const TRANSCRIPT_READ_ATTEMPTS: usize = 3;
 
 /// One page of a conversation's transcript.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -131,12 +135,27 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// `NOT_FOUND` when the actor may not read the conversation or it is not
-    /// one; `BAD_REQUEST` for a zero limit or a cursor this read did not give.
+    /// one; `BAD_REQUEST` for a zero limit or a cursor this read did not give;
+    /// `INVALID_STATE` when the conversation's turns kept moving in time
+    /// while the page was read.
     pub fn conversation_transcript(
         &self,
         conversation: &EntityId,
         after: Option<&str>,
         limit: usize,
+    ) -> MemoryResult<ScopedReadResult<TranscriptPage>> {
+        self.conversation_transcript_listed(conversation, after, limit, || {})
+    }
+
+    /// [`Self::conversation_transcript`], running `listed` after each listing
+    /// of the turns and before they are read: a test seam for a write between
+    /// the two. Production callers pass an empty callback.
+    pub(super) fn conversation_transcript_listed(
+        &self,
+        conversation: &EntityId,
+        after: Option<&str>,
+        limit: usize,
+        mut listed: impl FnMut(),
     ) -> MemoryResult<ScopedReadResult<TranscriptPage>> {
         if limit == 0 {
             return Err(MemoryError::bad_request(
@@ -148,16 +167,51 @@ impl Memory<'_> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let ScopedReadResult {
             value: row,
-            mut receipt,
+            receipt,
         } = lane.read(&[PointRead::id(*conversation)], None)?.single();
         if row.is_none_or(|row| row.entity_type != ENTITY_TYPE_CONVERSATION || row.body.is_none()) {
             return Err(MemoryError::not_found("conversation not found").with_read_receipt(receipt));
         }
-        let turns = self.transcript_turns(conversation, after)?;
+        // The turns are listed, then read through the lane. A listed turn
+        // whose time moved in between is listed again where it now is, so a
+        // page stays in order, its cursor names a time it served, and no turn
+        // is passed over.
+        for _ in 0..TRANSCRIPT_READ_ATTEMPTS {
+            let turns = self.transcript_turns(conversation, after)?;
+            listed();
+            let mut read = receipt.clone();
+            if let Some((turns, next)) = self.transcript_page(&lane, &turns, limit, &mut read)? {
+                return Ok(ScopedReadResult {
+                    value: TranscriptPage {
+                        conversation: conversation.to_hex(),
+                        turns,
+                        next,
+                    },
+                    receipt: read,
+                });
+            }
+        }
+        Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "the conversation's turns kept moving while the page was read",
+            &["Read the page again."],
+        )
+        .with_read_receipt(receipt))
+    }
+
+    /// Up to `limit` readable turns of `turns`, in order, and the cursor of
+    /// the page after them; `None` when a listed turn's time no longer is
+    /// what the listing saw. `receipt` takes each read's narrowing.
+    fn transcript_page(
+        &self,
+        lane: &ScopedRead<'_>,
+        turns: &[TurnKey],
+        limit: usize,
+        receipt: &mut ScopedReadReceipt,
+    ) -> MemoryResult<Option<(Vec<TranscriptTurn>, Option<String>)>> {
         let mut page = Vec::new();
         let mut last = None;
-        let mut next = None;
-        'chunks: for chunk in turns.chunks(limit) {
+        for chunk in turns.chunks(limit) {
             let members = self.transcript_members(chunk)?;
             let targets: Vec<ReadTargetSlot> = chunk
                 .iter()
@@ -168,19 +222,18 @@ impl Memory<'_> {
             let ScopedReadResult {
                 value: views,
                 receipt: read,
-            } = self.read_views(&lane, &targets)?;
+            } = self.read_views(lane, &targets)?;
             receipt.restrict_with(&read);
             let (turn_views, mut message_views) = views.split_at(chunk.len());
             for ((key, ids), turn_view) in chunk.iter().zip(&members).zip(turn_views) {
                 let (own, rest) = message_views.split_at(ids.len());
                 message_views = rest;
-                // A turn whose time moved since the turns were listed is left
-                // to the read that lists it where it now is, so a page stays
-                // in order and its cursor names a time the page served.
-                let Some(turn) = turn_view.as_ref().filter(|turn| turn.occurred_start == key.0)
-                else {
+                let Some(turn) = turn_view else {
                     continue;
                 };
+                if turn.occurred_start != key.0 {
+                    return Ok(None);
+                }
                 let mut messages: Vec<_> = own
                     .iter()
                     .flatten()
@@ -190,8 +243,7 @@ impl Memory<'_> {
                     continue;
                 }
                 if page.len() == limit {
-                    next = last.as_ref().map(cursor);
-                    break 'chunks;
+                    return Ok(Some((page, last.as_ref().map(cursor))));
                 }
                 messages.sort_by(|(left, a), (right, b)| left.cmp(right).then(a.id.cmp(&b.id)));
                 page.push(TranscriptTurn {
@@ -203,14 +255,7 @@ impl Memory<'_> {
                 last = Some(*key);
             }
         }
-        Ok(ScopedReadResult {
-            value: TranscriptPage {
-                conversation: conversation.to_hex(),
-                turns: page,
-                next,
-            },
-            receipt,
-        })
+        Ok(Some((page, None)))
     }
 
     /// The conversation's turns after `after`, in transcript order, each by

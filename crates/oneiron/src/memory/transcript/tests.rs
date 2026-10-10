@@ -171,6 +171,72 @@ fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
     assert_eq!(page.next, None, "no page holds the erased turn");
 }
 
+/// A turn whose time moves between the listing of a conversation's turns and
+/// their read is served where it now is: the pages stay in order, each cursor
+/// names a time a page served, and the walk passes no turn over.
+#[test]
+fn a_turn_that_moves_while_a_page_is_read_is_served_where_it_now_is() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let room = id(0xD9);
+    let (early, later) = (id(0xDA), id(0xDB));
+    witness(
+        &vault,
+        owner,
+        room,
+        early,
+        AT,
+        vec![said(0, WitnessAuthor::User, "early words")],
+    );
+    witness(
+        &vault,
+        owner,
+        room,
+        later,
+        AT + 20,
+        vec![said(0, WitnessAuthor::Companion, "later words")],
+    );
+    let raw = vault.get_raw(&early).expect("read the turn").expect("turn");
+    let body = raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let learned = vault.get_learned_at(&early).expect("learned at");
+
+    // The first page lists the early turn first; before it is read, the turn
+    // moves past the later one.
+    let mut moved = false;
+    let first = vault
+        .memory(owner, EdgeActorClass::Human)
+        .conversation_transcript_listed(&room, None, 1, || {
+            if !moved {
+                moved = true;
+                vault
+                    .put_entity(
+                        &early,
+                        ENTITY_TYPE_TURN,
+                        TimeRange {
+                            start: AT + 30,
+                            end: AT + 30,
+                        },
+                        learned,
+                        &body,
+                    )
+                    .expect("move the early turn");
+            }
+        })
+        .expect("read the first page")
+        .value;
+    assert!(moved);
+    assert_eq!(read(&first), [turn(later, &[("companion", "later words")])]);
+    assert_eq!(
+        first.next.as_deref(),
+        Some(format!("{}:{}", AT + 20, later.to_hex()).as_str())
+    );
+    let second = transcript(&vault, owner, room, first.next.as_deref(), 1);
+    assert_eq!(read(&second), [turn(early, &[("user", "early words")])]);
+    assert_eq!(second.turns[0].occurred_start, AT + 30);
+    assert_eq!(second.next, None);
+}
+
 /// The reader recall reads as (ARCH-0004, ARCH-0040): a reader whose grants
 /// admit some of a conversation's messages gets exactly those, each in its
 /// turn; a turn with none of them is left out. The owner reads them all.

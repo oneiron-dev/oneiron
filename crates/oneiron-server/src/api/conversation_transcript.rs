@@ -11,8 +11,8 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, TranscriptPage,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
+    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, TranscriptPage,
 };
 use oneiron::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,7 @@ pub(crate) struct TranscriptResponse {
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read, or names no principal and actor class.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "No conversation the reader may read has this id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The conversation's turns kept moving in time while the page was read; read it again.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Transcript read failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -137,6 +138,13 @@ fn refusal(error: MemoryError) -> EnvelopedApiError {
     let api = match error.code.as_str() {
         MEMORY_CODE_NOT_FOUND => ApiError::not_found("conversation", None),
         MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, None),
+        MEMORY_CODE_INVALID_STATE => ApiError::new(
+            error.message,
+            ApiErrorDetails::InvalidState {
+                state: Some("transcript_turns_moved".to_owned()),
+            },
+            error.suggestions,
+        ),
         MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => ApiError::new(
             error.message,
             ApiErrorDetails::Forbidden {
