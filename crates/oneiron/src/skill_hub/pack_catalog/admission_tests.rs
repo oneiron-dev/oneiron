@@ -2051,10 +2051,11 @@ fn a_pack_ships_its_migration_map_and_a_same_version_update_applies_it() -> Resu
         ])
     };
     let shipped = |maps: serde_json::Value| format!("migrations: {maps}\n");
-    // A 100-byte name and version, so a map key spelling both beside the two
-    // sources would pass LMDB's 511-byte key bound.
+    // A 100-byte name and a 200-byte version: a map key spelling both beside
+    // the two sources would pass LMDB's 511-byte key bound, and a version
+    // past 128 bytes is still one a map can start from.
     let name = format!("alice.{}", "t".repeat(94));
-    let version = format!("v{}", "3".repeat(99));
+    let version = format!("v{}", "3".repeat(199));
     let (topic, subject) = (format!("{name}.topic"), format!("{name}.subject"));
     let first = source(&name, &version, &[topic.as_str()], "")?;
     let first_hash = first.content_hash().to_hex();

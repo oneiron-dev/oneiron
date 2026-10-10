@@ -79,8 +79,9 @@ pub(super) fn parse(
             }
             Some(_) => return Err(refused()),
         };
+        // `from` names a version, so it takes a version's own bound.
         if from.is_empty()
-            || from.len() > 128
+            || from.len() > 4096
             || from.chars().any(char::is_control)
             || (from == version && source.is_none())
             || !starts.insert((from.clone(), source.clone()))
