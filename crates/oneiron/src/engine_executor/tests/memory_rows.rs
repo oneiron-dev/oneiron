@@ -124,23 +124,24 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
     let subject = seed_person(&vault, 0xB1);
     let [first, second] = [entity(0xC1), entity(0xC2)];
     let program = format!(
-        "const subject = '{subject}'; const out = {{}}; \
+        "const subject = '{subject}'; const out = {{}}; try {{ \
          out.search = await self.memory.search({{query: 'sencha', limit: 3}}); \
          out.first = await self.memory.put_claim({{id: '{first}', subject, \
-           predicate: 'profile.favorite_drink', value: 'sencha', confidence: 0.9}}); \
+           predicate: 'profile.favorite_drink', value: 'sencha', confidence: 0.9, \
+           occurred: {{start: 3, end: 4}}, learnedAt: 4}}); \
          out.second = await self.memory.put_claim({{id: '{second}', subject, \
-           predicate: 'profile.favorite_drink', value: 'matcha', occurred: {{start: 5, end: 9}}, \
-           learnedAt: 11}}); \
+           predicate: 'profile.favorite_drink', value: 'matcha'}}); \
          out.superseded = await self.memory.supersede_claim({{newId: '{second}', \
            oldId: '{first}', now: 12}}); \
          out.edge = await self.memory.put_edge({{src: '{second}', kind: 'about', tgt: subject}}); \
-         finish(JSON.stringify(out));",
+         finish(JSON.stringify(out)); }} catch (error) {{ finish(`threw ${{error}}`); }}",
         subject = subject.to_hex(),
         first = first.to_hex(),
         second = second.to_hex(),
     );
     let (answer, rows) = run_program(&vault, 0x71, &program).expect("run");
-    let answer: serde_json::Value = serde_json::from_str(&answer).expect("guest answer");
+    let answer: serde_json::Value =
+        serde_json::from_str(&answer).unwrap_or_else(|_| panic!("{answer}; {rows:?}"));
     assert_eq!(
         answer,
         serde_json::json!({
