@@ -212,9 +212,11 @@ pub(super) fn scope_sources_in_txn(
     Ok(ScopeSources { members, sources })
 }
 
-/// What a summary body was written from.
+/// What a summary body says, and what it was written from.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SummarySources {
+pub(crate) struct SummaryContent<'a> {
+    /// The body's words.
+    pub(crate) text: &'a str,
     /// The records whose text the body was written from.
     pub(crate) covers: Vec<EntityId>,
     /// The MESSAGEs those records' text came from, at the revisions read.
@@ -223,12 +225,18 @@ pub(crate) struct SummarySources {
     pub(crate) memo: Option<[u8; 32]>,
 }
 
-impl SummarySources {
-    /// Every source the scope resolves to, for a body written outside the
-    /// Dreamer (test fixtures).
-    #[cfg(test)]
-    fn whole_scope(vault: &Vault, txn: &mut RwTxn<'_>, scope: &ScopeSelector) -> Result<Self> {
+#[cfg(test)]
+impl<'a> SummaryContent<'a> {
+    /// `text` over every source the scope resolves to, for a body written
+    /// outside the Dreamer (test fixtures).
+    fn whole_scope(
+        vault: &Vault,
+        txn: &mut RwTxn<'_>,
+        scope: &ScopeSelector,
+        text: &'a str,
+    ) -> Result<Self> {
         Ok(Self {
+            text,
             covers: scope_sources_in_txn(vault, txn, scope)?.sources,
             messages: Vec::new(),
             memo: None,
@@ -243,30 +251,29 @@ fn word_sources(body: &ScopeSummaryBody) -> impl Iterator<Item = &EntityId> {
         .chain(body.messages.iter().map(|message| &message.id))
 }
 
-/// Mints a summary of `sources`. Each MESSAGE is registered as a dependency
+/// Mints a summary of `content`. Each MESSAGE is registered as a dependency
 /// beside the covers' DerivedFrom edges, so erasing one invalidates the
 /// summary in the erasing transaction.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn mint_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     id: EntityId,
     scope: &ScopeSelector,
-    text: &str,
     actor: WriteActor,
     now: u64,
-    sources: SummarySources,
+    content: SummaryContent<'_>,
 ) -> Result<EntityId> {
     actor_in_txn(&vault.store, txn, actor)?;
+    let text = content.text;
     let body = ScopeSummaryBody {
-        v: if sources.memo.is_some() { 2 } else { 1 },
+        v: if content.memo.is_some() { 2 } else { 1 },
         scope: scope.clone(),
         text: text.to_owned(),
         actor: actor.entity_ref().to_hex(),
-        covers: sources.covers,
+        covers: content.covers,
         minted_at: now,
-        messages: sources.messages,
-        memo: sources.memo,
+        messages: content.messages,
+        memo: content.memo,
     };
     let encoded = encode_scope_summary_body(&body)?;
     let mut batch = vault
@@ -594,16 +601,15 @@ impl Vault {
                 return Err(invalid("selected thread differs from bounded span"));
             }
             let now = self.store.clock.now_recorded_at();
-            let sources = SummarySources::whole_scope(self, txn, &scope)?;
+            let content = SummaryContent::whole_scope(self, txn, &scope, text)?;
             let summary = mint_in_txn(
                 self,
                 txn,
                 self.store.clock.entity_id()?,
                 &scope,
-                text,
                 actor,
                 now,
-                sources,
+                content,
             )?;
             let landed = land_in_txn(self, txn, &summary, &trunk, actor, false, now)?;
             Ok((summary, landed))
@@ -627,16 +633,15 @@ impl Vault {
         }
         self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
-            let sources = SummarySources::whole_scope(self, txn, scope)?;
+            let content = SummaryContent::whole_scope(self, txn, scope, text)?;
             let summary = mint_in_txn(
                 self,
                 txn,
                 self.store.clock.entity_id()?,
                 scope,
-                text,
                 actor,
                 now,
-                sources,
+                content,
             )?;
             let landed = land_on
                 .map(|turn| land_in_txn(self, txn, &summary, &turn, actor, as_record, now))

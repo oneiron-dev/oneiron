@@ -9,7 +9,7 @@
 use super::codec::SummarySourceMessage;
 use super::codec::{invalid, parse_scope, scope_value};
 use super::doors::{
-    LandedHeader, ScopeSources, SummarySources, header_landed_in_txn, land_in_txn, mint_in_txn,
+    LandedHeader, ScopeSources, SummaryContent, header_landed_in_txn, land_in_txn, mint_in_txn,
     scope_sources_in_txn, standing_composition_in_txn, validate_landing_in_txn,
 };
 use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
@@ -323,21 +323,13 @@ impl Vault {
                 ));
             }
             let now = self.store.clock.now_recorded_at();
-            let sources = SummarySources {
+            let content = SummaryContent {
+                text: composed.text,
                 covers: composed.covers.clone(),
                 messages: composed.messages.clone(),
                 memo: Some(composed.memo),
             };
-            mint_in_txn(
-                self,
-                txn,
-                id,
-                &plan.scope,
-                composed.text,
-                author,
-                now,
-                sources,
-            )?;
+            mint_in_txn(self, txn, id, &plan.scope, author, now, content)?;
             let landed = plan
                 .land_on
                 .map(|turn| land_in_txn(self, txn, &id, &turn, plan.requester, plan.as_record, now))
