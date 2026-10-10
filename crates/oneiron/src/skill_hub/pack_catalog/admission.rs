@@ -2,8 +2,8 @@
 use super::super::install_transition::{InstallBinding, InstallDisposition, InstallPlan};
 use super::{
     BundledSkillPermissions, PackAdapter, PackCandidateReason, PackFitPolicy, PackFitVerdict,
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions,
-    PackQualification, PackRuntimeRecipe, PackSource, invalid,
+    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackKind,
+    PackPermissions, PackQualification, PackRuntimeRecipe, PackSource, invalid,
 };
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
@@ -38,6 +38,7 @@ impl Vault {
         let source = self
             .get_pack_source(&source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
+        refuse_engine_namespace(&source)?;
         let prior = {
             let txn = self.store.env.read_txn()?;
             self.installed_pack_in_txn(&txn, &source.manifest.name)?
@@ -120,6 +121,7 @@ impl Vault {
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
         self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
+            refuse_engine_namespace(&source)?;
             if let Some(reason) = self.screen_pack_in_txn(
                 txn,
                 &source,
@@ -697,5 +699,22 @@ fn validate_qualification(source: &PackSource, result: &PackQualification) -> Re
     crate::skill::SkillContentHash::parse_hex(&runtime.runtime_hash)?;
     super::script_plan::ScriptExecutionPlan::from_source(source, runtime)?.qualified_shape()?;
     crate::batch::secret_scan::scan_metadata_field(&runtime.runtime_id)?;
+    Ok(())
+}
+
+/// A pack never takes a namespace the engine owns, not as its name and not in
+/// a declaration, so no shipped migration map can move an owner's query over
+/// engine state (ARCH-0059 §4). Checked where a source is admitted, not where
+/// a stored one is decoded, so a source stored before the rule still reads.
+fn refuse_engine_namespace(source: &PackSource) -> Result<()> {
+    let manifest = &source.manifest;
+    if manifest.kind != PackKind::Agent
+        && std::iter::once(&manifest.name)
+            .chain(&manifest.predicates)
+            .chain(&manifest.kinds)
+            .any(|name| super::migrations::engine_owned(name))
+    {
+        return Err(invalid("a pack cannot take a namespace the engine owns"));
+    }
     Ok(())
 }

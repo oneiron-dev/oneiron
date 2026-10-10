@@ -148,14 +148,14 @@ fn closed_rewrite(rewrite: Value) -> Result<PackPredicateRewrite> {
     Ok(rewrite)
 }
 
-/// A predicate in a namespace the engine owns: its layers (`core`,
-/// `companion`, `persona`, `commitment`) and its reserved doors.
-fn engine_owned(predicate: &str) -> bool {
+/// A predicate, or a pack name, in a namespace the engine owns: its layers,
+/// its reserved doors and the families it writes. The one door that reads
+/// those lists for packs, at admission and again at the migration map.
+pub(super) fn engine_owned(predicate: &str) -> bool {
+    let namespace = predicate.split('.').next().unwrap_or_default();
     crate::claim::is_reserved_predicate(predicate)
-        || predicate
-            .split('.')
-            .next()
-            .is_some_and(|namespace| crate::claim::PREDICATE_LAYER_NAMESPACES.contains(&namespace))
+        || crate::claim::PREDICATE_LAYER_NAMESPACES.contains(&namespace)
+        || crate::claim::ENGINE_PREDICATE_NAMESPACES.contains(&namespace)
 }
 
 /// A JSON value whose objects repeat no key. serde_json keeps the last of a
