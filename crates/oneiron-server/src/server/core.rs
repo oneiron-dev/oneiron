@@ -111,7 +111,7 @@ pub struct SyncServer {
     /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
     pub(crate) llm: Option<crate::models::RawInference>,
     /// Where the run admission of every model call writes its receipts.
-    pub(crate) run_receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+    pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
     /// Inert unless the serve path attaches a configured host.
     pub(crate) ai: crate::ai_host::AiHandle,
@@ -260,7 +260,7 @@ impl SyncServer {
             embedder: None,
             tagger: None,
             llm: None,
-            run_receipts: Arc::new(crate::models::LoggedReceipts),
+            run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             extraction_egress: None,
             owner_host: None,
@@ -360,19 +360,18 @@ impl SyncServer {
     }
 
     /// Writes every model call's run receipts to `receipts` instead of the
-    /// log. Call it before [`crate::ai_host::AiHost::attach`], which hands it
-    /// to the model runtime.
+    /// log, including the calls of models and providers attached before.
     #[must_use]
     pub fn with_run_receipts(
-        mut self,
+        self,
         receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
     ) -> Self {
-        self.run_receipts = receipts;
+        self.run_receipts.choose(receipts);
         self
     }
 
     pub(crate) fn run_receipts(&self) -> Arc<dyn oneiron::llm::run_admission::RunReceiptSink> {
-        Arc::clone(&self.run_receipts)
+        self.run_receipts.clone()
     }
 
     /// Attaches the AI host's handle. When `[models]` configured any model,

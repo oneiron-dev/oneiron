@@ -104,10 +104,10 @@ pub(super) struct RunInner {
     pub(super) host: Option<Arc<HostAccount>>,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
-    /// Every lease this run's permits hold, model and paid alike. A meter
-    /// other runs share issues theirs too, so the meter alone cannot tell a
-    /// permit's run.
-    issued: Mutex<BTreeSet<String>>,
+    /// The open paid-connector permits' leases. A model permit's lease is in
+    /// `calls`. A meter other runs share issues their leases too, so the
+    /// meter alone cannot tell a permit's run.
+    paid: Mutex<BTreeSet<String>>,
 }
 
 struct Revisioned {
@@ -172,7 +172,7 @@ impl RunAdmission {
                 host,
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
-                issued: Mutex::new(BTreeSet::new()),
+                paid: Mutex::new(BTreeSet::new()),
             }),
         }
     }
@@ -366,8 +366,13 @@ impl RunInner {
         lease: &BudgetLease,
         call: &DispatchBinding,
     ) -> Result<(), RunDenied> {
-        let started = if self.lock_issued().contains(lease.id()) {
+        let ours = self.lock_calls().contains_key(lease.id());
+        let ours = ours || self.lock_paid().contains(lease.id());
+        let started = if ours {
             self.guard.begin_dispatch(lease, call)
+        } else if self.guard.lease_open(lease) == Some(false) {
+            // A settled permit, which its run no longer holds.
+            Err(DispatchRefused::Closed)
         } else {
             // Another run's permit, on a meter the two share.
             Err(DispatchRefused::ForeignLease)
@@ -446,7 +451,6 @@ impl RunInner {
     ) -> Result<RunPermit, RunDenied> {
         match admitted {
             Ok(permit) => {
-                self.lock_issued().insert(permit.lease.id().to_owned());
                 if let Some(model) = model {
                     self.lock_calls().insert(
                         permit.lease.id().to_owned(),
@@ -458,6 +462,8 @@ impl RunInner {
                             settled_units: None,
                         },
                     );
+                } else {
+                    self.lock_paid().insert(permit.lease.id().to_owned());
                 }
                 self.record(revision, RunEvent::Admitted(Box::new(permit.facts.clone())));
                 Ok(permit)
@@ -507,8 +513,8 @@ impl RunInner {
         self.calls.lock().expect("run call mutex poisoned")
     }
 
-    fn lock_issued(&self) -> MutexGuard<'_, BTreeSet<String>> {
-        self.issued.lock().expect("run permit mutex poisoned")
+    pub(super) fn lock_paid(&self) -> MutexGuard<'_, BTreeSet<String>> {
+        self.paid.lock().expect("run permit mutex poisoned")
     }
 }
 

@@ -68,7 +68,10 @@ pub(super) async fn bind(
     // The executor hands this lease to every call; the backend below admits
     // and settles each call on the meter instead, so the lease carries no
     // spend and its reservation is released at once.
-    let lease = match crate::mcp::idle_lease(&guard) {
+    let lease = match guard
+        .admit()
+        .and_then(|admission| guard.abort(&admission.lease).map(|_| admission.lease))
+    {
         Ok(lease) => lease,
         Err(denied) => {
             tracing::error!(?denied, "code mode's meter admits nothing");

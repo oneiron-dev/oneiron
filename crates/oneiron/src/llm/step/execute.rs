@@ -185,6 +185,9 @@ pub async fn call_as_step_with_fallbacks(
     // retries) runs to a terminal response so its lease can settle real usage.
     let generated =
         super::schema::generate(backend, &request, &admission.lease, guard, ctx.deadline).await;
+    // A corrective call failed: an earlier response was already answered and
+    // paid, whatever usage it reported.
+    let answered = matches!(generated, Err(DurableStepError::SpentLlm { .. }));
     let (generated, failed_usage) = match generated {
         Err(DurableStepError::SpentLlm { source, usage }) => {
             (Err(DurableStepError::Llm(source)), *usage)
@@ -215,12 +218,12 @@ pub async fn call_as_step_with_fallbacks(
             }
         }
         // A metered backend below the step (a host's run admission, rung by
-        // rung) found the budget spent before the step spent anything: the
+        // rung) found the budget spent before any response was answered: the
         // same trap as this step's own admission, never a model failure. Once
-        // a response was paid, a spent budget fails the step as a spent
+        // a response was answered, a spent budget fails the step as a spent
         // correction admission does.
         Err(DurableStepError::Llm(LlmError::BudgetDenied(BudgetDenied::Exhausted)))
-            if failed_usage.input.total == 0 && failed_usage.output.total == 0 =>
+            if !answered =>
         {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
             return budget_trap(ctx, step_hash);

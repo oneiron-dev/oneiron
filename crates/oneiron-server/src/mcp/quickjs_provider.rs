@@ -40,11 +40,18 @@ pub fn checked_in_quickjs_runtime() -> oneiron::Result<QuickJsRuntimeFactory> {
     QuickJsRuntimeFactory::from_component(CHECKED_IN_COMPONENT, pin, ComponentBudget::default())
 }
 
-/// A lease from `meter` with its reservation released: the executor hands
-/// one to every call, and a gated backend admits each call on its own permit.
-pub(crate) fn idle_lease(meter: &BudgetGuard) -> Result<BudgetLease, oneiron::llm::BudgetDenied> {
-    let lease = meter.admit()?.lease;
-    meter.abort(&lease)?;
+/// The lease the executor hands every call. The backend below admits and
+/// settles each call on its own permit and never charges this one, so it
+/// comes from a meter of its own that pays for nothing, never the host's.
+fn carrier_lease() -> Result<BudgetLease, oneiron::llm::BudgetDenied> {
+    let carrier = BudgetGuard::with_reserve_units(
+        "code-mode-carrier",
+        1,
+        1,
+        oneiron::BudgetExhaustionPolicy::Suspend,
+    );
+    let lease = carrier.admit()?.lease;
+    carrier.abort(&lease)?;
     Ok(lease)
 }
 
@@ -75,7 +82,7 @@ impl McpQuickJsProvider {
         meter: BudgetGuard,
         config: EngineExecutorConfig,
     ) -> Result<Self, oneiron::engine_executor::EngineExecutorError> {
-        let lease = idle_lease(&meter).map_err(LlmError::from)?;
+        let lease = carrier_lease().map_err(LlmError::from)?;
         let models = InjectedRuns::new(
             Arc::clone(&backend),
             meter.clone(),

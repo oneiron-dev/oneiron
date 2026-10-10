@@ -34,14 +34,10 @@ pub(super) struct StepRunner {
     /// How long a failed step waits before its next try, times the tries.
     pub(super) retry_backoff_secs: u64,
     /// What each step's tries spent in all, by the failed try a retry
-    /// follows: the next try replays exactly that.
+    /// follows: the next try replays exactly that. Held only while a retry
+    /// may follow, and only in this process.
     pub(super) spent: Mutex<HashMap<AttemptId, u64>>,
 }
-
-/// Failed tries whose spend is kept for a retry. A chain past its last try
-/// keeps its entry, so the map is cleared at this size; a retry it forgot
-/// replays the bound instead.
-const KEPT_SPENDS: usize = 1024;
 
 /// Why a step did not produce its output, and whether a later try of the
 /// same call may succeed (a model call the provider answered with a
@@ -68,6 +64,14 @@ fn message(role: LlmMessageRole, text: String) -> LlmMessage {
 }
 
 impl StepRunner {
+    /// Drops what a failed try spent once no retry follows it.
+    pub(super) fn forget(&self, attempt: AttemptId) {
+        self.spent
+            .lock()
+            .expect("step spend mutex poisoned")
+            .remove(&attempt);
+    }
+
     /// Runs on the pump thread, which owns `runtime`: blocking on the model
     /// call here never stalls a request worker.
     pub(super) fn run(
@@ -141,8 +145,9 @@ impl StepRunner {
         // this try's meter, so the step's budget and every policy row it
         // matches (the agent's cap, the purpose's) see them: retries share
         // one budget, never renew it. The try this one follows left what the
-        // chain spent; after a restart, each earlier try is replayed at one
-        // reservation per rung of the ladder, the most it could have sent.
+        // chain spent. After a restart nothing is left, and each earlier try
+        // is replayed at one reservation per rung of the ladder it has now:
+        // exact unless the seat's ladder changed across the restart.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
         let carried = step.attempt.retry_of.and_then(|parent| {
@@ -184,11 +189,11 @@ impl StepRunner {
             Err(error) => {
                 let retryable = matches!(error, oneiron::llm::LlmError::Retryable(_));
                 if retryable {
-                    let mut spent = self.spent.lock().expect("step spend mutex poisoned");
-                    if spent.len() >= KEPT_SPENDS {
-                        spent.clear();
-                    }
-                    spent.insert(step.attempt.id, run.read().used_units);
+                    let chain = run.read().used_units;
+                    self.spent
+                        .lock()
+                        .expect("step spend mutex poisoned")
+                        .insert(step.attempt.id, chain);
                 }
                 return Err(StepFault {
                     retryable,

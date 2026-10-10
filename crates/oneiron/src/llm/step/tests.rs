@@ -520,6 +520,42 @@ fn a_backend_that_finds_the_budget_spent_opens_the_budget_trap() -> Result<()> {
     Ok(())
 }
 
+/// After an answered response, a corrective call that finds the budget spent
+/// below the step fails the step as a spent correction admission does, even
+/// when that response reported no usage: it was still paid for.
+#[test]
+fn a_spent_budget_after_an_answer_without_usage_is_not_a_fresh_trap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let mut unpriced = response_fixture("not json");
+    unpriced.usage = LlmUsage::zero();
+    let backend = ScriptedBackend::new(vec![
+        Ok(unpriced),
+        Err(LlmError::BudgetDenied(crate::llm::BudgetDenied::Exhausted)),
+    ]);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::ClassifiedLlm {
+            source: LlmError::BudgetDenied(crate::llm::BudgetDenied::Exhausted),
+            ..
+        })
+    ));
+    assert_eq!(backend.calls(), 2);
+    assert!(
+        DreamerRunnerStore::new(&vault)
+            .parked_attempt(fixture.attempt_id)?
+            .is_none()
+    );
+    Ok(())
+}
+
 /// Astra R2 #1304: the budget trap and its park committed in two
 /// transactions, so a crash or a refused park between them left an open trap
 /// over an unparked attempt; boot recovery requeued it and a fresh budget ran

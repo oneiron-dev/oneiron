@@ -156,6 +156,18 @@ impl BudgetGuard {
         state.leases.get(lease.id()).map(|record| record.dispatched)
     }
 
+    /// Whether this lease is still open, neither settled nor aborted; `None`
+    /// for a lease another meter issued or this one never did.
+    #[must_use]
+    pub fn lease_open(&self, lease: &BudgetLease) -> Option<bool> {
+        let state = self.lock_state();
+        state.check_lease_provenance(lease).ok()?;
+        state
+            .leases
+            .get(lease.id())
+            .map(|record| record.state == LeaseState::Open)
+    }
+
     /// Moves this meter's limit and per-call reservation: an owner's or a
     /// host's revision of the line. Spend, open reservations and fired
     /// thresholds stay; a lower limit only refuses later admissions.
