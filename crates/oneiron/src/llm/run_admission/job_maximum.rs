@@ -3,8 +3,8 @@
 //! Nothing in the engine stops a running model. A paid job with a declared
 //! maximum is the one exception the owner granted, and only under five
 //! conditions, which this contract enforces: the customer set the maximum and
-//! saw it at the job's start; a warning goes out at 95 percent; a checkpoint is
-//! taken before the stop; the stop carries an add-funds notice; and the job
+//! saw it at the job's start; a warning reaches the customer at 95 percent; a
+//! checkpoint is taken after it, before the stop; the stop carries an add-funds notice; and the job
 //! resumes from that checkpoint in one step. The job reserves its whole
 //! maximum through [`super::RunAdmission::admit_paid`]; a resume takes a fresh
 //! admission for the next chunk.
@@ -34,7 +34,8 @@ pub struct CheckpointRef(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "signal", rename_all = "snake_case")]
 pub enum JobSignal {
-    /// 95 percent of the maximum is used. Sent once, before any stop.
+    /// 95 percent of the maximum is used. Returned at each record until the
+    /// host confirms it reached the customer.
     Warning95 { used_units: u64, maximum_units: u64 },
     /// The maximum is used up. The job may now be stopped, after a checkpoint.
     AtMaximum,
@@ -82,7 +83,7 @@ pub enum JobStartRefused {
 pub enum StopRefused {
     #[error("the job has not reached its maximum")]
     NotAtMaximum,
-    #[error("the 95 percent warning has not gone out")]
+    #[error("the 95 percent warning has not reached the customer")]
     NoWarning,
     #[error("no checkpoint was taken after the warning")]
     NoCheckpoint,
@@ -102,13 +103,15 @@ pub enum ResumeRefused {
     MaximumNotRaised,
 }
 
-/// One paid job's run against its declared maximum.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One paid job's run against its declared maximum. It is not `Clone`: one
+/// state decides the stop and consumes its resume.
+#[derive(Debug, PartialEq, Eq)]
 pub struct JobMaximum {
     job: String,
     maximum: DeclaredMaximum,
     used_units: u64,
-    warned: bool,
+    warning_due: bool,
+    warning_delivered: bool,
     checkpoint: Option<CheckpointRef>,
     stops: u32,
     stopped: bool,
@@ -131,7 +134,8 @@ impl JobMaximum {
             job: job.into(),
             maximum,
             used_units: 0,
-            warned: false,
+            warning_due: false,
+            warning_delivered: false,
             checkpoint: None,
             stops: 0,
             stopped: false,
@@ -158,8 +162,10 @@ impl JobMaximum {
         self.used_units = self.used_units.max(used_units);
         let mut signals = Vec::new();
         let warn_at = u128::from(self.maximum.units) * 95;
-        if !self.warned && u128::from(self.used_units) * 100 >= warn_at {
-            self.warned = true;
+        if u128::from(self.used_units) * 100 >= warn_at {
+            self.warning_due = true;
+        }
+        if self.warning_due && !self.warning_delivered {
             signals.push(JobSignal::Warning95 {
                 used_units: self.used_units,
                 maximum_units: self.maximum.units,
@@ -171,10 +177,21 @@ impl JobMaximum {
         signals
     }
 
-    /// Records a checkpoint. Only one taken after the warning counts for the
-    /// stop.
+    /// The host confirms the 95 percent warning reached the customer. Returns
+    /// false, and counts nothing, when no warning is due.
+    #[must_use]
+    pub fn confirm_warning(&mut self) -> bool {
+        if self.warning_due {
+            self.warning_delivered = true;
+        }
+        self.warning_delivered
+    }
+
+    /// Records a checkpoint. Only one taken after the warning reached the
+    /// customer counts for the stop, and a stopped job keeps the checkpoint
+    /// its resume offer names.
     pub fn checkpoint(&mut self, checkpoint: CheckpointRef) {
-        if self.warned {
+        if self.warning_delivered && !self.stopped {
             self.checkpoint = Some(checkpoint);
         }
     }
@@ -187,7 +204,7 @@ impl JobMaximum {
         if self.used_units < self.maximum.units {
             return Err(StopRefused::NotAtMaximum);
         }
-        if !self.warned {
+        if !self.warning_delivered {
             return Err(StopRefused::NoWarning);
         }
         let checkpoint = self.checkpoint.clone().ok_or(StopRefused::NoCheckpoint)?;
@@ -233,7 +250,8 @@ impl JobMaximum {
             return Err(ResumeRefused::MaximumNotRaised);
         }
         self.maximum = maximum;
-        self.warned = false;
+        self.warning_due = false;
+        self.warning_delivered = false;
         self.stopped = false;
         Ok(self
             .checkpoint

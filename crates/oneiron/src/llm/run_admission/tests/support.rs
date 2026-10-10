@@ -11,9 +11,9 @@ use std::task::{Context, Poll, Wake, Waker};
 use futures_core::Stream;
 
 use super::super::super::{
-    BudgetLease, ContentPart, FinishReason, LlmBackend, LlmGenerateFuture, LlmMessage,
-    LlmMessageRole, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmUsage,
-    RetryableLlmError,
+    BudgetLease, ContentPart, FinishReason, LlmBackend, LlmCapability, LlmGenerateFuture,
+    LlmMessage, LlmMessageRole, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult,
+    LlmUsage, ModelId, RetryableLlmError, SingleRouteBackend,
 };
 use super::super::{PaidConnector, RunAdmission, RunDenied};
 use crate::llm::LlmRequest;
@@ -54,13 +54,17 @@ pub(super) enum Reply {
     Usage { input: u64, output: u64 },
     /// Does the work, then the response is lost on the way back.
     LostAfterWork,
+    /// Takes the request and never answers.
+    Hang,
 }
 
 /// A provider that serves any model it is reached with, as a real key would,
-/// and records what reached it.
+/// and records what reached it. It supports every capability but those it is
+/// told to refuse.
 pub(super) struct FakeProvider {
     sent: Mutex<Vec<Sent>>,
     reply: Mutex<Reply>,
+    refused: Mutex<Vec<LlmCapability>>,
 }
 
 impl FakeProvider {
@@ -71,7 +75,12 @@ impl FakeProvider {
                 input: 3,
                 output: 1,
             }),
+            refused: Mutex::new(Vec::new()),
         })
+    }
+
+    pub(super) fn refuse(&self, capability: LlmCapability) {
+        self.refused.lock().expect("refused").push(capability);
     }
 
     pub(super) fn reply_with(&self, reply: Reply) {
@@ -109,7 +118,13 @@ fn answer(request: &LlmRequest, input: u64, output: u64) -> LlmResponse {
     }
 }
 
+impl SingleRouteBackend for FakeProvider {}
+
 impl LlmBackend for FakeProvider {
+    fn supports(&self, _model: &ModelId, capability: LlmCapability) -> bool {
+        !self.refused.lock().expect("refused").contains(&capability)
+    }
+
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
@@ -120,6 +135,7 @@ impl LlmBackend for FakeProvider {
             match reply {
                 Reply::Usage { input, output } => Ok(answer(&request, input, output)),
                 Reply::LostAfterWork => Err(RetryableLlmError::Timeout.into()),
+                Reply::Hang => std::future::pending().await,
             }
         })
     }
@@ -141,7 +157,9 @@ impl LlmBackend for FakeProvider {
                     }),
                 ])
             }
-            Reply::LostAfterWork => VecDeque::from([Err(RetryableLlmError::StreamCut.into())]),
+            Reply::LostAfterWork | Reply::Hang => {
+                VecDeque::from([Err(RetryableLlmError::StreamCut.into())])
+            }
         };
         Ok(LlmStream::new(Events(events)))
     }

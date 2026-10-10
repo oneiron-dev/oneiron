@@ -7,13 +7,16 @@
 //! first real leased adapter passes N4a and P2, and N4b, N5's wire forms and
 //! N11 (key reflection) need that adapter too.
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::{Arc, Barrier};
+use std::task::{Context, Waker};
 
 use super::*;
 use crate::llm::{
     BudgetDenied, CallClass, CallEnvelope, CallPurpose, ContentPart, DispatchRefused,
-    FAILED_RUNGS_KEY, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest, LlmStreamEvent,
-    ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence,
+    FAILED_RUNGS_KEY, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmStreamEvent, ModelId, ModelLocality, ModelTierRef,
+    ResponseFormat, TierPrecedence,
 };
 
 mod support;
@@ -53,10 +56,7 @@ fn one_to_one() -> Vec<UnitRate> {
 }
 
 fn model_route() -> OfferRoute {
-    OfferRoute {
-        adapter: "fake".to_owned(),
-        origin: MODEL_ORIGIN.to_owned(),
-    }
+    OfferRoute::new("fake", MODEL_ORIGIN).expect("route")
 }
 
 fn offer(model: &str) -> OfferBinding {
@@ -76,10 +76,7 @@ fn local_offer() -> OfferBinding {
     OfferBinding {
         offer: "local/small@v1@device".to_owned(),
         model: id("local/small@v1"),
-        route: OfferRoute {
-            adapter: "local".to_owned(),
-            origin: "device".to_owned(),
-        },
+        route: OfferRoute::new("local", "device").expect("route"),
         locality: ModelLocality::OnDevice,
         payer: Payer::Local,
         catalog_revision: None,
@@ -91,10 +88,7 @@ fn local_offer() -> OfferBinding {
 fn search() -> PaidConnector {
     PaidConnector {
         connector: "search".to_owned(),
-        route: OfferRoute {
-            adapter: "paid".to_owned(),
-            origin: PAID_ORIGIN.to_owned(),
-        },
+        route: OfferRoute::new("paid", PAID_ORIGIN).expect("route"),
         locality: ModelLocality::ThirdParty,
         payer: Payer::CustomerKey,
         catalog_revision: Some("catalog-7".to_owned()),
@@ -478,14 +472,10 @@ fn n5_a_permit_does_not_carry_onto_a_lookalike_or_other_route() {
         "http://model.test:443",
         "https://model.test:8443",
         "https://child.model.test:443",
-        "https://user@model.test:443",
     ] {
         let lookalike = world.a.admission.gate(
             world.provider.clone(),
-            &OfferRoute {
-                adapter: "fake".to_owned(),
-                origin: origin.to_owned(),
-            },
+            &OfferRoute::new("fake", origin).expect("route"),
         );
         let before = world.before();
         assert_eq!(
@@ -495,6 +485,11 @@ fn n5_a_permit_does_not_carry_onto_a_lookalike_or_other_route() {
         );
         world.assert_refused_cleanly(&before);
     }
+    // A userinfo lookalike never becomes a route at all.
+    assert_eq!(
+        OfferRoute::new("fake", "https://user@model.test:443"),
+        Err(OfferRouteError::Origin)
+    );
 }
 
 #[test]
@@ -529,24 +524,19 @@ fn n7_a_settled_aborted_or_cloned_permit_dispatches_at_most_once() {
         .generate(&world.gated_a, request(SMALL), &settled)
         .expect("first call");
     let usage = world.provider.sent().len();
-    world
-        .a
-        .admission
-        .settle(
-            &settled,
-            CallOutcome::Answered(&crate::llm::LlmUsage::zero()),
-        )
+    let settled_lease = settled.lease().clone();
+    settled
+        .settle(CallOutcome::Answered(&crate::llm::LlmUsage::zero()))
         .expect("settle");
     let aborted = admit(&world.a, None, &request(SMALL), &offer(SMALL)).expect("permit");
-    world
-        .a
-        .admission
-        .settle(&aborted, CallOutcome::Failed)
+    let aborted_lease = aborted.lease().clone();
+    aborted
+        .settle(CallOutcome::Failed)
         .expect("abort before dispatch");
-    for permit in [&settled, &aborted] {
+    for lease in [&settled_lease, &aborted_lease] {
         let before = world.before();
         assert_eq!(
-            world.generate(&world.gated_a, request(SMALL), permit),
+            block_on(world.gated_a.generate(request(SMALL), lease)).map(|_| ()),
             Err(LlmError::BudgetDenied(BudgetDenied::LeaseInvalid))
         );
         world.assert_refused_cleanly(&before);
@@ -629,18 +619,12 @@ fn n9_an_exhausted_line_refuses_new_calls_while_an_admitted_call_settles_in_full
     });
     let response = block_on(world.gated_a.generate(request(SMALL), first.lease()))
         .expect("admitted call finishes");
-    world
-        .a
-        .admission
-        .settle(&first, CallOutcome::Answered(&response.usage))
+    first
+        .settle(CallOutcome::Answered(&response.usage))
         .expect("settle above estimate");
     assert_eq!(world.a.used(), 9);
-    for permit in [&second, &third] {
-        world
-            .a
-            .admission
-            .settle(permit, CallOutcome::Failed)
-            .expect("release unsent");
+    for permit in [second, third] {
+        permit.settle(CallOutcome::Failed).expect("release unsent");
     }
     assert_eq!((world.a.used(), world.a.reserved()), (9, 0));
 }
@@ -667,22 +651,20 @@ fn n10_a_response_lost_after_work_is_charged_its_reservation_once() {
     assert_eq!(world.provider.sent().len(), 1, "the fake recorded the work");
     assert_eq!((world.a.used(), world.a.reserved()), (6, 0));
 
-    // A completion that arrives twice is charged once.
+    // A completion settles once: settling takes the permit, and the lease
+    // left behind cannot start another call.
     world.provider.reply_with(Reply::Usage {
         input: 3,
         output: 1,
     });
     let permit = admit(&world.a, None, &request(SMALL), &offer(SMALL)).expect("permit");
-    let response =
-        block_on(world.gated_a.generate(request(SMALL), permit.lease())).expect("answer");
-    for _ in 0..2 {
-        world
-            .a
-            .admission
-            .settle(&permit, CallOutcome::Answered(&response.usage))
-            .expect("settle");
-    }
-    assert_eq!(world.a.used(), 10);
+    let lease = permit.lease().clone();
+    let response = block_on(world.gated_a.generate(request(SMALL), &lease)).expect("answer");
+    permit
+        .settle(CallOutcome::Answered(&response.usage))
+        .expect("settle");
+    assert!(block_on(world.gated_a.generate(request(SMALL), &lease)).is_err());
+    assert_eq!((world.a.used(), world.a.reserved()), (10, 0));
 }
 
 #[test]
@@ -768,20 +750,17 @@ fn p2_a_paid_search_with_the_runs_permit_settles_its_cost() {
     let world = World::new();
     let permit = world.a.admission.admit_paid(&search(), 1).expect("search");
     assert_eq!(permit.facts().reserved_units, 3);
+    let lease = permit.lease().clone();
     let used = paid_call(
         &world.a.admission,
-        permit.lease(),
+        &lease,
         &search(),
         &world.resolver,
         &world.endpoint,
         1,
     )
     .expect("admitted search");
-    world
-        .a
-        .admission
-        .settle(&permit, CallOutcome::Used(used))
-        .expect("settle");
+    permit.settle(CallOutcome::Used(used)).expect("settle");
     assert_eq!(
         (world.endpoint.sends(), world.endpoint.billable_units()),
         (1, 1)
@@ -792,7 +771,7 @@ fn p2_a_paid_search_with_the_runs_permit_settles_its_cost() {
     assert_eq!(
         paid_call(
             &world.a.admission,
-            permit.lease(),
+            &lease,
             &search(),
             &world.resolver,
             &world.endpoint,
@@ -914,8 +893,8 @@ fn a_host_paid_permit_binds_the_payer_catalog_and_allocation_and_settles_both_li
     assert_eq!(facts.unit, units());
     assert_eq!(facts.allocation_reserved_units, Some(12));
     let response = block_on(gated.generate(request(SMALL), permit.lease())).expect("answer");
-    run.admission
-        .settle(&permit, CallOutcome::Answered(&response.usage))
+    permit
+        .settle(CallOutcome::Answered(&response.usage))
         .expect("settle");
     assert!(run.receipts.rows().iter().any(|row| matches!(
         row.event,
@@ -970,8 +949,8 @@ fn a_host_check_holds_new_host_paid_spend_and_nothing_else() {
     local.envelope.locality = ModelLocality::OnDevice;
     admit(&run, None, &local, &local_offer()).expect("local continues");
     // The admitted host-paid call still settles.
-    run.admission
-        .settle(&admitted, CallOutcome::Failed)
+    admitted
+        .settle(CallOutcome::Failed)
         .expect("admitted work settles");
     // A vault with no allocation delivered and a hold reads as the hold.
     let empty = HostAccount::new();
@@ -1099,10 +1078,8 @@ fn a_streamed_call_starts_its_permit_once_and_receipts_its_digest() {
             .stream(request(SMALL), permit.lease())
             .is_err()
     );
-    world
-        .a
-        .admission
-        .settle(&permit, CallOutcome::Answered(&usage.expect("terminal")))
+    permit
+        .settle(CallOutcome::Answered(&usage.expect("terminal")))
         .expect("settle");
     let report = world.a.admission.teacher_report();
     assert_eq!(report.called.len(), 1);
@@ -1122,13 +1099,213 @@ fn an_answer_pays_a_reservation_for_each_failed_rung_and_never_zero() {
         .expect("answer");
     let mut usage = crate::llm::LlmUsage::zero();
     usage.raw_provider = serde_json::json!({ FAILED_RUNGS_KEY: 1 });
-    world
-        .a
-        .admission
-        .settle(&permit, CallOutcome::Answered(&usage))
+    permit
+        .settle(CallOutcome::Answered(&usage))
         .expect("settle");
     // No usage reported: the 6-unit reservation, plus 6 for the failed rung.
     assert_eq!(world.a.used(), 12);
+}
+
+// ---------------------------------------------------------------------------
+// A permit's lifetime, the gate's edge and the receipts' facts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_unsettled_permit_settles_when_dropped() {
+    let account = granted(100, 1);
+    let provider = FakeProvider::new();
+    let run = Run::start(declaration(), Some(account.clone()));
+    let gated = run.admission.gate(provider.clone(), &model_route());
+    let allocation = || {
+        let read = account.live().0.expect("live allocation").meter.read();
+        (read.used_units, read.reserved_units)
+    };
+    // Dropped before it starts: both reservations come back.
+    let unsent = admit(&run, None, &request(SMALL), &host_offer(SMALL)).expect("permit");
+    assert_eq!((run.reserved(), allocation()), (6, (0, 12)));
+    drop(unsent);
+    assert_eq!((run.used(), run.reserved(), allocation()), (0, 0, (0, 0)));
+    // Dropped after it went out: both lines keep their reservations as spend.
+    let sent = admit(&run, None, &request(SMALL), &host_offer(SMALL)).expect("permit");
+    block_on(gated.generate(request(SMALL), sent.lease())).expect("answer");
+    drop(sent);
+    assert_eq!((run.used(), run.reserved(), allocation()), (6, 0, (12, 0)));
+    assert_eq!(provider.sent().len(), 1);
+    let settled = run
+        .receipts
+        .rows()
+        .into_iter()
+        .filter(|row| matches!(row.event, RunEvent::Settled { .. }))
+        .count();
+    assert_eq!(settled, 2);
+}
+
+#[test]
+fn a_cancelled_call_settles_its_permit_and_writes_its_dispatch_receipt() {
+    let world = World::new();
+    world.provider.reply_with(Reply::Hang);
+    let (small, small_offer) = (request(SMALL), offer(SMALL));
+    let mut call = Box::pin(world.a.admission.call(
+        &world.gated_a,
+        RunCall {
+            selector: None,
+            request: &small,
+            offer: &small_offer,
+        },
+    ));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(call.as_mut().poll(&mut cx).is_pending());
+    assert_eq!((world.a.used(), world.a.reserved()), (0, 6));
+    drop(call);
+    assert_eq!(world.provider.sent().len(), 1);
+    assert_eq!((world.a.used(), world.a.reserved()), (6, 0));
+    let rows = world.a.receipts.rows();
+    assert!(rows.iter().any(|row| matches!(
+        row.event,
+        RunEvent::Dispatched {
+            answered: false,
+            ..
+        }
+    )));
+    assert!(
+        rows.iter()
+            .any(|row| matches!(row.event, RunEvent::Settled { units: 6, .. }))
+    );
+}
+
+#[test]
+fn a_call_its_route_cannot_serve_is_refused_before_its_permit_starts() {
+    let world = World::new();
+    world.provider.refuse(LlmCapability::Streaming);
+    let permit = admit(&world.a, None, &request(SMALL), &offer(SMALL)).expect("permit");
+    let before = world.before();
+    let refused = world
+        .gated_a
+        .stream(request(SMALL), permit.lease())
+        .err()
+        .expect("refused");
+    assert!(matches!(
+        refused,
+        LlmError::Fatal(FatalLlmError::Unsupported(_))
+    ));
+    assert_eq!(world.provider.sent().len(), before.sends);
+    assert_eq!(world.a.used(), before.used);
+    assert!(world.a.receipts.rows().iter().any(|row| matches!(
+        &row.event,
+        RunEvent::Denied {
+            reason: RunDenied::Unsupported {
+                capability: LlmCapability::Streaming
+            },
+            ..
+        }
+    )));
+    // The permit is unused: the call goes out once it fits the route.
+    let response =
+        block_on(world.gated_a.generate(request(SMALL), permit.lease())).expect("answer");
+    permit
+        .settle(CallOutcome::Answered(&response.usage))
+        .expect("settle");
+    assert_eq!((world.a.used(), world.a.reserved()), (4, 0));
+}
+
+#[test]
+fn a_route_that_could_carry_a_credential_into_a_receipt_is_refused() {
+    for origin in [
+        "https://user:sk-secret@model.test",
+        "https://model.test/v1?key=sk-secret",
+        "https://model.test/#sk-secret",
+        "https://model.test/ v1",
+        "",
+    ] {
+        assert_eq!(
+            OfferRoute::new("fake", origin),
+            Err(OfferRouteError::Origin),
+            "{origin}"
+        );
+    }
+    for adapter in ["", "fake@other", "fake\n"] {
+        assert_eq!(
+            OfferRoute::new(adapter, MODEL_ORIGIN),
+            Err(OfferRouteError::Adapter),
+            "{adapter:?}"
+        );
+    }
+    let route = OfferRoute::new("fake", "https://model.test:443/v1").expect("a path is fine");
+    assert_eq!(
+        (route.adapter(), route.origin()),
+        ("fake", "https://model.test:443/v1")
+    );
+}
+
+#[test]
+fn a_large_native_amount_converts_whole_and_is_never_priced_low() {
+    let half = vec![UnitRate {
+        unit: units(),
+        per: 2,
+        cost: 1,
+    }];
+    let convert = super::host::convert;
+    assert_eq!(
+        convert(u128::from(u64::MAX) * 2, &gpu_seconds(), &units(), &half),
+        Some(u64::MAX)
+    );
+    assert_eq!(convert(u128::MAX, &units(), &units(), &[]), Some(u64::MAX));
+    let zero_per = UnitRate {
+        per: 0,
+        ..half[0].clone()
+    };
+    assert_eq!(convert(7, &gpu_seconds(), &units(), &[zero_per]), None);
+    // A connector call that big is refused, never admitted at half its price.
+    let gpu = PaidConnector {
+        connector: "gpu".to_owned(),
+        unit_cost: 2,
+        cost_unit: gpu_seconds(),
+        rates: half,
+        ..search()
+    };
+    let run = Run::start(RunDeclaration::declared(line()).with_connector("gpu"), None);
+    assert_eq!(
+        run.admission
+            .admit_paid(&gpu, u64::MAX)
+            .expect_err("too big"),
+        RunDenied::Budget {
+            denied: BudgetDenied::Exhausted
+        }
+    );
+    assert_eq!((run.used(), run.reserved()), (0, 0));
+}
+
+#[test]
+fn a_calls_receipts_carry_the_revision_it_was_admitted_under() {
+    let world = World::new();
+    let permit = admit(&world.a, None, &request(SMALL), &offer(SMALL)).expect("permit");
+    let widened = RunDeclaration::declared(line())
+        .with_teachers(teachers(&[SMALL, LARGE], &host_aliases()))
+        .with_connector("search");
+    assert_eq!(
+        world.a.admission.revise(DeclarationEditor::Owner, widened),
+        Ok(2)
+    );
+    world
+        .generate(&world.gated_a, request(SMALL), &permit)
+        .expect("answer");
+    permit
+        .settle(CallOutcome::Answered(&crate::llm::LlmUsage::zero()))
+        .expect("settle");
+    let revisions: Vec<u32> = world
+        .a
+        .receipts
+        .rows()
+        .into_iter()
+        .filter(|row| {
+            matches!(
+                row.event,
+                RunEvent::Admitted(_) | RunEvent::Dispatched { .. } | RunEvent::Settled { .. }
+            )
+        })
+        .map(|row| row.revision)
+        .collect();
+    assert_eq!(revisions, vec![1, 1, 1]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1161,9 +1338,10 @@ fn a_job_starts_only_under_a_maximum_the_customer_saw() {
 }
 
 #[test]
-fn a_job_stops_at_its_maximum_only_after_the_warning_and_a_checkpoint() {
+fn a_job_stops_at_its_maximum_only_after_the_warning_reached_the_customer_and_a_checkpoint() {
     let mut job = JobMaximum::start("job", maximum(100), SHOWN).expect("start");
     assert_eq!(job.record_usage(50), vec![]);
+    assert!(!job.confirm_warning(), "no warning is due at 50");
     job.checkpoint(CheckpointRef("too-early".to_owned()));
     assert_eq!(
         job.record_usage(95),
@@ -1173,8 +1351,22 @@ fn a_job_stops_at_its_maximum_only_after_the_warning_and_a_checkpoint() {
         }]
     );
     assert_eq!(job.stop_at_maximum(), Err(StopRefused::NotAtMaximum));
+    // Undelivered, the warning comes back at the next record, and neither a
+    // stop nor a checkpoint counts until it reaches the customer.
+    job.checkpoint(CheckpointRef("undelivered".to_owned()));
+    assert_eq!(
+        job.record_usage(100),
+        vec![
+            JobSignal::Warning95 {
+                used_units: 100,
+                maximum_units: 100
+            },
+            JobSignal::AtMaximum
+        ]
+    );
+    assert_eq!(job.stop_at_maximum(), Err(StopRefused::NoWarning));
+    assert!(job.confirm_warning());
     assert_eq!(job.record_usage(100), vec![JobSignal::AtMaximum]);
-    // The checkpoint taken before the warning does not count.
     assert_eq!(job.stop_at_maximum(), Err(StopRefused::NoCheckpoint));
     job.checkpoint(CheckpointRef("ckpt-2".to_owned()));
     let stop = job.stop_at_maximum().expect("stop");
@@ -1182,6 +1374,12 @@ fn a_job_stops_at_its_maximum_only_after_the_warning_and_a_checkpoint() {
     assert_eq!(stop.notice.used_units, 100);
     assert_eq!(stop.notice.maximum, maximum(100));
     assert_eq!(job.stop_at_maximum(), Err(StopRefused::Stopped));
+    // A checkpoint that lands after the stop leaves the offer's in place.
+    job.checkpoint(CheckpointRef("late".to_owned()));
+    assert_eq!(
+        job.resume(&stop.resume, maximum(200), SHOWN),
+        Ok(CheckpointRef("ckpt-2".to_owned()))
+    );
 }
 
 #[test]
@@ -1197,6 +1395,10 @@ fn a_job_that_jumps_past_its_maximum_warns_before_it_can_stop() {
             JobSignal::AtMaximum
         ]
     );
+    job.checkpoint(CheckpointRef("before-warning".to_owned()));
+    assert_eq!(job.stop_at_maximum(), Err(StopRefused::NoWarning));
+    assert!(job.confirm_warning());
+    assert_eq!(job.stop_at_maximum(), Err(StopRefused::NoCheckpoint));
     job.checkpoint(CheckpointRef("ckpt".to_owned()));
     assert!(job.stop_at_maximum().is_ok());
 }
@@ -1227,13 +1429,15 @@ fn a_stopped_job_resumes_in_one_step_from_its_checkpoint_on_a_fresh_admission() 
     assert_eq!(chunk.facts().reserved_units, 10);
     let mut job = JobMaximum::start("job", maximum(100), SHOWN).expect("start");
     job.record_usage(100);
+    assert!(job.confirm_warning());
     job.checkpoint(CheckpointRef("ckpt".to_owned()));
     let stop = job.stop_at_maximum().expect("stop");
     run.admission
         .dispatch_paid(chunk.lease(), &gpu)
         .expect("chunk ran");
-    run.admission
-        .settle(&chunk, CallOutcome::Used(100))
+    let chunk_lease = chunk.lease().id().to_owned();
+    chunk
+        .settle(CallOutcome::Used(100))
         .expect("settle the chunk");
 
     let mut stale = stop.resume.clone();
@@ -1260,6 +1464,6 @@ fn a_stopped_job_resumes_in_one_step_from_its_checkpoint_on_a_fresh_admission() 
     );
     // The next chunk takes its own admission.
     let next = run.admission.admit_paid(&gpu, 100).expect("next chunk");
-    assert_ne!(next.lease().id(), chunk.lease().id());
+    assert_ne!(next.lease().id(), chunk_lease);
     assert_eq!((run.used(), run.reserved()), (10, 10));
 }

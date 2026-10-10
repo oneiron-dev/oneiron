@@ -36,14 +36,57 @@ pub enum KeyCustody {
     T1,
 }
 
-/// The adapter and the origin a call goes out through.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The adapter and the origin a call goes out through. The origin names
+/// where the call goes, never how it authenticates: it lands in every receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct OfferRoute {
-    pub adapter: String,
-    pub origin: String,
+    adapter: String,
+    origin: String,
+}
+
+/// Why a route was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
+#[serde(rename_all = "snake_case")]
+pub enum OfferRouteError {
+    #[error("an adapter name is non-empty, without '@', whitespace or control characters")]
+    Adapter,
+    /// An origin with userinfo, a query or a fragment could carry a
+    /// credential into a receipt.
+    #[error("an origin is non-empty, without '@', '?', '#', whitespace or control characters")]
+    Origin,
 }
 
 impl OfferRoute {
+    pub fn new(
+        adapter: impl Into<String>,
+        origin: impl Into<String>,
+    ) -> Result<Self, OfferRouteError> {
+        let (adapter, origin) = (adapter.into(), origin.into());
+        let plain = |name: &str, banned: &[char]| {
+            !name.is_empty()
+                && !name
+                    .chars()
+                    .any(|c| c.is_whitespace() || c.is_control() || banned.contains(&c))
+        };
+        if !plain(&adapter, &['@']) {
+            return Err(OfferRouteError::Adapter);
+        }
+        if !plain(&origin, &['@', '?', '#']) {
+            return Err(OfferRouteError::Origin);
+        }
+        Ok(Self { adapter, origin })
+    }
+
+    #[must_use]
+    pub fn adapter(&self) -> &str {
+        &self.adapter
+    }
+
+    #[must_use]
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
     pub(super) fn key(&self) -> String {
         format!("{}@{}", self.adapter, self.origin)
     }
@@ -59,23 +102,26 @@ pub struct UnitRate {
 }
 
 /// Converts `units` of `native` into `target`: unchanged in the same unit,
-/// else through the first matching rate, rounded up. `None` when no rate
-/// names `target`, so units never mix silently.
+/// else through the first matching rate, rounded up, and clamped to `u64` only
+/// at the end, so a large native amount is never priced low. `None` when no
+/// rate names `target`, so units never mix silently.
 pub(super) fn convert(
-    units: u64,
+    units: u128,
     native: &LeaseUnit,
     target: &LeaseUnit,
     rates: &[UnitRate],
 ) -> Option<u64> {
-    if native == target {
-        return Some(units);
-    }
-    let rate = rates
-        .iter()
-        .find(|rate| rate.unit == *target && rate.per > 0)?;
-    let scaled = u128::from(units).saturating_mul(u128::from(rate.cost));
-    let per = u128::from(rate.per);
-    Some(u64::try_from(scaled.div_ceil(per)).unwrap_or(u64::MAX))
+    let converted = if native == target {
+        units
+    } else {
+        let rate = rates
+            .iter()
+            .find(|rate| rate.unit == *target && rate.per > 0)?;
+        units
+            .saturating_mul(u128::from(rate.cost))
+            .div_ceil(u128::from(rate.per))
+    };
+    Some(u64::try_from(converted).unwrap_or(u64::MAX))
 }
 
 /// One model at one place, as the host bound it: the host, not the caller,

@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::Serialize;
 
 use super::super::{
-    BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, BudgetSettlement,
-    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId,
+    BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchRefused,
+    LlmBackend, LlmCapability, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
 };
 use super::declaration::{DeclarationEditor, LeaseUnit, RunDeclaration};
 use super::gate::GatedBackend;
@@ -33,6 +33,8 @@ pub enum RunDenied {
     LocalityMismatch,
     #[error("the call picks its model or route through {key}")]
     RouteOverride { key: String },
+    #[error("the route's backend cannot serve {capability:?}")]
+    Unsupported { capability: LlmCapability },
     #[error("a declared run keeps its paid keys at T0")]
     KeyAtT1,
     #[error("the run did not declare connector {connector}")]
@@ -110,6 +112,8 @@ struct Revisioned {
 }
 
 pub(super) struct CallFacts {
+    /// The declaration revision the call was admitted under.
+    revision: u32,
     model: ModelId,
     request_digest: Option<String>,
     served_model: Option<String>,
@@ -219,7 +223,7 @@ impl RunAdmission {
     /// The only backend a host hands a run for `route`: it checks and starts
     /// the call's permit before any byte leaves, on `generate` and `stream`.
     #[must_use]
-    pub fn gate(&self, inner: Arc<dyn LlmBackend>, route: &OfferRoute) -> GatedBackend {
+    pub fn gate(&self, inner: Arc<dyn SingleRouteBackend>, route: &OfferRoute) -> GatedBackend {
         GatedBackend::new(Arc::clone(&self.inner), inner, route.key())
     }
 
@@ -233,20 +237,8 @@ impl RunAdmission {
             .begin_dispatch(lease, &connector.connector, &connector.route.key())
     }
 
-    /// Settles a permitted call once. An answer pays its usage, or its
-    /// reservation when it reports none, plus a reservation for each rung
-    /// that failed before it. A call that started and then failed pays its
-    /// reservation as unknown usage; one that never started pays nothing. A
-    /// settlement the meter refuses goes on the receipt and is returned.
-    pub fn settle(
-        &self,
-        permit: &RunPermit,
-        outcome: CallOutcome<'_>,
-    ) -> Result<BudgetSettlement, RunDenied> {
-        self.inner.settle(permit, outcome)
-    }
-
-    /// Admits, sends through `gated` and settles one model call.
+    /// Admits, sends through `gated` and settles one model call. A call
+    /// dropped before it ends settles as failed.
     pub async fn call(
         &self,
         gated: &GatedBackend,
@@ -255,12 +247,12 @@ impl RunAdmission {
         let permit = self.admit(call)?;
         match gated.generate(call.request.clone(), permit.lease()).await {
             Ok(response) => {
-                self.settle(&permit, CallOutcome::Answered(&response.usage))?;
+                permit.settle(CallOutcome::Answered(&response.usage))?;
                 Ok(response)
             }
             Err(error) => Err(RunCallError::Failed {
                 error,
-                settlement: self.settle(&permit, CallOutcome::Failed).err(),
+                settlement: permit.settle(CallOutcome::Failed).err(),
             }),
         }
     }
@@ -364,7 +356,7 @@ impl RunInner {
         lease: Option<&BudgetLease>,
         reason: RunDenied,
     ) {
-        let revision = self.lock_declaration().revision;
+        let revision = self.revision_for(lease);
         self.record(
             revision,
             RunEvent::Denied {
@@ -385,11 +377,12 @@ impl RunInner {
         served_model: Option<String>,
         answered: bool,
     ) {
-        if let Some(facts) = self.lock_calls().get_mut(lease.id()) {
+        let admitted_under = self.lock_calls().get_mut(lease.id()).map(|facts| {
             facts.request_digest = Some(request_digest.clone());
             facts.served_model.clone_from(&served_model);
-        }
-        let revision = self.lock_declaration().revision;
+            facts.revision
+        });
+        let revision = admitted_under.unwrap_or_else(|| self.lock_declaration().revision);
         self.record(
             revision,
             RunEvent::Dispatched {
@@ -401,6 +394,17 @@ impl RunInner {
                 answered,
             },
         );
+    }
+
+    /// The revision a row about `lease` carries: the one its call was
+    /// admitted under, else the current one.
+    fn revision_for(&self, lease: Option<&BudgetLease>) -> u32 {
+        let admitted_under = lease.and_then(|lease| {
+            self.lock_calls()
+                .get(lease.id())
+                .map(|facts| facts.revision)
+        });
+        admitted_under.unwrap_or_else(|| self.lock_declaration().revision)
     }
 
     fn receipt_for(
@@ -417,6 +421,7 @@ impl RunInner {
                     self.lock_calls().insert(
                         permit.lease.id().to_owned(),
                         CallFacts {
+                            revision,
                             model,
                             request_digest: None,
                             served_model: None,

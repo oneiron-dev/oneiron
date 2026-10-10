@@ -8,7 +8,8 @@ use futures_core::Stream;
 
 use super::super::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmRequest,
-    LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmUsage, ModelId,
+    LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmUsage, ModelId, SingleRouteBackend,
+    UnsupportedCapability,
 };
 use super::admission::{RunDenied, RunInner};
 
@@ -21,48 +22,68 @@ const SERVED_MODEL_KEYS: [&str; 2] = ["reported_model", "served_model"];
 /// another model or route than its permit, and a call that picks its model or
 /// route through a param or provider option.
 ///
-/// The host hands a run only gated backends, each over one concrete route: a
-/// fallback ladder below a gate would pick its model after the check. One
-/// permit buys one physical call, so a retry, a schema correction or the next
-/// hop of a chain takes a fresh admission. A lease from any other meter, the
-/// step layer's included, is refused here.
+/// It wraps only a [`SingleRouteBackend`]: a fallback ladder below a gate
+/// would pick its model after the check. One permit buys one physical call,
+/// so a retry, a schema correction or the next hop of a chain takes a fresh
+/// admission. A call the backend cannot serve is refused before its permit
+/// starts, so it costs nothing. A lease from any other meter, the step
+/// layer's included, is refused here.
 pub struct GatedBackend {
     run: Arc<RunInner>,
-    inner: Arc<dyn LlmBackend>,
+    inner: Arc<dyn SingleRouteBackend>,
     route: String,
 }
 
 impl GatedBackend {
-    pub(super) fn new(run: Arc<RunInner>, inner: Arc<dyn LlmBackend>, route: String) -> Self {
+    pub(super) fn new(
+        run: Arc<RunInner>,
+        inner: Arc<dyn SingleRouteBackend>,
+        route: String,
+    ) -> Self {
         Self { run, inner, route }
     }
 
     /// Checks and starts the call's permit; returns the digest of the request
     /// that is about to leave.
-    fn open(&self, request: &LlmRequest, lease: &BudgetLease) -> LlmResult<String> {
+    fn open(&self, request: &LlmRequest, lease: &BudgetLease, stream: bool) -> LlmResult<String> {
+        let model = request.model.as_str();
         if let Some(key) = request.route_selector_override() {
             let reason = RunDenied::RouteOverride { key };
-            self.run
-                .refuse(Some(request.model.as_str()), Some(lease), reason);
+            self.run.refuse(Some(model), Some(lease), reason);
             return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if let Some(capability) = request
+            .needed_capabilities(stream)
+            .into_iter()
+            .find(|capability| !self.inner.supports(&request.model, capability.clone()))
+        {
+            let reason = RunDenied::Unsupported {
+                capability: capability.clone(),
+            };
+            self.run.refuse(Some(model), Some(lease), reason);
+            return Err(FatalLlmError::Unsupported(UnsupportedCapability {
+                capability,
+                model: Some(request.model.clone()),
+                reason: None,
+            })
+            .into());
         }
         let digest = request
             .canonical_hash_hex()
             .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
-        self.run
-            .begin_dispatch(lease, request.model.as_str(), &self.route)?;
+        self.run.begin_dispatch(lease, model, &self.route)?;
         Ok(digest)
     }
 
-    fn record(&self, dispatch: &Dispatch, served_model: Option<String>, answered: bool) {
-        self.run.dispatched(
-            &dispatch.lease,
-            dispatch.model.as_str(),
-            &self.route,
-            dispatch.digest.clone(),
-            served_model,
-            answered,
-        );
+    fn pending(&self, request: &LlmRequest, lease: &BudgetLease, digest: String) -> Pending<'_> {
+        Pending {
+            gate: self,
+            dispatch: Some(Dispatch {
+                lease: lease.clone(),
+                model: request.model.clone(),
+                digest,
+            }),
+        }
     }
 }
 
@@ -70,6 +91,34 @@ struct Dispatch {
     lease: BudgetLease,
     model: ModelId,
     digest: String,
+}
+
+/// A started call's dispatch receipt, written once: when the call ends, or
+/// when it is dropped before it ends.
+struct Pending<'a> {
+    gate: &'a GatedBackend,
+    dispatch: Option<Dispatch>,
+}
+
+impl Pending<'_> {
+    fn finish(&mut self, served_model: Option<String>, answered: bool) {
+        if let Some(dispatch) = self.dispatch.take() {
+            self.gate.run.dispatched(
+                &dispatch.lease,
+                dispatch.model.as_str(),
+                &self.gate.route,
+                dispatch.digest,
+                served_model,
+                answered,
+            );
+        }
+    }
+}
+
+impl Drop for Pending<'_> {
+    fn drop(&mut self) {
+        self.finish(None, false);
+    }
 }
 
 fn served_model(usage: &LlmUsage) -> Option<String> {
@@ -93,56 +142,30 @@ impl LlmBackend for GatedBackend {
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            let digest = self.open(&request, lease)?;
-            let dispatch = Dispatch {
-                lease: lease.clone(),
-                model: request.model.clone(),
-                digest,
-            };
+            let digest = self.open(&request, lease, false)?;
+            let mut pending = self.pending(&request, lease, digest);
             let result = self.inner.generate(request, lease).await;
             match &result {
-                Ok(response) => self.record(&dispatch, served_model(&response.usage), true),
-                Err(_) => self.record(&dispatch, None, false),
+                Ok(response) => pending.finish(served_model(&response.usage), true),
+                Err(_) => pending.finish(None, false),
             }
             result
         })
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        let digest = self.open(&request, lease)?;
-        let dispatch = Dispatch {
-            lease: lease.clone(),
-            model: request.model.clone(),
-            digest,
-        };
-        match self.inner.stream(request, lease) {
-            Ok(inner) => Ok(LlmStream::new(GatedStream {
-                gate: self,
-                inner,
-                dispatch: Some(dispatch),
-            })),
-            Err(error) => {
-                self.record(&dispatch, None, false);
-                Err(error)
-            }
-        }
+        let digest = self.open(&request, lease, true)?;
+        let pending = self.pending(&request, lease, digest);
+        let inner = self.inner.stream(request, lease)?;
+        Ok(LlmStream::new(GatedStream { inner, pending }))
     }
 }
 
 /// The inner stream, receipted once: at its terminal, or when it is dropped
 /// before one.
 struct GatedStream<'a> {
-    gate: &'a GatedBackend,
     inner: LlmStream<'a>,
-    dispatch: Option<Dispatch>,
-}
-
-impl GatedStream<'_> {
-    fn finish(&mut self, served_model: Option<String>, answered: bool) {
-        if let Some(dispatch) = self.dispatch.take() {
-            self.gate.record(&dispatch, served_model, answered);
-        }
-    }
+    pending: Pending<'a>,
 }
 
 impl Stream for GatedStream<'_> {
@@ -153,17 +176,11 @@ impl Stream for GatedStream<'_> {
         let polled = Pin::new(&mut this.inner).poll_next(cx);
         match &polled {
             Poll::Ready(Some(Ok(LlmStreamEvent::Done { usage, .. }))) => {
-                this.finish(served_model(usage), true);
+                this.pending.finish(served_model(usage), true);
             }
-            Poll::Ready(Some(Err(_)) | None) => this.finish(None, false),
+            Poll::Ready(Some(Err(_)) | None) => this.pending.finish(None, false),
             Poll::Ready(Some(Ok(_))) | Poll::Pending => {}
         }
         polled
-    }
-}
-
-impl Drop for GatedStream<'_> {
-    fn drop(&mut self) {
-        self.finish(None, false);
     }
 }

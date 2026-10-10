@@ -1,18 +1,25 @@
 //! Building a run's permits: the declared teachers, the host's offer, the
 //! key's rung, the run's line and the vault's allocation, in that order.
-use super::super::{BudgetDenied, BudgetGuard, BudgetLease, ModelLocality, PinnedConfigViolation};
+use std::sync::Arc;
+
+use super::super::{
+    BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, ModelLocality, PinnedConfigViolation,
+};
 use super::admission::{RunCall, RunDenied, RunInner};
 use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
     AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, convert,
 };
 use super::receipt::PermitFacts;
+use super::settle::CallOutcome;
 
 /// A one-use admission for one call: the lease to send with it and every fact
 /// the admission bound. It is not `Clone`; a cloned lease still dispatches
-/// at most once.
-#[derive(Debug)]
+/// at most once. It settles once, on the run that issued it, through
+/// [`RunPermit::settle`]; a permit dropped unsettled, a cancelled call's
+/// included, settles as [`CallOutcome::Failed`].
 pub struct RunPermit {
+    run: Arc<RunInner>,
     pub(super) facts: PermitFacts,
     pub(super) revision: u32,
     pub(super) lease: BudgetLease,
@@ -26,8 +33,9 @@ pub struct RunPermit {
     pub(super) unit_cost: u64,
     /// The call's reservation in native units: the bounded charge of an
     /// answer that reports no usage.
-    pub(super) reserve_native: u64,
+    pub(super) reserve_native: u128,
     pub(super) rates: Vec<UnitRate>,
+    settled: bool,
 }
 
 #[derive(Debug)]
@@ -54,11 +62,43 @@ impl RunPermit {
     pub fn revision(&self) -> u32 {
         self.revision
     }
+
+    /// Settles the call. An answer pays its usage, or its reservation when it
+    /// reports none, plus a reservation for each rung that failed before it.
+    /// A call that started and then failed pays its reservation as unknown
+    /// usage; one that never started pays nothing. A settlement the meter
+    /// refuses goes on the receipt and is returned.
+    pub fn settle(mut self, outcome: CallOutcome<'_>) -> Result<BudgetSettlement, RunDenied> {
+        self.settled = true;
+        let run = Arc::clone(&self.run);
+        run.settle(&self, outcome)
+    }
+}
+
+impl Drop for RunPermit {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.settled = true;
+            let run = Arc::clone(&self.run);
+            // The refusal, if any, is on the Settled receipt.
+            run.settle(self, CallOutcome::Failed).ok();
+        }
+    }
+}
+
+impl std::fmt::Debug for RunPermit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunPermit")
+            .field("facts", &self.facts)
+            .field("revision", &self.revision)
+            .field("settled", &self.settled)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RunInner {
     pub(super) fn admit_model(
-        &self,
+        self: &Arc<Self>,
         declaration: &RunDeclaration,
         revision: u32,
         call: RunCall<'_>,
@@ -109,12 +149,16 @@ impl RunInner {
                 .lease;
             (lease, 0)
         } else {
-            let reserve = convert(line.reserve_units, &tokens, &line.unit, &offer.rates).ok_or(
-                RunDenied::UnitMismatch {
-                    from: tokens.clone(),
-                    to: line.unit.clone(),
-                },
-            )?;
+            let reserve = convert(
+                u128::from(line.reserve_units),
+                &tokens,
+                &line.unit,
+                &offer.rates,
+            )
+            .ok_or(RunDenied::UnitMismatch {
+                from: tokens.clone(),
+                to: line.unit.clone(),
+            })?;
             let lease = self
                 .guard
                 .admit_reserve_bound(reserve, binding)
@@ -122,16 +166,21 @@ impl RunInner {
                 .lease;
             (lease, reserve)
         };
-        let allocation =
-            match self.hold_allocation(offer.payer, line.reserve_units, &tokens, &offer.rates) {
-                Ok(allocation) => allocation,
-                Err(denied) => {
-                    // Not dispatched, so the abort releases the line's reservation.
-                    self.guard.abort(&lease).ok();
-                    return Err(denied);
-                }
-            };
+        let allocation = match self.hold_allocation(
+            offer.payer,
+            u128::from(line.reserve_units),
+            &tokens,
+            &offer.rates,
+        ) {
+            Ok(allocation) => allocation,
+            Err(denied) => {
+                // Not dispatched, so the abort releases the line's reservation.
+                self.guard.abort(&lease).ok();
+                return Err(denied);
+            }
+        };
         Ok(RunPermit {
+            run: Arc::clone(self),
             facts: PermitFacts {
                 selector: selector.map(str::to_owned),
                 subject: request.model.as_str().to_owned(),
@@ -157,13 +206,14 @@ impl RunInner {
             allocation: allocation.map(|(_, hold)| hold),
             native: tokens,
             unit_cost: 1,
-            reserve_native: line.reserve_units,
+            reserve_native: u128::from(line.reserve_units),
             rates: offer.rates.clone(),
+            settled: false,
         })
     }
 
     pub(super) fn admit_connector(
-        &self,
+        self: &Arc<Self>,
         declaration: &RunDeclaration,
         revision: u32,
         connector: &PaidConnector,
@@ -181,7 +231,7 @@ impl RunInner {
             &connector.connector,
         )?;
         let line = declaration.budget();
-        let native = connector.unit_cost.saturating_mul(quantity);
+        let native = u128::from(connector.unit_cost) * u128::from(quantity);
         let reserve = convert(native, &connector.cost_unit, &line.unit, &connector.rates).ok_or(
             RunDenied::UnitMismatch {
                 from: connector.cost_unit.clone(),
@@ -206,6 +256,7 @@ impl RunInner {
             }
         };
         Ok(RunPermit {
+            run: Arc::clone(self),
             facts: PermitFacts {
                 selector: None,
                 subject: connector.connector.clone(),
@@ -233,6 +284,7 @@ impl RunInner {
             unit_cost: connector.unit_cost,
             reserve_native: native,
             rates: connector.rates.clone(),
+            settled: false,
         })
     }
 
@@ -241,7 +293,7 @@ impl RunInner {
     fn hold_allocation(
         &self,
         payer: Payer,
-        native_units: u64,
+        native_units: u128,
         native: &LeaseUnit,
         rates: &[UnitRate],
     ) -> Result<Option<(AllocationRef, AllocationHold)>, RunDenied> {

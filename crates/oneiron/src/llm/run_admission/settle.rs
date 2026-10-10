@@ -19,14 +19,21 @@ pub enum CallOutcome<'a> {
 }
 
 impl RunInner {
+    /// Settles `permit` on this run, its issuer. Only [`RunPermit::settle`]
+    /// and the permit's drop call this, once.
     pub(super) fn settle(
         &self,
         permit: &RunPermit,
         outcome: CallOutcome<'_>,
     ) -> Result<BudgetSettlement, RunDenied> {
         let native = match outcome {
-            CallOutcome::Answered(usage) => Some(answered_units(usage, permit.reserve_native)),
-            CallOutcome::Used(quantity) => Some(quantity.saturating_mul(permit.unit_cost)),
+            CallOutcome::Answered(usage) => {
+                let floor = u64::try_from(permit.reserve_native).unwrap_or(u64::MAX);
+                Some(u128::from(answered_units(usage, floor)))
+            }
+            CallOutcome::Used(quantity) => {
+                Some(u128::from(quantity) * u128::from(permit.unit_cost))
+            }
             CallOutcome::Failed => None,
         };
         let line_unit = &permit.facts.unit;
@@ -60,7 +67,9 @@ impl RunInner {
             }
         });
         let charged = if permit.metered { units } else { 0 };
-        if let Some(facts) = self.lock_calls().get_mut(permit.lease.id()) {
+        if settled.is_ok()
+            && let Some(facts) = self.lock_calls().get_mut(permit.lease.id())
+        {
             facts.settled_units = Some(charged);
         }
         let allocation_error = allocation
