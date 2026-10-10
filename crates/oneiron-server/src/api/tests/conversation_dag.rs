@@ -511,9 +511,11 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
             owner.to_hex()
         ),
     );
+    // A witnessed turn is learned as it occurs, so it must occur after the
+    // earlier turn the Micro watermark has stepped past.
     let turn = json!({
         "conversation_ref": "41414141414141414141414141414141",
-        "occurred_at": 1_767_225_600,
+        "occurred_at": server.vault.now_recorded_at() + 1,
         "messages": [{"author": "user", "message_type": "text", "is_visible": true, "order": 0,
             "content": "my brother Kenji moved to Sapporo last winter"}],
     });
