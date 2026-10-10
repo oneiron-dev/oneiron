@@ -38,7 +38,7 @@ use crate::context_pack::{
 };
 use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
-use crate::registry::ENTITY_TYPE_REGISTRY;
+use crate::registry::{ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN};
 use crate::serialize::{SerializeConfig, serialize_pack};
 
 /// Chat uses the same closed five-level effort vocabulary as retrieval.
@@ -404,6 +404,7 @@ impl Memory<'_> {
                 Err(err) => return Err(err),
             }
         }
+        self.add_turn_text(&mut views, &mut narrowing)?;
 
         // Rendered from the documents this call already hydrated: the format
         // the caller asked for, over exactly the set they named.
@@ -437,6 +438,74 @@ impl Memory<'_> {
             },
             gaps,
         ))
+    }
+
+    /// Gives each named TURN its text as `txt`, the field a turn renders its
+    /// text from. A turn's text is its messages' (ARCH-0004), which its own
+    /// body does not hold: those this caller may read, so a named turn never
+    /// shows the words of a message the caller could not name. A turn named
+    /// at a text revision (`MemoryItem::source_revision_ref`) gets the words
+    /// that revision pins, and none once they can no longer be found.
+    fn add_turn_text(
+        &self,
+        views: &mut [EntityView],
+        narrowing: &mut Option<crate::claim::ScopedReadReceipt>,
+    ) -> MemoryResult<()> {
+        let turns = views
+            .iter()
+            .enumerate()
+            .filter(|(_, view)| document_entity_type(&view.kind) == ENTITY_TYPE_TURN)
+            .map(|(index, view)| -> MemoryResult<_> {
+                let pin = view
+                    .short_ref
+                    .as_deref()
+                    .and_then(|short_ref| short_ref.rsplit_once('@'))
+                    .and_then(|(_, revision)| crate::memory::RevisionRef::from_hex(revision).ok());
+                Ok((index, EntityId::from_hex(&view.id_hex)?, pin))
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        if turns.is_empty() {
+            return Ok(());
+        }
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let reads: Vec<_> = turns
+            .iter()
+            .map(|(_, id, _)| crate::claim::PointRead::id(*id))
+            .collect();
+        let crate::claim::ScopedReadResult {
+            value: texts,
+            receipt,
+        } = lane.read_projected(&reads, None, |txn, rows| {
+            turns
+                .iter()
+                .zip(rows)
+                .map(|((_, turn, pin), row)| {
+                    if row.is_none() {
+                        return Ok(None);
+                    }
+                    let mode =
+                        pin.map_or(crate::vault::ReadMode::Live, crate::vault::ReadMode::Pinned);
+                    let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
+                        self.vault, txn, turn, mode,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    let messages =
+                        served.readable(|message| lane.is_entity_readable_in(txn, message))?;
+                    Ok(crate::embed::joined_turn_text(&messages))
+                })
+                .collect::<crate::error::Result<Vec<_>>>()
+        })?;
+        super::read_lane::fold_receipt(narrowing, receipt);
+        for ((index, _, _), text) in turns.into_iter().zip(texts) {
+            if let (Some(text), Some(serde_json::Value::Object(body))) =
+                (text, views[index].body.as_mut())
+            {
+                body.insert("txt".to_owned(), serde_json::Value::String(text));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -499,7 +568,12 @@ fn pack_short_ids(pack: &MemoryPack) -> Vec<String> {
 /// was read at. The caller named this document, so nothing here is a ranked
 /// guess and no score is invented for it.
 fn document_item(view: &EntityView) -> MemoryItem {
-    let content = view.body.as_ref().and_then(|body| body.get("content"));
+    let text_field = if document_entity_type(&view.kind) == ENTITY_TYPE_TURN {
+        "txt"
+    } else {
+        "content"
+    };
+    let content = view.body.as_ref().and_then(|body| body.get(text_field));
     let value_text = match (content.and_then(serde_json::Value::as_str), &view.body) {
         (Some(text), _) => text.to_owned(),
         (None, Some(body)) => serde_json::to_string(body).unwrap_or_default(),
@@ -530,6 +604,7 @@ fn document_item(view: &EntityView) -> MemoryItem {
         facet: None,
         salience: None,
         reactions: Vec::new(),
+        cited_messages: Vec::new(),
     }
 }
 

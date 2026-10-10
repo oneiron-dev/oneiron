@@ -76,6 +76,229 @@ fn safe_delete_requires_named_reason_and_returns_receipt() {
     assert!(receipt.receipt_ref.is_some());
 }
 
+/// Sol 9B #8 (P1), ARCH-0038 (Layer 2): erasing one message of an embedded
+/// turn through the room's deletion door drops the turn's vector in the
+/// erasing transaction, with no worker running, and marks the turn at the
+/// text left. Bug repro: the erase only marked the turn, so the vector built
+/// from the erased words kept finding the turn until a worker embedded it
+/// again, and for good if none ever did.
+#[test]
+fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
+    const ERASED_MEANING: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+    for reason in [
+        crate::DeleteReason::UserHardDelete,
+        crate::DeleteReason::UserDelete,
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = crate::Vault::open(
+            dir.path(),
+            VaultConfig {
+                embedding_model: Some("test/model@v1".to_owned()),
+                dimensions: ERASED_MEANING.len(),
+                ..VaultConfig::default()
+            },
+        )
+        .expect("open vault");
+        let alice = put_person(&vault, 0xC1);
+        let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
+        crate::conversation_dag::fixtures::grant(&vault, owner, true);
+        let room = EntityId::now();
+        vault
+            .create_conversation(
+                room,
+                &crate::conversation::ConversationBody::default(),
+                owner,
+                1,
+            )
+            .expect("create room");
+        let facade = facade_for(&vault, alice);
+        let receipt = facade
+            .witness(&WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: None,
+                messages: vec![
+                    witness_message(
+                        0,
+                        WitnessAuthor::User,
+                        "The mechanic says the car needs new brakes.",
+                    ),
+                    witness_message(1, WitnessAuthor::User, "We met for lunch at noon."),
+                ],
+                occurred_at: 500,
+            })
+            .expect("witness turn");
+        let id_of = |short_id: &str| {
+            facade
+                .get_entity(short_id)
+                .expect("read by short id")
+                .value
+                .map(|view| EntityId::from_hex(&view.id_hex).expect("entity id"))
+                .expect("entity")
+        };
+        let turn = id_of(&receipt.turn_short_id);
+        let car = id_of(&receipt.message_short_ids[0]);
+        let pending = || {
+            let rtxn = vault.store.env.read_txn().expect("read txn");
+            vault
+                .store
+                .pending_embedding_token(&rtxn, &turn)
+                .expect("pending marker")
+        };
+        let finds_turn = || {
+            vault
+                .search_vector(&ERASED_MEANING, 5)
+                .expect("vector search")
+                .iter()
+                .any(|hit| hit.id == turn)
+        };
+
+        // The worker's fill: one vector for both messages' meaning.
+        let leased = pending().expect("the witness marks the turn");
+        vault
+            .batch()
+            .vector_for_pending_embedding(&turn, &ERASED_MEANING, &leased)
+            .commit()
+            .expect("fill the turn");
+        assert!(finds_turn(), "{reason:?}: the filled turn is found");
+
+        vault
+            .delete_room_record(room, car, owner, reason)
+            .expect("erase the car message");
+
+        assert_eq!(
+            vault.get_vector(&turn).expect("read vector"),
+            None,
+            "{reason:?}: the turn keeps the vector of the erased words"
+        );
+        assert!(
+            !finds_turn(),
+            "{reason:?}: the erased words still find the turn"
+        );
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        assert_eq!(
+            crate::embed::turn_text_in_txn(&vault, &rtxn, &turn)
+                .expect("turn text")
+                .as_deref(),
+            Some("We met for lunch at noon."),
+            "{reason:?}: the worker embeds the text left"
+        );
+        drop(rtxn);
+        let marked = pending().expect("the turn is marked again");
+        assert_ne!(marked, leased, "{reason:?}: the turn keeps its old marker");
+        // A fill of the erased words leased before the erase cannot land.
+        vault
+            .batch()
+            .vector_for_pending_embedding(&turn, &ERASED_MEANING, &leased)
+            .commit()
+            .expect("stale fill");
+        assert_eq!(
+            vault.get_vector(&turn).expect("read vector"),
+            None,
+            "{reason:?}: a fill leased before the erase restores the erased words"
+        );
+    }
+}
+
+/// Astra 1333 #2 (P1), ARCH-0038: a handle opened before any process
+/// attached an embedding model still erases a turn's vector, which lives in
+/// the store, not in the handle. Process A opens vectorless; process B, with
+/// the model, fills the turn from both messages; A erases one of them. The
+/// test plays A by clearing the model from the handle's own config after the
+/// fill, as A's config never had one. Bug repro: the erase collected the
+/// message's turns only when the erasing handle had a model, so the vector
+/// of the erased words stayed and kept finding the turn.
+#[test]
+fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
+    const ERASED_MEANING: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+    for reason in [
+        crate::DeleteReason::UserHardDelete,
+        crate::DeleteReason::UserDelete,
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let model = VaultConfig {
+            embedding_model: Some("test/model@v1".to_owned()),
+            dimensions: ERASED_MEANING.len(),
+            ..VaultConfig::default()
+        };
+        let mut vault = crate::Vault::open(dir.path(), model.clone()).expect("open vault");
+        let alice = put_person(&vault, 0xC2);
+        let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
+        crate::conversation_dag::fixtures::grant(&vault, owner, true);
+        let room = EntityId::now();
+        vault
+            .create_conversation(
+                room,
+                &crate::conversation::ConversationBody::default(),
+                owner,
+                1,
+            )
+            .expect("create room");
+        let (turn, private) = {
+            let facade = facade_for(&vault, alice);
+            let receipt = facade
+                .witness(&WitnessTurn {
+                    conversation_ref: room.to_hex(),
+                    turn_ref: None,
+                    messages: vec![
+                        witness_message(
+                            0,
+                            WitnessAuthor::User,
+                            "The clinic moved my scan to Friday.",
+                        ),
+                        witness_message(1, WitnessAuthor::User, "We met for lunch at noon."),
+                    ],
+                    occurred_at: 500,
+                })
+                .expect("witness turn");
+            let id_of = |short_id: &str| {
+                facade
+                    .get_entity(short_id)
+                    .expect("read by short id")
+                    .value
+                    .map(|view| EntityId::from_hex(&view.id_hex).expect("entity id"))
+                    .expect("entity")
+            };
+            (
+                id_of(&receipt.turn_short_id),
+                id_of(&receipt.message_short_ids[0]),
+            )
+        };
+        let leased = {
+            let rtxn = vault.store.env.read_txn().expect("read txn");
+            vault
+                .store
+                .pending_embedding_token(&rtxn, &turn)
+                .expect("pending marker")
+                .expect("the witness marks the turn")
+        };
+        vault
+            .batch()
+            .vector_for_pending_embedding(&turn, &ERASED_MEANING, &leased)
+            .commit()
+            .expect("fill the turn");
+
+        vault.config.embedding_model = None;
+        vault
+            .delete_room_record(room, private, owner, reason)
+            .expect("erase the private message");
+        vault.config.embedding_model = model.embedding_model.clone();
+
+        assert_eq!(
+            vault.get_vector(&turn).expect("read vector"),
+            None,
+            "{reason:?}: a vectorless handle left the vector of the erased words"
+        );
+        assert!(
+            vault
+                .search_vector(&ERASED_MEANING, 5)
+                .expect("vector search")
+                .iter()
+                .all(|hit| hit.id != turn),
+            "{reason:?}: the erased words still find the turn"
+        );
+    }
+}
+
 /// DA-C/DA-E/DA-F: a crash after tombstone-first TXN1 leaves the subject
 /// untouched until startup recovery executes the purge; TXN1's request-keyed
 /// recovery sidecar lets that TXN3 append the authority record exactly once.
