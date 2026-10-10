@@ -26,15 +26,31 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
-    let registry = server.mcp_registry.lock().await;
-    let mut actor = registry
-        .resolve(&credential, unix_seconds_now(), |actor_class, actor_ref| {
-            server
-                .vault
-                .gate_actor_ceiling_exists(actor_class, actor_ref)
-                .unwrap_or(false)
-        })
-        .map_err(mcp_actor_resolution_error)?;
+    let mut registry = server.mcp_registry.lock().await;
+    let ceiling_exists = |actor_class: &str, actor_ref: &str| {
+        server
+            .vault
+            .gate_actor_ceiling_exists(actor_class, actor_ref)
+            .unwrap_or(false)
+    };
+    // The registry is memory: it learns a credential when one is redeemed over
+    // HTTP. A live paired slip it has not seen gets its record now, by the
+    // same rule, once the slip verifies — so a restart or a credential minted
+    // on the stopped vault does not lock an agent out.
+    let mut actor = match registry.resolve(&credential, unix_seconds_now(), ceiling_exists) {
+        Err(McpConnectorActorResolutionError::UnknownCredential)
+            if crate::api::pairing::register_live_paired_mcp(
+                &mut registry,
+                &credential,
+                headers,
+                server,
+            ) =>
+        {
+            registry.resolve(&credential, unix_seconds_now(), ceiling_exists)
+        }
+        resolved => resolved,
+    }
+    .map_err(mcp_actor_resolution_error)?;
     drop(registry);
     // The connector header selects a registered instrument, not another
     // principal. Verify that exact instrument with its holder proof; never
@@ -61,7 +77,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     {
         return Err(mcp_proof_error());
     }
-    if auth.org_ref().is_some() || !proof.allows_verb("read") {
+    if auth.org_ref().is_some() || !auth.has_scope(crate::auth::CoreScope::Read) {
         return Err(mcp_proof_error());
     }
     // The legacy registry can represent only all or one world/facet. Refuse
@@ -90,6 +106,33 @@ fn mcp_proof_error() -> McpGatewayError {
         "mcp_auth_required",
         "the registered connector requires its live paired holder proof",
     )
+}
+
+/// The verb a call needs on this door: Read, or for a write, Write — or
+/// Propose when the actor's live ceiling holds what it writes for review.
+/// Every write here is bound to its actor and lands at that ceiling, so a
+/// propose-only credential (ARCH-0028: write capability at `proposed`) writes
+/// here, and on no unbound door: those all require Write.
+fn mcp_call_scope(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    auth: &crate::auth::CoreAuth,
+    writes: bool,
+) -> crate::auth::CoreScope {
+    use crate::auth::CoreScope;
+    if !writes {
+        return CoreScope::Read;
+    }
+    let held_for_review = !auth.has_scope(CoreScope::Write)
+        && server
+            .vault
+            .gate_actor_ceiling_is_proposed(actor.gate_actor_class, &actor.gate_actor_ref)
+            .unwrap_or(false);
+    if held_for_review {
+        CoreScope::Propose
+    } else {
+        CoreScope::Write
+    }
 }
 
 pub(crate) fn mcp_connector_credential(headers: &HeaderMap) -> Result<String, McpGatewayError> {
@@ -325,10 +368,6 @@ fn mcp_credential_gate(
             )
         })?;
     }
-    auth.require(if writes {
-        crate::auth::CoreScope::Write
-    } else {
-        crate::auth::CoreScope::Read
-    })
-    .map_err(|_| mcp_proof_error())
+    auth.require(mcp_call_scope(server, actor, auth, writes))
+        .map_err(|_| mcp_proof_error())
 }
