@@ -108,7 +108,7 @@ fn typed_fixture_refuses_secret_bearing_receipts_and_denied_credentials() {
 #[test]
 fn typed_fixture_refuses_first_party_import_and_unknown_credential_args() {
     for fixture in [
-        conformance::WAT.replace("\"credential-call\"", "\"memory-put-claim\""),
+        conformance::WAT.replace("\"credential-call\"", "\"verb-call\""),
         conformance::WAT.replace("\\22host\\22", "\\22body\\22"),
     ] {
         let (_temp, root) = scratch();

@@ -29,6 +29,15 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 fn refusal(status: StatusCode, code: &str) -> Response {
     (status, Json(serde_json::json!({"error":{"code":code}}))).into_response()
 }
+/// A param or provider option that would pick the model or the route
+/// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`.
+fn route_selector_refusal(key: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error":{"code":"route_selector_forbidden","key":key}})),
+    )
+        .into_response()
+}
 fn failure(error: LlmError) -> Response {
     use oneiron::{FatalLlmError, RetryableLlmError};
     let (status, code) = match &error {
@@ -119,6 +128,11 @@ fn admit(
 ) -> Result<(Arc<dyn oneiron::LlmBackend>, Reservation), Box<Response>> {
     if !auth.is_owner_grade() {
         return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
+    }
+    // The request's model id picks the model and its route; a body field that
+    // names another is refused before anything is reserved.
+    if let Some(key) = request.route_selector_override() {
+        return Err(Box::new(route_selector_refusal(&key)));
     }
     let Some((backend, guard)) = &server.llm else {
         return Err(Box::new(refusal(

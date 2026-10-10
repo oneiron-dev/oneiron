@@ -28,22 +28,6 @@ impl GuestImports for Host {
     fn json_validate(&mut self, _: String, _: String) -> Result<bool, String> {
         Err("validator uses the shared host import".into())
     }
-    fn memory_search(&mut self, _: SearchInput) -> Result<SearchOutput, String> {
-        Ok(SearchOutput { results: vec![] })
-    }
-    fn memory_put_claim(&mut self, input: ClaimInput) -> Result<ClaimOutput, String> {
-        Ok(ClaimOutput { id: input.id })
-    }
-    fn memory_supersede_claim(&mut self, input: SupersedeInput) -> Result<ClaimOutput, String> {
-        Ok(ClaimOutput { id: input.new_id })
-    }
-    fn memory_put_edge(&mut self, input: EdgeInput) -> Result<EdgeOutput, String> {
-        Ok(EdgeOutput {
-            src: input.src,
-            kind: input.kind,
-            tgt: input.tgt,
-        })
-    }
     fn report_blocked(&mut self, _: String, _: String) -> Result<BlockedOutput, String> {
         Ok(BlockedOutput {
             receipt: "receipt".into(),
@@ -80,12 +64,8 @@ fn foreign_writes_and_all_wasi_imports_fail_construction() {
     let write = boundary
         .compile(
             br#"(component
-      (type $input-shape (record (field "new-id" string) (field "old-id" string) (field "now" u64)))
-      (import "supersede-input" (type $input (eq $input-shape)))
-      (type $output-shape (record (field "id" string)))
-      (import "mutation-result" (type $output (eq $output-shape)))
-      (type $reply (result $output (error string)))
-      (import "memory-supersede-claim" (func (param "input" $input) (result $reply))))"#,
+      (type $reply (result string (error string)))
+      (import "verb-call" (func (param "verb" string) (param "input" string) (result $reply))))"#,
         )
         .unwrap();
     assert!(

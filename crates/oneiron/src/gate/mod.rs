@@ -89,9 +89,8 @@ pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 pub(crate) use self::constants::{
     FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_OWNER_POLICY_DOCUMENT_KEY,
     POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
-    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
-    POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY,
-    POLICY_ROW_WORLD_REF_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_ROW_ACTION_KEY,
+    POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
 };
 pub(crate) use self::constants::{
     POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
@@ -156,8 +155,6 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
-#[cfg(test)]
-pub(crate) use self::operational_policy::default_manifest_with_linear_sync_pages_for_test;
 pub(crate) use self::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
 };
@@ -208,8 +205,6 @@ use self::constants::*;
 #[cfg(test)]
 use self::decision::*;
 #[cfg(test)]
-use self::decode::*;
-#[cfg(test)]
 use self::effect::*;
 #[cfg(test)]
 use self::grants::*;
@@ -219,8 +214,6 @@ use self::input::*;
 use self::resolution::*;
 #[cfg(test)]
 use crate::agent_def::AgentCeiling;
-#[cfg(test)]
-use crate::authority::CriticalWriteConfirmDisposition;
 #[cfg(test)]
 use crate::batch::EntityMetadataHeader;
 #[cfg(test)]
@@ -236,14 +229,7 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 #[cfg(test)]
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, CallPurpose};
-#[cfg(test)]
-use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
-#[cfg(test)]
-use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_POLICY_MANIFEST,
-};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST};
 #[cfg(test)]
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 #[cfg(test)]

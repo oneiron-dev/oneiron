@@ -138,6 +138,84 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
 }
 
 #[tokio::test]
+async fn a_call_that_picks_its_own_model_or_route_never_reaches_the_provider() {
+    let fake = FakeLlm::start(Vec::new(), None).await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        "default = \"cpa:olety7/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
+        fake.base_url
+    ))));
+    let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
+    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
+    let lease = guard.admit().unwrap().lease;
+    let mut fallback_list = request(&seat.model, "hi");
+    fallback_list
+        .provider_options
+        .insert("openai".into(), json!({ "models": ["other/model"] }));
+    let mut routed = request(&seat.model, "hi");
+    routed
+        .params
+        .insert("provider".into(), json!({ "order": ["other"] }));
+    for swapped in [fallback_list, routed] {
+        assert!(
+            seat.backend
+                .generate(swapped.clone(), &lease)
+                .await
+                .is_err()
+        );
+        let mut events = seat
+            .backend
+            .stream(swapped, &lease)
+            .expect("the ladder opens its stream lazily");
+        assert!(matches!(events.next().await, Some(Err(_))));
+    }
+    assert!(fake.seen().is_empty());
+}
+
+/// Astra R6 and R7 for chat turns and workflow steps, #1338's code-mode rule:
+/// an answer after a failed rung pays for that rung too, and a reply that
+/// reports no usage pays the reservation, never nothing. The key the ladder
+/// stamps is the key the charge reads.
+#[tokio::test]
+async fn an_answer_pays_for_the_rungs_that_failed_before_it_and_never_nothing() {
+    let failing = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
+    let no_usage = Reply::NoUsage {
+        deltas: vec!["ok".into()],
+        model: "big".into(),
+    };
+    let answering = FakeLlm::start(vec![Reply::text("ok"), no_usage], None).await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        r#"
+[providers.first]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.second]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
+"#,
+        failing.base_url, answering.base_url
+    ))));
+    let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
+    let floor = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
+    let guard = BudgetGuard::new("models-test", 100 * floor, BudgetExhaustionPolicy::Suspend);
+    let mut charges = Vec::new();
+    for _ in 0..2 {
+        let lease = guard.admit().unwrap().lease;
+        let before = guard.read().used_units;
+        let response = seat
+            .backend
+            .generate(request(&seat.model, "hi"), &lease)
+            .await
+            .expect("the second rung answers");
+        settle_answered(&guard, &lease, &response.usage, floor).unwrap();
+        charges.push(guard.read().used_units - before);
+    }
+    // 11 + 7 tokens and one failed rung; then no usage and one failed rung.
+    assert_eq!(charges, [18 + floor, 2 * floor]);
+}
+
+#[tokio::test]
 async fn anthropic_compatible_provider_generates_and_streams_through_a_seat() {
     let fake = FakeLlm::start(
         vec![
