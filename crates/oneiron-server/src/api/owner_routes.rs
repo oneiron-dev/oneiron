@@ -31,7 +31,10 @@ use super::{has_json_content_type, json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
-use crate::owner::{OwnerError, backup, healer, imports, location, runs, secrets};
+use crate::owner::{
+    OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, off_record,
+    pack_drift, persona, runs, secrets,
+};
 use crate::server::SyncServer;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
@@ -53,6 +56,24 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/runs/review", get(review_run))
         .route("/runs/approve", post(approve_run))
         .route("/runs/decline", post(decline_run))
+        .route("/cleanup", get(cleanup_review).post(configure_cleanup))
+        .route("/cleanup/accept", post(accept_cleanup))
+        .route("/cleanup/reject", post(reject_cleanup))
+        .route("/cleanup/restore", post(restore_archived))
+        .route("/persona", get(preview_persona))
+        .route("/persona/export", post(export_persona))
+        .route(
+            "/off-record",
+            get(off_record_session).post(enter_off_record),
+        )
+        .route("/off-record/mode", post(flip_off_record))
+        .route("/off-record/witness", post(witness_off_record))
+        .route("/off-record/promote", post(promote_off_record))
+        .route("/off-record/close", post(close_off_record))
+        .route("/graph-fs", get(read_graph_fs))
+        .route("/feedback/preview", post(preview_feedback))
+        .route("/feedback/send", post(send_feedback))
+        .route("/pack-drift", get(pack_drift_repairs))
 }
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
@@ -92,6 +113,20 @@ fn host(server: &SyncServer) -> Result<Arc<OwnerHost>, ApiError> {
     })
 }
 
+fn feedback_host(
+    server: &SyncServer,
+) -> Result<Arc<crate::feedback_delivery::FeedbackHost>, ApiError> {
+    server.feedback.clone().ok_or_else(|| {
+        ApiError::new(
+            "this server has no feedback destination",
+            ApiErrorDetails::InvalidState {
+                state: Some("feedback_destination_unset".to_owned()),
+            },
+            ["Set [feedback] destination and endpoint in the config, then restart `oneiron serve`."],
+        )
+    })
+}
+
 fn owner_error(error: OwnerError) -> ApiError {
     match error {
         OwnerError::Invalid(message) => ApiError::bad_request(message, None),
@@ -102,6 +137,14 @@ fn owner_error(error: OwnerError) -> ApiError {
             },
             ["Review it again and act on what you reviewed."],
         ),
+        OwnerError::Refused(message) => ApiError::new(
+            message,
+            ApiErrorDetails::InvalidState {
+                state: Some("refused".to_owned()),
+            },
+            std::iter::empty::<String>(),
+        ),
+        OwnerError::NotFound(what, which) => ApiError::not_found(what, Some(&which)),
         OwnerError::Engine(error) => match error.kind() {
             oneiron::ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
@@ -190,7 +233,8 @@ async fn rehearse_backup(
     owner(&auth, &server)?;
     let host = host(&server)?;
     let request = json_payload(payload)?;
-    let rehearsal = blocking(move || host.rehearse(request.file.as_deref())).await?;
+    let rehearsal =
+        blocking(move || host.rehearse(server.vault(), request.file.as_deref())).await?;
     Ok(Json(rehearsal))
 }
 
@@ -403,4 +447,236 @@ async fn decide_run(
     })
     .await?;
     Ok(Json(resolved))
+}
+
+async fn cleanup_review(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<cleanup::CleanupReview> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || cleanup::review(server.vault())).await?,
+    ))
+}
+
+async fn configure_cleanup(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<cleanup::CleanupSettings>, JsonRejection>,
+) -> OwnerReply<cleanup::CleanupReview> {
+    let owner = owner(&auth, &server)?;
+    let settings = json_payload(payload)?;
+    let review = blocking(move || cleanup::configure(server.vault(), &owner, &settings)).await?;
+    Ok(Json(review))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecideCleanup {
+    /// A proposal id from `GET /v1/owner/cleanup`.
+    proposal: String,
+}
+
+async fn accept_cleanup(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<DecideCleanup>, JsonRejection>,
+) -> OwnerReply<cleanup::Accepted> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let accepted =
+        blocking(move || cleanup::accept(server.vault(), &owner, &request.proposal)).await?;
+    Ok(Json(accepted))
+}
+
+async fn reject_cleanup(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<DecideCleanup>, JsonRejection>,
+) -> OwnerReply<cleanup::CleanupReview> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let review = blocking(move || {
+        cleanup::reject(server.vault(), &owner, &request.proposal)?;
+        cleanup::review(server.vault())
+    })
+    .await?;
+    Ok(Json(review))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoreArchived {
+    /// An id from the `archived` list of `GET /v1/owner/cleanup`.
+    entity: String,
+    /// That entry's `kind`: `record` (the default) or `completed_attempt`.
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+async fn restore_archived(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<RestoreArchived>, JsonRejection>,
+) -> OwnerReply<cleanup::CleanupReview> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let review = blocking(move || {
+        cleanup::restore(
+            server.vault(),
+            &owner,
+            &request.entity,
+            request.kind.as_deref(),
+        )?;
+        cleanup::review(server.vault())
+    })
+    .await?;
+    Ok(Json(review))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersonaQuery {
+    /// The person the card is about.
+    subject: String,
+}
+
+async fn preview_persona(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<PersonaQuery>, QueryRejection>,
+) -> OwnerReply<persona::Preview> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let preview = blocking(move || persona::preview(server.vault(), &query.subject)).await?;
+    Ok(Json(preview))
+}
+
+async fn export_persona(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<persona::ExportRequest>, JsonRejection>,
+) -> OwnerReply<persona::Exported> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let exported = blocking(move || persona::export(server.vault(), &owner, &request)).await?;
+    Ok(Json(exported))
+}
+
+async fn enter_off_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<off_record::Enter>, JsonRejection>,
+) -> OwnerReply<off_record::Session> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let session = blocking(move || off_record::enter(server.vault(), &owner, &request)).await?;
+    Ok(Json(session))
+}
+
+async fn off_record_session(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<off_record::SessionName>, QueryRejection>,
+) -> OwnerReply<off_record::Session> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let session = blocking(move || off_record::record(server.vault(), &query.session_ref)).await?;
+    Ok(Json(session))
+}
+
+async fn flip_off_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<off_record::Flip>, JsonRejection>,
+) -> OwnerReply<off_record::Session> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let session = blocking(move || off_record::flip(server.vault(), &owner, &request)).await?;
+    Ok(Json(session))
+}
+
+async fn witness_off_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<off_record::Witness>, JsonRejection>,
+) -> OwnerReply<oneiron::memory::WitnessReceipt> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let receipt = blocking(move || off_record::witness(server.vault(), &owner, &request)).await?;
+    Ok(Json(receipt))
+}
+
+async fn promote_off_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<off_record::Promote>, JsonRejection>,
+) -> OwnerReply<off_record::Promoted> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let promoted = blocking(move || off_record::promote(server.vault(), &owner, &request)).await?;
+    Ok(Json(promoted))
+}
+
+async fn close_off_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<off_record::SessionName>, JsonRejection>,
+) -> OwnerReply<off_record::Closed> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let closed =
+        blocking(move || off_record::close(server.vault(), &owner, &request.session_ref)).await?;
+    Ok(Json(closed))
+}
+
+async fn read_graph_fs(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<graph_fs::GraphFsQuery>, QueryRejection>,
+) -> OwnerReply<graph_fs::GraphFsReply> {
+    owner(&auth, &server)?;
+    // The owner's own scoped read: the tree is what the owner's slip reads.
+    let reader = auth
+        .verified_slip()
+        .and_then(oneiron::claim::ScopedReadActorKey::from_verified_slip)
+        .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
+    let query = query_params(query)?;
+    let reply = blocking(move || graph_fs::run(server.vault(), reader, &query)).await?;
+    Ok(Json(reply))
+}
+
+async fn preview_feedback(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<feedback::FeedbackRequest>, JsonRejection>,
+) -> OwnerReply<feedback::Preview> {
+    let owner = owner(&auth, &server)?;
+    let host = feedback_host(&server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || feedback::preview(server.vault(), &host, &owner, &request)).await?,
+    ))
+}
+
+async fn send_feedback(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<feedback::SendRequest>, JsonRejection>,
+) -> OwnerReply<feedback::Sent> {
+    let owner = owner(&auth, &server)?;
+    let host = feedback_host(&server)?;
+    let request = json_payload(payload)?;
+    let sent = blocking(move || feedback::send(server.vault(), &host, &owner, &request)).await?;
+    Ok(Json(sent))
+}
+
+async fn pack_drift_repairs(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<pack_drift::Repair>> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || pack_drift::repairs(server.vault())).await?,
+    ))
 }

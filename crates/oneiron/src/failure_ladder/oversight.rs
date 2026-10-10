@@ -134,7 +134,7 @@ impl Vault {
     pub fn record_healer_review(&self, case: &str, now: u64, escalated: bool) -> Result<()> {
         validate_case_ref(case)?;
         let key = case.to_owned();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut activity = ACTIVITY
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::InvalidConfig("unknown healer case".into()))?;
@@ -173,12 +173,14 @@ impl Vault {
             reviewed_at,
             escalated: false,
         };
-        self.with_write_txn(|txn| ACTIVITY.put(&self.store, txn, &case.to_owned(), &activity))
+        self.with_write_txn_grouped(|txn| {
+            ACTIVITY.put(&self.store, txn, &case.to_owned(), &activity)
+        })
     }
     /// Emits all three receipts in one transaction. Each contains counts so
     /// empty denominators remain explicit instead of yielding NaN rates.
     pub fn emit_healer_oversight(&self, now: u64) -> Result<Vec<OversightReceipt>> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let identity = crate::identity::ensure_device_identity_in_txn(self, txn)?;
             let mut counts = OversightCounts {
                 vault_device: identity.client_id,

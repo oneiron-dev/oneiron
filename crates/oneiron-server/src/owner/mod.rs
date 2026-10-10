@@ -7,9 +7,16 @@
 //! owner acts once and the engine writes the receipt.
 
 pub(crate) mod backup;
+pub(crate) mod cleanup;
+pub(crate) mod feedback;
+pub(crate) mod graph_fs;
 pub(crate) mod healer;
 pub(crate) mod imports;
 pub(crate) mod location;
+pub(crate) mod note_imports;
+pub(crate) mod off_record;
+pub(crate) mod pack_drift;
+pub(crate) mod persona;
 pub(crate) mod runs;
 pub(crate) mod schedule;
 pub(crate) mod secrets;
@@ -46,6 +53,10 @@ pub(crate) enum OwnerError {
     Invalid(String),
     /// What the owner reviewed is no longer what the vault holds.
     Changed(String),
+    /// The engine will not do this yet, whoever asks.
+    Refused(String),
+    /// The named thing does not exist: `(what, which)`.
+    NotFound(&'static str, String),
     /// The engine refused or failed.
     Engine(Box<oneiron::Error>),
     /// A host-side failure: files, directories, encoding.
@@ -55,7 +66,10 @@ pub(crate) enum OwnerError {
 impl std::fmt::Display for OwnerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Invalid(message) | Self::Changed(message) => f.write_str(message),
+            Self::Invalid(message) | Self::Changed(message) | Self::Refused(message) => {
+                f.write_str(message)
+            }
+            Self::NotFound(what, which) => write!(f, "no {what} {which}"),
             Self::Engine(error) => write!(f, "{error}"),
             Self::Host(error) => write!(f, "{error:#}"),
         }

@@ -12,7 +12,7 @@ pub(super) fn owner_recipe(server: &SyncServer) -> String {
     ))
 }
 
-fn person(server: &SyncServer, body: &[u8]) -> oneiron::EntityId {
+pub(super) fn person(server: &SyncServer, body: &[u8]) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();
     server
         .vault()
@@ -390,7 +390,7 @@ async fn owner_backup_rehearse_and_status_through_the_route() {
 /// own transaction and lands no receipt and no change.
 #[tokio::test]
 async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
-    use crate::owner::{OwnerError, imports, runs};
+    use crate::owner::{OwnerError, cleanup, imports, off_record, persona, runs};
     let (_dir, server) = auth_test_server();
     let vault = server.vault();
     let owner_id = vault.ensure_embedded_owner_actor().unwrap();
@@ -490,6 +490,130 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         oneiron::ClaimApprovalStatus::Proposed
     );
     assert_eq!(runs::pending(vault).unwrap()[0].run_id, run);
+
+    // Cleanup review, persona export and off-record controls refuse the same
+    // queued proof.
+    let husk = oneiron::EntityId::now();
+    assert!(
+        vault
+            .put_extraction_minted_person(
+                &husk,
+                oneiron::ClaimSource::Generated,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"husk",
+            )
+            .unwrap()
+    );
+    let cleanup_run =
+        oneiron::vault_cleanup::run_vault_cleanup(vault, &oneiron::attempt_queue::AttemptId::now())
+            .unwrap();
+    let cleanup_proposal = cleanup_run.proposal.unwrap().to_hex();
+    refused_owner(cleanup::accept(vault, &admitted, &cleanup_proposal).unwrap_err());
+    assert!(vault.archived_entity(&husk).unwrap().is_none());
+    let card = persona::preview(vault, &subject).unwrap();
+    let export = persona::ExportRequest {
+        subject,
+        stamp: card.stamp,
+        strike: Vec::new(),
+        unstrike: Vec::new(),
+    };
+    refused_owner(persona::export(vault, &admitted, &export).unwrap_err());
+    let room: off_record::Enter = serde_json::from_value(
+        json!({ "session_ref": "revoked-room", "mode": "off_record", "backend": "local" }),
+    )
+    .unwrap();
+    refused_owner(off_record::enter(vault, &admitted, &room).unwrap_err());
+    assert!(vault.off_record_session("revoked-room").unwrap().is_none());
+    // A promotion that passed the door and then waited for the writer is
+    // refused in the transaction that would replay the turn.
+    let room: off_record::Enter = serde_json::from_value(
+        json!({ "session_ref": "promote-room", "mode": "off_record", "backend": "local" }),
+    )
+    .unwrap();
+    off_record::enter(vault, &unbound, &room).unwrap();
+    let turn: off_record::Witness = serde_json::from_value(json!({
+        "session_ref": "promote-room",
+        "turn": { "conversation_ref": "", "turn_ref": null, "occurred_at": 100,
+                  "messages": [{ "id": null, "author": "user", "message_type": "utterance",
+                                 "content": "keep this", "metadata": null,
+                                 "is_visible": true, "order": 0 }] },
+    }))
+    .unwrap();
+    let receipt = off_record::witness(vault, &unbound, &turn).unwrap();
+    let turn =
+        oneiron::EntityId::from_hex(receipt.receipt_ref.strip_prefix("witness:").unwrap()).unwrap();
+    let session = vault
+        .off_record_session_vault()
+        .bind("promote-room")
+        .unwrap();
+    refused(session.promote_turn_as(&admitted, &turn).unwrap_err());
+    assert!(vault.get(&turn).unwrap().is_none(), "nothing replayed");
+    assert!(vault.off_record_promote_receipt(&turn).unwrap().is_none());
+    assert_eq!(
+        vault
+            .off_record_promote_pickup_markers_for_test(&turn)
+            .unwrap(),
+        0
+    );
+    let room = vault.off_record_session("promote-room").unwrap().unwrap();
+    assert!(room.promoted_turns.is_empty());
+    // The turn is still in the room: the live proof promotes it.
+    off_record::promote(
+        vault,
+        &unbound,
+        &serde_json::from_value(json!({ "session_ref": "promote-room", "turn": turn.to_hex() }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(vault.get(&turn).unwrap().is_some());
+    assert!(vault.off_record_promote_receipt(&turn).unwrap().is_some());
+    assert!(
+        vault
+            .off_record_promote_pickup_markers_for_test(&turn)
+            .unwrap()
+            > 0
+    );
+
+    // A witness into a room on the record lands in the vault itself; one
+    // that passed the door and then waited lands nothing.
+    let room: off_record::Enter = serde_json::from_value(
+        json!({ "session_ref": "witness-room", "mode": "off_record", "backend": "local" }),
+    )
+    .unwrap();
+    off_record::enter(vault, &unbound, &room).unwrap();
+    let on_record: off_record::Flip =
+        serde_json::from_value(json!({ "session_ref": "witness-room", "mode": "on_record" }))
+            .unwrap();
+    off_record::flip(vault, &unbound, &on_record).unwrap();
+    let message = oneiron::EntityId::now();
+    let said: off_record::Witness = serde_json::from_value(json!({
+        "session_ref": "witness-room",
+        "turn": { "conversation_ref": "", "turn_ref": null, "occurred_at": 200,
+                  "messages": [{ "id": message.to_hex(), "author": "user",
+                                 "message_type": "utterance", "content": "on the record",
+                                 "metadata": null, "is_visible": true, "order": 0 }] },
+    }))
+    .unwrap();
+    let session = vault
+        .off_record_session_vault()
+        .bind("witness-room")
+        .unwrap();
+    let error = vault
+        .memory(owner_id, oneiron::edge::EdgeActorClass::Human)
+        .witness_into_session_as(&admitted, &session, &said.turn, None)
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        oneiron::memory::MEMORY_CODE_FORBIDDEN,
+        "{error:?}"
+    );
+    assert!(vault.get(&message).unwrap().is_none(), "nothing landed");
+    off_record::witness(vault, &unbound, &said).unwrap();
+    assert!(
+        vault.get(&message).unwrap().is_some(),
+        "the live proof lands it"
+    );
 }
 
 /// Review serves a stored proposal through the release redaction even with

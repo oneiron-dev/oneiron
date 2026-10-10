@@ -68,7 +68,14 @@ pub struct BackupArgs {
 #[derive(Args, Clone, Debug)]
 pub struct RestoreArgs {
     /// The backup file.
-    pub backup: PathBuf,
+    #[arg(required_unless_present = "activate")]
+    pub backup: Option<PathBuf>,
+
+    /// Activate the previous vault a restore set aside at this path, which
+    /// is archived and refuses writes, as a side vault of the configured
+    /// vault: it gets key custody of its own and opens for writing again.
+    #[arg(long, value_name = "PREVIOUS_VAULT", conflicts_with_all = ["backup", "rehearse"])]
+    pub activate: Option<PathBuf>,
 
     /// Restore into a scratch copy, open and check it, and report. The vault
     /// itself is never opened, so this also works while `serve` runs.
@@ -123,6 +130,10 @@ pub enum ImportCommand {
     ClaudeCode(Box<ImportSourceArgs>),
     /// Codex history: `~/.codex/sessions`, any folder under it, or one rollout.
     Codex(Box<ImportSourceArgs>),
+    /// A folder of linked markdown notes (an Obsidian vault, an agent's
+    /// memory folder): writes the batch of new notes and links to `--out` and
+    /// prints the digest that approves or declines it.
+    Notes(Box<ImportNotesArgs>),
     /// Print the exact batch, ids filled in, and the digest that approves it.
     Preview(Box<ImportBatchArgs>),
     /// Admit the whole previewed batch as approved, in one act.
@@ -149,6 +160,26 @@ pub struct ImportSourceArgs {
     /// else.
     #[arg(long, conflicts_with = "dry_run")]
     pub queue: bool,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportNotesArgs {
+    /// The folder. Only this path is read: symbolic links and hidden entries
+    /// under it are skipped.
+    pub path: PathBuf,
+
+    /// Write the batch to this new file (owner-only). `import approve` and
+    /// `import decline` take it with the printed digest.
+    #[arg(long)]
+    pub out: PathBuf,
+
+    /// The note kind of a note whose frontmatter `type` names no kind the
+    /// vault knows.
+    #[arg(long, default_value = "observation")]
+    pub kind: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

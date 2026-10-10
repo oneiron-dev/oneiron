@@ -229,7 +229,7 @@ pub(super) fn register_foreign_world_for_pact(
     world: ForeignWorldId,
 ) -> Result<()> {
     let key = federation_world_key(pact_id, world.entity_id());
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         FEDERATION_WORLD.put(&vault.store, wtxn, &key, &WorldRegistrationMarker)?;
         Ok(())
     })
@@ -266,7 +266,7 @@ pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
     // ONE timestamp for the whole sweep: two worlds stamped by one transition
     // are stale at one instant, not at two clock reads.
     let stamped_at_secs = vault.store.clock.now_recorded_at();
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut stamped = 0usize;
         for (pact_id, reason, disconnect_epoch) in &terminal {
             let prefix = federation_world_prefix(pact_id);

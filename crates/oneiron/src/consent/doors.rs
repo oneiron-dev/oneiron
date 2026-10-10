@@ -247,9 +247,21 @@ impl Vault {
             )));
         }
         owner.credential = Some(Box::new(credential));
-        let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        self.recheck_owner(&owner)?;
         Ok(owner)
+    }
+
+    /// Rechecks `owner` against the vault as it stands now: the person is
+    /// live and, for a bound credential, the capability is live and the actor
+    /// still owns this vault. For an act that keeps no row of its own to
+    /// recheck in, so it runs only if the proof still holds when it starts.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds.
+    pub fn recheck_owner(&self, owner: &AuthenticatedOwner) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)
     }
 
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {
@@ -283,7 +295,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|wtxn| self.approve_once_in_txn(wtxn, owner, effect_digest))
+        self.with_write_txn_grouped(|wtxn| self.approve_once_in_txn(wtxn, owner, effect_digest))
     }
 
     /// Composes the exact consent receipt with the effect it authorizes.
@@ -343,7 +355,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|wtxn| self.create_standing_grant_in_txn(wtxn, owner, bound))
+        self.with_write_txn_grouped(|wtxn| self.create_standing_grant_in_txn(wtxn, owner, bound))
     }
 
     /// Transaction-composable [`Vault::create_standing_grant`].

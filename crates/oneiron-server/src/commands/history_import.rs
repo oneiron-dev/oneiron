@@ -48,13 +48,17 @@ const MAX_DECODED_BYTES: usize = 1 << 30;
 const EXPORT_CONVERSATIONS: &str = "conversations.json";
 
 /// The files an import read, the other `.jsonl` files it passed over under
-/// the given folder (a workflow journal, a tool's prompt history), and the
-/// session logs it left out for being over [`MAX_LOG_BYTES`].
+/// the given folder (a workflow journal, a tool's prompt history), the
+/// session logs it left out for being over [`MAX_LOG_BYTES`], and those it
+/// passed over for having another name.
 #[derive(Serialize, Default)]
 struct Files {
     read: usize,
     passed: usize,
     too_large: usize,
+    /// Session logs with another name (a hard link), never read: that name
+    /// may be outside the folder.
+    hard_linked: usize,
     /// Each log left out, reported beside the counts.
     #[serde(skip)]
     warnings: Vec<ImportWarning>,
@@ -73,6 +77,10 @@ enum ImportWarning {
         bytes: u64,
         limit: u64,
     },
+    /// Files with another name (a hard link), never read: that name can be
+    /// outside the folder. Counted, not named, as a notes import's stdout
+    /// names no note.
+    HardLinked { files: usize },
 }
 
 #[derive(Serialize, Default)]
@@ -176,6 +184,13 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
             "left out {} session log(s) over {MAX_LOG_BYTES} bytes; the report's \
              `warnings` names each",
             files.too_large
+        ));
+    }
+    if files.hard_linked > 0 {
+        progress(&format!(
+            "passed over {} session log(s) with another name (a hard link), which may \
+             be outside the folder",
+            files.hard_linked
         ));
     }
     Ok(())
@@ -289,6 +304,15 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             files.passed += 1;
             return Ok(());
         }
+        // Of the open file, as the notes walk does: a name swapped after the
+        // walk listed it changes nothing.
+        let metadata = file
+            .metadata()
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))?;
+        if hard_linked(&metadata) {
+            files.hard_linked += 1;
+            return Ok(());
+        }
         let Some(text) = files.read_log(&file, shown)? else {
             return Ok(());
         };
@@ -305,6 +329,11 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
         files.read += 1;
         Ok(())
     })?;
+    if files.hard_linked > 0 {
+        files.warnings.push(ImportWarning::HardLinked {
+            files: files.hard_linked,
+        });
+    }
     Ok((files, conversations))
 }
 
@@ -376,10 +405,12 @@ impl Decoded {
     }
 }
 
+pub(super) mod notes;
+
 #[cfg(unix)]
 mod confined;
 #[cfg(unix)]
-use confined::{open_in, walk_logs};
+use confined::{open_in, walk_logs, walk_notes};
 #[cfg(unix)]
 pub(super) mod queue;
 
@@ -433,7 +464,7 @@ fn read_queued(
         confined::walk(
             &folder,
             &path.with_extension(""),
-            0,
+            confined::LOGS,
             &mut |shown: &Path, file: File| {
                 if !session_log_name(source, shown) {
                     return Ok(());
@@ -493,6 +524,14 @@ fn walk_logs(
 }
 
 #[cfg(not(unix))]
+fn walk_notes(
+    path: &Path,
+    _visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    anyhow::bail!("importing a folder ({}) needs a unix host", path.display())
+}
+
+#[cfg(not(unix))]
 fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
     let path = dir.join(name);
     Ok(std::fs::symlink_metadata(&path)
@@ -500,6 +539,18 @@ fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
         .filter(std::fs::Metadata::is_file)
         .map(|_| File::open(&path))
         .transpose()?)
+}
+
+/// Whether the open file has another name (a hard link). A walk passes over
+/// such a file: the other name may be outside the folder it was given.
+#[cfg(unix)]
+fn hard_linked(metadata: &std::fs::Metadata) -> bool {
+    std::os::unix::fs::MetadataExt::nlink(metadata) > 1
+}
+
+#[cfg(not(unix))]
+fn hard_linked(_metadata: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// An export's conversations: the zip, its `conversations.json`, or the

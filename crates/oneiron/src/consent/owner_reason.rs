@@ -160,7 +160,7 @@ impl Vault {
     ) -> Result<OwnerReasonConfirmation> {
         let digest = effect.digest();
         let Some(reason) = payload.reason else {
-            return self.with_write_txn(|txn| {
+            return self.with_write_txn_grouped(|txn| {
                 owner.revalidate_in_txn(self, &*txn)?;
                 let receipt = self.approve_once_in_txn(txn, owner, digest)?;
                 Ok(OwnerReasonConfirmation {
@@ -189,7 +189,7 @@ impl Vault {
                 "reason must bind the exact non-catastrophe effect requirement",
             )));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
             let grant_ref = bound.digest().to_hex();
             if let Some(grant) = self.consent_grant_in_txn(&*txn, &grant_ref)?
@@ -258,7 +258,7 @@ impl Vault {
         if action.command != OWNER_REASON_UNDO_COMMAND {
             return Err(Error::Gate(GateError::ConsentGrantNotFound));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
             let key = RuleKey {
                 grant_ref: action.grant_ref.clone(),
@@ -302,7 +302,7 @@ impl Vault {
         effect: &ComposedEffect,
         confidence: ReasonMatchConfidence,
     ) -> Result<OwnerReasonVerdict> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut rules = Vec::new();
             let mut candidates = Vec::new();
             for entry in RULES.iter_from(&self.store, &*txn, &[])? {

@@ -387,7 +387,7 @@ pub fn capture_tier2_samples(
             sources,
         });
     }
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         let week = now / WEEK;
         let wk = week_key(week);
@@ -439,7 +439,7 @@ pub fn read_tier2_samples(vault: &Vault) -> Result<Vec<Tier2Sample>> {
     if !vault.config.failure_signals.exports() {
         return Ok(Vec::new());
     }
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         let mut live = Vec::new();
         let mut stale = Vec::new();

@@ -345,7 +345,7 @@ impl Vault {
     /// open-session pointer or aliases an existing sitting.
     pub fn spawn_dag_sub_session(&self, turn: &EntityId, actor: WriteActor) -> Result<EntityId> {
         let now = self.store.clock.now_recorded_at();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             actor_in_txn(&self.store, txn, actor)?;
             let conversation = conversation_of(&self.store, txn, turn)?;
             crate::conversation_dag::migrate_in_txn(self, txn, &conversation)?;
@@ -418,25 +418,6 @@ impl Vault {
         Ok(result)
     }
 
-    /// Resolves the selector and mints a summary in one transaction.
-    pub fn mint_dag_scope_summary(
-        &self,
-        scope: &ScopeSelector,
-        text: &str,
-        actor: WriteActor,
-    ) -> Result<EntityId> {
-        self.with_write_txn(|txn| {
-            mint_in_txn(
-                self,
-                txn,
-                scope,
-                text,
-                actor,
-                self.store.clock.now_recorded_at(),
-            )
-        })
-    }
-
     /// Projects the first thread chain and lands its header on the trunk atomically.
     pub fn mint_and_land_thread_summary(
         &self,
@@ -444,7 +425,7 @@ impl Vault {
         text: &str,
         actor: WriteActor,
     ) -> Result<(EntityId, LandedHeader)> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let selected = selected_thread_in_txn(self, txn, trunk)?
                 .ok_or_else(|| invalid("trunk has no thread"))?;
             let scope = ScopeSelector {
@@ -481,7 +462,7 @@ impl Vault {
         if as_record && land_on.is_none() {
             return Err(invalid("as_record requires land_on"));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
             let summary = mint_in_txn(self, txn, scope, text, actor, now)?;
             let landed = land_on
@@ -500,7 +481,7 @@ impl Vault {
         actor: WriteActor,
         as_record: bool,
     ) -> Result<LandedHeader> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             land_in_txn(
                 self,
                 txn,

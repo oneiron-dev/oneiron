@@ -75,7 +75,7 @@ pub fn history_free_window_required(vault: &Vault, key: &WindowKey) -> Result<bo
 
 /// Durably pins this window to history-free snapshot transport/persistence.
 pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
         Ok(())
     })
@@ -512,7 +512,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             Some(r) => r,
             None => {
                 // Stale marker — clear it
-                vault.with_write_txn(|wtxn| {
+                vault.with_write_txn_grouped(|wtxn| {
                     OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                     Ok(())
                 })?;
@@ -543,7 +543,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 require_history_free_window(vault, window_key)?;
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
@@ -553,7 +553,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         if crate::identity_topology::attribution_carrier_key(&raw)
             .is_some_and(|key| redacted_authors.contains(&key))
         {
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
@@ -567,7 +567,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         let protected_tombstone =
             quarantine_outbound_protected_tombstones(vault, window_key, &tombstones_map, id, &raw)?;
         if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
@@ -637,7 +637,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 replayed += 1;
             }
 
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
@@ -648,7 +648,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // receipts are LMDB-local accountability rows; undecodable bytes
         // fail closed using the same gate as reverse remat.
         if reverse_remat_skip_redaction_receipt_mirror(&raw) {
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
             })?;
@@ -686,7 +686,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 
         // Clear the marker
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
             Ok(())
         })?;

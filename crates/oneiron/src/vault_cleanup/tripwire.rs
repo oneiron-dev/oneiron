@@ -263,20 +263,26 @@ pub(super) fn cleanup_posture_in_txn(
 ///
 /// Storage errors.
 pub fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
-        if posture == CleanupPosture::AutoWithDigest && !rollout::auto_enabled(vault, wtxn)? {
-            return Err(Error::InvariantViolation(
-                "automatic cleanup rollout blockers are open",
-            ));
-        }
-        POSTURE.put(
-            &vault.store,
-            wtxn,
-            &(),
-            &posture.as_str().as_bytes().to_vec(),
-        )?;
-        Ok(())
-    })
+    vault.with_write_txn_grouped(|wtxn| set_cleanup_posture_in_txn(vault, wtxn, posture))
+}
+
+pub(super) fn set_cleanup_posture_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    posture: CleanupPosture,
+) -> Result<()> {
+    if posture == CleanupPosture::AutoWithDigest && !rollout::auto_enabled(vault, wtxn)? {
+        return Err(Error::InvariantViolation(
+            "automatic cleanup rollout blockers are open",
+        ));
+    }
+    POSTURE.put(
+        &vault.store,
+        wtxn,
+        &(),
+        &posture.as_str().as_bytes().to_vec(),
+    )?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

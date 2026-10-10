@@ -125,7 +125,7 @@ impl Vault {
         tgt: &EntityId,
         weight: f32,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::ports::EdgeStore::port_edge_upsert(self, txn, src, kind, tgt, weight)
         })
     }
@@ -206,7 +206,7 @@ impl Vault {
     /// Deletes a directed edge and its reverse index entry, behind the same
     /// guards as [`BatchBuilder::delete_edge`](crate::BatchBuilder::delete_edge).
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::ports::EdgeStore::port_edge_delete(self, txn, src, kind, tgt)
         })
     }

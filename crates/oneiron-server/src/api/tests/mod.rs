@@ -16,6 +16,7 @@ mod auth_idempotency;
 mod org_admin;
 mod owner_healer;
 mod owner_routes;
+mod owner_surfaces;
 mod slips;
 use crate::test_credentials as slip_credentials;
 mod billing_usage;
