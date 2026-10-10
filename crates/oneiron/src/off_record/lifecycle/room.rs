@@ -438,16 +438,13 @@ impl OffRecordSession<'_> {
             return Ok(());
         }
         talk.turn(turn, header.occurred_start, true);
-        let (Some(body), Some(header)) = (
-            self.vault.get(&message)?,
-            self.vault.read_entity_header(&message)?,
-        ) else {
+        let Some(body) = self.vault.get(&message)? else {
             return Ok(());
         };
         if blake3::hash(&body).as_bytes() != &kept.digest {
             return Ok(());
         }
-        talk.message(turn, message, header.occurred_start, &body)?;
+        talk.message(turn, message, kept.at, &body)?;
         if let Some(actor) = self
             .vault
             .targets(&message, EdgeKind::AuthoredBy, None)?

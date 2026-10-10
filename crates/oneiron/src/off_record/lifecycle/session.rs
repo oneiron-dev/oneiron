@@ -632,7 +632,11 @@ impl OffRecordSession<'_> {
 
     /// Notes the messages of a turn witnessed while the room was on record:
     /// they landed in base, where a copy of the talk reads them.
-    pub(crate) fn note_on_record_messages(&self, turn: EntityId, messages: &[(EntityId, &[u8])]) {
+    pub(crate) fn note_on_record_messages(
+        &self,
+        turn: EntityId,
+        messages: &[(EntityId, u64, &[u8])],
+    ) {
         if let Ok(mut state) = session_entry_state(&self.entry)
             && !state.record.closing
             && !state.gone
@@ -756,6 +760,22 @@ impl OffRecordSession<'_> {
             if (room.is_none() || state.record.promoted_turns.contains(turn.as_bytes()))
                 && let Some(receipt) = self.vault.off_record_promote_receipt(turn)?
             {
+                // In a room the receipt answers only someone who could save
+                // the turn now: their proof holds, they own this vault, and
+                // their membership shows every moment of it.
+                if let (Some(room), Some(owner)) = (room, owner) {
+                    let times = state.kept_times(*turn);
+                    let txn = self.vault.store.env.read_txn()?;
+                    owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
+                    super::room::require_sight_in_txn(
+                        self.vault,
+                        &txn,
+                        &self.session_ref,
+                        room,
+                        owner.actor(),
+                        &times,
+                    )?;
+                }
                 return Ok(receipt.outcome);
             }
             // The snapshot is taken under the state lock, so the journal this
@@ -858,17 +878,18 @@ impl OffRecordSession<'_> {
         // journal entries from the room — in that order, and never before.
         for plan in &plans {
             state.record.promoted_turns.push(*plan.turn().as_bytes());
-            let messages: Vec<(EntityId, &[u8])> = plan
+            let messages: Vec<(EntityId, u64, &[u8])> = plan
                 .ops
                 .iter()
                 .filter_map(|op| match op {
                     crate::batch::BatchOp::Put {
                         id,
                         entity_type,
+                        occurred,
                         data,
                         ..
                     } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE => {
-                        Some((*id, data.as_slice()))
+                        Some((*id, occurred.start, data.as_slice()))
                     }
                     _ => None,
                 })

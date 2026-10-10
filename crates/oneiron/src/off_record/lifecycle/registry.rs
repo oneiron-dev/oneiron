@@ -65,28 +65,40 @@ pub(super) struct OffRecordSessionEntryState {
     pub(super) kept_messages: BTreeMap<EntityId, KeptMessage>,
 }
 
-/// A message of the stretch that is in base now: its turn and the digest of
-/// its body as it was said.
+/// A message of the stretch that is in base now: its turn, when it was said
+/// and the digest of its body as it was said.
 pub(super) struct KeptMessage {
     pub(super) turn: EntityId,
+    pub(super) at: u64,
     pub(super) digest: [u8; 32],
 }
 
 impl OffRecordSessionEntryState {
-    /// Notes `messages` of `turn`, now in base, for a copy of a room's talk.
-    pub(super) fn keep_messages(&mut self, turn: EntityId, messages: &[(EntityId, &[u8])]) {
+    /// Notes `messages` of `turn` (each with when it was said and its body),
+    /// now in base, for a copy of a room's talk.
+    pub(super) fn keep_messages(&mut self, turn: EntityId, messages: &[(EntityId, u64, &[u8])]) {
         if self.record.room.is_none() {
             return;
         }
-        for &(message, body) in messages {
+        for &(message, at, body) in messages {
             self.kept_messages.insert(
                 message,
                 KeptMessage {
                     turn,
+                    at,
                     digest: *blake3::hash(body).as_bytes(),
                 },
             );
         }
+    }
+
+    /// When each kept message of `turn` was said.
+    pub(super) fn kept_times(&self, turn: EntityId) -> Vec<u64> {
+        self.kept_messages
+            .values()
+            .filter(|kept| kept.turn == turn)
+            .map(|kept| kept.at)
+            .collect()
     }
 }
 

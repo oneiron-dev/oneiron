@@ -437,10 +437,12 @@ impl Memory<'_> {
                 // A room on record took this turn into base; a copy of the
                 // talk reads its messages there.
                 if let Some(session) = on_record_session {
-                    let messages: Vec<(EntityId, &[u8])> = plan
+                    let messages: Vec<(EntityId, u64, &[u8])> = plan
                         .messages
                         .iter()
-                        .map(|planned| (planned.id, planned.body.as_slice()))
+                        .map(|planned| {
+                            (planned.id, planned.occurred.start, planned.body.as_slice())
+                        })
                         .collect();
                     session.note_on_record_messages(plan.turn_id, &messages);
                 }
