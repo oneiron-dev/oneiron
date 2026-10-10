@@ -1165,6 +1165,26 @@ fn seed_failed_task_and_open_turn(
     [task.to_hex(), room, turn]
 }
 
+/// On the stopped vault, while `author` is full-access: one claim of its own
+/// about `subject`, at a caller-chosen id, which takes effect. Returns the id.
+fn seed_effective_claim(vault: &Path, author: &Minted, subject: &Minted) -> String {
+    let id = oneiron::EntityId::now().to_hex();
+    let principal = |minted: &Minted| minted.printed["principal_ref"].as_str().unwrap().to_owned();
+    let vault = oneiron::Vault::open_owned(vault, oneiron::VaultConfig::server()).unwrap();
+    let input: oneiron::memory::ClaimInput = serde_json::from_value(json!({
+        "id": id, "predicate": "note.reviewed", "subject_ref": principal(subject),
+        "value": "original", "confidence": 0.8, "source": "observed",
+    }))
+    .unwrap();
+    let author = oneiron::EntityId::from_hex(&principal(author)).unwrap();
+    let written = vault
+        .memory(author, oneiron::EdgeActorClass::Agent)
+        .claim_upsert(&input)
+        .unwrap();
+    assert_eq!(written.approval, "auto", "{written:?}");
+    id
+}
+
 /// `tools/list`'s schema version, which every call states.
 fn schema_version(bridge: &mut Bridge) -> Value {
     let listed = bridge.call(1, "tools/list", json!({}));
@@ -1189,17 +1209,27 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     let mint = |name: &str, tier: &str| {
         Minted::new(&config, dir.path().join(format!("{name}.cred")), name, tier)
     };
+    let vault = dir.path().join("vault");
     let writer = mint("writer", "full-access");
+    // The reviewer wrote a claim of its own while it was full-access, then
+    // was minted again propose-only.
+    let earlier = Minted::new(
+        &config,
+        dir.path().join("reviewer-earlier.cred"),
+        "reviewer",
+        "full-access",
+    );
+    let own_claim = seed_effective_claim(&vault, &earlier, &writer);
     let reviewer = mint("reviewer", "propose-only");
     let reader = mint("reader", "read-only");
     let [failed, room, turn] =
-        seed_failed_task_and_open_turn(&dir.path().join("vault"), &writer, &[&reviewer, &reader]);
+        seed_failed_task_and_open_turn(&vault, &writer, &[&reviewer, &reader]);
     let principal = |minted: &Minted| minted.printed["principal_ref"].as_str().unwrap().to_owned();
 
     let port = free_port();
     let origin = format!("http://127.0.0.1:{port}");
     let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
-    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let server = serve(&config, port, &dir.path().join("serve.log"));
     let spawn = |minted: &Minted| {
         let name = minted.file.file_stem().unwrap().to_str().unwrap();
         let stderr = dir.path().join(format!("{name}.stderr"));
@@ -1238,11 +1268,28 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
         "{claimed:#}"
     );
 
-    // Every other write that takes effect at once, including a claim edit
-    // in place, is refused the same way.
+    // Every other write that takes effect at once is refused the same way,
+    // including an edit of its own claim in place, in either form serde reads
+    // a claim from (Sol on this PR: a positional spec hid its `id`).
     let reviewer_ref = principal(&reviewer);
     let mut in_place = proposal(&principal(&writer));
-    in_place["id"] = json!(oneiron::EntityId::now().to_hex());
+    in_place["id"] = json!(own_claim);
+    let positional = json!([
+        own_claim,
+        "note.reviewed",
+        principal(&writer),
+        "replaced",
+        0.8,
+        "observed",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+    ]);
     let commits = [
         (
             "witness",
@@ -1290,6 +1337,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
             }}}),
         ),
         ("claim_upsert", json!({ "spec": in_place })),
+        ("claim_upsert", json!({ "spec": positional })),
     ];
     for (id, (tool, arguments)) in (10..).zip(commits) {
         let answer = call(&mut as_reviewer, id, tool, arguments);
@@ -1326,6 +1374,25 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     for bridge in [as_writer, as_reviewer, as_reader] {
         bridge.close();
     }
+
+    // The reviewer's own claim is still in effect, as it was written.
+    sigterm(server);
+    let vault = oneiron::Vault::open_owned(&vault, oneiron::VaultConfig::server()).unwrap();
+    let kept = vault
+        .get_claim(&oneiron::EntityId::from_hex(&own_claim).unwrap())
+        .unwrap()
+        .expect("the claim is still there");
+    assert_eq!(
+        kept.approval,
+        oneiron::ClaimApprovalStatus::Auto,
+        "{kept:?}"
+    );
+    assert_eq!(
+        kept.lifecycle,
+        oneiron::ClaimLifecycleStatus::Active,
+        "{kept:?}"
+    );
+    assert_eq!(kept.value.as_str(), Some("original"), "{kept:?}");
 }
 
 /// `oneiron api` and `oneiron token pair` hand curl the credential the way
