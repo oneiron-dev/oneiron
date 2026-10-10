@@ -20109,6 +20109,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/history/land/tests.rs",
+     "purpose": "ARCH-0027: an imported coding session keeps the folder it ran in and when it started, and importing its log…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -23068,7 +23076,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 2,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -23614,6 +23622,31 @@
      "notable": [],
      "path": "src/memory/tests_regressions/recall_security.rs",
      "purpose": "Recall must not be a broader read side channel than point reads or BM25",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TranscriptMessage",
+      "TranscriptPage",
+      "TranscriptTurn"
+     ],
+     "path": "src/memory/transcript.rs",
+     "purpose": "One conversation's transcript, read as the bound actor: its turns in order, each with the messages it holds…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/transcript/tests.rs",
+     "purpose": "A conversation's transcript is what its reader may read of it, in order: never an erased message, never one…",
      "surface": {}
     },
     {
@@ -36799,7 +36832,7 @@
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
       "crate-vis": 2,
-      "fn": 24
+      "fn": 25
      }
     },
     {
@@ -39601,7 +39634,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39678,7 +39711,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 96,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40233,8 +40266,8 @@
    },
    "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2443,
-   "test_files": 773
+   "source_files": 2444,
+   "test_files": 775
   },
   "oneiron-android": {
    "files": [
@@ -48134,6 +48167,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/conversation_transcript.rs",
+     "purpose": "`GET /v1/core/conversations/{conversation_id}/transcript`: one conversation's turns and their messages in…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/conversation_transcript/tests.rs",
+     "purpose": "A loopback page reads an imported coding session from the vault alone, with the dev-mode credential a local…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -52047,7 +52098,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 166,
+     "files": 168,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52252,8 +52303,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 313,
-   "test_files": 122
+   "source_files": 314,
+   "test_files": 123
   },
   "oneiron-uniffi": {
    "files": [
