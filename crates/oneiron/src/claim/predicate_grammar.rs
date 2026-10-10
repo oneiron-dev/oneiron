@@ -25,6 +25,58 @@ pub const PREDICATE_LAYER_NAMESPACES: [&str; 4] = [
     PREDICATE_NAMESPACE_COMMITMENT,
 ];
 
+/// First segments of the predicate families the engine itself defines and
+/// writes outside the four layers and the reserved doors (sender reputation
+/// under `channel_identity`, calendar, booking, CRM and the rest). With those
+/// two they are the namespaces a pack may not take: not as its name, not in
+/// a declaration, and on neither side of a shipped migration map. Append a
+/// namespace when the engine starts writing a new family.
+pub const ENGINE_PREDICATE_NAMESPACES: [&str; 43] = [
+    "affect",
+    "agent",
+    "annotation",
+    "blob",
+    "booking",
+    "brief",
+    "calendar",
+    "campaign",
+    "channel_identity",
+    "charter",
+    "code",
+    "comm",
+    "conversation",
+    "coping",
+    "counterparty_contact",
+    "critic_reliability",
+    "crm",
+    "delivery_window",
+    "disclosure",
+    "dreamer",
+    "entity",
+    "facet",
+    "federation",
+    "import",
+    "judgment",
+    "linkedin",
+    "maintenance",
+    "merge",
+    "note",
+    "pattern",
+    "person",
+    "plugin",
+    "preference",
+    "profile",
+    "project",
+    "provider",
+    "repo",
+    "review",
+    "room",
+    "state",
+    "tasks",
+    "vault",
+    "voice",
+];
+
 /// Claim-module well-known predicate registry.
 ///
 /// This is only the crate-owned schema list used by structural validators and

@@ -1,8 +1,10 @@
 //! Closed PACK.md manifest parser. Requested powers stay data until local admission.
 use std::collections::BTreeSet;
 
+use super::migrations::PackMigration;
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
+use crate::saved_query::PackMigrationMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +38,26 @@ pub struct PackManifest {
     pub kinds: BTreeSet<String>,
     pub requested_grants: BTreeSet<String>,
     pub wake_subscriptions: BTreeSet<String>,
+    /// Predicate migration maps this source ships for moves from earlier
+    /// sources of the pack (ARCH-0059 §4, rung 1).
+    pub migrations: Vec<PackMigration>,
+}
+
+impl PackManifest {
+    /// The map this source ships for a move from the installed source
+    /// `content_hash` of `version`: the entry naming that exact source, else
+    /// the one naming its version alone.
+    #[must_use]
+    pub fn migration_from(&self, version: &str, content_hash: &str) -> Option<PackMigrationMap> {
+        let from_version = self.migrations.iter().filter(|entry| entry.from == version);
+        from_version
+            .clone()
+            .find(|entry| entry.source.as_deref() == Some(content_hash))
+            .or_else(|| from_version.clone().find(|entry| entry.source.is_none()))
+            .map(|entry| PackMigrationMap {
+                rewrites: entry.rewrites.clone(),
+            })
+    }
 }
 
 impl PackManifest {
@@ -66,6 +88,7 @@ impl PackManifest {
                     | "grants"
                     | "wakes"
                     | "facets"
+                    | "migrations"
             ) {
                 return Err(invalid("unknown PACK.md field"));
             }
@@ -148,7 +171,7 @@ impl PackManifest {
                 .ok_or_else(|| invalid("agent pack requires a facet map"))?
                 .validate_paths()?;
             if adapter.is_some()
-                || ["predicates", "kinds", "grants", "wakes"]
+                || ["predicates", "kinds", "grants", "wakes", "migrations"]
                     .iter()
                     .any(|key| fields.contains_key(key))
             {
@@ -180,6 +203,11 @@ impl PackManifest {
         if predicates.iter().any(|name| kinds.contains(name)) {
             return Err(invalid("predicate and structural names must be disjoint"));
         }
+        let migrations = fields
+            .get("migrations")
+            .map(|line| super::migrations::parse(line, &name, &version, &predicates))
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             name,
             description,
@@ -195,6 +223,7 @@ impl PackManifest {
             kinds,
             requested_grants: list("grants")?,
             wake_subscriptions: list("wakes")?,
+            migrations,
         })
     }
 }
@@ -226,7 +255,7 @@ fn validate_agent_text(value: &str, max_bytes: usize) -> Result<()> {
     }
     Ok(())
 }
-fn validate_name(name: &str) -> Result<()> {
+pub(super) fn validate_name(name: &str) -> Result<()> {
     if name.len() > 256
         || !name.contains('.')
         || name.split('.').any(|part| {

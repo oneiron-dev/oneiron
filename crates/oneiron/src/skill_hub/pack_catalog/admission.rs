@@ -2,8 +2,8 @@
 use super::super::install_transition::{InstallBinding, InstallDisposition, InstallPlan};
 use super::{
     BundledSkillPermissions, PackAdapter, PackCandidateReason, PackFitPolicy, PackFitVerdict,
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions,
-    PackQualification, PackRuntimeRecipe, PackSource, invalid,
+    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackKind,
+    PackPermissions, PackQualification, PackRuntimeRecipe, PackSource, invalid,
 };
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
@@ -38,6 +38,7 @@ impl Vault {
         let source = self
             .get_pack_source(&source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
+        refuse_engine_namespace(&source)?;
         let prior = {
             let txn = self.store.env.read_txn()?;
             self.installed_pack_in_txn(&txn, &source.manifest.name)?
@@ -114,11 +115,13 @@ impl Vault {
     /// a code flag or rules hit leaves it Candidate, without registering verbs.
     ///
     /// A changed source for an installed pack is an update: in the same
-    /// transaction, every saved query reading a predicate the update dropped
-    /// or remapped runs the pack-drift repair ladder (ARCH-0059 §4).
+    /// transaction, the source's shipped migration map for the move is stored
+    /// and every saved query reading a predicate the update dropped or
+    /// remapped runs the pack-drift repair ladder (ARCH-0059 §4).
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
         self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
+            refuse_engine_namespace(&source)?;
             if let Some(reason) = self.screen_pack_in_txn(
                 txn,
                 &source,
@@ -276,8 +279,13 @@ impl Vault {
                         pack: &source.manifest.name,
                         from_version: &from_version,
                         to_version: &source.manifest.version,
+                        from_source: &old.content_hash,
+                        to_source: &receipt.content_hash,
                         from_predicates: &from_predicates,
                         to_predicates: &source.manifest.predicates,
+                        shipped: source
+                            .manifest
+                            .migration_from(&from_version, &old.content_hash),
                     },
                     self.now_recorded_at(),
                 )?;
@@ -691,5 +699,22 @@ fn validate_qualification(source: &PackSource, result: &PackQualification) -> Re
     crate::skill::SkillContentHash::parse_hex(&runtime.runtime_hash)?;
     super::script_plan::ScriptExecutionPlan::from_source(source, runtime)?.qualified_shape()?;
     crate::batch::secret_scan::scan_metadata_field(&runtime.runtime_id)?;
+    Ok(())
+}
+
+/// A pack never takes a namespace the engine owns, not as its name and not in
+/// a declaration, so no shipped migration map can move an owner's query over
+/// engine state (ARCH-0059 §4). Checked where a source is admitted, not where
+/// a stored one is decoded, so a source stored before the rule still reads.
+pub(super) fn refuse_engine_namespace(source: &PackSource) -> Result<()> {
+    let manifest = &source.manifest;
+    if manifest.kind != PackKind::Agent
+        && std::iter::once(&manifest.name)
+            .chain(&manifest.predicates)
+            .chain(&manifest.kinds)
+            .any(|name| super::migrations::engine_owned(name))
+    {
+        return Err(invalid("a pack cannot take a namespace the engine owns"));
+    }
     Ok(())
 }
