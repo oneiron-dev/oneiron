@@ -107,6 +107,14 @@ fn no_wait(deadline: Option<Instant>) -> bool {
     deadline.is_some()
 }
 
+/// Whether a failed syscall is tried again. An interrupt always is. EAGAIN
+/// is only for a timed frame, whose [`ready`] waits first; an untimed frame
+/// returns it, so a caller's own nonblocking mode or socket timeout still
+/// ends the read.
+fn retry(errno: Errno, deadline: Option<Instant>) -> bool {
+    errno == Errno::INTR || (errno == Errno::AGAIN && deadline.is_some())
+}
+
 /// A send to a closed peer fails with EPIPE rather than raising SIGPIPE in
 /// a host that has not ignored it.
 #[cfg(target_os = "linux")]
@@ -193,7 +201,7 @@ pub fn send_frame_until<T: Serialize>(
         match result {
             Ok(written) => sent += written,
             // Interrupted, or the buffer filled again since poll: wait anew.
-            Err(Errno::INTR | Errno::AGAIN) => {}
+            Err(errno) if retry(errno, deadline) => {}
             Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }
@@ -255,7 +263,7 @@ pub fn recv_frame_until<T: DeserializeOwned>(
         let mut iov = [IoSliceMut::new(&mut header[got..])];
         let msg = match recvmsg(stream, &mut iov, &mut control, flags) {
             Ok(msg) => msg,
-            Err(Errno::INTR | Errno::AGAIN) => continue,
+            Err(errno) if retry(errno, deadline) => continue,
             Err(errno) => return Err(io::Error::from(errno).into()),
         };
         for message in control.drain() {
@@ -294,7 +302,7 @@ pub fn recv_frame_until<T: DeserializeOwned>(
         match recv(stream, &mut body[filled..], body_flags) {
             Ok((0, _)) => return Err(FrameError::Closed),
             Ok((read, _)) => filled += read,
-            Err(Errno::INTR | Errno::AGAIN) => {}
+            Err(errno) if retry(errno, deadline) => {}
             Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }

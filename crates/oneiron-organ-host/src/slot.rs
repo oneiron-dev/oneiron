@@ -154,6 +154,7 @@ impl Slot {
                 record_crash(&mut state);
             }
         }
+        state.generations.retain(|old| old.is_running());
     }
 
     /// The host stopped the process on purpose (deadline, unload, revoke):
@@ -167,6 +168,7 @@ impl Slot {
         {
             state.process = None;
         }
+        state.generations.retain(|old| old.is_running());
     }
 
     pub(crate) fn current(&self) -> Option<Arc<OrganProcess>> {
@@ -180,6 +182,21 @@ impl Slot {
         let mut state = self.lock();
         state.generations.retain(|old| old.is_running());
         state.generations.clone()
+    }
+
+    /// Forgets every process that has been killed and reaped. Until then a
+    /// stopped process is held here; after, it holds only its sockets.
+    pub(crate) fn prune(&self) {
+        self.lock().generations.retain(|old| old.is_running());
+    }
+
+    /// Whether this slot was retired and every process it started has
+    /// ended, so a revocation has nothing left to find in it. A slot not
+    /// retired yet can still start one, however empty it is now.
+    pub(crate) fn finished(&self) -> bool {
+        let mut state = self.lock();
+        state.generations.retain(|old| old.is_running());
+        state.unavailable.is_some() && state.generations.is_empty()
     }
 
     /// Refuses every later call and hands back every live process to stop.
