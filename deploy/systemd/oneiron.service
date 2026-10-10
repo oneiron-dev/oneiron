@@ -6,6 +6,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# glibc's per-thread malloc arenas hold freed memory: two arenas measured
+# 75-93 MiB less resident per vault running the local embedder, at the same
+# embedding speed (2026-10-10).
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=%h/.cargo/bin/oneiron-server serve --vault-path %h/.local/share/oneiron/default --config %h/.config/oneiron/oneiron.toml
 Restart=on-failure
 RestartSec=5s

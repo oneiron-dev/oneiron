@@ -22,6 +22,7 @@ mod places;
 mod read_fixture;
 mod search_retrieval;
 mod transactions;
+mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
 use crate::config::{VaultConfig, VaultPrivacyConfig};
@@ -66,6 +67,9 @@ pub struct Vault {
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
+    /// Where vector evidence starts now: the configured floors until the host
+    /// sets others ([`Vault::set_vector_evidence`]).
+    vector_evidence: std::sync::RwLock<crate::config::VectorEvidenceFloors>,
     pub(crate) analyzer: MultilingualAnalyzer,
     /// Which vault this handle belongs to, resolved once at open.
     vault_id: VaultId,

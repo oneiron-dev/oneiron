@@ -97,8 +97,9 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_scoring_constants(&mut hasher, builder.vault.config.fast_dims);
     // RET-01 reads the embedding space's own evidence floors, and a folding
     // run returns a matched MESSAGE as its TURN: both change the result.
-    fork_hash_f32(&mut hasher, builder.vault.config.vector_evidence.floor);
-    fork_hash_f32(&mut hasher, builder.vault.config.vector_evidence.strong);
+    let floors = builder.vault.vector_evidence();
+    fork_hash_f32(&mut hasher, floors.floor);
+    fork_hash_f32(&mut hasher, floors.strong);
     fork_hash_str(&mut hasher, builder.turn_fold.as_str());
     fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
     fork_hash_opt_str(&mut hasher, builder.skill_executor.as_deref());

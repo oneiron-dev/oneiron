@@ -160,9 +160,10 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     };
     // `json!` above is at its recursion limit, so these join after it.
     inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
+    let floors = builder.vault.vector_evidence();
     inputs.config["vector_evidence"] = json!({
-        "floor": builder.vault.config.vector_evidence.floor,
-        "strong": builder.vault.config.vector_evidence.strong,
+        "floor": floors.floor,
+        "strong": floors.strong,
     });
     inputs
 }

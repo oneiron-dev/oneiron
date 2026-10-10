@@ -4,14 +4,24 @@
 //! `llama-server`, a cloud. The server cannot see what the remote actually
 //! loaded, so the configured artifact string is provenance it logs and never
 //! verifies; the `model_id` it reports is the vault's space id, unchanged.
+//!
+//! One remote gets more: `oneiron-server embedder serve` marks its `/models`
+//! rows, and to it this client sends what a local vault's provider would see —
+//! whole texts, each marked query or document ([`Wire::Oneiron`]). It names
+//! the model it loaded and how it makes vectors, in its listing and in every
+//! answer, and the vault holds both to what it admitted.
 
 use std::io::Read;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
+use oneiron::error::StoreError;
 
+use super::local::evidence::{self, RunProfile};
+use super::remote::RungHold;
 use super::{EmbedderCommon, QueryEmbedder, engine_locality};
 use crate::config::EmbedderConfig;
 
@@ -27,6 +37,11 @@ const CHARS_PER_TOKEN: usize = 4;
 const PROBE_TEXT: &str = "oneiron embedder probe";
 /// Tool name on every upstream failure this provider reports.
 const EMBEDDER_TOOL: &str = "embedder-endpoint";
+/// Bytes of text one request to `embedder serve` carries at most; an input
+/// over it goes alone. About 8K tokens, which a CPU host embeds well inside
+/// the default request timeout: whole texts go on that wire, and a batch of
+/// long ones in one request would time out, and be retried, for ever.
+const ONEIRON_REQUEST_BYTES: usize = 32 * 1024;
 
 /// What a startup probe found.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,11 +66,46 @@ pub(crate) enum ProbeError {
 struct EmbeddingsRequest<'a> {
     model: &'a str,
     input: Vec<&'a str>,
+    #[serde(flatten)]
+    side: Side<'a>,
+}
+
+/// The fields beyond OpenAI's, sent only on [`Wire::Oneiron`].
+#[derive(Clone, Copy, Default, serde::Serialize)]
+struct Side<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_type: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instruction: Option<&'a str>,
+}
+
+/// What the remote reads beyond OpenAI's fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Wire {
+    /// Any OpenAI-compatible server. A query carries the configured
+    /// instruction in its text, and the input cap is approximated here in
+    /// characters, there being no tokenizer on this side.
+    OpenAi,
+    /// `oneiron-server embedder serve`, running the local provider: inputs go
+    /// whole, marked query or document, with any configured instruction
+    /// beside a query, so its tokenizer caps them and its prompts apply as in
+    /// a local vault.
+    Oneiron,
 }
 
 #[derive(serde::Deserialize)]
 struct EmbeddingsResponse {
     data: Vec<EmbeddingRow>,
+    /// The model that made these vectors, from `embedder serve`.
+    #[serde(default)]
+    model_id: Option<String>,
+    /// How these vectors were made, from `embedder serve`.
+    #[serde(default)]
+    transform: Option<String>,
+    /// How the model that made them runs, from `embedder serve`
+    /// ([`RunProfile`]), kept as sent.
+    #[serde(default)]
+    profile: Option<serde_json::Value>,
 }
 
 #[derive(serde::Deserialize)]
@@ -72,6 +122,89 @@ struct ModelsResponse {
 #[derive(serde::Deserialize)]
 struct ModelRow {
     id: String,
+    /// Set by `oneiron-server embedder serve`, with `model_id` and
+    /// `transform`.
+    #[serde(default)]
+    oneiron_wire: Option<u32>,
+    /// The model the server loaded, which an alias in `id` stands for.
+    #[serde(default)]
+    model_id: Option<String>,
+    #[serde(default)]
+    transform: Option<String>,
+    #[serde(default)]
+    profile: Option<serde_json::Value>,
+}
+
+/// What the vault admitted for a remote.
+#[derive(Clone, Debug, Default)]
+enum Admitted {
+    /// Nothing yet (the startup probe): answers are not checked.
+    #[default]
+    Unchecked,
+    /// The remote's listing when the vault admitted it, which every answer
+    /// must agree with ([`Listing::agrees_with`]).
+    Listing(Listing),
+    /// A remote rung, held to the vault's space without a listing of its own
+    /// ([`HttpEmbedder::hold_as_rung`]).
+    Rung(Arc<Mutex<RungHold>>),
+}
+
+/// What the remote's `/models` listing said about the configured model.
+#[derive(Clone, Debug)]
+pub(crate) struct Listing {
+    wire: Wire,
+    /// The model the remote loaded, when it says ([`Wire::Oneiron`]): the
+    /// configured model key may be an alias, and the model behind an alias
+    /// can change while the alias stays.
+    model_id: Option<String>,
+    /// How the remote makes vectors, when it says ([`Wire::Oneiron`]).
+    transform: Option<String>,
+    /// How it runs the model, when it says ([`Wire::Oneiron`]), as sent: a
+    /// profile this build cannot read is held to all the same, and judged
+    /// unmeasured.
+    profile: Option<serde_json::Value>,
+}
+
+impl Listing {
+    /// How the remote makes vectors, when it says.
+    pub(crate) fn transform(&self) -> Option<&str> {
+        self.transform.as_deref()
+    }
+
+    /// Where vector evidence starts in the space this listing serves: a
+    /// shipped model's measured floors when the remote names that model
+    /// loaded and runs it as it was measured ([`RunProfile`]), and the
+    /// vault's queries go unprompted; the engine's default otherwise, and for
+    /// any remote that does not say.
+    pub(crate) fn evidence(&self, config: &EmbedderConfig) -> VectorEvidenceFloors {
+        let profile = self
+            .profile
+            .clone()
+            .and_then(|profile| serde_json::from_value::<RunProfile>(profile).ok());
+        match (&self.model_id, profile) {
+            (Some(model_id), Some(profile)) => evidence::measured_floors(
+                model_id,
+                &profile,
+                evidence::endpoint_queries_unprompted(config),
+            )
+            .unwrap_or_default(),
+            _ => VectorEvidenceFloors::default(),
+        }
+    }
+
+    /// Whether an answer names what this listing did: `embedder serve` names
+    /// the model it loaded, its transform and its profile in every answer,
+    /// and any other server none of them.
+    fn agrees_with(&self, answer: &EmbeddingsResponse) -> bool {
+        match self.wire {
+            Wire::OpenAi => answer.transform.is_none(),
+            Wire::Oneiron => {
+                answer.model_id == self.model_id
+                    && answer.transform == self.transform
+                    && answer.profile == self.profile
+            }
+        }
+    }
 }
 
 pub(crate) struct HttpEmbedder {
@@ -80,6 +213,16 @@ pub(crate) struct HttpEmbedder {
     model_key: String,
     locality: EmbedderLocality,
     max_input_chars: usize,
+    /// The vault's own query prompt, if it names one; an empty one for a vault
+    /// on a shipped model with measured evidence floors, which were measured
+    /// with no query prompt, so the server's own never applies to it.
+    query_instruction: Option<String>,
+    /// The remote's last `/models` listing that answered, read before the
+    /// first request that depends on it and again at every admission.
+    listing: Mutex<Option<Listing>>,
+    /// What the vault admitted for this remote ([`Self::admit`]), which every
+    /// answer is then held to.
+    admitted: Mutex<Admitted>,
     client: reqwest::blocking::Client,
     truncations: AtomicU64,
 }
@@ -159,6 +302,11 @@ impl HttpEmbedder {
             model_key,
             locality: engine_locality(config.endpoint.locality),
             max_input_chars: config.max_input_tokens.saturating_mul(CHARS_PER_TOKEN),
+            query_instruction: config.query_instruction.clone().or_else(|| {
+                super::local::evidence::names_measured_model(&config.model_id).then(String::new)
+            }),
+            listing: Mutex::new(None),
+            admitted: Mutex::new(Admitted::Unchecked),
             client,
             truncations: AtomicU64::new(0),
         }))
@@ -181,11 +329,132 @@ impl HttpEmbedder {
         text
     }
 
-    fn post_embeddings(&self, texts: &[&str]) -> oneiron::Result<Vec<Vec<f32>>> {
+    /// What the remote reads, from its `/models` listing.
+    fn wire(&self) -> oneiron::Result<Wire> {
+        let cached = self
+            .listing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|listing| listing.wire);
+        match cached {
+            Some(wire) => Ok(wire),
+            None => Ok(self.read_listing()?.wire),
+        }
+    }
+
+    /// What the remote serves, read afresh. `embedder serve` names the model
+    /// it loaded, which must be this section's, the vault's space, and its
+    /// transform, which the slot holds to the vault's pin as it holds the
+    /// local provider's. An error when the listing does not answer, or names
+    /// another model.
+    pub(crate) fn served(&self) -> oneiron::Result<Listing> {
+        let listing = self.read_listing()?;
+        if listing.wire == Wire::Oneiron
+            && listing.model_id.as_deref() != Some(self.common.model_id.as_str())
+        {
+            return Err(oneiron::Error::Store(StoreError::EmbeddingModelChanged {
+                stored: self.common.model_id.clone(),
+                requested: listing.model_id.unwrap_or_default(),
+            }));
+        }
+        Ok(listing)
+    }
+
+    /// Records what the vault admitted. From then on an answer that names
+    /// another model, transform or profile than the admitted listing, or
+    /// names one where none was listed, is refused: a remote restarted with
+    /// another model or other settings, or whose listing could not be read as
+    /// `embedder serve`'s, fills and answers nothing until it is restored or
+    /// the vault is reembedded, or, for a profile alone, until the worker
+    /// admits it again with the floors that profile takes.
+    pub(crate) fn admit(&self, listing: Listing) {
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Listing(listing);
+    }
+
+    /// [`Self::admit`], once `vault_side` has taken the listing (its
+    /// transform against the vault's pin, its floors), with no answer checked
+    /// in between: an answer is held either to the listing before, under the
+    /// floors before, or to this one under this one's. Nothing is recorded
+    /// when `vault_side` refuses.
+    pub(crate) fn admit_with<E>(
+        &self,
+        listing: Listing,
+        vault_side: impl FnOnce(&Listing) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
+        vault_side(&listing)?;
+        *admitted = Admitted::Listing(listing);
+        Ok(())
+    }
+
+    /// Holds a remote rung to the vault's space. A rung is never admitted
+    /// from a listing of its own and fills the rows the vault's provider
+    /// would: an answer that names the model it loaded must name the vault's,
+    /// one that names a transform must name the one the vault admitted from
+    /// its provider, and under a model's measured floors one that names its
+    /// profile must name the measured one ([`RungHold::holds`]).
+    pub(crate) fn hold_as_rung(&self, hold: Arc<Mutex<RungHold>>) {
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Rung(hold);
+    }
+
+    /// Reads the remote's `/models` listing and keeps it. A listing that does
+    /// not answer, or answers with a failure, is an error and keeps nothing:
+    /// it is asked again next time. A remote with no listing route, or one
+    /// that answers without the mark, is the OpenAI wire.
+    fn read_listing(&self) -> oneiron::Result<Listing> {
+        let url = format!("{}/models", self.endpoint);
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .map_err(|e| transport_error("models listing", &e))?;
+        let status = response.status();
+        let listed = if status.is_success() {
+            let bytes = bounded_body(response)?;
+            serde_json::from_slice::<ModelsResponse>(&bytes).ok()
+        } else if no_listing_route(status) {
+            None
+        } else {
+            return Err(oneiron::Error::UpstreamToolFailure {
+                tool: EMBEDDER_TOOL,
+                code: format!("embedder models listing returned HTTP {status}"),
+            });
+        };
+        let listing = self.listing_of(listed.as_ref());
+        *self.listing.lock().unwrap_or_else(PoisonError::into_inner) = Some(listing.clone());
+        Ok(listing)
+    }
+
+    fn listing_of(&self, listed: Option<&ModelsResponse>) -> Listing {
+        let row = listed.and_then(|listed| {
+            listed.data.iter().find(|row| {
+                row.id == self.model_key && row.oneiron_wire == Some(super::serve::ONEIRON_WIRE)
+            })
+        });
+        match row {
+            Some(row) => Listing {
+                wire: Wire::Oneiron,
+                model_id: row.model_id.clone(),
+                transform: row.transform.clone(),
+                profile: row.profile.clone(),
+            },
+            None => Listing {
+                wire: Wire::OpenAi,
+                model_id: None,
+                transform: None,
+                profile: None,
+            },
+        }
+    }
+
+    /// Posts `texts`; the answer is held to what the vault admitted.
+    fn post_embeddings(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.endpoint);
         let body = EmbeddingsRequest {
             model: &self.model_key,
             input: texts.to_vec(),
+            side,
         };
         let response = self
             .client
@@ -207,6 +476,22 @@ impl HttpEmbedder {
                     code: format!("embeddings response: {e}"),
                 }
             })?;
+        let agrees = match &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner) {
+            Admitted::Unchecked => true,
+            Admitted::Listing(listing) => listing.agrees_with(&parsed),
+            Admitted::Rung(hold) => hold.lock().unwrap_or_else(PoisonError::into_inner).holds(
+                &self.common.model_id,
+                parsed.model_id.as_deref(),
+                parsed.transform.as_deref(),
+                parsed.profile.as_ref(),
+            ),
+        };
+        if !agrees {
+            return Err(oneiron::Error::UpstreamToolFailure {
+                tool: EMBEDDER_TOOL,
+                code: "embedder endpoint now serves another model, or makes vectors another way, than the vault admitted; restore it or run `oneiron-server reembed`".to_owned(),
+            });
+        }
         self.order_rows(parsed.data, texts.len())
     }
 
@@ -258,6 +543,24 @@ impl HttpEmbedder {
             })
             .collect()
     }
+}
+
+/// `texts` in order, as consecutive requests of at most `bytes` bytes each,
+/// or of one text where a text alone is over it.
+fn requests<'t, 'a>(texts: &'t [&'a str], bytes: usize) -> Vec<&'t [&'a str]> {
+    let mut requests = Vec::new();
+    let (mut start, mut size) = (0, 0);
+    for (index, text) in texts.iter().enumerate() {
+        if index > start && size + text.len() > bytes {
+            requests.push(&texts[start..index]);
+            (start, size) = (index, 0);
+        }
+        size += text.len();
+    }
+    if start < texts.len() {
+        requests.push(&texts[start..]);
+    }
+    requests
 }
 
 fn transport_error(what: &str, error: &reqwest::Error) -> oneiron::Error {
@@ -323,16 +626,31 @@ impl Embedder for HttpEmbedder {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
+        let wire = self.wire()?;
         let texts: Vec<String> = inputs
             .iter()
             .map(|input| {
-                self.common
-                    .document_text(input)
-                    .map(|text| self.truncate(text))
+                self.common.document_text(input).map(|text| match wire {
+                    Wire::OpenAi => self.truncate(text),
+                    Wire::Oneiron => text,
+                })
             })
             .collect::<oneiron::Result<_>>()?;
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-        self.post_embeddings(&refs)
+        match wire {
+            Wire::OpenAi => self.post_embeddings(&refs, Side::default()),
+            Wire::Oneiron => {
+                let side = Side {
+                    input_type: Some("document"),
+                    instruction: None,
+                };
+                let mut vectors = Vec::with_capacity(refs.len());
+                for request in requests(&refs, ONEIRON_REQUEST_BYTES) {
+                    vectors.extend(self.post_embeddings(request, side)?);
+                }
+                Ok(vectors)
+            }
+        }
     }
 }
 
@@ -346,11 +664,56 @@ impl QueryEmbedder for HttpEmbedder {
     }
 
     fn embed_query(&self, text: &str) -> oneiron::Result<Vec<f32>> {
-        let prefixed = self.truncate(self.common.query_text(text));
-        let mut vectors = self.post_embeddings(&[prefixed.as_str()])?;
+        let mut vectors = match self.wire()? {
+            Wire::OpenAi => {
+                let prefixed = self.truncate(self.common.query_text(text));
+                self.post_embeddings(&[prefixed.as_str()], Side::default())?
+            }
+            Wire::Oneiron => self.post_embeddings(
+                &[text],
+                Side {
+                    input_type: Some("query"),
+                    instruction: self.query_instruction.as_deref(),
+                },
+            )?,
+        };
         vectors.pop().ok_or(oneiron::Error::InvariantViolation(
             "embedder endpoint answered a single query with no row",
         ))
+    }
+}
+
+/// Whether a `/models` answer says the remote has no listing route, which
+/// any OpenAI-compatible server may lack: the OpenAI wire, with an unknown
+/// catalog.
+fn no_listing_route(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::NOT_FOUND
+            | reqwest::StatusCode::METHOD_NOT_ALLOWED
+            | reqwest::StatusCode::NOT_IMPLEMENTED
+    )
+}
+
+/// How the configured remote makes vectors, asked now: what `embedder serve`
+/// lists for the model, `None` for any other remote. `embedder serve` must
+/// serve the configured model itself, and the remote must then pass the
+/// startup probe held to that listing — it lists the model key and answers at
+/// the configured width, naming the listed model and transform — so a vault
+/// is never moved to a remote that cannot fill it, nor to a listing no answer
+/// came from. An error when it does not answer or does not pass.
+pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
+    let embedder = HttpEmbedder::from_config(config)?;
+    let served = embedder.served()?;
+    let transform = served.transform.clone();
+    embedder.admit(served);
+    match probe_endpoint(&embedder) {
+        Ok(ProbeOutcome::Ready) => Ok(transform),
+        Ok(ProbeOutcome::Unreachable(why)) => Err(oneiron::Error::UpstreamToolFailure {
+            tool: EMBEDDER_TOOL,
+            code: format!("embedder endpoint did not answer the probe: {why}"),
+        }),
+        Err(refused) => Err(oneiron::Error::InvalidConfig(refused.to_string())),
     }
 }
 
@@ -364,9 +727,12 @@ impl QueryEmbedder for HttpEmbedder {
 pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, ProbeError> {
     let url = format!("{}/models", embedder.endpoint);
     let listed = match embedder.client.get(&url).send() {
-        Ok(response) if response.status().is_success() => bounded_body(response)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<ModelsResponse>(&bytes).ok()),
+        Ok(response) if response.status().is_success() => match bounded_body(response) {
+            Ok(bytes) => serde_json::from_slice::<ModelsResponse>(&bytes).ok(),
+            Err(error) => return Ok(ProbeOutcome::Unreachable(error.to_string())),
+        },
+        // No listing route: an unknown catalog, so only the width is checked.
+        Ok(response) if no_listing_route(response.status()) => None,
         Ok(response) => {
             return Ok(ProbeOutcome::Unreachable(format!(
                 "GET {url} returned HTTP {}",
@@ -382,7 +748,7 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
     // A remote that answers but cannot be parsed is treated as reachable with
     // an unknown catalog: some servers omit `/models` entirely, and refusing
     // to start over a missing listing would be stricter than the contract.
-    if let Some(listed) = listed
+    if let Some(listed) = &listed
         && !listed.data.iter().any(|row| row.id == embedder.model_key)
     {
         return Err(ProbeError::ModelKeyMissing {
@@ -390,7 +756,13 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
             model_key: embedder.model_key.clone(),
         });
     }
-    match embedder.post_embeddings(&[PROBE_TEXT]) {
+    *embedder
+        .listing
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(embedder.listing_of(listed.as_ref()));
+    // Unmarked, so any remote answers it as a document; held to the listing
+    // admitted, if any (none at startup, the listed one before a move).
+    match embedder.post_embeddings(&[PROBE_TEXT], Side::default()) {
         Ok(vectors) => {
             let got = vectors.first().map_or(0, Vec::len);
             if got == embedder.common.dimensions {
