@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::ledger::{LeaseState, llm_usage_units, release_reservations_for_lease};
 use super::policy::BudgetPolicyTable;
+use super::settlement::settle_usage_locked;
 use super::state::BudgetState;
 use super::types::{
     BudgetAdmission, BudgetExhaustionPolicy, BudgetRead, BudgetSettlement,
@@ -114,7 +115,7 @@ impl BudgetGuard {
             )
             && state.local_continuation_available(reserve_units, Some(purpose));
         if continue_local {
-            let lease = state.issue_lease(0, false, "local");
+            let lease = state.issue_lease(0, false, "local", None);
             let read = state.read();
             return Ok(BudgetAdmission {
                 lease,
@@ -138,7 +139,7 @@ impl BudgetGuard {
             return Err(BudgetDenied::AdmissionDenied);
         }
 
-        let lease = state.issue_lease(0, false, "local");
+        let lease = state.issue_lease(0, false, "local", None);
         let read = state.read();
         Ok(BudgetAdmission {
             lease,
@@ -189,9 +190,20 @@ impl BudgetGuard {
         self.settle_usage(lease, units)
     }
 
+    /// Releases an open lease's reservation untouched. A lease that
+    /// [`Self::begin_dispatch`] started may already have bought work upstream,
+    /// so its abort charges the reservation instead, as unknown usage that is
+    /// never refunded.
     pub fn abort(&self, lease: &BudgetLease) -> Result<BudgetSettlement, BudgetDenied> {
         let mut state = self.lock_state();
         state.check_lease_provenance(lease)?;
+        if let Some(record) = state.leases.get(lease.id())
+            && record.dispatched
+            && record.state == LeaseState::Open
+        {
+            let reserve_units = record.reserve_units;
+            return settle_usage_locked(&mut state, lease, reserve_units);
+        }
         let mut aborted = None;
         {
             let Some(record) = state.leases.get_mut(lease.id()) else {

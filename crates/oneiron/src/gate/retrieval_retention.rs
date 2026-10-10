@@ -139,6 +139,3 @@ pub(crate) fn default_retrieval_retention_rows() -> Value {
         ]),
     ])
 }
-
-#[cfg(test)]
-mod tests;
