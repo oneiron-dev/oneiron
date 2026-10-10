@@ -437,12 +437,12 @@ impl Memory<'_> {
                 // A room on record took this turn into base; a copy of the
                 // talk reads its messages there.
                 if let Some(session) = on_record_session {
-                    session.note_on_record_messages(
-                        plan.turn_id,
-                        plan.messages
-                            .iter()
-                            .map(|planned| (planned.id, planned.body.as_slice())),
-                    );
+                    let messages: Vec<(EntityId, &[u8])> = plan
+                        .messages
+                        .iter()
+                        .map(|planned| (planned.id, planned.body.as_slice()))
+                        .collect();
+                    session.note_on_record_messages(plan.turn_id, &messages);
                 }
                 self.base_receipt(&plan)
             }

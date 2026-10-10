@@ -632,11 +632,7 @@ impl OffRecordSession<'_> {
 
     /// Notes the messages of a turn witnessed while the room was on record:
     /// they landed in base, where a copy of the talk reads them.
-    pub(crate) fn note_on_record_messages(
-        &self,
-        turn: EntityId,
-        messages: impl IntoIterator<Item = (EntityId, &[u8])>,
-    ) {
+    pub(crate) fn note_on_record_messages(&self, turn: EntityId, messages: &[(EntityId, &[u8])]) {
         if let Ok(mut state) = session_entry_state(&self.entry)
             && !state.record.closing
             && !state.gone
@@ -862,18 +858,22 @@ impl OffRecordSession<'_> {
         // journal entries from the room — in that order, and never before.
         for plan in &plans {
             state.record.promoted_turns.push(*plan.turn().as_bytes());
-            let messages = plan.ops.iter().filter_map(|op| match op {
-                crate::batch::BatchOp::Put {
-                    id,
-                    entity_type,
-                    data,
-                    ..
-                } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE => {
-                    Some((*id, data.as_slice()))
-                }
-                _ => None,
-            });
-            state.keep_messages(plan.turn(), messages);
+            let messages: Vec<(EntityId, &[u8])> = plan
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    crate::batch::BatchOp::Put {
+                        id,
+                        entity_type,
+                        data,
+                        ..
+                    } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE => {
+                        Some((*id, data.as_slice()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            state.keep_messages(plan.turn(), &messages);
         }
         self.entry.publish_state(state);
         for plan in &plans {
