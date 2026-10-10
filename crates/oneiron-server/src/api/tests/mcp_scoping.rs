@@ -16,11 +16,16 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
     .await;
     let scope = crate::mcp::mcp_effective_scope_value(&crate::mcp::McpConnectorScope::vault_wide());
 
-    let legacy = crate::mcp::McpToolName::all()
-        .iter()
-        .map(|tool| tool.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(legacy.len(), 7, "the retired census is seven names");
+    // The retired seven-name catalog (ONE-1704 M1); the names stay unknown.
+    let legacy = [
+        "oneiron.nav",
+        "oneiron.read",
+        "oneiron.edit",
+        "oneiron.ask",
+        "oneiron.ask_routed",
+        "oneiron.calendar",
+        "oneiron.book",
+    ];
 
     for (index, name) in legacy.iter().enumerate() {
         for path in ["/mcp", MCP_TOOL_FIRST_PATH] {

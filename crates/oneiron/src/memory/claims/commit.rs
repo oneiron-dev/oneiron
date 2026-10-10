@@ -93,7 +93,7 @@ impl Memory<'_> {
                 subject.to_hex()
             )));
         }
-        let source = parse_claim_source(&input.source)?;
+        let source = self.claim_source(&input.source)?;
         let value = json_to_rmpv(&input.value);
         let world = match &input.world_ref {
             Some(world_ref) => Some(self.resolve_ref(world_ref)?),
@@ -152,12 +152,7 @@ impl Memory<'_> {
             if let Some(scope) = scope_rmpv.clone() {
                 candidate = candidate.with_scope(scope);
             }
-            let mut envelope = WriteEnvelope::new(
-                WriteActor::new(self.actor, self.actor_class),
-                source,
-                WriteProvenance::new(facade_provenance("commit"))?,
-                approval,
-            );
+            let mut envelope = self.claim_envelope(source, "commit", approval)?;
             let occurred = TimeRange {
                 start: occurred_at,
                 end: occurred_at,
@@ -232,12 +227,7 @@ impl Memory<'_> {
                     // source and actor would qualify for Auto. The later grant is
                     // the only door allowed to close the prior head.
                     if prior.is_some() {
-                        envelope = WriteEnvelope::new(
-                            envelope.actor(),
-                            source,
-                            envelope.provenance().clone(),
-                            ClaimApprovalStatus::Proposed,
-                        );
+                        envelope = envelope.with_approval(ClaimApprovalStatus::Proposed);
                     }
                     self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
                     let closure_envelope = envelope.clone();

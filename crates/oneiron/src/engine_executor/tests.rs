@@ -18,6 +18,7 @@ use crate::{
 
 use super::*;
 
+mod agent_verb_regressions;
 mod output_decay;
 mod speech_identity_regressions;
 
@@ -1325,7 +1326,7 @@ fn heal_tally_failure_rolls_back_replay_and_retry_counts_once() {
         vault
             .get_code_run_replay_record(&config.run_id)
             .expect("load replay")
-            .is_none(),
+            .is_some_and(|record| record.step_checkpoints.is_empty()),
         "the replay append rolls back with its tally"
     );
 

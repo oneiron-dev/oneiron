@@ -9,9 +9,9 @@ use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
 };
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
-    GatedActorWrite, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect,
-    SelfFailedResult,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorCallSite,
+    ExecutorStorage, GatedActorWrite, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
+    SelfDurableWait, SelfEffect, SelfFailedResult,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -26,6 +26,7 @@ use crate::{Error, Result};
 pub(super) struct RecordingJsHost<'a, 's> {
     gated_write: &'a GatedActorWrite<'a>,
     run_id: EntityId,
+    step_start: u64,
     next_seq: u64,
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
@@ -51,6 +52,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         Self {
             gated_write,
             run_id,
+            step_start: next_seq,
             next_seq,
             determinism,
             legibility,
@@ -178,10 +180,16 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         // has made, so a write can never be sealed against a narrower history
         // than the one already recorded.
         self.gated_write.observe_bridge_history(&self.bridge_calls);
-        let outcome = match self
+        let site = ExecutorCallSite {
+            run_id: self.run_id,
+            seq,
+            step_start: self.step_start,
+            earlier: &self.bridge_calls,
+        };
+        let dispatched = self
             .gated_write
-            .dispatch_for_executor_run(self.run_id, call.clone())
-        {
+            .dispatch_for_executor_run(site, call.clone());
+        let outcome = match dispatched {
             Ok(outcome) => outcome,
             Err(err) => {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
@@ -316,12 +324,13 @@ pub(super) fn executor_boundary_contract() -> EngineExecutorResult<SandboxBounda
 pub(super) fn executor_system_prompt(wire: &str) -> String {
     let wire = wire.trim_end();
     let runtime_types = include_str!("../../../../components/code-run-quickjs/runtime.d.ts");
+    let verbs = crate::task_verb::sdk::code_mode_declarations();
     format!(
         "You are Oneiron's engine-native executor.\n{wire}\n\
          The guest runs inside the CODE-1 Wasmtime WIT component boundary.\n\
          Clock and random values are host-controlled imports for replay determinism.\n\
          Use the prompt-side host verb types below as documentation only; runtime effects arrive \
-         as typed host imports:\n\n{PLAIN_JS_HOST_VERB_DTS}\n{runtime_types}"
+         as typed host imports:\n\n{PLAIN_JS_HOST_VERB_DTS}\n{verbs}\n{runtime_types}"
     )
 }
 

@@ -52,8 +52,8 @@ Does your sandbox bind the host dispatcher self.oneiron?
 ```
 
 1. Does your sandbox bind Oneiron as the host dispatcher `self.oneiron`? Use
-   [code-mode-repl](#lane-code-mode-repl). A generic REPL is not enough: this release
-   registers `execute_code` nowhere.
+   [code-mode-repl](#lane-code-mode-repl). A generic REPL is not enough: a server
+   lists `execute_code` only when its operator configured code mode.
 2. Otherwise, can you `npm install` one package AND run TypeScript? Use
    [thin-client](#lane-thin-client). The package ships TypeScript source, so the
    runtime must load it: Bun 1.3+, not plain `node`.
@@ -84,9 +84,10 @@ const projection = await self.context({ /* projection descriptor */ });
 ```
 
 `execute_code` is the code-mode entry a host supplies. A server registers it only
-after binding a verified runtime, backend and budget lease; an unconfigured server
-lists it nowhere and refuses a direct call with `code_host_unbound` before any run
-is created. Either way the dispatcher above is the code-mode surface. Do not
+after binding a verified runtime, backend and budget lease (the shipped server binds
+them from `[models]` when `[models.code_mode]` names the executor's prompt package);
+an unconfigured server lists it nowhere and refuses a direct call with
+`code_host_unbound` before any run is created. Either way the dispatcher above is the code-mode surface. Do not
 install the HTTP client for this lane: the dispatcher already speaks the same wire,
 actor identity, and Gate that this pack documents.
 
