@@ -12,7 +12,7 @@ pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_t
 #[cfg(test)]
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
-    guard_room_message_delete, pin_room_message_edge, replay_room_message_tombstone,
+    guard_room_message_delete, pin_room_message_edge, record_author, replay_room_message_tombstone,
     room_message_owner_in, room_person_write_allowed,
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};

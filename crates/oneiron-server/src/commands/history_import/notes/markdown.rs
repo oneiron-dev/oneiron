@@ -116,8 +116,12 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
     // Where the current list item's content starts.
     let mut item_column = 0;
     let mut after_blank = true;
+    // Whether the line before was a heading, a rule or a closing fence that
+    // stood on its own (`own_block` below).
+    let mut after_block = false;
     for line in body.lines() {
         let line = expand_prefix(line);
+        let block_before = std::mem::take(&mut after_block);
         if let Some(open) = fence {
             // A fence ends with its closing line, or with the quote or list
             // item it opened in. Quote markers past its own are code.
@@ -131,6 +135,7 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
                     && content.trim_start_matches(open.mark).trim().is_empty()
                 {
                     fence = None;
+                    after_block = open.own_block && at_margin(inner, content);
                 }
                 continue;
             }
@@ -149,7 +154,13 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             continue;
         }
         indented_code = false;
-        if indent >= 4 && after_blank && !in_list && paragraph.is_empty() {
+        // Indented code cannot interrupt a paragraph. It follows a blank
+        // line, or a heading, rule or closed fence that stood on its own.
+        if indent >= 4
+            && !in_list
+            && paragraph.is_empty()
+            && (after_blank || (block_before && depth == 0))
+        {
             indented_code = true;
             continue;
         }
@@ -164,6 +175,12 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
         } else if indent < 2 && after_blank {
             in_list = false;
         }
+        // A block at the margin, outside any quote, with no text before it
+        // and no item opened on its line, stands on its own. Any other is
+        // left to the blank-line rule: where the text, item or quote around
+        // it ends (raw HTML, a lazy line, a nested item) is past what this
+        // reader tracks, and its next line may be theirs.
+        let own_block = !item && depth == 0 && paragraph.is_empty() && at_margin(inner, content);
         after_blank = false;
         // A `===` line under a paragraph makes it a heading, which ends there.
         if !paragraph.is_empty() && content.trim_end().chars().all(|c| c == '=') {
@@ -176,6 +193,7 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             span_links(&std::mem::take(&mut paragraph), &mut links);
             span_links(content, &mut links);
             in_list &= item || indent >= 2;
+            after_block = own_block;
             continue;
         }
         if let Some(mark) = fence_mark(content)
@@ -188,6 +206,7 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
                 len: run(content, mark),
                 depth,
                 item_column: in_list.then_some(item_column),
+                own_block,
             });
             continue;
         }
@@ -199,13 +218,15 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
 }
 
 /// An open code fence: its character and length, the block-quote depth it
-/// opened at, and where the content of the list item it opened in starts.
+/// opened at, where the content of the list item it opened in starts, and
+/// whether it opened as a block on its own.
 #[derive(Clone, Copy)]
 struct Fence {
     mark: char,
     len: usize,
     depth: usize,
     item_column: Option<usize>,
+    own_block: bool,
 }
 
 /// The line with the tabs among its leading spaces and quote markers
@@ -248,6 +269,14 @@ fn unquote(line: &str, most: Option<usize>) -> (usize, &str) {
         rest = inner.strip_prefix(' ').unwrap_or(inner);
     }
     (depth, rest)
+}
+
+/// Whether `content`, the rest of `inner`, starts in its first two columns
+/// behind spaces and tabs only. CommonMark indents a block marker with
+/// those alone, so one behind other whitespace (U+00A0) is text.
+fn at_margin(inner: &str, content: &str) -> bool {
+    let lead = &inner[..inner.len() - content.len()];
+    lead.bytes().all(|b| b == b' ' || b == b'\t') && indent(lead) < 2
 }
 
 /// Columns of leading whitespace; a tab moves to the next multiple of four.
@@ -463,6 +492,59 @@ mod tests {
         assert_eq!(targets("1. ```\n   [[a]]\n\n  [[b]]\n"), ["b"]);
         assert_eq!(targets("1. ```\n   [[a]]\n   ```\n   [[b]]\n"), ["b"]);
         assert_eq!(targets("Heading `\n===\nSee [[b]] and `.\n"), ["b"]);
+    }
+
+    /// Greptile (#1351, markdown.rs:154): indented code was code only after
+    /// a blank line, so an indented line right after a heading or a closed
+    /// fence read as text and made a link. It is code after such a block
+    /// when the block stands on its own outside any quote; a paragraph's
+    /// indented line still links.
+    #[test]
+    fn indented_code_after_a_block_is_code() {
+        let none = Vec::<String>::new();
+        assert_eq!(targets("# Heading\n    [[alpha]]\n"), none);
+        assert_eq!(targets("```\ncode\n```\n    [[alpha]]\n"), none);
+        assert_eq!(
+            targets("~~~\ncode\n~~~\n    [[alpha]]\n    [[beta]]\n"),
+            none
+        );
+        assert_eq!(targets("***\n    [[alpha]]\n"), none);
+        assert_eq!(targets("Text and\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(targets("# Heading\nText and\n    [[alpha]]\n"), ["alpha"]);
+        // Sol on #1359, rounds 1-4: a block that does not stand on its own
+        // (in a quote, after text, inside raw HTML, indented into a
+        // paragraph or an item, behind non-ASCII whitespace) leaves its next
+        // line to the blank-line rule, which keeps these lines text.
+        assert_eq!(targets("- item\n  > # Heading\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(targets("- item\n  > ***\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(
+            targets("- item\n  > ```\n  > [[a]]\n  > ```\n    [[alpha]]\n"),
+            ["alpha"]
+        );
+        assert_eq!(
+            targets("- item\n  > - ```\n  >   code\n  > [[alpha]]\n"),
+            ["alpha"]
+        );
+        assert_eq!(targets("1. item\n  > # Heading\n\n    [[alpha]]\n"), none);
+        assert_eq!(targets("Text\n    ===\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(targets("Text\n> ===\n>     [[alpha]]\n"), ["alpha"]);
+        assert_eq!(
+            targets("<div>\n# Heading\n    [[alpha]]\n</div>\n"),
+            ["alpha"]
+        );
+        assert_eq!(
+            targets("- item\n  - ```\n    code\n  # Heading\n    [[alpha]]\n"),
+            ["alpha"]
+        );
+        assert_eq!(
+            targets("- item\n  > # Heading\n  # Heading\n    [[alpha]]\n"),
+            ["alpha"]
+        );
+        assert_eq!(targets("\u{a0}# Heading\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(
+            targets("- item\n\n  > # Heading\n  >     code\n    [[alpha]]\n"),
+            ["alpha"]
+        );
     }
 
     /// Astra 4 and Greptile (markdown.rs:301): at every `[[` the scan looked

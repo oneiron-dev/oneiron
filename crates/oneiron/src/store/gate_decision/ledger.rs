@@ -25,7 +25,7 @@ use super::vet::vet_gate_decision_record;
 /// the Store door decodes with its current custody root after this typed read.
 pub(super) const LEDGER: SideTable<GateDecisionId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_LEDGER);
-const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
+pub(super) const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_CUSTODY_ROOT);
 
 /// Presence marker literal byte `b"1"`, matching the marker already on disk
@@ -211,8 +211,8 @@ impl Store {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
         if record.claim_id.is_some() {
             // The first claim-bound append pins a path to LIVE exterior custody
-            // in the same LMDB transaction as the value. Restoring the image
-            // elsewhere reuses that path, never a backed-up key copy.
+            // in the same LMDB transaction as the value. A restore in this vault's
+            // place reuses that path; a side restore forks it (checkpoint_custody).
             let expected = orcb::encode_custody_root(&self.core.gate_custody_root)?;
             match CUSTODY_ROOT.get(self, &*wtxn, &())? {
                 Some(bound) if bound != expected => {
@@ -373,6 +373,9 @@ impl Store {
         if cfg!(not(unix)) {
             // No exterior custody exists here, so no claim key can either.
             return Ok(());
+        }
+        if self.core.gate_custody_archived() {
+            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
         }
         let root = &self.core.gate_custody_root;
         let overflow = || Error::ArithmeticOverflow("gate decision key generation");
@@ -798,6 +801,11 @@ fn append_gate_decision_row_in_txn(
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
     let value = if let Some(claim) = record.claim_id {
+        // An archived vault's custody is its replacement's; it mints no key
+        // there.
+        if store.gate_custody_archived() {
+            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
+        }
         // A committed age sweep may still be retiring this partition's
         // exterior key. No new ciphertext may reuse it in that interval.
         if super::retention::RETIRE_PENDING.contains(store, &*wtxn, &claim)? {

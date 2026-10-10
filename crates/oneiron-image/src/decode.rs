@@ -134,6 +134,26 @@ fn header_limits() -> Limits {
     limits
 }
 
+/// What [`read_header`] may hold before it returns, for the caller to book
+/// first. A PNG or WebP header holds at most the metadata allowance, and the
+/// copy of the profile and EXIF it hands out. A JPEG decoder takes no
+/// allowance until its header is read: it holds its copy of the prefix, and
+/// two copies of the metadata in the header (its own, and the one it hands
+/// out).
+pub(crate) fn header_cost(bytes: &[u8]) -> u64 {
+    match sniff(bytes) {
+        Ok(Format::Jpeg) => {
+            let prefix = bytes.len().min(JPEG_HEADER_PREFIX) as u64;
+            // A file whose markers do not lead to a scan is refused before
+            // the decoder copies anything.
+            let header = jpeg_layout(bytes).map_or(0, |layout| layout.header_end as u64);
+            prefix.saturating_add(header.min(prefix).saturating_mul(2))
+        }
+        Ok(Format::Png | Format::Webp) => HEADER_ALLOC.saturating_mul(2),
+        Err(_) => 0,
+    }
+}
+
 /// Reads the header only.
 ///
 /// # Errors

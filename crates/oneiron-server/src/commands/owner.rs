@@ -1,5 +1,6 @@
 //! The owner's own commands on a stopped vault: doctor, backup, restore,
-//! export, the secret scan switch, import consent and agent-run consent.
+//! window recovery, export, the secret scan switch, import consent and
+//! agent-run consent.
 //!
 //! Holding the vault's writer lease is the owner proof here, the same local
 //! door the embedded export uses; a running `serve` answers the same actions
@@ -12,8 +13,8 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RestoreArgs, RunsCommand, SecretScanArgs,
-    SecretScanSwitch, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverWindowArgs, RestoreArgs, RunsCommand,
+    SecretScanArgs, SecretScanSwitch, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
@@ -46,6 +47,12 @@ fn vault_config(config: &ServeConfig) -> oneiron::VaultConfig {
 /// Opens the configured, existing vault for one owner command. `route` names
 /// the `/v1/owner` route to use instead while a server holds the vault.
 fn open_vault(config: &ServeConfig, route: &str) -> anyhow::Result<oneiron::Vault> {
+    open_stopped_vault(config, &format!("or ask it: `oneiron api raw {route}`"))
+}
+
+/// [`open_vault`] for a command no running server answers: `instead` says
+/// what to do while one holds the vault.
+fn open_stopped_vault(config: &ServeConfig, instead: &str) -> anyhow::Result<oneiron::Vault> {
     let path = &config.vault_path;
     anyhow::ensure!(
         path.join("data.mdb").is_file(),
@@ -54,8 +61,7 @@ fn open_vault(config: &ServeConfig, route: &str) -> anyhow::Result<oneiron::Vaul
     );
     oneiron::Vault::open_owned(path, vault_config(config)).map_err(|error| match error {
         oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
-            "vault {} is open in a running `oneiron serve`; stop it first, or ask it: \
-             `oneiron api raw {route}`",
+            "vault {} is open in a running `oneiron serve`; stop it first, {instead}",
             path.display()
         ),
         error => anyhow::anyhow!("open vault {}: {error}", path.display()),
@@ -165,18 +171,77 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
 
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
+    if let Some(previous) = &args.activate {
+        return emit(&backup::activate(
+            previous,
+            &config.vault_path,
+            vault_config(&config),
+        )?);
+    }
+    let backup = args
+        .backup
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("name the backup file to restore"))?;
     if args.rehearse {
+        // Read off the disk, beside a `serve` that may hold the vault.
+        let source = oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
         return emit(&backup::rehearse(
-            &args.backup,
+            backup,
             vault_config(&config),
             args.scratch.as_deref(),
+            &source,
         )?);
     }
     emit(&backup::restore_over(
-        &args.backup,
+        backup,
         &config.vault_path,
         vault_config(&config),
     )?)
+}
+
+#[derive(Serialize)]
+struct RecoveredWindow {
+    window: String,
+    /// `healthy`, `targeted_chunk_repair` or `full_rebuild`.
+    tier: &'static str,
+    /// The window's manifest of chunk hashes, kept for the next recovery.
+    manifest: std::path::PathBuf,
+    /// A bad manifest, renamed intact beside the manifest.
+    quarantined: Option<std::path::PathBuf>,
+    /// The chunks this recovery rebuilt.
+    rebuilt: Vec<String>,
+}
+
+/// Recovers one window of the stopped vault from a canonical snapshot of its
+/// CRDT state (ARCH-0038). Holding the writer lease stops the window's
+/// writers; the engine holds the snapshot in memory and writes none to disk.
+pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(
+        &config,
+        "since a window recovers only with its writers stopped",
+    )?;
+    let owner = local_owner(&vault)?;
+    let dir = config.vault_path.join("recovery");
+    let report = vault
+        .recover_window_from_canonical_snapshot(
+            &owner,
+            &args.window,
+            &dir,
+            oneiron::recovery::RecoveryBudget::default(),
+        )
+        .map_err(|error| anyhow::anyhow!("recover window {}: {error}", args.window))?;
+    emit(&RecoveredWindow {
+        window: report.window,
+        tier: match report.tier {
+            oneiron::recovery::RecoveryTier::Healthy => "healthy",
+            oneiron::recovery::RecoveryTier::TargetedChunkRepair => "targeted_chunk_repair",
+            oneiron::recovery::RecoveryTier::FullRebuild => "full_rebuild",
+        },
+        manifest: report.manifest_path,
+        quarantined: report.quarantine_path,
+        rebuilt: report.obligations,
+    })
 }
 
 #[derive(Serialize)]
@@ -367,6 +432,24 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
     }
 }
 
+/// Deciding a Dreamer proposal writes its signed history with the host's
+/// machine key (ONE-1634), so the command holds the host root as `serve` does
+/// when the config names its secret. Without one, a run the Dreamer proposed
+/// stays undecided here; a running server decides it at `/v1/owner/runs`.
+fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Result<()> {
+    let Some(secret) = config
+        .sync_server_config()
+        .auth_secret
+        .filter(|secret| !secret.is_empty())
+    else {
+        return Ok(());
+    };
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    vault.ensure_host_root_slip(&issuer)?;
+    vault.provision_engine_machine_identities(&issuer)?;
+    Ok(())
+}
+
 pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
     let serve = match &command {
         RunsCommand::Pending(args) => &args.serve,
@@ -375,6 +458,9 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
     };
     let config = resolve_serve_config(serve)?;
     let vault = open_vault(&config, "GET /v1/owner/runs")?;
+    if matches!(command, RunsCommand::Approve(_) | RunsCommand::Decline(_)) {
+        hold_host_root(&config, &vault)?;
+    }
     match command {
         RunsCommand::Pending(_) => emit(&runs::pending(&vault)?),
         RunsCommand::Show(args) => {

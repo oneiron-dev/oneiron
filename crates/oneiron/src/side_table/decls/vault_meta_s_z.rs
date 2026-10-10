@@ -313,6 +313,18 @@ side_tables! {
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.
     MESSAGE_STREAM_RECEIPT_BY_REF: VaultMeta b"stream:v1:" Named;
+    /// Which turns' saved tag sets name one entity, real or provisional: derived, local, never
+    /// synced. Empty marker. Key: entity id16 + turn id16.
+    TAGGING_MENTION_REF: VaultMeta b"tagging:mention_ref:v1:" Raw;
+    /// A provisional entity the tagger's save minted on an identity-key miss: local like the tags,
+    /// never synced, until it is confirmed into a real entity. Key: id16.
+    TAGGING_PROVISIONAL: VaultMeta b"tagging:provisional:v1:" Named;
+    /// Local identity-hint index over the provisional entities, keyed as the engine's identity
+    /// index is. Empty marker. Key: kind byte + blake3(hint) + id16.
+    TAGGING_PROVISIONAL_HINT: VaultMeta b"tagging:provisional_hint:v1:" Raw;
+    /// One turn's saved tag set under its derivation envelope: unconfirmed mentions, the turn's
+    /// mood and merge evidence. Derived, local, never synced. Key: turn id16.
+    TAGGING_TAG_SET: VaultMeta b"tagging:tags:v1:" Named;
     /// Owner/question-class ask band and consumed receipt markers. Key: id16 + u16be + class [+ ':' id16].
     TASK_ASK_BAND: VaultMeta b"tasks.ask.band.v1:" Raw;
     /// Local ed25519 seed (32 bytes) that signs one ask group's option-link words. Key: id16 (group).
@@ -376,6 +388,12 @@ side_tables! {
     /// Legacy per-entity VAD annotation metadata row (entity_type byte then subject id); no current
     /// write path, only read and deleted for headerless-delete cleanup. Key: u8 + id16.
     AFFECT_VAD_ANNOTATION_META: VaultMeta b"vad_ann:" Named;
+    /// Archives a vault that shares key custody with another: the image a restore in its place
+    /// set aside, and the replacement until it is in that place. An archived vault's handles
+    /// refuse every write until an owner activates it as a side vault. Runtime, never
+    /// checkpointed. Value: the byte 1 (archived wherever it is), or the byte 2 and an encoded
+    /// canonical root (archived unless it is at that root). Key: ().
+    VAULT_ARCHIVED_BY_RESTORE: VaultMeta b"vault_archived:v1" Raw;
     /// Marks a completed queue-record attempt as archived, pinned to the exact bytes archived. Key:
     /// id16 (AttemptId).
     VAULT_CLEANUP_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.attempt_archive.v1/" Raw;

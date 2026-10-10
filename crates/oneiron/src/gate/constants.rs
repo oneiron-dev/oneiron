@@ -196,6 +196,9 @@ pub(super) const DREAMER_PROVENANCE_RUN_ID_KEY: &str = "run_id";
 pub(super) const DREAMER_PROVENANCE_RUN_KEY: &str = "run";
 pub(super) const DREAMER_PROVENANCE_RUNNER_KEY: &str = "runner";
 pub(super) const DREAMER_PROVENANCE_SURFACE_KEY: &str = "surface";
+/// Dreamer-provenance key naming the import review a claim from imported
+/// evidence waits in (`ingest::history::history_import_review_id`).
+pub(crate) const DREAMER_PROVENANCE_IMPORT_REVIEW_KEY: &str = "import_review";
 pub(super) const ACTOR_CEILING_KEY: &str = "ceiling";
 pub(super) const SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY: &str = "max_auto_sensitivity";
 pub(super) const SOURCE_TRUST_AUTO_KEY: &str = "auto";

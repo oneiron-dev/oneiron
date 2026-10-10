@@ -1143,6 +1143,7 @@ fn test_memory_board(claim_score: f32) -> MemoriesSection {
         world: None,
         tier: crate::context_board::MemoryTier::Snippet,
         snippet: None,
+        source_revision: None,
     };
 
     MemoriesSection {

@@ -15,7 +15,7 @@ use crate::store::{
     Diagnostics, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, GateSystemNoticeRecord,
-    PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreOwner,
+    PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreEnv, StoreOwner,
     active_write_txn_depth, decode_pending_gate_consent, gate_decision_upper_bound,
     load_structural_kind_registry, pending_gate_consent_claim_id_from_key,
     pending_gate_consent_upper_bound, seed_default_policy_manifest_in_txn,
@@ -134,18 +134,23 @@ impl Store {
                 clock.observe_floor(floor)?;
             }
         }
-        let gate_custody_root = {
+        let (gate_custody_root, gate_custody_archived_at_open) = {
             let txn = env.read_txn()?;
-            vault_meta_view
+            let root = vault_meta_view
                 .get(&txn, crate::store::CUSTODY_ROOT_KEY)?
                 .map(|raw| crate::store::decode_custody_root(&raw))
                 .transpose()?
-                .unwrap_or_else(|| registered_path.path.clone())
+                .unwrap_or_else(|| registered_path.path.clone());
+            let mark =
+                vault_meta_view.get(&txn, crate::side_table::VAULT_ARCHIVED_BY_RESTORE.prefix)?;
+            let archived = crate::store::archived_by(mark.as_deref(), &registered_path.path)?;
+            (root, archived)
         };
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
             gate_custody_root,
-            env: shared_env,
+            gate_custody_archived_at_open,
+            env: StoreEnv::new(shared_env),
             raw,
             kind_registry,
             off_record_sessions: OffRecordSessionRegistry::default(),

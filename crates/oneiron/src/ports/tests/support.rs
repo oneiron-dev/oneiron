@@ -41,7 +41,7 @@ impl Backend for Vault {
         Ok(self.store.env.read_txn()?)
     }
     fn write(&self) -> Result<heed::RwTxn<'_>> {
-        Ok(self.store.env.write_txn()?)
+        self.store.env.write_txn()
     }
     fn commit(&self, txn: heed::RwTxn<'_>) -> Result<()> {
         Ok(txn.commit()?)

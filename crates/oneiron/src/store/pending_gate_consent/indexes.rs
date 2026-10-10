@@ -301,12 +301,21 @@ impl Store {
         run_id: &str,
     ) -> Result<Vec<PendingGateConsentRecord>> {
         let rtxn = self.env.read_txn()?;
+        self.pending_gate_consents_for_run_in_txn(&rtxn, run_id)
+    }
+
+    /// [`Self::pending_gate_consents_for_run`] inside the caller's snapshot.
+    pub(crate) fn pending_gate_consents_for_run_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        run_id: &str,
+    ) -> Result<Vec<PendingGateConsentRecord>> {
         let scan_prefix = suffix_of(
             pending_gate_consent_run_index_prefix(run_id),
             super::keys::PENDING_GATE_CONSENT_RUN_INDEX_PREFIX,
         );
         self.pending_gate_consents_for_vec_index_in_txn(
-            &rtxn,
+            txn,
             RUN_INDEX,
             &scan_prefix,
             "pending gate consent run index",

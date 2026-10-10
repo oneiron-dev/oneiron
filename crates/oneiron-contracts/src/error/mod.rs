@@ -122,6 +122,7 @@ pub enum ErrorKind {
     InvalidSkillBody,
     SkillEditGateRetry,
     SkillContentAnchorTypeMismatch,
+    SkillPackageUnavailable,
     InvalidAgentDefBody,
     AgentDefinitionNotFound,
     AgentDefinitionDisabled,
@@ -307,10 +308,12 @@ pub enum ErrorKind {
     InvalidMachineClaimProof,
     MachineClaimHistoryIncomplete,
     RemoteMachineHistoryPending,
+    EngineIdentitiesNotProvisioned,
     SideTableRow,
     SideTableKeyUndeclared,
     ScopedReadOwnerNotLive,
     EmbeddingTransformChanged,
+    ArchivedVault,
 }
 
 /// Crate error type.

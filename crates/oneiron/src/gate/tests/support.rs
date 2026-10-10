@@ -730,17 +730,6 @@ pub(super) fn put_text_entity(
         .commit()
 }
 
-pub(super) fn put_vector_entity(vault: &crate::Vault, id: &EntityId, vector: &[f32]) -> Result<()> {
-    vault.put_entity(
-        id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        test_time(1),
-        1,
-        b"vector entity",
-    )?;
-    vault.put_vector(id, vector)
-}
-
 pub(super) fn put_dangling_short_id(
     vault: &crate::Vault,
     short_id: &str,
@@ -1017,23 +1006,6 @@ pub(super) fn assert_gate_rejected(
         }
         other => panic!("expected GateWriteRejected, got {other:?}"),
     }
-}
-
-pub(super) fn assert_metric_counter_advanced(
-    before: &GateMetricsSnapshot,
-    after: &GateMetricsSnapshot,
-    outcome: GateOutcome,
-    reason_class: GateMetricReasonClass,
-    delta: u64,
-) {
-    let before_count = before.count(outcome, reason_class);
-    let after_count = after.count(outcome, reason_class);
-    assert!(
-        after_count >= before_count + delta,
-        "expected metric {}/{} to advance by at least {delta}; before={before_count}, after={after_count}",
-        outcome.as_str(),
-        reason_class.as_str()
-    );
 }
 
 pub(super) fn stored_claim_body(vault: &crate::Vault, id: &EntityId) -> Result<ClaimBody> {

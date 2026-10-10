@@ -240,7 +240,7 @@ impl Memory<'_> {
         // existing live schedule without appending a second Gate decision. A
         // missing key writes only inside this uncommitted transaction and is
         // therefore neither durable nor claimable.
-        let mut preflight_txn = self.vault.store.env.write_txn().map_err(Error::from)?;
+        let mut preflight_txn = self.vault.store.env.write_txn()?;
         verify_actor_binding_in_txn(self.vault, &preflight_txn, self.actor, self.actor_class)?;
         let preflight = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault,

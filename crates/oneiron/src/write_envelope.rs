@@ -506,6 +506,30 @@ pub(crate) const WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY: &str = "candidate_eviden
 /// Present ONLY when the lineage says more than the declared source already
 /// did, so trivial-lineage writes keep the evidence map they always had.
 pub(crate) const WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY: &str = "lineage";
+/// The evidence a raw predecessor held at its top level, carried by a stamped
+/// successor apart from any writer's `candidate_evidence`. Readers that check
+/// a raw claim's evidence where it was written (typed citations) check it here.
+pub(crate) const WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY: &str = "carried_evidence";
+
+/// The raw predecessor's evidence a stamped claim carries (see
+/// [`WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY`]). A stamp is never carried
+/// evidence, so a value that holds one is not.
+pub(crate) fn envelope_carried_evidence(evidence: &Value) -> Option<&Value> {
+    fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    }
+    let Value::Map(entries) = evidence else {
+        return None;
+    };
+    field(entries, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)?;
+    match field(entries, WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY)? {
+        Value::Map(carried) if field(carried, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY).is_some() => None,
+        carried => Some(carried),
+    }
+}
 
 pub(crate) fn write_envelope_evidence(
     envelope: &WriteEnvelope,

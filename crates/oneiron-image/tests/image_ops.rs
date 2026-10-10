@@ -376,7 +376,7 @@ fn animation_wide_channels_and_foreign_profiles_are_refused() {
     )
     .expect("untagged");
     assert_eq!(parsed(&body(&untagged)).source.icc, Icc::None);
-    assert!(untagged.notes.warnings.iter().any(|w| w.contains("sRGB")));
+    assert_eq!(untagged.notes.warnings, ["untagged_read_as_srgb"]);
 }
 
 #[test]
