@@ -28,8 +28,10 @@ impl<T: OwnServerTransport> OwnServerBackend<T> {
             .admit(request, stream)
     }
 }
-/// One request to the own server per call; retries stay with the host.
-impl<T: OwnServerTransport> oneiron::llm::SingleRouteBackend for OwnServerBackend<T> {
+/// One request to the own server per call, when the transport sends once.
+impl<T: OwnServerTransport + oneiron::llm::SingleSend> oneiron::llm::SingleRouteBackend
+    for OwnServerBackend<T>
+{
     fn preflight(&self, request: &LlmRequest, stream: bool) -> oneiron::LlmResult<()> {
         self.admit(request, stream)
     }

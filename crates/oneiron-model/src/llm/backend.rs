@@ -82,13 +82,19 @@ pub trait LlmBackend: Send + Sync {
 
 /// A backend whose one call is one request to one route: no retry, and no
 /// fallback to another model or origin. A run admission's gate wraps only
-/// these, so the permit it checks covers exactly the request that leaves.
+/// these, so the permit it checks covers exactly the request that leaves. A
+/// wire adapter is one only over a [`SingleSend`] transport.
 pub trait SingleRouteBackend: LlmBackend {
     /// Every check this backend makes before it sends, with no I/O: the
     /// refusal its `generate` or `stream` would return for `request` before
     /// any byte leaves, or `Ok` when it would send.
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()>;
 }
+
+/// A transport or runtime that makes one request per call: it never retries,
+/// and never follows a redirect to another origin. Its author claims it; a
+/// retrying transport stays below a ladder, never below a run's gate.
+pub trait SingleSend {}
 
 /// Opaque admission token issued by the budget guard.
 #[derive(Clone)]

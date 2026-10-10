@@ -95,10 +95,11 @@ impl<T> AnthropicMessagesBackend<T> {
     }
 }
 
-/// One request to the configured Messages endpoint per call; retries stay with the host.
+/// One request to the configured Messages endpoint per call, when the host's
+/// transport sends once; retries stay with the host, above a run's gate.
 impl<T> oneiron::llm::SingleRouteBackend for AnthropicMessagesBackend<T>
 where
-    T: AnthropicMessagesTransport,
+    T: AnthropicMessagesTransport + oneiron::llm::SingleSend,
 {
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         build_anthropic_messages_request(&self.config, request, stream).map(drop)

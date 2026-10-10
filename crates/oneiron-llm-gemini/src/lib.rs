@@ -26,8 +26,11 @@ impl<T: GeminiTransport> GeminiBackend<T> {
         })
     }
 }
-/// One request to the configured endpoint per call; retries stay with the host.
-impl<T: GeminiTransport> oneiron::llm::SingleRouteBackend for GeminiBackend<T> {
+/// One request to the configured endpoint per call, when the host's transport
+/// sends once; retries stay with the host, above a run's gate.
+impl<T: GeminiTransport + oneiron::llm::SingleSend> oneiron::llm::SingleRouteBackend
+    for GeminiBackend<T>
+{
     fn preflight(&self, request: &LlmRequest, stream: bool) -> oneiron::LlmResult<()> {
         let entry = self
             .models

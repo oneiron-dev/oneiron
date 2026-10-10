@@ -84,10 +84,11 @@ impl<T> OpenAiCompatBackend<T> {
     }
 }
 
-/// One request to the configured endpoint per call; retries stay with the host.
+/// One request to the configured endpoint per call, when the host's
+/// transport sends once; retries stay with the host, above a run's gate.
 impl<T> oneiron::llm::SingleRouteBackend for OpenAiCompatBackend<T>
 where
-    T: OpenAiCompatTransport,
+    T: OpenAiCompatTransport + oneiron::llm::SingleSend,
 {
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         build_openai_chat_request(&self.config, request, stream).map(drop)
