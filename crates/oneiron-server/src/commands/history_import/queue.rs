@@ -31,7 +31,9 @@ use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 
 use super::confined::open_file;
-use super::{Decoded, Totals, below, earliest_first, order_key, read_queued};
+use super::{
+    Decoded, Totals, below, earliest_first, order_key, own_second, queue_dreamer, read_queued,
+};
 use crate::config::{ImportConfig, ServeConfig};
 use crate::server::SyncServer;
 
@@ -399,22 +401,34 @@ fn again(dir: &OwnedFd, name: &str, mut entry: Entry) -> std::io::Result<()> {
     written
 }
 
-/// Lands every claimed conversation, earliest first within each source.
+/// Lands every claimed conversation, earliest first within each source, and
+/// puts what landed in front of the Dreamer, as `oneiron import` does. Each
+/// pass is an import of its own: its claims wait in their own review.
 fn land(
     vault: &oneiron::Vault,
     sources: Vec<(HistorySource, Vec<HistoryConversation>)>,
 ) -> anyhow::Result<Totals> {
     let owner = crate::owner::local_owner(vault)?;
-    let imported_at = vault.now_recorded_at();
+    let imported_at = own_second(vault)?;
     let mut totals = Totals::default();
     for (source, mut conversations) in sources {
         earliest_first(&mut conversations);
+        let mut landed = false;
         for conversation in &conversations {
             let report = vault
                 .import_history(&owner, source, conversation, imported_at)
                 .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
+            landed |= report.new > 0 || report.changed > 0;
             totals.add(&report);
         }
+        if landed {
+            tracing::info!(
+                source = source.source_id(),
+                review = %oneiron::ingest::history::history_import_review_id(source, imported_at),
+                "queued import's claims wait for the owner in this review"
+            );
+        }
     }
+    queue_dreamer(vault, imported_at)?;
     Ok(totals)
 }

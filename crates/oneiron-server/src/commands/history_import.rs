@@ -175,9 +175,7 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     let review = match &target {
         Target::Land(landing) => {
             let (vault, _, imported_at) = &**landing;
-            let dreamer_attempts =
-                oneiron::dreamer_consolidation::plan_dirty_turn_rounds(vault, *imported_at)
-                    .map_err(|error| anyhow::anyhow!("queue the Dreamer: {error}"))?;
+            let dreamer_attempts = queue_dreamer(vault, *imported_at)?;
             if totals.new + totals.changed == 0 && dreamer_attempts > 0 {
                 progress(&format!(
                     "queued {dreamer_attempts} Dreamer attempt(s) an earlier import left; \
@@ -285,6 +283,13 @@ fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+}
+
+/// Queues the Dreamer's rounds over every turn not yet planned, as a session
+/// end does for captured turns: no sitting ever ends for an import.
+fn queue_dreamer(vault: &oneiron::Vault, imported_at: u64) -> anyhow::Result<usize> {
+    oneiron::dreamer_consolidation::plan_dirty_turn_rounds(vault, imported_at)
+        .map_err(|error| anyhow::anyhow!("queue the Dreamer: {error}"))
 }
 
 /// Where conversations go: planned against a read-only ledger, or landed.

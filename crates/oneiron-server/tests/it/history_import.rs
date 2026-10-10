@@ -638,7 +638,8 @@ fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
 /// `--queue` while `serve` is down land when it starts, a session's subagent
 /// logs with it and a resumed session's copies once; a session handed over
 /// again while `serve` runs, after it grew, adds only its new messages; and a
-/// queued path that leaves the root through a link lands nothing.
+/// queued path that leaves the root through a link lands nothing. What lands
+/// is queued for the Dreamer, as after `oneiron import` (Wave 9a lane 3b).
 #[cfg(unix)]
 #[test]
 fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_messages() {
@@ -758,6 +759,11 @@ fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_message
         0,
         "nothing under the link was read"
     );
+    // No sitting ends for a queued import either.
+    let attempts = oneiron::attempt_queue::AttemptQueue::new(&home.open())
+        .list()
+        .expect("the attempt queue");
+    assert!(!attempts.is_empty(), "nothing was queued for the Dreamer");
 
     append(&session, &fixtures().join("claude-code/append.jsonl"));
     let server = start();
