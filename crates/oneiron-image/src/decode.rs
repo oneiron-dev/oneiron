@@ -151,12 +151,10 @@ pub fn read_header(bytes: &[u8]) -> Result<Header, OrganError> {
         }
         Format::Jpeg => {
             // The markers say where the header ends and how the decoder
-            // will hold the image; a missing scan is the decoder's to name.
-            let layout = jpeg_layout(bytes);
-            if layout
-                .as_ref()
-                .is_some_and(|layout| layout.header_end > JPEG_HEADER_PREFIX)
-            {
+            // will hold the image; a file whose markers do not say is
+            // refused, not booked by a guess.
+            let layout = jpeg_layout(bytes)?;
+            if layout.header_end > JPEG_HEADER_PREFIX {
                 return Err(OrganError::new(
                     ErrorCode::TooLarge,
                     format!("the JPEG's header runs past {JPEG_HEADER_PREFIX} bytes"),
@@ -166,11 +164,7 @@ pub fn read_header(bytes: &[u8]) -> Result<Header, OrganError> {
             let mut decoder = JpegDecoder::new(Cursor::new(prefix)).map_err(image_error)?;
             decoder.set_limits(header_limits()).map_err(image_error)?;
             let mut header = header_of(decoder, format, false, None)?;
-            header.scratch = jpeg_scratch(
-                header.stored_width,
-                header.stored_height,
-                &layout.unwrap_or(JpegLayout::WORST),
-            );
+            header.scratch = jpeg_scratch(header.stored_width, header.stored_height, &layout);
             Ok(header)
         }
         Format::Webp => {
@@ -270,12 +264,14 @@ fn icc_is_srgb(icc: &[u8]) -> bool {
     let Some(icc) = icc_whole(icc) else {
         return false;
     };
-    // A LUT transform, where present, is what a colour engine uses, not
-    // the colorants and curves checked here: such a profile is not proven.
-    if [b"A2B0", b"A2B1", b"A2B2", b"D2B0", b"D2B1", b"D2B2"]
-        .iter()
-        .any(|tag| icc_tag(icc, tag).is_some())
-    {
+    // A LUT transform (any A2Bn or D2Bn tag), where present, is what a
+    // colour engine uses, not the colorants and curves checked here: such a
+    // profile is not proven. The whole table is searched.
+    let tags = be32(icc, 128).unwrap_or(0);
+    if (0..tags).any(|i| {
+        icc.get(132 + i * 12..135 + i * 12)
+            .is_some_and(|signature| signature == b"A2B" || signature == b"D2B")
+    }) {
         return false;
     }
     let rgb = icc.get(16..20) == Some(b"RGB ".as_slice());
@@ -412,29 +408,23 @@ struct JpegLayout {
     header_end: usize,
 }
 
-impl JpegLayout {
-    /// For a file whose markers did not say: progressive, four components,
-    /// 2x2 sampling.
-    const WORST: Self = Self {
-        progressive: true,
-        components: 4,
-        max_h: 2,
-        max_v: 2,
-        first_scan: 1,
-        header_end: 0,
-    };
-}
-
 /// Walks a JPEG's marker segments, over the borrowed bytes, to its first
-/// SOS. `None` if it never gets there.
-fn jpeg_layout(bytes: &[u8]) -> Option<JpegLayout> {
+/// SOS.
+///
+/// # Errors
+/// `bad_request` if it never gets there, a byte between segments is not a
+/// marker, a segment runs past the file, or a second frame header comes;
+/// `unsupported` for a frame type the decoder does not read (arithmetic,
+/// lossless, hierarchical), which it would skip rather than refuse.
+fn jpeg_layout(bytes: &[u8]) -> Result<JpegLayout, OrganError> {
+    let lost = || bad("the JPEG's markers do not lead to its first scan");
     let mut frame: Option<(bool, u8, u8, u8)> = None;
     let mut at = 2usize;
     loop {
-        if *bytes.get(at)? != 0xff {
-            return None;
+        if *bytes.get(at).ok_or_else(lost)? != 0xff {
+            return Err(lost());
         }
-        let marker = *bytes.get(at + 1)?;
+        let marker = *bytes.get(at + 1).ok_or_else(lost)?;
         match marker {
             // Fill bytes, and markers with no segment.
             0xff => {
@@ -445,56 +435,72 @@ fn jpeg_layout(bytes: &[u8]) -> Option<JpegLayout> {
                 at += 2;
                 continue;
             }
-            0xd9 => return None,
+            0xd9 => return Err(lost()),
             _ => {}
         }
         let len = usize::from(u16::from_be_bytes([
-            *bytes.get(at + 2)?,
-            *bytes.get(at + 3)?,
+            *bytes.get(at + 2).ok_or_else(lost)?,
+            *bytes.get(at + 3).ok_or_else(lost)?,
         ]));
-        let segment = bytes.get(at + 4..at.checked_add(2)?.checked_add(len)?);
+        let end = at + 2 + len;
+        if len < 2 || end > bytes.len() {
+            return Err(lost());
+        }
+        let segment = &bytes[at + 4..end];
         match marker {
-            0xc0..=0xcf if !matches!(marker, 0xc4 | 0xc8 | 0xcc) => {
-                let segment = segment?;
-                let components = *segment.get(5)?;
+            0xc0..=0xc2 => {
+                if frame.is_some() {
+                    return Err(bad("a JPEG with two frame headers"));
+                }
+                let components = *segment.get(5).ok_or_else(lost)?;
                 let (mut max_h, mut max_v) = (1, 1);
                 for i in 0..usize::from(components) {
-                    let sampling = *segment.get(6 + i * 3 + 1)?;
+                    let sampling = *segment.get(6 + i * 3 + 1).ok_or_else(lost)?;
                     max_h = max_h.max(sampling >> 4);
                     max_v = max_v.max(sampling & 0x0f);
                 }
-                let progressive = matches!(marker, 0xc2 | 0xc6 | 0xca | 0xce);
-                frame = Some((progressive, components, max_h, max_v));
+                frame = Some((marker == 0xc2, components, max_h, max_v));
+            }
+            0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf => {
+                return Err(OrganError::new(
+                    ErrorCode::Unsupported,
+                    "arithmetic, lossless and hierarchical JPEGs are not supported",
+                ));
             }
             0xda => {
-                let (progressive, components, max_h, max_v) = frame?;
-                return Some(JpegLayout {
+                let (progressive, components, max_h, max_v) = frame.ok_or_else(lost)?;
+                return Ok(JpegLayout {
                     progressive,
                     components,
                     max_h,
                     max_v,
-                    first_scan: *bytes.get(at + 4)?,
-                    header_end: at + 2 + len,
+                    first_scan: *segment.first().ok_or_else(lost)?,
+                    header_end: end,
                 });
             }
             _ => {}
         }
-        at = at.checked_add(2)?.checked_add(len)?;
+        at = end;
     }
 }
 
-/// What the pinned JPEG decoder holds beside its output: rows of 16-bit
-/// samples, one MCU high, for each component (three sets, for upsampling);
-/// and, for a progressive file or one whose first scan leaves a component
-/// out, a whole 16-bit coefficient plane per component. Every plane is
-/// padded to whole MCUs.
+/// What the pinned JPEG decoder holds beside its output, bounded from the
+/// frame's largest sampling factors: rows of 16-bit samples one MCU high,
+/// as many as a component's sampling can ask for, four sets (its raw rows,
+/// upsampled rows at twice their size, and the upsampler's scratch); and,
+/// for a progressive file or one whose first scan leaves a component out,
+/// a whole 16-bit coefficient plane per component. Every plane is padded
+/// to whole MCUs.
 fn jpeg_scratch(width: u32, height: u32, layout: &JpegLayout) -> u64 {
-    let mcu_w = 8 * u64::from(layout.max_h.max(1));
-    let mcu_h = 8 * u64::from(layout.max_v.max(1));
+    let (h, v) = (
+        u64::from(layout.max_h.max(1)),
+        u64::from(layout.max_v.max(1)),
+    );
+    let (mcu_w, mcu_h) = (8 * h, 8 * v);
     let padded_w = u64::from(width).div_ceil(mcu_w) * mcu_w;
     let padded_h = u64::from(height).div_ceil(mcu_h) * mcu_h;
     let components = u64::from(layout.components.max(1));
-    let rows = 3 * components * padded_w * mcu_h * 2;
+    let rows = 4 * components * h * mcu_h * padded_w * 2;
     let planes = if layout.progressive || layout.first_scan < layout.components {
         components * padded_w * padded_h * 2
     } else {
