@@ -48,7 +48,7 @@ mod save;
 mod tags;
 mod trace;
 
-pub use held::HeldTagsOutcome;
+pub use held::{HeldTagsOutcome, UnreadText};
 pub use history::TaggingTraceRecord;
 pub use marker::{
     DEFAULT_LIVE_WINDOW_TOKENS, DEFAULT_TRACE_MAX_AGE_SECS, DEFAULT_TRACES_PER_TURN,

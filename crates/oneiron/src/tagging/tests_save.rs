@@ -4,7 +4,7 @@
 //! import that holds its tags makes no tagger call. The rest repro the Sol
 //! review of the save path (2026-10-10), each named for what it holds.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -475,6 +475,204 @@ fn an_import_that_holds_its_tags_makes_no_tagger_call() {
     assert_eq!(outcome, HeldTagsOutcome::Refused(OutputRefusal::BadOffsets));
     worker.drain_once().expect("drain");
     assert_eq!(tagger.calls(), 1);
+}
+
+/// A span an importer holds for a name, labelled as the label table maps it.
+fn name_span(message: usize, start: usize, end: usize) -> NerSpan {
+    NerSpan {
+        message,
+        start,
+        end,
+        label: "PERSON".to_owned(),
+        confidence: 1.0,
+    }
+}
+
+/// Greptile on #1356: held tags index the messages as the importer sent
+/// them, not the text the turn shows. In a turn whose text skips a hidden
+/// message and an empty one, each span is saved on the message it was read
+/// from, never on the one at its index in the turn's text. A span on the
+/// hidden message, which the turn does not show, is refused, and the turn is
+/// left to the tagger.
+#[test]
+fn held_tags_are_saved_on_the_messages_they_were_read_from() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path());
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+    let message = |byte: u8| EntityId::from_bytes([byte; 16]).expect("message id");
+    // The companion's turn, as sent: a user row is never hidden.
+    let sent = |turn_ref: &str, messages: &[(u8, bool, &str)]| WitnessTurn {
+        messages: messages
+            .iter()
+            .zip(0..)
+            .map(|((id, visible, content), order)| WitnessMessage {
+                id: Some(message(*id).to_hex()),
+                author: WitnessAuthor::Companion,
+                message_type: "text".into(),
+                content: (*content).into(),
+                metadata: None,
+                is_visible: *visible,
+                order,
+            })
+            .collect(),
+        ..turn(turn_ref, &[])
+    };
+    let landed = sent(
+        "7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d",
+        &[
+            (0xa1, true, "Ada called"),
+            (0xa2, false, "about Mirela"),
+            (0xa3, true, ""),
+            (0xa4, true, "Mirela wrote back"),
+            (0xa5, true, "Ottilie answered"),
+            (0xa6, true, "Bruno too"),
+        ],
+    );
+    let held = EncoderOutput {
+        spans: vec![name_span(0, 0, 3), name_span(3, 0, 6)],
+        links: Vec::new(),
+        vad: None,
+    };
+
+    let (_, outcome) = memory
+        .witness_with_held_tags(&landed, &held)
+        .expect("import");
+
+    assert!(matches!(outcome, HeldTagsOutcome::Completed(_)));
+    let turn = EntityId::from_hex("7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d").expect("turn id");
+    let saved = tags(&vault, &turn);
+    assert_eq!(
+        saved
+            .mentions
+            .iter()
+            .map(|mention| (mention.message, mention.start, mention.end))
+            .collect::<Vec<_>>(),
+        vec![(message(0xa1), 0, 3), (message(0xa4), 0, 6)]
+    );
+    assert_eq!(found(&vault, "Ada"), vec![(turn, 0)]);
+    assert_eq!(found(&vault, "Mirela"), vec![(turn, 1)]);
+    assert!(found(&vault, "Bruno").is_empty());
+
+    let (_, outcome) = memory
+        .witness_with_held_tags(
+            &sent(
+                "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+                &[(0xb1, true, "Ada called"), (0xb2, false, "about Mirela")],
+            ),
+            &EncoderOutput {
+                spans: vec![name_span(1, 6, 12)],
+                ..held
+            },
+        )
+        .expect("import");
+    assert_eq!(outcome, HeldTagsOutcome::Unread(UnreadText::UnshownMessage));
+    let hidden = EntityId::from_hex("7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e").expect("turn id");
+    assert_eq!(vault.turn_tags(&hidden).expect("read"), None);
+}
+
+/// Greptile on #1356: held tags that never read a turn's earlier text do
+/// not settle it. An append whose tags index only the message it sends is
+/// refused; the tag set read from the turn stays until the tagger reads the
+/// turn whole.
+#[test]
+fn held_tags_for_an_append_leave_the_turn_to_the_tagger() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path());
+    let tagger = Names::new(&["Ada", "Mirela"]);
+    let worker = reconciler(&vault, &tagger);
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+    let turn_ref = "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f";
+    let held = |spans| EncoderOutput {
+        spans,
+        links: Vec::new(),
+        vad: None,
+    };
+    let (_, outcome) = memory
+        .witness_with_held_tags(
+            &turn(turn_ref, &[(0, "Ada called")]),
+            &held(vec![name_span(0, 0, 3)]),
+        )
+        .expect("import");
+    assert!(matches!(outcome, HeldTagsOutcome::Completed(_)));
+
+    let (_, outcome) = memory
+        .witness_with_held_tags(
+            &turn(turn_ref, &[(1, "Mirela wrote back")]),
+            &held(vec![name_span(0, 0, 6)]),
+        )
+        .expect("append");
+
+    assert_eq!(outcome, HeldTagsOutcome::Unread(UnreadText::UnsentMessage));
+    let turn = EntityId::from_hex(turn_ref).expect("turn id");
+    assert_eq!(found(&vault, "Ada"), vec![(turn, 0)]);
+    worker.drain_once().expect("drain");
+    assert_eq!(tagger.calls(), 1);
+    assert_eq!(found(&vault, "Ada"), vec![(turn, 0)]);
+    assert_eq!(found(&vault, "Mirela"), vec![(turn, 1)]);
+}
+
+/// Greptile on #1356: merge evidence names two spans linked to different
+/// entities, and goes when they stop being so. "Mira", a name the key
+/// misses, mints; "Mirela", which the tagger says is the same one, keys to
+/// the vault's Mirela: evidence the two may be one. Resolving the
+/// provisional name into Mirela leaves no suggestion to merge her with
+/// herself, and deleting either entity leaves no evidence whose span names
+/// nothing.
+#[test]
+fn merge_evidence_goes_when_its_spans_stop_naming_different_entities() {
+    let turn_ref = "70707070707070707070707070707070";
+    let coreferent = || {
+        let dir = tempfile::tempdir().expect("dir");
+        let vault = open(dir.path());
+        let mirela = person(&vault, 0x22, "Mirela");
+        let (_, outcome) = vault
+            .memory(speaker(&vault), EdgeActorClass::Human)
+            .witness_with_held_tags(
+                &turn(turn_ref, &[(0, "Mira wrote. Mirela agreed.")]),
+                &EncoderOutput {
+                    spans: vec![name_span(0, 0, 4), name_span(0, 12, 18)],
+                    links: vec![CorefLink {
+                        span: 1,
+                        antecedent: 0,
+                    }],
+                    vad: None,
+                },
+            )
+            .expect("import");
+        assert!(matches!(outcome, HeldTagsOutcome::Completed(_)));
+        let turn = EntityId::from_hex(turn_ref).expect("turn id");
+        let saved = tags(&vault, &turn);
+        assert_eq!(saved.merge_evidence.len(), 1);
+        let mira = minted(&saved.mentions[0].link);
+        (dir, vault, turn, mira, mirela)
+    };
+
+    let (_dir, vault, turn, mira, mirela) = coreferent();
+    vault
+        .memory(speaker(&vault), EdgeActorClass::Human)
+        .resolve_provisional_entity(&mira, &mirela)
+        .expect("resolve Mira into Mirela");
+    let resolved = tags(&vault, &turn);
+    assert_eq!(resolved.entities(), BTreeSet::from([mirela]));
+    assert!(resolved.merge_evidence.is_empty());
+
+    let (_dir, vault, turn, _, mirela) = coreferent();
+    vault
+        .batch()
+        .delete(&mirela)
+        .commit()
+        .expect("delete Mirela");
+    assert_eq!(tags(&vault, &turn).mentions[1].link, MentionLink::Tag);
+    assert!(tags(&vault, &turn).merge_evidence.is_empty());
+
+    let (_dir, vault, turn, mira, _) = coreferent();
+    vault
+        .batch()
+        .delete(&mira)
+        .commit()
+        .expect("delete the provisional id");
+    assert_eq!(tags(&vault, &turn).mentions[0].link, MentionLink::Tag);
+    assert!(tags(&vault, &turn).merge_evidence.is_empty());
 }
 
 /// A provisional entity's id is never allocated again: its row is no entity

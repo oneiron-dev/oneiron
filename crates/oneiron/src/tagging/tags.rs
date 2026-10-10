@@ -147,6 +147,7 @@ pub struct TaggedMention {
 
 /// A coreference link that joins two spans linked to different entities:
 /// evidence that they may be one, for the Dreamer. The save never merges.
+/// It is kept only while the two spans name different entities.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MergeEvidence {
@@ -179,6 +180,24 @@ impl TurnTags {
             .iter()
             .flat_map(|mention| mention.link.entities().iter().copied())
             .collect()
+    }
+
+    /// Keeps the merge evidence whose two spans still name different
+    /// entities, as the save found them: each names one or more, and they
+    /// share none. A link changed after the save leaves no suggestion to
+    /// merge one entity with itself, or with nothing.
+    fn keep_live_evidence(&mut self) {
+        let mentions = &self.mentions;
+        self.merge_evidence.retain(|evidence| {
+            let (Some(span), Some(antecedent)) = (
+                mentions.get(evidence.span),
+                mentions.get(evidence.antecedent),
+            ) else {
+                return false;
+            };
+            let (own, other) = (span.link.entities(), antecedent.link.entities());
+            !own.is_empty() && !other.is_empty() && own.iter().all(|id| !other.contains(id))
+        });
     }
 }
 
@@ -390,7 +409,8 @@ pub(super) fn replace_in_txn(
 }
 
 /// Removes `entity` from every tag set that names it: a link left naming
-/// nothing is a tag. Its index rows go with it.
+/// nothing is a tag, and merge evidence it leaves naming nothing goes. Its
+/// index rows go with it.
 pub(super) fn strip_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -402,6 +422,7 @@ pub(super) fn strip_in_txn(
             for mention in &mut tags.mentions {
                 mention.link = mention.link.without(entity);
             }
+            tags.keep_live_evidence();
             TAG_SET.put(store, txn, turn, &tags)?;
         }
         MENTION_REF.delete(store, txn, &(*entity, *turn))?;
@@ -409,7 +430,8 @@ pub(super) fn strip_in_txn(
     Ok(!turns.is_empty())
 }
 
-/// Names `to` wherever a tag set names `from`, moving the index rows.
+/// Names `to` wherever a tag set names `from`, moving the index rows. Merge
+/// evidence whose spans now both name `to` goes.
 pub(super) fn redirect_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -421,6 +443,7 @@ pub(super) fn redirect_in_txn(
             for mention in &mut tags.mentions {
                 mention.link = mention.link.redirected(from, to);
             }
+            tags.keep_live_evidence();
             TAG_SET.put(store, txn, &turn, &tags)?;
         }
         MENTION_REF.delete(store, txn, &(*from, turn))?;

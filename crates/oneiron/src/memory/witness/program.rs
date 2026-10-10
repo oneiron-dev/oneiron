@@ -411,14 +411,21 @@ impl Memory<'_> {
                         crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
                     }
                     // Held tags settle the marker just committed, in this
-                    // write, so no worker ever claims it.
+                    // write, so no worker ever claims it. Their spans index
+                    // the messages as sent.
                     if let Some(held) = held {
+                        let sent: Vec<_> = plan
+                            .messages
+                            .iter()
+                            .map(|planned| (planned.id, planned.message.content.as_str()))
+                            .collect();
                         held.outcome
                             .set(Some(crate::tagging::settle_held_tags_in_txn(
                                 self.vault,
                                 wtxn,
                                 &plan.turn_id,
                                 held.tags,
+                                Some(&sent),
                             )?));
                     }
                     Landed::Base
