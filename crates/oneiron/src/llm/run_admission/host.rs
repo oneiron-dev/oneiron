@@ -181,13 +181,17 @@ pub(super) fn convert(
 
 /// One model at one place, as the host bound it: the host, not the caller,
 /// supplies its route, locality and payer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OfferBinding {
     pub offer: String,
     pub model: ModelId,
     pub route: OfferRoute,
     pub locality: ModelLocality,
     pub payer: Payer,
+    /// The host's id for the credential binding that pays for this offer's
+    /// calls: a name for the key's record, never the key. `None` for a
+    /// keyless offer.
+    pub credential_binding: Option<String>,
     /// The host catalog revision this binding came from.
     pub catalog_revision: Option<String>,
     pub custody: KeyCustody,
@@ -201,18 +205,22 @@ impl OfferBinding {
             subject: self.model.as_str().to_owned(),
             route: self.route.key(),
             locality: self.locality,
+            offer: identity(self),
         }
     }
 }
 
 /// A paid service that is not a model (a search, a GPU job), as the host
 /// bound it, with the per-unit cost its pack row names.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PaidConnector {
     pub connector: String,
     pub route: OfferRoute,
     pub locality: ModelLocality,
     pub payer: Payer,
+    /// The host's id for the credential binding that pays for this
+    /// connector's calls, never the key.
+    pub credential_binding: Option<String>,
     pub catalog_revision: Option<String>,
     pub custody: KeyCustody,
     /// What one unit of this service costs, in `cost_unit`.
@@ -227,8 +235,19 @@ impl PaidConnector {
             subject: self.connector.clone(),
             route: self.route.key(),
             locality: self.locality,
+            offer: identity(self),
         }
     }
+}
+
+/// The identity a lease and the gate or paid adapter it leaves through
+/// compare: a digest of every field the host bound. Two bindings of one model
+/// or connector at one route that differ in payer, credential binding, catalog
+/// revision, custody or price are two offers, and neither's permit starts a
+/// call for the other.
+fn identity(binding: &impl Serialize) -> String {
+    let bytes = serde_json::to_vec(binding).expect("an offer binding serializes");
+    blake3::hash(&bytes).to_hex().to_string()
 }
 
 /// Which allocation a lease draws on: its id and generation.

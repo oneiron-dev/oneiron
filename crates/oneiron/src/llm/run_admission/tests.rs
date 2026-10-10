@@ -67,6 +67,7 @@ fn offer(model: &str) -> OfferBinding {
         route: model_route(),
         locality: ModelLocality::ThirdParty,
         payer: Payer::CustomerKey,
+        credential_binding: Some("customer-key-1".to_owned()),
         catalog_revision: Some("catalog-7".to_owned()),
         custody: KeyCustody::T0,
         rates: one_to_one(),
@@ -80,6 +81,7 @@ fn local_offer() -> OfferBinding {
         route: OfferRoute::new("local", "device").expect("route"),
         locality: ModelLocality::OnDevice,
         payer: Payer::Local,
+        credential_binding: None,
         catalog_revision: None,
         custody: KeyCustody::Keyless,
         rates: one_to_one(),
@@ -92,6 +94,7 @@ fn search() -> PaidConnector {
         route: OfferRoute::new("paid", PAID_ORIGIN).expect("route"),
         locality: ModelLocality::ThirdParty,
         payer: Payer::CustomerKey,
+        credential_binding: Some("customer-search-key-1".to_owned()),
         catalog_revision: Some("catalog-7".to_owned()),
         custody: KeyCustody::T0,
         unit_cost: 3,
@@ -213,8 +216,8 @@ impl World {
         let a = Run::start(declaration_a, None);
         // Run B has its own line and the same textual run id.
         let b = Run::start(declaration(), None);
-        let gated_a = a.admission.gate(provider.clone(), &model_route());
-        let gated_b = b.admission.gate(provider.clone(), &model_route());
+        let gated_a = a.admission.gate(provider.clone(), &offer(SMALL));
+        let gated_b = b.admission.gate(provider.clone(), &offer(SMALL));
         Self {
             a,
             b,
@@ -476,7 +479,10 @@ fn n5_a_permit_does_not_carry_onto_a_lookalike_or_other_route() {
     ] {
         let lookalike = world.a.admission.gate(
             world.provider.clone(),
-            &OfferRoute::new("fake", origin).expect("route"),
+            &OfferBinding {
+                route: OfferRoute::new("fake", origin).expect("route"),
+                ..offer(SMALL)
+            },
         );
         let before = world.before();
         assert_eq!(
@@ -795,8 +801,12 @@ fn p3_the_owner_widens_the_declaration_and_the_run_calls_the_new_teacher() {
         world.a.admission.revise(DeclarationEditor::Owner, widened),
         Ok(2)
     );
+    let gated_large = world
+        .a
+        .admission
+        .gate(world.provider.clone(), &offer(LARGE));
     let response = block_on(world.a.admission.call(
-        &world.gated_a,
+        &gated_large,
         RunCall {
             selector: Some("teacher-other"),
             request: &request(LARGE),
@@ -816,7 +826,7 @@ fn p3_the_owner_widens_the_declaration_and_the_run_calls_the_new_teacher() {
 fn p4_a_real_local_call_stays_unmetered() {
     let world = World::with(RunDeclaration::declared(line()));
     let local = local_offer();
-    let gated = world.a.admission.gate(world.provider.clone(), &local.route);
+    let gated = world.a.admission.gate(world.provider.clone(), &local);
     let mut call = request("local/small@v1");
     call.envelope.locality = ModelLocality::OnDevice;
     block_on(world.a.admission.call(
@@ -843,6 +853,7 @@ fn micro_usd() -> LeaseUnit {
 fn host_offer(model: &str) -> OfferBinding {
     OfferBinding {
         payer: Payer::Host,
+        credential_binding: Some("host-key-1".to_owned()),
         rates: vec![
             UnitRate {
                 unit: units(),
@@ -879,7 +890,7 @@ fn a_host_paid_permit_binds_the_payer_catalog_and_allocation_and_settles_both_li
     let account = granted(100, 1);
     let provider = FakeProvider::new();
     let run = Run::start(declaration(), Some(account.clone()));
-    let gated = run.admission.gate(provider, &model_route());
+    let gated = run.admission.gate(provider, &host_offer(SMALL));
     let permit = admit(&run, None, &request(SMALL), &host_offer(SMALL)).expect("host-paid");
     let facts = permit.facts().clone();
     assert_eq!(facts.payer, Payer::Host);
@@ -967,6 +978,109 @@ fn a_host_check_holds_new_host_paid_spend_and_nothing_else() {
             reason: AllocationRefusal::HostCheck
         }
     );
+}
+
+#[test]
+fn a_permit_never_dispatches_under_another_offer_at_the_same_endpoint() {
+    // Astra #1355 P1: offer A is the customer's key, offer B the host's, for
+    // one model at one adapter and origin. The host holds B behind a check.
+    let account = HostAccount::new();
+    account.refuse_fresh(AllocationRefusal::HostCheck);
+    let run = Run::start(declaration(), Some(account));
+    let (customer, host) = (FakeProvider::new(), FakeProvider::new());
+    let (customer_offer, host_paid) = (offer(SMALL), host_offer(SMALL));
+    assert_eq!(customer_offer.route, host_paid.route);
+    let customer_gate = run.admission.gate(customer.clone(), &customer_offer);
+    let host_gate = run.admission.gate(host.clone(), &host_paid);
+    assert_eq!(
+        admit(&run, None, &request(SMALL), &host_paid).expect_err("held"),
+        RunDenied::AllocationRefused {
+            reason: AllocationRefusal::HostCheck
+        }
+    );
+    let offer_refusals = || {
+        run.receipts
+            .rows()
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row.event,
+                    RunEvent::Denied {
+                        reason: RunDenied::Dispatch {
+                            refused: DispatchRefused::OfferMismatch
+                        },
+                        ..
+                    }
+                )
+            })
+            .count()
+    };
+    // A's permit at B's gate: nothing is sent, and the line comes back.
+    let permit = admit(&run, None, &request(SMALL), &customer_offer).expect("BYOK");
+    assert_eq!(
+        block_on(host_gate.generate(request(SMALL), permit.lease())).map(|_| ()),
+        Err(LlmError::BudgetDenied(BudgetDenied::LeaseInvalid))
+    );
+    drop(permit);
+    assert_eq!(host.sent().len(), 0, "a host-paid send");
+    assert_eq!((run.used(), run.reserved(), offer_refusals()), (0, 0, 1));
+    // The one-stop form too.
+    let one_stop = block_on(run.admission.call(
+        &host_gate,
+        RunCall {
+            selector: None,
+            request: &request(SMALL),
+            offer: &customer_offer,
+        },
+    ));
+    assert_eq!(
+        one_stop.map(|_| ()),
+        Err(RunCallError::Failed {
+            error: LlmError::BudgetDenied(BudgetDenied::LeaseInvalid),
+            settlement: None
+        })
+    );
+    assert_eq!(host.sent().len(), 0, "a host-paid send");
+    assert_eq!((run.used(), run.reserved(), offer_refusals()), (0, 0, 2));
+    // Another key of the same payer is another offer as well.
+    let other_key = OfferBinding {
+        credential_binding: Some("customer-key-2".to_owned()),
+        ..customer_offer.clone()
+    };
+    let permit = admit(&run, None, &request(SMALL), &other_key).expect("BYOK");
+    assert!(block_on(customer_gate.generate(request(SMALL), permit.lease())).is_err());
+    drop(permit);
+    assert_eq!((customer.sent().len(), offer_refusals()), (0, 3));
+    // A's own gate still serves A's permit.
+    let permit = admit(&run, None, &request(SMALL), &customer_offer).expect("BYOK");
+    block_on(customer_gate.generate(request(SMALL), permit.lease())).expect("answer");
+    drop(permit);
+    assert_eq!(customer.sent().len(), 1);
+
+    // A paid connector: the same name and route, paid by the host.
+    let world = World::new();
+    let host_search = PaidConnector {
+        payer: Payer::Host,
+        credential_binding: Some("host-search-key-1".to_owned()),
+        ..search()
+    };
+    let before = world.before();
+    let permit = world.a.admission.admit_paid(&search(), 1).expect("search");
+    assert_eq!(
+        paid_call(
+            &world.a.admission,
+            permit.lease(),
+            &host_search,
+            &world.resolver,
+            &world.endpoint,
+            1,
+        ),
+        Err(RunDenied::Dispatch {
+            refused: DispatchRefused::OfferMismatch
+        })
+    );
+    drop(permit);
+    world.assert_refused_cleanly(&before);
 }
 
 #[test]
@@ -1116,7 +1230,7 @@ fn an_unsettled_permit_settles_when_dropped() {
     let account = granted(100, 1);
     let provider = FakeProvider::new();
     let run = Run::start(declaration(), Some(account.clone()));
-    let gated = run.admission.gate(provider.clone(), &model_route());
+    let gated = run.admission.gate(provider.clone(), &host_offer(SMALL));
     let allocation = || {
         let read = account.live().0.expect("live allocation").meter.read();
         (read.used_units, read.reserved_units)

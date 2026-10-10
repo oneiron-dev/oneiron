@@ -1,19 +1,19 @@
 //! One run admission: each paid call of a run, to a model or to a paid
 //! connector, is admitted against the run's own declaration and its lease,
-//! and gets a one-use permit bound to the run, the model, the route and the
-//! locality.
+//! and gets a one-use permit bound to the run, the model, the route, the
+//! locality and the offer that pays.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 
 use super::super::{
-    BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchRefused,
-    LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
+    BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
+    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
 };
 use super::declaration::{DeclarationEditor, LeaseUnit, RunDeclaration};
 use super::gate::GatedBackend;
-use super::host::{AllocationRefusal, HostAccount, OfferBinding, OfferRoute, PaidConnector};
+use super::host::{AllocationRefusal, HostAccount, OfferBinding, PaidConnector};
 use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
@@ -220,21 +220,24 @@ impl RunAdmission {
             .receipt_for(revision, None, &connector.connector, admitted, None)
     }
 
-    /// The only backend a host hands a run for `route`: it checks and starts
-    /// the call's permit before any byte leaves, on `generate` and `stream`.
+    /// The only backend a host hands a run for `offer`, over that offer's own
+    /// backend and credential: it checks and starts the call's permit before
+    /// any byte leaves, on `generate` and `stream`. A permit admitted under
+    /// another offer never starts here, whatever route the two share.
     #[must_use]
-    pub fn gate(&self, inner: Arc<dyn SingleRouteBackend>, route: &OfferRoute) -> GatedBackend {
-        GatedBackend::new(Arc::clone(&self.inner), inner, route.key())
+    pub fn gate(&self, inner: Arc<dyn SingleRouteBackend>, offer: &OfferBinding) -> GatedBackend {
+        GatedBackend::new(Arc::clone(&self.inner), inner, offer.dispatch_binding())
     }
 
-    /// The dispatch check a paid connector's adapter makes before it sends.
+    /// The dispatch check a paid connector's adapter makes before it sends,
+    /// for the connector binding whose credential it is about to use.
     pub fn dispatch_paid(
         &self,
         lease: &BudgetLease,
         connector: &PaidConnector,
     ) -> Result<(), RunDenied> {
         self.inner
-            .begin_dispatch(lease, &connector.connector, &connector.route.key())
+            .begin_dispatch(lease, &connector.dispatch_binding())
     }
 
     /// Admits, sends through `gated` and settles one model call. A call
@@ -338,16 +341,13 @@ impl RunInner {
     pub(super) fn begin_dispatch(
         &self,
         lease: &BudgetLease,
-        subject: &str,
-        route: &str,
+        call: &DispatchBinding,
     ) -> Result<(), RunDenied> {
-        self.guard
-            .begin_dispatch(lease, subject, route)
-            .map_err(|refused| {
-                let reason = RunDenied::Dispatch { refused };
-                self.refuse(Some(subject), Some(lease), reason.clone());
-                reason
-            })
+        self.guard.begin_dispatch(lease, call).map_err(|refused| {
+            let reason = RunDenied::Dispatch { refused };
+            self.refuse(Some(&call.subject), Some(lease), reason.clone());
+            reason
+        })
     }
 
     pub(super) fn refuse(
