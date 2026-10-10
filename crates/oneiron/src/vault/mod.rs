@@ -109,6 +109,9 @@ pub struct Vault {
     /// sweep safety and must defer.
     #[cfg(feature = "sync")]
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
+    /// The speculative passes running on threads of their own (call mode on
+    /// ASR partials), capped against the reader slots.
+    pub(crate) speculative_passes: crate::speculative::SpeculativePasses,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

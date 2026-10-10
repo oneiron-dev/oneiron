@@ -25,7 +25,9 @@
 //! pass run under that hard deadline, on a thread of their own, so the voice
 //! loop never waits past it. A fire that misses it changes nothing but its
 //! budget ([`SpeculativeFireDecision::MissedDeadline`]); a finalize that
-//! misses it answers with the warm pack, the best results ready.
+//! misses it answers with the warm pack, the best results ready. A vault
+//! runs such passes on at most a quarter of its reader slots at once; a pass
+//! past that misses its deadline without starting.
 //!
 //! Snapshot posture (recorded deviation from E7's literal "one
 //! read-snapshot" wording, designer-resolved): per-fire LMDB snapshot
@@ -38,6 +40,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
@@ -93,9 +96,10 @@ pub enum SpeculativeFireDecision {
         /// stages that finished.
         partial: bool,
     },
-    /// The fire was not done by its deadline. The warm pack and signature
-    /// stay those of the last fire that landed; the fire still counts
-    /// against `max_fires`.
+    /// The fire was not done by its deadline, or did not start because the
+    /// vault already ran as many passes as it lets run. The warm pack and
+    /// signature stay those of the last fire that landed; the fire still
+    /// counts against `max_fires`.
     MissedDeadline,
     /// Signature identical to the last fired signature.
     SkippedUnchanged,
@@ -221,17 +225,23 @@ impl SpeculativeSession {
 
     /// Runs one pass, under the session's deadline when it has one. `None`
     /// when the pass was not done by then: it ran on a thread of its own,
-    /// which stops at its next checkpoint, and its result is dropped.
+    /// which stops at its next checkpoint, and its result is dropped. Also
+    /// `None`, at once, while the vault already runs as many passes as it
+    /// lets run.
     fn run(&self, pass: SpeculativePass) -> Result<Option<PassOutput>> {
         let Some(budget) = self.config.deadline else {
             return pass.run(&self.vault, None).map(Some);
         };
         let started = Instant::now();
+        let Some(running) = RunningPass::admit(&self.vault) else {
+            return Ok(None);
+        };
         let vault = Arc::clone(&self.vault);
         let (sender, answer) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
             .name("oneiron-speculative".to_owned())
             .spawn(move || {
+                let _running = running;
                 let deadline = RetrievalDeadline::hard(started, budget);
                 // The caller may have stopped waiting; a closed slot is moot.
                 let _ = sender.send(pass.run(&vault, Some(&deadline)));
@@ -318,6 +328,41 @@ impl SpeculativeSession {
             warm_appended,
             partial: fresh.partial,
         })
+    }
+}
+
+/// The share of a vault's LMDB reader slots its speculative passes may hold
+/// at once: one in this many.
+const READER_SLOT_SHARE: u32 = 4;
+
+/// The speculative passes running on threads of their own in one vault. A
+/// pass past its deadline keeps its read snapshot, and with it a reader
+/// slot, until its next checkpoint, so fires that keep missing a stalled
+/// stage would otherwise take every slot the vault has.
+#[derive(Default)]
+pub(crate) struct SpeculativePasses(AtomicUsize);
+
+/// One admitted pass; the vault counts it until its thread lets it go.
+struct RunningPass(Arc<crate::Vault>);
+
+impl RunningPass {
+    fn admit(vault: &Arc<crate::Vault>) -> Option<Self> {
+        let cap = usize::try_from((vault.config.max_readers / READER_SLOT_SHARE).max(1))
+            .unwrap_or(usize::MAX);
+        vault
+            .speculative_passes
+            .0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |running| {
+                (running < cap).then_some(running + 1)
+            })
+            .ok()?;
+        Some(Self(Arc::clone(vault)))
+    }
+}
+
+impl Drop for RunningPass {
+    fn drop(&mut self) {
+        self.0.speculative_passes.0.fetch_sub(1, Ordering::AcqRel);
     }
 }
 

@@ -155,3 +155,52 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
     ));
     Ok(())
 }
+
+/// A pass past its deadline keeps its read snapshot, and with it an LMDB
+/// reader slot, until its next checkpoint. Fires that keep missing a stalled
+/// stage stop at the vault's cap on running passes, so the vault keeps slots
+/// for its other readers.
+#[test]
+fn stalled_speculative_fires_leave_the_vault_reader_slots() -> Result<()> {
+    use crate::retrieval_depth::SlowRetrievalStage;
+    use crate::speculative::{SpeculativePartial, SpeculativeSession};
+    use crate::store::RetrievalSignal;
+
+    let (_dir, vault) = vault();
+    put_text(&vault, 7, "Tokyo launch")?;
+    vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
+        signal: RetrievalSignal::Text,
+        duration: Duration::from_secs(5),
+        yields: false,
+    }));
+    let terms = ["tokyo".to_owned()];
+    // Twice as many utterances as the vault has reader slots, each with one
+    // fire that misses its deadline in the stalled stage.
+    for _ in 0..2 * vault.config.max_readers {
+        let mut session = SpeculativeSession::new(
+            Arc::clone(&vault),
+            SpeculativeSessionConfig {
+                deadline: Some(Duration::from_millis(20)),
+                ..SpeculativeSessionConfig::default()
+            },
+        );
+        let heard = SpeculativePartial {
+            text: "Tokyo launch",
+            query_vector: None,
+            entity_labels: &[],
+            salient_terms: &terms,
+        };
+        assert_eq!(
+            session.observe_partial(heard)?,
+            SpeculativeFireDecision::MissedDeadline
+        );
+    }
+    // A reader on a thread of its own, which holds no slot yet.
+    let reader = Arc::clone(&vault);
+    std::thread::spawn(move || -> Result<()> {
+        drop(reader.store.env.read_txn()?);
+        Ok(())
+    })
+    .join()
+    .expect("reader thread")
+}
