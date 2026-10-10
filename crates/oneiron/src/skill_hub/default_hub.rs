@@ -9,7 +9,7 @@ use crate::{EntityId, Vault, error::Result, temporal::TimeRange};
 
 /// Released oneiron-hub revision. Moving this pin requires a reviewed engine update;
 /// a floating branch or network lookup must never change an opened vault's source.
-const HUB_COMMIT: &str = "72e737009fb798db8380613db7f8c28bdbdb953f";
+const HUB_COMMIT: &str = "e1040cbcc1ca2a1eb8404c8fc80956b0e75ae3e5";
 const HUB_ENDPOINT: &str = "https://github.com/oneiron-dev/oneiron-hub.git";
 /// The model catalog has no authority; its exact file tree is pinned alongside the hub revision.
 pub(crate) const MODEL_PACK_SUBTREE: &str = "packs/model-catalog";
