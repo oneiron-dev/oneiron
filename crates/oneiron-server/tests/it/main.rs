@@ -5,6 +5,7 @@ mod agent_credentials;
 mod ai_serve;
 mod booking_agent_api;
 mod campaign_surface_oracle;
+mod code_mode_compaction;
 mod core_discover;
 #[path = "../support/fake_llm.rs"]
 mod fake_llm;

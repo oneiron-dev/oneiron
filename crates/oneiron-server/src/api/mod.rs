@@ -453,7 +453,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
                 },
                 "ai": {
                     "dreamer": "idle",
-                    "dreamer_reason": "no_model_configured"
+                    "dreamer_reason": "no_model_configured",
+                    "compaction": "off",
+                    "compaction_reason": "no_model_configured"
                 }
             })
         )

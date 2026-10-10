@@ -350,9 +350,11 @@ pub(super) fn window_message(
     }
 }
 
-/// Every existing entity a run's calls returned so far: a superset of what
-/// any step could have printed, because the guest keeps state across steps
-/// and no step boundary is stored with its calls.
+/// Every entity a run's calls returned so far: a superset of what any step
+/// could have printed, because the guest keeps state across steps and no
+/// step boundary is stored with its calls. A deleted record's shell stays a
+/// source, so a summary written after the deletion is born withdrawn; a
+/// purged one leaves nothing to derive from, so the window is refused.
 pub(super) fn served_sources(
     vault: &crate::Vault,
     record: &CodeRunReplayRecord,
@@ -366,6 +368,12 @@ pub(super) fn served_sources(
     for id in found {
         if crate::ports::EntityStoreRead::port_entity_record(&vault.store, &rtxn, &id)?.is_some() {
             sources.push(id);
+        } else if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &rtxn, &id)?
+            .deleted
+        {
+            return Err(crate::Error::InvariantViolation(
+                "a record the run was served has been purged",
+            ));
         }
     }
     Ok(sources)

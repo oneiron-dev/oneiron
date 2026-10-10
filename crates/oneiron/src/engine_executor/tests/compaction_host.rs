@@ -1,0 +1,483 @@
+//! The compaction host end to end (agent-runtime-v1 §d7 done-means): a run
+//! past its threshold compacts by itself, the swapped window passes the six
+//! checks, and the next step continues from the summary. A forced failure of
+//! each check stops the swap and leaves the run whole; a run whose window
+//! fills parks with the typed reason instead of truncating.
+use std::sync::Arc;
+use std::time::Duration;
+
+use super::*;
+use crate::agent_def::{CompactionOwnership, MemoryProfile};
+use crate::code_run::SelfMemorySearchCall;
+use crate::compaction::output::OutputDecayPolicy;
+use crate::compaction::{
+    CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
+    CompactionGatePolicy, CompactionProduct, CompactionRefusal, CompactionRequest,
+    CompactionSuppression, CompactionTierClass,
+};
+use crate::registry::ENTITY_TYPE_SUMMARY;
+
+const RUN_REF: &str = "run-compaction-host";
+const FAILED_LINE: &str = "Host bridge call failed: fixture quota exceeded";
+const SUMMARY_FACT: &str = "the project status is green";
+const NOTE_WORD: &str = "fixturenote";
+
+/// Every pass runs on the step thread, so it lands at the next boundary.
+struct InlineSpawn;
+
+impl CompactionSpawn for InlineSpawn {
+    fn spawn(&self, pass: Box<dyn FnOnce() + Send + 'static>) {
+        pass();
+    }
+}
+
+/// The fixture compaction model: answers the schema, or fails one check on
+/// every try. Records the retry each try was told about.
+#[derive(Default)]
+struct Compactor {
+    fail: Mutex<Option<CompactionCheck>>,
+    tries: Mutex<Vec<Option<CompactionCheck>>>,
+}
+
+struct CompactorSeat(Arc<Compactor>);
+
+impl CompactionBackend for CompactorSeat {
+    fn backend_key(&self) -> &str {
+        "fixture-compactor"
+    }
+
+    fn tier_class(&self) -> CompactionTierClass {
+        CompactionTierClass::Cheap
+    }
+
+    fn compact(
+        &self,
+        request: &CompactionRequest,
+        retry: Option<CompactionCheck>,
+    ) -> std::result::Result<CompactionProduct, CompactionRefusal> {
+        self.0.tries.lock().expect("tries").push(retry);
+        let from = request.turn_start;
+        let through = request.window.last().map_or(from, |message| message.turn);
+        let lead = format!(
+            "Steps {from} to {through} searched the fixture notes and kept what the run needs \
+             next: {SUMMARY_FACT}, and the deploy checklist has four items."
+        );
+        let kept = std::iter::once(lead.clone())
+            .chain(request.pins.iter().cloned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let reply = |summary: &str, through: u64| {
+            serde_json::json!({"from": from, "through": through, "summary": summary}).to_string()
+        };
+        let fail = *self.0.fail.lock().expect("fail");
+        let (text, finish) = match fail {
+            None => (reply(&kept, through), FinishReason::Stop),
+            Some(CompactionCheck::NaturalStop) => (reply(&kept, through), FinishReason::Length),
+            Some(CompactionCheck::Schema) => (kept, FinishReason::Stop),
+            Some(CompactionCheck::Size) => (reply("noted.", through), FinishReason::Stop),
+            Some(CompactionCheck::Pins) => (reply(&lead, through), FinishReason::Stop),
+            Some(CompactionCheck::Degeneracy) => {
+                let looped = format!(
+                    "{}{}",
+                    "the same line again\n".repeat(30),
+                    request.pins.join("\n")
+                );
+                (reply(&looped, through), FinishReason::Stop)
+            }
+            Some(CompactionCheck::Coverage) => (reply(&kept, through + 1), FinishReason::Stop),
+        };
+        Ok(CompactionProduct {
+            summary_text: text,
+            finish,
+            latency: Duration::from_secs(30),
+        })
+    }
+}
+
+fn console(seq: usize) -> String {
+    let lead = if seq == 1 {
+        FAILED_LINE.to_owned()
+    } else {
+        format!("console-marker-{seq}")
+    };
+    format!("{lead}\n{}", "alpha beta gamma delta ".repeat(400))
+}
+
+fn program(seq: usize) -> String {
+    format!("const step{seq} = {seq};")
+}
+
+fn no_decay() -> OutputDecayPolicy {
+    OutputDecayPolicy {
+        overview_after_turns: u64::MAX,
+        stub_after_turns: u64::MAX,
+    }
+}
+
+fn transcript(request: &LlmRequest) -> String {
+    request
+        .messages
+        .iter()
+        .map(text_message)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A run's vault: a searchable note the run's first step reads, and the
+/// sizes of its base request and of one step, measured on its first two
+/// steps (no seat yet).
+struct LongRun {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    note: EntityId,
+    lease: BudgetLease,
+    run_id: EntityId,
+    base_tokens: u64,
+    step_tokens: u64,
+}
+
+impl LongRun {
+    fn start(hard_steps: u32) -> Self {
+        let (dir, vault) = open_test_vault();
+        let note = seed_person(&vault, 0x51);
+        vault
+            .batch()
+            .text(&note, &[("body", "fixturenote alpha")])
+            .commit()
+            .expect("searchable note");
+        let lease = BudgetLease::for_test("compaction-host-lease");
+        let run_id = entity(0x84);
+        // Seeds the run's actor; later calls bind the same one.
+        let gated_write = gated_actor_write(&vault, RUN_REF);
+        let backend = FixtureBackend::new([program(0), program(1)]);
+        let mut runtime = FixtureRuntime::new([
+            JsCodeModeStepOutcome::pending(console(0)),
+            JsCodeModeStepOutcome::pending(console(1)),
+        ])
+        .with_calls([vec![SelfCall::MemorySearch(SelfMemorySearchCall::new(
+            NOTE_WORD, 4,
+        ))]]);
+        let config = executor_config(
+            run_id,
+            EngineExecutorLimits {
+                soft_steps: 2,
+                hard_steps,
+            },
+        );
+        let outcome = block_on_ready(
+            EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write)
+                .with_output_decay(no_decay())
+                .run(&config),
+        )
+        .expect("first two steps");
+        assert_eq!(
+            outcome.status,
+            EngineExecutorStatus::Yielded { next_step_seq: 2 }
+        );
+        let requests = backend.requests.lock().expect("requests");
+        let base_tokens = crate::engine_executor::compaction::request_tokens(&requests[0]);
+        let step_tokens =
+            crate::engine_executor::compaction::request_tokens(&requests[1]) - base_tokens;
+        drop(requests);
+        Self {
+            _dir: dir,
+            vault,
+            note,
+            lease,
+            run_id,
+            base_tokens,
+            step_tokens,
+        }
+    }
+
+    /// A seat whose threshold is `compact_at` tokens: the margin law is
+    /// pinned past half the budget, so the threshold is its floor.
+    fn seat(&self, compact_at: u64, compactor: &Arc<Compactor>) -> RunCompaction {
+        let mut registry = CompactionBackendRegistry::new();
+        registry
+            .register(Arc::new(CompactorSeat(Arc::clone(compactor))))
+            .expect("cheap backend");
+        let profile = MemoryProfile::new(
+            compact_at * 2,
+            ModelTierRef("fixture-compactor".into()),
+            CompactionOwnership::Engine,
+        );
+        let mut driver = CompactionDriver::for_profile(&profile, &registry)
+            .expect("driver")
+            .expect("engine-owned");
+        driver.observe_velocity(1e12);
+        RunCompaction::live(
+            driver,
+            CompactionGatePolicy::default(),
+            WriteActor::new(entity(0xA0), EdgeActorClass::Agent),
+            1,
+            Arc::new(InlineSpawn),
+        )
+    }
+
+    /// Steps `first..last` (the last completes the run) in one call that
+    /// yields after `soft_steps`. Returns the outcome and every request.
+    fn call(
+        &self,
+        seat: &mut RunCompaction,
+        steps: std::ops::Range<usize>,
+        soft_steps: u32,
+        hard_steps: u32,
+    ) -> (EngineExecutorOutcome, Vec<String>) {
+        let gated_write = GatedActorWrite::new(
+            &self.vault,
+            WriteActor::new(entity(0xA0), EdgeActorClass::Agent),
+            RUN_REF,
+        )
+        .expect("gated actor write");
+        let backend = FixtureBackend::new(steps.clone().map(program));
+        let last = steps.end.saturating_sub(1);
+        let mut runtime = FixtureRuntime::new(steps.map(|seq| {
+            if seq == last && last + 1 == hard_steps as usize {
+                JsCodeModeStepOutcome::complete(console(seq))
+            } else {
+                JsCodeModeStepOutcome::pending(console(seq))
+            }
+        }));
+        let config = executor_config(
+            self.run_id,
+            EngineExecutorLimits {
+                soft_steps,
+                hard_steps,
+            },
+        );
+        let outcome = block_on_ready(
+            EngineNativeExecutor::new(
+                &self.vault,
+                &backend,
+                &self.lease,
+                &mut runtime,
+                &gated_write,
+            )
+            .with_output_decay(no_decay())
+            .with_compaction(seat)
+            .run(&config),
+        )
+        .expect("the run continues");
+        let requests = backend
+            .requests
+            .lock()
+            .expect("requests")
+            .iter()
+            .map(transcript)
+            .collect();
+        (outcome, requests)
+    }
+
+    fn summaries(&self) -> usize {
+        self.vault
+            .entities_by_type(ENTITY_TYPE_SUMMARY)
+            .expect("summaries")
+            .len()
+    }
+}
+
+/// Canon §d7: past `compact_at` the run compacts the steps behind its hot
+/// window by itself; the next request holds the summary in place of those
+/// steps (failures kept word for word, every output still reachable by
+/// handle) and the run goes on. Erasing a record the run was served retires
+/// the summary's words, the steps stay covered, and a summary written after
+/// the erasure is born withdrawn.
+#[test]
+fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
+    let run = LongRun::start(10);
+    let compactor = Arc::new(Compactor::default());
+    // Crosses at four steps: the hot step is step 3, so steps 0-2 compact.
+    let compact_at = run.base_tokens + run.step_tokens * 7 / 2;
+    let mut seat = run.seat(compact_at, &compactor);
+    let (outcome, requests) = run.call(&mut seat, 2..6, 4, 10);
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 6 }
+    );
+    assert_eq!(
+        *compactor.tries.lock().expect("tries"),
+        vec![None],
+        "one pass, accepted on its first try"
+    );
+    let report = outcome.compaction.expect("the run's compaction report");
+    assert_eq!(report.last_swap, Some((1, 0, 2)));
+    assert_eq!(report.suppressed, None);
+    // Steps 2-4 ran on the raw window; the request for step 5 is the first
+    // after the swap.
+    for request in &requests[..3] {
+        assert!(!request.contains("<compacted"));
+        assert!(request.contains("console-marker-0"));
+    }
+    let swapped = &requests[3];
+    assert!(swapped.contains("<compacted epoch=\"1\" steps=\"0-2\">"));
+    assert!(swapped.contains(SUMMARY_FACT));
+    assert!(
+        swapped.contains(FAILED_LINE),
+        "a failure is never compacted away"
+    );
+    for covered in ["console-marker-0", "console-marker-2"] {
+        assert!(!swapped.contains(covered), "{covered} left the window");
+    }
+    for hot in ["console-marker-3", "console-marker-4"] {
+        assert!(swapped.contains(hot), "{hot} stays raw");
+    }
+    for step in 0..=2 {
+        assert!(
+            swapped.contains(&format!("\"step\":{step}")),
+            "step {step} keeps a handle"
+        );
+    }
+    assert!(swapped.contains("sandbox.fs.read_file"));
+
+    let epochs = run
+        .vault
+        .code_run_compaction_epochs(run.run_id)
+        .expect("epochs");
+    assert_eq!(epochs.len(), 1);
+    assert_eq!(run.summaries(), 1);
+    let summary = epochs[0].0.summary_id();
+    let sources = run
+        .vault
+        .edges_out(&summary)
+        .expect("edges")
+        .into_iter()
+        .filter(|edge| edge.kind == EdgeKind::DerivedFrom)
+        .map(|edge| edge.target)
+        .collect::<Vec<_>>();
+    assert!(sources.contains(&run.note), "the served note is a source");
+
+    // Erasing a record the summary was written from withdraws its words.
+    assert!(run.vault.delete_entity(&run.note).expect("delete the note"));
+    let epochs = run
+        .vault
+        .code_run_compaction_epochs(run.run_id)
+        .expect("epochs");
+    assert_eq!(epochs.len(), 1, "the steps stay covered");
+    assert_eq!(epochs[0].1, None, "the summary is withdrawn");
+    // Step 7's boundary crosses again: steps 3-5 compact, from a window
+    // whose run was served the erased note.
+    let (outcome, requests) = run.call(&mut seat, 6..8, 2, 10);
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 8 }
+    );
+    let resumed = &requests[0];
+    assert!(resumed.contains("<compacted epoch=\"1\" steps=\"0-2\">"));
+    assert!(!resumed.contains(SUMMARY_FACT));
+    assert!(!resumed.contains("console-marker-0"));
+    assert!(resumed.contains("sandbox.fs.read_file"));
+    let (outcome, requests) = run.call(&mut seat, 8..10, 2, 10);
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    assert!(requests[0].contains("<compacted epoch=\"2\" steps=\"3-5\">"));
+    assert!(!requests[0].contains("console-marker-3"));
+    assert!(!requests[0].contains(SUMMARY_FACT), "born withdrawn");
+    let epochs = run
+        .vault
+        .code_run_compaction_epochs(run.run_id)
+        .expect("epochs");
+    assert_eq!(
+        epochs
+            .iter()
+            .map(|(_, text)| text.is_some())
+            .collect::<Vec<_>>(),
+        vec![false, false]
+    );
+}
+
+/// Canon §d7: every check fails closed. A pass that fails one check on every
+/// try (each retry naming it) swaps nothing: no SUMMARY, no coverage, and
+/// the next request still holds every raw step. The reason is typed.
+#[test]
+fn each_failed_check_stops_the_swap_and_leaves_the_run_whole() {
+    for check in [
+        CompactionCheck::NaturalStop,
+        CompactionCheck::Schema,
+        CompactionCheck::Size,
+        CompactionCheck::Pins,
+        CompactionCheck::Degeneracy,
+        CompactionCheck::Coverage,
+    ] {
+        let run = LongRun::start(8);
+        let compactor = Arc::new(Compactor::default());
+        *compactor.fail.lock().expect("fail") = Some(check);
+        let compact_at = run.base_tokens + run.step_tokens * 7 / 2;
+        let mut seat = run.seat(compact_at, &compactor);
+        let (outcome, requests) = run.call(&mut seat, 2..8, 8, 8);
+        assert_eq!(outcome.status, EngineExecutorStatus::Complete, "{check:?}");
+        assert_eq!(
+            *compactor.tries.lock().expect("tries"),
+            vec![None, Some(check), Some(check)],
+            "each retry names the failed check"
+        );
+        let report = outcome.compaction.expect("report");
+        assert_eq!(report.last_swap, None, "{check:?}");
+        assert_eq!(
+            report.suppressed,
+            Some(CompactionSuppression::TurnScoped { check: Some(check) })
+        );
+        assert_eq!(run.summaries(), 0, "{check:?} minted no SUMMARY");
+        assert!(
+            run.vault
+                .code_run_compaction_epochs(run.run_id)
+                .expect("epochs")
+                .is_empty(),
+            "{check:?} wrote no coverage"
+        );
+        let last = requests.last().expect("a request");
+        assert!(!last.contains("<compacted"), "{check:?}");
+        for step in 0..7 {
+            if step != 1 {
+                assert!(
+                    last.contains(&format!("console-marker-{step}")),
+                    "{check:?}"
+                );
+            }
+        }
+        assert!(last.contains(FAILED_LINE));
+    }
+}
+
+/// Canon §d7: reaching the window budget with no accepted swap parks the run
+/// with the typed reason instead of truncating; the same run goes on once a
+/// swap lands.
+#[test]
+fn a_full_window_parks_with_its_reason_and_resumes_after_the_swap() {
+    let run = LongRun::start(12);
+    let compactor = Arc::new(Compactor::default());
+    *compactor.fail.lock().expect("fail") = Some(CompactionCheck::Size);
+    // Budget = base + 6 steps: the call parks at its sixth step boundary.
+    let budget = run.base_tokens + run.step_tokens * 6;
+    let mut seat = run.seat(budget / 2, &compactor);
+    let (outcome, requests) = run.call(&mut seat, 2..12, 12, 12);
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::WindowFull {
+            next_step_seq: 6,
+            reason: WindowFullReason::Suppressed(CompactionSuppression::TurnScoped {
+                check: Some(CompactionCheck::Size),
+            }),
+        }
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.contains("<compacted"))
+    );
+
+    // A new call is a new turn: the pass runs again, now accepted, and the
+    // run parks only while it is in flight.
+    *compactor.fail.lock().expect("fail") = None;
+    let (outcome, _) = run.call(&mut seat, 6..12, 12, 12);
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::WindowFull {
+            next_step_seq: 6,
+            reason: WindowFullReason::InFlight,
+        }
+    );
+    let (outcome, requests) = run.call(&mut seat, 6..12, 12, 12);
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    assert!(requests[0].contains("<compacted epoch=\"1\""));
+    assert!(requests[0].contains(SUMMARY_FACT));
+}

@@ -317,9 +317,15 @@ async fn serve_without_models_captures_finds_exports_and_reports_the_dreamer_idl
     let base = format!("http://127.0.0.1:{port}");
     let client = reqwest::Client::new();
     let health = wait_healthy(&client, &base).await;
+    // Compaction is off and says why; with no model it never calls one.
     assert_eq!(
         health["ai"],
-        serde_json::json!({"dreamer": "idle", "dreamer_reason": "no_model_configured"})
+        serde_json::json!({
+            "dreamer": "idle",
+            "dreamer_reason": "no_model_configured",
+            "compaction": "off",
+            "compaction_reason": "no_model_configured",
+        })
     );
 
     let note = EntityId::now();

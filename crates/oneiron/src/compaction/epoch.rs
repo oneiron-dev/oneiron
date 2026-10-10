@@ -573,13 +573,24 @@ pub(super) fn mint_epoch_summary_with(
         for target in derived {
             batch = batch.edge(&summary_id, EdgeKind::DerivedFrom, target, 1.0);
         }
+        // A source erased or withdrawn before this mint has already run its
+        // invalidation, so the summary is born withdrawn, as it would be had
+        // the erasure come after it: never indexed, never embedded.
+        let mut born_withdrawn = false;
+        for target in derived {
+            let state =
+                crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, wtxn, target)?;
+            born_withdrawn |= state.deleted || state.stale;
+        }
         batch.apply(wtxn)?;
         // Explicitly scheduled for embedding inside the mint transaction, so
         // the ratified "vector-indexed, RAPTOR-retrievable" contract is a
         // durable fact of the mint rather than a later sweep's guess.
-        vault
-            .store
-            .mark_pending_embedding(wtxn, &summary_id, &body)?;
+        if !born_withdrawn {
+            vault
+                .store
+                .mark_pending_embedding(wtxn, &summary_id, &body)?;
+        }
         // The compacted turns leave their boards' retained history in the
         // same act: reconstructing one now fails explicitly (ARCH-0067).
         if request.folds_board_turns {
@@ -599,6 +610,9 @@ pub(super) fn mint_epoch_summary_with(
                 turn_end,
             },
         )?;
+        if born_withdrawn {
+            crate::ports::RetrievalIndex::port_retrieval_mark_stale(vault, wtxn, &summary_id)?;
+        }
         Ok(epoch)
     })?;
     Ok((epoch, summary_id))

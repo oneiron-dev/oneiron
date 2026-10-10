@@ -20,8 +20,8 @@ use oneiron::engine_executor::{
 };
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmError, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability, LlmError,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence,
 };
 use oneiron::{BudgetGuard, CompactionOwnership, MemoryProfile, Vault, WriteActor};
@@ -291,7 +291,7 @@ impl CompactionBackend for ServedCompactionBackend {
         retry: Option<CompactionCheck>,
     ) -> Result<CompactionProduct, CompactionRefusal> {
         let started = Instant::now();
-        let call = self
+        let mut call = self
             .models
             .admit_role(&self.vault, self.role, self.llm_request(request, retry))
             .map_err(|refusal| {
@@ -303,6 +303,15 @@ impl CompactionBackend for ServedCompactionBackend {
                 };
                 refused(suppression, refusal.to_string())
             })?;
+        // A route that cannot hold a reply to a schema (an Anthropic-style
+        // one) is asked in plain text: the prompt asks for the same JSON, and
+        // the gate's schema check refuses anything else.
+        if !call
+            .backend
+            .supports(&call.request.model, LlmCapability::JsonResponse)
+        {
+            call.request.envelope.response_format = ResponseFormat::Text;
+        }
         let lease = self
             .guard
             .admit_for_request(&call.request)
