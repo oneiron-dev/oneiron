@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::guard::BudgetGuard;
 use super::ledger::LeaseState;
 use super::types::{BudgetAdmission, BudgetRead};
-use crate::llm::{BudgetDenied, BudgetLease, LlmUsage, ModelLocality};
+use crate::llm::{BudgetDenied, BudgetLease, CallPurpose, LlmUsage, ModelLocality};
 
 /// What one bound admission grants its lease for. The guard records it and
 /// compares it at dispatch; it holds no rule about which subjects or routes a
@@ -92,6 +92,20 @@ impl BudgetGuard {
     ) -> Result<BudgetAdmission, BudgetDenied> {
         let mut state = self.lock_state();
         let lease = state.reserve_bound(reserve_units, None, Some(binding))?;
+        Ok(state.metered_admission(lease))
+    }
+
+    /// [`Self::admit_reserve_bound`] for a model call: a policy row for the
+    /// call's purpose caps it too, as it caps
+    /// [`Self::admit_for_request`].
+    pub fn admit_call_bound(
+        &self,
+        reserve_units: u64,
+        purpose: &CallPurpose,
+        binding: DispatchBinding,
+    ) -> Result<BudgetAdmission, BudgetDenied> {
+        let mut state = self.lock_state();
+        let lease = state.reserve_bound(reserve_units, Some(purpose), Some(binding))?;
         Ok(state.metered_admission(lease))
     }
 

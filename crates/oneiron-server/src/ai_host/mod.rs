@@ -10,11 +10,14 @@ use std::sync::Arc;
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocality, Vault};
 use oneiron_driver::{HintPusher, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig};
-use crate::models::{ModelRuntime, ModelsStatus, RoleCall, RoleRefusal, Seat};
+use crate::models::{
+    LoggedReceipts, ModelRuntime, ModelsStatus, RawInference, RoleCall, RoleRefusal, Seat,
+};
 use crate::server::SyncServer;
 
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -144,6 +147,29 @@ impl AiHandle {
         self.runtime.admit_role(vault, role, request)
     }
 
+    /// A run that declares nothing on `meter` (a chat turn's line), with this
+    /// server's run receipts.
+    pub(crate) fn undeclared_run(
+        &self,
+        run: impl Into<String>,
+        meter: oneiron::BudgetGuard,
+    ) -> oneiron::llm::run_admission::RunAdmission {
+        self.runtime.undeclared_run(run, meter)
+    }
+
+    /// A declared run on this server's models, for the host that states a
+    /// run's teachers and budget (a training loop). Nothing on the server
+    /// declares a run yet.
+    #[must_use]
+    pub fn declared_run(
+        &self,
+        run: impl Into<String>,
+        declaration: oneiron::llm::run_admission::RunDeclaration,
+        host: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
+    ) -> crate::models::DeclaredRun {
+        self.runtime.declared_run(run, declaration, host)
+    }
+
     /// Registers a running chat turn with shutdown.
     pub(crate) fn enter_turn(&self) -> TurnGuard {
         self.turns.enter()
@@ -240,10 +266,11 @@ impl AiHost {
     /// serve, and hands the server its handle (and the raw `/v1/llm` routes
     /// their router, and MCP `execute_code` its executor).
     pub async fn attach(server: SyncServer, models: Option<&ModelsConfig>) -> (SyncServer, Self) {
-        let host = Self::start(
+        let host = Self::start_receipted(
             Arc::clone(server.vault()),
             models,
             server.host_root_provisioned(),
+            server.run_receipts(),
         )
         .await;
         let server = server.with_ai(host.handle.clone());
@@ -252,9 +279,22 @@ impl AiHost {
         (server, host)
     }
 
+    /// [`Self::start_receipted`] with run receipts written to the log.
     pub async fn start(vault: Arc<Vault>, models: Option<&ModelsConfig>, host_root: bool) -> Self {
+        Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts)).await
+    }
+
+    /// Builds every seat from `models` and starts the workers those seats can
+    /// serve. Every model call they make is admitted as a run whose receipts
+    /// go to `receipts`.
+    pub(crate) async fn start_receipted(
+        vault: Arc<Vault>,
+        models: Option<&ModelsConfig>,
+        host_root: bool,
+        receipts: Arc<dyn RunReceiptSink>,
+    ) -> Self {
         recover_dead_leases(&vault);
-        let runtime = Arc::new(ModelRuntime::build(models));
+        let runtime = Arc::new(ModelRuntime::build(models).with_receipts(receipts));
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
             handle: handle.clone(),
@@ -496,12 +536,10 @@ fn start_workflows(
 
 impl AiHandle {
     /// The router the raw `/v1/llm` routes call, with its own meter.
-    pub(crate) fn raw_inference(
-        &self,
-    ) -> Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)> {
-        let router: Arc<dyn oneiron::LlmBackend> = self.runtime.router()?;
+    pub(crate) fn raw_inference(&self) -> Option<RawInference> {
+        let router = self.runtime.router()?;
         let units = self.raw_budget_units?;
-        Some((
+        Some(RawInference::configured(
             router,
             oneiron::BudgetGuard::new(
                 "raw-inference",

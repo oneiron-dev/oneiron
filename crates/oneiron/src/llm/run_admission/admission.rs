@@ -139,6 +139,24 @@ impl RunAdmission {
             budget.reserve_units,
             BudgetExhaustionPolicy::Suspend,
         );
+        Self::with_meter(run, declaration, guard, host, receipts)
+    }
+
+    /// Starts a run at revision 1 of `declaration` on a meter the host built
+    /// for its line, such as the vault's budget policy for one actor's calls.
+    /// `meter` holds the line `declaration.budget()` names, and each call
+    /// reserves that line's `reserve_units` on it. Runs that share a meter
+    /// share its line, and a permit one of them issued starts at another's
+    /// gate for the same offer.
+    #[must_use]
+    pub fn with_meter(
+        run: impl Into<String>,
+        declaration: RunDeclaration,
+        meter: BudgetGuard,
+        host: Option<Arc<HostAccount>>,
+        receipts: Arc<dyn RunReceiptSink>,
+    ) -> Self {
+        let run = run.into();
         Self {
             inner: Arc::new(RunInner {
                 run,
@@ -146,7 +164,7 @@ impl RunAdmission {
                     revision: 1,
                     declaration,
                 }),
-                guard,
+                guard: meter,
                 host,
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),

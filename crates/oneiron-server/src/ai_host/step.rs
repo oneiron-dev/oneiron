@@ -128,19 +128,20 @@ impl StepRunner {
             .map_err(|refusal| Error::InvalidConfig(format!("workflow step refused: {refusal}")))?;
         let request = call.request;
         // The agent pays: its live budget policy rows, its own meter. Every
-        // earlier try of this step failed its model call and was charged its
-        // reservation, the same fixed amount for every try whatever the
-        // config did between them. Those charges are replayed into this
-        // try's meter, so the step's budget and every policy row it matches
-        // (the agent's cap, the purpose's) see them: retries share one
-        // budget, never renew it.
+        // earlier try of this step failed its model call, and each rung it
+        // sent was charged its reservation: one reservation per rung of the
+        // ladder, at most, whatever the config did between them. Those
+        // charges are replayed into this try's meter, so the step's budget
+        // and every policy row it matches (the agent's cap, the purpose's)
+        // see them: retries share one budget, never renew it.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
+        let run_id = format!(
+            "workflow-step:{}",
+            oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())?.to_hex()
+        );
         let guard = vault.policy_budget_guard(
-            format!(
-                "workflow-step:{}",
-                oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())?.to_hex()
-            ),
+            run_id.clone(),
             self.budget_units,
             reserve,
             BudgetExhaustionPolicy::Suspend,
@@ -149,15 +150,20 @@ impl StepRunner {
         let budget = |denied: oneiron::llm::BudgetDenied| {
             Error::InvalidConfig(format!("workflow step budget: {denied:?}"))
         };
-        for _ in 0..earlier {
+        let charged = u64::from(earlier).saturating_mul(call.ladder.rungs() as u64);
+        for _ in 0..charged {
             let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
             guard.settle_reserved(&spent).map_err(budget)?;
         }
-        let lease = guard.admit_for_request(&request).map_err(budget)?.lease;
-        let response = match runtime.block_on(call.backend.generate(request, &lease)) {
+        // The step is a run on that meter: each rung its call reaches is
+        // admitted on its own permit, sent through the run's gate and
+        // settled. An answer pays its tokens, or the reservation when it
+        // reports none; a rung that went out and failed pays its reservation.
+        let run = self.models.undeclared_run(run_id, guard);
+        let response = match runtime.block_on(call.ladder.generate(&run, request, None)) {
             Ok(response) => response,
+            Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied).into()),
             Err(error) => {
-                let _ = guard.settle_reserved(&lease);
                 return Err(StepFault {
                     retryable: matches!(error, oneiron::llm::LlmError::Retryable(_)),
                     error: Error::InvalidConfig(format!(
@@ -166,11 +172,6 @@ impl StepRunner {
                 });
             }
         };
-        // An answer pays its tokens, or the reservation when it reports none,
-        // plus the reservation for each rung that failed before it.
-        crate::models::settle_answered(&guard, &lease, &response.usage, reserve).map_err(
-            |denied| Error::InvalidConfig(format!("workflow step settlement: {denied:?}")),
-        )?;
         let text: String = response
             .message
             .content

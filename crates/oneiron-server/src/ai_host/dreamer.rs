@@ -26,7 +26,7 @@ use oneiron_driver::{
 use super::policy::extraction_egress;
 use super::status::{StatusCell, WorkState, WorkStatus};
 use crate::config::models::DreamerSettings;
-use crate::models::{ModelRuntime, Seat};
+use crate::models::{ModelRuntime, RunBackend, Seat};
 
 /// Stamped on every admission and park this server makes.
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
@@ -191,6 +191,9 @@ fn now_ms() -> u64 {
         })
 }
 
+/// The run a Dreamer pass's model calls are admitted under.
+const DREAMER_PASS_RUN: &str = "dreamer-pass";
+
 /// The consolidation factory, rebuilt for each pass on the model that pass's
 /// extraction is admitted as, with each pass and attempt reported to status.
 struct ObservedFactory {
@@ -231,8 +234,22 @@ impl PassExecutorFactory for ObservedFactory {
                 return Err(error);
             }
         };
+        // The pass's calls go out as a run on a line that mirrors the pass's
+        // own: each rung takes its own permit through the run's gate. The
+        // engine's step layer still meters the pass on `guard` with its own
+        // lease, and each of its retries reaches the run as a fresh call.
+        let line = oneiron::BudgetGuard::with_reserve_units(
+            DREAMER_PASS_RUN,
+            guard.read().limit_units,
+            guard.reserve_units(),
+            oneiron::BudgetExhaustionPolicy::Suspend,
+        );
+        let backend = RunBackend::new(
+            route.ladder,
+            self.runtime.undeclared_run(DREAMER_PASS_RUN, line),
+        );
         let mut factory = ConsolidationExecutorFactory::new(
-            route.backend,
+            Arc::new(backend),
             DreamerClaimAuthoringStrategy::SinglePass,
             self.actor,
             route.model.clone(),

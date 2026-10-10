@@ -42,6 +42,12 @@ fn response() -> LlmResponse {
         finish_reason: FinishReason::Stop,
     }
 }
+// One request per call: the raw routes' gate wraps it.
+impl oneiron::llm::SingleRouteBackend for Backend {
+    fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+        Ok(())
+    }
+}
 impl LlmBackend for Backend {
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
@@ -339,6 +345,12 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
 async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_usage() {
     use tower::ServiceExt;
     struct Partial(bool);
+    // One request per call: the raw routes' gate wraps it.
+    impl oneiron::llm::SingleRouteBackend for Partial {
+        fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+            Ok(())
+        }
+    }
     impl LlmBackend for Partial {
         fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
             unreachable!()
@@ -415,6 +427,12 @@ async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_
 async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
     use tower::ServiceExt;
     struct MissingUsage;
+    // One request per call: the raw routes' gate wraps it.
+    impl oneiron::llm::SingleRouteBackend for MissingUsage {
+        fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+            Ok(())
+        }
+    }
     impl LlmBackend for MissingUsage {
         fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
             Box::pin(async {
@@ -496,6 +514,12 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     // A backend that answers anything, as a provider key would, and counts
     // what reached it.
     struct Counting(AtomicUsize);
+    // One request per call: the raw routes' gate wraps it.
+    impl oneiron::llm::SingleRouteBackend for Counting {
+        fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+            Ok(())
+        }
+    }
     impl LlmBackend for Counting {
         fn generate<'a>(&'a self, r: LlmRequest, l: &'a BudgetLease) -> LlmGenerateFuture<'a> {
             self.0.fetch_add(1, Ordering::SeqCst);
