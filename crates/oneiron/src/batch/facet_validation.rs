@@ -19,7 +19,9 @@ pub(crate) fn stored_entity_type(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<u8>> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)?
+        .map(zeroize::Zeroizing::new)
+    else {
         return Ok(None);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
