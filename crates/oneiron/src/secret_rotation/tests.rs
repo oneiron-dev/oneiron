@@ -203,6 +203,26 @@ fn rotate_refuses_a_missing_or_inactive_record() {
     assert_eq!(count_rows(&vault, SECRET_ROTATION_RECEIPT_PREFIX), 1);
 }
 
+/// The rotation wipes the value it replaces before freeing it, and its own
+/// copy of the new value once that is stored. Both used to be freed unwiped.
+#[test]
+fn a_rotation_wipes_the_value_it_replaces_and_its_copy_of_the_new_one() {
+    use super::owner_door::wiped;
+
+    // Distinct from every other row's values, so the hook's counts are ours.
+    const OLD: &[u8] = b"wipe-check-replaced-value";
+    const NEW: &[u8] = b"wipe-check-rotated-value";
+    let (_tmp, vault) = temp_vault();
+    register(&vault, SECRET, OLD);
+
+    vault
+        .rotate_secret(SECRET, NEW, AT_ROTATED)
+        .expect("rotate");
+
+    assert_eq!(wiped::count(OLD), 1, "the replaced value");
+    assert_eq!(wiped::count(NEW), 1, "the record's copy of the new value");
+}
+
 #[test]
 fn the_next_lease_gets_the_new_value_and_the_old_lease_stays_alive_and_observably_stale() {
     let (_tmp, vault) = temp_vault();
