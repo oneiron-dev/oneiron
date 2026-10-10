@@ -102,7 +102,7 @@ pub fn signature_send_state(vault: &Vault, id: EntityId) -> PublisherResult<Sign
 }
 
 fn put_send_state(vault: &Vault, id: EntityId, state: SignatureSendState) -> Result<()> {
-    vault.with_write_txn(|wtxn| SEND_STATE.put(&vault.store, wtxn, &id, &state))
+    vault.with_write_txn_grouped(|wtxn| SEND_STATE.put(&vault.store, wtxn, &id, &state))
 }
 
 fn require_signature(vault: &Vault, id: EntityId) -> PublisherResult<()> {

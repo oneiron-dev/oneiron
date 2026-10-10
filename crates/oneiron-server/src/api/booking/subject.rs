@@ -52,7 +52,7 @@ pub(super) fn resolve_booker_contact(
         .map_err(engine_read_error)?;
     server
         .vault
-        .with_write_txn(|txn| {
+        .with_write_txn_grouped(|txn| {
             if let Some(authority) = public_authority {
                 authority
                     .recheck_in_txn(&server.vault, txn, now)

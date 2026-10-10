@@ -205,7 +205,7 @@ impl Vault {
             true,
             owner.decision_id(),
         )?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let receipt = RUN
                 .get(&self.store, txn, &(*actor, run_digest(run)))?
                 .ok_or(Error::EntityNotFound)?;
@@ -229,7 +229,7 @@ impl Vault {
             true,
             owner.decision_id(),
         )?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let counter = COUNT
                 .get(&self.store, txn, &check.actor)?
                 .ok_or_else(|| Error::InvalidConfig("actor has no burst check".into()))?;
@@ -263,7 +263,7 @@ impl Vault {
         if let Some(release) = release {
             super::validate_ref(release)?;
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut record = PROPOSAL
                 .get(&self.store, txn, id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -403,7 +403,7 @@ impl HealerRegistration<'_> {
         // The policy and the healer binding are read under the SAME write
         // transaction that records the proposal. A revocation between preflight
         // and this snapshot therefore denies admission, not just future runs.
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             if let Some(binding) = &binding {
                 binding.require_in_txn(self.vault, txn)?;
             }

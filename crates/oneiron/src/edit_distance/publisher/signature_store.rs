@@ -95,7 +95,7 @@ fn decode_signature(bytes: &[u8]) -> Result<IssueSignature> {
 /// Storage errors.
 pub fn emit_issue_signature(vault: &Vault, sig: IssueSignature) -> PublisherResult<EntityId> {
     let id = vault.store.clock.entity_id()?;
-    vault.with_write_txn(|wtxn| SIGNATURE.put(&vault.store, wtxn, &id, &sig))?;
+    vault.with_write_txn_grouped(|wtxn| SIGNATURE.put(&vault.store, wtxn, &id, &sig))?;
     Ok(id)
 }
 

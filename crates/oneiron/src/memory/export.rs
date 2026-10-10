@@ -182,7 +182,7 @@ fn render_export(
     };
     // Export is never gated: a vault that cannot take one more write (a full
     // map, a failing disk) still hands the owner their data, and says so.
-    if let Err(error) = vault.with_write_txn(|txn| {
+    if let Err(error) = vault.with_write_txn_grouped(|txn| {
         let sequence = match EXPORT_RECEIPTS
             .iter_rev_from(&vault.store, txn, &[])?
             .next()

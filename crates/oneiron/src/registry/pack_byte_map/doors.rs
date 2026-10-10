@@ -49,7 +49,7 @@ impl Vault {
         &self,
         kinds: &[PackKindIdentity],
     ) -> Result<Vec<PackKindRegistration>> {
-        self.with_write_txn(|txn| self.install_pack_kinds_in_txn(txn, kinds))
+        self.with_write_txn_grouped(|txn| self.install_pack_kinds_in_txn(txn, kinds))
     }
 
     /// Data snapshot, including retired name identities and generation history.
@@ -67,7 +67,7 @@ impl Vault {
 
     /// Disable new instance writes, retaining the handle while rows refer to it.
     pub fn uninstall_pack_kind(&self, name: &str) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut map = read(&self.store, txn)?.ok_or_else(|| {
                 Error::Registry(RegistryError::PackKindNotInstalled(name.to_owned()))
             })?;
@@ -86,7 +86,7 @@ impl Vault {
     /// Soft-deleted shells count. Historic sync bodies remain name-bearing and
     /// can never be decoded as the later occupant of a recycled slot.
     pub fn gc_pack_kind(&self, name: &str) -> Result<bool> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let Some(mut map) = read(&self.store, txn)? else {
                 return Ok(false);
             };
@@ -137,7 +137,7 @@ impl Vault {
         learned_at: u64,
         payload: &[u8],
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let map = read(&self.store, txn)?.ok_or_else(|| {
                 Error::Registry(RegistryError::PackKindNotInstalled(name.to_owned()))
             })?;
@@ -158,7 +158,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let (handle, envelope) = self.store.remap_pack_instance_in_txn(txn, source)?;
             self.batch_in()
                 .put(id, handle, occurred, learned_at, &envelope.to_bytes()?)

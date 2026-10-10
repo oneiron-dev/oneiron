@@ -35,7 +35,7 @@ impl Vault {
         &self,
         input: ThreadPassportInput,
     ) -> Result<ThreadPassportResolution> {
-        self.with_write_txn(|txn| self.record_thread_passport_in_txn(txn, input))
+        self.with_write_txn_grouped(|txn| self.record_thread_passport_in_txn(txn, input))
     }
 
     pub(crate) fn record_thread_passport_in_txn(

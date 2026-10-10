@@ -73,7 +73,7 @@ impl Vault {
         if ROW_DELETION_FENCE_BACKFILLED.contains(&self.store, &self.store.env.read_txn()?, &())? {
             return Ok(());
         }
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             if ROW_DELETION_FENCE_BACKFILLED.contains(&self.store, wtxn, &())? {
                 return Ok(());
             }

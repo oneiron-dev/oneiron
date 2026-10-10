@@ -82,7 +82,7 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         actor: WriteActor,
     ) -> Result<CitationPin> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, entity, actor)?;
             let h = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
@@ -220,7 +220,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let receipt = self.with_write_txn(|txn| {
+        let receipt = self.with_write_txn_grouped(|txn| {
             super::forks::owner_in_txn(self, txn, owner)?;
             let mut h = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;

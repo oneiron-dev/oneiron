@@ -113,7 +113,7 @@ impl Vault {
     /// The copied object is not a grant. Requested powers remain on its card;
     /// a code flag or rules hit leaves it Candidate, without registering verbs.
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
             if let Some(reason) = self.screen_pack_in_txn(
                 txn,

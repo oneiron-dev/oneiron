@@ -1,15 +1,17 @@
 //! Agent write-mix bench for the vault's single writer (OF-536 group commit).
 //!
 //! N writer threads share one fresh vault and run a fixed agent mix: 50% a
-//! note-like batch (put + text), 20% a turn-like write through the
-//! caller-transaction door, 10% a batch carrying an embedding, and 20% a
-//! recall that writes its retrieval-telemetry row. One JSON line per writer
-//! count reports logical writes/s, durable commits/s (LMDB's own transaction
-//! id, read from the data file's meta pages), fsyncs/s (when
-//! `fsync_count.so` is preloaded) and p50/p95 write latency. Public API only,
-//! so the same file measures any engine revision.
+//! note-like batch (put + text), 20% a turn-like write through the engine's
+//! caller-transaction door (`--turn-door opaque`: the hosts' door, whose
+//! callback runs as a group of its own), 10% a batch carrying an embedding,
+//! and 20% a recall that writes its retrieval-telemetry row. One JSON line
+//! per writer count reports logical writes/s, durable commits/s (LMDB's own
+//! transaction id, read from the data file's meta pages), fsyncs/s (when
+//! `fsync_count.so` is preloaded) and p50/p95 write latency. Public API only
+//! (the engine's door is public, though hidden from the docs).
 //!
 //! usage: write_mix_bench <scratch dir> [--writers 1,10,100,200] [--ops 4000]
+//!        [--turn-door grouped|opaque]
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -19,6 +21,15 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 const CORPUS: usize = 2048;
 const DIMS: usize = 64;
 const SEED: u64 = 42;
+
+/// Which caller-transaction door the turn-like write takes.
+#[derive(Clone, Copy, Debug)]
+enum TurnDoor {
+    /// The engine's own door: the group goes on after the write.
+    Grouped,
+    /// The hosts' door: an opaque callback runs as a group of its own.
+    Opaque,
+}
 
 #[derive(Clone, Copy)]
 enum Op {
@@ -45,6 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scratch = args.next().ok_or("expected a scratch directory")?;
     let mut writer_counts = vec![1, 10, 100, 200];
     let mut total_ops = 4000;
+    let mut turn_door = TurnDoor::Grouped;
     while let Some(flag) = args.next() {
         let value = args.next().ok_or("flag without a value")?;
         match flag.as_str() {
@@ -52,12 +64,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 writer_counts = value.split(',').map(str::parse).collect::<Result<_, _>>()?;
             }
             "--ops" => total_ops = value.parse()?,
+            "--turn-door" => {
+                turn_door = match value.as_str() {
+                    "grouped" => TurnDoor::Grouped,
+                    "opaque" => TurnDoor::Opaque,
+                    _ => return Err(format!("unknown turn door {value}").into()),
+                }
+            }
             _ => return Err(format!("unknown flag {flag}").into()),
         }
     }
     for writers in writer_counts {
         let dir = tempfile::tempdir_in(&scratch)?;
-        let line = measure(dir.path(), writers, total_ops)?;
+        let line = measure(dir.path(), writers, total_ops, turn_door)?;
         println!("{line}");
     }
     Ok(())
@@ -100,7 +119,12 @@ struct Samples {
     logical_writes: usize,
 }
 
-fn measure(dir: &Path, writers: usize, total_ops: usize) -> Result<String, String> {
+fn measure(
+    dir: &Path,
+    writers: usize,
+    total_ops: usize,
+    turn_door: TurnDoor,
+) -> Result<String, String> {
     let mut config = VaultConfig::device();
     config.retrieval_telemetry_capture = true;
     config.dimensions = DIMS;
@@ -145,7 +169,7 @@ fn measure(dir: &Path, writers: usize, total_ops: usize) -> Result<String, Strin
             .enumerate()
             .map(|(writer, plan)| {
                 let (vault, corpus, start) = (&vault, &corpus, &start);
-                scope.spawn(move || run_writer(vault, corpus, writer, plan, start))
+                scope.spawn(move || run_writer(vault, corpus, (writer, turn_door), plan, start))
             })
             .collect();
         start.wait();
@@ -179,6 +203,7 @@ fn measure(dir: &Path, writers: usize, total_ops: usize) -> Result<String, Strin
     let rate = |count: u64| count as f64 / seconds;
     Ok(serde_json::json!({
         "writers": writers,
+        "turn_door": format!("{turn_door:?}"),
         "ops": writers * per_writer,
         "window_s": seconds,
         "logical_writes": logical_writes,
@@ -198,7 +223,7 @@ fn measure(dir: &Path, writers: usize, total_ops: usize) -> Result<String, Strin
 fn run_writer(
     vault: &Vault,
     corpus: &[(EntityId, String)],
-    writer: usize,
+    (writer, turn_door): (usize, TurnDoor),
     plan: &[(EntityId, Vec<f32>)],
     start: &std::sync::Barrier,
 ) -> Result<Samples, String> {
@@ -221,13 +246,12 @@ fn run_writer(
                 .put(entity, 1, at, index as u64 + 2, b"write-mix-note")
                 .text(entity, &[("body", body.as_str())])
                 .commit(),
-            Op::Turn => vault.with_write_txn(|txn| {
-                vault
-                    .batch_in()
-                    .put(entity, 1, at, index as u64 + 2, b"write-mix-turn")
-                    .text(entity, &[("body", body.as_str())])
-                    .apply(txn)
-            }),
+            Op::Turn => match turn_door {
+                TurnDoor::Grouped => {
+                    vault.with_write_txn_grouped(|txn| turn(vault, txn, entity, at, &body))
+                }
+                TurnDoor::Opaque => vault.with_write_txn(|txn| turn(vault, txn, entity, at, &body)),
+            },
             Op::Embedded => vault
                 .batch()
                 .put(entity, 1, at, index as u64 + 2, b"write-mix-embedded")
@@ -252,6 +276,21 @@ fn run_writer(
         samples.writes_ms.push(ms(began.elapsed()));
     }
     Ok(samples)
+}
+
+/// The turn-like write: one entity and its text, in the caller's transaction.
+fn turn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+    at: TimeRange,
+    body: &str,
+) -> Result<(), oneiron::Error> {
+    vault
+        .batch_in()
+        .put(entity, 1, at, at.start, b"write-mix-turn")
+        .text(entity, &[("body", body)])
+        .apply(txn)
 }
 
 fn ms(elapsed: Duration) -> f64 {

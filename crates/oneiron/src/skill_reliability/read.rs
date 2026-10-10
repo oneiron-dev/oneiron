@@ -138,7 +138,7 @@ pub(super) fn active_reliability_heads_in_txn(
 /// is still the claim's, so a caller reading it reads truth either way.
 pub fn rebuild_skill_confidence_cache(vault: &Vault, skill: &EntityId, at: u64) -> Result<f32> {
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let posterior =
             resolved_reliability_posterior_in_txn(vault, wtxn, skill, None)?.unwrap_or(prior);
         let mean = posterior.mean();

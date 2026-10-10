@@ -188,7 +188,7 @@ impl Vault {
     /// start) → [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody); subject edge missing →
     /// [`Error::EdgeNotFound`].
     pub fn retract_edge_provenance(&self, claim_id: &EntityId, now: u64) -> Result<()> {
-        self.with_write_txn(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
+        self.with_write_txn_grouped(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
     }
 
     pub(super) fn retract_edge_provenance_in_txn(
@@ -285,7 +285,9 @@ impl Vault {
     /// [`RegistryError::MaintenanceKindNotWritable`](crate::error::RegistryError::MaintenanceKindNotWritable): this method is the ONLY public
     /// door, and it only ever writes the engine-shaped body.
     pub fn ensure_model_substrate(&self, name: &str, version: &str, now: u64) -> Result<EntityId> {
-        self.with_write_txn(|wtxn| self.ensure_model_substrate_in_txn(wtxn, name, version, now))
+        self.with_write_txn_grouped(|wtxn| {
+            self.ensure_model_substrate_in_txn(wtxn, name, version, now)
+        })
     }
 
     pub(crate) fn ensure_model_substrate_in_txn(
@@ -371,7 +373,7 @@ impl Vault {
         learned_at: u64,
         explicit_prior: Option<&EntityId>,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.write_edge_provenance_in_txn(
                 wtxn,
                 EdgeProvenanceWrite {

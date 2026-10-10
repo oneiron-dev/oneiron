@@ -64,7 +64,7 @@ pub(crate) fn vault_import_confirm_if_pending(
     let key = Hex64(expected.receipt_id);
     let a = encode_vault_import_receipt(expected)?;
     let b = encode_vault_import_receipt(confirmed)?;
-    vault.with_write_txn(|w| {
+    vault.with_write_txn_grouped(|w| {
         let Some(current) = RECEIPT.get(&vault.store, w, &key)? else {
             return Ok(false);
         };
@@ -97,7 +97,7 @@ fn put_stage_if_absent(
 ) -> Result<bool> {
     let key = Hex64(receipt.receipt_id);
     let encoded = encode_vault_import_receipt(receipt)?;
-    vault.with_write_txn(|w| {
+    vault.with_write_txn_grouped(|w| {
         if RECEIPT.contains(&vault.store, w, &key)? {
             return Ok(false);
         }

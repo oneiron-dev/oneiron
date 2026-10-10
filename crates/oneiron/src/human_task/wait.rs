@@ -37,7 +37,7 @@ pub fn bind_human_wait(
         step_hash: trap.step_hash,
         is_active: true,
     };
-    vault.with_write_txn(|wtxn| put_wait_binding_in_txn(vault, wtxn, &binding))?;
+    vault.with_write_txn_grouped(|wtxn| put_wait_binding_in_txn(vault, wtxn, &binding))?;
     Ok(binding)
 }
 
@@ -101,7 +101,7 @@ pub fn signal_human_response(
         stored.step_hash,
         signal.occurred_at,
     )?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         put_wait_signal_marker_in_txn(
             vault,
             wtxn,
@@ -153,7 +153,7 @@ pub fn release_human_wait(vault: &Vault, task_ref: EntityId) -> Result<bool> {
         is_active: false,
         ..binding
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         put_wait_binding_in_txn(vault, wtxn, &retired)?;
         WAIT_SIGNALS.delete(&vault.store, wtxn, &binding.trap_claim_id)?;
         Ok(())

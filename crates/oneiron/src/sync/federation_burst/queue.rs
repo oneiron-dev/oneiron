@@ -202,7 +202,7 @@ impl DeferredWork {
         if self.peer != peer.digest() || self.selector != encode_sync_selector(&peer.selector)? {
             return Err(corrupt());
         }
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             vault.store.sync_queue.delete(txn, &self.key())?;
             // Keep a small, payload-free delivery witness. If the socket dies
             // after direct enqueue, the same authenticated ticket can fetch

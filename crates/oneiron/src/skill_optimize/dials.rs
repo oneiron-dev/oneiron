@@ -64,7 +64,7 @@ pub fn set_skill_optimize_min_outcomes(vault: &Vault, min_outcomes: u32) -> Resu
             "skill optimize min_outcomes must be > 0: evidence is the point",
         ));
     }
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         MIN_OUTCOMES.put(&vault.store, wtxn, &(), &min_outcomes.to_be_bytes())?;
         Ok(())
     })

@@ -325,7 +325,7 @@ fn compact_window(
     // `Ok` arm that commits nothing — the `d:w:`/`sv:` puts live AFTER the
     // re-read+compare, so an early return can never clobber a newer carrier.
     let raced = std::cell::Cell::new(false);
-    let result = vault.with_write_txn(|wtxn| {
+    let result = vault.with_write_txn_grouped(|wtxn| {
         // Finding 4 (anti-clobber): re-read `d:w:` and compare byte-for-byte
         // against the snapshot captured in the read phase — `Option<Vec<u8>>`
         // equality, so absent-vs-present (None↔Some) AND any byte difference

@@ -136,7 +136,7 @@ impl Vault {
         ask: &SharedSkillMergeAsk,
         owner: &AuthenticatedOwner,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.check_merge_ask(txn, ask)?;
             self.approve_once_in_txn(txn, owner, ask.effect)
         })
@@ -212,7 +212,7 @@ impl Vault {
         let encoded_receipt =
             serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
         crate::batch::secret_scan::scan_staged_payload(&self.store, &encoded_receipt)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if let Some(revision) = &judge_revision {
                 crate::skill_optimize::ensure_current_judge_in_txn(self, txn, revision)?;
             }

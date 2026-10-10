@@ -101,7 +101,7 @@ pub fn run_task_attribution_sweep_with_judge(
     }
     // A crash before this cursor repeats captures safely. A full pass wraps, so
     // late terminal receipts and temporarily unknown facts are retried as well.
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if complete {
             SCAN_CURSOR.delete(&vault.store, txn, &())?;
         } else if let Some(last) = receipts.last() {
@@ -207,7 +207,7 @@ pub fn run_task_attribution_sweep_with_judge(
     }
     // Separate from routing: an interrupted projector must be retried from durable
     // judgments, not silently skipped merely because the judge advanced its cursor.
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let held = APPLIED_CURSOR.get(&vault.store, txn, &())?.unwrap_or(0);
         APPLIED_CURSOR.put(&vault.store, txn, &(), &held.max(routed))?;
         Ok(())
@@ -296,7 +296,7 @@ fn capture_receipt(
         validate_evidence(vault, &row)?;
         evidence.push(row);
     }
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if CAPTURED.contains(&vault.store, txn, &receipt.receipt_id)? {
             return Ok(Some(0));
         }

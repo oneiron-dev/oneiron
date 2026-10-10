@@ -57,7 +57,7 @@ impl Vault {
             Value::from(node.turn_ref.to_hex()),
         ]);
         let id = EntityId::now();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.batch_in()
                 .claim_candidate(
                     &id,

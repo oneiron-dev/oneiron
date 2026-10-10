@@ -118,7 +118,7 @@ impl Vault {
         ask: &HubActivationAsk,
         owner: &AuthenticatedOwner,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.check_hub_ask_in_txn(txn, ask)?;
             self.approve_once_in_txn(txn, owner, ask.effect)
         })
@@ -170,7 +170,7 @@ impl Vault {
         if scorer.judge_revision() != judge_revision {
             return Err(invalid("marketplace judge revision moved during scoring"));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::skill_optimize::ensure_current_judge_in_txn(self, txn, &judge_revision)?;
             self.check_hub_ask_in_txn(txn, ask)?;
             let authorization =

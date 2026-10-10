@@ -200,7 +200,7 @@ impl Vault {
         held_before: u64,
         limit: usize,
     ) -> Result<usize> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let frontier =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;

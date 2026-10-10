@@ -99,7 +99,7 @@ impl Vault {
             return Ok(());
         }
         drop(txn);
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if BACKFILLED.get(&self.store, txn, &())?.is_some() {
                 return Ok(());
             }

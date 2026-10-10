@@ -138,7 +138,7 @@ impl HostedDerivationCache {
 impl crate::Vault {
     /// Host-only initialization. The first owner binding is immutable.
     pub fn bind_derivation_owner(&self, owner: DerivationOwner) -> crate::Result<DerivationScope> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if let Some(existing) = DERIVATION_OWNER.get(&self.store, txn, &())? {
                 if existing != owner.0 {
                     return Err(crate::Error::InvalidConfig(

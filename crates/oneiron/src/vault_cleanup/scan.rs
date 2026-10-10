@@ -85,7 +85,7 @@ pub(super) fn run_with_limit(
     attempt: &AttemptId,
     limit: usize,
 ) -> Result<CleanupRunReport> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if let Some(report) = run_record::read_in_txn(vault, txn, attempt)? {
             return Ok(report);
         }

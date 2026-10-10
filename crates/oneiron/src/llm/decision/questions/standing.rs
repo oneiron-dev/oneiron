@@ -240,7 +240,7 @@ pub fn backfill_standing_answer(
     input: StandingAnswer,
     now: u64,
 ) -> Result<AnswerRecord> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let (mut head, record) =
             standing_record(vault, txn, principal, question, expected_version)?;
         if !record.definition.units.contains(&input.unit)

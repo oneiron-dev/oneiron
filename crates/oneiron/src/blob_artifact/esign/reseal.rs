@@ -17,7 +17,7 @@ impl Vault {
         user_agent: Option<String>,
     ) -> Result<()> {
         let now = self.now_recorded_at();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let required = GrantBound::action(
                 ActorBound::new(owner.actor().to_hex())?,
@@ -63,7 +63,7 @@ impl Vault {
         if documents.len() > 100 {
             return Err(invalid("seal sweep batch exceeds 100"));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut queued = 0;
             for &document in documents {
                 let state = state_in(self, txn, document)?;

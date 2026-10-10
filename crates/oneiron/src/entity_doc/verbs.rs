@@ -113,7 +113,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn(|txn| {
+        let out = self.with_write_txn_grouped(|txn| {
             let mut h = storage::head(&self.store, txn, entity)?;
             let mut doc = storage::load(&self.store, txn, &h)?;
             let before = doc.doc.oplog_vv();
@@ -147,7 +147,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn(|txn| {
+        let out = self.with_write_txn_grouped(|txn| {
             let permitted =
                 super::forks::covered(self, txn, authorization, &request.entity, request.actor)?;
             let mut h = storage::head(&self.store, txn, &request.entity)?;

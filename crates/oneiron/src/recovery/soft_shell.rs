@@ -57,7 +57,7 @@ pub(crate) fn materialize_retained_shells(vault: &Vault, doc: &LoroDoc) -> Resul
     for (id, blob, tombstone) in shells {
         // Never resurrect after a local hard delete, even if a peer removed its
         // hard marker from the CRDT. The ordinary tombstone pass stays in charge.
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
                 return Ok(());
             }

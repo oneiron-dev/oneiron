@@ -592,7 +592,7 @@ impl Vault {
         slip: &Scope,
         channel: &Scope,
     ) -> Result<Vec<EntityId>> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut ids = Vec::new();
             for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, txn)? {
                 let (id, raw) = row?;

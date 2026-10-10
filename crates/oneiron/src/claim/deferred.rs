@@ -186,7 +186,7 @@ impl Vault {
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
     ) -> Result<()> {
-        let decision = self.with_write_txn(|txn| {
+        let decision = self.with_write_txn_grouped(|txn| {
             let proposal = load(self, txn, id)?.ok_or(Error::EntityNotFound)?;
             let DeferredAction::Supersede { old, old_hash } = proposal.action else {
                 return Err(Error::InvalidClaimBody("not a deferred supersession"));

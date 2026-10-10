@@ -91,7 +91,7 @@ impl Vault {
         thresholds: &RetuneThresholds,
     ) -> Result<()> {
         thresholds.validate()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
             THRESHOLDS.put(&self.store, txn, &(), thresholds)?;
             Ok(())
@@ -128,7 +128,7 @@ pub(super) fn run(
     // Resolve the bound envelope before taking the writer. Baseline comparison,
     // proposal, receipt and new baseline then commit as one serializable decision.
     let envelope = vault.dreamer_proposal_envelope(HARNESS_FACET, attempt.status.attempt.id)?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let prior = BASELINE.get(&vault.store, &*txn, &evaluation.artifact)?;
         if prior.as_ref().is_some_and(|p| p.version > evaluation.version || p.observed_at > now) {
             return Ok(None);

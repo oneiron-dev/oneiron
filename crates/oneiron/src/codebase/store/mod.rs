@@ -404,7 +404,7 @@ impl Vault {
         // The final writer view decides every derived write, not merely the
         // manifest. A registration committed between passes excludes its blob
         // from ASSET, CODE_SYMBOL and snapshot in one transaction.
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let (files, custody_report) =
                 self.apply_custody_to_snapshot(wtxn, &snapshot, &contents)?;
             let filtered_snapshot = CodebaseSnapshot::new(

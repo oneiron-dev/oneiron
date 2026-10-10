@@ -53,7 +53,7 @@ pub(crate) fn settle_ask_if_due(vault: &Vault, id: EntityId) -> Result<()> {
         return Ok(());
     }
     drop(txn);
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         settle_in(vault, txn, id, vault.store.clock.now_recorded_at()).map(|_| ())
     })
 }

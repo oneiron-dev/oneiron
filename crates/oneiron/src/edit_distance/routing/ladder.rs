@@ -36,7 +36,7 @@ pub fn set_rollout_rung(vault: &Vault, task_class: &str, rung: RolloutRung) -> R
         v: ROW_VERSION,
         rung: rung.as_str().to_owned(),
     };
-    vault.with_write_txn(|wtxn| RUNG.put(&vault.store, wtxn, &key, &row))
+    vault.with_write_txn_grouped(|wtxn| RUNG.put(&vault.store, wtxn, &key, &row))
 }
 
 pub(super) fn rung_in_txn(

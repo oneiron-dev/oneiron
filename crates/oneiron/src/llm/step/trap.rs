@@ -56,7 +56,7 @@ pub fn open_trap(
     step_hash: [u8; 32],
     note: &str,
 ) -> Result<TrapRef> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         open_trap_in_txn(
             vault,
             wtxn,
@@ -144,7 +144,7 @@ pub fn trap_for_durable_wait(
 /// Signal-before-wait: if the signal already landed, returns `Sent` without
 /// writing; the caller proceeds straight to consume.
 pub fn register_wait(vault: &Vault, trap: &TrapRef, now: u64) -> Result<DreamerTrapState> {
-    vault.with_write_txn(|wtxn| register_wait_in_txn(vault, wtxn, trap, now))
+    vault.with_write_txn_grouped(|wtxn| register_wait_in_txn(vault, wtxn, trap, now))
 }
 
 /// Transaction-composable body of [`register_wait`], so a delegation can
@@ -184,7 +184,7 @@ pub fn send_trap_signal(
     step_hash: [u8; 32],
     now: u64,
 ) -> Result<EntityId> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let (head_id, head) = trap_head_in_txn(vault, wtxn, trap_claim_id)?;
         require_attempt_scoped_signal_in_txn(vault, wtxn, trap_claim_id)?;
         if head.step_hash != step_hash {
@@ -255,7 +255,7 @@ pub fn consume_trap_signal(
     require_lineage_chains_to_anchor(vault, &head_id, &trap.trap_claim_id)?;
     let delegated_task = peer_wait_task_for_trap(vault, &trap.trap_claim_id)?;
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         append_trap_transition_in_txn(
             vault,
             wtxn,

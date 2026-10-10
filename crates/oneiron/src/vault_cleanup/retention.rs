@@ -12,7 +12,7 @@ impl Vault {
     /// Sets completed-task retention; `None` or zero disables this arm.
     /// Like the cleanup posture setter, this is a trusted owner configuration door.
     pub fn set_task_retention_days(&self, days: Option<u32>) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             RETENTION.put(&self.store, txn, &(), &u64::from(days.unwrap_or(0)))?;
             Ok(())
         })

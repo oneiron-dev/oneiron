@@ -194,7 +194,7 @@ impl<'a> CompanionQueue<'a> {
     /// Enqueues a companion task as a generic durable attempt row.
     pub fn enqueue(&self, input: EnqueueCompanionTask) -> Result<EnqueueCompanionTaskOutcome> {
         let payload = encode_companion_task_payload(&input.task)?;
-        let outcome = self.vault.with_write_txn(|txn| {
+        let outcome = self.vault.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_enqueue(
                 self.vault,
                 txn,
@@ -220,7 +220,7 @@ impl<'a> CompanionQueue<'a> {
     /// Claims the oldest queued companion task without leasing unrelated attempts.
     pub fn claim(&self, input: ClaimCompanionTask) -> Result<ClaimCompanionTaskOutcome> {
         loop {
-            match self.vault.with_write_txn(|txn| {
+            match self.vault.with_write_txn_grouped(|txn| {
                 crate::ports::JobQueue::port_job_claim(
                     self.vault,
                     txn,
@@ -246,7 +246,7 @@ impl<'a> CompanionQueue<'a> {
     /// Completes a leased companion task through the generic AttemptQueue.
     pub fn complete(&self, input: CompleteCompanionTask) -> Result<CompleteCompanionTaskOutcome> {
         self.ensure_companion_attempt_id(input.id)?;
-        let outcome = self.vault.with_write_txn(|txn| {
+        let outcome = self.vault.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_complete(
                 self.vault,
                 txn,
@@ -270,7 +270,7 @@ impl<'a> CompanionQueue<'a> {
     /// Terminally fails a leased companion task through the generic AttemptQueue.
     pub fn fail(&self, input: FailCompanionTask) -> Result<FailCompanionTaskOutcome> {
         self.ensure_companion_attempt_id(input.id)?;
-        let outcome = self.vault.with_write_txn(|txn| {
+        let outcome = self.vault.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_fail(
                 self.vault,
                 txn,
@@ -330,7 +330,7 @@ impl<'a> CompanionQueue<'a> {
         lease_owner: &str,
         now: u64,
     ) -> Result<()> {
-        match self.vault.with_write_txn(|txn| {
+        match self.vault.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_fail(
                 self.vault,
                 txn,

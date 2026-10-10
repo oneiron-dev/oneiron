@@ -220,7 +220,7 @@ impl Vault {
             external_id: None,
         };
         value.validate()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             actor_in_txn(&self.store, txn, input.actor)?;
             if input.actor.entity_ref() != input.by {
                 return Err(invalid("reactor is not the write actor"));
@@ -265,7 +265,7 @@ impl Vault {
         glyph: &str,
         actor: WriteActor,
     ) -> Result<ReactionChange> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             actor_in_txn(&self.store, txn, actor)?;
             if actor.entity_ref() != by {
                 return Err(invalid("reactor is not the write actor"));

@@ -189,7 +189,7 @@ impl Vault {
             operation_id: stamp.operation_id,
         };
         INTENTS.encode_value(&intent)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
@@ -203,7 +203,7 @@ impl Vault {
         key: &ReceivePackIntentKey,
         intent: &ReceivePackIntent,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             INTENTS.put(&self.store, wtxn, key, intent)?;
             Ok(())
         })

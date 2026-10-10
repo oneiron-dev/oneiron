@@ -79,7 +79,7 @@ impl DreamerRunnerStore<'_> {
                 "checkpoint park target differs from settlement",
             ));
         }
-        let settled = self.vault.with_write_txn(|wtxn| {
+        let settled = self.vault.with_write_txn_grouped(|wtxn| {
             let settled = self.settle_budget_in_txn(wtxn, input.clone())?;
             if !matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
                 return Err(invalid_dreamer_runner(

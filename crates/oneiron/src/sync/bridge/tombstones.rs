@@ -123,7 +123,7 @@ pub(super) fn materialize_tombstones_from_delta(
                                 continue;
                             }
                             Err(error) => {
-                                let _ = vault.with_write_txn(|txn| {
+                                let _ = vault.with_write_txn_grouped(|txn| {
                                     quarantine::set_remat_marker_in_txn(vault, txn, window_key, &id)
                                 });
                                 tracing::error!(%error, "tombstone residence check failed");
@@ -256,7 +256,7 @@ fn apply_tombstone_batch(
 
     #[cfg(test)]
     note_tombstone_batch_top_level_txn();
-    let batch = vault.with_write_txn(|parent| {
+    let batch = vault.with_write_txn_grouped(|parent| {
         let mut affected = Vec::new();
         for work in staged {
             let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {
@@ -348,7 +348,7 @@ fn apply_tombstone_batch(
         );
         // The update carrying these deletes is still stored after this
         // callback, so its rows stay fenced and flagged for retry.
-        if let Err(error) = vault.with_write_txn(|txn| {
+        if let Err(error) = vault.with_write_txn_grouped(|txn| {
             for work in staged {
                 quarantine::set_remat_marker_in_txn(vault, txn, window_key, &work.id)?;
                 vault.fence_unapplied_delete_in_txn(txn, &work.id, &work.raw_value)?;

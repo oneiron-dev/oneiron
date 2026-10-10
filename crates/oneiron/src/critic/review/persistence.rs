@@ -30,7 +30,7 @@ pub(super) fn persist_review(
         triage.auto_resolved,
         &triage.findings,
     ))?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if let Some(result) = cached_review(vault, txn, request)? {
             return Ok(result);
         }

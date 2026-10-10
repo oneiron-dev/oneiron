@@ -366,7 +366,7 @@ fn coreference_claim_ops(
 }
 
 fn apply_coreference_ops(vault: &Vault, ops: Vec<BatchOp>) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         crate::batch::apply_ops(
             &vault.store,
             &vault.config,

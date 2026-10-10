@@ -500,7 +500,7 @@ impl SyncConnection {
         }
         let vault = self.manager.vault();
         vault
-            .with_write_txn(|wtxn| {
+            .with_write_txn_grouped(|wtxn| {
                 for marker in markers {
                     WINDOW_FULL_RESYNC_MARKER.delete(&vault.store, wtxn, &marker.window_key)?;
                 }

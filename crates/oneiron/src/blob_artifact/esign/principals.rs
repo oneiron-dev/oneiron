@@ -50,7 +50,7 @@ impl Vault {
         if principals.len() > 256 {
             return Err(invalid("too many signing principals"));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let mut seen = BTreeSet::new();
             for row in principals {

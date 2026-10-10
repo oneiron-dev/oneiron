@@ -194,7 +194,7 @@ impl<'a> CampaignEnrollmentRunner<'a> {
         now: u64,
     ) -> Result<EnqueueOutcome> {
         let dedupe_key = enrollment_dedupe_key(self.vault, payload)?;
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_enqueue(
                 self.vault,
                 txn,
@@ -230,7 +230,7 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             }
             CampaignHomeNodeAdmission::Designated(_) => self
                 .vault
-                .with_write_txn(|txn| {
+                .with_write_txn_grouped(|txn| {
                     crate::ports::JobQueue::port_job_claim(
                         self.vault,
                         txn,

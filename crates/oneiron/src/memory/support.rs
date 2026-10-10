@@ -435,6 +435,12 @@ impl Vault {
     /// Binds a MACHINE's claim writes to its enrolled software signing key.
     /// Transport authentication alone cannot supply this proof. Other memory
     /// verbs remain subject to their own authorization and write doors.
+    ///
+    /// The surface's claim and key-value writes call `sign` inside the vault's
+    /// write transaction, which may be one group commit shared with other
+    /// writes. `sign` must only sign: it must not call into this vault or wait
+    /// on anything a vault caller can hold while it writes, or the vault's
+    /// writer deadlocks.
     #[must_use]
     pub fn memory_signed_machine<'a>(
         &'a self,
@@ -634,7 +640,7 @@ impl Memory<'_> {
                 Error::InvalidClaimBody("content actor does not match bound facade").into(),
             );
         }
-        self.vault.try_with_write_txn(|wtxn| {
+        self.vault.try_with_write_txn_grouped(|wtxn| {
             verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
             let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, actor)?;
             let result = write(&mut content)?;
@@ -651,7 +657,18 @@ impl Memory<'_> {
         &self,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
-        self.vault.try_with_write_txn(|wtxn| {
+        self.with_verified_actor_write_txn_as(crate::store::Callback::Audited, write)
+    }
+
+    /// [`Self::with_verified_actor_write_txn`] through the door `callback`
+    /// names: a write that runs host code in its transaction is
+    /// [`crate::store::Callback::Opaque`].
+    pub(crate) fn with_verified_actor_write_txn_as<T>(
+        &self,
+        callback: crate::store::Callback,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        self.vault.write_txn_door(callback, |wtxn| {
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
             if let Some(creation) = self.vault.shared_vault_creation_in_txn(wtxn)? {
                 self.vault.authorize_shared_vault_write_in_txn(

@@ -63,7 +63,7 @@ impl Vault {
             let notice = super::ask_soft_confirm::notice(self, &txn, group, person)?;
             if notice.is_none() {
                 drop(txn);
-                return self.with_write_txn(|txn| {
+                return self.with_write_txn_grouped(|txn| {
                     store(self, txn, group, person, TaskAskSoftConfirmDelivery::Closed)?;
                     Ok(TaskAskSoftConfirmDelivery::Closed)
                 });
@@ -128,7 +128,7 @@ impl Vault {
                 }
             }
         };
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let stored = DELIVERIES
                 .get(&self.store, txn, &(group, person))?
                 .ok_or_else(super::ask_record::invalid)?;
@@ -185,7 +185,7 @@ impl Vault {
             .map(|(key, group, person)| (key.clone(), *group, *person))
             .collect();
         if let Some((last, _, _)) = pending.last() {
-            self.with_write_txn(|txn| {
+            self.with_write_txn_grouped(|txn| {
                 CURSOR.put(&self.store, txn, &(), last)?;
                 Ok(())
             })?;

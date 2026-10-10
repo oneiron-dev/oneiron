@@ -813,7 +813,7 @@ pub fn supersede_skill_edit_judge(
     {
         return Err(invalid("invalid candidate judge replacement"));
     }
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let revision_key = displaced.to_owned();
         if let Some(held) = DISPLACED_REVISION.get(&vault.store, txn, &revision_key)? {
             if held.0 != replacement {

@@ -91,7 +91,7 @@ pub fn convert_messages_to_skill(
         "refiner rationale must be a non-empty string at most 1024 bytes",
     )?;
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         // The MECHANICAL tier, first and unconditionally: identical bytes are
         // ONE skill whichever road they arrive on, and no refiner verdict — not
         // even an insistent `Mint` — buys a second holder for them.

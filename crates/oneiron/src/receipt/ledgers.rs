@@ -143,7 +143,9 @@ pub(crate) fn overwrite_attempt_pack_receipt_for_test(
     vault: &Vault,
     receipt: &ReceiptRecord,
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| put_attempt_pack_receipt_for_test(&vault.store, wtxn, receipt))
+    vault.with_write_txn_grouped(|wtxn| {
+        put_attempt_pack_receipt_for_test(&vault.store, wtxn, receipt)
+    })
 }
 
 /// The transaction-scoped half of [`overwrite_attempt_pack_receipt_for_test`],
@@ -259,7 +261,7 @@ pub(crate) fn persist_send_receipt(
     transport_dispatched: bool,
     delivered_idempotency: Option<(EntityId, &str)>,
 ) -> Result<bool> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         persist_send_receipt_in_txn(
             &vault.store,
             wtxn,
@@ -419,7 +421,7 @@ pub(crate) fn attempt_pack_receipt_in_txn(
 #[cfg(test)]
 pub(crate) fn make_attempt_receipt_legacy_for_tests(vault: &Vault, receipt_id: &str) -> Result<()> {
     let key = receipt_id.to_owned();
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let mut receipt =
             PACK_RECEIPT
                 .get(&vault.store, txn, &key)?

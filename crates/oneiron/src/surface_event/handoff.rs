@@ -297,7 +297,7 @@ impl Vault {
         dispatcher: &dyn SurfaceEventDispatcher,
     ) -> Result<SurfaceEventWorkerOutcome> {
         let queue = AttemptQueue::new(self);
-        let ClaimOutcome::Claimed(attempt) = self.with_write_txn(|txn| {
+        let ClaimOutcome::Claimed(attempt) = self.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_claim(
                 self,
                 txn,
@@ -325,7 +325,7 @@ impl Vault {
         let correlation_id = payload.event.correlation_id.as_str();
         match disposition {
             SurfaceEventDispatchDisposition::Complete => {
-                let outcome = self.with_write_txn(|txn| {
+                let outcome = self.with_write_txn_grouped(|txn| {
                     crate::ports::JobQueue::port_job_complete(
                         self,
                         txn,
@@ -362,7 +362,7 @@ impl Vault {
                 )))
             }
             SurfaceEventDispatchDisposition::Fail { reason } => {
-                let outcome = self.with_write_txn(|txn| {
+                let outcome = self.with_write_txn_grouped(|txn| {
                     crate::ports::JobQueue::port_job_fail(
                         self,
                         txn,
@@ -401,7 +401,8 @@ fn admit_surface_event_once(
     event: &SurfaceEvent,
     now: u64,
 ) -> Result<AdmittedSurfaceEvent> {
-    vault.with_write_txn(|txn| admit_surface_event_once_in_txn(vault, txn, event, None, now))
+    vault
+        .with_write_txn_grouped(|txn| admit_surface_event_once_in_txn(vault, txn, event, None, now))
 }
 
 pub(super) fn admit_surface_event_once_in_txn(

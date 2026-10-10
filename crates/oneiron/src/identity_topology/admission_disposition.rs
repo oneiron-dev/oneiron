@@ -505,7 +505,7 @@ pub(crate) fn signed_validated_row_for_test(
     target: EntityId,
     core: &StoredIdentityOpEvent,
 ) -> Result<(EntityId, StoredIdentityOpEvent)> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let fact = AdmissionDisposition::sign(
             vault,
             wtxn,

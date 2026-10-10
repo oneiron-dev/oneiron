@@ -94,7 +94,7 @@ impl Vault {
         evidence: EntityId,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             if policy.is_fail_closed() {

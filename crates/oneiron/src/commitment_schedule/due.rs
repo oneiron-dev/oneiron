@@ -237,7 +237,7 @@ impl Vault {
     /// its occurrence, and a `LifecycleDue` row only by the close hook — letting
     /// a surface "acknowledge" either would erase an obligation by looking at it.
     pub fn acknowledge_commitment_due(&self, entry: &CommitmentDueEntry) -> Result<bool> {
-        self.with_write_txn(|wtxn| self.acknowledge_commitment_due_in_txn(wtxn, entry))
+        self.with_write_txn_grouped(|wtxn| self.acknowledge_commitment_due_in_txn(wtxn, entry))
     }
 
     /// Transaction-composable [`Vault::acknowledge_commitment_due`], with the
@@ -262,7 +262,7 @@ impl Vault {
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
     pub fn corrupt_commitment_due_row_for_test(&self, at: u64) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.store
                 .corrupt_commitment_due_row_for_test_in_txn(wtxn, at)
         })

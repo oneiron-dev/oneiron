@@ -132,7 +132,7 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let key = PendingTombstoneKey {
                 window: window_label.to_owned(),
                 id: *id,

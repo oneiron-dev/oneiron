@@ -126,7 +126,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
         match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
                 if window_key.world().is_some()
-                    && let Err(error) = vault.with_write_txn(|txn| {
+                    && let Err(error) = vault.with_write_txn_grouped(|txn| {
                         vault.store.sync_state.put(
                             txn,
                             &format!("m:dw:{}", id.to_hex()),

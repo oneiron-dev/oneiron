@@ -52,7 +52,7 @@ pub(crate) fn maybe_propose_standing_policy_at(
 ) -> Result<Option<EntityId>> {
     let scope = normalized_scope(scope)?.to_owned();
     let row_ref = vault.store.clock.entity_id()?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let key = ScopeTriggerKey {
             scope_digest: scope_key(&scope),
             trigger,
@@ -196,7 +196,7 @@ pub fn accept_standing_policy(vault: &Vault, row_ref: &EntityId) -> Result<()> {
 /// [`accept_standing_policy`] against a caller-supplied clock.
 pub(crate) fn accept_standing_policy_at(vault: &Vault, row_ref: &EntityId, at: u64) -> Result<()> {
     let wanted = row_ref.to_hex();
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let found = find_standing_policy_in_txn(&vault.store, &*wtxn, &wanted)?;
         let Some((key, mut row)) = found else {
             return Err(Error::Gate(GateError::InvalidConsentBound(

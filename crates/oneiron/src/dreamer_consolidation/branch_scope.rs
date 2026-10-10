@@ -210,7 +210,7 @@ pub(super) fn pin_execution_scope(
     attempt: crate::attempt_queue::AttemptId,
     requested: Option<&Scope>,
 ) -> Result<Option<Scope>> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let stored = SELECTION_SCOPE
             .get(&vault.store, txn, attempt.as_bytes())?
             .flatten();

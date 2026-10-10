@@ -44,7 +44,7 @@ impl Vault {
         &self,
         record: &OriginPublicationRecord,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             PUBLICATIONS.put(
                 &self.store,
                 wtxn,

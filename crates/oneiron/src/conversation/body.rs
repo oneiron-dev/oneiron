@@ -244,7 +244,7 @@ impl Vault {
         learned_at: u64,
         text: &[(&str, &str)],
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             create_in_txn(self, txn, id, body, actor, occurred, learned_at, text)
         })
     }

@@ -285,7 +285,7 @@ pub(super) fn emit_preference_value(
         start: cluster.at,
         end: cluster.at,
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if !cluster_is_eligible(vault, wtxn, handle, now)? {
             return Ok(None);
         }
@@ -394,7 +394,7 @@ fn emit_skill_edit(
         decision: None,
     };
     let mark = StoredMintMark::new(MARK_KIND_SKILL_EDIT, &proposal_id);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if !cluster_is_eligible(vault, wtxn, handle, now)? {
             return Ok(None);
         }

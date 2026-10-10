@@ -65,7 +65,7 @@ pub(super) fn materialize_entities_with_changes(
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
-    let result = vault.with_write_txn(|wtxn| {
+    let result = vault.with_write_txn_grouped(|wtxn| {
         // One delta has no row order: an ask word, receipt or project home room
         // must not reach its sibling check before the row it names.
         let mut updates: Vec<_> = delta.updated.iter().collect();

@@ -157,7 +157,7 @@ impl Vault {
         let bytes = rmp_serde::to_vec_named(&snapshot)
             .map_err(|_| Error::InvariantViolation("centroid evidence encode"))?;
         let hash = *blake3::hash(&bytes).as_bytes();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if let Some(prior) = EVIDENCE.get_bytes(&self.store, txn, &hash)? {
                 if prior != bytes {
                     return Err(Error::CorruptedIndex("centroid evidence collision"));

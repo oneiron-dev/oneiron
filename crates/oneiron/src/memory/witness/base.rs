@@ -119,14 +119,18 @@ impl Memory<'_> {
 
     /// Stream terminal sidecars and EntityDoc birth share the canonical witness
     /// transaction. An error rolls back row, indexes, receipt and seed deletion.
+    /// `callback` names the write door: an `effect` that runs host code is
+    /// [`crate::store::Callback::Opaque`].
     pub(crate) fn witness_with_route_and_txn_effect(
         &self,
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
+        callback: crate::store::Callback,
         before_txn: impl FnOnce(),
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.run_witness(
+        self.run_witness_as(
+            callback,
             turn,
             WitnessTarget::Base {
                 route: session_route,

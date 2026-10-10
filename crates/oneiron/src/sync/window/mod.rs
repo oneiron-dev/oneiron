@@ -184,7 +184,7 @@ impl LoadedWindow {
         let history_free = history_free_window_required(vault, &self.key)?;
         let vv = doc_version_vector(&self.doc);
 
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
             if history_free {
                 HISTORY_FREE_WINDOW.put(

@@ -245,7 +245,7 @@ fn acquire_authorized_recovery_lease(
     now_ms: u64,
     lease_until_ms: u64,
 ) -> Result<bool> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if let Some(lease) = AUTHORIZED_RECOVERY_LEASE.get(&vault.store, &*wtxn, &())?
             && lease.lease_until_ms > now_ms
         {
@@ -267,7 +267,7 @@ fn acquire_authorized_recovery_lease(
 /// Releases only this sweep's best-effort lease token. The lease is not an
 /// exactly-once authority; durable ledger state and its replay fence are.
 fn release_authorized_recovery_lease(vault: &Vault, token: AttemptId) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let Some(lease) = AUTHORIZED_RECOVERY_LEASE.get(&vault.store, &*wtxn, &())? else {
             return Ok(());
         };

@@ -194,7 +194,7 @@ fn forward_with_recovery(
         let witnesses = doc.get_map("retained_claim_worlds");
         let mut rows = Vec::new();
         witnesses.for_each(|raw, _| rows.push(raw.to_owned()));
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             for raw in &rows {
                 let id = EntityId::from_hex(raw)?;
                 let Some(blob) =
@@ -231,7 +231,7 @@ fn forward_with_recovery(
         // The validated canonical artifact binds every retained soft shell
         // to this world. Persist that address before the edge pass and the
         // next ordinary reopen consult the same durable proof.
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             for shell in &snapshot.retained_claim_worlds {
                 let id = EntityId::from_bytes(shell.id)?;
                 vault.store.sync_state.put(
@@ -246,7 +246,7 @@ fn forward_with_recovery(
     edge_pass::run(&ctx, &mut ledger)?;
     // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
     // Parent obligation left by a different window whose doc is not loaded.
-    vault.with_write_txn(|txn| super::bridge::retry_in_txn(vault, txn))?;
+    vault.with_write_txn_grouped(|txn| super::bridge::retry_in_txn(vault, txn))?;
     let tombstone_outcome = tombstone_pass::run(&ctx, &mut ledger);
 
     // An edge outcome is not proof that its source claim's missing actor or
@@ -270,7 +270,7 @@ fn forward_with_recovery(
         || !ledger.terminal_quarantines.is_empty()
         || !tombstone_outcome.receiver_scrub_candidates.is_empty()
     {
-        let marker_result = vault.with_write_txn(|wtxn| {
+        let marker_result = vault.with_write_txn_grouped(|wtxn| {
             // Clear BEFORE set so set wins: an id that both succeeded and
             // failed in one pass (case-shifted tombstone aliases with
             // divergent reasons) must KEEP its marker — losing it would
@@ -382,7 +382,7 @@ fn forward_with_recovery(
                     error = %err,
                     "forward remat: receiver outbox scrub/bookkeeping txn FAILED after hard tombstone replay; flagging entity-scoped rm: markers for durable retry"
                 );
-                vault.with_write_txn(|wtxn| {
+                vault.with_write_txn_grouped(|wtxn| {
                     for id in tombstone_outcome
                         .purge_failures
                         .iter()

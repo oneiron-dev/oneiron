@@ -57,7 +57,7 @@ pub(super) fn has_embedding_source(raw: &[u8]) -> Result<bool> {
     }
 }
 pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let rows = crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, txn)?
             .collect::<Result<Vec<_>>>()?;
         let mut embeddings = 0;

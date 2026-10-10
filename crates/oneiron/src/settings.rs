@@ -425,7 +425,7 @@ impl Vault {
     ///
     /// Storage errors.
     pub fn set_plugin_suggestions_enabled(&self, enabled: bool) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             PLUGIN_SUGGESTIONS_ENABLED.put(
                 &self.store,
                 wtxn,
@@ -445,7 +445,7 @@ impl Vault {
                 "base reality cannot be device-only".to_owned(),
             ));
         }
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             if self.get_entity_type_in_txn(wtxn, &world)?
                 != Some(crate::registry::ENTITY_TYPE_WORLD)
             {
@@ -481,7 +481,7 @@ impl Vault {
         value: CustomizationLayerValue,
     ) -> Result<CustomizationSettingsUpdate> {
         value.validate()?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let mut settings = customization_settings_in_write_txn(&self.store, wtxn)?;
             let previous = settings.layer_value(value.layer());
             if previous == value {

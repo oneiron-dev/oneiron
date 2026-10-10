@@ -46,7 +46,7 @@ pub fn create_saved_query(
         updated_at: now,
     };
     let kind = saved_query_type_byte(vault)?;
-    vault.with_write_txn(|wtxn| store_record_in_txn(vault, wtxn, &record, kind))?;
+    vault.with_write_txn_grouped(|wtxn| store_record_in_txn(vault, wtxn, &record, kind))?;
     Ok(record)
 }
 
@@ -89,7 +89,7 @@ pub fn update_saved_query(
     now: u64,
 ) -> Result<SavedQueryRecord> {
     let kind = saved_query_type_byte(vault)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut record =
             owned_record_in_txn(vault, wtxn, authenticated_principal, query_ref, kind)?;
         require_expected_version(&record, request.expected_definition_version)?;
@@ -141,7 +141,7 @@ pub fn archive_saved_query(
     now: u64,
 ) -> Result<SavedQueryRecord> {
     let kind = saved_query_type_byte(vault)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut record =
             owned_record_in_txn(vault, wtxn, authenticated_principal, query_ref, kind)?;
         require_expected_version(&record, expected_definition_version)?;

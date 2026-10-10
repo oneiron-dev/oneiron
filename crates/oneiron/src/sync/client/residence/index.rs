@@ -136,7 +136,7 @@ impl SyncClient {
             let items = complete.ok_or(TransportError::IndexRevisionChanged)?;
             let prefix = format!("ri:w:{key}:");
             self.vault
-                .with_write_txn(|txn| {
+                .with_write_txn_grouped(|txn| {
                     let old: Vec<_> = self
                         .vault
                         .store

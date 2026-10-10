@@ -207,7 +207,7 @@ pub fn replay_pending_tombstones(
     // after CRDT commit + snapshot persistence succeed.
     let snapshot = export_scrubbed_window_snapshot(vault, window_key, doc)?;
     let vv = doc_version_vector(doc);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;

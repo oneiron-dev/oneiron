@@ -153,7 +153,7 @@ where
             parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
         })?;
 
-        let outcome = self.vault.with_write_txn(|txn| {
+        let outcome = self.vault.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_enqueue_scoped(
                 self.vault,
                 txn,
@@ -397,7 +397,7 @@ where
         request: CaptureByoaExhaust,
     ) -> ByoaResult<ByoaTerminalReceipt> {
         self.vault
-            .try_with_write_txn(|wtxn| self.capture_terminal_exhaust_in_txn(wtxn, request))
+            .try_with_write_txn_grouped(|wtxn| self.capture_terminal_exhaust_in_txn(wtxn, request))
     }
 
     pub(super) fn capture_terminal_exhaust_in_txn(

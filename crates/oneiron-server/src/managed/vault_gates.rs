@@ -186,7 +186,7 @@ pub(super) fn managed_lease_scope(vault: &oneiron::Vault) -> Result<u64, Managed
         return Ok(0);
     }
     vault
-        .with_write_txn(|txn| {
+        .with_write_txn_grouped(|txn| {
             const KEY: &str = "managed:lease_scope:v1";
             if let Some(raw) = vault.sync_state_get_in_write_txn(txn, KEY)? {
                 let bytes = raw

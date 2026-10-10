@@ -122,7 +122,7 @@ impl Vault {
             start: event.valid_from,
             end: event.valid_to.unwrap_or(u64::MAX),
         };
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             apply_ops(
                 &self.store,
                 &self.config,

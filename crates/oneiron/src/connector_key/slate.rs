@@ -457,7 +457,7 @@ impl Vault {
             owner_authentication: None,
         };
         let id = EntityId::now();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
             Ok(id)
         })
@@ -475,7 +475,7 @@ impl Vault {
         expected_revision: u64,
         overrides: &BTreeMap<String, SlateOwnerOverride>,
     ) -> Result<ConnectorGrantSlate> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::memory::verify_deletion_authority_in_txn(
                 self,
                 txn,

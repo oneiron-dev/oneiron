@@ -265,7 +265,7 @@ pub fn apply_magistrate_verdict(
         end: case.now,
     };
     let body = canonical_bytes(&magistrate_receipt_value(&receipt));
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         vault
             .batch_in()
             .put(
@@ -424,7 +424,7 @@ pub fn record_magistrate_overturn(
         start: record.occurred_at,
         end: record.occurred_at,
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         vault
             .batch_in()
             .put(

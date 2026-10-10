@@ -40,6 +40,11 @@ impl WakePassDeadline {
 
     /// Test constructor with an injected elapsed-ms clock (no wall clock in
     /// logic — chain test pin).
+    ///
+    /// A wake pass reads `elapsed_ms` inside the vault's write transaction,
+    /// which may be one group commit shared with other writes. It must only
+    /// read time: it must not call into the vault or wait on anything a vault
+    /// caller can hold while it writes, or the vault's writer deadlocks.
     #[must_use]
     pub fn with_clock(ceiling_ms: u64, elapsed_ms: NowMsFn) -> Self {
         Self {

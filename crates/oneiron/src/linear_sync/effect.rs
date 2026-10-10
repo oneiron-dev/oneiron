@@ -111,7 +111,7 @@ impl Vault {
         {
             return Err(LinearSyncError::AuthorizationDenied);
         }
-        let admitted = self.try_with_write_txn::<_, _, LinearSyncError>(|txn| {
+        let admitted = self.try_with_write_txn_grouped::<_, _, LinearSyncError>(|txn| {
             let state = linear_effect_state_in_txn(self, txn, request.task_ref)?;
             // Only the operation the mirror would send for the current dirty
             // revision: same TASK, same link state, same fields.

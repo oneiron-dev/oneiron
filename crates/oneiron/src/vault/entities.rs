@@ -157,7 +157,7 @@ impl Vault {
         learned_at: u64,
         data: &[u8],
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::ports::EntityStore::port_entity_put(
                 self,
                 txn,
@@ -222,7 +222,7 @@ impl Vault {
     /// Model-free hosts can call [`Self::refresh_staged_indexed_at_idle`] after
     /// configuring [`Self::set_indexed_idle_delay_ms`].
     pub fn put_vector(&self, id: &EntityId, vector: &[f32]) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::ports::RetrievalIndex::port_retrieval_upsert(self, txn, id, Some(vector), None)
         })
     }

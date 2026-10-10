@@ -184,7 +184,7 @@ impl SyncServer {
             return Ok(None);
         }
         self.root_doc.commit();
-        if let Err(err) = self.vault.with_write_txn(|wtxn| {
+        if let Err(err) = self.vault.with_write_txn_grouped(|wtxn| {
             server_state::persist_root_snapshot_in_txn(&self.vault, wtxn, &self.root_doc)?;
             lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())

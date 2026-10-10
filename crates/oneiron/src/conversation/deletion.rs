@@ -621,7 +621,7 @@ impl Vault {
         person: EntityId,
         actor: WriteActor,
     ) -> Result<Vec<DeleteEntityOutcome>> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             authorize_room_erasure(self, txn, room, person, actor)?;
             ROOM_ERASURES.put(&self.store, txn, &(room, person), &[1])?;
             Ok(())
@@ -720,7 +720,7 @@ impl Vault {
         // The single writer closes the in-flight fence only after every
         // selected active row has completed its reason-aware deletion. A
         // failure above leaves phase 1 for a bounded retry, never free append.
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             authorize_room_erasure(self, txn, room, person, actor)?;
             ROOM_ERASURES.put(&self.store, txn, &(room, person), &[2])?;
             Ok(())

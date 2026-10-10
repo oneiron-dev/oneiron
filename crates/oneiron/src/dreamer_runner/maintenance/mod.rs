@@ -31,7 +31,7 @@ impl DreamerRunnerStore<'_> {
         dedupe: String,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             self.enqueue_kind_in_txn(
                 txn,
                 MAINTENANCE_QUEUE_KIND,

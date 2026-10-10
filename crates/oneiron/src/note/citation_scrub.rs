@@ -8,7 +8,7 @@ use crate::side_table::HexId;
 use crate::{EntityId, Result, Vault};
 
 pub(crate) fn scrub_pending_citations(vault: &Vault) -> Result<()> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let mut documents = std::collections::BTreeSet::new();
         for key in super::citation_erase::NOTE_ERASE_PENDING.scan_keys(&vault.store, txn, &[])? {
             documents.insert((key.0).0);

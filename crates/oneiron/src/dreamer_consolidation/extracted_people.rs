@@ -72,7 +72,7 @@ pub(super) fn mint_extracted_people(
     let Some(people) = parsed.get("persons").and_then(serde_json::Value::as_array) else {
         return Ok(());
     };
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         // Check before the first write. Once admitted, the gated write is not
         // interrupted mid-transaction by the wake clock.
         if deadline.is_some_and(WakePassDeadline::expired) {

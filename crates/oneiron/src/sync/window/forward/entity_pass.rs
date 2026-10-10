@@ -43,7 +43,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             return;
         }
         let step = match vault
-            .with_write_txn(|wtxn| ingest_entity_in_savepoint(&ingest, wtxn, key, value))
+            .with_write_txn_grouped(|wtxn| ingest_entity_in_savepoint(&ingest, wtxn, key, value))
         {
             Ok(step) => step,
             Err(err) => {

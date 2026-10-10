@@ -132,6 +132,10 @@ impl Memory<'_> {
     /// Actor/owner, token revocation, grant/member/role, scope, policy, erasure
     /// and citation checks run under the writer lock that commits the result.
     /// The liveness predicate must read current auth state without writing it.
+    /// It runs inside the write transaction, which may be one group commit
+    /// shared with other writes: it reads through the transaction it is given,
+    /// and must not otherwise call into the vault or wait on anything a vault
+    /// caller can hold while it writes, or the vault's writer deadlocks.
     #[cfg(feature = "sync")]
     pub fn admit_note_operation(
         &self,
@@ -177,7 +181,8 @@ impl Memory<'_> {
 
     /// Host boundary for an own device on the owner lane. The actor must be
     /// the vault owner and the NOTE must pass the owner export's refusals;
-    /// the operation applies with no grant.
+    /// the operation applies with no grant. `session_is_live` keeps the
+    /// contract of [`Self::admit_note_operation`]'s liveness predicate.
     #[cfg(feature = "sync")]
     pub fn admit_owner_note_operation(
         &self,

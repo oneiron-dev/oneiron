@@ -487,7 +487,7 @@ pub(super) fn mint_epoch_summary_with(
     let at = request.watermark.learned_at;
     let summary_id = vault.store.clock.entity_id()?;
 
-    let epoch = vault.with_write_txn(|wtxn| {
+    let epoch = vault.with_write_txn_grouped(|wtxn| {
         refuse_overlay_derived_mint(&vault.store, &request.window)?;
         let prior = prior_epoch_in_txn(&vault.store, &*wtxn, session_ref)?;
         validate_epoch_boundary(prior, turn_start)?;

@@ -223,7 +223,7 @@ impl Vault {
         }
     }
     pub fn set_consolidation_key_rules(&self, rules: &PredicateKeyRules) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             KEY_RULES.put(&self.store, txn, &(), rules)?;
             Ok(())
         })

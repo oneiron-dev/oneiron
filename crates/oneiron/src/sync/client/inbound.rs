@@ -589,7 +589,7 @@ impl SyncClient {
             let mut ids = Vec::new();
             witnesses.for_each(|raw, _| ids.push(raw.to_owned()));
             self.vault
-                .with_write_txn(|txn| {
+                .with_write_txn_grouped(|txn| {
                     for raw in &ids {
                         let id = crate::EntityId::from_hex(raw)?;
                         if let Some(blob) = crate::sync::loro_support::map_get_bytes(
@@ -759,7 +759,7 @@ impl SyncClient {
         // BulkTransferDone is observable on restart.
         let marker_key = window_key.to_owned();
         self.vault
-            .with_write_txn(|wtxn| {
+            .with_write_txn_grouped(|wtxn| {
                 BULK_TRANSFER_MARKER.put(&self.vault.store, wtxn, &marker_key, &[1u8])?;
                 Ok(())
             })
@@ -913,7 +913,7 @@ impl SyncClient {
         // Clear the in-progress marker only after persistence succeeded
         // (fail-closed: a failed persist leaves the marker set for retry).
         self.vault
-            .with_write_txn(|wtxn| {
+            .with_write_txn_grouped(|wtxn| {
                 BULK_TRANSFER_MARKER.delete(&self.vault.store, wtxn, &marker_key)?;
                 Ok(())
             })

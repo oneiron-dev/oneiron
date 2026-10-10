@@ -82,7 +82,7 @@ pub fn run_judge_audit_with_judge(
         abstained: report.abstained as u64,
         at,
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let sequence = next_audit_sequence_in_txn(vault, wtxn)?;
         AUDIT.put(&vault.store, wtxn, &(at, sequence), &row)?;
         Ok(())

@@ -40,7 +40,7 @@ impl Vault {
         let message = canonical_message_id(message_id)?;
         let references = canonical_message_id_list(references)?;
         let reply = in_reply_to.map(canonical_message_id).transpose()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let routed = self.route_inbound_surface_event(input.clone())?;
             let Some(event) = routed.surface_event.clone() else {
                 return Ok(CcAgentIntakeOutcome {

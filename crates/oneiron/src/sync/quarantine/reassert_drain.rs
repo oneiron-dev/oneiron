@@ -90,7 +90,7 @@ pub(in crate::sync) fn enqueue_tombstone_reassert_marker(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         enqueue_tombstone_reassert_marker_in_txn(vault, wtxn, window_key, id)
     })
 }
@@ -308,7 +308,7 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     // ONE transaction: snapshot triple + delete-bearing queue row + marker
     // deletions. An empty delta (every apply was downgrade-blocked / no-op)
     // skips the queue push — nothing new to propagate.
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
         if let Some(update) = &delete_update {
             crate::sync::queue::push_delete_bearing_in_txn(

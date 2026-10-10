@@ -188,7 +188,7 @@ impl Vault {
     /// Restores a completed queue record without changing its state or payload.
     /// Direct `AttemptQueue::get` always reads it, even while archived.
     pub fn restore_archived_attempt(&self, id: AttemptId) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let raw = self
                 .store
                 .attempt_records

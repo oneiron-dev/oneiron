@@ -238,7 +238,7 @@ fn receive_pack_claim(subject: ClaimSubject, predicate: &str, value: Value) -> R
 impl Vault {
     fn put_receive_pack_evidence(&self, id: EntityId, body: &ClaimBody, at: u64) -> Result<()> {
         let encoded = encode_claim_body(body)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             if self.store.port_entity_record(wtxn, &id)?.is_some()
                 || EVIDENCE.contains(&self.store, wtxn, &id)?
             {

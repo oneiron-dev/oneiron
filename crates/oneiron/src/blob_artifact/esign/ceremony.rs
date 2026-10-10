@@ -88,11 +88,11 @@ impl Vault {
         let now = self.now_recorded_at();
         // Observe independently, including refused mutation attempts. A failed
         // observation transaction cannot turn a valid ceremony into a refusal.
-        let _ = self.with_write_txn(|txn| {
+        let _ = self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
         });
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             let document = EntityId::from_hex(&cap.document)?;
             let mut state = state_in(self, txn, document)?;

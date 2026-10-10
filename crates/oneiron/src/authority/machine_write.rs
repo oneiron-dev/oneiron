@@ -184,6 +184,11 @@ impl Vault {
     /// vault handle. Enrollment remains a separate, host-rooted authority-log
     /// action; retaining a callback cannot grant the actor standing. A reopen
     /// requires the host to provide the callback again.
+    ///
+    /// The engine's writers call `sign` inside the vault's write transaction,
+    /// which may be one group commit shared with other writes. `sign` must
+    /// only sign: it must not call into this vault or wait on anything a vault
+    /// caller can hold while it writes, or the vault's writer deadlocks.
     pub fn retain_machine_write_signer(
         &self,
         machine: EntityId,

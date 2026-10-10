@@ -283,7 +283,7 @@ pub struct FinalizedProposalText {
 /// trace, so the divergence is surfaced instead: identical bytes are idempotent
 /// (a retried finalize is not an error), different bytes are an error.
 pub fn put_finalized_proposal_text(vault: &Vault, record: &FinalizedProposalText) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let stored =
             PROPOSAL_ARTIFACT.get(&vault.store, &*wtxn, &record.artifact_ref.entity_id())?;
         match stored {
@@ -326,7 +326,7 @@ pub fn finalized_proposal_text(
 pub fn register_peer_actor(vault: &Vault, peer_id: u64, actor: &WriteActor) -> Result<EntityId> {
     let now = vault.store.clock.now_recorded_at();
     let actor = *actor;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let superseded = peer_bindings_in_txn(vault, &*wtxn, peer_id)?
             .into_iter()
             .filter(|binding| binding.lifecycle == ClaimLifecycleStatus::Active)

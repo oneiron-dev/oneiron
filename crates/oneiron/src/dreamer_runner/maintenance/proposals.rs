@@ -12,7 +12,9 @@ pub(super) fn emit(
     now: u64,
 ) -> Result<EntityId> {
     let envelope = vault.dreamer_proposal_envelope(facet, attempt)?;
-    vault.with_write_txn(|txn| emit_in_txn(vault, txn, subject, predicate, value, &envelope, now))
+    vault.with_write_txn_grouped(|txn| {
+        emit_in_txn(vault, txn, subject, predicate, value, &envelope, now)
+    })
 }
 
 pub(super) fn emit_in_txn(

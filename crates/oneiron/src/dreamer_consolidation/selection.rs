@@ -158,7 +158,7 @@ impl Vault {
     /// Operator configuration seam, like the prefilter row. It is not an agent verb.
     pub fn set_consolidation_selection(&self, config: &SelectionConfig) -> Result<()> {
         config.validate()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             SELECTION.put(&self.store, txn, &(), config)?;
             Ok(())
         })

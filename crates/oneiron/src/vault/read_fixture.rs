@@ -64,7 +64,7 @@ impl Vault {
                 })
                 .collect(),
         )?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             for actor in actors {
                 let super::LiveEntityRow::Live { entity_type, .. } =
                     super::live_entity_row_in_txn(&self.store, txn, &actor.entity_ref())?

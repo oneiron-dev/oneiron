@@ -372,7 +372,7 @@ impl Vault {
                 plan_reanchored_head(&thread, from_version, to_version, ops, pptx.as_ref());
             // Each thread's head write + old-head supersede share ONE txn, so a
             // rejected supersede leaves that thread's original head live.
-            let new_head_id = self.with_write_txn(|wtxn| {
+            let new_head_id = self.with_write_txn_grouped(|wtxn| {
                 self.require_anchor_version_in_txn(&*wtxn, artifact_id, to_version)?;
                 self.apply_reanchor_head_in_txn(
                     wtxn,

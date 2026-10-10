@@ -75,7 +75,7 @@ impl UsageLedger {
         validate_key(&key)?;
         let raw = rmp_serde::to_vec_named(&limit)?;
         self.vault
-            .try_with_write_txn(|txn| -> Result<(), UsageError> {
+            .try_with_write_txn_grouped(|txn| -> Result<(), UsageError> {
                 self.vault.sync_state_put_in_write_txn(txn, &key, &raw)?;
                 Ok(())
             })?;

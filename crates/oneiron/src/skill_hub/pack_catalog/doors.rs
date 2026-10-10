@@ -13,7 +13,9 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        self.with_write_txn(|txn| self.stage_pack_source_in_txn(txn, source, occurred, learned_at))
+        self.with_write_txn_grouped(|txn| {
+            self.stage_pack_source_in_txn(txn, source, occurred, learned_at)
+        })
     }
     pub(super) fn stage_pack_source_in_txn(
         &self,

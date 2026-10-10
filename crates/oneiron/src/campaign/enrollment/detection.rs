@@ -334,7 +334,7 @@ pub(super) fn put_event(vault: &Vault, event: &CampaignEnrollmentEvent) -> Resul
         definition_version: event.definition_version,
         scope_digest: bytes_to_hex_lower(&event.scope_digest),
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         EVENT.put(&vault.store, wtxn, &event.event_ref, &row)?;
         Ok(())
     })
@@ -385,7 +385,7 @@ fn put_baseline(
         definition_version,
         scope_digest: bytes_to_hex_lower(scope_digest),
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         BASELINE.put(&vault.store, wtxn, &query_ref, &row)?;
         Ok(())
     })

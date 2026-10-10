@@ -126,7 +126,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         document: EntityId,
     ) -> Result<Vec<(String, EsignCapability)>> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let state = state_in(self, txn, document)?;
             if state.status != DocumentStatus::Draft {
@@ -173,7 +173,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         token: &EsignCapability,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let mut row = binding(self, txn, token)?;
             row.revoked_at = Some(self.now_recorded_at());

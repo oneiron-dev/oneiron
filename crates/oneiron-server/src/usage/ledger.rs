@@ -29,7 +29,7 @@ impl UsageLedger {
         let key = usage_event_key(&event.owner, &event.vault_id, &event.idempotency_key);
         let rollup_key = vault_rollup_key(&event.owner, &event.vault_id);
         self.vault
-            .try_with_write_txn(|txn| -> Result<_, UsageError> {
+            .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
                 let mut rollup = self
                     .vault
                     .sync_state_get_in_write_txn(txn, &rollup_key)?
@@ -102,7 +102,7 @@ impl UsageLedger {
             return decode_rollup(&raw).map(Some);
         }
         self.vault
-            .try_with_write_txn(|txn| -> Result<_, UsageError> {
+            .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
                 let mut rollup = self
                     .vault
                     .sync_state_get_in_write_txn(txn, &key)?

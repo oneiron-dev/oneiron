@@ -3,9 +3,15 @@ use crate::error::{Error, Result};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The engine reads the clock inside the vault's write transaction, which may
+/// be one group commit shared with other writes. An implementation must only
+/// read time: it must not call into the vault or wait on anything a vault
+/// caller can hold while it writes, or the vault's writer deadlocks.
 pub trait Clock: Send + Sync {
     fn now_recorded_at(&self) -> u64;
 }
+/// The engine mints ids inside the vault's write transaction, under the same
+/// contract as [`Clock`]: an implementation must only mint ids.
 pub trait IdGen: Send + Sync {
     fn ulid(&self) -> [u8; 16];
 }

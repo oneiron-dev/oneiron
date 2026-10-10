@@ -78,7 +78,7 @@ pub(crate) fn import_note_from_authority(
     let head = EntityId::from_bytes(head.try_into().map_err(|_| invalid("NOTE frame head"))?)
         .map_err(|_| invalid("NOTE frame head"))?;
     let seq = u64::from_be_bytes(seq.try_into().map_err(|_| invalid("NOTE frame head"))?);
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if !SYNC_DS_E.contains(&vault.store, txn, &HexId(id))? {
             return Err(invalid("unsolicited NOTE authority state"));
         }

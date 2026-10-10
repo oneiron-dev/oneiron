@@ -383,7 +383,7 @@ pub fn rebuild_reservoir_index(vault: &Vault) -> Result<()> {
         (rebuilt, stale)
     };
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         for key in &stale {
             CANDIDATE.delete(&vault.store, wtxn, key)?;
         }
@@ -581,7 +581,7 @@ fn record_export(
         since: scope.since,
         at: vault.store.clock.now_recorded_at(),
     };
-    vault.with_write_txn(|wtxn| EXPORT.put(&vault.store, wtxn, &id, &row))?;
+    vault.with_write_txn_grouped(|wtxn| EXPORT.put(&vault.store, wtxn, &id, &row))?;
     Ok(id)
 }
 

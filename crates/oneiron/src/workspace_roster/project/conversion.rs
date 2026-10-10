@@ -86,7 +86,7 @@ impl Vault {
         thread: EntityId,
         task: EntityId,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let policy: crate::gate::ProjectConversionPolicy =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?
                     .project_conversion_policy()
@@ -162,7 +162,7 @@ impl Vault {
         now: u64,
     ) -> Result<ProjectRecord> {
         let kind = self.project_type_byte()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if let Some((intent, owner)) = card {
                 owner.revalidate_in_txn(self, txn)?;
                 if intent.principal_ref != owner.principal_ref()

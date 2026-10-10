@@ -149,7 +149,7 @@ pub(crate) use commitment_due::*;
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
-pub(crate) use group_commit::{GroupCommit, GroupCommitCounters, Rows};
+pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
 pub use handle::*;
 pub(crate) use key_encoding::*;
 pub use open_gates::*;

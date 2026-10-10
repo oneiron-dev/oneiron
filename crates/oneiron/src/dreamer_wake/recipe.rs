@@ -300,7 +300,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         .with_evidence(cited(&pin, source))
         .with_evidence_taint(source)?;
         let now = ctx.now_ms / 1000;
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             if cached_result(vault, txn, attempt, &pin, actor, &id)? {
                 return Ok(());
             }

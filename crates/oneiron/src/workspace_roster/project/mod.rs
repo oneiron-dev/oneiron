@@ -409,7 +409,7 @@ impl Vault {
     /// under an immutable, content-addressed POLICY_MANIFEST identity; the
     /// write door fills the body's depth cache from it.
     pub fn put_project(&self, id: EntityId, record: &ProjectRecord, now: u64) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let body = record.clone();
             // A leader's signed spawn needs no owner birth; the shared door
             // verifies its proof.
@@ -465,7 +465,7 @@ impl Vault {
     /// Attach an asset to a project collection with a low-weight `belongs_to`
     /// edge. CLAIMs never link to hubs: their sideways scope is the project id.
     pub fn put_project_member(&self, asset: EntityId, project: EntityId) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if !is_project_entity(&self.store, txn, project)? {
                 return Err(invalid());
             }
@@ -510,7 +510,7 @@ impl Vault {
             .claims
             .holder_ref;
         let actor = EntityId::from_hex(&holder)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let parent = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                 .ok_or_else(invalid)?
                 .visible(parent_id)?
@@ -785,7 +785,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
     let (leader, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")?
         .ok_or_else(invalid)?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if ROOT.contains(&vault.store, txn, &())? {
             return Ok(());
         }

@@ -162,7 +162,7 @@ pub fn register_peer_result_wait(
     if trap_head(vault, &trap.trap_claim_id)?.1.step_hash != trap.step_hash {
         return Err(invalid_trap("peer-result wait step hash mismatch"));
     }
-    let state = vault.with_write_txn(|wtxn| {
+    let state = vault.with_write_txn_grouped(|wtxn| {
         let state = register_wait_in_txn(vault, wtxn, trap, now)?;
         peer_wait_binding_put_in_txn(
             vault,
@@ -273,7 +273,7 @@ fn ask_void_trap_signal(vault: &Vault, trap: EntityId) -> Result<bool> {
 }
 
 fn mark_ask_void_trap(vault: &Vault, trap: EntityId, generation: u64) -> Result<()> {
-    vault.with_write_txn(|txn| ASK_VOID_TRAP.put(&vault.store, txn, &trap, &generation))
+    vault.with_write_txn_grouped(|txn| ASK_VOID_TRAP.put(&vault.store, txn, &trap, &generation))
 }
 
 // ---------------------------------------------------------------------------

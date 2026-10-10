@@ -132,7 +132,7 @@ impl Vault {
         claim_id: &EntityId,
         now: u64,
     ) -> Result<Option<ReceiptRecord>> {
-        let emitted = self.with_write_txn(|wtxn| {
+        let emitted = self.with_write_txn_grouped(|wtxn| {
             self.store
                 .let_go_pending_gate_consent_in_txn(wtxn, claim_id, now)
         })?;

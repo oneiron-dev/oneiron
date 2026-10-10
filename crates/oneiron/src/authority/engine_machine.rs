@@ -149,7 +149,7 @@ impl Vault {
     }
 
     fn ensure_esign_artifact_machine(&self, now: u64) -> Result<EntityId> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             Ok(crate::blob_artifact::esign::artifact_machine(self, txn, now)?.entity_ref())
         })
     }

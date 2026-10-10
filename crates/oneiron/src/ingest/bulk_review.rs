@@ -86,7 +86,9 @@ impl Vault {
         batch: &ImportedClaimBatch,
     ) -> Result<ImportedClaimBatchReceipt> {
         let digest = self.imported_claim_batch_effect(owner, batch)?.digest();
-        self.with_write_txn(|txn| self.admit_imported_claim_batch_in_txn(txn, owner, batch, digest))
+        self.with_write_txn_grouped(|txn| {
+            self.admit_imported_claim_batch_in_txn(txn, owner, batch, digest)
+        })
     }
 
     /// The owner's one act for the whole batch: the approve-once receipt and
@@ -103,7 +105,7 @@ impl Vault {
         batch: &ImportedClaimBatch,
     ) -> Result<ImportedClaimBatchReceipt> {
         let digest = self.imported_claim_batch_effect(owner, batch)?.digest();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             self.approve_once_in_txn(txn, owner, digest)?;
             self.admit_imported_claim_batch_in_txn(txn, owner, batch, digest)
@@ -125,7 +127,7 @@ impl Vault {
     ) -> Result<ConsentReceipt> {
         let digest = self.imported_claim_batch_effect(owner, batch)?.digest();
         let slot = decision_slot(batch)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let receipt = self.deny_consent_in_txn(txn, owner, digest)?;
             self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;

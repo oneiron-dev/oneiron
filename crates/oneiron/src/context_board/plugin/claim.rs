@@ -396,7 +396,7 @@ pub fn propose_plugin_section_install_with_evidence(
         ClaimApprovalStatus::Proposed,
     );
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         apply_ops_with_gate_mode(
             &vault.store,
             &vault.config,

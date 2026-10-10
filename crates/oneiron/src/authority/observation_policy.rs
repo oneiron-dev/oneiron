@@ -105,7 +105,7 @@ impl Vault {
         policy: AuthorityObservationPolicy,
     ) -> Result<()> {
         policy.validate()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             POLICY.put(&self.store, txn, &(), &policy)?;
             Ok(())
         })

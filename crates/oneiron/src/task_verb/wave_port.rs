@@ -451,7 +451,7 @@ impl Vault {
     ) -> crate::Result<crate::attempt_queue::EnqueueOutcome> {
         let payload = serde_json::to_vec(&serde_json::json!({"epic": epic.to_hex(), "objective": objective, "constraints": constraints}))
             .map_err(|_| Error::InvariantViolation("wave request encoding"))?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_enqueue(
                 self,
                 txn,

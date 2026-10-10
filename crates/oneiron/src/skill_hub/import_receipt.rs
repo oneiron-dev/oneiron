@@ -146,7 +146,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         enabled: bool,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let revision = CODE_AUTO_INSTALL_REVISION
                 .get(&self.store, txn, &())?
@@ -179,7 +179,7 @@ impl Vault {
         hash: SkillContentHash,
         blocked: bool,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let nonce = self.store.clock.entity_id()?;
             let effect = ComposedEffect::new(EffectFacts::new(format!(
@@ -233,7 +233,7 @@ impl Vault {
         let parsed = super::folder::package_from_files(package.files)?;
         let static_scan = crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?;
         let fit = fit.evaluate(source, &parsed, &static_scan)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
             if self.hub_record_in_txn(txn, &source.hub_id)? != configured {
                 return Err(invalid("configured hub moved while fetching"));
@@ -341,7 +341,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let key = import_receipt_key(entity, source);
             let mut receipt = IMPORT_RECEIPT

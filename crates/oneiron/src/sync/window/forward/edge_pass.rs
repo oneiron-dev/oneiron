@@ -83,7 +83,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             if kind == crate::edge::EdgeKind::Parent {
                 let tombstoned = tombstone_map_contains_id(tombstones_map, &src)
                     || tombstone_map_contains_id(tombstones_map, &tgt);
-                match vault.with_write_txn(|wtxn| {
+                match vault.with_write_txn_grouped(|wtxn| {
                     bridge::submit_parent_in_txn(
                         vault,
                         wtxn,
@@ -202,7 +202,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // comparison, and paired write share ONE LMDB write txn. A
             // separate read check followed by `batch().commit()` would let
             // an intervening undo revoke the mandate before the edge write.
-            let result = vault.with_write_txn(|wtxn| {
+            let result = vault.with_write_txn_grouped(|wtxn| {
                 if vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
                     || vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
                 {

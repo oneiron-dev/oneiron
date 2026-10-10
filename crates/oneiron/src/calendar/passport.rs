@@ -242,7 +242,7 @@ pub fn index_passport_uid(
     event_ref: &EntityId,
 ) -> Result<(), CalendarError> {
     let digest = passport_digest(uid);
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         PASSPORT_INDEX.put(&vault.store, wtxn, &digest, event_ref)?;
         Ok::<_, crate::Error>(())
     })?;

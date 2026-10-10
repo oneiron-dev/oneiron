@@ -94,7 +94,7 @@ pub fn evaluate_entity_resolution_waterfall(
     candidates: &[EntityResolutionCandidate],
     high_collision_mention: bool,
 ) -> crate::Result<EntityResolutionWaterfallDecision> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         evaluate_entity_resolution_waterfall_in_txn(vault, txn, candidates, high_collision_mention)
     })
 }

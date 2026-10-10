@@ -164,7 +164,7 @@ impl Vault {
                 "claim held-out reserve must be bounded and nonempty",
             ));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let original = self
                 .get_claim_in_txn(txn, &base)?
@@ -264,7 +264,7 @@ impl Vault {
         .with_session_tag(session_tag);
         crate::batch::secret_scan::scan_metadata_field(session_tag)?;
         let id = EntityId::now();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             require_resident(self, txn, resident)?;
             let original = self
                 .get_claim_in_txn(txn, &base)?
@@ -363,7 +363,7 @@ impl Vault {
         ask: &ClaimRefinementMergeAsk,
         owner: &AuthenticatedOwner,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.check_claim_refinement_ask(txn, ask)?;
             self.approve_once_in_txn(txn, owner, ask.effect)
         })
@@ -432,7 +432,7 @@ impl Vault {
             accepted,
             at,
         };
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.check_claim_refinement_ask(txn, ask)?;
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?

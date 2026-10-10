@@ -78,7 +78,7 @@ pub fn enqueue_booking_verb_with_publication(
     let payload = encode_row(&attempt)?;
 
     let outcome = vault
-        .with_write_txn(|txn| {
+        .with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_enqueue(
                 vault,
                 txn,
@@ -213,7 +213,7 @@ where
     }
 
     let claimed = vault
-        .with_write_txn(|txn| {
+        .with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_claim(
                 vault,
                 txn,
@@ -279,7 +279,7 @@ fn finalize_attempt(
 ) -> Result<(), BookingError> {
     match outcome {
         Ok(_) => vault
-            .with_write_txn(|txn| {
+            .with_write_txn_grouped(|txn| {
                 crate::ports::JobQueue::port_job_complete(
                     vault,
                     txn,
@@ -294,7 +294,7 @@ fn finalize_attempt(
             .map(|_| ())
             .map_err(|error| engine_failure("lifecycle attempt complete", error)),
         Err(failure) => vault
-            .with_write_txn(|txn| {
+            .with_write_txn_grouped(|txn| {
                 crate::ports::JobQueue::port_job_fail(
                     vault,
                     txn,

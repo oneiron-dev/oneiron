@@ -67,8 +67,8 @@ pub fn admit_federated_window_update(
     })?;
 
     let admitted = create_admission_doc(key, update, role)?;
-    let policy =
-        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
+    let policy = vault
+        .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     reject_federated_tombstones(&remote)?;
     copy_admitted_entities(vault, &policy, &remote, &admitted)?;
@@ -121,8 +121,8 @@ pub(in crate::sync) fn revalidate_admitted_federated_claims(
         })
     })?;
 
-    let policy =
-        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
+    let policy = vault
+        .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     let mut result = Ok(());
     map_for_each_value_bytes(&admitted.get_map("entities"), |_, value| {

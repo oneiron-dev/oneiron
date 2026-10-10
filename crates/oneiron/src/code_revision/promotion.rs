@@ -63,7 +63,7 @@ impl Vault {
         // File promotion still requires independent review and authenticated folds.
         body.source = Some(crate::claim::ClaimSource::Observed);
         let id = EntityId::now();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.put_reserved_claim_in_txn(
                 txn,
                 &id,

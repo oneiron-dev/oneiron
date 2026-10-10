@@ -150,7 +150,7 @@ impl Vault {
         attempt_id: AttemptId,
         class: FailureSignalClass,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let record = AttemptQueue::new(self)
                 .get_in_write_txn(txn, attempt_id)?
                 .ok_or_else(invalid)?;

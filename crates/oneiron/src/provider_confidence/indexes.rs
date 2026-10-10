@@ -514,7 +514,7 @@ fn provider_key_from_actor_body(body: &[u8]) -> Option<String> {
 #[doc(hidden)]
 pub fn clear_provider_confidence_indexes(vault: &Vault, provider: &str) -> Result<()> {
     validate_provider_key(provider)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let digest = provider_key_hash(provider);
         PROVIDER_ACTOR_INDEX.delete(&vault.store, wtxn, &digest)?;
         PROVIDER_PRIOR_HEAD_INDEX.delete(&vault.store, wtxn, &digest)?;
@@ -554,7 +554,7 @@ pub fn set_provider_confidence_index_raw(
     prior_head_row: Option<&[u8]>,
 ) -> Result<()> {
     validate_provider_key(provider)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let digest = provider_key_hash(provider);
         for (table, value) in [
             (PROVIDER_ACTOR_INDEX, actor_row),

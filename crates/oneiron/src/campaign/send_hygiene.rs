@@ -118,7 +118,7 @@ pub fn apply_suppression(
     cause: SuppressionCause,
     input: &SuppressionInput,
 ) -> Result<SuppressionReceipt> {
-    vault.with_write_txn(|wtxn| apply_suppression_in_txn(vault, wtxn, cause, input))
+    vault.with_write_txn_grouped(|wtxn| apply_suppression_in_txn(vault, wtxn, cause, input))
 }
 
 /// Writes one suppression's restrictive claims into the CALLER's transaction.
@@ -518,7 +518,7 @@ pub fn bind_sticky_sender(
     basis_evidence: EntityId,
     occurred_at: u64,
 ) -> Result<StickySenderOutcome> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         bind_sticky_sender_in_txn(
             vault,
             wtxn,

@@ -122,7 +122,7 @@ pub(crate) fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
     drop(rtxn);
 
     let mut client_id = None;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         client_id = Some(load_or_mint_client_id_in_txn(vault, wtxn)?);
         Ok(())
     })?;
@@ -176,7 +176,7 @@ pub(crate) fn ensure_device_identity_in_txn(
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
     let mut identity = None;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         identity = Some(ensure_device_identity_in_txn(vault, wtxn)?);
         Ok(())
     })?;

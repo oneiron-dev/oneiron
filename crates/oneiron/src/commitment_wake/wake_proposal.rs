@@ -325,7 +325,7 @@ fn write_commitment_wake_proposal(vault: &Vault, write: &ProposalWrite<'_>) -> R
         end: write.event.fire_at,
     };
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if let Some(landed) = vault.get_claim_in_txn(&*wtxn, &claim_id)? {
             return match_landed_proposal(&landed, write.event, &value, &provenance);
         }
