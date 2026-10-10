@@ -292,8 +292,8 @@ fn names_any(rows: &[Value], tasks: &[oneiron::EntityId]) -> bool {
 }
 
 /// Astra #1353 finding 1: a subscription is not a read grant. The owner's
-/// live read admits TURNs only, so its own TASK never reaches its STREAM: no
-/// WAKE, and no done delta on its next results.
+/// live read admits TURNs only, so its own TASKs never reach its STREAM: no
+/// WAKE for its open consult, and no done delta on its next results.
 #[tokio::test]
 async fn a_task_outside_its_owners_read_grant_never_reaches_their_stream() {
     let (_dir, server) = auth_test_server();
@@ -323,6 +323,8 @@ async fn a_task_outside_its_owners_read_grant_never_reaches_their_stream() {
     )
     .expect("turns-only read grant");
 
+    // An open consult would wake its owner; a done one would ride a result.
+    ask(&server, actor, 0xd2b1_0015);
     let tasks = ask_and_answer(&server, actor, 0xd2b1_0013);
     publisher_passed(&server, witness, &witness_connection, 0xd2b1_0014).await;
 
