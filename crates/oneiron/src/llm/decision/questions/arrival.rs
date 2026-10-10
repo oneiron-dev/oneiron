@@ -168,8 +168,7 @@ fn project(
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
     let mut count = 0;
     for id in ids {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
-            .map(zeroize::Zeroizing::new)
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         else {
             continue;
         };
@@ -431,9 +430,7 @@ pub(super) fn readable(
     if crate::vault_cleanup::is_archived_in_txn(store, txn, id)? {
         return Ok(false);
     }
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
-        .map(zeroize::Zeroizing::new)
-    else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)? else {
         return Ok(false);
     };
     let header =

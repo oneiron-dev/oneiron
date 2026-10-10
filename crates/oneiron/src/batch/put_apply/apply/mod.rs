@@ -461,8 +461,8 @@ pub(in crate::batch) fn apply_put(
     // the ONE-1604-D1 eviction above takes, and for the same reason: the arm
     // that decides holds a read borrow of `wtxn`.
     let mut optimizer_birth_marker = None;
-    if let Some(old_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
-        .map(zeroize::Zeroizing::new)
+    if let Some(old_record) =
+        crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
     {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         previous_skill_record =

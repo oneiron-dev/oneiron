@@ -522,6 +522,43 @@ fn a_registration_wipes_the_staged_row_that_carried_its_value() {
     );
 }
 
+/// Sol on the staging fix: generic readers on the put path copied a custody
+/// row, value and all, into buffers freed unwiped, before they checked its
+/// kind. Neither a registration nor a rotation of it makes a plain copy of a
+/// row that holds the value.
+#[test]
+fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
+    const VALUE: &[u8] = b"wipe-check-copied-row-value";
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("vault");
+    let owner = owner(&vault);
+    crate::ports::row_copies::watch(VALUE);
+    vault
+        .register_secret_as_owner(
+            &owner,
+            &OwnerSecretRegistration {
+                bindings: vec![binding("deploy", None, &["read"])],
+                manifest: None,
+                value: VALUE,
+                ..ask(
+                    "deploy-token",
+                    CustodyClass::CustodyPortable,
+                    CustodyTier::T1Leased,
+                )
+            },
+            7,
+        )
+        .expect("registered");
+    vault
+        .rotate_secret_as_owner(&owner, "deploy-token", VALUE, 8)
+        .expect("rotated");
+    assert_eq!(
+        crate::ports::row_copies::sites(),
+        Vec::<String>::new(),
+        "the readers that copied a row holding the value unwiped"
+    );
+}
+
 /// Astra on #1372: the parser kept the last of a repeated key, so a binding
 /// declaring `tier_ceiling = 0` and then `tier_ceiling = 2` registered at
 /// tier 2. A manifest that says one thing twice is refused, under any

@@ -83,8 +83,7 @@ pub(crate) fn reindex_identity_hints(
     id: &EntityId,
     replacement: Option<(u8, &[u8])>,
 ) -> Result<()> {
-    if let Some(raw) =
-        crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.map(zeroize::Zeroizing::new)
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
     {
         for hint in hints(
