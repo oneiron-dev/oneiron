@@ -99,6 +99,15 @@ pub enum ArtifactError {
     /// minted or reused without adopting a squatter. Nothing was written.
     #[error("skill content anchor id is held by entity type {existing}")]
     SkillContentAnchorTypeMismatch { existing: u8 },
+    /// A SKILL revision names instruction content (its `content_hash`) whose
+    /// package this vault can no longer read, for example after its source
+    /// carrier was deleted. Restoring the record alone would activate the
+    /// skill without its instructions, so nothing was written.
+    #[error(
+        "skill revision {} has content whose package is unavailable",
+        revision.to_hex()
+    )]
+    SkillPackageUnavailable { revision: EntityId },
     /// An AGENT_DEF entity body failed pinned structural/lifecycle validation
     /// or the update-immutability gate. Nothing was written.
     #[error("invalid AGENT_DEF body: {0}")]
@@ -178,6 +187,7 @@ impl ArtifactError {
             Self::SkillContentAnchorTypeMismatch { .. } => {
                 ErrorKind::SkillContentAnchorTypeMismatch
             }
+            Self::SkillPackageUnavailable { .. } => ErrorKind::SkillPackageUnavailable,
             Self::InvalidAgentDefBody(_) => ErrorKind::InvalidAgentDefBody,
             Self::AgentDefinitionNotFound { .. } => ErrorKind::AgentDefinitionNotFound,
             Self::AgentDefinitionDisabled { .. } => ErrorKind::AgentDefinitionDisabled,

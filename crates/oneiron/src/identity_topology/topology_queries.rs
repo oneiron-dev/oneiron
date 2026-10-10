@@ -114,8 +114,9 @@ impl Vault {
     ///   no structural witness at all (no edge moves, and r6 forbids
     ///   rewriting the claim's subject), so the engine-authored index IS the
     ///   record;
-    /// - a FACET reads its canonical `facet_of` stamps, the same rows the
-    ///   local query filter and the federation selector already honor.
+    /// - a FACET reads the canonical `facet_of` birth stamps of the claims
+    ///   forked under it (r9), the same rows the local query filter and the
+    ///   federation selector already honor.
     ///
     /// This is a READ over records ABOUT the claims. The claims themselves
     /// are untouched: every returned claim still carries the subject its
