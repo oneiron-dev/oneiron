@@ -122,8 +122,8 @@ pub(super) const COSINE_GHOST_VECTOR_THRESHOLD: f32 = 0.3;
 // RET-01 only gates context-pack assembly. These are deliberately
 // conservative: the vector floor needs an absent keyword signal too, while
 // the score-gap check only compares raw cosine scores from the same channel.
-pub(super) const CONTEXT_PACK_MIN_VECTOR_SIMILARITY: f32 = 0.3;
-pub(super) const CONTEXT_PACK_MEDIOCRE_VECTOR_SIMILARITY: f32 = 0.5;
+// The floor and the strong-match score belong to the embedding space
+// (`VaultConfig::vector_evidence`).
 pub(super) const CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO: f32 = 0.1;
 pub(super) const CONTEXT_PACK_SCORE_GAP_EPSILON: f32 = f32::EPSILON;
 pub(super) const CONTEXT_PACK_ANOMALOUS_REPEAT_RUN: usize = 32;
@@ -160,6 +160,31 @@ pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::Store, &heed::RoTxn<
     + Send
     + Sync
     + 'a;
+
+/// What a run does with a MESSAGE hit
+/// (`PipelineBuilder::fold_messages_into_turns`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnFold {
+    /// Every hit stands as itself.
+    Off,
+    /// A MESSAGE hit becomes its TURN when the run admits the turn; any other
+    /// message stays as itself.
+    Fold,
+    /// As [`Self::Fold`], and a MESSAGE that found no admitted turn leaves the
+    /// run: the caller admits messages only as the way to their turns.
+    TurnsOnly,
+}
+
+impl TurnFold {
+    /// The mode's name in replay inputs and the fork hash.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Fold => "fold",
+            Self::TurnsOnly => "turns_only",
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct PipelineFilterConfig<'a> {
@@ -224,6 +249,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
+    /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
+    /// first. Empty unless the run folds messages into their turns.
+    pub(crate) cited_messages: HashMap<EntityId, Vec<EntityId>>,
     pub(crate) capabilities: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,

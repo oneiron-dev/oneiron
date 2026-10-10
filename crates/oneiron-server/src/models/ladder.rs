@@ -41,11 +41,14 @@ impl LadderRung {
         request
     }
 
-    fn stamp(&self, raw_provider: serde_json::Value) -> serde_json::Value {
+    /// The receipt of an answer this rung gave after `failed` rungs before
+    /// it were tried and failed.
+    fn stamp(&self, failed: usize, raw_provider: serde_json::Value) -> serde_json::Value {
         served_receipt(
             &self.provider,
             &self.wire_model,
             self.position,
+            failed,
             raw_provider,
         )
     }
@@ -98,7 +101,8 @@ impl LlmBackend for LadderBackend {
         Box::pin(async move {
             self.admits(&request)?;
             let mut last = None;
-            for rung in &self.rungs {
+            // A rung is reached only when every rung before it failed.
+            for (failed, rung) in self.rungs.iter().enumerate() {
                 match rung
                     .backend
                     .generate(rung.bind(request.clone()), lease)
@@ -106,7 +110,7 @@ impl LlmBackend for LadderBackend {
                 {
                     Ok(mut response) => {
                         let raw = std::mem::take(&mut response.usage.raw_provider);
-                        response.usage.raw_provider = rung.stamp(raw);
+                        response.usage.raw_provider = rung.stamp(failed, raw);
                         return Ok(response);
                     }
                     Err(error) if falls_through(&error) => {
@@ -186,7 +190,7 @@ async fn next_event(
                 finish_reason,
             })) => {
                 let raw = std::mem::take(&mut usage.raw_provider);
-                usage.raw_provider = state.ladder.rungs[index].stamp(raw);
+                usage.raw_provider = state.ladder.rungs[index].stamp(index, raw);
                 let done = LlmStreamEvent::Done {
                     message,
                     usage,

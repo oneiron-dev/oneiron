@@ -11,10 +11,10 @@ use crate::registry::{
 use crate::store::{RetrievalScoreComponent, RetrievalSignal, Store};
 
 use super::types::{
-    CONTEXT_PACK_ANOMALOUS_REPEAT_RUN, CONTEXT_PACK_MEDIOCRE_VECTOR_SIMILARITY,
-    CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO, CONTEXT_PACK_MIN_VECTOR_SIMILARITY,
+    CONTEXT_PACK_ANOMALOUS_REPEAT_RUN, CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO,
     CONTEXT_PACK_SCORE_GAP_EPSILON, EntityMetadataCache, ScoredEntity,
 };
+use crate::config::VectorEvidenceFloors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPackBudgetKind {
@@ -185,6 +185,7 @@ pub(super) fn context_pack_evidence_abstains(
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     text_query: Option<&str>,
     has_vector_query: bool,
+    floors: VectorEvidenceFloors,
 ) -> bool {
     if text_query.is_some_and(context_pack_text_is_anomalous) {
         return true;
@@ -219,9 +220,10 @@ pub(super) fn context_pack_evidence_abstains(
         && !vector_scores.is_empty()
         && vector_scores
             .iter()
-            .all(|score| !score.is_finite() || *score < CONTEXT_PACK_MIN_VECTOR_SIMILARITY);
+            .all(|score| !score.is_finite() || *score < floors.floor);
 
-    absent_keyword_and_low_vector || context_pack_vector_score_gap_is_poor(&mut vector_scores)
+    absent_keyword_and_low_vector
+        || context_pack_vector_score_gap_is_poor(&mut vector_scores, floors.strong)
 }
 
 /// RET-01 pack hygiene for malformed or degenerate text input. Newlines and
@@ -257,7 +259,7 @@ fn context_pack_text_is_anomalous(text: &str) -> bool {
 /// Score-gap evidence is meaningful only within the same raw vector channel.
 /// The ratio follows `(top1 - top2) / max(top1, epsilon)`; it suppresses
 /// uniformly mediocre results, not a close cluster of strong matches.
-fn context_pack_vector_score_gap_is_poor(vector_scores: &mut [f32]) -> bool {
+fn context_pack_vector_score_gap_is_poor(vector_scores: &mut [f32], strong: f32) -> bool {
     if vector_scores.len() < 2 {
         return false;
     }
@@ -268,7 +270,7 @@ fn context_pack_vector_score_gap_is_poor(vector_scores: &mut [f32]) -> bool {
     if !top.is_finite() || !next.is_finite() || top <= 0.0 {
         return true;
     }
-    if top >= CONTEXT_PACK_MEDIOCRE_VECTOR_SIMILARITY {
+    if top >= strong {
         return false;
     }
 

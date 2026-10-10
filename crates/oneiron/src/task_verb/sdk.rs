@@ -168,21 +168,35 @@ pub struct RecallRequest {
 
 /// `recall` with a host's query vector. Every SDK door lands here: the
 /// generated [`recall`] embeds nothing, and a server whose embedder is serving
-/// embeds the query. `embed` runs only once the request is admitted.
+/// embeds the query. `embed` runs only once the request is admitted: a request
+/// recall refuses (a paid effort, an unknown format or kind) costs no vector.
 pub fn recall_with_vector(
     memory: &Memory<'_>,
     input: RecallRequest,
     embed: impl FnOnce(&str) -> Option<Vec<f32>>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
+    let effort = input.effort.unwrap_or(crate::memory::Effort::Medium);
+    let scope = input.scope.unwrap_or_default();
+    let limit = input.limit.unwrap_or(10);
     crate::memory::caps::check_query(&input.query)?;
-    crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
-    crate::memory::caps::check_as_of(input.as_of)?;
+    crate::memory::caps::check_limit(limit)?;
+    crate::memory::check_recall_request(
+        effort,
+        &scope,
+        limit,
+        input.format.as_deref(),
+        None,
+        &crate::retrieval_depth::RecallExecution {
+            as_of: input.as_of,
+            ..Default::default()
+        },
+    )?;
     let embedding = embed(&input.query);
     memory.recall_with_execution(
         &input.query,
-        input.effort.unwrap_or(crate::memory::Effort::Medium),
-        &input.scope.unwrap_or_default(),
-        input.limit.unwrap_or(10),
+        effort,
+        &scope,
+        limit,
         input.format.as_deref(),
         None,
         &crate::retrieval_depth::RecallExecution {
@@ -203,6 +217,142 @@ pub struct ReceiptsRequest {
 include!("verb_catalog.rs");
 include!("sdk_generated.rs");
 
+/// The verb table as code mode's `self.memory` declarations: one signature
+/// per row, rendered from that verb's own input schema, so the methods a
+/// model is shown are exactly the rows the host serves.
+#[must_use]
+pub fn code_mode_declarations() -> &'static str {
+    // GLOBAL STATE: rendered once from compiled verb schemas, which are
+    // immutable and vault-independent.
+    static DECLARATIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut tree = std::collections::BTreeMap::new();
+        for verb in AgentVerb::ALL {
+            let mut node = &mut tree;
+            let mut parts = verb.as_str().split('.').peekable();
+            while let Some(part) = parts.next() {
+                let entry = node
+                    .entry(part)
+                    .or_insert_with(|| DeclarationNode::Namespace(Default::default()));
+                if parts.peek().is_none() {
+                    *entry = DeclarationNode::Verb(*verb);
+                    break;
+                }
+                let DeclarationNode::Namespace(next) = entry else {
+                    break;
+                };
+                node = next;
+            }
+        }
+        let mut out = String::from("declare namespace self {\n  namespace memory {\n");
+        render_declarations(&tree, 2, &mut out);
+        out.push_str("  }\n}\n");
+        out
+    });
+    &DECLARATIONS
+}
+
+enum DeclarationNode {
+    Namespace(std::collections::BTreeMap<&'static str, DeclarationNode>),
+    Verb(AgentVerb),
+}
+
+fn render_declarations(
+    tree: &std::collections::BTreeMap<&'static str, DeclarationNode>,
+    depth: usize,
+    out: &mut String,
+) {
+    let indent = "  ".repeat(depth);
+    for (name, node) in tree {
+        match node {
+            DeclarationNode::Namespace(children) => {
+                out.push_str(&format!("{indent}namespace {name} {{\n"));
+                render_declarations(children, depth + 1, out);
+                out.push_str(&format!("{indent}}}\n"));
+            }
+            DeclarationNode::Verb(verb) => {
+                let input =
+                    input_schema(verb.as_str()).map_or_else(|| "object".to_owned(), schema_type);
+                out.push_str(&format!(
+                    "{indent}function {name}(input: {input}): Promise<unknown>;\n"
+                ));
+            }
+        }
+    }
+}
+
+/// A schema's TypeScript spelling, one level deep: nested objects stay `object`.
+fn schema_type(schema: &serde_json::Value) -> String {
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .map(|fields| {
+            fields
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(properties) = schema["properties"].as_object() else {
+        return "object".to_owned();
+    };
+    let fields: Vec<String> = properties
+        .iter()
+        .map(|(field, property)| {
+            let optional = if required.contains(&field.as_str()) {
+                ""
+            } else {
+                "?"
+            };
+            format!("{field}{optional}: {}", property_type(property))
+        })
+        .collect();
+    format!("{{ {} }}", fields.join("; "))
+}
+
+fn property_type(property: &serde_json::Value) -> String {
+    if let Some(values) = property["enum"].as_array() {
+        return values
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join(" | ");
+    }
+    if let Some(branches) = property["anyOf"]
+        .as_array()
+        .or_else(|| property["oneOf"].as_array())
+    {
+        return branches
+            .iter()
+            .map(property_type)
+            .collect::<Vec<_>>()
+            .join(" | ");
+    }
+    let types: Vec<&str> = match &property["type"] {
+        serde_json::Value::String(kind) => vec![kind.as_str()],
+        serde_json::Value::Array(kinds) => {
+            kinds.iter().filter_map(serde_json::Value::as_str).collect()
+        }
+        _ => return "unknown".to_owned(),
+    };
+    types
+        .into_iter()
+        .map(|kind| match kind {
+            "string" => "string".to_owned(),
+            "integer" | "number" => "number".to_owned(),
+            "boolean" => "boolean".to_owned(),
+            "null" => "null".to_owned(),
+            "array" => format!(
+                "{}[]",
+                match property_type(&property["items"]).as_str() {
+                    item if item.contains(' ') => format!("({item})"),
+                    item => item.to_owned(),
+                }
+            ),
+            _ => "object".to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 #[cfg(test)]
 #[test]
 fn verb_input_schema_is_built_once_per_process() {
@@ -219,15 +369,18 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
         assert!(names.insert(verb.as_str()));
         assert_eq!(AgentVerb::from_name(verb.as_str()), Some(*verb));
         assert!(input_schema(verb.as_str()).is_some());
-        assert_eq!(verb.argument_fields().is_some(), verb.is_mcp());
-        assert_eq!(verb.required_fields().is_some(), verb.is_mcp());
-        assert_eq!(mcp_arguments_schema(verb.as_str()).is_some(), verb.is_mcp());
+        // ARCH-0028: the tool list is the whole verb table, never a curated one.
+        assert!(
+            mcp_arguments_schema(verb.as_str()).is_some(),
+            "{}",
+            verb.as_str()
+        );
     }
     assert!(AgentVerb::TasksAsk.is_section());
     assert!(AgentVerb::RoomsSpeak.writes());
     assert!(AgentVerb::RoomsList.is_facade());
     assert!(!AgentVerb::BoardExpand.is_facade());
-    assert!(!AgentVerb::Recall.is_mcp());
+    assert_eq!(AgentVerb::Recall.argument_fields(), &["spec"]);
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
 
@@ -264,6 +417,56 @@ fn retired_task_verb_names_are_unknown() {
     for name in ["describe", "tasks.update", "cancel"] {
         assert!(AgentVerb::from_name(name).is_some(), "{name}");
     }
+}
+
+/// #1323 review (CodeRabbit, Greptile): a server embedded the query of a
+/// recall that validation then refused, so a paid effort, an unknown format
+/// or an unknown kind still cost an embedding call. Each is refused first.
+#[cfg(test)]
+#[test]
+fn a_recall_the_engine_refuses_never_embeds_its_query() {
+    use crate::memory::Effort;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    let request = |effort, format: Option<&str>, kinds: Option<&str>| RecallRequest {
+        query: "who fixes my car".to_owned(),
+        effort: Some(effort),
+        scope: kinds.map(|kind| crate::memory::RecallScope {
+            kinds: Some(vec![kind.to_owned()]),
+            ..Default::default()
+        }),
+        limit: None,
+        format: format.map(str::to_owned),
+        as_of: None,
+    };
+    for (input, code) in [
+        (
+            request(Effort::High, None, None),
+            crate::memory::MEMORY_CODE_LEASE_REQUIRED,
+        ),
+        (
+            request(Effort::Medium, Some("xml"), None),
+            crate::memory::MEMORY_CODE_BAD_REQUEST,
+        ),
+        (
+            request(Effort::Medium, None, Some("NOT_A_KIND")),
+            crate::memory::MEMORY_CODE_BAD_REQUEST,
+        ),
+    ] {
+        let refusal = recall_with_vector(&memory, input, |_| panic!("the refused query embedded"))
+            .expect_err("refused");
+        assert_eq!(refusal.code, code, "{refusal:?}");
+    }
+    let mut embedded = 0;
+    recall_with_vector(&memory, request(Effort::Medium, None, None), |_| {
+        embedded += 1;
+        None
+    })
+    .expect("an admitted recall runs");
+    assert_eq!(embedded, 1);
 }
 
 #[cfg(test)]

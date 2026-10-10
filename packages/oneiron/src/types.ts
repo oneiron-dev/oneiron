@@ -102,7 +102,7 @@ export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 export type RecallScope = {
   worldRef?: string
   facet?: string
-  /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but turns, conversations, sessions, facets and worlds. */
+  /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
   kinds?: string[]
 }
 
@@ -131,7 +131,11 @@ export type MemoryProvenance = {
 export type MemoryItem = {
   /** The same `name:hash` a witness receipt returns. */
   shortId: string
-  /** The revision the item was read at; `${shortId}@${sourceRevisionRef}` hydrates exactly it. */
+  /**
+   * The revision the item was read at; `${shortId}@${sourceRevisionRef}` hydrates exactly it.
+   * A TURN's pins its messages' words too, and reads those words back after an edit
+   * while the messages' history holds them.
+   */
   sourceRevisionRef?: string
   kind: string
   predicate?: string
@@ -142,6 +146,14 @@ export type MemoryItem = {
   world?: string
   facet?: string
   salience?: number
+  /** For a TURN item, the messages whose words the query matched, best first. */
+  citedMessages: CitedMessage[]
+}
+
+/** A MESSAGE a TURN item quotes: the words a query matched, as they were said. */
+export type CitedMessage = {
+  shortId: string
+  valueText: string
 }
 
 /** What the requested scope excluded. */

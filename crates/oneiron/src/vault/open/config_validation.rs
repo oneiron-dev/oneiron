@@ -27,5 +27,6 @@ pub(super) fn validate_open_config(config: &VaultConfig) -> Result<()> {
     if let Some(tagging) = &config.tagging {
         tagging.validate()?;
     }
+    config.vector_evidence.validate()?;
     Ok(())
 }

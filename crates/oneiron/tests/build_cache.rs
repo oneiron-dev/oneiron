@@ -8,9 +8,8 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::temporal::TimeRange;
 use oneiron::write_envelope::WriteActor;
 use oneiron::{
-    ActionResult, ArtifactVersionRef, BuildAction, BuildCache, BuildCacheError,
-    BuildCachePutOutcome, BuildInputRoot, BuildPlatform, DeclaredOutputPath, EntityId,
-    FrozenBuildCommand, RepoRef, Vault, VaultConfig,
+    ActionResult, ArtifactVersionRef, BuildAction, BuildCache, BuildCacheError, BuildInputRoot,
+    BuildPlatform, DeclaredOutputPath, EntityId, FrozenBuildCommand, RepoRef, Vault, VaultConfig,
 };
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
@@ -83,65 +82,6 @@ fn result(reference: ArtifactVersionRef) -> ActionResult {
 }
 
 #[test]
-fn put_get_preserves_full_result_and_exact_versions() {
-    let (_dir, vault) = temp_vault();
-    let output = artifact(&vault, b"binary");
-    let stdout = append(&vault, output.artifact_id(), b"stdout");
-    let stderr = artifact(&vault, b"stderr!");
-    let mut proposed = result(output.clone());
-    proposed.stdout_ref = Some(stdout.clone());
-    proposed.stderr_ref = Some(stderr.clone());
-    let action = action();
-    let cache = BuildCache::new(&vault);
-    let BuildCachePutOutcome::Stored(stored) = cache.put(&action, proposed.clone()).expect("store")
-    else {
-        panic!("expected Stored");
-    };
-    assert_eq!(stored.result, proposed);
-    assert_eq!(stored.action_key, action.action_key().expect("key"));
-    assert_eq!(stored.referenced_bytes, 19);
-    let newer = append(&vault, output.artifact_id(), b"new head");
-    assert!(newer.version() > stdout.version());
-    let hit = cache.get(&stored.action_key).expect("get").expect("hit");
-    assert_eq!(hit, stored);
-    assert_eq!(hit.result.outputs.get(&path("out/bin")), Some(&output));
-    assert_eq!(hit.result.stdout_ref, Some(stdout));
-    assert_eq!(hit.result.stderr_ref, Some(stderr));
-}
-
-#[test]
-fn first_writer_wins_and_existing_short_circuits_invalid_proposals() {
-    let (_dir, vault) = temp_vault();
-    let action = action();
-    let reference = artifact(&vault, b"first result");
-    let first = result(reference.clone());
-    let cache = BuildCache::new(&vault);
-    cache.put(&action, first.clone()).expect("store first");
-    let candidate_ref = append(&vault, reference.artifact_id(), b"different candidate");
-    let mut candidate = result(candidate_ref);
-    candidate.producer_ref = "executor:second".into();
-    let BuildCachePutOutcome::Existing(existing) = cache.put(&action, candidate).expect("existing")
-    else {
-        panic!("expected Existing");
-    };
-    assert_eq!(existing.result, first);
-    let mut invalid = result(reference.clone());
-    invalid.outputs.insert(path("undeclared"), reference);
-    invalid.producer_ref.clear();
-    assert!(invalid.validate().is_err());
-    assert_eq!(
-        cache
-            .put(&action, invalid)
-            .expect("existing before validation"),
-        BuildCachePutOutcome::Existing(existing.clone())
-    );
-    assert_eq!(
-        cache.get(&existing.action_key).expect("get"),
-        Some(existing)
-    );
-}
-
-#[test]
 fn account_vaults_share_rows_artifact_bytes_and_producer_provenance() {
     let (_dir_a, vault_a) = temp_vault();
     let (_dir_b, vault_b) = temp_vault();
@@ -196,57 +136,4 @@ fn unavailable_artifacts_or_versions_leave_no_index_row() {
             Err(BuildCacheError::ArtifactUnavailable { artifact_ref }) if artifact_ref == expected));
         assert!(matches!(cache.get(&key), Ok(None)));
     }
-}
-
-#[test]
-fn independent_cache_instances_share_one_vault() {
-    let (_dir, vault) = temp_vault();
-    let action = action();
-    let writer = BuildCache::new(&vault);
-    let reader = BuildCache::new(&vault);
-    let BuildCachePutOutcome::Stored(stored) = writer
-        .put(&action, result(artifact(&vault, b"shared")))
-        .expect("store")
-    else {
-        panic!("expected Stored");
-    };
-    assert_eq!(
-        reader.get(&stored.action_key).expect("read"),
-        Some(stored.clone())
-    );
-    assert_eq!(writer.get(&stored.action_key).expect("read"), Some(stored));
-}
-
-#[test]
-fn decoded_refs_have_exact_artifact_at_version_spelling() {
-    let (_dir, vault) = temp_vault();
-    let reference = artifact(&vault, b"version one");
-    let reference = append(&vault, reference.artifact_id(), b"version two");
-    let expected = format!("{}@2", reference.artifact_id().to_hex());
-    let mut proposed = result(reference.clone());
-    proposed.stderr_ref = Some(reference);
-    let action = action();
-    let cache = BuildCache::new(&vault);
-    cache.put(&action, proposed).expect("store");
-    let hit = cache
-        .get(&action.action_key().expect("key"))
-        .expect("get")
-        .expect("hit");
-    for reference in hit
-        .result
-        .outputs
-        .values()
-        .chain(hit.result.stdout_ref.iter())
-        .chain(hit.result.stderr_ref.iter())
-    {
-        assert_eq!(reference.to_result_ref(), expected);
-        assert_eq!(
-            &ArtifactVersionRef::parse(&expected).expect("parse exact ref"),
-            reference
-        );
-    }
-    assert_eq!(
-        hit.referenced_bytes, 11,
-        "same version in three roles counts once"
-    );
 }

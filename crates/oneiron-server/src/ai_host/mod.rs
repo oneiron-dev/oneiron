@@ -17,6 +17,8 @@ use crate::config::models::{ChatSettings, ModelsConfig};
 use crate::models::{ModelRuntime, ModelsStatus, RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
 
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod code_mode;
 mod dreamer;
 mod policy;
 mod status;
@@ -236,7 +238,7 @@ pub struct AiHost {
 impl AiHost {
     /// Builds every seat from `models`, starts the workers those seats can
     /// serve, and hands the server its handle (and the raw `/v1/llm` routes
-    /// their router).
+    /// their router, and MCP `execute_code` its executor).
     pub async fn attach(server: SyncServer, models: Option<&ModelsConfig>) -> (SyncServer, Self) {
         let host = Self::start(
             Arc::clone(server.vault()),
@@ -244,7 +246,10 @@ impl AiHost {
             server.host_root_provisioned(),
         )
         .await;
-        (server.with_ai(host.handle.clone()), host)
+        let server = server.with_ai(host.handle.clone());
+        #[cfg(feature = "code-sandbox-wasmtime")]
+        let server = code_mode::bind(server, &host.handle.runtime, models).await;
+        (server, host)
     }
 
     pub async fn start(vault: Arc<Vault>, models: Option<&ModelsConfig>, host_root: bool) -> Self {
