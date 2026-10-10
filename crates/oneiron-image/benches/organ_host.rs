@@ -2,7 +2,9 @@
 //! images only: `cargo bench -p oneiron-image --bench organ_host`.
 //!
 //! 1. Added cost of a small op: `image.crop` through the host and the
-//!    organ process, against the same op called in this process.
+//!    organ process, against the same op called in this process; beside it
+//!    `organ.echo` through the host (the protocol alone) and a socketpair
+//!    ping-pong between two threads (the floor any process boundary pays).
 //! 2. Read throughput of a 100 MiB and a 1 GiB blob: a cached region, a cold
 //!    region (copied out of the vault and checked first), and the same bytes
 //!    copied over the socket.
@@ -10,9 +12,13 @@
 //! 4. Resident memory of a warm organ, idle and after one export.
 //!
 //! Run it on one quiet host; it prints the host and its load beside the table.
+//! `ORGAN_BENCH_QUICK` shortens every row; `ORGAN_BENCH_ROWS=1,3` runs only
+//! those rows.
 
 #[cfg(unix)]
 mod bench {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
     use std::sync::atomic::AtomicBool;
     use std::time::{Duration, Instant};
 
@@ -21,7 +27,9 @@ mod bench {
     use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
     use oneiron_image::{ImageOrgan, VERB_CROP, VERB_EXPORT, VERB_OPEN};
     use oneiron_organ_host::{CallClass, HostConfig, OrganCall, OrganHost, OrganInput, OrganSpec};
-    use oneiron_organ_protocol::{CallContext, InputBytes, Limits, Organ, TypedBody, VERB_TOUCH};
+    use oneiron_organ_protocol::{
+        CallContext, InputBytes, Limits, Organ, TypedBody, VERB_ECHO, VERB_TOUCH,
+    };
     use rmpv::Value;
 
     const ORGAN: &str = env!("CARGO_BIN_EXE_oneiron-image-organ");
@@ -91,7 +99,7 @@ mod bench {
 
     fn spec(memory_bytes: u64, max_call_frame: u32) -> OrganSpec {
         let mut spec = OrganSpec::first_party("image", ORGAN);
-        spec.verbs = [VERB_OPEN, VERB_CROP, VERB_EXPORT, VERB_TOUCH]
+        spec.verbs = [VERB_OPEN, VERB_CROP, VERB_EXPORT, VERB_TOUCH, VERB_ECHO]
             .map(String::from)
             .into();
         spec.media_types = vec![PNG.to_owned(), BIN.to_owned()];
@@ -262,6 +270,16 @@ mod bench {
                 micros(percentile(times, 99))
             );
         };
+        let echo = || {
+            host.call(&fixture.vault, call(VERB_ECHO, 1.into(), None, Vec::new()))
+                .expect("echo")
+        };
+        for _ in 0..200 {
+            echo();
+        }
+        let echoed = timed(runs, || {
+            std::hint::black_box(echo());
+        });
         row("crop through host + organ process", &hosted);
         row("crop in process", &local);
         println!(
@@ -269,6 +287,34 @@ mod bench {
             micros(percentile(&hosted, 50)) - micros(percentile(&local, 50)),
             micros(percentile(&hosted, 99)) - micros(percentile(&local, 99)),
         );
+        row("echo through host + organ process (protocol only)", &echoed);
+        row("floor: socketpair ping-pong, two threads", &ping_pong(runs));
+    }
+
+    /// One byte there and back between two threads over a socketpair, both
+    /// blocking: two wake-ups per round trip, nothing else.
+    fn ping_pong(runs: usize) -> Vec<Duration> {
+        let (mut ours, mut theirs) = UnixStream::pair().expect("pair");
+        let echo = std::thread::spawn(move || {
+            let mut byte = [0u8; 1];
+            while theirs.read_exact(&mut byte).is_ok() {
+                if theirs.write_all(&byte).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut byte = [7u8; 1];
+        let mut round_trip = || {
+            ours.write_all(&byte).expect("ping");
+            ours.read_exact(&mut byte).expect("pong");
+        };
+        for _ in 0..200 {
+            round_trip();
+        }
+        let times = timed(runs, round_trip);
+        drop(ours);
+        let _ = echo.join();
+        times
     }
 
     fn touch(host: &OrganHost, fixture: &Fixture, input: OrganInput) -> Duration {
@@ -413,18 +459,28 @@ mod bench {
 
     pub(super) fn run() {
         let quick = std::env::var_os("ORGAN_BENCH_QUICK").is_some();
+        let rows = std::env::var("ORGAN_BENCH_ROWS").unwrap_or_default();
+        let wanted = |row: &str| rows.is_empty() || rows.split(',').any(|r| r.trim() == row);
         let fixture = Fixture::new();
         println!("host {} · load before {}", host_name(), load());
         println!();
         println!("| # | measure | p50 / rate | p99 / median |");
         println!("|---|---|---|---|");
-        small_op(&fixture, if quick { 200 } else { 2000 });
-        throughput(&fixture, 100, if quick { 2 } else { 5 });
-        if !quick {
-            throughput(&fixture, 1024, 3);
+        if wanted("1") {
+            small_op(&fixture, if quick { 200 } else { 2000 });
         }
-        cold_start(&fixture, if quick { 10 } else { 50 });
-        memory(&fixture);
+        if wanted("2") {
+            throughput(&fixture, 100, if quick { 2 } else { 5 });
+            if !quick {
+                throughput(&fixture, 1024, 3);
+            }
+        }
+        if wanted("3") {
+            cold_start(&fixture, if quick { 10 } else { 50 });
+        }
+        if wanted("4") {
+            memory(&fixture);
+        }
         println!();
         println!("load after {}", load());
     }

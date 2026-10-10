@@ -226,6 +226,7 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
         thread::spawn(move || work(&shared, &queue));
     }
     loop {
+        crate::spin::poll_readable(stream);
         match recv_frame::<ToOrgan>(stream, limits.max_call_frame) {
             Ok((ToOrgan::Call(call), fds)) => {
                 let cancel = Arc::new(AtomicBool::new(false));
@@ -256,7 +257,8 @@ fn builtin_verbs() -> [VerbSpec; 2] {
 
 fn work<O: Organ>(shared: &Shared<O>, queue: &Mutex<mpsc::Receiver<Job>>) {
     loop {
-        let next = lock(queue).recv();
+        // Spinning holds the queue: the other workers would only wait on it.
+        let next = crate::spin::recv_spinning(&lock(queue), None);
         let Ok(job) = next else { return };
         let id = job.call.id;
         let (outcome, fds) = answer(shared, job);
