@@ -80,15 +80,16 @@ impl OffRecordSessionEntryState {
         if self.record.room.is_none() {
             return;
         }
+        // A retry of a message already kept changes nothing: the vault holds
+        // the row as it was first written, so that is the one kept.
         for &(message, at, body) in messages {
-            self.kept_messages.insert(
-                message,
-                KeptMessage {
+            self.kept_messages
+                .entry(message)
+                .or_insert_with(|| KeptMessage {
                     turn,
                     at,
                     digest: *blake3::hash(body).as_bytes(),
-                },
-            );
+                });
         }
     }
 
