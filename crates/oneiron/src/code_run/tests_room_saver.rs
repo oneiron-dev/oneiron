@@ -125,11 +125,11 @@ fn a_run_write_waiting_for_the_writer_lands_nothing_once_the_room_goes_off_recor
     let (_dir, vault) = open_test_vault();
     let (room, session) = room_on_record(&vault);
     let id = EntityId::now();
-    let bound = std::sync::Barrier::new(2);
+    let held = std::sync::Barrier::new(2);
     let refused = std::thread::scope(|scope| {
         let run = scope.spawn(|| {
             let run = bind_run(&session, &room);
-            bound.wait();
+            held.wait();
             run.dispatch(SelfCall::MemoryWriteFixture(
                 SelfMemoryWriteFixtureCall::new(id, said_in_the_room(&room), range(60), 60),
             ))
@@ -137,12 +137,16 @@ fn a_run_write_waiting_for_the_writer_lands_nothing_once_the_room_goes_off_recor
         });
         vault
             .with_write_txn(|_| {
-                bound.wait();
-                // Long enough that the run's checks before the writer have
-                // certainly run: it is queued on the writer this closure
-                // holds, so only a check in its own transaction still sees
+                held.wait();
+                // The run queues for the writer this closure holds only once
+                // every check it makes before its transaction has passed, so
+                // from here on only a check in that transaction still sees
                 // the room go off record.
-                std::thread::sleep(std::time::Duration::from_millis(150));
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while vault.store.group_commit.queued() == 0 {
+                    assert!(std::time::Instant::now() < deadline, "the run never queued");
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
                 vault.set_off_record_session_mode(session.session_ref(), OffRecordMode::OffRecord)?;
                 Ok(())
             })
