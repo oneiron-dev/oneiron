@@ -16863,7 +16863,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -19596,7 +19596,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -29656,7 +29656,7 @@
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
       "crate-vis": 10,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -29850,6 +29850,17 @@
       "enum": 2,
       "fn": 10,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_rotation/owner_door.rs",
+     "purpose": "The owner's rotation door and the one transaction body every rotation shares",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -39646,7 +39657,7 @@
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
     },
     "secret_rotation": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -39942,7 +39953,7 @@
    },
    "over_bar": 32,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2418,
+   "source_files": 2419,
    "test_files": 785
   },
   "oneiron-android": {
@@ -48101,6 +48112,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/owner_healer.rs",
+     "purpose": "`/v1/owner` safety and repair: the owner rotates a secret (ARCH-0069 S6), reads the three signed healer…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -50193,6 +50212,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/owner/healer.rs",
+     "purpose": "The owner reads the self-healing loop (ARCH-0066): the three signed oversight receipts the vault emits, and…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/owner/imports.rs",
      "purpose": "Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202)",
      "surface": {
@@ -50216,7 +50245,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -50275,6 +50304,16 @@
      "notable": [],
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/secrets.rs",
+     "purpose": "The owner rotates a secret (ARCH-0069 S6)",
      "surface": {
       "crate-vis": 7
      }
@@ -50481,8 +50520,21 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 1
+      "crate-vis": 3,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OversightStartError"
+     ],
+     "path": "src/server/oversight.rs",
+     "purpose": "The healer oversight receipts (ARCH-0066 §8): each vault signs three counts about review work, coverage…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1
      }
     },
     {
@@ -50915,7 +50967,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/managed_mode.rs",
@@ -50965,7 +51017,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 161,
+     "files": 162,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51098,7 +51150,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 15,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51126,7 +51178,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51170,8 +51222,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 302,
-   "test_files": 115
+   "source_files": 305,
+   "test_files": 116
   },
   "oneiron-uniffi": {
    "files": [
