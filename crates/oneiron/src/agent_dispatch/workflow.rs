@@ -55,6 +55,7 @@ impl AgentDispatcher<'_> {
         let mut txn = self.vault.store.env.write_txn()?;
         let outcome = self.dispatch_workflow_in_txn(&mut txn, input, spawn, None)?;
         txn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 

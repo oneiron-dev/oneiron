@@ -29,6 +29,7 @@
 //!   pass, which defers consuming the next already-signalled tick rather
 //!   than generating wakeups of its own.
 
+mod attachment;
 mod budget_ids;
 mod config;
 mod factory;
@@ -37,6 +38,9 @@ mod pass;
 mod run;
 mod shutdown;
 
+pub use self::attachment::{
+    AttachedPassFuture, LinkedShutdown, PassAttachment, PassAttachmentSource, WakePassFuture,
+};
 pub use self::config::{
     MAX_PASS_BUDGET_BASE_LEN, NowSeconds, RestartBackoffConfig, WakeSupervisorConfig,
 };
