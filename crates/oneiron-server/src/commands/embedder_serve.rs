@@ -7,8 +7,8 @@ use zeroize::Zeroizing;
 
 use crate::cli::EmbedderServeArgs;
 use crate::config::{
-    EmbedderArgs, EmbedderConfig, EmbedderProvider, EnvConfig, ServeArgs, default_config_path,
-    resolve_serve_config_with_sources,
+    EmbedderConfig, EmbedderProvider, EnvConfig, ServeArgs, default_config_path,
+    layer_serve_config, resolve_serve_config_with_sources,
 };
 use crate::embedder::serve::{Listen, run};
 
@@ -48,34 +48,24 @@ fn served_config_from(
     env: &EnvConfig,
     default_config_path: Option<PathBuf>,
 ) -> anyhow::Result<EmbedderConfig> {
-    let resolve = |embedder: EmbedderArgs, dimensions: Option<usize>| {
-        resolve_serve_config_with_sources(
-            &ServeArgs {
-                config: args.config.clone(),
-                embedder,
-                dimensions,
-                ..ServeArgs::default()
-            },
-            env.clone(),
-            default_config_path.clone(),
-        )
+    let serve_args = |dimensions: Option<usize>| ServeArgs {
+        config: args.config.clone(),
+        embedder: args.embedder.clone(),
+        dimensions,
+        ..ServeArgs::default()
     };
     // There is no vault here, so the vault-wide width only has to agree with
     // the model's, and unless --dimensions names it, it is the model's: the
-    // section's width as every layer resolves it, read with the section held
-    // inactive, which the vault check skips. Should that read fail, the full
-    // resolution below says why.
-    let dimensions = args.dimensions.or_else(|| {
-        let inactive = EmbedderArgs {
-            embedder_provider: Some(EmbedderProvider::None),
-            ..args.embedder.clone()
-        };
-        resolve(inactive, None)
-            .ok()
-            .and_then(|resolved| resolved.embedder)
-            .map(|embedder| embedder.dimensions)
-    });
-    let resolved = resolve(args.embedder.clone(), dimensions)?;
+    // section's width as the layers resolve it, read before the checks that
+    // hold it to a vault.
+    let dimensions = match args.dimensions {
+        Some(dimensions) => Some(dimensions),
+        None => layer_serve_config(&serve_args(None), env.clone(), default_config_path.clone())?
+            .embedder
+            .map(|embedder| embedder.dimensions),
+    };
+    let resolved =
+        resolve_serve_config_with_sources(&serve_args(dimensions), env.clone(), default_config_path)?;
     match resolved.embedder {
         Some(embedder) if embedder.provider == EmbedderProvider::Local => Ok(embedder),
         Some(embedder) if embedder.provider == EmbedderProvider::Endpoint => anyhow::bail!(

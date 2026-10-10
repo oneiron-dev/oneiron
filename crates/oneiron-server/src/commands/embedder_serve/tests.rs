@@ -2,7 +2,7 @@
 //! vault here, so the vault-wide width only has to agree with the model's.
 
 use super::*;
-use crate::config::EmbedderDevice;
+use crate::config::{EmbedderArgs, EmbedderDevice};
 use crate::config::embedder::DEFAULT_DIMENSIONS;
 
 fn serve_args(
@@ -72,6 +72,30 @@ fn a_config_file_that_names_no_width_serves_the_model_s() {
     )
     .expect("served");
     assert_eq!(served.dimensions, DEFAULT_DIMENSIONS);
+}
+
+/// Review R5-1: the width was read with the section held inactive, which a
+/// remote rung refuses, so a valid section with one fell back to the
+/// vault-wide default and was refused.
+#[test]
+fn a_section_with_a_remote_rung_is_served_at_its_width() {
+    let embedder = EmbedderArgs {
+        embedder_remote: Some(
+            serde_json::from_str(
+                r#"{"endpoint":"https://embeddings.example/v1","model_key":"shared","locality":"owner-server","egress":{"allow_all":true}}"#,
+            )
+            .expect("remote rung"),
+        ),
+        ..on_cpu()
+    };
+    let served = served_config_from(
+        &serve_args(None, embedder, None),
+        &EnvConfig::default(),
+        None,
+    )
+    .expect("served");
+    assert_eq!(served.dimensions, DEFAULT_DIMENSIONS);
+    assert!(served.remote.is_some());
 }
 
 /// Widths named against each other are still refused.
