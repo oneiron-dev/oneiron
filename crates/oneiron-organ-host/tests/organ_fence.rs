@@ -23,7 +23,7 @@ const ENGINE_CRATES: [&str; 3] = ["oneiron", "oneiron-server", "oneiron-organ-ho
 
 /// Organs still compiled into the engine, each waiting for its move behind
 /// the host. Each move PR deletes its name; the list only shrinks.
-const PENDING_MOVE: [&str; 3] = ["oneiron-seal", "oneiron-docedit", "oneiron-xlsx-formula"];
+const PENDING_MOVE: [&str; 2] = ["oneiron-docedit", "oneiron-xlsx-formula"];
 
 struct Manifest {
     organ: bool,

@@ -8,6 +8,12 @@ description = "Native PDF PAdES seal and verification engine"
 repository.workspace = true
 homepage.workspace = true
 
+# An organ runs as its own process behind the organ host. The engine never
+# depends on it, and it never depends on the engine (the of060 F4 fence in
+# crates/oneiron-organ-host/tests/organ_fence.rs).
+[package.metadata.oneiron]
+organ = true
+
 [features]
 default = ["native"]
 native = [
@@ -28,6 +34,9 @@ native = [
   "dep:url",
   "dep:x509-ocsp",
   "dep:x509-tsp",
+  "dep:oneiron-organ-protocol",
+  "dep:rmp-serde",
+  "dep:rmpv",
 ]
 network-fetch = [
   "native",
@@ -43,10 +52,21 @@ seal-oracle = ["native"]
 # doctest compile pass entirely.
 doctest = false
 
+# The organ process: the engine reaches the seal only through it.
+[[bin]]
+name = "oneiron-seal-organ"
+path = "src/bin/oneiron-seal-organ.rs"
+required-features = ["native"]
+
 [dependencies]
 async-trait = "0.1"
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
+
+# The organ protocol, the only link to the engine (a socket, not a crate).
+oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol", optional = true }
+rmp-serde = { workspace = true, optional = true }
+rmpv = { workspace = true, optional = true }
 
 # Exact-pinned PDF/CMS/X.509 and cryptographic wire stack. Any update to an
 # exact-pinned crypto/wire dependency requires the complete native + oracle
@@ -82,6 +102,11 @@ tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
 url = { version = "2", optional = true }
 
 [dev-dependencies]
+# The engine's seal task over the real host and this crate's organ binary
+# (tests/esign_host_e2e.rs). Test-only: the fence ignores dev edges.
+oneiron = { path = "../oneiron", features = ["test-support"] }
+oneiron-organ-host = { path = "../oneiron-organ-host" }
+rmp-serde = { workspace = true }
 der = { version = "=0.7.10", features = ["alloc", "derive", "oid", "std"] }
 ipnet = "2"
 p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
@@ -105,6 +130,12 @@ required-features = ["native"]
 name = "oracle"
 path = "tests/oracle.rs"
 required-features = ["seal-oracle"]
+
+# The engine's seal task over the real host and the organ binary.
+[[test]]
+name = "esign_host_e2e"
+path = "tests/esign_host_e2e.rs"
+required-features = ["native"]
 
 [lints]
 workspace = true

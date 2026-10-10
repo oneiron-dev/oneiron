@@ -1,15 +1,16 @@
-//! Lease-fenced native seal job. No terminal claim precedes self-verification.
+//! Lease-fenced seal job. No terminal claim precedes self-verification. The
+//! sealer is a port ([`EsignSealer`]); the seal itself runs in its own organ.
 use super::{
     ledger::{append, events_in, state_in},
     model::*,
     render::{PdfPreparation, PdfPreparationError, SignatureRaster, prepare_esign_pdf},
+    sealer::{EsignSealRequest, EsignSealer, EsignSealerError, EsignVerdict, SealProfile},
 };
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, CompleteAttempt, SetAttemptResult,
 };
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
-use oneiron_seal::{PadesProfile, PdfSealEngine, SealError, SealRequest, VerifyReport};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -28,7 +29,7 @@ pub enum EsignSealError {
     #[error(transparent)]
     Prepare(#[from] PdfPreparationError),
     #[error(transparent)]
-    Seal(#[from] SealError),
+    Sealer(#[from] EsignSealerError),
     #[error("sealed PDF failed post-seal verification")]
     Verification,
 }
@@ -72,13 +73,13 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         CANONICAL.get(&self.store, &txn, &document)
     }
-    /// Async backend work is outside the writer lock. Immutable original
-    /// versions are always used, including for owner-authorized reseals.
-    pub async fn seal_esign_attempt<E: PdfSealEngine>(
+    /// The sealer runs outside the writer lock. Immutable original versions
+    /// are always used, including for owner-authorized reseals.
+    pub fn seal_esign_attempt(
         &self,
         attempt: &AttemptRecord,
-        engine: &E,
-        profile: PadesProfile,
+        sealer: &dyn EsignSealer,
+        profile: SealProfile,
         canonical_url: &str,
     ) -> std::result::Result<SealedDocument, EsignSealError> {
         let document = EntityId::from_bytes(
@@ -174,21 +175,19 @@ impl Vault {
                     signature_images: &images,
                 },
             )?;
-            let sealed = engine
-                .seal_pdf(
-                    &prepared.bytes,
-                    &SealRequest {
-                        operation_id: format!(
-                            "esign:{}:{}:{index}",
-                            document.to_hex(),
-                            crate::entity_id::bytes_to_hex_lower(&fingerprint)
-                        ),
-                        target_profile: profile,
-                    },
-                )
-                .await?;
-            let checked = engine.verify_sealed_pdf(&sealed.bytes)?;
-            if !sealed.self_verify_report.passes_self_verify() || !checked.passes_self_verify() {
+            let sealed = sealer.seal(
+                &prepared.bytes,
+                &EsignSealRequest {
+                    operation_id: format!(
+                        "esign:{}:{}:{index}",
+                        document.to_hex(),
+                        crate::entity_id::bytes_to_hex_lower(&fingerprint)
+                    ),
+                    profile,
+                },
+            )?;
+            let checked = sealer.verify(&sealed.bytes)?;
+            if !sealed.self_verify.self_verify_ok || !checked.self_verify_ok {
                 return Err(EsignSealError::Verification);
             }
             let hash: [u8; 32] = Sha256::digest(&sealed.bytes).into();
@@ -330,13 +329,13 @@ impl Vault {
         })
         .map_err(Into::into)
     }
-    /// Re-hash stored bytes and run the native verifier for the in-app badge.
-    pub fn verify_esign_item<E: PdfSealEngine>(
+    /// Re-hash stored bytes and run the sealer's verifier for the in-app badge.
+    pub fn verify_esign_item(
         &self,
         document: EntityId,
         item: usize,
-        engine: &E,
-    ) -> std::result::Result<VerifyReport, EsignSealError> {
+        sealer: &dyn EsignSealer,
+    ) -> std::result::Result<EsignVerdict, EsignSealError> {
         let manifest = self
             .sealed_esign_document(document)?
             .ok_or(Error::EntityNotFound)?;
@@ -353,6 +352,6 @@ impl Vault {
         if <[u8; 32]>::from(Sha256::digest(&bytes)) != item.sha256 {
             return Err(EsignSealError::Verification);
         }
-        Ok(engine.verify_sealed_pdf(&bytes)?)
+        Ok(sealer.verify(&bytes)?)
     }
 }

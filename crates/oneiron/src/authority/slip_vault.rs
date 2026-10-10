@@ -602,7 +602,7 @@ fn next_entry(
         now,
     )
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Vault {
     /// Binds a test owner person as the human owner under the host root, so
     /// owner verbs keep working once a fixture roots its vault.

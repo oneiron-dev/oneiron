@@ -24,6 +24,8 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 serde = { workspace = true }
+# The seal verdict's report, as the engine's port carries it.
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]

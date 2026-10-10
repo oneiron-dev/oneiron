@@ -4,11 +4,16 @@
 //! claim predicate, attempt kind, blob version, or audit row, and it performs
 //! no orchestration or storage writes. Python, pyHanko, and sidecar processes
 //! are absent from the runtime path; pyHanko is a CI-only differential oracle.
+//!
+//! The engine never links it. It runs as its own organ process,
+//! `oneiron-seal-organ`, behind the organ host (the `organ` module).
 
 pub mod api;
 mod error;
 #[cfg(feature = "native")]
 mod native;
+#[cfg(all(unix, feature = "native"))]
+pub mod organ;
 
 pub use api::{
     Anomaly, BackendError, BackendRejectCode, BackendSignature, ByteRangeEvidence, Coverage,
