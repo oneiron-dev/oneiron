@@ -18,7 +18,7 @@ mod local;
 pub(crate) mod serve;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, payload_text};
@@ -180,6 +180,9 @@ pub(crate) struct EmbedderSlot {
     /// built at boot but answers no query until the worker has admitted it,
     /// as a local model answers none before it has loaded and been admitted.
     admitted: AtomicBool,
+    /// The transform the vault admitted from the provider, if it named one,
+    /// which a remote rung is held to ([`Self::remote_rung`]).
+    vault_transform: Mutex<Option<String>>,
 }
 
 impl EmbedderSlot {
@@ -197,6 +200,7 @@ impl EmbedderSlot {
             ready: OnceLock::new(),
             models: local::model_manager::ModelManager::default(),
             admitted: AtomicBool::new(false),
+            vault_transform: Mutex::new(None),
         };
         if config.provider == EmbedderProvider::Endpoint {
             let embedder = endpoint::HttpEmbedder::from_config(config)?;
@@ -255,17 +259,21 @@ impl EmbedderSlot {
                 // Read afresh each time: a refused remote restored to the
                 // vault's model and settings is admitted on the worker's next
                 // try, and one restarted with another profile gets its floors.
+                // The answers' pin goes in with the vault's side, before
+                // queries are let through.
                 let admitted = http.served().and_then(|served| {
-                    admit(Admission {
-                        transform: served.transform(),
-                        evidence: served.evidence(&self.config),
+                    let transform = served.transform().map(str::to_owned);
+                    http.admit_with(served, |served| {
+                        admit(Admission {
+                            transform: served.transform(),
+                            evidence: served.evidence(&self.config),
+                        })
                     })?;
-                    Ok(served)
+                    Ok(transform)
                 });
-                // The answers' pin goes in before queries are let through.
                 match admitted {
-                    Ok(served) => {
-                        http.admit(served);
+                    Ok(transform) => {
+                        *self.vault_transform() = transform;
                         self.admitted.store(true, Ordering::Release);
                     }
                     Err(error) => {
@@ -281,11 +289,26 @@ impl EmbedderSlot {
             transform: Some(local.transform()),
             evidence: evidence_floors(&self.config),
         })?;
+        *self.vault_transform() = Some(local.transform().to_owned());
         self.admitted.store(true, Ordering::Release);
         let embedder = local as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
         // `set` loses a race; the winner is the one every caller must see.
         Ok(self.ready.get().map_or(embedder, Arc::clone))
+    }
+
+    fn vault_transform(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.vault_transform
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The section's remote rung, if it configures one, held to the vault's
+    /// model and to the transform the vault admitted from the provider
+    /// ([`Self::ensure_ready`] first).
+    pub(crate) fn remote_rung(&self) -> oneiron::Result<Option<oneiron::embed::RemoteRung>> {
+        let transform = self.vault_transform().clone();
+        build_remote_rung(&self.config, transform)
     }
 
     /// Embeds a query, or says why it cannot.

@@ -30,11 +30,13 @@
 //! floors.
 //!
 //! A request's bearer key is checked from its headers before any of its body
-//! is read. A body is read only once the bytes it declares fit a budget,
-//! which it holds until its request's work ends: small bodies (queries, a
-//! vault's document batches) and large ones each have their own, so a recall
-//! never waits behind an upload, and no number of callers can make the server
-//! hold more than both.
+//! is read. A body must declare its length, and is read only once that fits a
+//! budget, which it holds until its request's work ends: small bodies
+//! (queries, a vault's document batches) and large ones each have their own,
+//! so a recall never waits behind an upload. A few requests at most wait for
+//! a full budget, and a body that does not arrive in time gives its budget
+//! back, so no number of callers can make the server hold much more than
+//! both.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -68,9 +70,16 @@ const SMALL_BODY_BYTES: usize = 256 * 1024;
 /// requests' work ends. Their own budget, so a query never waits behind a
 /// large upload.
 const SMALL_BODIES_BYTES: usize = 16 * 1024 * 1024;
-/// What larger bodies, and bodies of no declared length, may hold at once:
-/// two of the largest.
+/// What larger bodies may hold at once: two of the largest.
 const LARGE_BODIES_BYTES: usize = 2 * MAX_BODY_BYTES;
+/// Requests that may wait at once for a full budget, each; one more is
+/// refused rather than queued. A waiting request holds what the transport
+/// already read of its body, so the queue is bounded too.
+const BODY_WAITERS: usize = 32;
+/// How long a body has to arrive once its bytes are reserved. One that is
+/// still arriving then is refused, and its reservation returned: a stalled
+/// upload holds a budget for this long at most.
+const BODY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// Bulk requests in flight at once. The model runs one forward at a time
 /// anyway; two keep it busy while the next request is tokenised, and the rest
 /// wait here rather than each holding a blocking thread a query may need.
@@ -182,10 +191,45 @@ struct Served {
     /// takes.
     bulk: Arc<tokio::sync::Semaphore>,
     queries: Arc<tokio::sync::Semaphore>,
-    /// The bytes request bodies may hold, by size ([`SMALL_BODY_BYTES`]), one
-    /// permit a byte, taken before a body is read and held with admission.
-    small_bodies: Arc<tokio::sync::Semaphore>,
-    large_bodies: Arc<tokio::sync::Semaphore>,
+    /// The bytes request bodies may hold, by size ([`SMALL_BODY_BYTES`]).
+    small_bodies: BodyBudget,
+    large_bodies: BodyBudget,
+}
+
+/// Bytes request bodies may hold at once, one permit a byte, taken before a
+/// body is read and held until its request's work ends.
+struct BodyBudget {
+    bytes: Arc<tokio::sync::Semaphore>,
+    /// Room to wait for `bytes` when they are all taken ([`BODY_WAITERS`]).
+    waiters: Arc<tokio::sync::Semaphore>,
+}
+
+impl BodyBudget {
+    fn new(total: usize) -> Self {
+        Self {
+            bytes: Arc::new(tokio::sync::Semaphore::new(total)),
+            waiters: Arc::new(tokio::sync::Semaphore::new(BODY_WAITERS)),
+        }
+    }
+
+    /// Reserves `bytes`, at once or after waiting among at most
+    /// [`BODY_WAITERS`] others; `None` when there is no room to wait, or the
+    /// server is shutting down.
+    async fn reserve(&self, bytes: usize) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        // Every size fits its budget, and both are far under `u32::MAX`.
+        let bytes = u32::try_from(bytes).ok()?;
+        if let Ok(held) = Arc::clone(&self.bytes).try_acquire_many_owned(bytes) {
+            return Some(held);
+        }
+        let _waiting = Arc::clone(&self.waiters).try_acquire_owned().ok()?;
+        Arc::clone(&self.bytes).acquire_many_owned(bytes).await.ok()
+    }
+
+    /// Requests waiting for bytes now.
+    #[cfg(test)]
+    fn waiting(&self) -> usize {
+        BODY_WAITERS - self.waiters.available_permits()
+    }
 }
 
 impl Served {
@@ -202,8 +246,8 @@ impl Served {
             key,
             bulk: Arc::new(tokio::sync::Semaphore::new(BULK_REQUESTS)),
             queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
-            small_bodies: Arc::new(tokio::sync::Semaphore::new(SMALL_BODIES_BYTES)),
-            large_bodies: Arc::new(tokio::sync::Semaphore::new(LARGE_BODIES_BYTES)),
+            small_bodies: BodyBudget::new(SMALL_BODIES_BYTES),
+            large_bodies: BodyBudget::new(LARGE_BODIES_BYTES),
         }
     }
 
@@ -211,8 +255,8 @@ impl Served {
     /// requests whose work has not ended.
     #[cfg(test)]
     fn body_bytes_held(&self) -> usize {
-        SMALL_BODIES_BYTES - self.small_bodies.available_permits() + LARGE_BODIES_BYTES
-            - self.large_bodies.available_permits()
+        SMALL_BODIES_BYTES - self.small_bodies.bytes.available_permits() + LARGE_BODIES_BYTES
+            - self.large_bodies.bytes.available_permits()
     }
 }
 
@@ -349,9 +393,10 @@ struct Usage {
     total_tokens: usize,
 }
 
-/// Reads a request's body once the bytes it may take fit its budget, which
-/// the returned permit holds. A body of no declared length may take the most.
-/// The key was checked before this ([`require_key`]).
+/// Reads a request's body once the bytes it declares fit its budget, which
+/// the returned permit holds. A body must declare its length: what it may
+/// take is known before any of it is read, and a short one never waits on
+/// the large budget. The key was checked before this ([`require_key`]).
 async fn read_body(
     served: &Served,
     request: Request,
@@ -362,6 +407,13 @@ async fn read_body(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
     let bytes = match declared {
+        None => {
+            return Err(refuse(
+                StatusCode::LENGTH_REQUIRED,
+                "invalid_request_error",
+                "a request body must declare its Content-Length",
+            ));
+        }
         Some(declared) if declared > MAX_BODY_BYTES as u64 => {
             return Err(refuse(
                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -370,34 +422,40 @@ async fn read_body(
             ));
         }
         Some(declared) => declared as usize,
-        None => MAX_BODY_BYTES,
     };
     let budget = if bytes <= SMALL_BODY_BYTES {
         &served.small_bodies
     } else {
         &served.large_bodies
     };
-    // Every size fits its budget, and both are far under `u32::MAX`.
-    let Ok(held) = Arc::clone(budget).acquire_many_owned(bytes as u32).await else {
+    let Some(held) = budget.reserve(bytes).await else {
         return Err(refuse(
             StatusCode::SERVICE_UNAVAILABLE,
             "server_error",
-            "the endpoint is shutting down",
+            "too many requests are waiting to send their bodies; retry",
         ));
     };
-    axum::body::to_bytes(request.into_body(), bytes)
-        .await
-        .map(|body| (held, body))
-        .map_err(|_| {
-            refuse(
-                StatusCode::BAD_REQUEST,
-                "invalid_request_error",
-                &format!(
-                    "the body could not be read in full, within its declared length and \
-                     {MAX_BODY_BYTES} bytes"
-                ),
-            )
-        })
+    match tokio::time::timeout(
+        BODY_READ_TIMEOUT,
+        axum::body::to_bytes(request.into_body(), bytes),
+    )
+    .await
+    {
+        Ok(Ok(body)) => Ok((held, body)),
+        Ok(Err(_)) => Err(refuse(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "the body ended before its declared length",
+        )),
+        Err(_) => Err(refuse(
+            StatusCode::REQUEST_TIMEOUT,
+            "invalid_request_error",
+            &format!(
+                "the body did not arrive within {} s",
+                BODY_READ_TIMEOUT.as_secs()
+            ),
+        )),
+    }
 }
 
 async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Response {

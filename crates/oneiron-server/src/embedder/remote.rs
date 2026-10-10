@@ -38,7 +38,13 @@ impl EgressPredicate for ConfiguredEgress {
     }
 }
 
-pub(crate) fn build_remote_rung(primary: &EmbedderConfig) -> oneiron::Result<Option<RemoteRung>> {
+/// The remote rung `primary` configures, if any. Its answers are held to the
+/// vault's model and to `transform`, the one the vault admitted from the
+/// primary provider ([`HttpEmbedder::hold_as_rung`]).
+pub(crate) fn build_remote_rung(
+    primary: &EmbedderConfig,
+    transform: Option<String>,
+) -> oneiron::Result<Option<RemoteRung>> {
     crate::config::remote_embedder::validate_remote(primary)?;
     let Some(config) = &primary.remote else {
         return Ok(None);
@@ -46,10 +52,9 @@ pub(crate) fn build_remote_rung(primary: &EmbedderConfig) -> oneiron::Result<Opt
     let policy = config.egress.as_ref().ok_or_else(|| {
         oneiron::Error::InvalidConfig("remote rung missing egress predicate".into())
     })?;
-    let mut rung = RemoteRung::new(
-        HttpEmbedder::from_config(&config.endpoint_config(primary))?,
-        Arc::new(ConfiguredEgress::new(policy)?),
-    );
+    let embedder = HttpEmbedder::from_config(&config.endpoint_config(primary))?;
+    embedder.hold_as_rung(transform);
+    let mut rung = RemoteRung::new(embedder, Arc::new(ConfiguredEgress::new(policy)?));
     rung.lease_duration_ms = config.lease_ms;
     Ok(Some(rung))
 }

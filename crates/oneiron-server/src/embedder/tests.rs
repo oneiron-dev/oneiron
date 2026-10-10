@@ -628,6 +628,73 @@ fn an_alias_moved_to_another_revision_is_refused_and_nothing_is_stored() {
     );
 }
 
+/// Review R7-2 (Sol, the P1 fix): a remote rung is a second door to the
+/// vault's vectors. Bug repro: it was never admitted, so a rung on a shared
+/// alias that came back with another revision behind it still had its answers
+/// stored. Its answers are now held to the vault's model and to the transform
+/// the vault admitted from its provider; a refused answer falls back to the
+/// provider, as any failed remote answer does.
+#[test]
+fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
+    use crate::config::EmbedderLocality as Locality;
+    use crate::config::remote_embedder::{EgressPolicy, RemoteEmbedderConfig};
+    use oneiron::embed::EmbedderLocality;
+    let primary = MockEndpoint::start(MockBehaviour::OneironWire);
+    let remote = MockEndpoint::start(MockBehaviour::OneironWire);
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = test_vault(dir.path());
+    let config = EmbedderConfig {
+        remote: Some(RemoteEmbedderConfig {
+            endpoint: remote.base.clone(),
+            model_key: MODEL_KEY.into(),
+            locality: Locality::OwnerServer,
+            artifact: None,
+            api_key_env: None,
+            lease_ms: 120_000,
+            timeout_ms: 1000,
+            egress: Some(EgressPolicy {
+                allow: Vec::new(),
+                deny: Vec::new(),
+                allow_all: true,
+            }),
+        }),
+        ..endpoint_config(&primary.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let embedder = slot
+        .ensure_ready(|admission| admission.into_vault(&vault))
+        .expect("admitted");
+    let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        embedder as Arc<dyn oneiron::embed::Embedder>,
+    )
+    .with_remote_rung(slot.remote_rung().expect("rung").expect("configured"))
+    .expect("rung");
+    while reconciler.reconcile_once().expect("filled").leased > 0 {}
+    let first = put_claim(&vault, 0xE5, "a claim the rung embeds");
+    let report = reconciler.reconcile_once().expect("filled");
+    assert_eq!((report.routed_remote, report.filled), (1, 1));
+    assert_eq!(
+        vault.embedding_locality(&first).expect("read"),
+        Some(EmbedderLocality::OwnerServer)
+    );
+
+    remote.serve_model(OTHER_REVISION);
+    let second = put_claim(&vault, 0xE6, "a claim the moved alias would embed");
+    let report = reconciler.reconcile_once().expect("filled");
+    assert_eq!(
+        (report.remote_failed_fallback_local, report.filled),
+        (1, 1),
+        "refused, and filled by the vault's own provider"
+    );
+    assert_eq!(
+        vault.embedding_locality(&second).expect("read"),
+        Some(EmbedderLocality::OnDevice)
+    );
+}
+
 /// The profile `embedder serve` lists for the shipped model run as it was
 /// measured, with `changed` over it.
 fn shipped_profile(changed: Value) -> Value {
@@ -1539,7 +1606,7 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
             }),
         });
         let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
-        let rung = build_remote_rung(&config).unwrap().unwrap();
+        let rung = build_remote_rung(&config, None).unwrap().unwrap();
         assert_eq!(rung.lease_duration_ms, 120_000);
         let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), primary)
             .with_remote_rung(rung)
@@ -1632,7 +1699,7 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
         Arc::clone(&vault),
         slot.ensure_ready(|_| Ok(())).unwrap() as Arc<dyn oneiron::embed::Embedder>,
     )
-    .with_remote_rung(build_remote_rung(embedder).unwrap().unwrap())
+    .with_remote_rung(slot.remote_rung().unwrap().unwrap())
     .unwrap();
     let report = reconciler.reconcile_once().unwrap();
     assert_eq!(

@@ -149,7 +149,7 @@ impl SyncServer {
             )
             .with_batch_size(config.batch_size)
             .with_lease_duration_ms(config.lease_ms);
-            if let Some(remote) = crate::embedder::build_remote_rung(config)? {
+            if let Some(remote) = slot.remote_rung()? {
                 reconciler = reconciler.with_remote_rung(remote)?;
             }
             Ok(reconciler)

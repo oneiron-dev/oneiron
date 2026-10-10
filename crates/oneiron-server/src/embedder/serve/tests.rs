@@ -198,7 +198,7 @@ fn status(stream: &mut std::net::TcpStream) -> std::io::Result<u16> {
 
 /// Polls until `held` reads `bytes`, for a few seconds at most.
 fn holds(served: &Served, bytes: usize) -> bool {
-    (0..200).any(|_| {
+    (0..500).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(10));
         served.body_bytes_held() == bytes
     })
@@ -228,7 +228,10 @@ fn a_request_without_the_key_is_refused_before_its_body_is_read() {
 
 /// Review P2: callers with the key share a byte budget for bodies, taken
 /// before a body is read. Past it a large body is not read until an earlier
-/// one's request ends, and a query, which draws on its own, still answers.
+/// one's request ends, a few at most wait for that, and a query, which draws
+/// on its own budget, still answers. Review R7-3 and R7-4 (Sol): a body of no
+/// declared length waited on the large budget whatever its size, and any
+/// number of requests could wait, each holding what the transport had read.
 #[test]
 fn bodies_wait_for_their_budget_before_they_are_read() {
     use std::io::Write;
@@ -238,16 +241,33 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
         Some(Zeroizing::new(KEY.to_owned())),
     ));
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
-    let mut uploads: Vec<_> = (0..3)
+    let mut uploads: Vec<_> = (0..2 + BODY_WAITERS)
         .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
         .collect();
-    assert!(holds(&served, LARGE_BODIES_BYTES), "two bodies reserved");
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    let queued = (0..500).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        served.large_bodies.waiting() == BODY_WAITERS
+    });
+    assert!(queued, "every waiter queued");
     assert_eq!(
         served.body_bytes_held(),
         LARGE_BODIES_BYTES,
-        "the third waits, unread"
+        "two bodies reserved, the rest wait unread"
     );
+    let mut one_more = post_head(addr, Some(KEY), MAX_BODY_BYTES);
+    assert_eq!(status(&mut one_more).expect("refused at once"), 503);
+
+    let mut chunked = std::net::TcpStream::connect(addr).expect("connected");
+    chunked
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .expect("timeout");
+    write!(
+        chunked,
+        "POST /v1/embeddings HTTP/1.1\r\nHost: endpoint\r\nAuthorization: Bearer {KEY}\r\n\
+         Transfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+    )
+    .expect("sent");
+    assert_eq!(status(&mut chunked).expect("refused at once"), 411);
 
     let query = serde_json::json!({
         "model": SYNTHETIC_MODEL,
@@ -260,7 +280,7 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     assert_eq!(status(&mut asking).expect("query answered"), 200);
 
     // Whichever two were reading, the one left holds its bytes once the
-    // others hang up: the one that waited was let in.
+    // others hang up: one that waited was let in.
     uploads.truncate(1);
     assert!(holds(&served, MAX_BODY_BYTES), "one body left");
     drop(uploads);

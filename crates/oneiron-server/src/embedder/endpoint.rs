@@ -137,12 +137,16 @@ struct ModelRow {
 /// What the vault admitted for a remote.
 #[derive(Clone, Debug, Default)]
 enum Admitted {
-    /// Nothing yet, or never (a remote rung): answers are not checked.
+    /// Nothing yet (the startup probe): answers are not checked.
     #[default]
     Unchecked,
     /// The remote's listing when the vault admitted it, which every answer
     /// must agree with ([`Listing::agrees_with`]).
     Listing(Listing),
+    /// A remote rung, held to the vault's space without a listing of its own
+    /// ([`HttpEmbedder::hold_as_rung`]): the transform the vault admitted
+    /// from its own provider, if that names one.
+    Rung { transform: Option<String> },
 }
 
 /// What the remote's `/models` listing said about the configured model.
@@ -368,6 +372,34 @@ impl HttpEmbedder {
         *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Listing(listing);
     }
 
+    /// [`Self::admit`], once `vault_side` has taken the listing (its
+    /// transform against the vault's pin, its floors), with no answer checked
+    /// in between: an answer is held either to the listing before, under the
+    /// floors before, or to this one under this one's. Nothing is recorded
+    /// when `vault_side` refuses.
+    pub(crate) fn admit_with<E>(
+        &self,
+        listing: Listing,
+        vault_side: impl FnOnce(&Listing) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
+        vault_side(&listing)?;
+        *admitted = Admitted::Listing(listing);
+        Ok(())
+    }
+
+    /// Holds a remote rung to the vault's space. A rung is never admitted
+    /// from a listing of its own and fills the rows the vault's provider
+    /// would: an answer that names the model it loaded must name the vault's,
+    /// and one that names a transform must name `transform`, the one the
+    /// vault admitted from its provider. A server that names neither, any
+    /// other OpenAI server, is held to the configured model's promise alone,
+    /// as before.
+    pub(crate) fn hold_as_rung(&self, transform: Option<String>) {
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) =
+            Admitted::Rung { transform };
+    }
+
     /// Reads the remote's `/models` listing and keeps it. A listing that does
     /// not answer, or answers with a failure, is an error and keeps nothing:
     /// it is asked again next time. A remote with no listing route, or one
@@ -446,10 +478,21 @@ impl HttpEmbedder {
                     code: format!("embeddings response: {e}"),
                 }
             })?;
-        if let Admitted::Listing(admitted) =
-            &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner)
-            && !admitted.agrees_with(&parsed)
-        {
+        let agrees = match &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner) {
+            Admitted::Unchecked => true,
+            Admitted::Listing(listing) => listing.agrees_with(&parsed),
+            Admitted::Rung { transform } => {
+                parsed
+                    .model_id
+                    .as_ref()
+                    .is_none_or(|model| *model == self.common.model_id)
+                    && parsed
+                        .transform
+                        .as_ref()
+                        .is_none_or(|named| Some(named) == transform.as_ref())
+            }
+        };
+        if !agrees {
             return Err(oneiron::Error::UpstreamToolFailure {
                 tool: EMBEDDER_TOOL,
                 code: "embedder endpoint now serves another model, or makes vectors another way, than the vault admitted; restore it or run `oneiron-server reembed`".to_owned(),

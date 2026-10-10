@@ -185,7 +185,10 @@ not HTTPS, so reach a remote embedder through a TLS proxy such as
 `tailscale serve`, or an SSH tunnel to a loopback port. The server checks the
 key before it reads any of a request's body, and reads bodies only within a
 budget (16 MiB for bodies up to 256 KiB, 64 MiB for larger ones, each body at
-most 32 MiB), so neither strangers nor key holders can make it hold more.
+most 32 MiB), so neither strangers nor key holders can make it hold more. A
+body must declare its `Content-Length` (411 otherwise); at most 32 requests
+wait for each budget (503 past that, to retry), and a body has 120 s to arrive
+once its budget is reserved (408 after).
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
 `PATH`) and ask for the device:
