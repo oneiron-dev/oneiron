@@ -522,7 +522,8 @@ fn native_quickjs_memory_rows_make_the_calls_their_imports_made() -> Result<()> 
     );
     assert!(outcome.done);
     let answer: serde_json::Value = serde_json::from_str(&outcome.observation).expect("answer");
-    let edge = |kind| serde_json::json!({"src": second.to_hex(), "kind": kind, "tgt": subject.to_hex()});
+    let edge =
+        |kind| serde_json::json!({"src": second.to_hex(), "kind": kind, "tgt": subject.to_hex()});
     assert_eq!(
         answer,
         serde_json::json!({
