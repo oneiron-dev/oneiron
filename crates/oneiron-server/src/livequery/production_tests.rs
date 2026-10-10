@@ -2218,15 +2218,6 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
             ..Default::default()
         };
         let derived = source.derive(&view, Channel::View).unwrap();
-        for message in [brakes, lunch] {
-            assert!(
-                derived
-                    .dependencies
-                    .contains(&format!("e:{}", message.to_hex())),
-                "{reason:?}: the view does not follow {message:?}: {:?}",
-                derived.dependencies
-            );
-        }
         let opened = queries
             .open(1, view.clone(), Channel::View, None, None)
             .unwrap();
@@ -2269,5 +2260,16 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
             "{reason:?}: {:#}",
             again.value
         );
+        // The view's own read set follows both messages, not only a coarse
+        // re-derive of every unfiltered view on any change.
+        for message in [brakes, lunch] {
+            assert!(
+                derived
+                    .dependencies
+                    .contains(&format!("e:{}", message.to_hex())),
+                "{reason:?}: the view does not follow {message:?}: {:?}",
+                derived.dependencies
+            );
+        }
     }
 }
