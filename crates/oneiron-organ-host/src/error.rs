@@ -10,6 +10,8 @@ use oneiron_organ_protocol::{FrameError, OrganError};
 pub enum Unavailable {
     /// Its install grant was withdrawn.
     Revoked,
+    /// A reinstall replaced this install while the call was starting; retry.
+    Reinstalled,
     /// It crashed five times in ten minutes; reinstall to clear.
     Quarantined,
     /// Its binary failed the handshake; the reason says how.

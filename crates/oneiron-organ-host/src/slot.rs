@@ -130,6 +130,8 @@ impl Slot {
                 state.unavailable = Some(Unavailable::Incompatible(reason.clone()));
                 Err(HostError::Handshake(reason))
             }
+            // The caller ran out of time; the organ is not at fault.
+            Err(HostError::DeadlineExceeded) => Err(HostError::DeadlineExceeded),
             Err(err) => {
                 record_crash(&mut state);
                 Err(err)
@@ -170,7 +172,9 @@ impl Slot {
         self.lock().process.clone()
     }
 
-    /// Every process of this slot that is still alive, current or not.
+    /// Every process of this slot that may still run, current or not. A
+    /// process whose socket closed counts until it is killed and reaped: it
+    /// may still hold what it mapped.
     pub(crate) fn live(&self) -> Vec<Arc<OrganProcess>> {
         let mut state = self.lock();
         state.generations.retain(|old| old.strong_count() > 0);
@@ -178,16 +182,24 @@ impl Slot {
             .generations
             .iter()
             .filter_map(Weak::upgrade)
-            .filter(|process| process.is_alive())
+            .filter(|process| process.is_running())
             .collect()
     }
 
     /// Refuses every later call and hands back every live process to stop.
     pub(crate) fn revoke(&self) -> Vec<Arc<OrganProcess>> {
-        self.lock().unavailable = Some(Unavailable::Revoked);
-        let live = self.live();
-        self.lock().process = None;
-        live
+        self.retire(Unavailable::Revoked)
+    }
+
+    /// As [`Slot::revoke`], for an install a reinstall replaced. A call that
+    /// picked this slot before the swap can start no process in it after,
+    /// so a later revocation, which sees only installed slots, misses none.
+    pub(crate) fn retire(&self, reason: Unavailable) -> Vec<Arc<OrganProcess>> {
+        let mut state = self.lock();
+        state.unavailable = Some(reason);
+        state.process = None;
+        drop(state);
+        self.live()
     }
 
     pub(crate) fn take_if_idle(&self, idle: Duration) -> Option<Arc<OrganProcess>> {

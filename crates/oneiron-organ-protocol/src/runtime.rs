@@ -21,8 +21,8 @@ use crate::frame::{FrameError, recv_frame, send_frame};
 use crate::region::{MappedRegion, SharedRegion};
 use crate::wire::{
     Call, DEFAULT_FRAME_LIMIT, ErrorCode, FromOrgan, Hash32, HelloAck, INLINE_MAX_BYTES, Input,
-    Limits, Notes, OrganError, OrganIdentity, Outcome, Output, PROTOCOL, Payload, Proposal, Reply,
-    ToOrgan, TypedBody, VerbSpec,
+    Limits, MAX_FDS_PER_FRAME, Notes, OrganError, OrganIdentity, Outcome, Output, PROTOCOL,
+    Payload, Proposal, Reply, ToOrgan, TypedBody, VerbSpec,
 };
 
 /// Reads every input byte and folds it; the host's read-throughput probe.
@@ -265,12 +265,18 @@ fn work<O: Organ>(shared: &Shared<O>, queue: &Mutex<mpsc::Receiver<Job>>) {
         let writer = lock(&shared.writer);
         let reply = FromOrgan::Reply(Reply { id, outcome });
         let sent = match send_frame(&writer, &reply, &borrowed, shared.limits.max_reply_frame) {
-            Err(FrameError::TooLarge { len, limit }) => {
+            // Nothing left, so the engine can still be told why.
+            Err(err) if err.is_local() => {
+                let code = if matches!(err, FrameError::Encode(_)) {
+                    ErrorCode::Internal
+                } else {
+                    ErrorCode::TooLarge
+                };
                 let refused = FromOrgan::Reply(Reply {
                     id,
                     outcome: Outcome::Error(OrganError::new(
-                        ErrorCode::TooLarge,
-                        format!("reply of {len} bytes is over the {limit}-byte frame limit"),
+                        code,
+                        format!("reply not sent: {err}"),
                     )),
                 });
                 send_frame(&writer, &refused, &[], shared.limits.max_reply_frame)
@@ -399,6 +405,12 @@ fn encode_answer(answer: Answer) -> Result<(Proposal, Vec<OwnedFd>), OrganError>
         let data = if output.bytes.len() <= INLINE_MAX_BYTES || !cfg!(target_os = "linux") {
             Payload::Inline(ByteBuf::from(output.bytes))
         } else {
+            if fds.len() >= MAX_FDS_PER_FRAME {
+                return Err(OrganError::new(
+                    ErrorCode::TooLarge,
+                    format!("more than {MAX_FDS_PER_FRAME} region outputs"),
+                ));
+            }
             let region = SharedRegion::from_bytes(&output.bytes).map_err(|err| {
                 OrganError::new(ErrorCode::Internal, format!("output region: {err}"))
             })?;

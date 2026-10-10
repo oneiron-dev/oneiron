@@ -38,6 +38,13 @@ pub enum FrameError {
     FdsTruncated,
     #[error("protocol violation: {0}")]
     Protocol(&'static str),
+    /// The frame's shape breaks the limits its receiver enforces
+    /// ([`crate::MAX_FRAME_VALUES`], [`crate::MAX_FRAME_DEPTH`]).
+    #[error("frame refused before sending: {0}")]
+    Refused(&'static str),
+    /// The deadline passed before the frame's first byte left.
+    #[error("the deadline passed before the frame was sent")]
+    Late,
     #[error("the frame missed its deadline")]
     TimedOut,
     #[error("frame encode: {0}")]
@@ -49,14 +56,36 @@ pub enum FrameError {
 }
 
 impl FrameError {
-    /// The frame was refused before any byte left, so the connection is
-    /// still in step and the peer saw nothing.
+    /// No byte of the frame left (it was refused, or its deadline came
+    /// first), so the connection is still in step and the peer saw nothing.
     #[must_use]
     pub fn is_local(&self) -> bool {
         matches!(
             self,
-            Self::TooLarge { .. } | Self::TooManyFds(_) | Self::Encode(_)
+            Self::TooLarge { .. }
+                | Self::TooManyFds(_)
+                | Self::Encode(_)
+                | Self::Refused(_)
+                | Self::Late
         )
+    }
+}
+
+/// Clears the timeout a timed frame set, however the frame ends: socket
+/// timeouts outlive the call and are shared by every clone of the socket,
+/// so an untimed frame after it would inherit what was left.
+struct Disarm<'a> {
+    stream: &'a UnixStream,
+    write: bool,
+}
+
+impl Drop for Disarm<'_> {
+    fn drop(&mut self) {
+        let _ = if self.write {
+            self.stream.set_write_timeout(None)
+        } else {
+            self.stream.set_read_timeout(None)
+        };
     }
 }
 
@@ -106,7 +135,9 @@ pub fn send_frame<T: Serialize>(
 /// off by the deadline leaves the stream out of step: close it.
 ///
 /// # Errors
-/// As [`send_frame`], plus [`FrameError::TimedOut`].
+/// As [`send_frame`], plus [`FrameError::Refused`] for a frame the receiver
+/// would refuse, [`FrameError::Late`] when no byte left by the deadline,
+/// and [`FrameError::TimedOut`] for a frame cut off part way.
 pub fn send_frame_until<T: Serialize>(
     stream: &UnixStream,
     msg: &T,
@@ -115,6 +146,8 @@ pub fn send_frame_until<T: Serialize>(
     deadline: Option<Instant>,
 ) -> Result<(), FrameError> {
     let body = rmp_serde::to_vec_named(msg)?;
+    // Refused here, not by the receiver, which would end the connection.
+    shape::check(&body).map_err(FrameError::Refused)?;
     let len = u32::try_from(body.len())
         .ok()
         .filter(|len| *len <= limit)
@@ -133,8 +166,22 @@ pub fn send_frame_until<T: Serialize>(
     }
     let total = HEADER + body.len();
     let mut sent = 0;
+    let _disarm = deadline.map(|_| Disarm {
+        stream,
+        write: true,
+    });
+    let late = |sent: usize| {
+        if sent == 0 {
+            FrameError::Late
+        } else {
+            FrameError::TimedOut
+        }
+    };
     while sent < total {
-        arm(stream, deadline, true)?;
+        match arm(stream, deadline, true) {
+            Err(FrameError::TimedOut) => return Err(late(sent)),
+            armed => armed?,
+        }
         let iov = if sent < HEADER {
             [IoSlice::new(&header[sent..]), IoSlice::new(&body)]
         } else {
@@ -154,7 +201,7 @@ pub fn send_frame_until<T: Serialize>(
         match result {
             Ok(written) => sent += written,
             Err(Errno::INTR) => {}
-            Err(errno) if timed_out(errno, deadline) => return Err(FrameError::TimedOut),
+            Err(errno) if timed_out(errno, deadline) => return Err(late(sent)),
             Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }
@@ -204,6 +251,10 @@ pub fn recv_frame_until<T: DeserializeOwned>(
     let mut header = [0u8; HEADER];
     let mut got = 0;
     let mut fds = Vec::new();
+    let _disarm = deadline.map(|_| Disarm {
+        stream,
+        write: false,
+    });
     while got < HEADER {
         arm(stream, deadline, false)?;
         let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_FDS_PER_FRAME))];

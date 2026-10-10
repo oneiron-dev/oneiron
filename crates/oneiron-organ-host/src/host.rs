@@ -14,7 +14,7 @@ use oneiron_organ_protocol::{
 };
 
 use crate::budget::Budget;
-use crate::error::HostError;
+use crate::error::{HostError, Unavailable};
 use crate::process::{CallFailure, OrganProcess};
 use crate::receipt::{CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest};
 use crate::regions::RegionCache;
@@ -105,7 +105,8 @@ impl OrganHost {
     pub fn install(&self, spec: OrganSpec) {
         let name = spec.name.clone();
         let old = lock(&self.slots).insert(name, Arc::new(Slot::new(spec)));
-        for process in old.map(|slot| slot.live()).unwrap_or_default() {
+        let live = old.map(|slot| slot.retire(Unavailable::Reinstalled));
+        for process in live.unwrap_or_default() {
             process.stop();
         }
     }
@@ -275,7 +276,7 @@ impl OrganHost {
             queued,
             sent_at,
             deadline,
-            max_output_bytes: slot.spec.max_output_bytes,
+            max_output_bytes: slot.spec.max_output_bytes.min(slot.spec.call_memory_bytes),
         };
         finish(&call, &process, &inputs, reply)
     }

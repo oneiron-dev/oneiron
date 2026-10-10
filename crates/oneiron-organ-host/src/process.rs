@@ -89,8 +89,9 @@ impl Lifeline {
         };
         if let Ok(group) = i32::try_from(self.pid) {
             // SAFETY: kill(2) with a negative pid signals the process group
-            // the organ leads (the sandbox's setpgid). The child is not yet
-            // reaped, so its pid, and with it the group id, cannot be reused.
+            // the organ leads (the sandbox's setpgid). Only this call reaps
+            // the child (`exited` looks without reaping), so its pid, and
+            // with it the group id, cannot have been reused.
             unsafe {
                 libc::kill(-group, libc::SIGKILL);
             }
@@ -100,10 +101,33 @@ impl Lifeline {
         *slot = None;
     }
 
+    /// Whether the organ has exited. It looks without reaping: a reaped
+    /// pid could be reused before `end` signals its group.
     fn exited(&self) -> bool {
-        lock(&self.child)
-            .as_mut()
-            .is_none_or(|child| matches!(child.try_wait(), Ok(Some(_))))
+        let child = lock(&self.child);
+        if child.is_none() {
+            return true;
+        }
+        // SAFETY: an all-zero siginfo_t is a valid value of this plain C
+        // struct; waitid(2) only writes into it.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: as above; WNOWAIT leaves the child waitable for `end`.
+        let found = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                self.pid,
+                &raw mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        // With WNOHANG, a child still running leaves si_pid zero.
+        // SAFETY: waitid filled `info` (or left it zeroed).
+        found == 0 && unsafe { info.si_pid() } != 0
+    }
+
+    /// Whether `end` has run: the process and its group are gone.
+    fn ended(&self) -> bool {
+        lock(&self.child).is_none()
     }
 }
 
@@ -166,16 +190,20 @@ pub(crate) struct OrganProcess {
 
 impl OrganProcess {
     /// Starts the organ confined and completes the handshake by `deadline`
-    /// (the handshake timeout, or the caller's deadline if sooner).
+    /// (the handshake timeout, or the caller's deadline if sooner). A start
+    /// cut short by the caller's deadline is the caller's
+    /// [`HostError::DeadlineExceeded`], never the organ's failure.
     pub(crate) fn spawn(
         spec: &OrganSpec,
         config: &HostConfig,
         deadline: Option<Instant>,
     ) -> Result<Arc<Self>, HostError> {
         let started = Instant::now();
-        let handshake_by = deadline.map_or(started + config.handshake_timeout, |deadline| {
-            deadline.min(started + config.handshake_timeout)
-        });
+        if deadline.is_some_and(|deadline| deadline <= started) {
+            return Err(HostError::DeadlineExceeded);
+        }
+        let own = started + config.handshake_timeout;
+        let handshake_by = deadline.map_or(own, |deadline| deadline.min(own));
         let (ours, theirs) = UnixStream::pair()?;
         let reader = ours.try_clone()?;
         let shutdown = ours.try_clone()?;
@@ -191,7 +219,7 @@ impl OrganProcess {
             socket: shutdown,
         });
         let mut guard = EndOnDrop(Some(Arc::clone(&lifeline)));
-        let hello = handshake(&ours, spec, config, handshake_by)?;
+        let hello = handshake(&ours, spec, config, handshake_by, handshake_by < own)?;
         let inbox = Arc::new(Inbox::default());
         inbox.alive.store(true, Ordering::SeqCst);
         let reader_inbox = Arc::clone(&inbox);
@@ -224,6 +252,12 @@ impl OrganProcess {
 
     pub(crate) fn is_alive(&self) -> bool {
         self.inbox.alive.load(Ordering::SeqCst)
+    }
+
+    /// Whether the process may still run, even with its socket closed: only
+    /// `end` makes this false.
+    pub(crate) fn is_running(&self) -> bool {
+        !self.lifeline.ended()
     }
 
     /// How long the process has had no call in flight; `None` while busy.
@@ -296,7 +330,8 @@ impl OrganProcess {
     }
 
     /// Sends one frame, the writer's lock and the frame both bounded by
-    /// `deadline`.
+    /// `deadline`. A deadline that passes while another frame holds the
+    /// writer is [`FrameError::Late`]: this frame sent nothing.
     fn send(
         &self,
         msg: &ToOrgan,
@@ -304,7 +339,7 @@ impl OrganProcess {
         limit: u32,
         deadline: Instant,
     ) -> Result<(), FrameError> {
-        let writer = lock_until(&self.writer, deadline).ok_or(FrameError::TimedOut)?;
+        let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
         send_frame_until(&writer, msg, fds, limit, Some(deadline))
     }
 
@@ -322,6 +357,8 @@ impl OrganProcess {
         let id = call.id;
         match self.send(&ToOrgan::Call(call), fds, self.max_call_frame, deadline) {
             Ok(()) => {}
+            // Nothing left: the organ is in step and keeps its other calls.
+            Err(FrameError::Late) => return Err(CallFailure::Deadline { stopped: false }),
             Err(err) if err.is_local() => return Err(CallFailure::Refused(err.into())),
             Err(FrameError::TimedOut) => {
                 // A half-sent frame leaves the stream out of step.
@@ -413,6 +450,7 @@ fn handshake(
     spec: &OrganSpec,
     config: &HostConfig,
     deadline: Instant,
+    caller_cut: bool,
 ) -> Result<HelloAck, HostError> {
     let hello = ToOrgan::Hello(Hello {
         protocol: PROTOCOL,
@@ -426,20 +464,22 @@ fn handshake(
         },
     });
     // An organ that dies or stalls before answering failed to start, which
-    // counts as a crash; one that answers wrongly is incompatible.
+    // counts as a crash; one that answers wrongly is incompatible. A stall
+    // the caller's deadline cut short is only the caller's.
     let start_failed = |err: FrameError| match err {
-        FrameError::Closed | FrameError::TimedOut | FrameError::Io(_) => HostError::StartFailed {
-            organ: spec.name.clone(),
-            reason: err.to_string(),
-        },
+        FrameError::TimedOut | FrameError::Late if caller_cut => HostError::DeadlineExceeded,
+        FrameError::Closed | FrameError::TimedOut | FrameError::Late | FrameError::Io(_) => {
+            HostError::StartFailed {
+                organ: spec.name.clone(),
+                reason: err.to_string(),
+            }
+        }
         other => HostError::Handshake(format!("no hello_ack: {other}")),
     };
     send_frame_until(stream, &hello, &[], DEFAULT_FRAME_LIMIT, Some(deadline))
         .map_err(start_failed)?;
     let (ack, _) = recv_frame_until::<FromOrgan>(stream, DEFAULT_FRAME_LIMIT, Some(deadline))
         .map_err(start_failed)?;
-    // The reader thread blocks without a timeout; each send arms its own.
-    stream.set_read_timeout(None)?;
     let FromOrgan::HelloAck(ack) = ack else {
         return Err(HostError::Handshake(
             "the first reply was not hello_ack".into(),
