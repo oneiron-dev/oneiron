@@ -54,10 +54,9 @@ const FORWARD_TOKENS: usize = 512;
 
 pub(crate) struct LocalEmbedder {
     common: EmbedderCommon,
-    /// The body. Forwards share it and run side by side; a bulk forward parks
-    /// between layers while a query runs ([`QueryFirst`]).
+    /// The body. One forward runs on it at a time, a query first ([`Turns`]).
     model: Model,
-    queries_first: QueryFirst,
+    turns: Turns,
     modules: StModules,
     /// What each side carries before its text.
     prompts: Prompts,
@@ -98,49 +97,59 @@ pub(super) struct Embedded {
     pub(super) tokens: usize,
 }
 
-/// Queries first. A bulk forward checks in before every layer and waits there
-/// while any query runs; a query never waits for a bulk forward, so a recall
-/// shares the device with at most one bulk layer already under way.
+/// One forward runs at a time, and a query goes first.
+///
+/// A bulk forward takes its turn layer by layer and gives it up between layers
+/// whenever a query is waiting; a query holds its turn for its whole call. So a
+/// recall waits for at most one bulk layer, and the memory a forward's widest
+/// step needs (a full-length input's attention scores are a gibibyte) is
+/// needed by one forward at a time, as when the model sat behind one lock.
 #[derive(Default)]
-struct QueryFirst {
-    running: Mutex<usize>,
-    done: Condvar,
+struct Turns {
+    state: Mutex<TurnState>,
+    changed: Condvar,
 }
 
-impl QueryFirst {
-    fn enter(&self) -> QueryRunning<'_> {
-        *count(&self.running) += 1;
-        QueryRunning(self)
-    }
+#[derive(Default)]
+struct TurnState {
+    running: bool,
+    queries_waiting: usize,
+}
 
-    fn make_way(&self) {
-        let mut running = count(&self.running);
-        while *running > 0 {
-            running = self
-                .done
-                .wait(running)
+impl Turns {
+    fn take(&self, priority: Priority) -> Turn<'_> {
+        let mut state = self.state();
+        if priority == Priority::Query {
+            state.queries_waiting += 1;
+        }
+        while state.running || (priority == Priority::Bulk && state.queries_waiting > 0) {
+            state = self
+                .changed
+                .wait(state)
                 .unwrap_or_else(PoisonError::into_inner);
         }
+        if priority == Priority::Query {
+            state.queries_waiting -= 1;
+        }
+        state.running = true;
+        Turn(self)
+    }
+
+    /// Poison recovery: the state is two plain fields that no panic leaves
+    /// half written, and refusing it would stop the model for the life of the
+    /// process.
+    fn state(&self) -> MutexGuard<'_, TurnState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
-/// Poison recovery: the count is a plain integer that no panic leaves half
-/// written, and refusing it would stall every bulk forward for the life of
-/// the process.
-fn count(running: &Mutex<usize>) -> MutexGuard<'_, usize> {
-    running.lock().unwrap_or_else(PoisonError::into_inner)
-}
+/// A forward's turn; dropping it lets the next one go.
+struct Turn<'a>(&'a Turns);
 
-/// A query in flight; dropping it lets parked bulk forwards go once none is.
-struct QueryRunning<'a>(&'a QueryFirst);
-
-impl Drop for QueryRunning<'_> {
+impl Drop for Turn<'_> {
     fn drop(&mut self) {
-        let mut running = count(&self.0.running);
-        *running = running.saturating_sub(1);
-        if *running == 0 {
-            self.0.done.notify_all();
-        }
+        self.0.state().running = false;
+        self.0.changed.notify_all();
     }
 }
 
@@ -247,7 +256,7 @@ impl LocalEmbedder {
         Ok(std::sync::Arc::new(Self {
             common: EmbedderCommon::from_config(config),
             model,
-            queries_first: QueryFirst::default(),
+            turns: Turns::default(),
             modules,
             prompts: spec.prompts,
             query_prompt_tokens,
@@ -319,17 +328,23 @@ impl LocalEmbedder {
         } else {
             batcher::group_equal_lengths(&lengths, self.batch_size)
         };
-        let _query = (priority == Priority::Query).then(|| self.queries_first.enter());
-        let park = || {
-            if priority == Priority::Bulk {
+        let mut turn: Option<Turn<'_>> = None;
+        let mut next_layer = || match priority {
+            Priority::Query => {
+                if turn.is_none() {
+                    turn = Some(self.turns.take(Priority::Query));
+                }
+            }
+            Priority::Bulk => {
                 // A GPU runs what it was handed in order, so a query would
-                // queue behind every layer a bulk forward had already
-                // submitted: finish each layer before checking. A failure
-                // here surfaces on the forward's next operation.
-                if !cpu {
+                // queue behind every layer a bulk forward had submitted:
+                // finish the layer before giving the turn up. A failure here
+                // surfaces on the forward's next operation.
+                if !cpu && turn.is_some() {
                     let _ = self.model.device().synchronize();
                 }
-                self.queries_first.make_way();
+                drop(turn.take());
+                turn = Some(self.turns.take(Priority::Bulk));
             }
         };
         let mut rows: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
@@ -338,7 +353,10 @@ impl LocalEmbedder {
                 .iter()
                 .map(|index| tokenized[*index].ids.as_slice())
                 .collect();
-            let states = self.model.forward(&inputs, &park).map_err(candle_failed)?;
+            let states = self
+                .model
+                .forward(&inputs, &mut next_layer)
+                .map_err(candle_failed)?;
             let mut indices = forward.iter();
             for state in &states {
                 let pooled: Vec<Vec<f32>> = self

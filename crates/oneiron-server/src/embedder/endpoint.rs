@@ -101,9 +101,19 @@ struct ModelsResponse {
 #[derive(serde::Deserialize)]
 struct ModelRow {
     id: String,
-    /// Set by `oneiron-server embedder serve`.
+    /// Set by `oneiron-server embedder serve`, with `transform`.
     #[serde(default)]
     oneiron_wire: Option<u32>,
+    #[serde(default)]
+    transform: Option<String>,
+}
+
+/// What the remote's `/models` listing said about the configured model.
+#[derive(Clone, Debug)]
+struct Listing {
+    wire: Wire,
+    /// How the remote makes vectors, when it says ([`Wire::Oneiron`]).
+    transform: Option<String>,
 }
 
 pub(crate) struct HttpEmbedder {
@@ -116,7 +126,7 @@ pub(crate) struct HttpEmbedder {
     query_instruction: Option<String>,
     /// Read from the remote's `/models` listing once, before the first
     /// request that depends on it.
-    wire: OnceLock<Wire>,
+    listing: OnceLock<Listing>,
     client: reqwest::blocking::Client,
     truncations: AtomicU64,
 }
@@ -197,7 +207,7 @@ impl HttpEmbedder {
             locality: engine_locality(config.endpoint.locality),
             max_input_chars: config.max_input_tokens.saturating_mul(CHARS_PER_TOKEN),
             query_instruction: config.query_instruction.clone(),
-            wire: OnceLock::new(),
+            listing: OnceLock::new(),
             client,
             truncations: AtomicU64::new(0),
         }))
@@ -220,12 +230,24 @@ impl HttpEmbedder {
         text
     }
 
-    /// What the remote reads, from its `/models` listing. A listing that
-    /// does not answer is an error and is asked again next time; one that
-    /// answers without the mark, or not with a listing, is the OpenAI wire.
+    /// What the remote reads, from its `/models` listing.
     fn wire(&self) -> oneiron::Result<Wire> {
-        if let Some(wire) = self.wire.get() {
-            return Ok(*wire);
+        Ok(self.listing()?.wire)
+    }
+
+    /// How the remote makes vectors, when it says: `embedder serve` does, and
+    /// the slot holds it to the vault's pinned transform as it holds the local
+    /// provider's.
+    pub(crate) fn served_transform(&self) -> oneiron::Result<Option<String>> {
+        Ok(self.listing()?.transform.clone())
+    }
+
+    /// The remote's `/models` listing, asked once. A listing that does not
+    /// answer is an error and is asked again next time; one that answers
+    /// without the mark, or not with a listing, is the OpenAI wire.
+    fn listing(&self) -> oneiron::Result<&Listing> {
+        if let Some(listing) = self.listing.get() {
+            return Ok(listing);
         }
         let url = format!("{}/models", self.endpoint);
         let response = self
@@ -240,15 +262,26 @@ impl HttpEmbedder {
         } else {
             None
         };
-        let wire = listed.map_or(Wire::OpenAi, |listed| self.wire_of(&listed));
-        Ok(*self.wire.get_or_init(|| wire))
+        let listing = self.listing_of(listed.as_ref());
+        Ok(self.listing.get_or_init(|| listing))
     }
 
-    fn wire_of(&self, listed: &ModelsResponse) -> Wire {
-        let marked = listed.data.iter().any(|row| {
-            row.id == self.model_key && row.oneiron_wire == Some(super::serve::ONEIRON_WIRE)
+    fn listing_of(&self, listed: Option<&ModelsResponse>) -> Listing {
+        let row = listed.and_then(|listed| {
+            listed.data.iter().find(|row| {
+                row.id == self.model_key && row.oneiron_wire == Some(super::serve::ONEIRON_WIRE)
+            })
         });
-        if marked { Wire::Oneiron } else { Wire::OpenAi }
+        match row {
+            Some(row) => Listing {
+                wire: Wire::Oneiron,
+                transform: row.transform.clone(),
+            },
+            None => Listing {
+                wire: Wire::OpenAi,
+                transform: None,
+            },
+        }
     }
 
     fn post_embeddings(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Vec<Vec<f32>>> {
@@ -481,9 +514,7 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
             model_key: embedder.model_key.clone(),
         });
     }
-    let _ = embedder
-        .wire
-        .set(listed.map_or(Wire::OpenAi, |listed| embedder.wire_of(&listed)));
+    let _ = embedder.listing.set(embedder.listing_of(listed.as_ref()));
     match embedder.post_embeddings(&[PROBE_TEXT], Side::default()) {
         Ok(vectors) => {
             let got = vectors.first().map_or(0, Vec::len);

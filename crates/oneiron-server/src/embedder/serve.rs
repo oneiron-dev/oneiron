@@ -46,6 +46,12 @@ use crate::config::{EmbedderConfig, EmbedderProvider};
 const MAX_INPUTS: usize = 2_048;
 /// Request bodies above this are refused before they are parsed.
 const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// Bulk requests in flight at once. The model runs one forward at a time
+/// anyway; two keep it busy while the next request is tokenised, and the rest
+/// wait here rather than each holding a blocking thread a query may need.
+const BULK_REQUESTS: usize = 2;
+/// Query requests in flight at once, for the same reason.
+const QUERY_REQUESTS: usize = 64;
 /// The version of the two fields beyond OpenAI's that this server reads,
 /// advertised on every `/v1/models` row.
 pub(crate) const ONEIRON_WIRE: u32 = 1;
@@ -95,6 +101,8 @@ struct Served {
     /// The space id first, then the aliases.
     names: Vec<String>,
     key: Option<Zeroizing<String>>,
+    bulk: tokio::sync::Semaphore,
+    queries: tokio::sync::Semaphore,
 }
 
 /// The two routes, over one loaded model.
@@ -113,6 +121,8 @@ pub(crate) fn router(
             embedder,
             names,
             key,
+            bulk: tokio::sync::Semaphore::new(BULK_REQUESTS),
+            queries: tokio::sync::Semaphore::new(QUERY_REQUESTS),
         }))
 }
 
@@ -297,6 +307,17 @@ async fn embeddings(
             "instruction goes with input_type query",
         );
     }
+    let admitted = match priority {
+        Priority::Query => served.queries.acquire().await,
+        Priority::Bulk => served.bulk.acquire().await,
+    };
+    let Ok(_admitted) = admitted else {
+        return refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server_error",
+            "the endpoint is shutting down",
+        );
+    };
     let embedder = Arc::clone(&served.embedder);
     let instruction = request.instruction;
     let embedded = tokio::task::spawn_blocking(move || {

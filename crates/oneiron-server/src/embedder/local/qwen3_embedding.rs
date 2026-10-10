@@ -620,12 +620,12 @@ impl Model {
     /// quantised matmul picks its kernel by the row count, which is why the
     /// provider sends a GPU only groups of one length (`batcher`).
     ///
-    /// `between_layers` runs before each layer. The provider parks a bulk
-    /// forward there while a query runs.
+    /// `between_layers` runs before each layer: the provider takes the
+    /// model's turn there, and a bulk forward gives it up to a waiting query.
     pub(super) fn forward(
         &self,
         inputs: &[&[u32]],
-        between_layers: &dyn Fn(),
+        between_layers: &mut dyn FnMut(),
     ) -> candle_core::Result<Vec<Tensor>> {
         let mut spans = Vec::with_capacity(inputs.len());
         let mut ids = Vec::with_capacity(inputs.iter().map(|input| input.len()).sum());

@@ -158,7 +158,12 @@ enum MockBehaviour {
     UnknownModel,
     /// Embed into [`concept_vector`]'s meaning space.
     Concepts,
+    /// List the model as `embedder serve` does: marked, with its transform.
+    OneironWire,
 }
+
+/// The transform the [`MockBehaviour::OneironWire`] listing reports.
+const MOCK_TRANSFORM: &str = "attn=bidirectional;pool=mean;mock";
 
 struct EmbeddingPause {
     request: usize,
@@ -243,12 +248,15 @@ impl MockEndpoint {
 }
 
 async fn mock_models(State(state): State<Arc<MockState>>) -> axum::Json<Value> {
-    let id = if state.behaviour() == MockBehaviour::UnknownModel {
-        "some-other-model"
-    } else {
-        MODEL_KEY
-    };
-    axum::Json(json!({ "data": [{ "id": id }] }))
+    match state.behaviour() {
+        MockBehaviour::UnknownModel => {
+            axum::Json(json!({ "data": [{ "id": "some-other-model" }] }))
+        }
+        MockBehaviour::OneironWire => axum::Json(json!({
+            "data": [{ "id": MODEL_KEY, "oneiron_wire": 1, "transform": MOCK_TRANSFORM }]
+        })),
+        _ => axum::Json(json!({ "data": [{ "id": MODEL_KEY }] })),
+    }
 }
 
 /// The deterministic space the mock embeds into: one axis per input text, so a
@@ -362,6 +370,48 @@ fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
         json!(["first text", "second text"]),
         "documents carry no instruction prefix and keep input order"
     );
+}
+
+/// Against `embedder serve`, whose `/models` rows carry the Oneiron mark, the
+/// client sends what a local vault's provider would see: whole documents
+/// marked as documents, which the server's tokenizer caps, and a query marked
+/// as one with the vault's own instruction beside it rather than in it. And
+/// the slot holds the server's transform to the vault's pin: refused, the
+/// endpoint answers no query, as a refused local model does.
+#[test]
+fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let config = EmbedderConfig {
+        query_instruction: Some("query: ".to_owned()),
+        max_input_tokens: 4,
+        ..endpoint_config(&mock.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let refused = slot.ensure_ready(|transform| {
+        assert_eq!(transform, MOCK_TRANSFORM);
+        Err(oneiron::Error::InvalidConfig(
+            "the vault pins another transform".to_owned(),
+        ))
+    });
+    assert!(refused.is_err());
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
+    let embedder = slot.ensure_ready(|_| Ok(())).expect("admitted");
+    let long = "word ".repeat(40);
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input(&long)]).expect("embedded");
+    slot.embed_query("cats").expect("query embedded");
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]["input"],
+        json!([long]),
+        "whole, past the client's cap"
+    );
+    assert_eq!(requests[0]["input_type"], json!("document"));
+    assert_eq!(requests[1]["input"], json!(["cats"]));
+    assert_eq!(requests[1]["input_type"], json!("query"));
+    assert_eq!(requests[1]["instruction"], json!("query: "));
 }
 
 /// An endpoint has no model files to read a prompt from: a query carries

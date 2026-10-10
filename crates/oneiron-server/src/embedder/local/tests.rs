@@ -747,11 +747,22 @@ mod with_model {
         let inputs: Vec<&[u32]> = tokenized.iter().map(|item| item.ids.as_slice()).collect();
         let mut differing_states = 0;
         for chunk in inputs.chunks(16) {
-            let together = packed.model.forward(chunk, &|| {}).expect("packed forward");
+            let blocks = packed
+                .model
+                .forward(chunk, &mut || {})
+                .expect("packed forward");
+            let together: Vec<candle_core::Tensor> = blocks
+                .iter()
+                .flat_map(|block| {
+                    (0..block.dim(0).expect("rows"))
+                        .map(|row| block.narrow(0, row, 1).expect("row"))
+                })
+                .collect();
+            assert_eq!(together.len(), chunk.len());
             for (input, state) in chunk.iter().zip(&together) {
                 let alone = reference
                     .model
-                    .forward(&[*input], &|| {})
+                    .forward(&[*input], &mut || {})
                     .expect("one input");
                 let bits = |tensor: &candle_core::Tensor| -> Vec<u32> {
                     tensor

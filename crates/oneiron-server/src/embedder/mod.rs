@@ -17,6 +17,7 @@ pub(crate) use remote::build_remote_rung;
 mod local;
 pub(crate) mod serve;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, payload_text};
@@ -155,6 +156,9 @@ pub(crate) struct EmbedderSlot {
     /// same reason `ready` is one: it belongs to this server, and it has to
     /// outlive the individual load attempts the worker makes.
     models: local::model_manager::ModelManager,
+    /// The endpoint said it makes vectors another way than the vault's were
+    /// made. It then answers no query either, as a refused local model does.
+    refused: AtomicBool,
 }
 
 impl EmbedderSlot {
@@ -171,6 +175,7 @@ impl EmbedderSlot {
             config: config.clone(),
             ready: OnceLock::new(),
             models: local::model_manager::ModelManager::default(),
+            refused: AtomicBool::new(false),
         };
         if config.provider == EmbedderProvider::Endpoint {
             let embedder = endpoint::HttpEmbedder::from_config(config)?;
@@ -216,12 +221,21 @@ impl EmbedderSlot {
     /// `admit` sees the loaded model's transform descriptor before the
     /// provider serves anything, and its refusal leaves the slot not ready: a
     /// model whose files only arrived after the vault opened is checked
-    /// against the vault's pinned transform here rather than at open.
+    /// against the vault's pinned transform here rather than at open. An
+    /// endpoint that says how it makes vectors (`embedder serve`) is checked
+    /// the same way, once its listing has been read.
     pub(crate) fn ensure_ready(
         &self,
         admit: impl FnOnce(&str) -> oneiron::Result<()>,
     ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         if let Some(ready) = self.ready.get() {
+            if let Some(http) = ready.as_endpoint() {
+                let admitted = http
+                    .served_transform()
+                    .and_then(|served| served.map_or(Ok(()), |transform| admit(&transform)));
+                self.refused.store(admitted.is_err(), Ordering::Relaxed);
+                admitted?;
+            }
             return Ok(Arc::clone(ready));
         }
         let local = local::LocalEmbedder::load(&self.config, &self.models)?;
@@ -237,6 +251,9 @@ impl EmbedderSlot {
         let Some(embedder) = self.ready.get() else {
             return Err(EmbedQueryRefusal::NotReady);
         };
+        if self.refused.load(Ordering::Relaxed) {
+            return Err(EmbedQueryRefusal::NotReady);
+        }
         embedder.embed_query(text).map_err(|error| {
             tracing::warn!(?error, "query embedding failed");
             EmbedQueryRefusal::Failed

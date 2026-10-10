@@ -157,7 +157,12 @@ oneiron-server init ~/vaults/notes --embedder endpoint \
 The vectors are the ones a `local` vault makes, to the bit: the server runs the
 same verified files, tokenizer, pooling and module chain, returns the chain's
 output, and the vault normalises and rounds it exactly as the local provider
-does. A vault can move between `local` and this endpoint without `reembed`.
+does. The vault's client recognises this server from its `/v1/models` listing
+and then sends whole texts marked query or document, so the server's tokenizer
+cuts long inputs and its prompts apply where a local vault's would. The vault
+also holds the server's transform to the one it pinned: a server started with,
+say, another output quantization fills nothing until `reembed`. A vault can
+move between `local` and this endpoint without `reembed`.
 `deploy/systemd/oneiron-embedder.service` runs it as a user service.
 
 `--config` or the `--embedder-*` flags pick another local model, as `serve`
