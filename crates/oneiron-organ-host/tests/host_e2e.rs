@@ -12,8 +12,8 @@ use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_organ_host::{
-    CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec, OrganState,
-    Unavailable,
+    BudgetConfig, CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec,
+    OrganState, Unavailable,
 };
 use oneiron_organ_protocol::{FrameError, Hash32, MAX_FRAME_DEPTH, MAX_FRAME_VALUES, touch_fold};
 
@@ -449,6 +449,43 @@ fn an_answer_with_too_many_regions_is_refused_and_the_organ_lives() {
     );
     let status = host.status("probe").expect("installed");
     assert_eq!((status.spawns, status.recent_crashes), (1, 0));
+}
+
+#[test]
+fn outputs_a_caller_keeps_stay_booked_until_they_drop() {
+    // A 64 MiB budget, 16 MiB booked per call, 12 MiB of output each: five
+    // kept outcomes hold 60 MiB, so a sixth call cannot be admitted until
+    // they are dropped.
+    let (_dir, vault) = vault();
+    let host = OrganHost::new(HostConfig {
+        budget: BudgetConfig {
+            threads: 4,
+            memory_bytes: 64 * 1024 * 1024,
+            max_inflight: 8,
+        },
+        ..HostConfig::default()
+    });
+    let mut spec = OrganSpec::first_party("probe", PROBE);
+    spec.verbs = vec!["probe.outputs".into()];
+    spec.call_memory_bytes = 16 * 1024 * 1024;
+    spec.max_output_bytes = 16 * 1024 * 1024;
+    host.install(spec);
+    let twelve = || {
+        let args = rmpv::Value::Map(vec![
+            ("count".into(), 1.into()),
+            ("bytes".into(), (12 * 1024 * 1024).into()),
+        ]);
+        let mut made = call("probe.outputs", args, Vec::new(), "g");
+        made.deadline = Duration::from_millis(500);
+        made
+    };
+    let kept: Vec<_> = (0..5)
+        .map(|_| host.call(&vault, twelve()).expect("fits"))
+        .collect();
+    let err = host.call(&vault, twelve()).expect_err("over budget");
+    assert!(matches!(err, HostError::BudgetTimeout), "{err:?}");
+    drop(kept);
+    host.call(&vault, twelve()).expect("fits again");
 }
 
 /// Whether `pid` is a live process (a zombie is not).

@@ -23,7 +23,7 @@ thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 memmap2 = "0.9"
-rustix = { version = "1", features = ["fs", "net", "shm", "std"] }
+rustix = { version = "1", features = ["event", "fs", "net", "shm", "std"] }
 
 [lints]
 workspace = true

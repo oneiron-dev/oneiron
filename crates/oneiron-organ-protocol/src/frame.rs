@@ -3,18 +3,21 @@
 //!
 //! A frame with a deadline is bounded as a whole, not per read or write: a
 //! peer that stops reading, or drips one byte at a time, ends the frame at
-//! the deadline with [`FrameError::TimedOut`].
+//! the deadline with [`FrameError::TimedOut`]. A timed frame waits with
+//! poll(2) and moves bytes without blocking; it never sets a socket timeout,
+//! which every clone of the socket would share.
 
-use std::io::{self, IoSlice, IoSliceMut, Read};
+use std::io::{self, IoSlice, IoSliceMut};
 use std::mem::MaybeUninit;
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
-    SendAncillaryMessage, SendFlags, recvmsg, sendmsg,
+    SendAncillaryMessage, SendFlags, recv, recvmsg, sendmsg,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -71,40 +74,37 @@ impl FrameError {
     }
 }
 
-/// Clears the timeout a timed frame set, however the frame ends: socket
-/// timeouts outlive the call and are shared by every clone of the socket,
-/// so an untimed frame after it would inherit what was left.
-struct Disarm<'a> {
-    stream: &'a UnixStream,
-    write: bool,
-}
-
-impl Drop for Disarm<'_> {
-    fn drop(&mut self) {
-        let _ = if self.write {
-            self.stream.set_write_timeout(None)
-        } else {
-            self.stream.set_read_timeout(None)
-        };
-    }
-}
-
-/// Sets the socket's timeout for the next read or write to what is left
-/// before `deadline`.
-fn arm(stream: &UnixStream, deadline: Option<Instant>, write: bool) -> Result<(), FrameError> {
+/// Waits until `stream` can be read (or written) or `deadline` passes. An
+/// untimed frame does not wait here: its syscall blocks instead.
+fn ready(stream: &UnixStream, deadline: Option<Instant>, write: bool) -> Result<(), FrameError> {
     let Some(deadline) = deadline else {
         return Ok(());
     };
-    let left = deadline.saturating_duration_since(Instant::now());
-    if left.is_zero() {
-        return Err(FrameError::TimedOut);
+    let events = if write { PollFlags::OUT } else { PollFlags::IN };
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(FrameError::TimedOut);
+        }
+        // At least a millisecond, so a poll that counts whole milliseconds
+        // never spins.
+        let wait = Timespec::try_from(left.max(Duration::from_millis(1))).unwrap_or(Timespec {
+            tv_sec: i64::MAX,
+            tv_nsec: 0,
+        });
+        let mut fds = [PollFd::new(stream, events)];
+        match poll(&mut fds, Some(&wait)) {
+            // Readable, writable, hung up or in error: the syscall says which.
+            Ok(n) if n > 0 => return Ok(()),
+            Ok(_) | Err(Errno::INTR) => {}
+            Err(errno) => return Err(io::Error::from(errno).into()),
+        }
     }
-    if write {
-        stream.set_write_timeout(Some(left))?;
-    } else {
-        stream.set_read_timeout(Some(left))?;
-    }
-    Ok(())
+}
+
+/// A timed frame's syscalls never block; [`ready`] does the waiting.
+fn no_wait(deadline: Option<Instant>) -> bool {
+    deadline.is_some()
 }
 
 /// A send to a closed peer fails with EPIPE rather than raising SIGPIPE in
@@ -113,10 +113,6 @@ fn arm(stream: &UnixStream, deadline: Option<Instant>, write: bool) -> Result<()
 const SEND_FLAGS: SendFlags = SendFlags::NOSIGNAL;
 #[cfg(not(target_os = "linux"))]
 const SEND_FLAGS: SendFlags = SendFlags::empty();
-
-fn timed_out(errno: Errno, deadline: Option<Instant>) -> bool {
-    deadline.is_some() && (errno == Errno::AGAIN || errno == Errno::WOULDBLOCK)
-}
 
 /// Encodes `msg` and sends it with `fds` attached.
 ///
@@ -166,10 +162,11 @@ pub fn send_frame_until<T: Serialize>(
     }
     let total = HEADER + body.len();
     let mut sent = 0;
-    let _disarm = deadline.map(|_| Disarm {
-        stream,
-        write: true,
-    });
+    let flags = if no_wait(deadline) {
+        SEND_FLAGS | SendFlags::DONTWAIT
+    } else {
+        SEND_FLAGS
+    };
     let late = |sent: usize| {
         if sent == 0 {
             FrameError::Late
@@ -178,9 +175,9 @@ pub fn send_frame_until<T: Serialize>(
         }
     };
     while sent < total {
-        match arm(stream, deadline, true) {
+        match ready(stream, deadline, true) {
             Err(FrameError::TimedOut) => return Err(late(sent)),
-            armed => armed?,
+            waited => waited?,
         }
         let iov = if sent < HEADER {
             [IoSlice::new(&header[sent..]), IoSlice::new(&body)]
@@ -189,19 +186,14 @@ pub fn send_frame_until<T: Serialize>(
         };
         // The descriptors ride on the first send only.
         let result = if sent == 0 {
-            sendmsg(stream, &iov, &mut control, SEND_FLAGS)
+            sendmsg(stream, &iov, &mut control, flags)
         } else {
-            sendmsg(
-                stream,
-                &iov,
-                &mut SendAncillaryBuffer::default(),
-                SEND_FLAGS,
-            )
+            sendmsg(stream, &iov, &mut SendAncillaryBuffer::default(), flags)
         };
         match result {
             Ok(written) => sent += written,
-            Err(Errno::INTR) => {}
-            Err(errno) if timed_out(errno, deadline) => return Err(late(sent)),
+            // Interrupted, or the buffer filled again since poll: wait anew.
+            Err(Errno::INTR | Errno::AGAIN) => {}
             Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }
@@ -251,19 +243,19 @@ pub fn recv_frame_until<T: DeserializeOwned>(
     let mut header = [0u8; HEADER];
     let mut got = 0;
     let mut fds = Vec::new();
-    let _disarm = deadline.map(|_| Disarm {
-        stream,
-        write: false,
-    });
+    let flags = if no_wait(deadline) {
+        RECV_FLAGS | RecvFlags::DONTWAIT
+    } else {
+        RECV_FLAGS
+    };
     while got < HEADER {
-        arm(stream, deadline, false)?;
+        ready(stream, deadline, false)?;
         let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_FDS_PER_FRAME))];
         let mut control = RecvAncillaryBuffer::new(&mut space);
         let mut iov = [IoSliceMut::new(&mut header[got..])];
-        let msg = match recvmsg(stream, &mut iov, &mut control, RECV_FLAGS) {
+        let msg = match recvmsg(stream, &mut iov, &mut control, flags) {
             Ok(msg) => msg,
-            Err(Errno::INTR) => continue,
-            Err(errno) if timed_out(errno, deadline) => return Err(FrameError::TimedOut),
+            Err(Errno::INTR | Errno::AGAIN) => continue,
             Err(errno) => return Err(io::Error::from(errno).into()),
         };
         for message in control.drain() {
@@ -292,23 +284,18 @@ pub fn recv_frame_until<T: DeserializeOwned>(
     }
     let mut body = vec![0u8; len as usize];
     let mut filled = 0;
-    let mut reader = stream;
+    let body_flags = if no_wait(deadline) {
+        RecvFlags::DONTWAIT
+    } else {
+        RecvFlags::empty()
+    };
     while filled < body.len() {
-        arm(stream, deadline, false)?;
-        match reader.read(&mut body[filled..]) {
-            Ok(0) => return Err(FrameError::Closed),
-            Ok(read) => filled += read,
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-            Err(err)
-                if deadline.is_some()
-                    && matches!(
-                        err.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                    ) =>
-            {
-                return Err(FrameError::TimedOut);
-            }
-            Err(err) => return Err(FrameError::Io(err)),
+        ready(stream, deadline, false)?;
+        match recv(stream, &mut body[filled..], body_flags) {
+            Ok((0, _)) => return Err(FrameError::Closed),
+            Ok((read, _)) => filled += read,
+            Err(Errno::INTR | Errno::AGAIN) => {}
+            Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }
     shape::check(&body).map_err(FrameError::Protocol)?;

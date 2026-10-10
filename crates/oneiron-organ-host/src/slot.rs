@@ -1,7 +1,7 @@
 //! One installed organ: its process, its crash history, its condition.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::OrganIdentity;
@@ -44,10 +44,11 @@ pub struct OrganStatus {
 #[derive(Debug, Default)]
 struct SlotState {
     process: Option<Arc<OrganProcess>>,
-    /// Every process this slot started that may still live: the current
-    /// one, and older ones a call in flight still holds. A revocation must
-    /// reach them all.
-    generations: Vec<Weak<OrganProcess>>,
+    /// Every process this slot started that may still run: the current
+    /// one, and older ones a call in flight may still hold. Held strongly
+    /// until each has been killed and reaped, so none can end in some other
+    /// thread's drop, out of a revocation's sight.
+    generations: Vec<Arc<OrganProcess>>,
     crashes: VecDeque<Instant>,
     not_before: Option<Instant>,
     unavailable: Option<Unavailable>,
@@ -118,8 +119,8 @@ impl Slot {
         }
         match OrganProcess::spawn(&self.spec, config, deadline) {
             Ok(process) => {
-                state.generations.retain(|old| old.strong_count() > 0);
-                state.generations.push(Arc::downgrade(&process));
+                state.generations.retain(|old| old.is_running());
+                state.generations.push(Arc::clone(&process));
                 state.spawns += 1;
                 state.last_spawn = Some(process.spawn_time);
                 state.not_before = None;
@@ -177,13 +178,8 @@ impl Slot {
     /// may still hold what it mapped.
     pub(crate) fn live(&self) -> Vec<Arc<OrganProcess>> {
         let mut state = self.lock();
-        state.generations.retain(|old| old.strong_count() > 0);
-        state
-            .generations
-            .iter()
-            .filter_map(Weak::upgrade)
-            .filter(|process| process.is_running())
-            .collect()
+        state.generations.retain(|old| old.is_running());
+        state.generations.clone()
     }
 
     /// Refuses every later call and hands back every live process to stop.
@@ -198,8 +194,8 @@ impl Slot {
         let mut state = self.lock();
         state.unavailable = Some(reason);
         state.process = None;
-        drop(state);
-        self.live()
+        state.generations.retain(|old| old.is_running());
+        state.generations.clone()
     }
 
     pub(crate) fn take_if_idle(&self, idle: Duration) -> Option<Arc<OrganProcess>> {
