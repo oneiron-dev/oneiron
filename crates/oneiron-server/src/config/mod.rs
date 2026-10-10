@@ -4,6 +4,7 @@ pub mod backup;
 pub mod embedder;
 mod embedder_shape;
 mod embedder_space;
+mod feedback;
 pub mod import;
 mod lookup;
 pub mod merge;
@@ -19,6 +20,7 @@ pub use embedder::{
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
 };
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
+pub use feedback::FeedbackConfig;
 pub use import::ImportConfig;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
