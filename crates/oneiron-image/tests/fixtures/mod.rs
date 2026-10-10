@@ -163,7 +163,7 @@ pub(crate) fn icc_profile(name: &str, colorants: [[f64; 3]; 3]) -> Vec<u8> {
     let entries = blocks.len() + 2;
     let mut offset = 128 + 4 + 12 * entries;
     let mut table = (entries as u32).to_be_bytes().to_vec();
-    let mut data = Vec::new();
+    let mut data: Vec<u8> = Vec::new();
     let mut curve = (0, 0);
     for (signature, block) in &blocks {
         table.extend(*signature);
