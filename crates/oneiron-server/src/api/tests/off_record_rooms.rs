@@ -906,3 +906,43 @@ async fn an_owner_removed_from_the_room_cannot_speak_into_it() {
     assert_eq!(status, StatusCode::OK, "{file}");
     assert!(words(&file).is_empty(), "the turn landed: {file}");
 }
+
+/// Sol #1373 r6 P2: the owner put the room on record, the credential they
+/// did it with was revoked, and their fresh flip on a new credential kept the
+/// revoked one as the saver, so the room went off record instead. A saver
+/// who no longer holds is let go before the flip decides anything.
+#[tokio::test]
+async fn a_fresh_flip_restarts_saving_after_its_credential_lapsed() {
+    let (_dir, server) = auth_test_server();
+    let room = room(&server);
+    let mina = slip("mina", room.mina, "human");
+    let key = owner_key(room.id, "garage");
+    let owner = room.owner.to_hex();
+    let [first, second] = ["first", "second"]
+        .map(|jti| format!("jti=owner-{jti};principal_ref={owner};actor_class=human"));
+    let flip = json!({ "session_ref": key, "mode": "on_record" });
+
+    start(&server, mina.clone(), room.id, "garage").await;
+    let (status, flipped) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/mode",
+        test_bearer(&first),
+        Some(&flip),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{flipped}");
+    slip_credentials::revoke(&server, &first);
+    let (status, flipped) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/mode",
+        test_bearer(&second),
+        Some(&flip),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{flipped}");
+    assert_eq!(flipped["mode"], "on_record", "{flipped}");
+    let kept = say(&server, mina, room.id, "garage", 100, "kept on record").await;
+    assert!(server.vault().get(&kept).unwrap().is_some());
+}

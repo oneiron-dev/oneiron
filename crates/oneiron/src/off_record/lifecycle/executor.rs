@@ -5,6 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
+use super::on_record::SaverCheck;
 use super::session::OffRecordSession;
 use super::types::ExecutorUtterance;
 use crate::error::OffRecordError;
@@ -219,16 +220,16 @@ impl OffRecordSession<'_> {
     /// `Base` route — the sole evidence the room went on record. An `Overlay`
     /// route means the caller reached a durable write while off record, which
     /// the effect policy is supposed to have refused first.
-    fn base_write_vault(&self, route: &SessionWriteRoute) -> Result<&Vault> {
+    ///
+    /// A room on record takes writes only while its saver holds, so the write
+    /// runs the returned check first in its own transaction.
+    fn base_write_vault(
+        &self,
+        route: &SessionWriteRoute,
+    ) -> Result<(&Vault, Option<SaverCheck<'_, '_>>)> {
         route.revalidate()?;
         match route.target() {
-            RouteTarget::Base => {
-                // A room on record takes writes only while its saver holds.
-                // These writes run their own transactions, so the saver is
-                // checked just before, as the route is.
-                self.require_saver()?;
-                Ok(self.vault)
-            }
+            RouteTarget::Base => Ok((self.vault, self.saver_check()?)),
             RouteTarget::Overlay | RouteTarget::Discard => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.session_ref.clone(),
@@ -246,7 +247,7 @@ impl OffRecordSession<'_> {
         envelope: &crate::WriteEnvelope,
         can_resolve_pending_consent: bool,
     ) -> Result<()> {
-        let vault = self.base_write_vault(route)?;
+        let (vault, _) = self.base_write_vault(route)?;
         crate::code_run::check_write_gate_against_vault(
             vault,
             id,
@@ -266,12 +267,13 @@ impl OffRecordSession<'_> {
         occurred: crate::TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let vault = self.base_write_vault(route)?;
+        let (vault, check) = self.base_write_vault(route)?;
         let predicate = candidate.predicate().to_owned();
         vault
             .batch()
             .claim_candidate(id, candidate, envelope, occurred, learned_at)
             .commit_with_target_guard(|txn| {
+                landing(check.as_ref(), txn)?;
                 vault.validate_code_run_claim_target_in_txn(txn, id, Some(&predicate))
             })
     }
@@ -286,10 +288,15 @@ impl OffRecordSession<'_> {
         occurred: crate::TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        self.base_write_vault(route)?
-            .put_claim_candidate_without_lexical_query_reconcile(
-                id, candidate, envelope, occurred, learned_at,
-            )
+        let (vault, check) = self.base_write_vault(route)?;
+        vault.put_claim_candidate_without_lexical_query_reconcile(
+            id,
+            candidate,
+            envelope,
+            occurred,
+            learned_at,
+            |txn| landing(check.as_ref(), txn),
+        )
     }
 
     /// `self.memory.supersede_claim` on a session-bound run. ONE-1936's
@@ -311,17 +318,18 @@ impl OffRecordSession<'_> {
         edge_gate_id: EntityId,
         edge_gate_body: &crate::ClaimBody,
     ) -> Result<()> {
-        self.base_write_vault(route)?
-            .supersede_claim_for_code_run_trap(
-                new_id,
-                old_id,
-                now,
-                envelope,
-                claim_gate_id,
-                claim_gate_body,
-                edge_gate_id,
-                edge_gate_body,
-            )
+        let (vault, check) = self.base_write_vault(route)?;
+        vault.supersede_claim_for_code_run_trap(
+            new_id,
+            old_id,
+            now,
+            envelope,
+            claim_gate_id,
+            claim_gate_body,
+            edge_gate_id,
+            edge_gate_body,
+            |txn| landing(check.as_ref(), txn),
+        )
     }
 
     /// `self.memory.put_edge` on a session-bound run.
@@ -340,7 +348,22 @@ impl OffRecordSession<'_> {
         gate_id: EntityId,
         gate_body: &crate::ClaimBody,
     ) -> Result<()> {
-        self.base_write_vault(route)?
-            .put_edge_for_code_run_trap(src, kind, tgt, weight, envelope, gate_id, gate_body)
+        let (vault, check) = self.base_write_vault(route)?;
+        vault.put_edge_for_code_run_trap(
+            src,
+            kind,
+            tgt,
+            weight,
+            envelope,
+            gate_id,
+            gate_body,
+            |txn| landing(check.as_ref(), txn),
+        )
     }
+}
+
+/// A base write's first step in its transaction: in a room on record, the
+/// saver must still hold.
+fn landing(check: Option<&SaverCheck<'_, '_>>, txn: &heed::RoTxn<'_>) -> Result<()> {
+    check.map_or(Ok(()), |check| check.in_txn(txn))
 }

@@ -96,6 +96,9 @@ impl<'vault> OffRecordSession<'vault> {
         } else {
             None
         };
+        // A standing saver who no longer holds has stopped saving, so this
+        // flip puts the room back on record under this owner's proof.
+        self.lapse_saver()?;
         // This handle's own entry, under one lock: the flip and its notice
         // land on the stretch the owner acted on, never on one that took its
         // name since, and a closing stretch is refused before either.
@@ -192,25 +195,15 @@ impl<'vault> OffRecordSession<'vault> {
     }
 
     /// Stops the saving when this stretch's room is on record and its saver
-    /// no longer holds in a fresh snapshot; the saver that lapsed, if one did.
-    pub(super) fn lapse_saver(&self) -> Result<Option<OnRecordSaver>> {
+    /// no longer holds in a fresh snapshot.
+    pub(super) fn lapse_saver(&self) -> Result<()> {
         let Some(saver) = self.on_record_saver()? else {
-            return Ok(None);
+            return Ok(());
         };
         if saver.holds_in_txn(self.vault, &self.vault.store.env.read_txn()?)? {
-            return Ok(None);
+            return Ok(());
         }
-        self.stop_saving(&saver)?;
-        Ok(Some(saver))
-    }
-
-    /// Refuses when this stretch's room is on record and its saver no longer
-    /// holds, and stops the saving.
-    pub(crate) fn require_saver(&self) -> Result<()> {
-        match self.lapse_saver()? {
-            Some(saver) => Err(self.saving_stopped(&saver)),
-            None => Ok(()),
-        }
+        self.stop_saving(&saver)
     }
 
     /// One write transaction for this stretch, in which `check` runs before
