@@ -524,8 +524,10 @@ fn a_registration_wipes_the_staged_row_that_carried_its_value() {
 
 /// Sol on the staging fix: generic readers on the put path copied a custody
 /// row, value and all, into buffers freed unwiped, before they checked its
-/// kind, and so did the deletion-fence probe. Neither a registration nor a
-/// rotation of it makes a plain copy of a row that holds the value.
+/// kind, and so did the deletion-fence probe and the identity topology
+/// reconcile, which read a participant's whole row for its type. Neither a
+/// registration nor a rotation of it makes a plain copy of a row that holds
+/// the value.
 #[test]
 fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
     const VALUE: &[u8] = b"wipe-check-copied-row-value";
@@ -565,6 +567,36 @@ fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
         )
         .expect("fence");
     wtxn.commit().expect("commit");
+    // A parked merge proposal that names the row (a peer may send one before
+    // the row arrives) makes the put reconcile identity topology, which reads
+    // each participant's type.
+    let proposal = crate::identity_topology::StoredIdentityOpEvent {
+        seq: 1,
+        validated_at_write: false,
+        invalidated: false,
+        at: 7,
+        actor: None,
+        source: crate::claim::ClaimSource::Inferred,
+        approval: crate::claim::ClaimApprovalStatus::Proposed,
+        confidence: 0.5,
+        evidence: None,
+        action: crate::identity_topology::StoredIdentityOpAction::Merge {
+            sources: vec![id],
+            survivor: vault.ensure_embedded_owner_actor().expect("owner actor"),
+        },
+    };
+    vault
+        .batch()
+        .put_replicated(
+            &EntityId::now(),
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange { start: 7, end: 7 },
+            7,
+            &crate::identity_topology::encode_identity_topology_event_body(&proposal)
+                .expect("proposal body"),
+        )
+        .commit()
+        .expect("proposal stored");
     vault
         .rotate_secret_as_owner(&owner, "deploy-token", VALUE, 8)
         .expect("rotated");
