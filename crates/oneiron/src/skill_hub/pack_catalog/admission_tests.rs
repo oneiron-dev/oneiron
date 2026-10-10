@@ -2022,3 +2022,113 @@ fn pack_update_runs_the_drift_ladder_on_saved_queries() -> Result<()> {
     assert_eq!(kept.definition.lifecycle, SavedQueryLifecycle::Active);
     Ok(())
 }
+
+/// ARCH-0059 §4 rung 1 from the pack itself: a source that changes under the
+/// same version ships the map for the move from the exact source it
+/// replaces, and the install migrates the saved query with a receipt.
+#[test]
+fn a_pack_ships_its_migration_map_and_a_same_version_update_applies_it() -> Result<()> {
+    use crate::saved_query::{
+        ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatcherSpec,
+        QueryScope, SAVED_QUERY_SCHEMA_VERSION, SavedQueryLifecycle,
+    };
+    let source = |predicates: &str, migrations: &str| {
+        PackSource::from_files(vec![
+            HubFile::new(
+                "PACK.md",
+                format!(
+                    "---\nname: alice.tools\ndescription: fixture\nversion: 3\nkind: capability\npredicates: [{predicates}]\n{migrations}---\nExact pack source\n"
+                )
+                .into_bytes(),
+            ),
+            HubFile::new(
+                "skills/format/SKILL.md",
+                b"---\nname: alice.format\ndescription: format\nversion: 1\n---\nKeep facts exact.\n"
+                    .to_vec(),
+            ),
+        ])
+    };
+    let shipped = |from: &str, source: Option<&str>, to: &str| {
+        let source = source.map_or(String::new(), |hash| format!(",\"source\":\"{hash}\""));
+        format!(
+            "migrations: [{{\"from\":\"{from}\"{source},\"rewrites\":{{\"alice.tools.topic\":{{\"kind\":\"rename\",\"to\":\"{to}\"}}}}}}]\n"
+        )
+    };
+    let first = source("\"alice.tools.topic\"", "")?;
+    let first_hash = first.content_hash().to_hex();
+    // A map for the pack's own version names the exact source it moves from,
+    // and moves the pack's predicates only onto ones the new source declares.
+    let subject = "\"alice.tools.subject\"";
+    assert!(source(subject, &shipped("3", None, "alice.tools.subject")).is_err());
+    assert!(
+        source(
+            subject,
+            &shipped("3", Some(&first_hash), "bob.notes.subject")
+        )
+        .is_err()
+    );
+
+    let (_dir, vault, owner, reference, publisher) = fixture(SkillHubTrustTier::Verified, &first)?;
+    crate::campaign::register_crm_pack(
+        &vault,
+        107,
+        108,
+        crate::registry::TypeByteFamily::Productivity,
+    )?;
+    let install = |source: &PackSource, pin: &str, at: u64| -> Result<()> {
+        let pinned = HubRef::new(
+            reference.hub_id,
+            pin,
+            HubPin::ContentHash(source.content_hash().to_hex()),
+        )?;
+        let id = fetched_fixture(&vault, source, &pinned, &publisher, at)?;
+        let ask = vault.prepare_pack_install(id, &pinned, &publisher, &policy())?;
+        assert!(matches!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Installed(_)
+        ));
+        Ok(())
+    };
+    install(&first, "pack/v3", 3)?;
+    let term = |predicate: &str| FilterAst::Claim {
+        predicate: predicate.to_owned(),
+        cmp: ClaimComparison::Exists,
+        value: serde_json::Value::Null,
+    };
+    let topic = crate::saved_query::create_saved_query(
+        &vault,
+        owner.actor(),
+        &CreateSavedQueryRequest {
+            schema_version: SAVED_QUERY_SCHEMA_VERSION,
+            scope: QueryScope::default(),
+            filter: term("alice.tools.topic"),
+            matcher: MatcherSpec::Hard {
+                expression: term("alice.tools.topic"),
+            },
+            eval: EvalPolicy {
+                mode: EvalMode::Manual,
+                max_entities_per_wake: 8,
+                max_judges_per_wake: 4,
+            },
+        },
+        10,
+    )?;
+
+    let second = source(
+        subject,
+        &shipped("3", Some(&first_hash), "alice.tools.subject"),
+    )?;
+    install(&second, "pack/v3b", 4)?;
+    let migrated = crate::saved_query::read_saved_query(&vault, owner.actor(), topic.query_ref)?
+        .expect("the query survives the update");
+    assert_eq!(migrated.definition.filter, term("alice.tools.subject"));
+    assert_eq!(migrated.definition.lifecycle, SavedQueryLifecycle::Active);
+    assert!(
+        crate::saved_query::pack_drift_repairs(&vault)?
+            .iter()
+            .any(|repair| repair.query_ref == topic.query_ref
+                && repair.summary.starts_with("auto-migrated")),
+        "rung 1 leaves a receipt"
+    );
+    Ok(())
+}

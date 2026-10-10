@@ -10,7 +10,7 @@ mod source;
 pub use crate::gate::PackInstallPolicyOverride;
 pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
-pub use manifest::{PackAdapter, PackKind, PackManifest};
+pub use manifest::{PackAdapter, PackKind, PackManifest, PackMigration};
 pub use screening::PackInstallRules;
 pub use source::{PackSection, PackSource};
 

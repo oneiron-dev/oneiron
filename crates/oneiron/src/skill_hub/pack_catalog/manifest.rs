@@ -1,8 +1,9 @@
 //! Closed PACK.md manifest parser. Requested powers stay data until local admission.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
+use crate::saved_query::{PackMigrationMap, PackPredicateRewrite};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +37,41 @@ pub struct PackManifest {
     pub kinds: BTreeSet<String>,
     pub requested_grants: BTreeSet<String>,
     pub wake_subscriptions: BTreeSet<String>,
+    /// Predicate migration maps this source ships for moves from earlier
+    /// sources of the pack (ARCH-0059 §4, rung 1).
+    pub migrations: Vec<PackMigration>,
+}
+
+/// One shipped migration map: the rewrites that carry a saved query from an
+/// earlier source of this pack to this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackMigration {
+    /// The version the move starts from.
+    pub from: String,
+    /// The exact source the move starts from, by content hash. Required
+    /// when `from` is this source's own version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Old predicate to its rewrite.
+    pub rewrites: BTreeMap<String, PackPredicateRewrite>,
+}
+
+impl PackManifest {
+    /// The map this source ships for a move from the installed source
+    /// `content_hash` of `version`: the entry naming that exact source, else
+    /// the one naming its version alone.
+    #[must_use]
+    pub fn migration_from(&self, version: &str, content_hash: &str) -> Option<PackMigrationMap> {
+        let from_version = self.migrations.iter().filter(|entry| entry.from == version);
+        from_version
+            .clone()
+            .find(|entry| entry.source.as_deref() == Some(content_hash))
+            .or_else(|| from_version.clone().find(|entry| entry.source.is_none()))
+            .map(|entry| PackMigrationMap {
+                rewrites: entry.rewrites.clone(),
+            })
+    }
 }
 
 impl PackManifest {
@@ -66,6 +102,7 @@ impl PackManifest {
                     | "grants"
                     | "wakes"
                     | "facets"
+                    | "migrations"
             ) {
                 return Err(invalid("unknown PACK.md field"));
             }
@@ -148,7 +185,7 @@ impl PackManifest {
                 .ok_or_else(|| invalid("agent pack requires a facet map"))?
                 .validate_paths()?;
             if adapter.is_some()
-                || ["predicates", "kinds", "grants", "wakes"]
+                || ["predicates", "kinds", "grants", "wakes", "migrations"]
                     .iter()
                     .any(|key| fields.contains_key(key))
             {
@@ -180,6 +217,15 @@ impl PackManifest {
         if predicates.iter().any(|name| kinds.contains(name)) {
             return Err(invalid("predicate and structural names must be disjoint"));
         }
+        let migrations = fields
+            .get("migrations")
+            .map(|value| {
+                serde_json::from_str::<Vec<PackMigration>>(value)
+                    .map_err(|_| invalid("migrations must be a JSON array of typed maps"))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        validate_migrations(&migrations, &name, &version, &predicates)?;
         Ok(Self {
             name,
             description,
@@ -195,6 +241,7 @@ impl PackManifest {
             kinds,
             requested_grants: list("grants")?,
             wake_subscriptions: list("wakes")?,
+            migrations,
         })
     }
 }
@@ -217,6 +264,57 @@ fn scalar(value: &str, allow_controls: bool) -> Result<String> {
         return Err(invalid("invalid manifest scalar"));
     }
     Ok(text)
+}
+/// A shipped map moves only the pack's own predicates, onto predicates this
+/// source declares, and names each starting source once.
+fn validate_migrations(
+    migrations: &[PackMigration],
+    name: &str,
+    version: &str,
+    predicates: &BTreeSet<String>,
+) -> Result<()> {
+    if migrations.len() > 32 {
+        return Err(invalid("too many shipped migration maps"));
+    }
+    let mut starts = BTreeSet::new();
+    for migration in migrations {
+        let source_ok = migration.source.as_deref().is_none_or(|hash| {
+            hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        });
+        if migration.from.is_empty()
+            || migration.from.len() > 128
+            || migration.from.chars().any(char::is_control)
+            || !source_ok
+            || (migration.from == version && migration.source.is_none())
+            || !starts.insert((&migration.from, &migration.source))
+        {
+            return Err(invalid(
+                "a migration names a distinct starting version, and the exact source for its own",
+            ));
+        }
+        if migration.rewrites.is_empty() || migration.rewrites.len() > 128 {
+            return Err(invalid("a migration map holds 1 to 128 rewrites"));
+        }
+        for (from, rewrite) in &migration.rewrites {
+            let (PackPredicateRewrite::Rename { to }
+            | PackPredicateRewrite::Equivalent { to, .. }
+            | PackPredicateRewrite::SemanticsChanging { to, .. }) = rewrite;
+            let note_ok = match rewrite {
+                PackPredicateRewrite::Rename { .. } => true,
+                PackPredicateRewrite::Equivalent { note, .. }
+                | PackPredicateRewrite::SemanticsChanging { note, .. } => {
+                    !note.is_empty() && note.len() <= 1024 && !note.chars().any(char::is_control)
+                }
+            };
+            validate_name(from)?;
+            if !from.starts_with(&format!("{name}.")) || !predicates.contains(to) || !note_ok {
+                return Err(invalid(
+                    "a migration rewrites the pack's own predicates onto ones it declares",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 fn validate_agent_text(value: &str, max_bytes: usize) -> Result<()> {
     if value.trim().is_empty() || value.len() > max_bytes {
