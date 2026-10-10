@@ -53,12 +53,23 @@ pub struct AskRequest<'a> {
 }
 
 /// A handler's answer.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Answered {
     pub value: rmpv::Value,
     pub data: Option<Vec<u8>>,
     /// For a fetch, where it went, for the receipt.
     pub fetch: Option<FetchTarget>,
+}
+
+impl Default for Answered {
+    /// A nil value, no bytes.
+    fn default() -> Self {
+        Self {
+            value: rmpv::Value::Nil,
+            data: None,
+            fetch: None,
+        }
+    }
 }
 
 /// The handlers a caller supplies for one call, by ask verb.
