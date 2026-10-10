@@ -123,7 +123,7 @@ pub(super) const COSINE_GHOST_VECTOR_THRESHOLD: f32 = 0.3;
 // conservative: the vector floor needs an absent keyword signal too, while
 // the score-gap check only compares raw cosine scores from the same channel.
 // The floor and the strong-match score belong to the embedding space
-// (`VaultConfig::vector_evidence`).
+// (`Vault::vector_evidence`).
 pub(super) const CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO: f32 = 0.1;
 pub(super) const CONTEXT_PACK_SCORE_GAP_EPSILON: f32 = f32::EPSILON;
 pub(super) const CONTEXT_PACK_ANOMALOUS_REPEAT_RUN: usize = 32;

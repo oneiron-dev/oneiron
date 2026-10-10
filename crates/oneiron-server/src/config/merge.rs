@@ -174,6 +174,21 @@ pub fn resolve_serve_config_with_sources(
     env: EnvConfig,
     default_config_path: Option<PathBuf>,
 ) -> anyhow::Result<ServeConfig> {
+    let resolved = layer_serve_config(args, env, default_config_path)?;
+    // Same-source or higher-precedence references remain for validation to
+    // refuse rather than silently fixing a contradictory self-host request.
+    validate_serve_config(&resolved)?;
+    Ok(resolved)
+}
+
+/// The file, environment and flag layers merged, before the checks that
+/// hold the result to one vault ([`resolve_serve_config_with_sources`]). A
+/// command with no vault reads what a layered section says through this.
+pub(crate) fn layer_serve_config(
+    args: &ServeArgs,
+    env: EnvConfig,
+    default_config_path: Option<PathBuf>,
+) -> anyhow::Result<ServeConfig> {
     let flag_values = PartialServeConfig::from(args);
     let config_path = args
         .config
@@ -224,9 +239,6 @@ pub fn resolve_serve_config_with_sources(
     if let Some(embedder) = resolved.embedder.as_mut() {
         super::embedder_space::settle_local_space(embedder, space_naming)?;
     }
-    // Same-source or higher-precedence references remain for validation to
-    // refuse rather than silently fixing a contradictory self-host request.
-    validate_serve_config(&resolved)?;
     Ok(resolved)
 }
 
