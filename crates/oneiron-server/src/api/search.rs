@@ -685,12 +685,14 @@ pub(crate) async fn search_semantic(
                 .embed_query_off_runtime(question.clone())
                 .await
                 .map_err(embed_query_error)?;
-            search_page(&server, page(embedding, question), None)?
+            let admission = admit_deep_retrieval(&server, depth)?;
+            search_page(&server, page(embedding, question), admission.as_ref(), None)?
         }
         // Under a deadline the embedding spends the same budget: it runs
         // inside the read, so one still running when the deadline comes due
-        // leaves the page empty and partial.
+        // leaves the page empty and partial. The request is admitted first.
         Some(budget) => {
+            let admission = admit_deep_retrieval(&server, depth)?;
             read_by_deadline(
                 Arc::clone(&server),
                 arrived,
@@ -698,7 +700,12 @@ pub(crate) async fn search_semantic(
                 count_mode,
                 move |server, deadline| {
                     let embedding = server.embed_query(&question).map_err(embed_query_error)?;
-                    search_page(server, page(embedding, question), Some(deadline))
+                    search_page(
+                        server,
+                        page(embedding, question),
+                        admission.as_ref(),
+                        Some(deadline),
+                    )
                 },
             )
             .await?

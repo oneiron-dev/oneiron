@@ -61,9 +61,10 @@ async fn raw_search_takes_a_deadline_and_refuses_one_out_of_range() {
     }
 }
 
-/// Bug repro (Sol R2-1): a search whose deadline comes due before it read
-/// anything, here because the blocking pool is busy, answers by the deadline
-/// with an empty partial page and no receipt, not with an error.
+/// Bug repros (Sol R2-1, R3-1): a search whose deadline comes due before it
+/// read anything, here because the blocking pool is busy, answers by the
+/// deadline with an empty partial page and no receipt, not with an error;
+/// and a request the server must refuse is still refused, not answered.
 #[test]
 fn raw_search_answers_by_its_deadline_when_it_could_not_read_yet() {
     const DEADLINE_MS: u64 = 200;
@@ -82,6 +83,15 @@ fn raw_search_answers_by_its_deadline_when_it_could_not_read_yet() {
         std::thread::sleep(BUSY);
     });
     busy.recv().expect("the blocking pool is busy");
+    // No deep retrieval host serves this server: paid depth is refused.
+    let (refused, refusal) = runtime.block_on(route_json_auth(
+        server.clone(),
+        search_request(
+            "GET",
+            &format!("/api/search/text?query=ferry&depth=high&deadlineMs={DEADLINE_MS}"),
+            None,
+        ),
+    ));
     let arrived = Instant::now();
     let (status, page) = runtime.block_on(route_json_auth(
         server,
@@ -95,6 +105,8 @@ fn raw_search_answers_by_its_deadline_when_it_could_not_read_yet() {
     // The cut read finishes once the pool frees, before the vault goes.
     drop(runtime);
     drop(dir);
+    assert_eq!(refused, StatusCode::SERVICE_UNAVAILABLE, "{refusal}");
+    assert_eq!(refusal["code"], "DEEP_RETRIEVAL_UNAVAILABLE", "{refusal}");
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(took < BUSY, "the busy pool held the answer {took:?}");
     assert_eq!(page["items"], json!([]), "{page}");

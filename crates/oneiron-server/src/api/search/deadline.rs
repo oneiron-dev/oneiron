@@ -20,20 +20,21 @@ pub(super) struct SearchPage {
     pub(super) page_limit: usize,
 }
 
-/// Reads and projects one page.
+/// Reads and projects one page under the request's deep-retrieval
+/// `admission` (none below the paid efforts).
 pub(super) fn search_page(
     server: &SyncServer,
     page: SearchPage,
+    admission: Option<&DeepAdmission>,
     deadline: Option<&RetrievalDeadline>,
 ) -> Result<ScopedSearchResponse, ApiError> {
-    let admission = admit_deep_retrieval(server, page.depth)?;
     let scoped_read = scoped_read_for_legacy_api(server)?;
     let results = run_depth_search(
         &scoped_read,
         page.probe,
         page.depth,
         search_fetch_limit(page.count_mode, page.page_limit),
-        admission.as_ref(),
+        admission,
         deadline,
     )?;
     let total = results.hits.len();
@@ -70,16 +71,17 @@ fn unread_page(count_mode: CountMode) -> ScopedSearchResponse {
     }
 }
 
-/// Runs a raw search page. With no deadline it runs inline, as it always
-/// has; with one, [`read_by_deadline`] reads it.
+/// Runs a raw search page, admitted first. With no deadline it runs inline,
+/// as it always has; with one, [`read_by_deadline`] reads it.
 pub(super) async fn search_page_by_deadline(
     server: Arc<SyncServer>,
     arrived: Instant,
     budget: Option<Duration>,
     page: SearchPage,
 ) -> Result<ScopedSearchResponse, ApiError> {
+    let admission = admit_deep_retrieval(&server, page.depth)?;
     match budget {
-        None => search_page(&server, page, None),
+        None => search_page(&server, page, admission.as_ref(), None),
         Some(budget) => {
             let count_mode = page.count_mode;
             read_by_deadline(
@@ -87,7 +89,9 @@ pub(super) async fn search_page_by_deadline(
                 arrived,
                 budget,
                 count_mode,
-                move |server, deadline| search_page(server, page, Some(deadline)),
+                move |server, deadline| {
+                    search_page(server, page, admission.as_ref(), Some(deadline))
+                },
             )
             .await
         }
@@ -95,7 +99,8 @@ pub(super) async fn search_page_by_deadline(
 }
 
 /// Runs `read` on the blocking pool under the hard deadline `budget`,
-/// counted from `arrived`. The read first publishes [`cut_page`], off the
+/// counted from `arrived`; the caller has already admitted the request, so
+/// every refusal precedes the answer. The read first publishes [`cut_page`], off the
 /// async thread because the reader's receipt reads the store, and the door
 /// answers when the deadline comes due: with the page if the read finished,
 /// else with the cut page. When the read has not reached even that (the
