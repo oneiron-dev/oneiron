@@ -784,26 +784,46 @@ fn download(
     {
         return Err(download_failed(&artifact.file, "exceeds the artifact cap"));
     }
-    let temp = partial_path(path);
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)
-        .map_err(oneiron::Error::Io)?;
+    let (temp, file) = locked_partial(path)?;
+    #[cfg(test)]
+    tests::partial_created(path);
     let placed = place(response, &file, &temp, path, artifact);
     if placed.is_err() {
         let _ = std::fs::remove_file(&temp);
     }
+    // The lock goes with the file, once it is renamed or removed.
     drop(file);
     placed.map(Some)
 }
 
-/// Writes a response body to its temporary file, checks it there, then
-/// renames it into place.
+/// Creates this attempt's temporary file and takes its lock, which the fetch
+/// holds until the file is renamed or removed: a sweep never takes a
+/// temporary file whose fetch is alive, however long that fetch pauses.
 ///
-/// The file's lock is held from before the first byte until the file is
-/// renamed or removed, so a sweep never takes a temporary file whose fetch is
-/// still alive, however long that fetch pauses.
+/// A fetch that stalls between creating its file and locking it can lose the
+/// file to a sweep. Only a sweep removes these names and nothing else creates
+/// them, so a name still there once the lock is held is this fetch's; a name
+/// gone is replaced by a fresh one.
+fn locked_partial(path: &Path) -> oneiron::Result<(PathBuf, std::fs::File)> {
+    loop {
+        let temp = partial_path(path);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(oneiron::Error::Io)?;
+        if let Err(error) = file.lock() {
+            let _ = std::fs::remove_file(&temp);
+            return Err(oneiron::Error::Io(error));
+        }
+        if temp.is_file() {
+            return Ok((temp, file));
+        }
+    }
+}
+
+/// Writes a response body to its locked temporary file, checks it there, then
+/// renames it into place.
 fn place(
     response: reqwest::blocking::Response,
     file: &std::fs::File,
@@ -811,19 +831,6 @@ fn place(
     path: &Path,
     artifact: &PinnedArtifact,
 ) -> oneiron::Result<FileStamp> {
-    file.lock().map_err(oneiron::Error::Io)?;
-    // A fetch that stalled between creating its file and locking it may have
-    // lost the file to a sweep. Only a sweep removes these names and nothing
-    // else creates them, so a name still there is this fetch's, and the lock
-    // now keeps it.
-    if !temp.is_file() {
-        return Err(download_failed(
-            &artifact.file,
-            "its temporary file was swept before it was locked",
-        ));
-    }
-    #[cfg(test)]
-    tests::partial_created(path);
     let mut writer = file;
     let written = std::io::copy(&mut response.take(MAX_ARTIFACT_BYTES + 1), &mut writer)
         .map_err(oneiron::Error::Io)?;
