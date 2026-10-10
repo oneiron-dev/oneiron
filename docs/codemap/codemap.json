@@ -13446,12 +13446,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DisclosableSet"
+     ],
+     "path": "src/disclosure/disclosable_set.rs",
+     "purpose": "The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -13505,7 +13518,7 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 12,
       "struct": 2
      }
@@ -13874,13 +13887,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 32,
       "re-export": 1
      }
     },
@@ -13993,8 +14006,8 @@
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "—",
      "surface": {
-      "const": 10,
-      "crate-vis": 29
+      "const": 11,
+      "crate-vis": 30
      }
     },
     {
@@ -14058,7 +14071,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_consolidation/tests/scope_enforcement.rs",
@@ -20096,6 +20109,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/history/land/tests.rs",
+     "purpose": "ARCH-0027: an imported coding session keeps the folder it ran in and when it started, and importing its log…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -23055,7 +23076,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 2,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -23601,6 +23622,31 @@
      "notable": [],
      "path": "src/memory/tests_regressions/recall_security.rs",
      "purpose": "Recall must not be a broader read side channel than point reads or BM25",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TranscriptMessage",
+      "TranscriptPage",
+      "TranscriptTurn"
+     ],
+     "path": "src/memory/transcript.rs",
+     "purpose": "One conversation's transcript, read as the bound actor: its turns in order, each with the messages it holds…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/transcript/tests.rs",
+     "purpose": "A conversation's transcript is what its reader may read of it, in order: never an erased message, never one…",
      "surface": {}
     },
     {
@@ -27700,7 +27746,7 @@
      "path": "src/provenance/derived_attachment.rs",
      "purpose": "Validate generated support evidence at the provenance write door",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -27796,7 +27842,7 @@
      "path": "src/provenance/mod.rs",
      "purpose": "`edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 2,
       "re-export": 3
      }
@@ -36786,7 +36832,7 @@
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
       "crate-vis": 2,
-      "fn": 24
+      "fn": 25
      }
     },
     {
@@ -36796,6 +36842,16 @@
      "path": "src/vault/transactions/sync_scan_tests.rs",
      "purpose": "Host scans refuse undeclared sync-state rows even under a broad prefix",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/vector_evidence.rs",
+     "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it",
+     "surface": {
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -39312,7 +39368,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39578,7 +39634,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39655,7 +39711,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 96,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40145,7 +40201,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40208,10 +40264,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 32,
+   "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2441,
-   "test_files": 773
+   "source_files": 2444,
+   "test_files": 775
   },
   "oneiron-android": {
    "files": [
@@ -48111,6 +48167,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/conversation_transcript.rs",
+     "purpose": "`GET /v1/core/conversations/{conversation_id}/transcript`: one conversation's turns and their messages in…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/conversation_transcript/tests.rs",
+     "purpose": "A loopback page reads an imported coding session from the vault alone, with the dev-mode credential a local…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -49231,6 +49305,8 @@
       "Command",
       "DreamerCommand",
       "DreamerGrantArgs",
+      "EmbedderCommand",
+      "EmbedderServeArgs",
       "HostCommand",
       "HostInitArgs",
       "InitArgs",
@@ -49251,10 +49327,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 7,
+      "enum": 8,
       "fn": 3,
       "re-export": 1,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -49298,7 +49374,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 11,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 1
      }
     },
@@ -49322,6 +49398,24 @@
      "surface": {
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/embedder_serve.rs",
+     "purpose": "`oneiron-server embedder serve`: resolves which model to serve, then hands it to the endpoint…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commands/embedder_serve/tests.rs",
+     "purpose": "Which section `embedder serve` serves, and at what width",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -49607,7 +49701,7 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
      }
@@ -49619,6 +49713,7 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
+      "crate-vis": 1,
       "mod": 9,
       "re-export": 10
      }
@@ -49810,7 +49905,7 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 13
      }
     },
     {
@@ -49828,9 +49923,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/embedder/local/batcher.rs",
-     "purpose": "Tokenisation and no-padding batching",
+     "purpose": "Tokenisation and packing",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/bench.rs",
+     "purpose": "Throughput and query latency of the local provider on synthetic text, the numbers its PR bodies report",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/cpu_q8.rs",
+     "purpose": "Q8_0 projections on the CPU that read each weight once per forward pass",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -49847,10 +49962,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embedder/local/evidence.rs",
+     "purpose": "Where vector evidence starts in a shipped model's space, and the profile its floors hold for",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/embedder/local/isq.rs",
      "purpose": "Quantise-at-load, in one function",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -49860,7 +49985,7 @@
      "path": "src/embedder/local/mod.rs",
      "purpose": "The `local` provider: the model runs in this process, on candle",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 23
      }
     },
     {
@@ -49870,7 +49995,7 @@
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 20
      }
     },
     {
@@ -49900,7 +50025,7 @@
      "path": "src/embedder/local/qwen3_embedding.rs",
      "purpose": "The embedding model body: a Qwen3 decoder stack with no language head",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -49938,7 +50063,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 22
      }
     },
     {
@@ -49948,11 +50073,29 @@
      "path": "src/embedder/remote.rs",
      "purpose": "Builds a remote rung with a nonblocking host egress predicate",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/serve.rs",
+     "purpose": "`oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/serve/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/embedder/tests.rs",
@@ -51402,7 +51545,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/embedding.rs",
@@ -51955,7 +52098,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 166,
+     "files": 168,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51983,7 +52126,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 20,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -52004,7 +52147,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "embedder": {
-     "files": 17,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52160,8 +52303,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 308,
-   "test_files": 120
+   "source_files": 314,
+   "test_files": 123
   },
   "oneiron-uniffi": {
    "files": [

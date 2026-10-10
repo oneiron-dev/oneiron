@@ -158,7 +158,28 @@ enum MockBehaviour {
     UnknownModel,
     /// Embed into [`concept_vector`]'s meaning space.
     Concepts,
+    /// List the model as `embedder serve` does: marked, with its transform,
+    /// and answer with that transform.
+    OneironWire,
+    /// [`Self::OneironWire`] restarted with other settings: it lists and
+    /// answers with [`OTHER_TRANSFORM`].
+    OneironWireOther,
+    /// The listing answers 503.
+    ListingDown,
+    /// No listing route (404), as many OpenAI-compatible servers have.
+    NoListing,
+    /// Lists the model as [`Self::OneironWire`] does, but answers with
+    /// [`OTHER_TRANSFORM`]: two backends behind one address.
+    ListingDisagrees,
 }
+
+/// The model the Oneiron-wire behaviours say they loaded, until a row says
+/// otherwise ([`MockEndpoint::serve_model`]): [`endpoint_config`]'s.
+const MOCK_MODEL: &str = "test/model@rev";
+/// The transform the [`MockBehaviour::OneironWire`] listing reports.
+const MOCK_TRANSFORM: &str = "attn=bidirectional;pool=mean;mock";
+/// The transform [`MockBehaviour::OneironWireOther`] reports.
+const OTHER_TRANSFORM: &str = "attn=bidirectional;pool=mean;mock;out=binary";
 
 struct EmbeddingPause {
     request: usize,
@@ -169,12 +190,24 @@ struct EmbeddingPause {
 struct MockState {
     pause: Mutex<Option<Arc<EmbeddingPause>>>,
     behaviour: Mutex<MockBehaviour>,
+    /// The model the Oneiron-wire behaviours list and answer as loaded.
+    model: Mutex<String>,
+    /// The profile they list and answer with; none until a row sets one.
+    profile: Mutex<Value>,
     requests: Mutex<Vec<Value>>,
 }
 
 impl MockState {
     fn behaviour(&self) -> MockBehaviour {
         *self.behaviour.lock().expect("mock behaviour lock")
+    }
+
+    fn model(&self) -> String {
+        self.model.lock().expect("mock model lock").clone()
+    }
+
+    fn profile(&self) -> Value {
+        self.profile.lock().expect("mock profile lock").clone()
     }
 }
 
@@ -200,6 +233,8 @@ impl MockEndpoint {
         let state = Arc::new(MockState {
             pause: Mutex::new(None),
             behaviour: Mutex::new(behaviour),
+            model: Mutex::new(MOCK_MODEL.to_owned()),
+            profile: Mutex::new(Value::Null),
             requests: Mutex::new(Vec::new()),
         });
         let app = Router::new()
@@ -229,6 +264,18 @@ impl MockEndpoint {
         *self.state.behaviour.lock().expect("mock behaviour lock") = behaviour;
     }
 
+    /// Puts another model behind the same key and transform, as a server
+    /// restarted on another checkpoint lists and answers it.
+    fn serve_model(&self, model: &str) {
+        *self.state.model.lock().expect("mock model lock") = model.to_owned();
+    }
+
+    /// Runs the model with another profile, as a server restarted with other
+    /// settings that leave its transform as it was lists and answers it.
+    fn serve_profile(&self, profile: Value) {
+        *self.state.profile.lock().expect("mock profile lock") = profile;
+    }
+
     fn requests(&self) -> Vec<Value> {
         self.state
             .requests
@@ -242,13 +289,33 @@ impl MockEndpoint {
     }
 }
 
-async fn mock_models(State(state): State<Arc<MockState>>) -> axum::Json<Value> {
-    let id = if state.behaviour() == MockBehaviour::UnknownModel {
-        "some-other-model"
-    } else {
-        MODEL_KEY
-    };
-    axum::Json(json!({ "data": [{ "id": id }] }))
+async fn mock_models(State(state): State<Arc<MockState>>) -> Result<axum::Json<Value>, StatusCode> {
+    Ok(match state.behaviour() {
+        MockBehaviour::UnknownModel => {
+            axum::Json(json!({ "data": [{ "id": "some-other-model" }] }))
+        }
+        MockBehaviour::ListingDown => return Err(StatusCode::SERVICE_UNAVAILABLE),
+        MockBehaviour::NoListing => return Err(StatusCode::NOT_FOUND),
+        MockBehaviour::OneironWire
+        | MockBehaviour::OneironWireOther
+        | MockBehaviour::ListingDisagrees => axum::Json(json!({
+            "data": [{
+                "id": MODEL_KEY,
+                "oneiron_wire": 1,
+                "model_id": state.model(),
+                "transform": mock_transform(state.behaviour()),
+                "profile": state.profile(),
+            }]
+        })),
+        _ => axum::Json(json!({ "data": [{ "id": MODEL_KEY }] })),
+    })
+}
+
+fn mock_transform(behaviour: MockBehaviour) -> &'static str {
+    match behaviour {
+        MockBehaviour::OneironWireOther => OTHER_TRANSFORM,
+        _ => MOCK_TRANSFORM,
+    }
 }
 
 /// The deterministic space the mock embeds into: one axis per input text, so a
@@ -336,6 +403,23 @@ async fn mock_embeddings(
     if state.behaviour() == MockBehaviour::Reversed {
         rows.reverse();
     }
+    if matches!(
+        state.behaviour(),
+        MockBehaviour::OneironWire
+            | MockBehaviour::OneironWireOther
+            | MockBehaviour::ListingDisagrees
+    ) {
+        let transform = match state.behaviour() {
+            MockBehaviour::ListingDisagrees => OTHER_TRANSFORM,
+            behaviour => mock_transform(behaviour),
+        };
+        return Ok(axum::Json(json!({
+            "data": rows,
+            "model_id": state.model(),
+            "transform": transform,
+            "profile": state.profile(),
+        })));
+    }
     Ok(axum::Json(json!({ "data": rows })))
 }
 
@@ -362,6 +446,448 @@ fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
         json!(["first text", "second text"]),
         "documents carry no instruction prefix and keep input order"
     );
+}
+
+/// Against `embedder serve`, whose `/models` rows carry the Oneiron mark, the
+/// client sends what a local vault's provider would see: whole documents
+/// marked as documents, which the server's tokenizer caps, and a query marked
+/// as one with the vault's own instruction beside it rather than in it. And
+/// the slot holds the server's transform to the vault's pin: before it is
+/// admitted, or refused, the endpoint answers no query, as a local model
+/// answers none before it is loaded and admitted.
+#[test]
+fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let config = EmbedderConfig {
+        query_instruction: Some("query: ".to_owned()),
+        max_input_tokens: 4,
+        ..endpoint_config(&mock.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    assert_eq!(
+        slot.embed_query("cats"),
+        Err(EmbedQueryRefusal::NotReady),
+        "no query before the worker admits the endpoint"
+    );
+    let refused = slot.ensure_ready(|admission| {
+        assert_eq!(admission.transform, Some(MOCK_TRANSFORM));
+        Err(oneiron::Error::InvalidConfig(
+            "the vault pins another transform".to_owned(),
+        ))
+    });
+    assert!(refused.is_err());
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
+    let embedder = slot.ensure_ready(|_| Ok(())).expect("admitted");
+    let long = "word ".repeat(40);
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input(&long)]).expect("embedded");
+    slot.embed_query("cats").expect("query embedded");
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]["input"],
+        json!([long]),
+        "whole, past the client's cap"
+    );
+    assert_eq!(requests[0]["input_type"], json!("document"));
+    assert_eq!(requests[1]["input"], json!(["cats"]));
+    assert_eq!(requests[1]["input_type"], json!("query"));
+    assert_eq!(requests[1]["instruction"], json!("query: "));
+}
+
+/// Whole texts go to `embedder serve`, so a batch of long ones is split into
+/// requests a slow host answers inside the timeout; the vectors come back in
+/// input order.
+#[test]
+fn long_documents_reach_an_oneiron_endpoint_in_several_requests() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let embedder = mock.embedder();
+    let texts: Vec<String> = ["a", "b", "c"]
+        .iter()
+        .map(|word| format!("{word} ").repeat(10 * 1024))
+        .collect();
+    let inputs: Vec<_> = texts.iter().map(|text| summary_input(text)).collect();
+    let vectors = oneiron::embed::Embedder::embed(embedder.as_ref(), &inputs).expect("embedded");
+    assert_eq!(mock.requests().len(), 3, "20 KiB each, two never share one");
+    for (vector, text) in vectors.iter().zip(&texts) {
+        assert_eq!(*vector, mock_vector(text, DIMS), "in input order");
+    }
+}
+
+/// The vault holds `embedder serve` to the transform it admitted for as long
+/// as it runs: a listing that fails is not taken for a plain OpenAI server, a
+/// server restarted with other settings fills and answers nothing, and once
+/// restored it is admitted again without a vault restart.
+#[test]
+fn an_oneiron_endpoint_that_changes_how_it_embeds_is_refused_until_restored() {
+    let mock = MockEndpoint::start(MockBehaviour::ListingDown);
+    let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
+        .expect("slot")
+        .expect("active");
+    let pinned = |admission: Admission<'_>| {
+        if admission.transform == Some(MOCK_TRANSFORM) {
+            Ok(())
+        } else {
+            Err(oneiron::Error::InvalidConfig(
+                "the vault pins another transform".to_owned(),
+            ))
+        }
+    };
+    assert!(
+        slot.ensure_ready(pinned).is_err(),
+        "a listing that answers 503 admits nothing"
+    );
+    mock.set_behaviour(MockBehaviour::OneironWireOther);
+    assert!(
+        slot.ensure_ready(pinned).is_err(),
+        "another transform is refused"
+    );
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    let embedder = slot.ensure_ready(pinned).expect("restored, admitted");
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("first")])
+        .expect("embedded");
+    assert_eq!(
+        mock.requests().last().expect("a request")["input_type"],
+        json!("document"),
+        "the failed listing was not cached as the OpenAI wire"
+    );
+    mock.set_behaviour(MockBehaviour::OneironWireOther);
+    assert!(
+        oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("second")]).is_err(),
+        "vectors made another way are not stored"
+    );
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::Failed));
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("third")])
+        .expect("restored");
+}
+
+/// Another revision of [`MOCK_MODEL`]: the same architecture, other weights.
+const OTHER_REVISION: &str = "test/model@rev2";
+
+/// Review P1 (Astra, #1361): a shared alias restarted on another revision of
+/// the same architecture truthfully lists and answers the same transform. Bug
+/// repro: the vault held answers to the transform alone, so it stored the new
+/// revision's vectors in the old one's space. The model the server loaded is
+/// now held to the vault's at admission, in every answer, after a restart
+/// and for a move; nothing it makes is stored, and no query is answered.
+#[test]
+fn an_alias_moved_to_another_revision_is_refused_and_nothing_is_stored() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = test_vault(dir.path());
+    let config = endpoint_config(&mock.base);
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let admit = |admission: Admission<'_>| admission.into_vault(&vault);
+    let embedder = slot
+        .ensure_ready(admit)
+        .expect("the vault's model, admitted");
+    let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        embedder as Arc<dyn oneiron::embed::Embedder>,
+    );
+    let first = put_claim(&vault, 0xE1, "a claim the first revision embeds");
+    while reconciler.reconcile_once().expect("filled").leased > 0 {}
+    assert!(vault.get_vector(&first).expect("read").is_some());
+    slot.embed_query("cats").expect("a query answered");
+
+    mock.serve_model(OTHER_REVISION);
+    let second = put_claim(&vault, 0xE2, "a claim the second revision answers");
+    assert!(
+        reconciler.reconcile_once().is_err(),
+        "an answer from another model is refused"
+    );
+    assert_eq!(vault.get_vector(&second).expect("read"), None);
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::Failed));
+    let refused = slot.ensure_ready(admit).err().map(|error| error.kind());
+    assert_eq!(refused, Some(oneiron::ErrorKind::EmbeddingModelChanged));
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
+
+    let restarted = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    assert!(
+        restarted.ensure_ready(admit).is_err(),
+        "nor after a restart"
+    );
+    assert!(
+        endpoint::resolve_transform(&config).is_err(),
+        "nor as the space a vault on the first revision moves to"
+    );
+    let moved = EmbedderConfig {
+        model_id: OTHER_REVISION.to_owned(),
+        ..config
+    };
+    assert_eq!(
+        endpoint::resolve_transform(&moved).expect("a move to the served revision"),
+        Some(MOCK_TRANSFORM.to_owned())
+    );
+}
+
+/// Review R7-2 (Sol, the P1 fix): a remote rung is a second door to the
+/// vault's vectors. Bug repro: it was never admitted, so a rung on a shared
+/// alias that came back with another revision behind it still had its answers
+/// stored. Its answers are now held to the vault's model and to the transform
+/// the vault admitted from its provider; a refused answer falls back to the
+/// provider, as any failed remote answer does.
+#[test]
+fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
+    use oneiron::embed::EmbedderLocality;
+    let primary = MockEndpoint::start(MockBehaviour::OneironWire);
+    let remote = MockEndpoint::start(MockBehaviour::OneironWire);
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = test_vault(dir.path());
+    let config = EmbedderConfig {
+        remote: Some(owner_rung(&remote.base)),
+        ..endpoint_config(&primary.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let embedder = slot
+        .ensure_ready(|admission| admission.into_vault(&vault))
+        .expect("admitted");
+    let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        embedder as Arc<dyn oneiron::embed::Embedder>,
+    )
+    .with_remote_rung(slot.remote_rung().expect("rung").expect("configured"))
+    .expect("rung");
+    while reconciler.reconcile_once().expect("filled").leased > 0 {}
+    let first = put_claim(&vault, 0xE5, "a claim the rung embeds");
+    let report = reconciler.reconcile_once().expect("filled");
+    assert_eq!((report.routed_remote, report.filled), (1, 1));
+    assert_eq!(
+        vault.embedding_locality(&first).expect("read"),
+        Some(EmbedderLocality::OwnerServer)
+    );
+
+    remote.serve_model(OTHER_REVISION);
+    let second = put_claim(&vault, 0xE6, "a claim the moved alias would embed");
+    let report = reconciler.reconcile_once().expect("filled");
+    assert_eq!(
+        (report.remote_failed_fallback_local, report.filled),
+        (1, 1),
+        "refused, and filled by the vault's own provider"
+    );
+    assert_eq!(
+        vault.embedding_locality(&second).expect("read"),
+        Some(EmbedderLocality::OnDevice)
+    );
+}
+
+/// A remote rung on the owner's server at `endpoint`, every row allowed out.
+fn owner_rung(endpoint: &str) -> crate::config::remote_embedder::RemoteEmbedderConfig {
+    use crate::config::remote_embedder::{EgressPolicy, RemoteEmbedderConfig};
+    RemoteEmbedderConfig {
+        endpoint: endpoint.to_owned(),
+        model_key: MODEL_KEY.into(),
+        locality: crate::config::EmbedderLocality::OwnerServer,
+        artifact: None,
+        api_key_env: None,
+        lease_ms: 120_000,
+        timeout_ms: 1000,
+        egress: Some(EgressPolicy {
+            allow: Vec::new(),
+            deny: Vec::new(),
+            allow_all: true,
+        }),
+    }
+}
+
+/// Review (Astra's re-check, #1361): a remote rung fills rows the vault
+/// judges by its floors. Bug repro: a rung's answers were held to the model
+/// and transform alone, and weight precision is not in the transform, so a
+/// rung on unquantised weights filled a vault judged by the floors measured
+/// for Q8_0. Under measured floors a rung's answers must now name a measured
+/// profile, or the vault's own provider fills the row.
+#[test]
+fn a_remote_rung_off_the_measured_profile_is_refused_under_measured_floors() {
+    use oneiron::embed::EmbedderLocality;
+    let shipped_id = crate::config::embedder::DEFAULT_MODEL_ID;
+    let primary = MockEndpoint::start(MockBehaviour::OneironWire);
+    let remote = MockEndpoint::start(MockBehaviour::OneironWire);
+    primary.serve_model(shipped_id);
+    primary.serve_profile(shipped_profile(json!({})));
+    remote.serve_model(shipped_id);
+    remote.serve_profile(shipped_profile(json!({ "quant": "none" })));
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = vault_on(dir.path(), shipped_id);
+    let config = EmbedderConfig {
+        model_id: shipped_id.to_owned(),
+        remote: Some(owner_rung(&remote.base)),
+        ..endpoint_config(&primary.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let embedder = slot
+        .ensure_ready(|admission| admission.into_vault(&vault))
+        .expect("admitted");
+    assert_eq!(vault.vector_evidence(), MEASURED);
+    let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        embedder as Arc<dyn oneiron::embed::Embedder>,
+    )
+    .with_remote_rung(slot.remote_rung().expect("rung").expect("configured"))
+    .expect("rung");
+    while reconciler.reconcile_once().expect("filled").leased > 0 {}
+
+    let first = put_claim(&vault, 0xE7, "a claim the unquantised rung would embed");
+    let report = reconciler.reconcile_once().expect("filled");
+    assert_eq!(
+        (report.remote_failed_fallback_local, report.filled),
+        (1, 1),
+        "refused, and filled by the vault's own provider"
+    );
+    assert_eq!(
+        vault.embedding_locality(&first).expect("read"),
+        Some(EmbedderLocality::OnDevice)
+    );
+
+    // A longer input cap still reads what the shipped one does.
+    remote.serve_profile(shipped_profile(json!({ "max_input_tokens": 8192 })));
+    let second = put_claim(&vault, 0xE8, "a claim the measured rung embeds");
+    let report = reconciler.reconcile_once().expect("filled");
+    assert_eq!((report.routed_remote, report.filled), (1, 1));
+    assert_eq!(
+        vault.embedding_locality(&second).expect("read"),
+        Some(EmbedderLocality::OwnerServer)
+    );
+}
+
+/// The profile `embedder serve` lists for the shipped model run as it was
+/// measured, with `changed` over it.
+fn shipped_profile(changed: Value) -> Value {
+    let mut profile = json!({
+        "model_dir": false,
+        "quant": "q8_0",
+        "attention": "auto",
+        "output_quantization": "int8",
+        "max_input_tokens": crate::config::embedder::DEFAULT_MAX_INPUT_TOKENS,
+    });
+    if let (Some(profile), Some(changed)) = (profile.as_object_mut(), changed.as_object()) {
+        profile.extend(changed.clone());
+    }
+    profile
+}
+
+/// The shipped model's measured floors.
+const MEASURED: oneiron::config::VectorEvidenceFloors = oneiron::config::VectorEvidenceFloors {
+    floor: 0.15,
+    strong: 0.25,
+};
+
+/// Review P3 (Astra, #1361): a shipped model's measured floors hold only for
+/// the profile they were measured under. Bug repro: an endpoint vault took
+/// them from its own `model_id` alone, so a server running the shipped model
+/// with binary output, which no one measured, was judged by them while a
+/// local vault on the same settings was not. A vault now takes its floors
+/// when it admits the server, from the model and profile the server names,
+/// by the local provider's rule; a profile it cannot read, or none, keeps the
+/// engine's default.
+#[test]
+fn an_endpoint_takes_measured_floors_only_for_the_profile_they_were_measured_with() {
+    let shipped_id = crate::config::embedder::DEFAULT_MODEL_ID;
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    mock.serve_model(shipped_id);
+    let shipped = EmbedderConfig {
+        model_id: shipped_id.to_owned(),
+        ..endpoint_config(&mock.base)
+    };
+    let floors = |profile: Value, config: &EmbedderConfig| {
+        mock.serve_profile(profile);
+        let dir = tempfile::tempdir().expect("vault dir");
+        let vault = vault_on(dir.path(), shipped_id);
+        EmbedderSlot::from_config(config)
+            .expect("slot")
+            .expect("active")
+            .ensure_ready(|admission| admission.into_vault(&vault))
+            .expect("admitted");
+        vault.vector_evidence()
+    };
+    assert_eq!(floors(shipped_profile(json!({})), &shipped), MEASURED);
+    let blank = EmbedderConfig {
+        query_instruction: Some(" \n".to_owned()),
+        ..shipped.clone()
+    };
+    assert_eq!(floors(shipped_profile(json!({})), &blank), MEASURED);
+    let default = oneiron::config::VectorEvidenceFloors::default();
+    for changed in [
+        json!({ "output_quantization": "binary" }),
+        json!({ "quant": "none" }),
+        json!({ "attention": "causal" }),
+        json!({ "attention": "bidirectional" }),
+        json!({ "max_input_tokens": 8 }),
+        json!({ "model_dir": true }),
+        json!({ "quant": "a precision this build does not know" }),
+    ] {
+        assert_eq!(
+            floors(shipped_profile(changed.clone()), &shipped),
+            default,
+            "{changed}"
+        );
+    }
+    assert_eq!(floors(Value::Null, &shipped), default, "no profile listed");
+    let prompted = EmbedderConfig {
+        query_instruction: Some("Represent this query: ".to_owned()),
+        ..shipped
+    };
+    assert_eq!(floors(shipped_profile(json!({})), &prompted), default);
+}
+
+/// A server restarted with another profile and the same transform keeps
+/// serving the vault, judged by the floors that profile takes: its answers
+/// are refused until the worker admits it again, and then fill.
+#[test]
+fn a_server_back_with_another_profile_is_admitted_again_with_its_floors() {
+    let shipped_id = crate::config::embedder::DEFAULT_MODEL_ID;
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    mock.serve_model(shipped_id);
+    mock.serve_profile(shipped_profile(json!({})));
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = vault_on(dir.path(), shipped_id);
+    let config = EmbedderConfig {
+        model_id: shipped_id.to_owned(),
+        idle_interval_ms: 20,
+        // A refused answer's row is leased again after this, inside the
+        // worker's first backoff.
+        lease_ms: 1_000,
+        ..endpoint_config(&mock.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let server = Arc::new(
+        crate::server::SyncServer::new(Arc::clone(&vault), Default::default())
+            .expect("sync server")
+            .with_embedder(Some(slot)),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("worker runtime");
+    runtime.block_on(async {
+        let worker = server.spawn_embedding_worker().expect("a worker");
+        let first = put_claim(&vault, 0xE3, "a claim the measured profile embeds");
+        assert!(wait_for_vectors(&vault, &[first]).await, "filled");
+        assert_eq!(vault.vector_evidence(), MEASURED);
+
+        mock.serve_profile(shipped_profile(json!({ "output_quantization": "binary" })));
+        let second = put_claim(&vault, 0xE4, "a claim the binary profile embeds");
+        let filled = wait_for_vectors(&vault, &[second]).await;
+        worker.abort();
+        assert!(filled, "admitted again and filled");
+        assert_eq!(
+            vault.vector_evidence(),
+            oneiron::config::VectorEvidenceFloors::default()
+        );
+    });
+    runtime.shutdown_background();
 }
 
 /// An endpoint has no model files to read a prompt from: a query carries
@@ -507,6 +1033,64 @@ fn a_probe_against_an_unreachable_endpoint_is_not_fatal() {
     ));
 }
 
+/// Review R4-3: a remote with no listing route is the OpenAI wire with an
+/// unknown catalog. Bug repro: the probe called it unreachable, so `reembed`
+/// refused to move a vault to it; it now checks its width.
+#[test]
+fn a_remote_with_no_listing_route_is_probed_at_its_width() {
+    let mock = MockEndpoint::start(MockBehaviour::NoListing);
+    assert!(matches!(
+        endpoint::probe_endpoint(mock.embedder().as_ref()),
+        Ok(ProbeOutcome::Ready)
+    ));
+    assert_eq!(
+        endpoint::resolve_transform(&endpoint_config(&mock.base)).expect("resolved"),
+        None
+    );
+}
+
+/// Review R4-4: a vault moves to the transform an answer came from. Bug
+/// repro: the probe's answer was held to nothing and the listing was read
+/// again after it, so a remote whose listing names one transform while its
+/// answers carry another moved the vault to the listed one.
+#[test]
+fn a_move_is_refused_when_the_answers_do_not_carry_the_listed_transform() {
+    let mock = MockEndpoint::start(MockBehaviour::ListingDisagrees);
+    endpoint::resolve_transform(&endpoint_config(&mock.base))
+        .expect_err("answers from another transform than the listed one");
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    assert_eq!(
+        endpoint::resolve_transform(&endpoint_config(&mock.base)).expect("resolved"),
+        Some(MOCK_TRANSFORM.to_owned())
+    );
+}
+
+/// Review R4-1: a vault on the shipped model takes its measured evidence
+/// floors, which were measured with unprompted queries. Bug repro: with no
+/// instruction of its own the vault sent none, so the shared server's own
+/// query prompt applied.
+#[test]
+fn a_vault_on_the_shipped_model_sends_its_queries_unprompted() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let shipped = EmbedderConfig {
+        model_id: crate::config::embedder::DEFAULT_MODEL_ID.to_owned(),
+        ..endpoint_config(&mock.base)
+    };
+    for config in [shipped, endpoint_config(&mock.base)] {
+        endpoint::HttpEmbedder::from_config(&config)
+            .expect("http embedder")
+            .embed_query("cats")
+            .expect("query embedded");
+    }
+    let requests = mock.requests();
+    assert_eq!(requests[0]["instruction"], json!(""));
+    assert_eq!(
+        requests[1].get("instruction"),
+        None,
+        "another model's vault leaves the server's query prompt to it"
+    );
+}
+
 /// A pending row that projects to nothing is refused rather than embedded: the
 /// alternative is a vector with no meaning that retrieval would then rank.
 #[test]
@@ -529,9 +1113,14 @@ fn an_empty_projection_is_refused() {
 
 /// A vault whose width and space match the mock endpoint.
 fn test_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
+    vault_on(dir, MOCK_MODEL)
+}
+
+/// A vault of the mock endpoint's width in `model`'s space.
+fn vault_on(dir: &std::path::Path, model: &str) -> Arc<oneiron::Vault> {
     let mut config = oneiron::VaultConfig::device();
     config.dimensions = DIMS;
-    config.embedding_model = Some("test/model@rev".to_owned());
+    config.embedding_model = Some(model.to_owned());
     Arc::new(oneiron::Vault::open(dir, config).expect("test vault"))
 }
 
@@ -1082,7 +1671,9 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
             }),
         });
         let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
-        let rung = build_remote_rung(&config).unwrap().unwrap();
+        let rung = build_remote_rung(&config, Default::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(rung.lease_duration_ms, 120_000);
         let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), primary)
             .with_remote_rung(rung)
@@ -1175,7 +1766,7 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
         Arc::clone(&vault),
         slot.ensure_ready(|_| Ok(())).unwrap() as Arc<dyn oneiron::embed::Embedder>,
     )
-    .with_remote_rung(build_remote_rung(embedder).unwrap().unwrap())
+    .with_remote_rung(slot.remote_rung().unwrap().unwrap())
     .unwrap();
     let report = reconciler.reconcile_once().unwrap();
     assert_eq!(
