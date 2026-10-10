@@ -69,7 +69,7 @@ fn init_with_env(
             }
             Some(embedder) => {
                 crate::embedder::build_slot(Some(embedder))?;
-                crate::embedder::build_remote_rung(embedder)?;
+                crate::embedder::build_remote_rung(embedder, Default::default())?;
                 if let Some(remote) = &embedder.remote {
                     format!(
                         "{} endpoint with on-device fallback and queries",
@@ -601,7 +601,7 @@ provider = "local"
         );
         assert!(!remote.egress.as_ref().unwrap().allow_all);
         assert_eq!(config.endpoint.locality, EmbedderLocality::OnDevice);
-        crate::embedder::build_remote_rung(&config).unwrap();
+        crate::embedder::build_remote_rung(&config, Default::default()).unwrap();
         assert!(!path.exists());
         assert!(!args.path.exists());
     }

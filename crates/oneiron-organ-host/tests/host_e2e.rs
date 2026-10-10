@@ -174,6 +174,18 @@ fn a_missed_deadline_cancels_then_kills_and_the_next_call_starts_clean() {
 }
 
 #[test]
+fn a_deadline_past_the_clock_is_answered_not_a_panic() {
+    // Review repro (#1370): `Instant + Duration::MAX` panicked before
+    // admission.
+    let (_dir, vault) = vault();
+    let host = host();
+    let mut patient = call("organ.echo", "patient".into(), Vec::new(), "g");
+    patient.deadline = Duration::MAX;
+    let echoed = host.call(&vault, patient).expect("a far deadline answers");
+    assert_eq!(echoed.report, rmpv::Value::from("patient"));
+}
+
+#[test]
 fn a_revoked_grant_stops_a_hostile_call_mid_flight() {
     let (_dir, vault) = vault();
     let host = host();

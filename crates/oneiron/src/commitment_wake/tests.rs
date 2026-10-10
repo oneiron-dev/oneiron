@@ -885,3 +885,88 @@ fn quiet_window_holds_then_eventually_delivers_after_window() {
     );
     assert_eq!(sink.calls.len(), 1, "the deferred send eventually happens");
 }
+
+/// The proposal as a landed retraction leaves it: lifecycle `Retracted`,
+/// valid to `now`. Written below the gate, which holds a Dreamer-authored
+/// proposal's retraction for consent in this fixture vault; the executor
+/// reads exactly the claim a landed retraction leaves.
+fn land_retraction(vault: &Vault, proposal: &EntityId, now: u64) {
+    let mut body = vault
+        .get_claim(proposal)
+        .expect("read the proposal")
+        .expect("the proposal");
+    body.lifecycle = ClaimLifecycleStatus::Retracted;
+    body.valid_to = Some(now);
+    let data = crate::claim::encode_claim_body(&body).expect("encode the retraction");
+    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(now), now, &data);
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .entities
+                .put(wtxn, proposal.as_bytes(), &payload)?;
+            Ok(())
+        })
+        .expect("land the retraction");
+}
+
+/// Astra #1353 finding 4: approval revocation reaches an already scheduled
+/// wake. Approve, schedule, then retract the proposal before the connector
+/// executor runs: nothing is sent, and the TASK settles as failed.
+#[test]
+fn retracting_an_approved_wake_stops_its_scheduled_send() {
+    let (_dir, vault) = open_vault();
+    let (instance, _attempt, proposal) = propose_lead_wake(&vault);
+    let key = phase_key(instance, CommitmentWakePhase::Lead);
+    accept_group(&vault, &key, DUE_AT);
+    let token = approved_commitment_wake(&vault, &proposal).expect("approved token");
+    let agent = party(DREAMER_AGENT);
+    put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().expect("default manifest id"),
+        &voice_send_manifest(&agent.to_hex()),
+    )
+    .expect("seed policy manifest");
+    let facade = vault.memory(agent, EdgeActorClass::Agent);
+    schedule_approved_commitment_wake(&facade, token).expect("the approved wake schedules");
+
+    land_retraction(&vault, &proposal, DUE_AT);
+
+    let mut sink = RecordingSink::default();
+    vault
+        .run_connector_task_executor(&mut sink, DUE_AT)
+        .expect("the executor runs");
+    assert!(sink.calls.is_empty(), "a withdrawn approval sends nothing");
+    let task = vault
+        .connector_send_tasks()
+        .expect("connector tasks")
+        .into_iter()
+        .find(|task| task.intent.idempotency_key.as_deref() == Some(key.as_str()))
+        .expect("the scheduled TASK");
+    assert_eq!(
+        task.outcome,
+        Some(crate::outbound::ConnectorSendTaskOutcome::Failed)
+    );
+}
+
+/// Greptile #1353: an approved run member whose claim cannot be read is
+/// reported to the approval door, not passed over.
+#[test]
+fn an_unreadable_claim_is_reported_by_the_approval_hook() {
+    let (_dir, vault) = open_vault();
+    let id = party(0x6D);
+    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(1), 1, &[0xc1]);
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+            let key = crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &id);
+            vault.store.type_index.put(wtxn, &key, &[])?;
+            Ok(())
+        })
+        .expect("seed an unreadable claim");
+    let results = schedule_approved_commitment_wakes(&vault, &[id]);
+    assert!(
+        matches!(results.as_slice(), [(claim, Err(_))] if *claim == id),
+        "{results:?}"
+    );
+}
