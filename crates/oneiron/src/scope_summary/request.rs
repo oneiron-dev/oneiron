@@ -7,11 +7,13 @@
 //! requester's move on its own turn.
 
 use super::codec::{invalid, parse_scope, scope_value};
-use super::doors::{LandedHeader, land_in_txn, mint_in_txn, validate_landing_in_txn};
+use super::doors::{
+    LandedHeader, ScopeSources, land_in_txn, mint_in_txn, scope_sources_in_txn,
+    validate_landing_in_txn,
+};
 use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::conversation_dag::{
-    ScopePath, ScopeSelector, actor_in_txn, prove_branch_span, resolve_in_txn,
-    selected_thread_in_txn,
+    ScopePath, ScopeSelector, actor_in_txn, prove_branch_span, selected_thread_in_txn,
 };
 use crate::dreamer_consolidation::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::dreamer_runner::{
@@ -59,6 +61,9 @@ pub struct ScopeSummaryQueued {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScopeSummaryPlan {
     pub(crate) scope: ScopeSelector,
+    /// Everything the scope resolved to: the landing fence.
+    pub(crate) members: Vec<EntityId>,
+    /// The records the body is written from, and so its `covers`.
     pub(crate) covers: Vec<EntityId>,
     pub(crate) land_on: Option<EntityId>,
     pub(crate) as_record: bool,
@@ -100,7 +105,7 @@ impl Vault {
             actor_in_txn(&self.store, txn, request.requester)?;
             match &request.target {
                 ScopeSummaryTarget::Scope { scope, land_on, .. } => {
-                    if resolve_in_txn(self, txn, scope)?.records.is_empty() {
+                    if scope_sources_in_txn(self, txn, scope)?.sources.is_empty() {
                         return Err(invalid("summary scope covers no records"));
                     }
                     if let Some(turn) = land_on {
@@ -173,13 +178,14 @@ impl Vault {
                     (scope, Some(trunk), false)
                 }
             };
-            let covers = resolve_in_txn(self, txn, &scope)?.records;
-            if covers.is_empty() {
+            let ScopeSources { members, sources } = scope_sources_in_txn(self, txn, &scope)?;
+            if sources.is_empty() {
                 return Err(invalid("summary scope covers no records"));
             }
             Ok(ScopeSummaryPlan {
                 scope,
-                covers,
+                members,
+                covers: sources,
                 land_on,
                 as_record,
                 requester: request.requester,
@@ -198,8 +204,9 @@ impl Vault {
 
     /// Lands a body the Dreamer composed over `plan`, once per attempt.
     ///
-    /// The scope must still resolve to exactly the records the body was
-    /// written from; a moved scope is refused and the attempt composes again.
+    /// The scope must still resolve as it did when the body was written, so
+    /// the minted `covers` are the records the body was written from; a moved
+    /// scope is refused and the attempt composes again.
     pub(crate) fn land_composed_scope_summary(
         &self,
         attempt: AttemptId,
@@ -224,7 +231,8 @@ impl Vault {
                 }
                 return Ok((id, None));
             }
-            if resolve_in_txn(self, txn, &plan.scope)?.records != plan.covers {
+            let current = scope_sources_in_txn(self, txn, &plan.scope)?;
+            if current.members != plan.members || current.sources != plan.covers {
                 return Err(Error::ConcurrentWrite(
                     "summary scope changed while the Dreamer composed it",
                 ));

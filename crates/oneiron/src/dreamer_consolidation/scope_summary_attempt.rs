@@ -241,29 +241,12 @@ fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecut
     }
 }
 
-/// A summary's own reply record carries a `summary` pointer. Its text is
-/// generated prose, and the records it summarized are still in the scope.
-fn is_summary_reply(vault: &crate::Vault, record: &crate::EntityId) -> Result<bool> {
-    let Some(raw) = vault.get_raw(record)? else {
-        return Ok(false);
-    };
-    let mut body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..];
-    Ok(match rmpv::decode::read_value(&mut body) {
-        Ok(rmpv::Value::Map(entries)) => entries
-            .iter()
-            .any(|(key, _)| key.as_str() == Some("summary")),
-        _ => false,
-    })
-}
-
 /// The covered records' text as the model reads it, one line per record.
-/// An earlier summary's reply is left out, so a summary never feeds on one.
+/// The plan's covers never hold an earlier summary's reply, so a summary
+/// never feeds on summary prose.
 fn scope_evidence(vault: &crate::Vault, covers: &[crate::EntityId]) -> Result<String> {
     let mut evidence = String::new();
     for record in covers {
-        if is_summary_reply(vault, record)? {
-            continue;
-        }
         if let Some(text) = read_turn_text(vault, record)?.into_text() {
             evidence.push_str(&format!("[{}] {text}\n", record.to_hex()));
         }

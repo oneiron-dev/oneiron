@@ -168,6 +168,39 @@ pub(crate) fn merge_summary_ref(body: &crate::ClaimBody) -> Result<Option<(Entit
     Ok(Some((turn, summary)))
 }
 
+/// A scope's resolved membership, and the records a summary of it reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ScopeSources {
+    pub(super) members: Vec<EntityId>,
+    /// The members less any earlier summary's reply: that reply is generated
+    /// prose, never a source (ARCH-0006a), and the records it summarized
+    /// count only where the scope holds them itself.
+    pub(super) sources: Vec<EntityId>,
+}
+
+pub(super) fn scope_sources_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    scope: &ScopeSelector,
+) -> Result<ScopeSources> {
+    let members = resolve_in_txn(vault, txn, scope)?.records;
+    let mut sources = Vec::with_capacity(members.len());
+    for record in &members {
+        let reply = match crate::vault::live_entity_row_in_txn(&vault.store, txn, record)? {
+            crate::vault::LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_TURN,
+                body,
+            } => super::codec::reply_summary(&body)?.is_some(),
+            _ => false,
+        };
+        if !reply {
+            sources.push(*record);
+        }
+    }
+    Ok(ScopeSources { members, sources })
+}
+
+/// Mints a summary whose `covers` are exactly the scope's sources.
 pub(super) fn mint_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -178,13 +211,12 @@ pub(super) fn mint_in_txn(
     now: u64,
 ) -> Result<EntityId> {
     actor_in_txn(&vault.store, txn, actor)?;
-    let resolved = resolve_in_txn(vault, txn, scope)?;
     let body = ScopeSummaryBody {
         v: 1,
         scope: scope.clone(),
         text: text.to_owned(),
         actor: actor.entity_ref().to_hex(),
-        covers: resolved.records,
+        covers: scope_sources_in_txn(vault, txn, scope)?.sources,
         minted_at: now,
     };
     let encoded = encode_scope_summary_body(&body)?;

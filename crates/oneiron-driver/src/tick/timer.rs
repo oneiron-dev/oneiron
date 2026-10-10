@@ -13,10 +13,11 @@ use oneiron::{commitment_schedule, commitment_wake};
 use super::{CommitmentDeadline, DeadlineSource, NowMillis, system_now_ms};
 
 /// [`DeadlineSource`] over the vault's advisory attempt table: the earliest due
-/// queued Dreamer consolidation attempt THIS NODE could admit. A queued attempt
+/// pending Dreamer consolidation attempt THIS NODE could admit. A queued attempt
 /// with no retry backoff is due at its enqueue stamp; a backoff-delayed attempt
-/// is due when the backoff clears. Attempt stamps are stored in seconds and
-/// surfaced here in milliseconds.
+/// is due when the backoff clears, and a scheduled retry at its scheduled
+/// instant. Attempt stamps are stored in seconds and surfaced here in
+/// milliseconds.
 ///
 /// MACRO attempts are gated at admission by the full local-admissibility
 /// predicate (`admit_next_consolidation`): `local_node_id` must match both
@@ -107,7 +108,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         let mut macro_error = None;
         let mut next: Option<CommitmentDeadline> = None;
         for attempt in queue.list()? {
-            if attempt.state != AttemptState::Queued {
+            if !matches!(attempt.state, AttemptState::Queued | AttemptState::Scheduled) {
                 continue;
             }
             let Some(scope) = scope_for_attempt_kind(&attempt.kind) else {
@@ -132,7 +133,11 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     continue;
                 }
             }
-            let due_secs = attempt.backoff_until.unwrap_or(attempt.created_at);
+            // The same readiness instant the claim reads.
+            let due_secs = attempt
+                .scheduled_at
+                .or(attempt.backoff_until)
+                .unwrap_or(attempt.created_at);
             let due_at_ms = due_secs.saturating_mul(1_000);
             if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
                 next = Some(CommitmentDeadline { due_at_ms, scope });

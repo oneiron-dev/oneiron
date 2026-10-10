@@ -996,9 +996,10 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
     );
 }
 
-/// ARCH-0006a #dag-summaries: a summary never feeds on summary prose. The first
-/// canonical summary leaves its reply on the trunk; the second one reads the
-/// records, not that reply (review repro).
+/// ARCH-0006a #dag-summaries: a summary never feeds on summary prose, and its
+/// `covers` are the exact records it summarized. The first canonical summary
+/// leaves its reply on the trunk; the second one reads and covers the records,
+/// not that reply (review repros).
 #[tokio::test]
 async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
     let reply = Reply::Text {
@@ -1047,5 +1048,17 @@ async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
     };
     assert!(second.contains("the original record"), "{second}");
     assert!(!second.contains("summary prose one"), "{second}");
+    for summary in server
+        .vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
+        .unwrap()
+    {
+        let covers = get(
+            &server,
+            &format!("/v1/core/summaries/{}/covers", summary.to_hex()),
+        )
+        .await;
+        assert_eq!(covers["covers"], json!([root["id"]]));
+    }
     host.shutdown().await;
 }

@@ -75,6 +75,50 @@ fn attempt_queue_deadlines_skip_macro_when_designation_matches_but_vault_identit
     );
 }
 
+/// A Dreamer attempt that retries later waits as a Scheduled successor. The
+/// timer arms for its scheduled instant; without that an idle server never
+/// runs it again (review repro: a summary whose scope moved while composing).
+#[test]
+fn attempt_queue_deadlines_arm_a_scheduled_retry() {
+    use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome, RetryAttempt};
+
+    let (_dir, vault) = open_vault();
+    let local = vault_client_node_id(&vault);
+    enqueue(&vault, DreamerConsolidationScope::Micro, "micro-retry", 10);
+    let queue = AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue
+        .claim_kind(
+            DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker-a".to_owned(),
+                now: 10,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("the queued attempt was not claimed");
+    };
+    queue
+        .retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: 70,
+            last_error: None,
+            now: 10,
+        })
+        .expect("retry");
+    assert_eq!(
+        AttemptQueueDeadlines::new(&vault, local)
+            .next_deadline()
+            .expect("read"),
+        Some(CommitmentDeadline {
+            due_at_ms: 70_000,
+            scope: DreamerConsolidationScope::Micro,
+        })
+    );
+}
+
 /// CMT-2 (ONE-1539). Two independent durable sources, one merge rule:
 /// the earlier instant arms the timer and a TIE keeps the attempt, so
 /// wiring the commitment lane in can never displace a deadline the attempt
