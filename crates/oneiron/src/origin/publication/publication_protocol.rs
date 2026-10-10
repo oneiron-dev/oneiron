@@ -51,7 +51,7 @@ impl Vault {
         }
         let repo_id = self.origin_repo_id_for(repo)?;
         let key = keep_owner_key(&repo_id, oid, kind, owner_key);
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             KEEP_OWNER.put(&self.store, wtxn, &key, &learned_at.to_le_bytes())?;
             Ok(())
         })?;
@@ -79,7 +79,7 @@ impl Vault {
         let _guard = lock_repository(repo.common_dir())?;
         let repo_id = self.origin_repo_id_for(repo)?;
         let key = keep_owner_key(&repo_id, oid, kind, owner_key);
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             KEEP_OWNER.delete(&self.store, wtxn, &key)?;
             Ok(())
         })?;

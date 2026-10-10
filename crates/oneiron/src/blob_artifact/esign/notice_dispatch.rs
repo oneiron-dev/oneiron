@@ -55,7 +55,7 @@ struct NoticeSink<'a> {
 }
 impl OutboundExecutionSink for NoticeSink<'_> {
     fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        let result = self.vault.with_write_txn(|txn| {
+        let result = self.vault.with_write_txn_grouped(|txn| {
             let queue = AttemptQueue::new(self.vault);
             let current = queue
                 .get_in_write_txn(txn, self.attempt.id)?
@@ -240,7 +240,7 @@ impl Vault {
         }
         let result = recorded.result;
         let identity = recorded.identity;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let queue = AttemptQueue::new(self);
             let lease_owner = attempt
                 .lease_owner

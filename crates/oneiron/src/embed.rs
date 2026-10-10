@@ -1,9 +1,17 @@
 mod cold_attach;
 mod eligibility;
 mod locality;
+mod turn;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
-pub(crate) use eligibility::{embeddable_payload, indexed_payload};
+pub(crate) use eligibility::{
+    embeddable_payload, embeddable_payload_in_txn, indexed_payload, joined_turn_text,
+    turn_text_in_txn,
+};
 pub(crate) use locality::clear_embedding_locality_in_txn;
+pub(crate) use turn::{
+    erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
+    mark_turn_in_txn,
+};
 
 #[cfg(feature = "sync")]
 use crate::ports::EntityStoreRead;
@@ -48,13 +56,16 @@ pub enum EmbedderLocality {
 /// Content supplied to an embedder and its egress predicate.
 ///
 /// Match the variant before decoding: CLAIM carries its canonical record,
-/// while an epoch SUMMARY carries only its already-decoded prose.
+/// while an epoch SUMMARY and a TURN carry only their already-read text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingEmbeddingPayload {
     /// Canonical MessagePack CLAIM body bytes, without the entity header.
     ClaimBody(Vec<u8>),
     /// UTF-8 prose from a validated epoch-summary body, without framing keys.
     SummaryText(String),
+    /// A TURN's text: its visible MESSAGE children's text in message order,
+    /// one per line (ARCH-0004: the turn is the embedding unit).
+    TurnText(String),
 }
 
 /// One pending entity supplied to a host-injected embedder.
@@ -101,6 +112,9 @@ pub trait EgressPredicate: Send + Sync {
     /// Called under a held write transaction: host trait impls invoked
     /// under a held txn/lock must be non-blocking cached lookups; hosts run
     /// arbitrary inference in the async phases the engine exposes for it.
+    /// That transaction may be one group commit shared with other writes:
+    /// `decide` must not call into the vault or wait on anything a vault
+    /// caller can hold while it writes, or the vault's writer deadlocks.
     fn decide(&self, input: &PendingEmbeddingInput) -> EgressDecision;
 }
 
@@ -152,7 +166,9 @@ pub fn dequantize_int8_embedding(codes: &[i8], scale: f32) -> Vec<f32> {
 /// bytes and therefore still one space — it is not an attempt at prose.
 pub fn payload_text(payload: &PendingEmbeddingPayload) -> Result<Cow<'_, str>> {
     match payload {
-        PendingEmbeddingPayload::SummaryText(text) => Ok(Cow::Borrowed(text)),
+        PendingEmbeddingPayload::SummaryText(text) | PendingEmbeddingPayload::TurnText(text) => {
+            Ok(Cow::Borrowed(text))
+        }
         PendingEmbeddingPayload::ClaimBody(bytes) => Ok(Cow::Owned(claim_text(
             &crate::claim::decode_claim_body(bytes, true)?,
         ))),
@@ -478,7 +494,7 @@ impl PendingEmbeddingReconciler {
             return Ok(batch);
         }
 
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             for job in jobs {
                 if crate::vault::entity_revision::entity_has_pending_revision(
                     &self.vault.store,
@@ -554,7 +570,7 @@ impl PendingEmbeddingReconciler {
         locality: EmbedderLocality,
     ) -> Result<bool> {
         let mut filled_current = false;
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             let current_before = self
                 .vault
                 .store
@@ -644,7 +660,7 @@ pub(crate) fn enqueue_pending_embedding_jobs(
         "K6: a live-overlay id reached the embed job queue; session content \
          embeds inline and must never enqueue a background job"
     );
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         for id in ids {
             if vault
                 .store
@@ -661,7 +677,7 @@ pub(crate) fn enqueue_pending_embedding_jobs(
 #[cfg(feature = "sync")]
 fn pending_input_in_txn(
     vault: &crate::Vault,
-    wtxn: &heed::RwTxn<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<PendingEmbeddingInput>> {
     let Some(token) = vault.store.pending_embedding_token_in_txn(wtxn, id)? else {
@@ -670,6 +686,22 @@ fn pending_input_in_txn(
     let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(None);
     };
+    // A TURN embeds its messages' text, read now, and the lease commits to
+    // exactly that text: marking it again here makes a fill current only for
+    // the words it embedded, even when a door that moved them marked nothing.
+    if raw.entity_type == crate::registry::ENTITY_TYPE_TURN {
+        let Some(text) = turn_text_in_txn(vault, wtxn, id)? else {
+            return Ok(None);
+        };
+        let token = vault
+            .store
+            .mark_pending_embedding(wtxn, id, text.as_bytes())?;
+        return Ok(Some(PendingEmbeddingInput {
+            entity_id: *id,
+            payload: PendingEmbeddingPayload::TurnText(text),
+            pending_embedding_token: token,
+        }));
+    }
 
     // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
     // CLAIM, and what the embedder (and egress gate) receives is its TEXT: the
@@ -704,7 +736,7 @@ fn retire_excluded_marker_in_txn(
     let Some(record) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(());
     };
-    if embeddable_payload(record.entity_type, &record.body).is_none() {
+    if embeddable_payload_in_txn(vault, wtxn, id, record.entity_type, &record.body)?.is_none() {
         vault.store.clear_pending_embedding(wtxn, id)?;
     }
     Ok(())

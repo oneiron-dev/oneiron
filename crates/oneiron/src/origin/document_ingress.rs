@@ -169,7 +169,7 @@ impl Vault {
             provenance: attribution.provenance_claim_id,
             ref_name_hash: *blake3::hash(update.name.as_bytes()).as_bytes(),
         };
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if let Some(old) = CODE_OPERATIONS.get(&self.store, txn, &receipt_key)?
                 && old != operations
             {

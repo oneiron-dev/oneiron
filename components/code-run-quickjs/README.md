@@ -34,7 +34,7 @@ other than `$root`; it does not add a WASI adapter to make such an import work.
 
 The build emits:
 
-- `quickjs-first-party.wasm`: all 14 typed imports;
+- `quickjs-first-party.wasm`: all 17 typed imports;
 
 - `quickjs-foreign.wasm`: only the four non-write imports;
 - `manifest.json`: source, WIT, toolchain and artifact pins.
@@ -69,6 +69,13 @@ Foreign guests have no `self` object. Their `propose.file(...)` and
 Only workspace/output file paths are proposal targets; upload and skill files
 remain read-only. Native globals (`process`, `require`, `fetch`, `std`, `os`)
 are absent. No import loader can reintroduce them.
+
+First-party `self.memory` carries one async method per SDK verb-table row the
+host serves (`self.memory.recall(input)`, `self.memory.tasks.create(input)`).
+Bootstrap builds them from the hidden `self.verbs` imports and then deletes
+`self.verbs`, so a row added to `scripts/sdk/agent-verbs.json` reaches the guest
+with no component rebuild. The four write-trap methods (`search`, `put_claim`,
+`supersede_claim`, `put_edge`) remain typed imports beside them.
 
 The interpreter has its own 24 MiB tracked heap and instruction-interrupt cap.
 Wasmtime adds bounded fuel, linear memory, stack, wall time and host-call counts.

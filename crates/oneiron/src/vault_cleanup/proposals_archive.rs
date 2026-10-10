@@ -57,7 +57,7 @@ pub fn cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<Option<Cle
 /// [`MaintenanceError::VaultCleanupProposalNotFound`](crate::error::MaintenanceError::VaultCleanupProposalNotFound) when no such proposal is open;
 /// storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn accept_cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<CleanupAcceptOutcome> {
-    vault.with_write_txn(|wtxn| accept_cleanup_proposal_in_txn(vault, wtxn, proposal))
+    vault.with_write_txn_grouped(|wtxn| accept_cleanup_proposal_in_txn(vault, wtxn, proposal))
 }
 
 pub(super) fn accept_cleanup_proposal_in_txn(
@@ -104,7 +104,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
 /// [`MaintenanceError::VaultCleanupProposalNotFound`](crate::error::MaintenanceError::VaultCleanupProposalNotFound) when no such proposal is open;
 /// storage errors.
 pub fn reject_cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if !PROPOSAL.delete(&vault.store, wtxn, proposal)? {
             return Err(Error::Maintenance(
                 MaintenanceError::VaultCleanupProposalNotFound {
@@ -215,7 +215,7 @@ impl Vault {
     /// [`MaintenanceError::VaultCleanupRestoreNotArchived`](crate::error::MaintenanceError::VaultCleanupRestoreNotArchived),
     /// [`MaintenanceError::VaultCleanupArchiveMarkerUndecodable`](crate::error::MaintenanceError::VaultCleanupArchiveMarkerUndecodable), storage errors.
     pub fn restore_archived(&self, entity: &EntityId) -> Result<()> {
-        self.with_write_txn(|wtxn| self.restore_archived_in_txn(wtxn, entity))
+        self.with_write_txn_grouped(|wtxn| self.restore_archived_in_txn(wtxn, entity))
     }
 
     pub(crate) fn restore_archived_in_txn(

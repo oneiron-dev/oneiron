@@ -102,49 +102,52 @@ fn prove_bm25_doc_counted_for_missing_posting_repair(
 }
 
 /// One document's fields as the analyzer reads them: term frequencies per
-/// field and surface lengths per field and in total. Pure computation over the
-/// caller's fields and the vault's analyzer, so a writer can do it before it
-/// takes the write transaction (RESEARCH-1115 Bend 2).
-pub(crate) struct AnalyzedText {
+/// field and surface lengths per field and in total.
+struct Analysis {
     /// (term, field id) -> tf, sorted by term then field so the forward index
     /// is canonical.
     per_term: BTreeMap<String, BTreeMap<u16, u32>>,
     per_field_len: HashMap<u16, u32>,
     doc_len_total: u32,
-    /// The input it was read from, so a stale analysis is never indexed.
-    source_bytes: usize,
-    source_fields: usize,
+}
+
+/// An [`Analysis`] done before the write transaction opens, so a writer does
+/// this pure computation outside its critical section (RESEARCH-1115 Bend 2).
+/// It owns a copy of the fields it was read from and indexes only those.
+pub(crate) struct AnalyzedText {
+    analysis: Analysis,
+    source: Vec<(String, String)>,
 }
 
 impl std::fmt::Debug for AnalyzedText {
     // Terms are the caller's text; only their shape is printed.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AnalyzedText")
-            .field("terms", &self.per_term.len())
-            .field("fields", &self.per_field_len.len())
-            .field("doc_len_total", &self.doc_len_total)
+            .field("terms", &self.analysis.per_term.len())
+            .field("fields", &self.analysis.per_field_len.len())
+            .field("doc_len_total", &self.analysis.doc_len_total)
             .finish_non_exhaustive()
     }
 }
 
 impl AnalyzedText {
-    /// Whether this analysis was read from `fields`.
+    /// Whether this analysis was read from exactly `fields`.
     pub(crate) fn reads(&self, fields: &[(String, String)]) -> bool {
-        self.source_fields == fields.len() && self.source_bytes == source_bytes(fields)
+        self.source == fields
     }
-}
-
-fn source_bytes(fields: &[(String, String)]) -> usize {
-    fields
-        .iter()
-        .map(|(name, value)| name.len().saturating_add(value.len()))
-        .fold(0, usize::saturating_add)
 }
 
 pub(crate) fn analyze_text(
     analyzer: &MultilingualAnalyzer,
     fields: &[(String, String)],
 ) -> Result<AnalyzedText> {
+    Ok(AnalyzedText {
+        analysis: analyze(analyzer, fields)?,
+        source: fields.to_vec(),
+    })
+}
+
+fn analyze(analyzer: &MultilingualAnalyzer, fields: &[(String, String)]) -> Result<Analysis> {
     let mut tokens: Vec<Token> = Vec::new();
     let ctx = AnalyzerContext::for_index();
     for (_, value) in fields {
@@ -180,12 +183,10 @@ pub(crate) fn analyze_text(
             per_term.entry(term).or_default().insert(fid, tf);
         }
     }
-    Ok(AnalyzedText {
+    Ok(Analysis {
         per_term,
         per_field_len,
         doc_len_total,
-        source_bytes: source_bytes(fields),
-        source_fields: fields.len(),
     })
 }
 
@@ -197,11 +198,12 @@ pub(crate) fn index_text(
     fields: &[(String, String)],
 ) -> Result<()> {
     validate_text_doc_id(id)?;
-    let analyzed = analyze_text(analyzer, fields)?;
-    index_analyzed_text(store, wtxn, id, fields, &analyzed)
+    let analysis = analyze(analyzer, fields)?;
+    write_index(store, wtxn, id, fields, &analysis)
 }
 
 /// [`index_text`] with the analysis already done, outside the transaction.
+/// Refuses an analysis read from any other fields.
 pub(crate) fn index_analyzed_text(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
@@ -215,7 +217,16 @@ pub(crate) fn index_analyzed_text(
             "bm25 analysis was read from other fields",
         ));
     }
+    write_index(store, wtxn, id, fields, &analyzed.analysis)
+}
 
+fn write_index(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    fields: &[(String, String)],
+    analysis: &Analysis,
+) -> Result<()> {
     match store.text_forward().get(wtxn, id.as_bytes())? {
         Some(_) => deindex_text(store, wtxn, id)?,
         None if store.text_meta().get(wtxn, id.as_bytes())?.is_some() => {
@@ -227,12 +238,11 @@ pub(crate) fn index_analyzed_text(
     // Canonical caller input, not tokenizer output. Restore rebuilds postings from it.
     INDEX_SOURCE_TEXT.put(store, wtxn, id, &fields.to_vec())?;
 
-    let AnalyzedText {
+    let Analysis {
         per_term,
         per_field_len,
         doc_len_total,
-        ..
-    } = analyzed;
+    } = analysis;
     if per_term.is_empty() {
         return Ok(());
     }

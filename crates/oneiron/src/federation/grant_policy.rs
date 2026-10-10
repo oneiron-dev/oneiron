@@ -266,7 +266,7 @@ impl crate::Vault {
         now: u64,
         expires_at: u64,
     ) -> Result<EntityId> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.create_federation_delegate_in_txn(
                 txn,
                 holder,

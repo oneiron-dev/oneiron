@@ -187,12 +187,20 @@ pub enum SandboxImportClass {
     /// that set closed. Speech writes a transcript row instead of memory and
     /// is gated on the witness path, so the two ceilings stay distinct.
     Speech,
+    /// The SDK verb table (ARCH-0028): the served names and one call of any
+    /// row. A row may write, so the class is a write; the host's bound verb
+    /// door gates each call as every other door gates it. Deliberately NOT
+    /// `WriteTrap`, whose closed set OF-060 P3 pins.
+    VerbTable,
 }
 
 impl SandboxImportClass {
     #[must_use]
     pub const fn is_write(self) -> bool {
-        matches!(self, Self::WriteTrap | Self::AgentAuthoring)
+        matches!(
+            self,
+            Self::WriteTrap | Self::AgentAuthoring | Self::VerbTable
+        )
     }
 }
 
@@ -271,6 +279,12 @@ const SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT: SandboxLinkedImport =
 const SELF_MEMORY_PUT_EDGE_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.put_edge", SandboxImportClass::WriteTrap);
 
+const SELF_VERBS_NAMES_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.verbs.names", SandboxImportClass::VerbTable);
+
+const SELF_VERBS_CALL_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.verbs.call", SandboxImportClass::VerbTable);
+
 const SELF_REPORT_BLOCKED_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.report_blocked", SandboxImportClass::WriteTrap);
 
@@ -304,6 +318,8 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     SELF_MEMORY_PUT_CLAIM_IMPORT,
     SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
     SELF_MEMORY_PUT_EDGE_IMPORT,
+    SELF_VERBS_NAMES_IMPORT,
+    SELF_VERBS_CALL_IMPORT,
     SELF_REPORT_BLOCKED_IMPORT,
     SELF_ASK_IMPORT,
     SELF_SPEAK_IMPORT,

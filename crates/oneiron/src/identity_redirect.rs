@@ -560,7 +560,7 @@ impl Vault {
     /// a cache, so losing it degrades resolution to the pre-topology answer
     /// and never to a wrong head.
     pub fn drop_redirect_projection(&self) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             REDIRECT.delete_from(&self.store, wtxn, &[])?;
             Ok(())
         })
@@ -578,7 +578,7 @@ impl Vault {
     /// loses its row, so a rebuild also repairs a stale table.
     pub fn rebuild_redirect_projection_from_edges(&self) -> Result<()> {
         self.drop_redirect_projection()?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let candidates = shell_edge_sources_for_store_in_txn(&self.store, &*wtxn)?;
             // A rebuild is an explicit maintenance door, so it pays the
             // UNGATED fold: it must find zero-head shells even on a vault

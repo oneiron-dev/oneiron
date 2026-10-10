@@ -140,7 +140,7 @@ impl Vault {
         let encoded = manifest.encode()?;
         let asset_id = manifest.asset_id()?;
         let owner = EntityId::now();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if DELETED.contains(&self.store, txn, &oid)?
                 || HARD_DELETE_MARKERS.contains(&self.store, txn, &HexId(asset_id))?
             {
@@ -166,7 +166,7 @@ impl Vault {
                     continue;
                 }
                 let id = chunks::chunk_id(&chunk.hash)?;
-                self.with_write_txn(|txn| {
+                self.with_write_txn_grouped(|txn| {
                     if !JOURNAL.contains(&self.store, txn, &owner)?
                         || DELETED.contains(&self.store, txn, &oid)?
                     {
@@ -197,7 +197,7 @@ impl Vault {
             if actual != *oid.as_bytes() {
                 return Err(chunks::invalid("lfs manifest pointer mismatch"));
             }
-            self.with_write_txn(|txn| {
+            self.with_write_txn_grouped(|txn| {
                 if !JOURNAL.contains(&self.store, txn, &owner)?
                     || DELETED.contains(&self.store, txn, &oid)?
                 {
@@ -235,7 +235,7 @@ impl Vault {
         })();
         // Failed/in-race duplicate imports cannot leave unreferenced byte assets.
         if !matches!(&outcome, Ok(result) if !result.deduplicated) {
-            self.with_write_txn(|txn| {
+            self.with_write_txn_grouped(|txn| {
                 JOURNAL.delete(&self.store, txn, &owner)?;
                 GC.put(&self.store, txn, &owner, &())?;
                 Ok(())

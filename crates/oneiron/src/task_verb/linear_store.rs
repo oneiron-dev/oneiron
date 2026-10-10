@@ -195,7 +195,7 @@ impl<'v> VaultLinearTaskStore<'v> {
         DIRTY.scan(&self.vault.store, &txn)
     }
     pub fn acknowledge_push(&self, task: EntityId, expected_revision: u64) -> Result<bool> {
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             if DIRTY.get(&self.vault.store, txn, &task)? == Some(expected_revision) {
                 return DIRTY.delete(&self.vault.store, txn, &task);
             }
@@ -215,7 +215,7 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
         fields: &MirroredTaskFields,
         now: u64,
     ) -> LinearSyncResult<TaskMirrorSnapshot> {
-        self.vault.try_with_write_txn(|txn| {
+        self.vault.try_with_write_txn_grouped(|txn| {
             let current = self.snapshot(txn, task)?;
             if current.revision != expected_revision {
                 return Err(LinearSyncError::Conflict {
@@ -269,7 +269,7 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
         Ok(read_link(self.vault, &txn, task)?)
     }
     fn put_link(&mut self, expected: Option<u64>, link: &TaskIssueLink) -> LinearSyncResult<()> {
-        self.vault.try_with_write_txn(|txn| {
+        self.vault.try_with_write_txn_grouped(|txn| {
             self.snapshot(txn, link.task_ref)?;
             let old = read_link(self.vault, txn, link.task_ref)?;
             let found = old.as_ref().map(|row| row.link_revision);
@@ -355,7 +355,7 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                     Error::InvalidConfig("linear source repeated its cursor".into()).into(),
                 );
             }
-            self.tasks().vault.with_write_txn(|txn| {
+            self.tasks().vault.with_write_txn_grouped(|txn| {
                 PULL_CURSOR.put(&self.tasks().vault.store, txn, &(), &next)?;
                 Ok(())
             })?;

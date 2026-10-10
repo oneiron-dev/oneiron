@@ -64,7 +64,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "query_occurred_range": t.query_occurred_range, "effort_anchor": t.effort_anchor,
         })
     });
-    RetrievalReplayInputs {
+    let mut inputs = RetrievalReplayInputs {
         query_ref: builder.replay_query_ref.clone(),
         config: json!({
             "channels": {
@@ -157,5 +157,12 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             }),
         }),
         corpus_snapshot_ref: builder.corpus_snapshot_ref.clone(),
-    }
+    };
+    // `json!` above is at its recursion limit, so these join after it.
+    inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
+    inputs.config["vector_evidence"] = json!({
+        "floor": builder.vault.config.vector_evidence.floor,
+        "strong": builder.vault.config.vector_evidence.strong,
+    });
+    inputs
 }

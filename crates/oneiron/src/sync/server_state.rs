@@ -49,7 +49,7 @@ pub fn persist_imported_window_update(
     key: &WindowKey,
     update_bytes: &[u8],
 ) -> Result<u32> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let seq_key = key.as_str().to_owned();
         let seq: u32 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
             None => 0,
@@ -88,7 +88,7 @@ pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) ->
     let state = crate::sync::window::export_scrubbed_window_snapshot(vault, key, doc)?;
     let vv = doc_version_vector(doc);
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         vault.fence_published_deletes_in_txn(wtxn, key.as_str(), doc)?;
         WINDOW_SNAPSHOT.put(&vault.store, wtxn, &key.as_str().to_owned(), &state)?;
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv)?;
@@ -141,7 +141,7 @@ pub fn persist_root_snapshot_in_txn(
 /// `meta.windows`), `sv:root`, and `svf:root` = `[1]` (fresh). Thin own-txn
 /// wrapper over [`persist_root_snapshot_in_txn`].
 pub fn persist_root_snapshot(vault: &Vault, doc: &LoroDoc) -> Result<()> {
-    vault.with_write_txn(|wtxn| persist_root_snapshot_in_txn(vault, wtxn, doc))
+    vault.with_write_txn_grouped(|wtxn| persist_root_snapshot_in_txn(vault, wtxn, doc))
 }
 
 /// Loads the root Doc from persisted state (ARCH-0023b startup step 1:

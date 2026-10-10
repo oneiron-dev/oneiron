@@ -49,6 +49,12 @@ impl GuestImports for Host {
             receipt: "receipt".into(),
         })
     }
+    fn verb_names(&mut self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+    fn verb_call(&mut self, _: String, _: String) -> Result<String, String> {
+        Err("no verb door".into())
+    }
     fn ask(&mut self, _: PromptInput) -> Result<WaitOutput, String> {
         Ok(WaitOutput {
             wait_id: "wait".into(),

@@ -254,10 +254,10 @@ impl TaggingReconciler {
         self.return_unsettled()?;
         for id in stranded {
             self.vault
-                .try_with_write_txn(|txn| self.rehome_in_txn(txn, id))?;
+                .try_with_write_txn_grouped(|txn| self.rehome_in_txn(txn, id))?;
         }
         for chunk in unindexed.chunks(history::PRUNE_BUDGET) {
-            self.vault.try_with_write_txn(|txn| {
+            self.vault.try_with_write_txn_grouped(|txn| {
                 for id in chunk {
                     queue.restore_owner_retained_ready_entry_in_txn(txn, *id)?;
                 }
@@ -493,8 +493,9 @@ impl TaggingReconciler {
             history::excess_per_turn_in_txn(&self.vault, &txn, *from)?
         };
         for chunk in excess.chunks(history::PRUNE_BUDGET) {
-            self.vault
-                .try_with_write_txn(|txn| history::delete_excess_in_txn(&self.vault, txn, chunk))?;
+            self.vault.try_with_write_txn_grouped(|txn| {
+                history::delete_excess_in_txn(&self.vault, txn, chunk)
+            })?;
         }
         match next {
             Some(turn) => *from = Some(turn),
@@ -517,7 +518,7 @@ impl TaggingReconciler {
             if !due {
                 return Ok(());
             }
-            let pruned = self.vault.try_with_write_txn(|txn| {
+            let pruned = self.vault.try_with_write_txn_grouped(|txn| {
                 let now = self.stamp_in_txn(txn)?;
                 history::prune_expired_in_txn(&self.vault, txn, now)
             })?;
@@ -538,7 +539,7 @@ impl TaggingReconciler {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         while let Some((record, reason)) = unsettled.last() {
-            self.vault.try_with_write_txn(|txn| -> Result<()> {
+            self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
                 let current = self
                     .vault
                     .store
@@ -569,8 +570,9 @@ impl TaggingReconciler {
         let prior_retries = queue.retry_chain_depth(record.id)?;
         let mut trace = unreadable_trace(record, prior_retries);
         let Some(payload) = MarkerPayload::decode(&record.payload) else {
-            self.vault
-                .try_with_write_txn(|txn| self.fail_unreadable_in_txn(txn, record, &trace))?;
+            self.vault.try_with_write_txn_grouped(|txn| {
+                self.fail_unreadable_in_txn(txn, record, &trace)
+            })?;
             return Ok(trace);
         };
         trace.turn = Some(payload.turn);
@@ -578,7 +580,7 @@ impl TaggingReconciler {
         if payload.checkpoint != self.checkpoint {
             // Owed by another checkpoint: the active tagger owes the turn now.
             trace.outcome = TaggingOutcome::Rekeyed;
-            self.vault.try_with_write_txn(|txn| -> Result<()> {
+            self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
                 let now = self.stamp_in_txn(txn)?;
                 enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?;
                 self.settle_in_txn(txn, record, &trace)
@@ -634,41 +636,46 @@ impl TaggingReconciler {
         // land in that same write, so a turn's marker settles exactly when
         // its tags are saved.
         let made_by = self.encoder.model_id().as_str().to_owned();
-        let settled = self
-            .vault
-            .try_with_write_txn(|txn| -> Result<Option<TaggingTrace>> {
-                let current = matches!(
-                    turn_text_in_txn(&self.vault, txn, &payload.turn)?,
-                    TurnInput::Ready { text_hash: ref now, .. } if *now == text_hash
-                );
-                if !current {
-                    return Ok(None);
-                }
-                let mut settled = trace.clone();
-                settled.outcome = match self.config.mode {
-                    TaggingMode::Shadow => self.shadowed(&output),
-                    TaggingMode::Save => {
-                        let answer = Answer {
-                            turn: payload.turn,
-                            input: &input,
-                            output: &output,
-                            envelope: save::envelope(&hash, &made_by, &self.config),
-                        };
-                        let now = self.stamp_in_txn(txn)?;
-                        let saved =
-                            save::save_in_txn(&self.vault, txn, answer, &self.config.labels, now)?;
-                        TaggingOutcome::Saved {
-                            spans: output.spans.len(),
-                            links: output.links.len(),
-                            mood: output.vad.is_some(),
-                            linked: saved.linked,
-                            minted: saved.minted,
-                        }
+        let settled =
+            self.vault
+                .try_with_write_txn_grouped(|txn| -> Result<Option<TaggingTrace>> {
+                    let current = matches!(
+                        turn_text_in_txn(&self.vault, txn, &payload.turn)?,
+                        TurnInput::Ready { text_hash: ref now, .. } if *now == text_hash
+                    );
+                    if !current {
+                        return Ok(None);
                     }
-                };
-                self.settle_in_txn(txn, record, &settled)?;
-                Ok(Some(settled))
-            })?;
+                    let mut settled = trace.clone();
+                    settled.outcome = match self.config.mode {
+                        TaggingMode::Shadow => self.shadowed(&output),
+                        TaggingMode::Save => {
+                            let answer = Answer {
+                                turn: payload.turn,
+                                input: &input,
+                                output: &output,
+                                envelope: save::envelope(&hash, &made_by, &self.config),
+                            };
+                            let now = self.stamp_in_txn(txn)?;
+                            let saved = save::save_in_txn(
+                                &self.vault,
+                                txn,
+                                answer,
+                                &self.config.labels,
+                                now,
+                            )?;
+                            TaggingOutcome::Saved {
+                                spans: output.spans.len(),
+                                links: output.links.len(),
+                                mood: output.vad.is_some(),
+                                linked: saved.linked,
+                                minted: saved.minted,
+                            }
+                        }
+                    };
+                    self.settle_in_txn(txn, record, &settled)?;
+                    Ok(Some(settled))
+                })?;
         if let Some(settled) = settled {
             return Ok(settled);
         }
@@ -693,17 +700,19 @@ impl TaggingReconciler {
         mut trace: TaggingTrace,
     ) -> Result<TaggingTrace> {
         trace.outcome = TaggingOutcome::Skipped { reason };
-        let settled = self.vault.try_with_write_txn(|txn| -> Result<bool> {
-            let read = turn_text_in_txn(&self.vault, txn, turn)?;
-            if matches!(read, TurnInput::Ready { .. }) {
-                return Ok(false);
-            }
-            if self.config.mode == TaggingMode::Save && matches!(read, TurnInput::Empty) {
-                super::tags::replace_in_txn(&self.vault, txn, turn, None)?;
-            }
-            self.settle_in_txn(txn, record, &trace)?;
-            Ok(true)
-        })?;
+        let settled = self
+            .vault
+            .try_with_write_txn_grouped(|txn| -> Result<bool> {
+                let read = turn_text_in_txn(&self.vault, txn, turn)?;
+                if matches!(read, TurnInput::Ready { .. }) {
+                    return Ok(false);
+                }
+                if self.config.mode == TaggingMode::Save && matches!(read, TurnInput::Empty) {
+                    super::tags::replace_in_txn(&self.vault, txn, turn, None)?;
+                }
+                self.settle_in_txn(txn, record, &trace)?;
+                Ok(true)
+            })?;
         if settled {
             return Ok(trace);
         }
@@ -817,7 +826,7 @@ impl TaggingReconciler {
         mut trace: TaggingTrace,
         outcome: impl FnOnce(u64) -> TaggingOutcome,
     ) -> Result<TaggingTrace> {
-        self.vault.try_with_write_txn(|txn| {
+        self.vault.try_with_write_txn_grouped(|txn| {
             let stamp = self.stamp_in_txn(txn)?;
             let retry_at = stamp.saturating_add(delay_secs);
             // A retry owed at once is ready at once, whatever the clock reads

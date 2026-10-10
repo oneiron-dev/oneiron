@@ -65,7 +65,7 @@ impl GitWire<'_> {
         record: &StoredGitWireRecord,
     ) -> Result<()> {
         let row = record_row_suffix(repo.identity(), &record.record_key);
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             RECORDS.put(&self.vault.store, txn, &row, record)?;
             Ok(())
         })
@@ -73,7 +73,7 @@ impl GitWire<'_> {
 
     pub(super) fn drop_record(&self, repo: &GitWireRepo, key: &[u8; 32]) -> Result<()> {
         let row = record_row_suffix(repo.identity(), key);
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             RECORDS.delete(&self.vault.store, txn, &row)?;
             Ok(())
         })
@@ -90,7 +90,7 @@ impl GitWire<'_> {
         next: StoredGitWireRecord,
     ) -> Result<StoredGitWireRecord> {
         let row = record_row_suffix(repo.identity(), &next.record_key);
-        self.vault.with_write_txn(move |txn| {
+        self.vault.with_write_txn_grouped(move |txn| {
             let current = match RECORDS.get(&self.vault.store, txn, &row)? {
                 Some(current) => current,
                 None => {

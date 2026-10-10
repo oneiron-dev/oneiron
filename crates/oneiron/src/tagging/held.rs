@@ -53,7 +53,7 @@ impl Vault {
                 "tagging markers are not armed on this vault".to_owned(),
             ));
         }
-        self.try_with_write_txn(|txn| settle_held_tags_in_txn(self, txn, turn, tags))
+        self.try_with_write_txn_grouped(|txn| settle_held_tags_in_txn(self, txn, turn, tags))
     }
 }
 

@@ -161,7 +161,7 @@ impl Vault {
         }
         let found = self.lookup_identity_key(kind, mention)?;
         let candidates = score(&found)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.resolve_prepared_mention_in_txn(
                 txn,
                 &MentionResolution {

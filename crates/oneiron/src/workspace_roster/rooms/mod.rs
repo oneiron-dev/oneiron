@@ -254,7 +254,7 @@ impl Vault {
         if handle.is_empty() || handle.len() > 256 || handle.contains('\0') {
             return Err(invalid());
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             require_member(self, txn, room, actor)?;
             HANDLES.put(&self.store, txn, &(room, handle.to_owned()), &actor)?;
             Ok(())
