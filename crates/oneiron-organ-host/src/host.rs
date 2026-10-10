@@ -13,7 +13,7 @@ use oneiron_organ_protocol::{
     Payload, Proposal, SharedRegion, TypedBody,
 };
 
-use crate::budget::Budget;
+use crate::budget::{Budget, Kept, Permit};
 use crate::error::{HostError, Unavailable};
 use crate::process::{CallFailure, OrganProcess};
 use crate::receipt::{CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest};
@@ -45,6 +45,8 @@ pub struct OrganOutput {
     pub media_type: String,
     pub content_hash: Hash32,
     bytes: OutputBytes,
+    /// The budget memory these bytes hold until they drop.
+    _kept: Kept,
 }
 
 #[derive(Debug)]
@@ -85,6 +87,9 @@ pub struct OrganHost {
     budget: Budget,
     regions: RegionCache,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
+    /// Slots a reinstall replaced, kept in sight of revocations until no
+    /// process of theirs runs.
+    retired: Mutex<Vec<Arc<Slot>>>,
     revoked: Mutex<HashSet<String>>,
 }
 
@@ -96,6 +101,7 @@ impl OrganHost {
             regions: RegionCache::new(config.region_cache_bytes),
             config,
             slots: Mutex::new(HashMap::new()),
+            retired: Mutex::new(Vec::new()),
             revoked: Mutex::new(HashSet::new()),
         }
     }
@@ -104,11 +110,35 @@ impl OrganHost {
     /// and clears its crash history and any refusal.
     pub fn install(&self, spec: OrganSpec) {
         let name = spec.name.clone();
-        let old = lock(&self.slots).insert(name, Arc::new(Slot::new(spec)));
-        let live = old.map(|slot| slot.retire(Unavailable::Reinstalled));
-        for process in live.unwrap_or_default() {
-            process.stop();
+        let old = {
+            let mut slots = lock(&self.slots);
+            let old = slots.insert(name, Arc::new(Slot::new(spec)));
+            // In the same breath as the swap, so a revocation always finds
+            // the old slot: installed, or retired.
+            if let Some(old) = &old {
+                lock(&self.retired).push(Arc::clone(old));
+            }
+            old
+        };
+        if let Some(old) = old {
+            for process in old.retire(Unavailable::Reinstalled) {
+                process.stop();
+            }
         }
+        let retired: Vec<Arc<Slot>> = lock(&self.retired).clone();
+        let finished: Vec<Arc<Slot>> = retired
+            .into_iter()
+            .filter(|slot| slot.live().is_empty())
+            .collect();
+        lock(&self.retired).retain(|slot| !finished.iter().any(|done| Arc::ptr_eq(done, slot)));
+    }
+
+    /// Every slot a revocation must search: the installed and the retired.
+    fn all_slots(&self) -> Vec<Arc<Slot>> {
+        let slots = lock(&self.slots);
+        let mut all: Vec<Arc<Slot>> = slots.values().cloned().collect();
+        all.extend(lock(&self.retired).iter().cloned());
+        all
     }
 
     fn slot(&self, organ: &str) -> Result<Arc<Slot>, HostError> {
@@ -180,7 +210,7 @@ impl OrganHost {
         // as a holder before it checks this set, so a call this scan misses
         // sees the revocation and is never sent.
         lock(&self.revoked).insert(grant.to_owned());
-        let slots: Vec<Arc<Slot>> = lock(&self.slots).values().cloned().collect();
+        let slots = self.all_slots();
         let holders: Vec<(Arc<Slot>, Arc<OrganProcess>)> = slots
             .iter()
             .flat_map(|slot| {
@@ -239,7 +269,7 @@ impl OrganHost {
         if call.inputs.len() > MAX_FDS_PER_FRAME {
             return Err(HostError::TooManyInputs);
         }
-        let _permit = self
+        let mut permit = self
             .budget
             .admit(call.class, 1, slot.spec.call_memory_bytes, deadline)?;
         let inputs = call
@@ -278,7 +308,7 @@ impl OrganHost {
             deadline,
             max_output_bytes: slot.spec.max_output_bytes.min(slot.spec.call_memory_bytes),
         };
-        finish(&call, &process, &inputs, reply)
+        finish(&call, &process, &inputs, reply, &mut permit)
     }
 
     fn exchange(
@@ -426,6 +456,7 @@ fn finish(
     process: &OrganProcess,
     inputs: &[Resolved],
     reply: Replied,
+    permit: &mut Permit,
 ) -> Result<OrganOutcome, HostError> {
     let Replied {
         proposal,
@@ -443,7 +474,7 @@ fn finish(
             base.kind, next.kind
         )));
     }
-    let outputs = take_outputs(proposal.outputs, fds, max_output_bytes, deadline)?;
+    let outputs = take_outputs(proposal.outputs, fds, max_output_bytes, deadline, permit)?;
     let receipt = CallReceipt {
         organ: process.hello.organ.clone(),
         protocol: process.hello.protocol,
@@ -497,13 +528,16 @@ fn hash_until(bytes: &[u8], deadline: Instant) -> Result<Hash32, HostError> {
     Ok(Hash32(*hasher.finalize().as_bytes()))
 }
 
-/// Maps and hashes the outputs. Region outputs must be sealed, and their
-/// sizes together stay within `max_output_bytes`, checked before each map.
+/// Maps and hashes the outputs. Region outputs must be sealed, and all
+/// outputs together stay within `max_output_bytes`, checked before each
+/// map. Their bytes keep that much of the call's booked memory until they
+/// drop, so outputs a caller holds on to stay counted.
 fn take_outputs(
     outputs: Vec<Output>,
     fds: Vec<OwnedFd>,
     max_output_bytes: u64,
     deadline: Instant,
+    permit: &mut Permit,
 ) -> Result<Vec<OrganOutput>, HostError> {
     if outputs.len() > MAX_FDS_PER_FRAME {
         return Err(HostError::ReplyInvalid("more than 16 outputs".into()));
@@ -514,7 +548,12 @@ fn take_outputs(
         .into_iter()
         .map(|output| {
             let bytes = match output.data {
-                Payload::Inline(bytes) => OutputBytes::Inline(bytes.into_vec()),
+                Payload::Inline(bytes) => {
+                    left = left.checked_sub(bytes.len() as u64).ok_or_else(|| {
+                        HostError::ReplyInvalid("outputs past the output limit".into())
+                    })?;
+                    OutputBytes::Inline(bytes.into_vec())
+                }
                 Payload::Slot(slot) => {
                     let fd = slots
                         .get_mut(usize::from(slot))
@@ -530,11 +569,16 @@ fn take_outputs(
                 OutputBytes::Inline(inline) => hash_until(inline, deadline)?,
                 OutputBytes::Mapped(region) => hash_until(region, deadline)?,
             };
+            let len = match &bytes {
+                OutputBytes::Inline(inline) => inline.len(),
+                OutputBytes::Mapped(region) => region.len(),
+            };
             Ok(OrganOutput {
                 name: bound_text(&output.name, MAX_NAME_BYTES),
                 media_type: bound_text(&output.media_type, MAX_NAME_BYTES),
                 content_hash,
                 bytes,
+                _kept: permit.keep(len as u64),
             })
         })
         .collect()

@@ -4,7 +4,7 @@
 //! pins "no second scheduler"). Classes wait in priority order; background
 //! work may hold at most half the threads; one core stays free of organs.
 
-use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use crate::error::HostError;
@@ -40,17 +40,62 @@ struct Used {
 
 #[derive(Debug)]
 pub(crate) struct Budget {
+    shared: Arc<Shared>,
+}
+
+#[derive(Debug)]
+struct Shared {
     config: BudgetConfig,
     used: Mutex<Used>,
     freed: Condvar,
 }
 
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, Used> {
+        self.used.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn give_back(&self, memory: u64) {
+        let mut used = self.lock();
+        used.memory -= memory;
+        drop(used);
+        self.freed.notify_all();
+    }
+}
+
 /// A booked share of the budget, returned on drop.
 #[derive(Debug)]
-pub(crate) struct Permit<'a> {
-    budget: &'a Budget,
+pub(crate) struct Permit {
+    shared: Arc<Shared>,
     threads: u32,
     memory: u64,
+}
+
+/// Memory a call's outputs keep after the call returns, out of its permit;
+/// given back when the outputs drop.
+#[derive(Debug)]
+pub(crate) struct Kept {
+    shared: Arc<Shared>,
+    memory: u64,
+}
+
+impl Permit {
+    /// Moves up to `bytes` of this permit's memory to outputs that outlive
+    /// the call.
+    pub(crate) fn keep(&mut self, bytes: u64) -> Kept {
+        let memory = bytes.min(self.memory);
+        self.memory -= memory;
+        Kept {
+            shared: Arc::clone(&self.shared),
+            memory,
+        }
+    }
+}
+
+impl Drop for Kept {
+    fn drop(&mut self) {
+        self.shared.give_back(self.memory);
+    }
 }
 
 fn rank(class: CallClass) -> usize {
@@ -64,14 +109,12 @@ fn rank(class: CallClass) -> usize {
 impl Budget {
     pub(crate) fn new(config: BudgetConfig) -> Self {
         Self {
-            config,
-            used: Mutex::new(Used::default()),
-            freed: Condvar::new(),
+            shared: Arc::new(Shared {
+                config,
+                used: Mutex::new(Used::default()),
+                freed: Condvar::new(),
+            }),
         }
-    }
-
-    fn lock(&self) -> MutexGuard<'_, Used> {
-        self.used.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Books `threads` and `memory` for one call, waiting in class order
@@ -82,30 +125,32 @@ impl Budget {
         threads: u32,
         memory: u64,
         deadline: Instant,
-    ) -> Result<Permit<'_>, HostError> {
-        if threads > self.config.threads || memory > self.config.memory_bytes {
+    ) -> Result<Permit, HostError> {
+        let shared = &self.shared;
+        let config = shared.config;
+        if threads > config.threads || memory > config.memory_bytes {
             return Err(HostError::OverBudget);
         }
         let rank = rank(class);
         let thread_cap = if class == CallClass::Background {
-            (self.config.threads / 2).max(1)
+            (config.threads / 2).max(1)
         } else {
-            self.config.threads
+            config.threads
         };
-        let mut used = self.lock();
+        let mut used = shared.lock();
         used.waiting[rank] += 1;
         loop {
             let ahead = used.waiting[..rank].iter().any(|count| *count > 0);
             let fits = used.threads + threads <= thread_cap
-                && used.memory + memory <= self.config.memory_bytes
-                && used.inflight < self.config.max_inflight;
+                && used.memory + memory <= config.memory_bytes
+                && used.inflight < config.max_inflight;
             if !ahead && fits {
                 used.waiting[rank] -= 1;
                 used.threads += threads;
                 used.memory += memory;
                 used.inflight += 1;
                 return Ok(Permit {
-                    budget: self,
+                    shared: Arc::clone(shared),
                     threads,
                     memory,
                 });
@@ -114,10 +159,10 @@ impl Budget {
             if now >= deadline {
                 used.waiting[rank] -= 1;
                 drop(used);
-                self.freed.notify_all();
+                shared.freed.notify_all();
                 return Err(HostError::BudgetTimeout);
             }
-            used = self
+            used = shared
                 .freed
                 .wait_timeout(used, deadline - now)
                 .unwrap_or_else(PoisonError::into_inner)
@@ -126,13 +171,13 @@ impl Budget {
     }
 }
 
-impl Drop for Permit<'_> {
+impl Drop for Permit {
     fn drop(&mut self) {
-        let mut used = self.budget.lock();
+        let mut used = self.shared.lock();
         used.threads -= self.threads;
         used.memory -= self.memory;
         used.inflight -= 1;
         drop(used);
-        self.budget.freed.notify_all();
+        self.shared.freed.notify_all();
     }
 }

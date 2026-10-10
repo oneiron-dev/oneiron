@@ -283,6 +283,11 @@ fn work<O: Organ>(shared: &Shared<O>, queue: &Mutex<mpsc::Receiver<Job>>) {
             }
             other => other,
         };
+        // The engine may send the next call the moment the reply lands:
+        // close the outputs' descriptors at once.
+        drop(borrowed);
+        drop(fds);
+        drop(writer);
         if sent.is_err() {
             // The engine is gone or the socket is broken: nothing can reach it.
             std::process::exit(2);
