@@ -239,8 +239,9 @@ archived until you accept, and the engine refuses the automatic posture.
   attempts (`"kind": "completed_attempt"`), in one list.
 - `POST /v1/owner/cleanup/accept` or `/reject` with `{"proposal": "<id>"}`. Accept archives the
   candidates that are still empty and records one digest; a proposal already answered is a 409.
-- `POST /v1/owner/cleanup/restore` with `{"entity": "<id>"}` brings back any item of that list:
-  a record, or an attempt, which returns to the queue listing.
+- `POST /v1/owner/cleanup/restore` with `{"entity": "<id>", "kind": "<kind>"}`, both copied
+  from that list, brings back the item: a record (`kind` may be left out for one), or an
+  attempt, which returns to the queue listing. An item that is not archived is a 409.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
 
