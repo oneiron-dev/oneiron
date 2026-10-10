@@ -56,10 +56,42 @@ pub(super) struct OffRecordSessionEntryState {
     /// taint the K4 guard exists to reject — and would link on-record turns to
     /// a room that is supposed to be invisible from base.
     pub(super) continuation_shell: Option<EntityId>,
-    /// Turns witnessed while the room was on record. They landed in base
-    /// directly, so a copy of the talk reads them there, as it reads the
-    /// promoted ones.
-    pub(super) on_record_turns: Vec<EntityId>,
+    /// The messages of a room's stretch now in base (saved, or said while
+    /// the room was on record), each with its turn and the digest of its
+    /// body as said. A copy of the talk reads them back from base and keeps
+    /// a message only while its body is still that one, so a message never
+    /// said in the stretch, or edited since, stays out. Empty for a 1:1,
+    /// which has no copy to take.
+    pub(super) kept_messages: BTreeMap<EntityId, KeptMessage>,
+}
+
+/// A message of the stretch that is in base now: its turn and the digest of
+/// its body as it was said.
+pub(super) struct KeptMessage {
+    pub(super) turn: EntityId,
+    pub(super) digest: [u8; 32],
+}
+
+impl OffRecordSessionEntryState {
+    /// Notes `messages` of `turn`, now in base, for a copy of a room's talk.
+    pub(super) fn keep_messages<'body>(
+        &mut self,
+        turn: EntityId,
+        messages: impl IntoIterator<Item = (EntityId, &'body [u8])>,
+    ) {
+        if self.record.room.is_none() {
+            return;
+        }
+        for (message, body) in messages {
+            self.kept_messages.insert(
+                message,
+                KeptMessage {
+                    turn,
+                    digest: *blake3::hash(body).as_bytes(),
+                },
+            );
+        }
+    }
 }
 
 impl Default for OffRecordSessionRegistry {
@@ -138,7 +170,7 @@ impl OffRecordSessionRegistry {
                 overlay_shell: clock.entity_id()?,
                 overlay_shell_staged: false,
                 continuation_shell: None,
-                on_record_turns: Vec::new(),
+                kept_messages: BTreeMap::new(),
             }),
             published_record: ArcSwapOption::from(Some(Arc::new(record))),
         });

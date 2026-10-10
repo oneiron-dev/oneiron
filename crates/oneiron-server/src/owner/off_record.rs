@@ -171,12 +171,14 @@ pub(crate) fn record(
         .off_record_session(session_ref)
         .map_err(|error| session_error(error, session_ref))?
         .ok_or_else(not_found)?;
-    // A stretch in a room the owner is not in is the same 404 as none.
-    if let Some(room) = record.room {
-        let room = EntityId::from_bytes(room).map_err(OwnerError::from)?;
-        if !vault.members(room)?.contains(&owner.actor()) {
-            return Err(not_found());
-        }
+    // A stretch in a room reads as the owner may see it there: the notices
+    // from the times their membership shows them, and no list of saved
+    // turns. A room the owner is not in is the same 404 as none.
+    if record.room.is_some() {
+        let record = bind(vault, owner, session_ref)?
+            .record_for(owner.actor())
+            .map_err(|error| session_error(error, session_ref))?;
+        return Ok(Session::from(record));
     }
     Ok(Session::from(record))
 }
@@ -304,26 +306,17 @@ pub(crate) fn close(
 }
 
 /// The session, when the owner may act on it: their own 1:1, or a stretch in
-/// a room they are in. Any other room's stretch is the same 404 as none.
+/// a room they are in. Any other room's stretch is the same 404 as none, even
+/// while it closes: the roster is checked before the name.
 fn bind<'vault>(
     vault: &'vault Vault,
     owner: &AuthenticatedOwner,
     session_ref: &str,
 ) -> OwnerResult<OffRecordSession<'vault>> {
-    let session = vault
+    vault
         .off_record_session_vault()
-        .bind(session_ref)
-        .map_err(|error| session_error(error, session_ref))?;
-    if session
-        .room()
-        .map_err(|error| session_error(error, session_ref))?
-        .is_some()
-    {
-        session
-            .require_in_room(owner.actor())
-            .map_err(|error| session_error(error, session_ref))?;
-    }
-    Ok(session)
+        .bind_for(session_ref, owner.actor())
+        .map_err(|error| session_error(error, session_ref))
 }
 
 fn session_error(error: oneiron::Error, session_ref: &str) -> OwnerError {

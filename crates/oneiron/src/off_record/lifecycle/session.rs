@@ -625,24 +625,23 @@ impl OffRecordSession<'_> {
         if session_entry_state(&self.entry)?.record.room.is_some() {
             return Err(super::room::unbound_in_room(&self.session_ref));
         }
-        self.flip_on_record_unbound()
-    }
-
-    pub(super) fn flip_on_record_unbound(&self) -> Result<()> {
         self.vault
             .set_off_record_session_mode(&self.session_ref, OffRecordMode::OnRecord)?;
         Ok(())
     }
 
-    /// Notes a turn witnessed while the room was on record: it landed in
-    /// base, where a copy of the talk reads it.
-    pub(crate) fn note_on_record_turn(&self, turn: EntityId) {
+    /// Notes the messages of a turn witnessed while the room was on record:
+    /// they landed in base, where a copy of the talk reads them.
+    pub(crate) fn note_on_record_messages<'body>(
+        &self,
+        turn: EntityId,
+        messages: impl IntoIterator<Item = (EntityId, &'body [u8])>,
+    ) {
         if let Ok(mut state) = session_entry_state(&self.entry)
             && !state.record.closing
             && !state.gone
-            && !state.on_record_turns.contains(&turn)
         {
-            state.on_record_turns.push(turn);
+            state.keep_messages(turn, messages);
         }
     }
 
@@ -734,23 +733,34 @@ impl OffRecordSession<'_> {
         turn: &EntityId,
         owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<PromoteOutcome> {
+        // In a room, the owner must be on its roster before anything is
+        // answered (read before the state lock, which the roster read takes).
+        if let Some(owner) = owner
+            && self.room()?.is_some()
+        {
+            self.require_in_room(owner.actor())?;
+        }
         let outcome = {
             let mut state = self.recording_state()?;
+            // A stretch in a room is saved only by someone with a proof, who
+            // is in the room and could see the turn.
+            let room = state.record.room.map(EntityId::from_bytes).transpose()?;
+            if room.is_some() && owner.is_none() {
+                return Err(super::room::unbound_in_room(&self.session_ref));
+            }
             // RETRY, ahead of the journal: a promoted turn's closure has
             // already been retired from the overlay, so planning it again would
             // fail with "no journaled turn" for a turn that IS promoted. The
             // durable receipt is the answer, and it stays the answer after
             // close. `FloorWrites::promote` re-reads it inside the write
             // transaction, which is where the atomicity of that decision lives;
-            // this read only spares the caller a plan it cannot build.
-            if let Some(receipt) = self.vault.off_record_promote_receipt(turn)? {
+            // this read only spares the caller a plan it cannot build. In a
+            // room only this stretch's own saved turns answer, so another
+            // room's receipt reads as a turn this stretch never had.
+            if (room.is_none() || state.record.promoted_turns.contains(turn.as_bytes()))
+                && let Some(receipt) = self.vault.off_record_promote_receipt(turn)?
+            {
                 return Ok(receipt.outcome);
-            }
-            // A stretch in a room is saved only by someone with a proof, who
-            // is in the room and could see the turn.
-            let room = state.record.room.map(EntityId::from_bytes).transpose()?;
-            if room.is_some() && owner.is_none() {
-                return Err(super::room::unbound_in_room(&self.session_ref));
             }
             // The snapshot is taken under the state lock, so the journal this
             // plan is cut from is the journal the commit below applies against.
@@ -852,6 +862,18 @@ impl OffRecordSession<'_> {
         // journal entries from the room — in that order, and never before.
         for plan in &plans {
             state.record.promoted_turns.push(*plan.turn().as_bytes());
+            let messages = plan.ops.iter().filter_map(|op| match op {
+                crate::batch::BatchOp::Put {
+                    id,
+                    entity_type,
+                    data,
+                    ..
+                } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE => {
+                    Some((*id, data.as_slice()))
+                }
+                _ => None,
+            });
+            state.keep_messages(plan.turn(), messages);
         }
         self.entry.publish_state(state);
         for plan in &plans {

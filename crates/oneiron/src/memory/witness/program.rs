@@ -435,9 +435,14 @@ impl Memory<'_> {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
             Landed::Base => {
                 // A room on record took this turn into base; a copy of the
-                // talk reads it there.
+                // talk reads its messages there.
                 if let Some(session) = on_record_session {
-                    session.note_on_record_turn(plan.turn_id);
+                    session.note_on_record_messages(
+                        plan.turn_id,
+                        plan.messages
+                            .iter()
+                            .map(|planned| (planned.id, planned.body.as_slice())),
+                    );
                 }
                 self.base_receipt(&plan)
             }

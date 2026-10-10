@@ -8,7 +8,8 @@ use crate::receipt::SessionLocalReceiptLog;
 use crate::session_overlay::OverlayKeyspace;
 
 use super::registry::{
-    OffRecordSessionEntry, live_session_entry, session_entry_state, vet_off_record_session_ref,
+    OffRecordSessionEntry, OffRecordSessionEntryState, live_session_entry, session_entry_state,
+    vet_off_record_session_ref,
 };
 use super::session::OffRecordSessionVault;
 use super::types::{
@@ -149,31 +150,13 @@ impl Vault {
         // then failed though the mode never changed). Deadlock-safe:
         // `seal_writes` takes only the overlay's own lock, never `entry.state`.
         let mut state = session_entry_state(&entry)?;
-        if state.record.closing || state.gone {
-            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
-                session_ref: session_ref.to_owned(),
-            }));
+        // A stretch in a room goes on record only through the owner's
+        // proof-bound door, `OffRecordSession::flip_on_record_as`, which also
+        // tells the room: on record, everyone's later turns land in this vault.
+        if mode == OffRecordMode::OnRecord && state.record.room.is_some() {
+            return Err(super::room::unbound_in_room(session_ref));
         }
-        if state.record.mode == mode {
-            return Ok(state.record.clone());
-        }
-        // Anonymous is an entry-time choice, never a way to hide an
-        // existing transcript or later publish one. Check both ends before
-        // touching the overlay's lifecycle or publishing another mode.
-        state
-            .record
-            .mode
-            .write_target()
-            .require_recording(session_ref)?;
-        mode.write_target().require_recording(session_ref)?;
-        match mode {
-            OffRecordMode::Anonymous => unreachable!("anonymous mode change refused above"),
-            OffRecordMode::OnRecord => entry.overlay.seal_writes()?,
-            OffRecordMode::OffRecord => entry.overlay.rearm()?,
-        }
-        state.record.mode = mode;
-        entry.publish_state(&state);
-        Ok(state.record.clone())
+        set_entry_mode(&entry, &mut state, session_ref, mode)
     }
 
     /// Opens the session-local emit receipt log bound to a live off-record
@@ -347,4 +330,42 @@ fn vet_roomless_session_ref(session_ref: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Flips `entry`'s mode under its held state lock, so the overlay's seal or
+/// rearm and the record's mode change are one step (see
+/// [`Vault::set_off_record_session_mode`]). A handle passes its own entry, so
+/// the flip lands on the stretch it holds, never on one that took its name
+/// since.
+pub(super) fn set_entry_mode(
+    entry: &OffRecordSessionEntry,
+    state: &mut OffRecordSessionEntryState,
+    session_ref: &str,
+    mode: OffRecordMode,
+) -> Result<OffRecordSessionRecord> {
+    if state.record.closing || state.gone {
+        return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+            session_ref: session_ref.to_owned(),
+        }));
+    }
+    if state.record.mode == mode {
+        return Ok(state.record.clone());
+    }
+    // Anonymous is an entry-time choice, never a way to hide an existing
+    // transcript or later publish one. Check both ends before touching the
+    // overlay's lifecycle or publishing another mode.
+    state
+        .record
+        .mode
+        .write_target()
+        .require_recording(session_ref)?;
+    mode.write_target().require_recording(session_ref)?;
+    match mode {
+        OffRecordMode::Anonymous => unreachable!("anonymous mode change refused above"),
+        OffRecordMode::OnRecord => entry.overlay.seal_writes()?,
+        OffRecordMode::OffRecord => entry.overlay.rearm()?,
+    }
+    state.record.mode = mode;
+    entry.publish_state(state);
+    Ok(state.record.clone())
 }

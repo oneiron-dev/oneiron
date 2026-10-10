@@ -28,7 +28,7 @@ use crate::off_record::promote::PromoteOutcome;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 use crate::session_overlay::{JournalEntry, JournalRole, OverlaySnapshot};
 
-use super::registry::{OffRecordSessionEntryState, session_entry_state};
+use super::registry::{KeptMessage, OffRecordSessionEntryState, session_entry_state};
 use super::session::{OffRecordSession, OffRecordSessionVault};
 use super::types::{
     OffRecordBackendClass, OffRecordMode, OffRecordNotice, OffRecordNoticeAct,
@@ -115,6 +115,21 @@ impl<'vault> OffRecordSessionVault<'vault> {
         })?;
         session.require_in_room(actor)?;
         Ok(session)
+    }
+
+    /// Binds the stretch the registry keys `key` for `actor`. A room's key
+    /// ([`room_session_key`]) binds as [`Self::bind_in_room`] does, so only
+    /// for someone on that room's roster, checked before the name; any other
+    /// key binds as [`Self::bind`].
+    pub fn bind_for(&self, key: &str, actor: EntityId) -> Result<OffRecordSession<'vault>> {
+        let Some(rest) = key.strip_prefix(ROOM_KEY_PREFIX) else {
+            return self.bind(key);
+        };
+        let (room, session_ref) = rest
+            .split_once(':')
+            .and_then(|(room, session_ref)| Some((EntityId::from_hex(room).ok()?, session_ref)))
+            .ok_or_else(|| not_in_room(key, actor))?;
+        self.bind_in_room(session_ref, room, actor)
     }
 }
 
@@ -289,13 +304,19 @@ impl OffRecordSession<'_> {
         if in_room {
             self.require_in_room(owner.actor())?;
         }
-        let was = self.mode()?;
-        self.flip_on_record_unbound()?;
-        // A room already on record hears nothing new, and one that closed
-        // since the flip has nobody left to tell.
-        if was != OffRecordMode::OnRecord
-            && let Ok(mut state) = self.recording_state()
-        {
+        // This handle's own entry, under one lock: the flip and its notice
+        // land on the stretch the owner acted on, never on one that took its
+        // name since, and a closing stretch is refused before either.
+        let mut state = session_entry_state(&self.entry)?;
+        let was = state.record.mode;
+        super::vault_api::set_entry_mode(
+            &self.entry,
+            &mut state,
+            &self.session_ref,
+            OffRecordMode::OnRecord,
+        )?;
+        // A room already on record hears nothing new.
+        if was != OffRecordMode::OnRecord {
             let at = self.vault.store.clock.now_recorded_at();
             post_notice(
                 &mut state,
@@ -358,20 +379,15 @@ impl OffRecordSession<'_> {
         Ok(saved)
     }
 
-    /// The talk so far, gathered: the turns already in this vault (saved, or
-    /// said while the room was on record) read from the vault as it holds
-    /// them now, and the turns and messages still in the room read from its
-    /// journal. [`Talk::finish`] keeps only what a reader's membership shows.
+    /// The talk so far, gathered: the messages of this stretch already in
+    /// this vault (saved, or said while the room was on record) read back
+    /// from the vault, and the turns and messages still in the room read from
+    /// its journal. [`Talk::finish`] keeps only what a reader's membership
+    /// shows.
     fn gather_talk(&self, state: &OffRecordSessionEntryState) -> Result<Talk> {
-        let promoted: BTreeSet<EntityId> = state
-            .record
-            .promoted_turns
-            .iter()
-            .map(|turn| EntityId::from_bytes(*turn))
-            .collect::<Result<_>>()?;
         let mut talk = Talk::default();
-        for turn in promoted.iter().chain(state.on_record_turns.iter()) {
-            self.read_vault_turn(&mut talk, *turn)?;
+        for (message, kept) in &state.kept_messages {
+            self.read_kept_message(&mut talk, *message, kept)?;
         }
         let snapshot = self.entry.overlay.snapshot()?;
         for (turn, at) in snapshot.journal_entries().iter().filter_map(turn_put) {
@@ -404,9 +420,17 @@ impl OffRecordSession<'_> {
         Ok(talk)
     }
 
-    /// One turn of this stretch as the vault holds it now; nothing once the
-    /// vault no longer does.
-    fn read_vault_turn(&self, talk: &mut Talk, turn: EntityId) -> Result<()> {
+    /// One message of this stretch as the vault holds it now. Only the
+    /// stretch's own messages are read, never anything added to their turn
+    /// in the vault since, and a message is left out once the vault no
+    /// longer holds the body that was said: deleted, or edited since.
+    fn read_kept_message(
+        &self,
+        talk: &mut Talk,
+        message: EntityId,
+        kept: &KeptMessage,
+    ) -> Result<()> {
+        let turn = kept.turn;
         let Some(header) = self.vault.read_entity_header(&turn)? else {
             return Ok(());
         };
@@ -414,31 +438,22 @@ impl OffRecordSession<'_> {
             return Ok(());
         }
         talk.turn(turn, header.occurred_start, true);
-        for message in self
+        let (Some(body), Some(header)) = (
+            self.vault.get(&message)?,
+            self.vault.read_entity_header(&message)?,
+        ) else {
+            return Ok(());
+        };
+        if blake3::hash(&body).as_bytes() != &kept.digest {
+            return Ok(());
+        }
+        talk.message(turn, message, header.occurred_start, &body)?;
+        if let Some(actor) = self
             .vault
-            .sources(&turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))?
+            .targets(&message, EdgeKind::AuthoredBy, None)?
+            .first()
         {
-            let (Some(body), Some(header)) = (
-                self.vault.get(&message)?,
-                self.vault.read_entity_header(&message)?,
-            ) else {
-                continue;
-            };
-            // A message the vault keeps in another form since (an edit moved
-            // its text into a document) is left out rather than misread.
-            if talk
-                .message(turn, message, header.occurred_start, &body)
-                .is_err()
-            {
-                continue;
-            }
-            if let Some(actor) = self
-                .vault
-                .targets(&message, EdgeKind::AuthoredBy, None)?
-                .first()
-            {
-                talk.speaker(turn, *actor);
-            }
+            talk.speaker(turn, *actor);
         }
         Ok(())
     }
