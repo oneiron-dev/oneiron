@@ -86,3 +86,173 @@ fn an_endpoint_vault_stores_the_vectors_a_local_vault_makes() {
         texts.len()
     );
 }
+
+// ─── the routes over a synthetic model ───────────────────────────────────
+
+/// Width of [`Synthetic`]'s vectors.
+const SYNTHETIC_DIMS: usize = 8;
+/// The bearer key the synthetic servers are started with.
+const KEY: &str = "synthetic-endpoint-key";
+
+/// A model that needs no checkpoint: each text along one axis.
+struct Synthetic {
+    model_id: &'static str,
+    transform: &'static str,
+}
+
+impl ServedModel for Synthetic {
+    fn model_id(&self) -> &str {
+        self.model_id
+    }
+
+    fn dimensions(&self) -> usize {
+        SYNTHETIC_DIMS
+    }
+
+    fn transform(&self) -> &str {
+        self.transform
+    }
+
+    fn embed_raw(
+        &self,
+        texts: &[String],
+        _side: Side,
+        _instruction: Option<&str>,
+        _priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        let rows = texts
+            .iter()
+            .map(|text| {
+                let mut row = vec![0.0; SYNTHETIC_DIMS];
+                row[text.len() % SYNTHETIC_DIMS] = 1.0;
+                row
+            })
+            .collect();
+        Ok(Embedded {
+            rows,
+            tokens: texts.len(),
+        })
+    }
+}
+
+fn synthetic() -> Arc<dyn ServedModel> {
+    Arc::new(Synthetic {
+        model_id: "fixture/embedding@1111111111111111111111111111111111111111",
+        transform: "attn=bidirectional;pool=mean;synthetic",
+    })
+}
+
+/// Serves `app` on loopback for as long as the returned runtime lives.
+fn on_loopback(app: Router) -> (SocketAddr, tokio::runtime::Runtime) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .expect("bound");
+    let addr = listener.local_addr().expect("address");
+    runtime.spawn(async move { axum::serve(listener, app).await });
+    (addr, runtime)
+}
+
+/// Opens a connection and sends a POST's head with no body after it.
+fn post_head(addr: SocketAddr, key: Option<&str>, length: usize) -> std::net::TcpStream {
+    use std::io::Write;
+    let mut stream = std::net::TcpStream::connect(addr).expect("connected");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .expect("timeout");
+    let authorization = key.map_or_else(String::new, |key| {
+        format!("Authorization: Bearer {key}\r\n")
+    });
+    write!(
+        stream,
+        "POST /v1/embeddings HTTP/1.1\r\nHost: endpoint\r\nContent-Type: application/json\r\n\
+         {authorization}Content-Length: {length}\r\n\r\n"
+    )
+    .expect("head sent");
+    stream
+}
+
+/// The status a response on `stream` starts with.
+fn status(stream: &mut std::net::TcpStream) -> std::io::Result<u16> {
+    use std::io::Read;
+    let mut line = [0u8; 12];
+    stream.read_exact(&mut line)?;
+    Ok(String::from_utf8_lossy(&line[9..12])
+        .parse()
+        .unwrap_or_default())
+}
+
+/// Polls until `held` reads `bytes`, for a few seconds at most.
+fn holds(served: &Served, bytes: usize) -> bool {
+    (0..200).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        served.body_bytes_held() == bytes
+    })
+}
+
+/// Review P2 (Astra, #1361): the key is checked from a request's headers
+/// before any of its body is read. Bug repro: the handler collected the body
+/// first, so callers without the key could each make the server hold up to
+/// 32 MiB while it waited for the rest.
+#[test]
+fn a_request_without_the_key_is_refused_before_its_body_is_read() {
+    let served = Arc::new(Served::new(
+        synthetic(),
+        Vec::new(),
+        Some(Zeroizing::new(KEY.to_owned())),
+    ));
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    for key in [None, Some("another key")] {
+        let mut stream = post_head(addr, key, MAX_BODY_BYTES);
+        assert_eq!(
+            status(&mut stream).expect("answered with the body unsent"),
+            401
+        );
+        assert_eq!(served.body_bytes_held(), 0, "no body budget for it");
+    }
+}
+
+/// Review P2: callers with the key share a byte budget for bodies, taken
+/// before a body is read. Past it a large body is not read until an earlier
+/// one's request ends, and a query, which draws on its own, still answers.
+#[test]
+fn bodies_wait_for_their_budget_before_they_are_read() {
+    use std::io::Write;
+    let served = Arc::new(Served::new(
+        synthetic(),
+        Vec::new(),
+        Some(Zeroizing::new(KEY.to_owned())),
+    ));
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let mut uploads: Vec<_> = (0..3)
+        .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
+        .collect();
+    assert!(holds(&served, LARGE_BODIES_BYTES), "two bodies reserved");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(
+        served.body_bytes_held(),
+        LARGE_BODIES_BYTES,
+        "the third waits, unread"
+    );
+
+    let query = serde_json::json!({
+        "model": "fixture/embedding@1111111111111111111111111111111111111111",
+        "input": "a short query",
+        "input_type": "query",
+    })
+    .to_string();
+    let mut asking = post_head(addr, Some(KEY), query.len());
+    asking.write_all(query.as_bytes()).expect("query sent");
+    assert_eq!(status(&mut asking).expect("query answered"), 200);
+
+    // Whichever two were reading, the one left holds its bytes once the
+    // others hang up: the one that waited was let in.
+    uploads.truncate(1);
+    assert!(holds(&served, MAX_BODY_BYTES), "one body left");
+    drop(uploads);
+    assert!(holds(&served, 0), "every request's bytes returned");
+}

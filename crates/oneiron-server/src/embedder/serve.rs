@@ -24,14 +24,21 @@
 //! embed: a recall sends one input and the fill worker sends batches. Every
 //! answer names the transform that made it, which the vault's client holds to
 //! the one it admitted from the listing.
+//!
+//! A request's bearer key is checked from its headers before any of its body
+//! is read. A body is read only once the bytes it declares fit a budget,
+//! which it holds until its request's work ends: small bodies (queries, a
+//! vault's document batches) and large ones each have their own, so a recall
+//! never waits behind an upload, and no number of callers can make the server
+//! hold more than both.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use base64::Engine as _;
@@ -46,8 +53,19 @@ use crate::config::{EmbedderConfig, EmbedderProvider};
 
 /// Inputs one request may carry, as OpenAI caps them.
 const MAX_INPUTS: usize = 2_048;
-/// Request bodies above this are refused before they are parsed.
+/// Request bodies above this are refused before they are read.
 const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// A body of at most this many bytes draws on [`SMALL_BODIES_BYTES`]: a
+/// recall's query, or a vault's batch of documents (its client sends at most
+/// 32 KiB of text a request).
+const SMALL_BODY_BYTES: usize = 256 * 1024;
+/// What small bodies may hold at once, read or being read, until their
+/// requests' work ends. Their own budget, so a query never waits behind a
+/// large upload.
+const SMALL_BODIES_BYTES: usize = 16 * 1024 * 1024;
+/// What larger bodies, and bodies of no declared length, may hold at once:
+/// two of the largest.
+const LARGE_BODIES_BYTES: usize = 2 * MAX_BODY_BYTES;
 /// Bulk requests in flight at once. The model runs one forward at a time
 /// anyway; two keep it busy while the next request is tokenised, and the rest
 /// wait here rather than each holding a blocking thread a query may need.
@@ -153,6 +171,37 @@ struct Served {
     /// takes.
     bulk: Arc<tokio::sync::Semaphore>,
     queries: Arc<tokio::sync::Semaphore>,
+    /// The bytes request bodies may hold, by size ([`SMALL_BODY_BYTES`]), one
+    /// permit a byte, taken before a body is read and held with admission.
+    small_bodies: Arc<tokio::sync::Semaphore>,
+    large_bodies: Arc<tokio::sync::Semaphore>,
+}
+
+impl Served {
+    fn new(
+        embedder: Arc<dyn ServedModel>,
+        aliases: Vec<String>,
+        key: Option<Zeroizing<String>>,
+    ) -> Self {
+        let mut names = vec![embedder.model_id().to_owned()];
+        names.extend(aliases.into_iter().filter(|alias| !alias.is_empty()));
+        Self {
+            embedder,
+            names,
+            key,
+            bulk: Arc::new(tokio::sync::Semaphore::new(BULK_REQUESTS)),
+            queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
+            small_bodies: Arc::new(tokio::sync::Semaphore::new(SMALL_BODIES_BYTES)),
+            large_bodies: Arc::new(tokio::sync::Semaphore::new(LARGE_BODIES_BYTES)),
+        }
+    }
+
+    /// Body bytes held now: reserved for bodies being read, or kept by
+    /// requests whose work has not ended.
+    fn body_bytes_held(&self) -> usize {
+        SMALL_BODIES_BYTES - self.small_bodies.available_permits() + LARGE_BODIES_BYTES
+            - self.large_bodies.available_permits()
+    }
 }
 
 /// The two routes, over one loaded model.
@@ -161,19 +210,27 @@ fn router(
     aliases: Vec<String>,
     key: Option<Zeroizing<String>>,
 ) -> Router {
-    let mut names = vec![embedder.model_id().to_owned()];
-    names.extend(aliases.into_iter().filter(|alias| !alias.is_empty()));
+    routes(Arc::new(Served::new(embedder, aliases, key)))
+}
+
+/// Every request's key is checked from its headers first, before any route
+/// reads a byte of its body.
+fn routes(served: Arc<Served>) -> Router {
     Router::new()
         .route("/v1/models", get(models))
         .route("/v1/embeddings", post(embeddings))
-        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .with_state(Arc::new(Served {
-            embedder,
-            names,
-            key,
-            bulk: Arc::new(tokio::sync::Semaphore::new(BULK_REQUESTS)),
-            queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
-        }))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&served),
+            require_key,
+        ))
+        .with_state(served)
+}
+
+async fn require_key(State(served): State<Arc<Served>>, request: Request, next: Next) -> Response {
+    match unauthorised(&served, request.headers()) {
+        Some(refused) => refused,
+        None => next.run(request).await,
+    }
 }
 
 #[derive(Serialize)]
@@ -195,10 +252,7 @@ struct ModelRow {
     oneiron_wire: u32,
 }
 
-async fn models(State(served): State<Arc<Served>>, headers: HeaderMap) -> Response {
-    if let Some(refused) = unauthorised(&served, &headers) {
-        return refused;
-    }
+async fn models(State(served): State<Arc<Served>>) -> Response {
     let data = served
         .names
         .iter()
@@ -273,14 +327,62 @@ struct Usage {
     total_tokens: usize,
 }
 
-async fn embeddings(
-    State(served): State<Arc<Served>>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    if let Some(refused) = unauthorised(&served, &headers) {
-        return refused;
-    }
+/// Reads a request's body once the bytes it may take fit its budget, which
+/// the returned permit holds. A body of no declared length may take the most.
+/// The key was checked before this ([`require_key`]).
+async fn read_body(
+    served: &Served,
+    request: Request,
+) -> Result<(tokio::sync::OwnedSemaphorePermit, axum::body::Bytes), Response> {
+    let declared = request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    let bytes = match declared {
+        Some(declared) if declared > MAX_BODY_BYTES as u64 => {
+            return Err(refuse(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "invalid_request_error",
+                &format!("a request body is at most {MAX_BODY_BYTES} bytes"),
+            ));
+        }
+        Some(declared) => declared as usize,
+        None => MAX_BODY_BYTES,
+    };
+    let budget = if bytes <= SMALL_BODY_BYTES {
+        &served.small_bodies
+    } else {
+        &served.large_bodies
+    };
+    // Every size fits its budget, and both are far under `u32::MAX`.
+    let Ok(held) = Arc::clone(budget).acquire_many_owned(bytes as u32).await else {
+        return Err(refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server_error",
+            "the endpoint is shutting down",
+        ));
+    };
+    axum::body::to_bytes(request.into_body(), bytes)
+        .await
+        .map(|body| (held, body))
+        .map_err(|_| {
+            refuse(
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                &format!(
+                    "the body could not be read in full, within its declared length and \
+                     {MAX_BODY_BYTES} bytes"
+                ),
+            )
+        })
+}
+
+async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Response {
+    let (body_held, body) = match read_body(&served, request).await {
+        Ok(read) => read,
+        Err(refused) => return refused,
+    };
     let request: EmbeddingsRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(_) => {
@@ -291,6 +393,8 @@ async fn embeddings(
             );
         }
     };
+    // The parsed request owns its texts; the bytes go before admission.
+    drop(body);
     if !served.names.contains(&request.model) {
         return refuse(
             StatusCode::NOT_FOUND,
@@ -387,7 +491,7 @@ async fn embeddings(
     let embedder = Arc::clone(&served.embedder);
     let instruction = request.instruction;
     let embedded = tokio::task::spawn_blocking(move || {
-        let _admitted = admitted;
+        let _held = (admitted, body_held);
         embedder.embed_raw(&texts, side, instruction.as_deref(), priority)
     })
     .await;
