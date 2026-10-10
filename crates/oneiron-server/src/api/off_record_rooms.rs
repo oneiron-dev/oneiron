@@ -305,10 +305,17 @@ async fn export(
     let actor = person(&auth)?;
     let request = json(payload)?;
     let room = parse_entity_id_param(&request.room, "room")?;
+    // The slip was checked with the headers; the body may have arrived long
+    // after. The copy is released only if it is still live once the talk is
+    // gathered.
+    let credential = auth.verified_slip().cloned();
     let export = blocking(move || {
         let talk = bind(server.vault(), room, &request.session_ref, actor)?
-            .export_talk_by(actor)
-            .map_err(|error| engine_error(error, &request.session_ref))?;
+            .export_talk_by(actor, credential.as_ref())
+            .map_err(|error| match error.kind() {
+                ErrorKind::OffRecordPromoteUnauthenticated => ApiError::unauthorized(),
+                _ => engine_error(error, &request.session_ref),
+            })?;
         Ok(Export::new(talk, &request.session_ref, unix_seconds_now()))
     })
     .await?;

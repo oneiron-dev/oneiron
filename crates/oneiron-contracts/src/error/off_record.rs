@@ -119,6 +119,17 @@ pub enum OffRecordError {
         session_ref: String,
         actor_ref: String,
     },
+    /// ARCH-0052 D5: a room on record saves into the vault of the person who
+    /// put it there. That person left the room, or lost this vault or their
+    /// proof, so saving stopped: the stretch is off record again, and the
+    /// write that found this kept nothing.
+    #[error(
+        "off-record stretch {session_ref} stopped saving: {saver_ref}, who put it on record, no longer holds this vault in the room"
+    )]
+    OffRecordSavingStopped {
+        session_ref: String,
+        saver_ref: String,
+    },
 }
 
 impl OffRecordError {
@@ -142,6 +153,7 @@ impl OffRecordError {
             Self::OffRecordTurnNotInJournal { .. } => ErrorKind::OffRecordTurnNotInJournal,
             Self::OffRecordPromoteAuthorMissing { .. } => ErrorKind::OffRecordPromoteAuthorMissing,
             Self::OffRecordNotInRoom { .. } => ErrorKind::OffRecordNotInRoom,
+            Self::OffRecordSavingStopped { .. } => ErrorKind::OffRecordSavingStopped,
         }
     }
 }

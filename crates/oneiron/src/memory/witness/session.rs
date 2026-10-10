@@ -101,12 +101,15 @@ impl Memory<'_> {
 
     /// [`Self::witness_into_session`] for a transport: `owner`'s proof is
     /// rechecked in the transaction that lands the turn, so a witness queued
-    /// behind a revocation writes nothing, on record or off.
+    /// behind a revocation writes nothing, on record or off. In a room, so is
+    /// the owner's place on its roster, so one queued behind their removal
+    /// writes nothing either.
     ///
     /// # Errors
     ///
-    /// `FORBIDDEN` when `owner` does not name this handle's actor or its proof
-    /// no longer holds; otherwise as [`Self::witness_into_session`].
+    /// `FORBIDDEN` when `owner` does not name this handle's actor, its proof
+    /// no longer holds or they are no longer in the stretch's room;
+    /// otherwise as [`Self::witness_into_session`].
     pub fn witness_into_session_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -126,6 +129,7 @@ impl Memory<'_> {
                 "the owner proof names another actor than the witness".to_owned(),
             ));
         }
+        let room = session.room()?;
         self.run_witness(
             turn,
             WitnessTarget::Session { session, summary },
@@ -135,7 +139,17 @@ impl Memory<'_> {
             |wtxn| {
                 owner
                     .revalidate_in_txn(self.vault, wtxn)
-                    .map_err(|error| refused(error.to_string()))
+                    .map_err(|error| refused(error.to_string()))?;
+                match room {
+                    Some(room) if !session.is_member_in_txn(wtxn, room, owner.actor())? => {
+                        Err(MemoryError::new(
+                            MEMORY_CODE_FORBIDDEN,
+                            "the owner is not in this stretch's room".to_owned(),
+                            &["Join the room before speaking in it."],
+                        ))
+                    }
+                    _ => Ok(()),
+                }
             },
         )
     }

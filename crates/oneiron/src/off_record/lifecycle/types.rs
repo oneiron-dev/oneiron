@@ -90,6 +90,9 @@ pub enum OffRecordNoticeAct {
     SavedTurn,
     /// Put the room on record: later turns are saved as they land.
     SavingFromHere,
+    /// Saving stopped: the person who put the room on record left it, or
+    /// lost this vault or their proof. Later turns stay off record.
+    SavingStopped,
     /// Took an export file of the talk.
     Exported,
     /// An agent suggested a save. Nothing was saved.

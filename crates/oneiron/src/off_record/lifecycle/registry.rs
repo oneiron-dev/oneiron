@@ -63,6 +63,9 @@ pub(super) struct OffRecordSessionEntryState {
     /// said in the stretch, or edited since, stays out. Empty for a 1:1,
     /// which has no copy to take.
     pub(super) kept_messages: BTreeMap<EntityId, KeptMessage>,
+    /// Who put a room's stretch on record, while it is; every landing in
+    /// base checks them again. `None` off record and in a 1:1.
+    pub(super) saver: Option<super::on_record::OnRecordSaver>,
 }
 
 /// A message of the stretch that is in base now: its turn, when it was said
@@ -180,6 +183,7 @@ impl OffRecordSessionRegistry {
                 overlay_shell_staged: false,
                 continuation_shell: None,
                 kept_messages: BTreeMap::new(),
+                saver: None,
             }),
             published_record: ArcSwapOption::from(Some(Arc::new(record))),
         });

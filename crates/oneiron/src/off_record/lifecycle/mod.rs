@@ -61,6 +61,8 @@
 //! they evaporate with the room without the seam knowing their type.
 
 mod executor;
+mod on_record;
+mod promotion;
 mod registry;
 mod room;
 mod session;

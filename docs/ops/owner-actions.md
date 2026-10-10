@@ -322,6 +322,15 @@ own `promote` and `mode` above post one too when the stretch runs in a room. A s
 with `POST /v1/owner/off-record` has no room, so it posts none. Someone outside the room gets the
 same 404 as for a stretch that does not exist.
 
+A save keeps what the room showed you, as an export does: the visible messages of the turns your
+membership shows you. An agent's hidden messages (its own reasoning) and turn summaries stay out.
+
+Putting a room on record saves into your vault only while you are in the room and own the vault
+on a live credential. Each later turn checks that again. Once you leave, or lose the vault or
+the credential, saving stops: the stretch goes back off record and the room hears
+`saving_stopped`. A turn caught in that moment is refused with `409`, and nothing of it is kept;
+say it again to keep it off record.
+
 ## Read the vault as files
 
 `GET /v1/owner/graph-fs?path=/entities` reads the vault as a read-only tree (OF-355): `/worlds`,

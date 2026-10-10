@@ -26,13 +26,13 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::promote::PromoteOutcome;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
-use crate::session_overlay::{JournalEntry, JournalRole, OverlaySnapshot};
+use crate::session_overlay::{JournalEntry, JournalRole, OverlaySnapshot, PromotePlan};
 
 use super::registry::{KeptMessage, OffRecordSessionEntryState, session_entry_state};
 use super::session::{OffRecordSession, OffRecordSessionVault};
 use super::types::{
-    OffRecordBackendClass, OffRecordMode, OffRecordNotice, OffRecordNoticeAct,
-    OffRecordSessionRecord, OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn,
+    OffRecordBackendClass, OffRecordNotice, OffRecordNoticeAct, OffRecordSessionRecord,
+    OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn,
 };
 
 /// The most notices a room's timeline holds; past it the oldest drop, so a
@@ -175,8 +175,10 @@ impl OffRecordSession<'_> {
     /// turns (their copy marks which turns are saved).
     pub fn record_for(&self, actor: EntityId) -> Result<OffRecordSessionRecord> {
         let room = self.require_in_room(actor)?;
+        // A saver who left the room has stopped saving, read or not.
+        self.lapse_saver()?;
         let mut record = session_entry_state(&self.entry)?.record.clone();
-        let windows = self.sight(room, actor)?;
+        let windows = self.sight(room, actor, None)?;
         record.promoted_turns.clear();
         record
             .notices
@@ -185,10 +187,28 @@ impl OffRecordSession<'_> {
     }
 
     /// `actor`'s membership windows in `room`, read AFTER whatever they
-    /// filter: someone removed before this read is refused, and anything
-    /// said after they left falls outside the windows it returns.
-    fn sight(&self, room: EntityId, actor: EntityId) -> Result<Vec<MembershipWindow>> {
+    /// filter: someone removed, or whose `credential` was revoked, before
+    /// this read is refused, and anything said after they left falls
+    /// outside the windows it returns.
+    fn sight(
+        &self,
+        room: EntityId,
+        actor: EntityId,
+        credential: Option<&VerifiedSlip>,
+    ) -> Result<Vec<MembershipWindow>> {
         let txn = self.vault.store.env.read_txn()?;
+        if let Some(credential) = credential
+            && !self
+                .vault
+                .capability_slip_is_live_in_txn(&txn, credential)?
+        {
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordPromoteUnauthenticated {
+                    session_ref: self.session_ref.clone(),
+                    actor_ref: actor.to_hex(),
+                },
+            ));
+        }
         if !is_member_in_txn(self.vault, &txn, room, actor)? {
             return Err(not_in_room(&self.session_ref, actor));
         }
@@ -210,11 +230,22 @@ impl OffRecordSession<'_> {
     /// A copy of the talk for `person`, who is in the room: every turn of the
     /// stretch from the times their membership shows them, saved or not.
     /// It posts an `exported` notice and writes no vault.
-    pub fn export_talk_by(&self, person: EntityId) -> Result<OffRecordTalk> {
+    ///
+    /// # Errors
+    ///
+    /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `credential`
+    /// was revoked or expired by the time the talk is gathered,
+    /// [`OffRecordError::OffRecordNotInRoom`] when `person` is not in the
+    /// room by then: either way nothing is released and nobody is told.
+    pub fn export_talk_by(
+        &self,
+        person: EntityId,
+        credential: Option<&VerifiedSlip>,
+    ) -> Result<OffRecordTalk> {
         let room = self.require_in_room(person)?;
         let mut state = self.recording_state()?;
         let gathered = self.gather_talk(&state)?;
-        let windows = self.sight(room, person)?;
+        let windows = self.sight(room, person, credential)?;
         let talk = OffRecordTalk {
             session_ref: self.session_ref.clone(),
             room: state.record.room,
@@ -287,48 +318,6 @@ impl OffRecordSession<'_> {
         self.save_talk(owner.actor(), room, authority)
     }
 
-    /// Flips the stretch on record for the owner: later turns are saved as
-    /// they land, and the room hears a `saving_from_here` notice. In a room
-    /// the owner must be on the roster and own this vault, since the flip
-    /// saves everyone's later turns into it.
-    pub fn flip_on_record_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<()> {
-        let in_room = self.room()?.is_some();
-        {
-            let txn = self.vault.store.env.read_txn()?;
-            if in_room {
-                owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
-            } else {
-                owner.revalidate_in_txn(self.vault, &txn)?;
-            }
-        }
-        if in_room {
-            self.require_in_room(owner.actor())?;
-        }
-        // This handle's own entry, under one lock: the flip and its notice
-        // land on the stretch the owner acted on, never on one that took its
-        // name since, and a closing stretch is refused before either.
-        let mut state = session_entry_state(&self.entry)?;
-        let was = state.record.mode;
-        super::vault_api::set_entry_mode(
-            &self.entry,
-            &mut state,
-            &self.session_ref,
-            OffRecordMode::OnRecord,
-        )?;
-        // A room already on record hears nothing new.
-        if was != OffRecordMode::OnRecord {
-            let at = self.vault.store.clock.now_recorded_at();
-            post_notice(
-                &mut state,
-                OffRecordNoticeAct::SavingFromHere,
-                owner.actor(),
-                at,
-            );
-            self.entry.publish_state(&state);
-        }
-        Ok(())
-    }
-
     fn save_talk(
         &self,
         by: EntityId,
@@ -351,15 +340,19 @@ impl OffRecordSession<'_> {
                 .map(|(turn, _)| (turn, turn_times(&snapshot, turn)))
                 .filter(|(_, times)| times.iter().all(|at| visible(windows.as_deref(), *at)))
                 .collect();
-            let plans = turns
-                .iter()
-                .map(|(turn, _)| snapshot.plan_promotion(*turn))
-                .collect::<Result<Vec<_>>>()?;
+            // The copy holds what the room showed, as an export does: a turn
+            // that showed nothing is not saved at all.
+            let (mut plans, mut times) = (Vec::new(), Vec::new());
+            for (turn, turn_times) in turns {
+                if let Some(plan) = copy_plan(&snapshot, turn)? {
+                    plans.push(plan);
+                    times.extend(turn_times);
+                }
+            }
             drop(snapshot);
             if plans.is_empty() {
                 return Ok(Vec::new());
             }
-            let times: Vec<u64> = turns.into_iter().flat_map(|(_, times)| times).collect();
             let saved = self.promote_plans(&mut state, plans, |wtxn| {
                 authority(self.vault, wtxn)?;
                 match room {
@@ -563,6 +556,62 @@ pub(super) fn turn_times(snapshot: &OverlaySnapshot, turn: EntityId) -> Vec<u64>
         .collect()
 }
 
+/// What a saved copy of `turn` holds (ARCH-0052 D5): what the room showed
+/// of it, as an export does. That is the room's shell, the TURN and its own
+/// edge, and each visible message with its edges and text. A hidden message
+/// (an agent's own reasoning), a summary and anything else of the turn stay
+/// out. `None` when the turn showed nothing.
+pub(super) fn copy_plan(snapshot: &OverlaySnapshot, turn: EntityId) -> Result<Option<PromotePlan>> {
+    let mut shown = BTreeSet::new();
+    for entry in snapshot.journal_entries() {
+        if let (
+            JournalRole::MessagePartOf,
+            BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                ..
+            },
+        ) = (&entry.role, &entry.op)
+            && *entity_type == ENTITY_TYPE_MESSAGE
+            && entry.scope.turn() == turn
+            && visible_message(data)?.is_some()
+        {
+            shown.insert(*id);
+        }
+    }
+    if shown.is_empty() {
+        return Ok(None);
+    }
+    snapshot
+        .plan_promotion_where(turn, |entry| match entry.role {
+            JournalRole::ConversationShell | JournalRole::TurnPut => true,
+            JournalRole::SummaryDerivedFrom => false,
+            JournalRole::MessagePartOf | JournalRole::AttributionEdge => {
+                subject(&entry.op).is_some_and(|id| shown.contains(&id))
+            }
+            // The TURN's own edge to the room, and a shown message's text.
+            JournalRole::TurnOwnedArtifact => match &entry.op {
+                BatchOp::Edge { src, .. } => *src == turn,
+                op => subject(op).is_some_and(|id| shown.contains(&id)),
+            },
+        })
+        .map(Some)
+}
+
+/// The row a journaled op writes, or the source of the edge it writes.
+fn subject(op: &BatchOp) -> Option<EntityId> {
+    match op {
+        BatchOp::Put { id, .. } | BatchOp::Text { id, .. } | BatchOp::Vector { id, .. } => {
+            Some(*id)
+        }
+        BatchOp::Edge { src, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { src, .. }
+        | BatchOp::EdgeWithCreatedAt { src, .. } => Some(*src),
+        _ => None,
+    }
+}
+
 /// Refuses unless, in `txn`, `actor` is on `room`'s roster and their
 /// membership shows every one of `times`.
 pub(super) fn require_sight_in_txn(
@@ -625,7 +674,7 @@ fn visible(windows: Option<&[MembershipWindow]>, at: u64) -> bool {
     windows.is_none_or(|windows| windows.iter().any(|window| window.contains(at)))
 }
 
-fn is_member_in_txn(
+pub(super) fn is_member_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,

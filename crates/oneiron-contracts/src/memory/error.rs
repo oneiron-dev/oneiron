@@ -366,6 +366,14 @@ impl From<Error> for MemoryError {
                     "A route is generation-stamped on purpose: a stale one refuses before staging anything.",
                 ],
             ),
+            ErrorKind::OffRecordSavingStopped => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Nothing of this write was kept, and the stretch is off record again.",
+                    "Witness the turn again to say it off record; only the vault's owner, in the room, puts it back on record.",
+                ],
+            ),
             ErrorKind::OffRecordOverlayFull => Self::new(
                 MEMORY_CODE_INVALID_STATE,
                 message,

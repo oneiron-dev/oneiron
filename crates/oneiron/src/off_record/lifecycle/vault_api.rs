@@ -366,6 +366,10 @@ pub(super) fn set_entry_mode(
         OffRecordMode::OffRecord => entry.overlay.rearm()?,
     }
     state.record.mode = mode;
+    // Off record again, nobody's vault takes the room's turns.
+    if mode != OffRecordMode::OnRecord {
+        state.saver = None;
+    }
     entry.publish_state(state);
     Ok(state.record.clone())
 }

@@ -222,7 +222,13 @@ impl OffRecordSession<'_> {
     fn base_write_vault(&self, route: &SessionWriteRoute) -> Result<&Vault> {
         route.revalidate()?;
         match route.target() {
-            RouteTarget::Base => Ok(self.vault),
+            RouteTarget::Base => {
+                // A room on record takes writes only while its saver holds.
+                // These writes run their own transactions, so the saver is
+                // checked just before, as the route is.
+                self.require_saver()?;
+                Ok(self.vault)
+            }
             RouteTarget::Overlay | RouteTarget::Discard => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.session_ref.clone(),
