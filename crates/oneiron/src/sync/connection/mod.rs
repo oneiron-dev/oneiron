@@ -273,7 +273,7 @@ use crate::sync::client::{SyncClient, SyncEvent};
 #[cfg(test)]
 use crate::sync::queue::QueuedUpdate;
 #[cfg(test)]
-use crate::sync::transport::{self, TransportError, window_sub_tags};
+use crate::sync::transport::{self, window_sub_tags};
 #[cfg(test)]
 use futures_util::{SinkExt, StreamExt};
 #[cfg(test)]

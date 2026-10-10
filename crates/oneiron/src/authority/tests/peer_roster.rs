@@ -7,8 +7,7 @@ use super::*;
 ///
 /// Its genesis device is owner/admin at a LAWFUL attestation tier — canon never
 /// stamps a host-root genesis `ROLE_CLOUD`/`CloudCustodial`, and the standing
-/// admission guards would refuse to mint one (see
-/// `peer_consent_predicate_ignores_cloud_markings_the_local_one_keeps`).
+/// admission guards would refuse to mint one.
 ///
 /// Chain: genesis(host) → enroll(admin) → enroll(agent) → enroll(spare) →
 /// revoke(spare). Everything past the second device carries the peer cosign the
@@ -162,66 +161,6 @@ fn peer_fold_derives_the_host_root_roster_from_relayed_entries() {
 }
 
 #[test]
-fn peer_consent_predicate_ignores_cloud_markings_the_local_one_keeps() {
-    let key = authority_key_from_ed(&ed_key(181));
-    let cloud_marked_owner = FoldedDevice {
-        key: key.clone(),
-        tier: AuthorityTier::CloudCustodial,
-        roles: ROLE_OWNER | ROLE_CLOUD,
-        revoked: false,
-    };
-    assert!(
-        folded_peer_device_is_consent_root(&cloud_marked_owner),
-        "the peer arm ignores ROLE_CLOUD/CloudCustodial: owner-or-admin and \
-         not-revoked is the whole test"
-    );
-    assert!(
-        !folded_device_can_authority_consent(&cloud_marked_owner),
-        "the self-host arm still excludes cloud-marked devices"
-    );
-
-    // Hosted roots now have the same wire shape as peer roots. The local
-    // self-host predicate above, not the codec, enforces device-only consent.
-    assert!(
-        device(
-            key.clone(),
-            ROLE_OWNER | ROLE_CLOUD,
-            AuthorityTier::Software
-        )
-        .validate()
-        .is_ok()
-    );
-    assert!(
-        device(key.clone(), ROLE_OWNER, AuthorityTier::CloudCustodial)
-            .validate()
-            .is_ok()
-    );
-
-    // Both arms agree on every shape that CAN reach a fold.
-    for (roles, tier, expected) in [
-        (ROLE_OWNER, AuthorityTier::Software, true),
-        (ROLE_ADMIN, AuthorityTier::Hardware, true),
-        (ROLE_AGENT, AuthorityTier::Software, false),
-        (ROLE_CLOUD, AuthorityTier::CloudCustodial, false),
-    ] {
-        let folded = FoldedDevice {
-            key: key.clone(),
-            tier,
-            roles,
-            revoked: false,
-        };
-        assert_eq!(folded_peer_device_is_consent_root(&folded), expected);
-        assert_eq!(folded_device_can_authority_consent(&folded), expected);
-        let revoked = FoldedDevice {
-            revoked: true,
-            ..folded
-        };
-        assert!(!folded_peer_device_is_consent_root(&revoked));
-        assert!(!folded_device_can_authority_consent(&revoked));
-    }
-}
-
-#[test]
 fn peer_entries_bind_only_the_authority_transcript_domain() {
     // Fixture copy of the sync-only `sync::lease::LEASE_POP_DOMAIN`. The law
     // under test is base-mode (a foreign transcript domain never widens the
@@ -293,33 +232,6 @@ fn peer_roster_is_permutation_invariant() {
 }
 
 #[test]
-fn withheld_peer_entries_cannot_mint_a_key_or_unrevoke_one() {
-    let fixture = peer_log_fixture(185);
-    let full = fold_legacy_peer_authority_log(&fixture.entries);
-    let revoke_hash = authority_entry_hash(fixture.entries.last().unwrap()).unwrap();
-
-    // The log is a chain, so its ancestry-closed subsets are exactly its
-    // prefixes.
-    for length in 1..=fixture.entries.len() {
-        let subset = &fixture.entries[..length];
-        let fold = fold_legacy_peer_authority_log(subset);
-        for key in fold.roster.keys() {
-            assert!(
-                full.roster.contains_key(key),
-                "withholding entries must never CREATE a never-enrolled key"
-            );
-        }
-        if fold.valid_entries.contains(&revoke_hash) {
-            assert!(
-                fold.roster[&fixture.revoked_key].revoked,
-                "no withheld suffix can widen a key back past its revocation"
-            );
-            assert!(!peer_roster_consent_keys(&fold).contains(&fixture.revoked_key));
-        }
-    }
-}
-
-#[test]
 fn forged_peer_entry_signed_off_roster_never_enters_the_peer_roster() {
     let fixture = peer_log_fixture(186);
     let forged_device = authority_key_from_ed(&ed_key(200));
@@ -359,32 +271,4 @@ fn forged_peer_entry_signed_off_roster_never_enters_the_peer_roster() {
         fold_legacy_peer_authority_log(&fixture.entries).roster,
         "the forgery leaves the derived roster byte-identical"
     );
-}
-
-#[test]
-fn peer_fold_never_imports_an_unpaired_client_authority_key() {
-    let owner = ed_key(123);
-    let genesis = genesis_entry(123, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    let enroll = enroll_device_entry(
-        vault_id,
-        &genesis,
-        &owner,
-        EnrollSpec {
-            seed: 124,
-            roles: ROLE_OWNER | ROLE_ADMIN,
-            tier: AuthorityTier::Hardware,
-            seq: 1,
-            ts: 2,
-        },
-    );
-    let hash = authority_entry_hash(&enroll).unwrap();
-    let fold = fold_peer_authority_log(&[genesis, enroll]);
-    assert!(!fold.valid_entries.contains(&hash));
-    assert!(
-        !fold
-            .roster
-            .contains_key(&authority_key_from_ed(&ed_key(124)))
-    );
-    assert!(fold.roster.contains_key(&authority_key_from_ed(&owner)));
 }

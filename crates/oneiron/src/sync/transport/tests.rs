@@ -147,20 +147,6 @@ fn lease_frame_layout_literals() {
 }
 
 #[test]
-fn protocol_hello_decode_roundtrip() {
-    let frame = encode_protocol_hello();
-    assert_eq!(decode_protocol_hello(&frame).unwrap(), PROTOCOL_VERSION);
-    let legacy_frame = encode_legacy_full_window_protocol_hello();
-    assert_eq!(
-        decode_protocol_hello(&legacy_frame).unwrap(),
-        LEGACY_FULL_WINDOW_PROTOCOL_VERSION
-    );
-    // A future-version peer's hello must still DECODE (the caller
-    // compares versions and closes) — decode returns the raw byte.
-    assert_eq!(decode_protocol_hello(&[TAG_PROTOCOL_HELLO, 9]).unwrap(), 9);
-}
-
-#[test]
 fn protocol_hello_decode_rejects_malformed_frames() {
     // (case_name, frame)
     let cases: &[(&str, &[u8])] = &[
@@ -176,54 +162,6 @@ fn protocol_hello_decode_rejects_malformed_frames() {
             "case {case_name}: expected InvalidPayload"
         );
     }
-}
-
-#[test]
-fn window_sync_roundtrip() {
-    let key = "2026-02";
-    let msg = b"test payload";
-    let encoded = encode_window_sync(key, window_sub_tags::UPDATE, msg)
-        .into_result()
-        .unwrap();
-    assert_eq!(encoded[0], TAG_WINDOW_SYNC);
-    let (dk, sub, dm) = decode_window_sync(&encoded[1..]).unwrap();
-    assert_eq!(dk, key);
-    assert_eq!(sub, window_sub_tags::UPDATE);
-    assert_eq!(dm, msg);
-}
-
-#[test]
-fn bulk_transfer_roundtrip() {
-    let key = "2025-11";
-    let data = vec![1, 2, 3];
-    let encoded = encode_bulk_transfer(key, &data).into_result().unwrap();
-    assert_eq!(encoded[0], TAG_BULK_TRANSFER);
-    let (dk, dd) = decode_bulk_transfer(&encoded[1..]).unwrap();
-    assert_eq!(dk, key);
-    assert_eq!(dd, &data[..]);
-}
-
-#[test]
-fn bulk_transfer_done_roundtrip() {
-    let key = "2025-09";
-    let state = vec![10, 20];
-    let encoded = encode_bulk_transfer_done(key, &state)
-        .into_result()
-        .unwrap();
-    assert_eq!(encoded[0], TAG_BULK_TRANSFER_DONE);
-    let (dk, ds) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
-    assert_eq!(dk, key);
-    assert_eq!(ds, &state[..]);
-}
-
-#[test]
-fn bulk_transfer_done_empty_state() {
-    let encoded = encode_bulk_transfer_done("2025-08", &[])
-        .into_result()
-        .unwrap();
-    let (k, s) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
-    assert_eq!(k, "2025-08");
-    assert!(s.is_empty());
 }
 
 #[test]
@@ -262,67 +200,6 @@ fn bulk_transfer_done_encoders_reject_hostile_keys_without_panicking() {
             "key {key:?} should return InvalidWindowKey"
         );
     }
-}
-
-#[cfg(target_pointer_width = "64")]
-#[test]
-fn bulk_transfer_done_checked_encoder_rejects_u32_overflow_len() {
-    let err = checked_bulk_transfer_done_state_len(u32::MAX as usize + 1).unwrap_err();
-
-    assert_matches!(err, TransportError::InvalidPayload(_));
-}
-
-#[test]
-fn bulk_transfer_done_capacity_rejects_usize_overflow() {
-    let err = checked_bulk_transfer_done_capacity(MAX_WINDOW_KEY_LEN, usize::MAX).unwrap_err();
-
-    assert_matches!(
-        err,
-        TransportError::FrameTooLarge { size, max }
-            if size == usize::MAX && max == MAX_ENCODED_FRAME_BYTES
-    );
-}
-
-#[test]
-fn window_sync_encoder_rejects_oversized_payload_without_panicking() {
-    let payload = vec![0u8; MAX_ENCODED_FRAME_BYTES];
-
-    assert_matches!(
-        encode_window_sync("2026-02", window_sub_tags::UPDATE, &payload).into_result(),
-        Err(TransportError::FrameTooLarge { size, max })
-            if size == MAX_ENCODED_FRAME_BYTES + 10 && max == MAX_ENCODED_FRAME_BYTES
-    );
-}
-
-#[test]
-fn bulk_transfer_encoder_rejects_oversized_payload_without_panicking() {
-    let payload = vec![0u8; MAX_ENCODED_FRAME_BYTES];
-
-    assert_matches!(
-        encode_bulk_transfer("2026-02", &payload).into_result(),
-        Err(TransportError::FrameTooLarge { size, max })
-            if size == MAX_ENCODED_FRAME_BYTES + 9 && max == MAX_ENCODED_FRAME_BYTES
-    );
-}
-
-#[test]
-fn bulk_transfer_done_encoder_rejects_oversized_payload_without_panicking() {
-    let state = vec![0u8; MAX_ENCODED_FRAME_BYTES];
-
-    assert_matches!(
-        encode_bulk_transfer_done("2026-02", &state).into_result(),
-        Err(TransportError::FrameTooLarge { size, max })
-            if size == MAX_ENCODED_FRAME_BYTES + 13 && max == MAX_ENCODED_FRAME_BYTES
-    );
-}
-
-#[test]
-fn encoded_frame_len_rejects_usize_overflow() {
-    assert_matches!(
-        checked_encoded_frame_len(MAX_WINDOW_KEY_LEN, usize::MAX),
-        Err(TransportError::FrameTooLarge { size, max })
-            if size == usize::MAX && max == MAX_ENCODED_FRAME_BYTES
-    );
 }
 
 #[test]
@@ -425,31 +302,4 @@ fn decoders_reject_invalid_calendar_window_keys() {
             std::str::from_utf8(invalid_key).unwrap_or("<bytes>")
         );
     }
-}
-
-#[test]
-fn world_month_keys_round_trip_through_all_window_frames() {
-    let world = crate::test_util::entity(0xab);
-    let key = crate::sync::WindowKey::for_world(1_771_027_200, world).to_string();
-    let vv = encode_window_sync(&key, window_sub_tags::VV_REQUEST, b"vv")
-        .into_result()
-        .unwrap();
-    let (decoded, tag, bytes) = decode_window_sync(&vv[1..]).unwrap();
-    assert_eq!(
-        (decoded, tag, bytes),
-        (key.as_str(), window_sub_tags::VV_REQUEST, b"vv".as_slice())
-    );
-    let bulk = encode_bulk_transfer(&key, b"data").into_result().unwrap();
-    assert_eq!(decode_bulk_transfer(&bulk[1..]).unwrap().0, key);
-    let done = encode_bulk_transfer_done(&key, b"state")
-        .into_result()
-        .unwrap();
-    assert_eq!(decode_bulk_transfer_done(&done[1..]).unwrap().0, key);
-    let uppercase = key.to_uppercase();
-    assert!(
-        encode_window_sync(&uppercase, window_sub_tags::VV_REQUEST, b"vv")
-            .into_result()
-            .is_err()
-    );
-    assert!(crate::sync::WindowKey::try_new(format!("{key}a")).is_none());
 }

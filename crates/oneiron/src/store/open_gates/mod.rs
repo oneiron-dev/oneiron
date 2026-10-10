@@ -37,8 +37,6 @@ pub(in crate::store) use self::read_only_door::read_existing_vault_meta;
 // bare through `use super::*`, but no non-test code outside `open_gates/`
 // reaches them through the seam, so the re-exports live under `cfg(test)`.
 #[cfg(test)]
-pub(crate) use self::hnsw_model_gates::read_vault_meta_u16;
-#[cfg(test)]
 pub(in crate::store) use self::manifest_storage_gates::StorageAbiGate;
 #[cfg(test)]
 pub(in crate::store) use self::manifest_storage_gates::gate_storage_abi_value;

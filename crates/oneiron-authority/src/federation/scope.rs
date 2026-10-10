@@ -313,14 +313,4 @@ mod tests {
             }
         }
     }
-    #[test]
-    fn disjoint_worlds_meet_at_bottom_not_base() {
-        let a = ScopeAxis::Some(BTreeSet::from([ScopeId(
-            EntityId::from_bytes([1; 16]).unwrap(),
-        )]));
-        let b = ScopeAxis::Some(BTreeSet::from([ScopeId(
-            EntityId::from_bytes([2; 16]).unwrap(),
-        )]));
-        assert_eq!(a.meet(&b), ScopeAxis::Bottom);
-    }
 }

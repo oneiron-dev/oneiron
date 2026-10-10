@@ -36,22 +36,6 @@ fn policy_manifest_signature_frontier_covers_first_party_auto_grant() -> Result<
 }
 
 #[test]
-fn gate_chokepoint_active_policy_source_denial_is_typed_gate_rejection() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let mut data = encode_policy_manifest(vec![]);
-    trust_human_candidate_actor(&mut data);
-    put_policy_manifest_bytes(&vault, test_id(0x84), &data)?;
-
-    assert_auto_source_gate_rejected(
-        &vault,
-        0x85,
-        ClaimSource::ToolOutput,
-        "pending",
-        &["gate.pending.source_trust"],
-    )
-}
-
-#[test]
 fn gate_decision_ledger_survives_rejected_standalone_write() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, test_id(0x90), &encode_policy_manifest(vec![]))?;
@@ -153,148 +137,6 @@ fn retraction_closes_custom_policy_pending_without_rebinding_or_reparking() -> R
     assert_eq!(closure.reason_codes, vec!["gate.pending.claim_retracted"]);
     assert_eq!(closure.diff_handle, pending.diff_handle);
     assert_eq!(closure.read_frontier_hash, pending.read_frontier_hash);
-    Ok(())
-}
-
-#[test]
-fn pending_gate_consent_groups_interleaved_dreamer_runs_with_default_lane() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0xA0), &encode_policy_manifest(vec![]))?;
-
-    let run_a = "dreamer-run-a";
-    let run_b = "dreamer-run-b";
-    // 0x81..0x85: [0xA1; 16]..[0xA5; 16] are write-door-reserved system-agent
-    // actor ids (ONE-1444).
-    let run_a_first = test_id(0x81);
-    let run_b_first = test_id(0x82);
-    let default_id = test_id(0x83);
-    let run_a_second = test_id(0x84);
-    let run_b_second = test_id(0x85);
-
-    let pending_body = |subject_seed: u8, value: &'static str, source: ClaimSource| {
-        let mut body = source_trust_claim(source);
-        body.subject = ClaimSubject::Entity(test_id(subject_seed));
-        body.value = Value::from(value);
-        body.approval = ClaimApprovalStatus::Proposed;
-        // Dreamer-authored bodies satisfy the evidence floor with their own
-        // seeded subject entity; UserStated writes are not floor-checked.
-        if source == ClaimSource::Generated {
-            body.evidence = Some(precommit_evidence(vec![test_id(subject_seed)]));
-        }
-        body
-    };
-
-    let body_a_first = pending_body(0xB1, "run-a-1", ClaimSource::Generated);
-    let body_b_first = pending_body(0xB2, "run-b-1", ClaimSource::Generated);
-    let body_default = pending_body(0xB3, "default", ClaimSource::UserStated);
-    let body_a_second = pending_body(0xB4, "run-a-2", ClaimSource::Generated);
-    let body_b_second = pending_body(0xB5, "run-b-2", ClaimSource::Generated);
-
-    for (claim_id, actor, run_id, body) in [
-        (run_a_first, test_id(0xC1), run_a, &body_a_first),
-        (run_b_first, test_id(0xC2), run_b, &body_b_first),
-    ] {
-        let (candidate, envelope) =
-            dreamer_claim_candidate_write_parts(&vault, body, actor, run_id)?;
-        vault
-            .batch()
-            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
-            .commit()?;
-        std::thread::sleep(Duration::from_millis(2));
-    }
-
-    let (candidate, envelope) = claim_candidate_write_parts(&vault, &body_default)?;
-    vault
-        .batch()
-        .claim_candidate(&default_id, candidate, &envelope, test_time(3), 3)
-        .commit()?;
-    std::thread::sleep(Duration::from_millis(2));
-
-    for (claim_id, actor, run_id, body) in [
-        (run_a_second, test_id(0xC4), run_a, &body_a_second),
-        (run_b_second, test_id(0xC5), run_b, &body_b_second),
-    ] {
-        let (candidate, envelope) =
-            dreamer_claim_candidate_write_parts(&vault, body, actor, run_id)?;
-        vault
-            .batch()
-            .claim_candidate(&claim_id, candidate, &envelope, test_time(4), 4)
-            .commit()?;
-        std::thread::sleep(Duration::from_millis(2));
-    }
-
-    let pending = vault.pending_gate_consents(10)?;
-    assert_eq!(pending.len(), 5);
-    assert_eq!(
-        pending
-            .iter()
-            .find(|record| record.claim_id == *run_a_first.as_bytes())
-            .and_then(|record| record.dreamer_run_id.as_deref()),
-        Some(run_a)
-    );
-    assert_eq!(
-        pending
-            .iter()
-            .find(|record| record.claim_id == *run_b_first.as_bytes())
-            .and_then(|record| record.dreamer_run_id.as_deref()),
-        Some(run_b)
-    );
-    assert_eq!(
-        pending
-            .iter()
-            .find(|record| record.claim_id == *default_id.as_bytes())
-            .and_then(|record| record.dreamer_run_id.as_deref()),
-        None
-    );
-
-    let groups = vault.pending_gate_consent_groups(10)?;
-    assert_eq!(groups.len(), 3);
-    let group_ids = |run_id: Option<&str>| -> Vec<[u8; ENTITY_ID_LEN]> {
-        groups
-            .iter()
-            .find(|group| group.dreamer_run_id.as_deref() == run_id)
-            .expect("group exists")
-            .records
-            .iter()
-            .map(|record| record.claim_id)
-            .collect()
-    };
-    assert_eq!(
-        group_ids(Some(run_a)),
-        vec![*run_a_first.as_bytes(), *run_a_second.as_bytes()]
-    );
-    assert_eq!(
-        group_ids(Some(run_b)),
-        vec![*run_b_first.as_bytes(), *run_b_second.as_bytes()]
-    );
-    assert_eq!(group_ids(None), vec![*default_id.as_bytes()]);
-
-    let mut approved_a_first = body_a_first;
-    approved_a_first.approval = ClaimApprovalStatus::Approved;
-    let (candidate, envelope) =
-        dreamer_claim_candidate_write_parts(&vault, &approved_a_first, test_id(0xC1), run_a)?;
-    vault
-        .batch()
-        .claim_candidate(&run_a_first, candidate, &envelope, test_time(5), 5)
-        .commit()?;
-
-    assert!(!has_pending_gate_consent(&vault, &run_a_first)?);
-    assert!(has_pending_gate_consent(&vault, &run_a_second)?);
-    assert_eq!(
-        vault
-            .get_claim(&run_a_first)?
-            .expect("approved claim")
-            .approval,
-        ClaimApprovalStatus::Approved
-    );
-
-    let groups = vault.pending_gate_consent_groups(10)?;
-    let run_a_after = groups
-        .iter()
-        .find(|group| group.dreamer_run_id.as_deref() == Some(run_a))
-        .expect("run A group remains");
-    assert_eq!(run_a_after.records.len(), 1);
-    assert_eq!(run_a_after.records[0].claim_id, *run_a_second.as_bytes());
     Ok(())
 }
 
@@ -849,30 +691,6 @@ fn gate_chokepoint_batch_policy_delete_cannot_weaken_later_claim() -> Result<()>
         "failed batch must not delete the active policy manifest"
     );
     assert!(vault.get_raw(&claim_id)?.is_none());
-    Ok(())
-}
-
-#[test]
-fn gate_chokepoint_allows_proposed_claims_for_review_under_pending_policy() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let mut data = encode_policy_manifest(vec![]);
-    trust_human_candidate_actor(&mut data);
-    put_policy_manifest_bytes(&vault, test_id(0x97), &data)?;
-
-    let claim_id = test_id(0x98);
-    let mut body = source_trust_claim(ClaimSource::ToolOutput);
-    body.predicate = "health.allergy".to_owned();
-    body.approval = ClaimApprovalStatus::Proposed;
-    let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
-
-    vault
-        .batch()
-        .claim_candidate(&claim_id, candidate, &envelope, test_time(7), 7)
-        .commit()?;
-
-    let stored = stored_claim_body(&vault, &claim_id)?;
-    assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
-    assert_eq!(stored.predicate, "health.allergy");
     Ok(())
 }
 

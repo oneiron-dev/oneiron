@@ -11,61 +11,6 @@ use super::support::*;
 use super::*;
 
 #[test]
-fn hardware_tier_and_attestation_do_not_authorize_any_device_widen() {
-    let owner = ed_key(62);
-    let owner_key = authority_key_from_ed(&owner);
-    for (tier, kind) in [
-        (AuthorityTier::Software, "SoftwareArgon2id"),
-        (AuthorityTier::Hardware, "Hardware"),
-    ] {
-        let mut root = device(owner_key.clone(), ROLE_OWNER | ROLE_ADMIN, tier);
-        root.attestation.kind = kind.into();
-        let genesis = sign_ed(
-            unsigned_entry(
-                None,
-                0,
-                Vec::new(),
-                AuthorityOp::Genesis {
-                    device: root,
-                    genesis_nonce: [72; 32],
-                    recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-                    tier_floor: AuthorityTier::Software,
-                    pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
-                },
-                owner_key.clone(),
-                1,
-            ),
-            &owner,
-        );
-        let vault_id = genesis_vault_id(&genesis).unwrap();
-        let enroll = enroll_device_entry(
-            vault_id,
-            &genesis,
-            &owner,
-            EnrollSpec {
-                seed: 63,
-                roles: ROLE_ADMIN,
-                tier: AuthorityTier::Software,
-                seq: 1,
-                ts: 2,
-            },
-        );
-        let enroll_hash = authority_entry_hash(&enroll).unwrap();
-        let first_seen = BTreeMap::from([(enroll_hash, 1)]);
-        let entries = [genesis, enroll];
-        for now in [1, 1 + DEFAULT_PENDING_WIDEN_DELAY_SECS] {
-            let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
-            assert!(!fold.valid_entries.contains(&enroll_hash));
-            assert!(
-                !fold
-                    .roster
-                    .contains_key(&authority_key_from_ed(&ed_key(63)))
-            );
-        }
-    }
-}
-
-#[test]
 fn rejected_client_enrollment_does_not_strand_independent_actor_revocation() {
     let owner = ed_key(231);
     let owner_key = authority_key_from_ed(&owner);

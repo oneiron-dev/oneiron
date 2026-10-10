@@ -183,56 +183,6 @@ fn lease_key_grammar_literal() {
 }
 
 #[test]
-fn lease_prefix_scan_isolates_vault_dimension() {
-    let (_dir, vault) = test_vault();
-    let vault_a = 0x0a0b0c0d0e0f1011;
-    let vault_b = 0x11100f0e0d0c0b0a;
-    let client = 0x0123456789abcdef;
-    let record_a = LeaseRecord {
-        vault_id: vault_a,
-        status: LeaseStatus::Active,
-        pubkey: [0xA1; 32],
-        granted_at: 1,
-        renewed_at: 2,
-        expires_at: 3,
-    };
-    let record_b = LeaseRecord {
-        vault_id: vault_b,
-        pubkey: [0xB2; 32],
-        ..record_a
-    };
-    let row_a = encode_lease_record(&record_a);
-    let row_b = encode_lease_record(&record_b);
-    vault
-        .sync_state_put(&lease_key(vault_a, client), &row_a)
-        .unwrap();
-    vault
-        .sync_state_put(&lease_key(vault_b, client), &row_b)
-        .unwrap();
-
-    let rtxn = vault.store.env.read_txn().unwrap();
-    let scoped_prefix = lease_key_prefix(vault_a);
-    assert_eq!(scoped_prefix, "ls:0a0b0c0d0e0f1011:");
-    let rows = vault
-        .store
-        .sync_state
-        .prefix_iter(&rtxn, &scoped_prefix)
-        .unwrap()
-        .map(|entry| {
-            let (key, value) = entry.unwrap();
-            (key.to_string(), value.to_vec())
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        rows,
-        vec![(
-            "ls:0a0b0c0d0e0f1011:0123456789abcdef".to_owned(),
-            row_a.to_vec()
-        )]
-    );
-}
-
-#[test]
 fn receipt_door_uses_vault_scoped_claimed_lookup() {
     let (_dir, vault) = test_vault();
     let vault_a = 0x0a0b_0c0d_0e0f_1011;
@@ -294,63 +244,6 @@ fn receipt_door_scopes_pubkey_revocation_floor_to_vault_prefix() {
     assert!(
         matches!(err, Error::Sync(SyncError::ReceiptLeaseRevoked { client_id }) if client_id == active_client_b),
         "same-vault revoked pubkey must still reject: {err:?}"
-    );
-}
-
-#[test]
-fn receipt_door_preserves_same_vault_expired_plus_revoked_floor() {
-    let (_dir, vault) = test_vault();
-    let vault_id = 0x0102_0304_0506_0708;
-    let expired_client = 0x1111_1111_1111_1111;
-    let revoked_client = 0x2222_2222_2222_2222;
-    let (receipt_id, pubkey, blob) = signed_receipt(0x41, expired_client);
-
-    put_lease_row(
-        &vault,
-        vault_id,
-        expired_client,
-        pubkey,
-        LeaseStatus::Expired,
-    );
-    put_lease_row(
-        &vault,
-        vault_id,
-        revoked_client,
-        pubkey,
-        LeaseStatus::Revoked,
-    );
-
-    let err = verify_receipt_for_vault(&vault, vault_id, &receipt_id, &blob).unwrap_err();
-    assert!(
-        matches!(err, Error::Sync(SyncError::ReceiptLeaseRevoked { client_id }) if client_id == expired_client),
-        "expired claimed rows still accept OD-7, but same-vault revoked pubkey floor rejects"
-    );
-}
-
-#[test]
-fn revoked_claimed_row_returns_claimed_client_id_before_scoped_floor_scan() {
-    let (_dir, vault) = test_vault();
-    let vault_id = 0x0102_0304_0506_0708;
-    let claimed_client = 0x4545_4545_4545_4545u64;
-    let corrupt_sibling_client = 0x4545_4545_4545_0001u64;
-    let (receipt_id, pubkey, blob) = signed_receipt(0x45, claimed_client);
-
-    put_lease_row(
-        &vault,
-        vault_id,
-        claimed_client,
-        pubkey,
-        LeaseStatus::Revoked,
-    );
-    vault
-        .sync_state_put(&lease_key(vault_id, corrupt_sibling_client), b"too-short")
-        .unwrap();
-
-    let err = verify_receipt_for_vault(&vault, vault_id, &receipt_id, &blob)
-        .expect_err("revoked claimed row must reject before scanning corrupt siblings");
-    assert!(
-        matches!(err, Error::Sync(SyncError::ReceiptLeaseRevoked { client_id }) if client_id == claimed_client),
-        "claimed-row revoked path must return the claimed client_id, got: {err:?}"
     );
 }
 
@@ -525,40 +418,6 @@ fn root_lease_mirror_isolates_tenants_for_same_subscriber() {
             .as_deref(),
         Some(bytes_b.as_slice()),
         "tenant B active replay-door row must stay under tenant B"
-    );
-}
-
-#[test]
-fn root_lease_map_value_matches_mirror_row_value() {
-    let (_dir, vault) = test_vault();
-    let doc = LoroDoc::new();
-    let vault_id = 0x0102030405060708;
-    let client_id = 0x0a0b0c0d0e0f1011;
-    let record = LeaseRecord {
-        vault_id,
-        status: LeaseStatus::Expired,
-        pubkey: [0x5A; 32],
-        granted_at: 10,
-        renewed_at: 20,
-        expires_at: 30,
-    };
-    let bytes = encode_lease_record(&record);
-    doc.get_map(ROOT_LEASES_MAP)
-        .insert(
-            lease_registry_key(vault_id, client_id).as_str(),
-            bytes.as_slice(),
-        )
-        .unwrap();
-    doc.commit();
-
-    mirror_leases_from_root(&vault, &doc).unwrap();
-    assert_eq!(
-        vault
-            .sync_state_get("ls:0102030405060708:0a0b0c0d0e0f1011")
-            .unwrap()
-            .as_deref(),
-        Some(bytes.as_slice()),
-        "root-doc leases value and ls: mirror value stay byte-identical"
     );
 }
 

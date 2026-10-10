@@ -13,9 +13,11 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use oneiron_docedit::ArchiveLimits;
 
 use super::frontier_hash::hash_policy_frontier_v0;
+#[cfg(feature = "sync")]
+use super::manifest_types::ResidenceOperationBudgetLimits;
 use super::manifest_types::{
     AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
-    ProjectCollaborationPolicy, ResidenceOperationBudgetLimits, SheetAnswerPrecedence,
+    ProjectCollaborationPolicy, SheetAnswerPrecedence,
 };
 use crate::gate::class_policy::{ActPosture, WaitResolution};
 
@@ -25,9 +27,8 @@ use crate::gate::ceiling::{
 };
 use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector};
 use crate::gate::policy_values::{
-    PolicyEvaluationScope, PolicyPrecedence, PolicyValue, PolicyValueKey, PolicyValueRow,
-    PolicyWhy, ResolvedPolicyValue, WhySource, precedence_row, resolve_row, resolve_value,
-    shipped_default_precedence,
+    PolicyEvaluationScope, PolicyPrecedence, PolicyValue, PolicyValueKey, PolicyWhy,
+    ResolvedPolicyValue, WhySource, precedence_row, resolve_value, shipped_default_precedence,
 };
 use crate::gate::project_conversion::ProjectConversionPolicy;
 
@@ -95,6 +96,7 @@ impl PolicyManifestResolution {
     /// The effective residence-operation caps, absent when loaded policy is
     /// malformed or otherwise forces fail-closed. Holder narrowing has already
     /// been capped by the vault-level values during the trusted manifest fold.
+    #[cfg(feature = "sync")]
     #[must_use]
     pub(crate) fn residence_operation_budgets(&self) -> Option<ResidenceOperationBudgetLimits> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
@@ -248,17 +250,6 @@ impl PolicyManifestResolution {
         }
     }
 
-    #[must_use]
-    pub(in crate::gate) fn policy_value_row(
-        &self,
-        key: PolicyValueKey,
-        scope: &PolicyEvaluationScope,
-    ) -> Option<&PolicyValueRow> {
-        (!self.is_fail_closed())
-            .then(|| resolve_row(&self.policy_values, key, scope))
-            .flatten()
-    }
-
     /// The meta-rule is read at vault scope only. Absence uses the shipped
     /// data default; callers can receipt the missing-row fallback distinctly.
     pub(in crate::gate) fn scope_precedence(&self) -> (PolicyPrecedence, Option<&str>) {
@@ -290,16 +281,6 @@ impl PolicyManifestResolution {
             self.scope_precedence().0,
             fallback,
         )
-    }
-
-    #[must_use]
-    pub(crate) fn proposal_check_threshold(&self) -> u64 {
-        self.proposal_check_threshold_in_scope(&PolicyEvaluationScope::default())
-    }
-
-    #[must_use]
-    pub(crate) fn proposal_check_threshold_in_scope(&self, scope: &PolicyEvaluationScope) -> u64 {
-        self.proposal_check_threshold_source(scope).threshold
     }
 
     pub(crate) fn proposal_check_threshold_source(
@@ -493,6 +474,7 @@ impl PolicyManifestResolution {
     /// table, which is exactly the single-pool meter.
     /// Resolved default mode; missing/bootstrapping manifests preserve the
     /// shipped non-home `opened` posture.
+    #[cfg(feature = "sync")]
     pub(crate) fn sync_default_all_worlds(&self) -> Result<bool> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             return Err(crate::Error::InvalidConfig(
@@ -504,6 +486,7 @@ impl PolicyManifestResolution {
 
     /// Trusted manifest cap for local world subscriptions. An absent manifest
     /// preserves bootstrap selection; a malformed loaded one grants nothing.
+    #[cfg(feature = "sync")]
     pub(crate) fn sync_world_ceiling(
         &self,
     ) -> Result<Option<&std::collections::BTreeSet<crate::EntityId>>> {

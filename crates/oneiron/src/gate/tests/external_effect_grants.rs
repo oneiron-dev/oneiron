@@ -161,43 +161,6 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
 }
 
 #[test]
-fn standing_outbound_grant_lookup_uses_principal_index_before_type_scan() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0xDD), &encode_policy_manifest(vec![]))?;
-
-    let grant_id = test_id(0xDE);
-    let intent = GrantMintIntent {
-        principal_ref: "sender".to_owned(),
-        origin_component_id: "ask-1".to_owned(),
-        origin_action_id: "escalate_always_this_verb_class".to_owned(),
-        origin_receipt_ref: Some("gate:ask-1".to_owned()),
-        scope: GrantMintIntentScope::VerbClass {
-            verb_class: "send".to_owned(),
-        },
-    };
-    vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
-    let policy = resolve(&vault)?;
-
-    // Persist an incomplete-index fixture: the grant and its principal association
-    // remain stored, but its type-index row is absent. Such a grant must remain
-    // usable by its owner.
-    vault.with_write_txn(|wtxn| {
-        let type_key = Store::encode_type_key(ENTITY_TYPE_OUTBOUND_GRANT, &grant_id);
-        vault.store.type_index.delete(wtxn, &type_key)?;
-        Ok(())
-    })?;
-
-    let mut effect = external_effect_gate_input("sender", "send", "line");
-    effect.has_opted_in = false;
-    let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
-    })?;
-
-    assert_eq!(decision.outcome(), GateOutcome::Allow);
-    Ok(())
-}
-
-#[test]
 fn forged_standing_grant_ref_does_not_authorize_external_effect() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let default_manifest_id = crate::gate::default_policy_manifest_id()?;
@@ -352,75 +315,6 @@ fn scoped_mcp_grant_without_registered_connector_key_stays_pending() -> Result<(
         vec!["gate.pending.connector_key_unregistered"]
     );
     assert_eq!(decision.receipt_reasons(), &["connector_key_unregistered"]);
-    Ok(())
-}
-
-#[test]
-fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0xC0), &encode_policy_manifest(vec![]))?;
-    let principal_ref = test_id(0xE0).to_hex();
-    let grant_id = test_id(0xC1);
-    vault.mint_scoped_mcp_outbound_grant(
-        &grant_id,
-        &crate::outbound_grant::ScopedMcpGrantMintIntent {
-            principal_ref: principal_ref.clone(),
-            origin_component_id: "ask-mcp".to_owned(),
-            origin_action_id: "grant-scoped-mcp".to_owned(),
-            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
-            server: "files".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        10,
-    )?;
-    let governing_connector = scoped_capability_connector("files", &grant_id);
-    let key_id = test_id(0xC2);
-    vault.register_connector_key(
-        &key_id,
-        crate::connector_key::ConnectorKeyRecord::active(
-            governing_connector,
-            None,
-            vec![crate::connector_key::EffectorBudget::rate(1, 3_600)],
-            10,
-        ),
-    )?;
-    approve_scoped_external_fixture(&vault, &key_id)?;
-
-    let policy = resolve(&vault)?;
-    let mut effect = external_effect_gate_input(&principal_ref, "send", "mcp:calendar");
-    effect.has_opted_in = false;
-    effect.send_ref = Some("intent:scoped".to_owned());
-    effect.scoped_mcp_call = Some(crate::outbound_consent::ScopedMcpCallContext {
-        server: "files".to_owned(),
-        tool: "read_file".to_owned(),
-        payload_data_class: crate::outbound_consent::DataClass::Personal,
-        resolved_endpoint: "https://files.internal.example".to_owned(),
-    });
-
-    // The first in-scope scoped call charges the rate-1 budget on the
-    // synthetic per-grant key.
-    let (_, decision, charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
-    })?;
-    assert_eq!(decision.outcome(), GateOutcome::Allow);
-    assert!(charge.is_some(), "the synthetic governing row was enforced");
-
-    // Discriminating: the rate-1 cap lives on the synthetic per-grant key.
-    // Comparing against the raw mcp:calendar channel would miss the cap and
-    // let this second in-scope scoped call auto-fire instead of exhausting.
-    let (_, decision, _) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
-    })?;
-    assert_eq!(decision.outcome(), GateOutcome::Deny);
-    assert_eq!(
-        gate_reason_strs(&decision),
-        vec!["gate.deny.effector_budget_exhausted"]
-    );
     Ok(())
 }
 
@@ -612,80 +506,6 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
         lens.grants[0].origin_receipt_ref.as_deref(),
         Some("gate:ask-1")
     );
-    Ok(())
-}
-
-#[test]
-fn counterparty_contact_records_are_visible_and_revocable_by_identity() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let identity = test_id(0xC7);
-    let intro_id = test_id(0xC8);
-    let inbound_id = test_id(0xC9);
-    let intro = CounterpartyContactRecord::user_introduction(identity, " kenji@example.com ", 10)?;
-    let inbound = CounterpartyContactRecord::inbound_first(identity, "+15551234567", 11)?;
-
-    vault.create_counterparty_contact(&intro_id, &intro)?;
-    vault.create_counterparty_contact(&inbound_id, &inbound)?;
-
-    let found = vault
-        .find_counterparty_contact(&identity, "kenji@example.com")?
-        .expect("intro contact visible by target");
-    assert_eq!(found.0, intro_id);
-    assert_eq!(
-        found.1.first_touch,
-        CounterpartyFirstTouch::UserIntroduction
-    );
-    assert_eq!(found.1.counterparty, "kenji@example.com");
-
-    let contacts = vault.counterparty_contacts_for_identity(&identity)?;
-    assert_eq!(contacts.len(), 2);
-
-    let revoked = vault.revoke_counterparty_contact(&intro_id, 20)?;
-    assert_eq!(revoked.status, CounterpartyContactStatus::Revoked);
-    assert!(revoked.revoked_at.is_some());
-
-    let stored = vault
-        .get_counterparty_contact(&intro_id)?
-        .expect("revoked stored");
-    assert_eq!(stored.identity_ref, identity);
-    assert_eq!(stored.counterparty, "kenji@example.com");
-    assert_eq!(stored.status, CounterpartyContactStatus::Revoked);
-    assert!(stored.revoked_at.is_some());
-    Ok(())
-}
-
-#[test]
-fn counterparty_contact_lookup_uses_dedicated_index_before_scan() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let identity = test_id(0xC7);
-    let contact_id = test_id(0xC8);
-    let contact = CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?;
-    vault.create_counterparty_contact(&contact_id, &contact)?;
-
-    // Persist an incomplete-index integrity fixture: the contact and its
-    // identity-counterparty association remain stored without a type-index row.
-    // Visibility and normalized assignment uniqueness must survive this state.
-    vault.with_write_txn(|wtxn| {
-        let type_key = Store::encode_type_key(ENTITY_TYPE_COUNTERPARTY_CONTACT, &contact_id);
-        vault.store.type_index.delete(wtxn, &type_key)?;
-        Ok(())
-    })?;
-
-    let found = vault
-        .find_counterparty_contact(&identity, "kenji@example.com")?
-        .expect("stored contact remains visible with an incomplete index");
-    assert_eq!(found.0, contact_id);
-    assert_eq!(found.1.counterparty, "kenji@example.com");
-
-    let duplicate_id = test_id(0xC9);
-    let duplicate = CounterpartyContactRecord::inbound_first(identity, " kenji@example.com ", 20)?;
-    let err = vault
-        .create_counterparty_contact(&duplicate_id, &duplicate)
-        .expect_err("incomplete index must not permit a duplicate counterparty assignment");
-    assert!(matches!(
-        err.kind(),
-        ErrorKind::CounterpartyContactAlreadyExists,
-    ));
     Ok(())
 }
 

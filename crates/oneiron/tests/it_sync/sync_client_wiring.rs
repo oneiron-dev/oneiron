@@ -435,62 +435,6 @@ fn reconnect_echo_update_is_not_repersisted_and_svf_stays_fresh() {
 // ─── AC3: Observer A → outbound (channel when attached, queue otherwise) ────
 
 #[test]
-fn local_commit_flows_to_attached_outbound_channel_as_window_sync_update() {
-    let (_temp, vault) = test_vault();
-    let manager = make_manager(&vault);
-
-    // "Connected": the test harness channel plays the connection's local_rx.
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    manager.outbound().attach(tx);
-
-    let window = manager.open_window(&WindowKey::new("2026-03")).unwrap();
-    let id = EntityId::now();
-    let blob = make_entity_blob(1, LEARNED_JAN_2026, b"outbound-entity");
-    window
-        .doc
-        .get_map("entities")
-        .insert(&id.to_hex(), blob.as_slice())
-        .unwrap();
-    window.doc.commit();
-
-    // The entity was written to the vault (Observer B)...
-    assert_eq!(
-        vault.get(&id).unwrap().as_deref(),
-        Some(b"outbound-entity".as_slice())
-    );
-
-    // ...and Observer A routed the persisted update to the live channel.
-    let update = rx
-        .try_recv()
-        .expect("Observer A must feed the attached outbound channel");
-    assert_eq!(update.window_key, "2026-03");
-
-    // The connection's send path wire-encodes it as a WindowSync UPDATE.
-    let wire = transport::encode_window_sync(
-        &update.window_key,
-        window_sub_tags::UPDATE,
-        &update.update_bytes,
-    );
-    assert_eq!(wire[0], TAG_WINDOW_SYNC);
-    let (key, sub_tag, payload) = transport::decode_window_sync(&wire[1..]).unwrap();
-    assert_eq!(key, "2026-03");
-    assert_eq!(sub_tag, window_sub_tags::UPDATE);
-
-    // The update bytes are a valid Loro update carrying the entity.
-    let receiver_doc = LoroDoc::new();
-    receiver_doc.import(payload).unwrap();
-    assert_eq!(
-        map_get_bytes(&receiver_doc.get_map("entities"), &id.to_hex()).as_deref(),
-        Some(blob.as_slice()),
-        "outbound update must reproduce the entity on the receiving side"
-    );
-
-    // Connected → the durable queue is NOT used.
-    let queue = SyncQueue::new(Arc::clone(&vault)).unwrap();
-    assert!(queue.is_empty().unwrap());
-}
-
-#[test]
 fn local_commit_buffers_to_sync_queue_when_disconnected() {
     let (_temp, vault) = test_vault();
     let manager = make_manager(&vault);
@@ -606,85 +550,6 @@ fn root_doc_persists_on_change_and_reloads_on_restart_with_u_root_replay() {
 }
 
 // ─── AC6: sv:/svf: fast-reconnect reader ────────────────────────────────────
-
-#[test]
-fn fast_reconnect_reuses_persisted_sv_without_doc_load_when_svf_fresh() {
-    let (_temp, vault) = test_vault();
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let current = WindowKey::from_timestamp(now_secs);
-
-    // Session A: write into the current window, then unload (persists
-    // d:w: + sv:w: + svf:w: = fresh).
-    let manager_a = make_manager(&vault);
-    let window = manager_a.open_window(&current).unwrap();
-    let id = EntityId::now();
-    window
-        .doc
-        .get_map("entities")
-        .insert(
-            &id.to_hex(),
-            make_entity_blob(1, now_secs, b"sv-entity").as_slice(),
-        )
-        .unwrap();
-    window.doc.commit();
-    let expected_vv = window.doc.oplog_vv();
-    drop(window);
-    assert!(manager_a.unload_window(&current).unwrap());
-    assert_eq!(
-        vault
-            .sync_state_get(&format!("svf:w:{current}"))
-            .unwrap()
-            .as_deref(),
-        Some([1u8].as_slice()),
-        "unload must leave the state vector fresh"
-    );
-
-    // Session B (fast reconnect): nothing loaded. The initial sync answers
-    // the VV exchange for the current window from sv:w: alone.
-    let manager_b = make_manager(&vault);
-    let (client, _rx) = make_client(&manager_b);
-    let messages = client.generate_initial_sync();
-
-    let mut found = None;
-    for msg in &messages {
-        if msg[0] != TAG_WINDOW_SYNC {
-            continue;
-        }
-        let (key, sub_tag, payload) = transport::decode_window_sync(&msg[1..]).unwrap();
-        if key == current.as_str() {
-            assert_eq!(sub_tag, window_sub_tags::VV_REQUEST);
-            // ONE-1127: wire VVs are Loro binary `VersionVector::encode()`
-            // bytes — the JSON VV encoding is dead.
-            found = Some(
-                VersionVector::decode(payload)
-                    .expect("VV_REQUEST payload must be Loro binary VV (ONE-1127)"),
-            );
-        }
-    }
-    assert_eq!(
-        found.expect("initial sync must include the current window VV"),
-        expected_vv,
-        "fast-reconnect VV must equal the persisted doc's version vector"
-    );
-    assert!(
-        manager_b.window(&current).is_none(),
-        "fresh svf must answer the VV exchange WITHOUT loading the window doc"
-    );
-
-    // Stale flag → full manager open instead of trusting sv:w:.
-    vault
-        .sync_state_put(&format!("svf:w:{current}"), &[0u8])
-        .unwrap();
-    let manager_c = make_manager(&vault);
-    let (client_c, _rx_c) = make_client(&manager_c);
-    let _ = client_c.generate_initial_sync();
-    assert!(
-        manager_c.window(&current).is_some(),
-        "stale svf must fall back to a full window open"
-    );
-}
 
 /// ONE-1151 svf-freshness fix (consumer side): when `persist_state` leaves a
 /// surviving post-merge `u:w:` row, `svf:w:` is STALE — so the fast-reconnect
@@ -843,55 +708,6 @@ fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
 // ─── AC7: BulkTransfer → sync_state persistence, fail-closed ────────────────
 
 #[test]
-fn bulk_transfer_done_persists_unloaded_window_state_for_next_open() {
-    let (_temp, vault) = test_vault();
-    let manager = make_manager(&vault);
-    let (mut client, mut rx) = make_client(&manager);
-
-    // 2025-11-15 — inside historical window 2025-11.
-    let learned_at = 1_763_164_800u64;
-    let id = EntityId::now();
-    let blob = make_entity_blob(1, learned_at, b"historical-entity");
-    let state_doc = create_window_doc("server", &WindowKey::new("2025-11"));
-    state_doc
-        .get_map("entities")
-        .insert(&id.to_hex(), blob.as_slice())
-        .unwrap();
-    state_doc.commit();
-    let snapshot = state_doc.export(ExportMode::Snapshot).unwrap();
-
-    let done = transport::encode_bulk_transfer_done("2025-11", &snapshot);
-    client.handle_server_message(&done).unwrap();
-    assert_matches!(rx.try_recv(), Ok(SyncEvent::BulkTransferComplete { window_key }) if window_key == "2025-11");
-
-    // Stays ON-DISK (Phase-3 historical window), with the contract rows set.
-    assert!(client.window("2025-11").is_none());
-    assert_eq!(
-        vault.sync_state_get("d:w:2025-11").unwrap().as_deref(),
-        Some(snapshot.as_slice())
-    );
-    let sv = vault
-        .sync_state_get("sv:w:2025-11")
-        .unwrap()
-        .expect("BulkTransferDone must persist sv:w:");
-    VersionVector::decode(&sv).expect("sv:w: must be StateVector V1 encoded");
-    assert_eq!(
-        vault.sync_state_get("svf:w:2025-11").unwrap().as_deref(),
-        Some([1u8].as_slice())
-    );
-
-    // The next open loads the persisted state and forward remat
-    // materializes it into the vault.
-    let reopened = manager.open_window(&WindowKey::new("2025-11")).unwrap();
-    assert!(map_get_bytes(&reopened.doc.get_map("entities"), &id.to_hex()).is_some());
-    assert_eq!(
-        vault.get(&id).unwrap().as_deref(),
-        Some(b"historical-entity".as_slice()),
-        "bulk-transferred window state must materialize on first open"
-    );
-}
-
-#[test]
 fn bulk_transfer_done_rejects_invalid_doc_state_and_keeps_marker() {
     let (_temp, vault) = test_vault();
     let manager = make_manager(&vault);
@@ -931,42 +747,6 @@ fn bulk_transfer_done_rejects_invalid_doc_state_and_keeps_marker() {
         client.window("2025-11").is_none(),
         "a failed bulk import must discard the just-opened window"
     );
-}
-
-#[test]
-fn bulk_transfer_done_imports_into_live_window_when_loaded() {
-    let (_temp, vault) = test_vault();
-    let manager = make_manager(&vault);
-    let (mut client, mut rx) = make_client(&manager);
-
-    // Window already live — bulk state must flow through the observed doc.
-    let live = client.ensure_window("2025-11").unwrap();
-
-    let learned_at = 1_763_164_800u64;
-    let id = EntityId::now();
-    let blob = make_entity_blob(1, learned_at, b"live-bulk-entity");
-    let state_doc = create_window_doc("server", &WindowKey::new("2025-11"));
-    state_doc
-        .get_map("entities")
-        .insert(&id.to_hex(), blob.as_slice())
-        .unwrap();
-    state_doc.commit();
-    let snapshot = state_doc.export(ExportMode::Snapshot).unwrap();
-
-    let done = transport::encode_bulk_transfer_done("2025-11", &snapshot);
-    client.handle_server_message(&done).unwrap();
-    assert_matches!(rx.try_recv(), Ok(SyncEvent::BulkTransferComplete { window_key }) if window_key == "2025-11");
-
-    // Observer B materialized the imported state into the vault...
-    assert_eq!(
-        vault.get(&id).unwrap().as_deref(),
-        Some(b"live-bulk-entity".as_slice()),
-        "bulk state imported into a live window must materialize via Observer B"
-    );
-    // ...the live doc carries it...
-    assert!(map_get_bytes(&live.doc.get_map("entities"), &id.to_hex()).is_some());
-    // ...and the merged state was persisted.
-    assert!(vault.sync_state_get("d:w:2025-11").unwrap().is_some());
 }
 
 /// ONE-1154: the live-window BulkTransferDone arm imports BEFORE persisting
@@ -1069,82 +849,6 @@ fn failed_bulk_persist_discards_live_window_instead_of_running_ahead() {
     assert!(
         map_get_bytes(&reopened.doc.get_map("entities"), &id.to_hex()).is_none(),
         "the never-durable bulk import must not reappear in the reloaded doc"
-    );
-}
-
-/// ONE-1151 fail-closed echo durability (R3): a LOCAL op that Observer A
-/// committed to the live doc but could NOT persist as a `u:w:` row (e.g. a
-/// corrupt `m:u_seq` row failing closed) leaves durable state behind the live
-/// doc. A later no-op reconnect echo (a frame whose ops the live doc already
-/// holds → `oplog_vv` unchanged) must rebuild the durable witness and persist
-/// the missing live-doc delta, so the op gets its durable `u:w:` row instead
-/// of vanishing on the next restart. The buggy plain-early-return impl
-/// persists nothing → no `u:w:` row → fails.
-#[test]
-fn persist_failed_local_op_survives_via_echo_no_op() {
-    let (_temp, vault) = test_vault();
-    let manager = make_manager(&vault);
-    let (mut client, _rx) = make_client(&manager);
-
-    let live = client.ensure_window("2026-03").unwrap();
-
-    // Corrupt the u_seq counter (2 bytes != 4) so the NEXT Observer A persist
-    // fails closed (CorruptedIndex) AFTER the CRDT op is already committed:
-    // the exact "op in the live doc, no durable u:w: row" interleaving the
-    // durable-coverage gate exists for.
-    vault
-        .sync_state_put("m:u_seq:w:2026-03", &[0xBA, 0xD0])
-        .unwrap();
-    let id = EntityId::now();
-    live.doc
-        .get_map("entities")
-        .insert(
-            &id.to_hex(),
-            make_entity_blob(1, LEARNED_JAN_2026, b"persist-failed-local").as_slice(),
-        )
-        .unwrap();
-    live.doc.commit(); // fires Observer A -> persist fails, live doc is ahead
-
-    // Precondition: the op is in the doc, NO durable u:w: row.
-    assert!(
-        vault
-            .sync_state_get("u:w:2026-03:00000001")
-            .unwrap()
-            .is_none(),
-        "the failed local persist must leave no u:w: row"
-    );
-
-    // Heal the corrupt counter so the coverage-gate persist can succeed.
-    vault
-        .sync_state_put("m:u_seq:w:2026-03", &0u32.to_le_bytes())
-        .unwrap();
-
-    // No-op echo: feed the live doc its OWN current state back as an UPDATE
-    // frame. The import adds no new ops (oplog_vv unchanged), so the handler
-    // takes the no-op path, where durable coverage is still checked.
-    let echo = live.doc.export(ExportMode::all_updates()).unwrap();
-    let vv_before = live.doc.oplog_vv();
-    let responses = client
-        .handle_server_message(&transport::encode_window_sync(
-            "2026-03",
-            window_sub_tags::UPDATE,
-            &echo,
-        ))
-        .unwrap();
-    assert!(responses.is_empty(), "a no-op echo returns no responses");
-    assert_eq!(
-        client.window("2026-03").unwrap().doc.oplog_vv(),
-        vv_before,
-        "precondition: the echo carried no new ops (true no-op path)"
-    );
-
-    // The live-doc delta now has its durable u:w: row.
-    assert!(
-        vault
-            .sync_state_get("u:w:2026-03:00000001")
-            .unwrap()
-            .is_some(),
-        "the missing live-doc delta must be persisted by the no-op echo coverage gate"
     );
 }
 

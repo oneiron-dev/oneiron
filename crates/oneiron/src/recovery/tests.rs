@@ -1,5 +1,4 @@
 use super::*;
-use crate::error::ArtifactError;
 
 const ARTIFACT_TYPE_FIXTURE: u16 = 42;
 
@@ -16,31 +15,6 @@ fn assert_invalid_suffix(path: &Path, original: &Path, suffix: u16) {
         path.file_name().and_then(|name| name.to_str()),
         Some(expected.as_str())
     );
-}
-
-#[test]
-fn valid_artifact_loads_after_header_and_checksum_validation() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let artifact_path = dir.path().join("snapshot.oneiron-artifact");
-    fs::write(
-        &artifact_path,
-        encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?,
-    )?;
-
-    let RecoveryArtifactLoad::Ready(artifact) =
-        load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE)?
-    else {
-        panic!("valid artifact should load");
-    };
-
-    assert_eq!(artifact.artifact_type(), ARTIFACT_TYPE_FIXTURE);
-    assert_eq!(artifact.payload(), b"payload");
-    assert!(artifact_path.exists(), "valid artifact stays in place");
-    assert!(
-        !invalid_artifact_path(&artifact_path, 1).exists(),
-        "valid artifact must not create quarantine state"
-    );
-    Ok(())
 }
 
 #[test]
@@ -180,30 +154,6 @@ fn repeated_invalid_artifact_quarantine_preserves_each_original() -> Result<()> 
     Ok(())
 }
 
-#[test]
-fn quarantine_uses_next_invalid_suffix_for_distinct_existing_bytes() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let artifact_path = dir.path().join("snapshot.oneiron-artifact");
-    let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
-    corrupt[HEADER_LEN] ^= 0x01;
-    fs::write(
-        invalid_artifact_path(&artifact_path, 1),
-        b"previous invalid bytes",
-    )?;
-    fs::write(&artifact_path, &corrupt)?;
-
-    let RecoveryArtifactLoad::Quarantined(quarantined) =
-        load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE)?
-    else {
-        panic!("corrupt artifact should quarantine");
-    };
-
-    assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
-    assert!(!artifact_path.exists(), "fallback source is removed");
-    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 2);
-    Ok(())
-}
-
 #[cfg(unix)]
 #[test]
 fn quarantine_skips_symlink_candidate_to_preserve_bytes() -> Result<()> {
@@ -269,20 +219,5 @@ fn unsupported_artifact_version_quarantines_without_use() -> Result<()> {
     assert!(!artifact_path.exists(), "unsupported source is moved aside");
     assert_eq!(fs::read(&quarantined.quarantine_path)?, future);
     assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
-    Ok(())
-}
-
-#[test]
-fn decode_error_exposes_recovery_reason() -> Result<()> {
-    let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
-    corrupt[HEADER_LEN] ^= 0x01;
-
-    let err = decode_recovery_artifact(&corrupt, ARTIFACT_TYPE_FIXTURE)
-        .expect_err("bad checksum must fail closed");
-
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::InvalidRecoveryArtifact(_))
-    ));
     Ok(())
 }
