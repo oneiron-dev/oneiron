@@ -277,6 +277,730 @@ fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
     );
 }
 
+/// A person claim with one receipt encrypted under the claim's key.
+fn claim_with_receipt(vault: &Vault) -> (EntityId, crate::store::GateDecisionRecord) {
+    use crate::store::{GateDecisionId, GateDecisionRecord};
+    let claim = EntityId::now();
+    vault
+        .put_entity(
+            &claim,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 10, end: 10 },
+            10,
+            b"custody fixture",
+        )
+        .expect("put fixture entity");
+    let receipt = GateDecisionRecord {
+        version: 0,
+        decision_id: GateDecisionId::now(),
+        created_at: 40,
+        outcome: "approved".into(),
+        reason_codes: vec!["gate.test.custody".into()],
+        receipt_reasons: vec![],
+        system_notices: vec![],
+        actor_class: "agent".into(),
+        actor_ref: Some("private-custody-receipt".into()),
+        content_kind: "claim".into(),
+        policy_manifest_version: "v0".into(),
+        claim_id: Some(*claim.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![1],
+        read_frontier_hash: [2; 32],
+        redacted_at: None,
+    };
+    vault
+        .with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &receipt))
+        .expect("append claim receipt");
+    (claim, receipt)
+}
+
+/// Commits an erase of `claim` whose finisher has not run (the process
+/// stopped in between): the key is still on disk.
+fn commit_unfinished_erase(vault: &Vault, claim: &EntityId) {
+    let mut wtxn = vault.store.env.write_txn().unwrap();
+    vault
+        .store
+        .redact_gate_decisions_for_claim_in_txn(&mut wtxn, claim.as_bytes(), 50)
+        .expect("commit an erase");
+    wtxn.commit().unwrap();
+}
+
+/// How a side restore reads its source's live custody state: from the open
+/// vault, from disk beside whoever holds the vault (the CLI rehearsal beside
+/// a running server), or by keeping the open vault's live authority.
+#[derive(Clone, Copy, Debug)]
+enum Side {
+    Open,
+    Disk,
+    KeepingAuthority,
+}
+const SIDES: [Side; 3] = [Side::Open, Side::Disk, Side::KeepingAuthority];
+
+/// Restores `image` beside the vault at `<root>/source` into `<root>/copy`
+/// through `side`, and returns the source, reopened when `Disk` closed it.
+fn restore_beside(side: Side, source: Vault, root: &Path, image: &Path) -> (Vault, Vault) {
+    let destination = root.join("copy");
+    let (copy, _) = match side {
+        Side::Open => Vault::restore_checkpoint_beside(
+            image,
+            &destination,
+            VaultConfig::device(),
+            &source.side_restore_source().expect("source state"),
+            120,
+        ),
+        Side::Disk => {
+            drop(source);
+            let state = SideRestoreSource::read(&root.join("source")).expect("source state");
+            let restored = Vault::restore_checkpoint_beside(
+                image,
+                &destination,
+                VaultConfig::device(),
+                &state,
+                120,
+            )
+            .expect("side restore");
+            let source = Vault::open(root.join("source"), VaultConfig::device()).unwrap();
+            return (source, restored.0);
+        }
+        Side::KeepingAuthority => Vault::restore_checkpoint_keeping_authority(
+            image,
+            &destination,
+            VaultConfig::device(),
+            &source,
+            120,
+        ),
+    }
+    .expect("side restore");
+    (source, copy)
+}
+
+/// A source vault with one claim receipt, and a copy of it restored beside it.
+fn side_copy(
+    root: &Path,
+    side: Side,
+) -> (Vault, Vault, EntityId, crate::store::GateDecisionRecord) {
+    let source = Vault::open(root.join("source"), VaultConfig::device()).unwrap();
+    let (claim, receipt) = claim_with_receipt(&source);
+    let image = root.join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    let (source, copy) = restore_beside(side, source, root, &image);
+    (source, copy, claim, receipt)
+}
+
+/// ARCH-0038 #erasure-completeness, "Key custody in a side restore" (REV-9
+/// item 11): custody forks at a side restore, so an erase in the copy never
+/// reaches the source's keys or receipts.
+#[test]
+fn an_erase_in_a_side_copy_never_reaches_its_source() {
+    for side in SIDES {
+        let root = tempfile::tempdir().unwrap();
+        let (source, copy, claim, receipt) = side_copy(root.path(), side);
+        copy.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+            .expect("erase in the copy");
+        assert!(
+            !copy
+                .gate_decisions(100)
+                .expect("the copy's ledger reads")
+                .contains(&receipt),
+            "{side:?}: the erase redacts the copy's receipt"
+        );
+        assert!(
+            source
+                .gate_decisions(100)
+                .expect("the source's receipts still decrypt")
+                .contains(&receipt),
+            "{side:?}"
+        );
+    }
+}
+
+/// The other direction: an erase in the source never reaches a side copy.
+#[test]
+fn an_erase_in_the_source_never_reaches_its_side_copy() {
+    for side in SIDES {
+        let root = tempfile::tempdir().unwrap();
+        let (source, copy, claim, receipt) = side_copy(root.path(), side);
+        source
+            .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+            .expect("erase in the source");
+        assert!(
+            copy.gate_decisions(100)
+                .expect("the copy's receipts still decrypt")
+                .contains(&receipt),
+            "{side:?}"
+        );
+    }
+}
+
+/// The fork copies only the keys still live in the source's custody: a key
+/// destroyed before the restore, or one whose retirement the source has
+/// committed but not yet carried out, never reaches the copy, and the copy
+/// restores without the receipts it decrypted.
+#[test]
+fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
+    let hex = |claim: &EntityId| crate::entity_id::bytes_to_hex_lower(claim.as_bytes());
+    for side in SIDES {
+        let root = tempfile::tempdir().unwrap();
+        let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+        let (live, live_receipt) = claim_with_receipt(&source);
+        let (destroyed, destroyed_receipt) = claim_with_receipt(&source);
+        let (committed, committed_receipt) = claim_with_receipt(&source);
+        let image = root.path().join("image");
+        source.snapshot_checkpoint(&image, 100).expect("image");
+        source
+            .delete_entity_with_reason(&destroyed, crate::DeleteReason::UserHardDelete)
+            .expect("erase before the restore");
+        commit_unfinished_erase(&source, &committed);
+        let source_custody = root.path().join(".source.gate-decision-keys");
+        assert!(source_custody.join(hex(&committed)).exists());
+
+        let (_source, copy) = restore_beside(side, source, root.path(), &image);
+        let copy_custody = root.path().join(".copy.gate-decision-keys");
+        assert!(
+            copy_custody.join(hex(&live)).exists(),
+            "{side:?}: the copy holds its own copy of a live key"
+        );
+        for claim in [destroyed, committed] {
+            assert!(!copy_custody.join(hex(&claim)).exists(), "{side:?}");
+        }
+        let rows = copy.gate_decisions(100).expect("the copy's ledger reads");
+        assert!(rows.contains(&live_receipt), "{side:?}");
+        assert!(
+            rows.iter().all(|row| {
+                row.decision_id != destroyed_receipt.decision_id
+                    && row.decision_id != committed_receipt.decision_id
+            }),
+            "{side:?}"
+        );
+    }
+}
+
+/// A side restore refused after its fork leaves no copy of a live key: the
+/// custody it forked goes with the destination it removes.
+#[test]
+fn a_refused_side_restore_leaves_no_forked_key_behind() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let owner = source.ensure_embedded_owner_actor().unwrap();
+    claim_with_receipt(&source);
+    let image = root.path().join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    // Reviving an owner deleted since is refused after the restore has run.
+    source
+        .delete_entity_with_options(&owner, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
+    let destination = root.path().join("copy");
+    assert!(
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &destination,
+            VaultConfig::device(),
+            &source,
+            120,
+        )
+        .is_err()
+    );
+    assert!(!destination.exists());
+    assert!(!root.path().join(".copy.gate-decision-keys").exists());
+}
+
+/// A restore never shreds custody its vault is not bound to. Its first
+/// handle names the custody beside its destination while the image binds
+/// another; here that custody is a side copy's that moved away, and the
+/// restored image carries an erase its source committed but did not finish.
+#[test]
+fn a_restore_never_shreds_custody_its_vault_is_not_bound_to() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let (claim, receipt) = claim_with_receipt(&source);
+    let image = root.path().join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    let (source, copy) = restore_beside(Side::Open, source, root.path(), &image);
+    drop(copy);
+    std::fs::rename(root.path().join("copy"), root.path().join("moved")).unwrap();
+    commit_unfinished_erase(&source, &claim);
+    let pending = root.path().join("pending");
+    source
+        .snapshot_checkpoint(&pending, 110)
+        .expect("image with the erase pending");
+
+    // In its vault's place at the path the copy left: keep-mode custody.
+    let (restored, _) = Vault::restore_checkpoint(
+        &pending,
+        &root.path().join("copy"),
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        130,
+    )
+    .expect("restore");
+    drop(restored);
+    let moved = Vault::open(root.path().join("moved"), VaultConfig::device()).unwrap();
+    assert!(
+        moved
+            .gate_decisions(100)
+            .expect("the moved copy's receipts still decrypt")
+            .contains(&receipt)
+    );
+}
+
+/// Whether `result` is the read-only door's refusal of a path that holds no
+/// vault.
+fn refused_as_no_vault<T>(result: Result<T>) -> bool {
+    matches!(
+        result,
+        Err(Error::Store(crate::error::StoreError::VaultRootPreflight {
+            problem: crate::error::VaultRootProblem::NotAnExistingVaultRoot { .. },
+            ..
+        }))
+    )
+}
+
+/// A side restore needs its source's live state, or it could copy a key the
+/// source has committed to destroy (REV-9 item 11, Astra A1): a source that
+/// is missing, empty or gone by the time the restore starts refuses it, and
+/// no key is copied.
+#[test]
+fn a_side_restore_refuses_a_source_it_cannot_read() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let (claim, _) = claim_with_receipt(&source);
+    let image = root.path().join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    commit_unfinished_erase(&source, &claim);
+    drop(source);
+    std::fs::create_dir(root.path().join("empty")).unwrap();
+    for missing in ["elsewhere", "empty"] {
+        assert!(
+            refused_as_no_vault(SideRestoreSource::read(&root.path().join(missing))),
+            "{missing}"
+        );
+    }
+    let state = SideRestoreSource::read(&root.path().join("source")).expect("source state");
+    std::fs::rename(root.path().join("source"), root.path().join("moved")).unwrap();
+    let destination = root.path().join("copy");
+    assert!(refused_as_no_vault(Vault::restore_checkpoint_beside(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &state,
+        120,
+    )));
+    assert!(!destination.exists());
+    assert!(!root.path().join(".copy.gate-decision-keys").exists());
+}
+
+/// Each side restore reads its source's live state when it starts, so a key
+/// retirement the source committed between two restores from one source
+/// never reaches the second copy (Astra A5).
+#[test]
+fn each_side_restore_reads_its_source_when_it_starts() {
+    let hex = |claim: &EntityId| crate::entity_id::bytes_to_hex_lower(claim.as_bytes());
+    for side in [Side::Open, Side::Disk] {
+        let root = tempfile::tempdir().unwrap();
+        let source_path = root.path().join("source");
+        let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+        let (claim, receipt) = claim_with_receipt(&source);
+        let image = root.path().join("image");
+        source.snapshot_checkpoint(&image, 100).expect("image");
+        let restore = |state: &SideRestoreSource<'_>, copy: &str| {
+            Vault::restore_checkpoint_beside(
+                &image,
+                &root.path().join(copy),
+                VaultConfig::device(),
+                state,
+                120,
+            )
+            .expect("side restore")
+            .0
+        };
+        let (_first, second) = if matches!(side, Side::Open) {
+            let state = source.side_restore_source().unwrap();
+            let first = restore(&state, "first");
+            commit_unfinished_erase(&source, &claim);
+            (first, restore(&state, "second"))
+        } else {
+            drop(source);
+            let state = SideRestoreSource::read(&source_path).unwrap();
+            let first = restore(&state, "first");
+            let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+            commit_unfinished_erase(&source, &claim);
+            drop(source);
+            (first, restore(&state, "second"))
+        };
+        assert!(
+            root.path()
+                .join(".first.gate-decision-keys")
+                .join(hex(&claim))
+                .exists(),
+            "{side:?}: the first copy took the key while it was live"
+        );
+        assert!(
+            !root
+                .path()
+                .join(".second.gate-decision-keys")
+                .join(hex(&claim))
+                .exists(),
+            "{side:?}"
+        );
+        let rows = second
+            .gate_decisions(100)
+            .expect("the second copy's ledger reads");
+        assert!(
+            rows.iter()
+                .all(|row| row.decision_id != receipt.decision_id),
+            "{side:?}"
+        );
+    }
+}
+
+/// A vault this process holds is read through its own handle, never through
+/// a second LMDB environment over the same files, under its own name or any
+/// other (Astra A3).
+///
+/// Nor does the refusal touch the held vault's LMDB locks. Closing any
+/// descriptor of `lock.mdb` releases every `fcntl` lock this process holds
+/// on it, so a door that opened the file to learn whose it is would strip
+/// the held environment, and its live reader, of the locks other processes
+/// rely on (Astra re-check R5).
+#[test]
+fn a_side_restore_source_never_reopens_a_vault_this_process_holds() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let reader = source.store.env.read_txn().unwrap();
+    let locks = |dir: &str| lmdb_locks_held(&root.path().join(dir).join("lock.mdb"));
+    let held = |path: &Path| {
+        matches!(
+            SideRestoreSource::read(path),
+            Err(Error::Store(crate::error::StoreError::VaultRootPreflight {
+                problem: crate::error::VaultRootProblem::DuplicateOpenRoot { .. },
+                ..
+            }))
+        )
+    };
+    let before = locks("source");
+    assert!(cfg!(not(target_os = "linux")) || before > 0);
+    assert!(held(&root.path().join("source")));
+    std::fs::rename(root.path().join("source"), root.path().join("renamed")).unwrap();
+    assert!(held(&root.path().join("renamed")));
+    assert_eq!(
+        locks("renamed"),
+        before,
+        "the held environment keeps its locks"
+    );
+    drop(reader);
+    drop(source);
+    assert!(SideRestoreSource::read(&root.path().join("renamed")).is_ok());
+}
+
+/// How many `fcntl` record locks this process holds on `lock_file`, from
+/// `/proc/locks`; zero where there is none to read.
+fn lmdb_locks_held(lock_file: &Path) -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let inode = std::fs::metadata(lock_file).unwrap().ino().to_string();
+        let pid = std::process::id().to_string();
+        std::fs::read_to_string("/proc/locks")
+            .unwrap()
+            .lines()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>())
+            .filter(|fields| fields.get(1) == Some(&"POSIX"))
+            .filter(|fields| fields.get(4) == Some(&pid.as_str()))
+            .filter(|fields| {
+                fields.get(5).and_then(|id| id.rsplit(':').next()) == Some(inode.as_str())
+            })
+            .count()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = lock_file;
+        0
+    }
+}
+
+/// A source read off its directory is that vault, not whatever is at its
+/// path when a restore starts: a different vault made there since, bound by
+/// default to custody at the same place, refuses the restore rather than
+/// stand in for the source's live state (Astra re-check R2).
+#[test]
+fn a_side_restore_source_read_off_disk_is_that_vault_only() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = root.path().join("source");
+    let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+    let (claim, _) = claim_with_receipt(&source);
+    let image = root.path().join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    drop(source);
+    let state = SideRestoreSource::read(&source_path).expect("source state");
+    let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+    commit_unfinished_erase(&source, &claim);
+    drop(source);
+    // The source moves; its custody stays, and a new vault takes its path.
+    std::fs::rename(&source_path, root.path().join("moved")).unwrap();
+    drop(Vault::open(&source_path, VaultConfig::device()).unwrap());
+    let destination = root.path().join("copy");
+    assert!(matches!(
+        Vault::restore_checkpoint_beside(&image, &destination, VaultConfig::device(), &state, 120),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(!destination.exists());
+    assert!(!root.path().join(".copy.gate-decision-keys").exists());
+}
+
+/// Whether `result` is the refusal of a write to an archived vault.
+fn archived<T>(result: Result<T>) -> bool {
+    matches!(
+        result,
+        Err(Error::Store(crate::error::StoreError::ArchivedVault))
+    )
+}
+
+/// Exchanges two directories, as `oneiron restore` does in one call.
+fn exchange(a: &Path, b: &Path) -> std::io::Result<()> {
+    let between = a.with_extension("exchange");
+    std::fs::rename(a, &between)?;
+    std::fs::rename(b, a)?;
+    std::fs::rename(&between, b)
+}
+
+/// A vault with one claim receipt, its image, and a replacement restored
+/// from the image for its place at `<root>/vault`, built at `<root>/staged`.
+fn replacement_for(root: &Path) -> (Vault, Vault, EntityId, crate::store::GateDecisionRecord) {
+    let vault = Vault::open(root.join("vault"), VaultConfig::device()).unwrap();
+    let (claim, receipt) = claim_with_receipt(&vault);
+    let image = root.join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let (replacement, _) = Vault::restore_checkpoint_replacing(
+        &image,
+        &root.join("staged"),
+        VaultConfig::device(),
+        &vault,
+        120,
+    )
+    .expect("restore");
+    (vault, replacement, claim, receipt)
+}
+
+/// The vault a restore in its place set aside still binds the custody its
+/// replacement keeps. ARCH-0038, "Key custody in a side restore": an erase
+/// or age sweep in one vault never reaches the other vault's keys or
+/// receipts. So it is archived: it reads, an erase in it is refused and the
+/// replacement's keys stay, and it is no side restore's source. Once the
+/// owner activates it as a side vault its custody is its own, and an erase
+/// in it no longer reaches the replacement.
+#[test]
+fn a_vault_a_restore_replaced_is_archived_until_activated() {
+    let root = tempfile::tempdir().unwrap();
+    let (vault_path, previous_path) = (root.path().join("vault"), root.path().join("previous"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    // Until it is in the vault's place, the replacement mints no key there.
+    let unminted = crate::store::GateDecisionRecord {
+        decision_id: crate::store::GateDecisionId::now(),
+        ..receipt.clone()
+    };
+    assert!(archived(replacement.with_write_txn(|txn| {
+        replacement
+            .store
+            .append_gate_decision_in_txn(txn, &unminted)
+    })));
+    // As `oneiron restore` runs it.
+    source
+        .swap_in_replacement(&replacement, || {
+            exchange(&vault_path, &root.path().join("staged"))
+        })
+        .expect("swap");
+    assert!(archived(source.delete_entity_with_reason(
+        &claim,
+        crate::DeleteReason::UserHardDelete
+    )));
+    drop((source, replacement));
+    std::fs::rename(root.path().join("staged"), &previous_path).unwrap();
+    let replacement = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+
+    let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
+    assert!(
+        previous
+            .gate_decisions(100)
+            .expect("the archive reads")
+            .contains(&receipt)
+    );
+    assert!(archived(previous.delete_entity_with_reason(
+        &claim,
+        crate::DeleteReason::UserHardDelete
+    )));
+    assert!(archived(previous.side_restore_source()));
+    drop(previous);
+    assert!(
+        replacement
+            .gate_decisions(100)
+            .expect("the replacement's receipts still decrypt")
+            .contains(&receipt)
+    );
+
+    Vault::activate_archived(
+        &previous_path,
+        VaultConfig::device(),
+        &replacement.side_restore_source().unwrap(),
+    )
+    .expect("activate");
+    Vault::open(&previous_path, VaultConfig::device())
+        .unwrap()
+        .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+        .expect("erase in the activated vault");
+    assert!(
+        replacement
+            .gate_decisions(100)
+            .expect("the replacement's receipts still decrypt")
+            .contains(&receipt)
+    );
+}
+
+/// A restore that dies in the middle of its swap leaves one live vault on
+/// the custody both halves bind: the one at the vault's path. The other
+/// opens archived, so an erase in it never shreds the live vault's keys
+/// (Astra re-check R1).
+#[test]
+fn a_restore_that_dies_mid_swap_leaves_one_live_vault() {
+    let root = tempfile::tempdir().unwrap();
+    let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        source.swap_in_replacement(&replacement, || {
+            exchange(&vault_path, &staged).unwrap();
+            panic!("the process dies once the directories are exchanged");
+        })
+    }));
+    assert!(died.is_err());
+    drop((source, replacement));
+
+    let previous = Vault::open(&staged, VaultConfig::device()).unwrap();
+    assert!(archived(previous.delete_entity_with_reason(
+        &claim,
+        crate::DeleteReason::UserHardDelete
+    )));
+    drop(previous);
+    let live = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+    assert!(
+        live.gate_decisions(100)
+            .expect("the live vault's receipts decrypt")
+            .contains(&receipt)
+    );
+    live.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+        .expect("the vault in place erases");
+}
+
+/// A write that passed the seal check before a restore swapped its vault
+/// out, and takes LMDB's writer after, is refused: the archive keeps no row
+/// written after it was set aside, and nothing reaches the custody it shares
+/// (Astra re-check R4).
+#[test]
+fn a_writer_waiting_through_a_swap_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    let (source, replacement) = (std::rc::Rc::new(source), std::rc::Rc::new(replacement));
+    crate::store::arm_after_seal_check({
+        let (source, replacement) = (source.clone(), replacement.clone());
+        let staged = staged.clone();
+        move || {
+            source
+                .swap_in_replacement(&replacement, || exchange(&vault_path, &staged))
+                .expect("swap");
+        }
+    });
+    // One write transaction, past the seal check when the swap begins.
+    let late = RestoreEpoch {
+        checkpoint_id: "written after the swap".into(),
+        restored_at: 130,
+        reason: RestoreReason::Restore,
+    };
+    assert!(archived(source.with_write_txn(|txn| {
+        RESTORE_EPOCH.put(&source.store, txn, &u64::MAX, &late)
+    })));
+    assert!(archived(source.delete_entity_with_reason(
+        &claim,
+        crate::DeleteReason::UserHardDelete
+    )));
+    drop((source, replacement));
+    let previous = Vault::open(&staged, VaultConfig::device()).unwrap();
+    assert!(!previous.restore_epochs().unwrap().contains(&late));
+    drop(previous);
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    assert!(
+        live.gate_decisions(100)
+            .expect("the live vault's receipts decrypt")
+            .contains(&receipt)
+    );
+}
+
+/// A swap that returns without the replacement's own directory in the
+/// vault's place, as an exchange of a symlink to the vault would, is
+/// refused, and the vault still there stays the live one (Astra re-check of
+/// R1: a symlinked vault path).
+#[test]
+fn a_swap_that_leaves_the_vault_in_place_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let (source, replacement, claim, _) = replacement_for(root.path());
+    assert!(matches!(
+        source.swap_in_replacement(&replacement, || Ok(())),
+        Err(Error::InvalidConfig(_))
+    ));
+    drop((source, replacement));
+    let staged = Vault::open(root.path().join("staged"), VaultConfig::device()).unwrap();
+    assert!(archived(staged.delete_entity_with_reason(
+        &claim,
+        crate::DeleteReason::UserHardDelete
+    )));
+    drop(staged);
+    Vault::open(root.path().join("vault"), VaultConfig::device())
+        .unwrap()
+        .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+        .expect("the vault in place erases");
+}
+
+/// An activation commits only once every receipt it keeps reads under its
+/// forked keys. A key the replacement shreds after the activation checked
+/// the archive's receipts, before the fork, refuses the activation and
+/// leaves the archive as it was, to be activated again (Astra re-check R3).
+#[test]
+fn an_activation_commits_only_receipts_its_forked_keys_read() {
+    let root = tempfile::tempdir().unwrap();
+    let (vault_path, previous_path) = (root.path().join("vault"), root.path().join("previous"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    source
+        .swap_in_replacement(&replacement, || {
+            exchange(&vault_path, &root.path().join("staged"))
+        })
+        .expect("swap");
+    drop((source, replacement));
+    std::fs::rename(root.path().join("staged"), &previous_path).unwrap();
+    let replacement = std::rc::Rc::new(Vault::open(&vault_path, VaultConfig::device()).unwrap());
+    crate::store::arm_before_activation_fork({
+        let replacement = replacement.clone();
+        move || {
+            replacement
+                .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+                .expect("erase in the replacement");
+        }
+    });
+    let source = replacement.side_restore_source().unwrap();
+    assert!(Vault::activate_archived(&previous_path, VaultConfig::device(), &source).is_err());
+    assert!(!root.path().join(".previous.gate-decision-keys").exists());
+    let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
+    assert!(archived(previous.side_restore_source()));
+    drop(previous);
+
+    Vault::activate_archived(&previous_path, VaultConfig::device(), &source).expect("activate");
+    let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
+    assert!(
+        previous
+            .gate_decisions(100)
+            .expect("the activated vault's ledger reads")
+            .iter()
+            .all(|row| row.decision_id != receipt.decision_id)
+    );
+}
+
 #[test]
 fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
     let root = tempfile::tempdir().unwrap();

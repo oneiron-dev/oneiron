@@ -106,6 +106,22 @@ fn backup_rehearse_restore_and_doctor_through_the_cli() {
     drop(vault);
     let previous = Path::new(restored["previous_vault"].as_str().unwrap());
     assert!(open(previous).get(&later).unwrap().is_some());
+    // It shares the restored vault's key custody, so it is archived: it reads
+    // but takes no write until the owner activates it beside the vault.
+    let write = open(previous).put_entity(
+        &EntityId::now(),
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"into the archive",
+    );
+    assert!(write.is_err());
+    let activated = json(&oneiron(
+        &config,
+        &["restore", "--activate", previous.to_str().unwrap()],
+    ));
+    assert_eq!(activated["vault"], previous.to_str().unwrap());
+    add_person(previous, b"after the activation");
 
     // Where the data lives: path, size, last backup, last export.
     let export_file = dir.path().join("vault.md");
@@ -139,6 +155,12 @@ fn backup_rehearse_restore_and_doctor_through_the_cli() {
     assert_eq!(location["backups"]["keep"], 3);
     assert_eq!(location["last_export"]["format"], "md");
     assert_eq!(location["secret_scan"], "on");
+    // The restore the vault came from is on record (OF-296); the rehearsal,
+    // which restored into scratch, is not.
+    let restores = location["backups"]["restores"].as_array().unwrap();
+    assert_eq!(restores.len(), 1, "{restores:?}");
+    assert_eq!(restores[0]["checkpoint_id"], taken["checkpoint_id"]);
+    assert_eq!(restores[0]["reason"], "restore");
 }
 
 #[test]

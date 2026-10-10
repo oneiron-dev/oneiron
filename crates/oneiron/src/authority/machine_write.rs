@@ -25,6 +25,8 @@ use super::{
     authority_entry_hash, authority_transcript, invalid_authority,
 };
 
+mod successor;
+
 const DOMAIN: &[u8] = b"oneiron/machine-claim/v1";
 const SIGNATURE_KEY: &str = "machine_signature";
 

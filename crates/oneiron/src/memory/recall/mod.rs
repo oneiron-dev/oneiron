@@ -202,7 +202,9 @@ fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
 pub struct MemoryProvenance {
     /// Claim source string, or `record` for structural source records.
     pub source: String,
-    /// This revision plus superseded ancestors (32-hex ids).
+    /// This revision plus superseded ancestors (32-hex ids). A TURN's also
+    /// names each message its text is read from that the reader may read,
+    /// so a live view of the turn follows a change to any of them.
     pub source_revision_ids: Vec<String>,
     /// Evidence TURN ids. Populated structurally for MESSAGE items; claim
     /// evidence stamping is the extraction pipeline's later responsibility.

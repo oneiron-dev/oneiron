@@ -589,6 +589,9 @@ impl Vault {
         })?;
         // Carrier data must still match the local installation head on reopen.
         let _ = vault.pack_byte_map_snapshot()?;
+        // The image a restore in this vault's place set aside reads, and
+        // refuses every write from here on (`Store::swap_out`).
+        vault.store.seal_if_archived()?;
         Ok(vault)
     }
 
