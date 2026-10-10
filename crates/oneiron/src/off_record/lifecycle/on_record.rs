@@ -154,9 +154,10 @@ impl<'vault> OffRecordSession<'vault> {
         if route.target() != RouteTarget::Base || state.record.room.is_none() {
             return Ok(None);
         }
-        let saver = state.saver.clone().ok_or(Error::InvariantViolation(
-            "a room on record has no saver",
-        ))?;
+        let saver = state
+            .saver
+            .clone()
+            .ok_or(Error::InvariantViolation("a room on record has no saver"))?;
         drop(state);
         Ok(Some(self.check_saver(saver)))
     }

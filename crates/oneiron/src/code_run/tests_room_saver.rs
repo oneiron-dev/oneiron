@@ -147,7 +147,8 @@ fn a_run_write_waiting_for_the_writer_lands_nothing_once_the_room_goes_off_recor
                     assert!(std::time::Instant::now() < deadline, "the run never queued");
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
-                vault.set_off_record_session_mode(session.session_ref(), OffRecordMode::OffRecord)?;
+                vault
+                    .set_off_record_session_mode(session.session_ref(), OffRecordMode::OffRecord)?;
                 Ok(())
             })
             .expect("the owner stops saving");
