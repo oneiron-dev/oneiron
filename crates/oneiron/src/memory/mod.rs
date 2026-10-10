@@ -35,6 +35,7 @@ mod campaign;
 pub mod caps;
 mod chat;
 mod claims;
+mod conversation_list;
 mod dreamer;
 mod entity_delete;
 mod export;
@@ -78,6 +79,7 @@ pub use claims::{
     ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
     PendingWrite, SafeDeleteReason,
 };
+pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
 pub use export::{ExportOptions, ExportReceipt, MemoryExport};
 pub use expression_preference::{

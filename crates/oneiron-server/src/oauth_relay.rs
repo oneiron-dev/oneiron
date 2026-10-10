@@ -536,7 +536,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/v1/core/conversations")
+                    .uri("/v1/core/outbound/capabilities")
                     .header(AUTHORIZATION, &bearer)
                     .body(Body::empty())
                     .unwrap(),
@@ -551,7 +551,7 @@ mod tests {
                 &slip,
                 &holder,
                 "GET",
-                "/v1/core/conversations",
+                "/v1/core/outbound/capabilities",
                 None,
             ))
             .await
