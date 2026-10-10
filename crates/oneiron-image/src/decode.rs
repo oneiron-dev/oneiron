@@ -406,11 +406,6 @@ fn le32(bytes: &[u8], at: usize) -> Option<usize> {
     usize::try_from(u32::from_le_bytes(word)).ok()
 }
 
-fn le24(bytes: &[u8], at: usize) -> Option<u32> {
-    let [a, b, c]: [u8; 3] = bytes.get(at..at.checked_add(3)?)?.try_into().ok()?;
-    Some(u32::from_le_bytes([a, b, c, 0]))
-}
-
 /// A lossy frame's size, from its key frame header.
 fn vp8_size(data: &[u8]) -> Option<(u32, u32)> {
     let key_frame = data.first()? & 1 == 0;

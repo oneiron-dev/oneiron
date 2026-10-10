@@ -30,7 +30,9 @@ pub(crate) fn confine(command: &mut Command, socket: RawFd, spec: &OrganSpec) {
     let plan = Plan {
         socket,
         memory: spec.memory_bytes,
-        open_files: 64 + 16 * u64::from(spec.threads),
+        // Per seat: a call's inputs, plus the outputs of the reply before it,
+        // which the organ may not have closed yet when the next call lands.
+        open_files: 64 + 2 * 16 * u64::from(spec.threads),
     };
     command
         .env_clear()
