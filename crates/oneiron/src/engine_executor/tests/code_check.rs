@@ -39,7 +39,7 @@ impl CodeCheck for FixtureCheck {
         }
     }
 
-    fn check(&self, _input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
+    fn check(&self, _input: &CheckInput<'_>) -> std::result::Result<CheckReport, CheckFailure> {
         assert!(!self.panics, "the fixture checker crashed");
         Ok(CheckReport {
             backend: self.backend(),
@@ -88,7 +88,10 @@ fn a_shadow_check_leaves_a_parked_step_parked() {
         assert_eq!(outcome.steps_run, 1);
         let totals = shadow.metrics().snapshot();
         if panics {
-            assert_eq!(totals.unchecked, BTreeMap::from([("code_check_crashed", 1)]));
+            assert_eq!(
+                totals.unchecked,
+                BTreeMap::from([("code_check_crashed", 1)])
+            );
         } else {
             assert_eq!(
                 totals.then_with_diagnostics,

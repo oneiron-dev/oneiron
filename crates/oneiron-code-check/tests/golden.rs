@@ -8,7 +8,8 @@
 //! interpreter's functions.
 
 use oneiron_code_check::{
-    CheckInput, CodeCheck, Declaration, MICROSOFT_TS_VERSION, MicrosoftTsc, TscRsBudget, TscRsWasm,
+    CheckFailure, CheckInput, CodeCheck, Declaration, MICROSOFT_TS_VERSION, MicrosoftTsc,
+    TscRsBudget, TscRsWasm,
 };
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
@@ -106,6 +107,19 @@ fn tsc_rs_in_process_gives_the_golden_diagnostics() {
 fn microsoft_oracle_gives_the_golden_diagnostics() {
     let checker = MicrosoftTsc::new(oracle()).unwrap();
     assert_eq!(rendered(&checker), std::fs::read_to_string(GOLDEN).unwrap());
+    // tsc resolves a module through the host's file system, so the native
+    // backend leaves a program that names one unchecked.
+    for program in [
+        "const outside = await import('/etc/hostname');\nfinish(outside);",
+        "/** @type {IMPORT('fs')} */\nconst fs = REQUIRE('fs');\nfinish(fs);",
+        "const fs = requ\\u0069re('fs');\nfinish(fs);",
+    ] {
+        let checked = checker.check(&CheckInput {
+            declarations: &DECLARATIONS,
+            program,
+        });
+        assert_eq!(checked, Err(CheckFailure::Unsupported), "{program}");
+    }
 }
 
 /// The registry's SHA-512 integrity of each platform package at the pin.

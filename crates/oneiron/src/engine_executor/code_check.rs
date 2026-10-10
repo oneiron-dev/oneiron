@@ -7,11 +7,9 @@ use super::host::executor_declarations;
 use super::store::{code_check_output_path, record_text_output};
 use super::types::EngineExecutorStatus;
 use crate::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage};
-use crate::session_overlay::RouteTarget;
 use crate::entity_id::EntityId;
-use oneiron_code_check::{
-    BackendId, CheckFailure, CheckInput, CheckReport, ShadowCheck, StepThen,
-};
+use crate::session_overlay::RouteTarget;
+use oneiron_code_check::{BackendId, CheckFailure, CheckInput, CheckReport, ShadowCheck, StepThen};
 use serde_json::json;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::{Duration, Instant};

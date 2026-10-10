@@ -170,10 +170,14 @@ fn the_code_check_is_off_by_default_and_enforce_is_refused() {
         error.to_string().contains("code_check_enforce_reserved"),
         "{error}"
     );
-    let microsoft = check("mode = \"shadow\"\nbackend = \"microsoft\"\nmicrosoft_tsc = \"/opt/tsc\"")
-        .unwrap()
-        .code_mode
-        .check;
+    let microsoft =
+        check("mode = \"shadow\"\nbackend = \"microsoft\"\nmicrosoft_tsc = \"/opt/tsc\"")
+            .unwrap()
+            .code_mode
+            .check;
     assert_eq!(microsoft.backend, BackendKind::Microsoft);
-    assert!(check("backend = \"microsoft\"").is_err(), "it needs its binary");
+    assert!(
+        check("backend = \"microsoft\"").is_err(),
+        "it needs its binary"
+    );
 }

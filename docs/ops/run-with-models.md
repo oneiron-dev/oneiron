@@ -233,7 +233,10 @@ the log.
 `tsc-rs` is the pinned Wasm module in `components/tsc-rs`, compiled once at
 startup (a few seconds) and run in a fresh instance per check, two at a time.
 `microsoft` runs Microsoft's native `tsc` (`@typescript/typescript-<platform>`,
-version `7.1.0-dev.20261010.1` only) as a process per check. With `tsc-rs` selected, a
+version `7.1.0-dev.20261010.1` only) as a process per check, in its own
+process group and temporary directory but with this host's file system: the
+check adds no imported file to the program, though resolving an import still
+probes the path it names. With `tsc-rs` selected, a
 set `microsoft_tsc` is the fallback for a check tsc-rs cannot finish. When no
 checker loads, code mode runs unchecked and the server logs why.
 

@@ -210,9 +210,11 @@ async fn shadow_mode_changes_no_programs_behaviour_or_result() {
             .iter()
             .map(|diagnostic| diagnostic["code"].as_u64().unwrap())
             .collect();
-        // Step 0 is the program's own unless it failed before any host call.
-        let program_step =
-            checked.text("executor/repl/000000.generated.js").as_deref() == Some(program);
+        // Step 0 is the program's own (as the executor heals it, without its
+        // trailing newline) unless it failed before any host call.
+        let program_step = checked
+            .text("executor/repl/000000.generated.js")
+            .is_some_and(|generated| generated.trim_end() == program.trim_end());
         let expected: Vec<u64> = if program_step {
             codes.iter().copied().map(u64::from).collect()
         } else {

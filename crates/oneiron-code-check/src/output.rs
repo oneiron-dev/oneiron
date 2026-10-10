@@ -102,7 +102,11 @@ mod tests {
                 (None, 0, 0, 5023),
             ]
         );
-        assert!(found[1].message.ends_with("\n  The expected type comes from property 'text'."));
+        assert!(
+            found[1]
+                .message
+                .ends_with("\n  The expected type comes from property 'text'.")
+        );
         assert!(diagnostics(b"Segmentation fault\n").is_err());
     }
 }

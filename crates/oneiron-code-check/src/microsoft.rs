@@ -24,6 +24,11 @@ pub const MICROSOFT_TS_VERSION: &str = "7.1.0-dev.20261010.1";
 const POLL: Duration = Duration::from_millis(1);
 /// How long the reader may take to finish once the process has exited.
 const DRAIN: Duration = Duration::from_millis(100);
+/// Text through which a program can make tsc resolve a module: an import
+/// (statement, call, JSDoc type or tag, JSX import source), a `require` call,
+/// a reference directive, or a Unicode escape that spells one of them.
+/// Matched without regard to case.
+const MODULE_NAMING: [&str; 4] = ["import", "require", "reference", "\\u"];
 /// `tsc --version` prints one short line.
 const VERSION_BYTES: usize = 256;
 
@@ -71,6 +76,13 @@ impl CodeCheck for MicrosoftTsc {
 
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
         let deadline = Instant::now() + self.wall_time;
+        // tsc runs with this host's file system, and resolving a module reads
+        // or probes the path it names, so a program that could name one is
+        // left unchecked here. tsc-rs reads only the check's own files.
+        let program = input.program.to_ascii_lowercase();
+        if MODULE_NAMING.iter().any(|token| program.contains(token)) {
+            return Err(CheckFailure::Unsupported);
+        }
         let files = project_files(input)?;
         let directory = tempfile::tempdir().map_err(|_| CheckFailure::Unavailable)?;
         for (name, bytes) in &files {
@@ -108,8 +120,11 @@ fn run_bounded(
         stop(&mut child);
         return Err(CheckFailure::Unavailable);
     };
-    let stdout = read_bounded(stdout, limit);
-    let stderr = read_bounded(stderr, 0);
+    let (Ok(stdout), Ok(stderr)) = (read_bounded(stdout, limit), read_bounded(stderr, 0)) else {
+        // A reader that did start ends once the group is gone.
+        stop(&mut child);
+        return Err(CheckFailure::Unavailable);
+    };
     let mut printed = None;
     let ended = loop {
         if printed.is_none()
@@ -139,7 +154,9 @@ fn run_bounded(
     // After the exit, each reader ends at its pipe's end. A process that
     // escaped the group and holds a pipe open (tsc starts none) leaves its
     // reader parked, and the check times out after a short drain.
-    let drain = deadline.saturating_duration_since(Instant::now()).max(DRAIN);
+    let drain = deadline
+        .saturating_duration_since(Instant::now())
+        .max(DRAIN);
     let printed = match printed {
         Some(read) => read,
         None => stdout
@@ -167,16 +184,19 @@ fn run_bounded(
 fn read_bounded(
     pipe: impl Read + Send + 'static,
     limit: usize,
-) -> mpsc::Receiver<std::io::Result<Vec<u8>>> {
+) -> Result<mpsc::Receiver<std::io::Result<Vec<u8>>>, CheckFailure> {
     let (sender, receiver) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let mut read = Vec::new();
-        let result = pipe
-            .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
-            .read_to_end(&mut read);
-        let _ = sender.send(result.map(|_| read));
-    });
-    receiver
+    std::thread::Builder::new()
+        .name("tsc-output".into())
+        .spawn(move || {
+            let mut read = Vec::new();
+            let result = pipe
+                .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
+                .read_to_end(&mut read);
+            let _ = sender.send(result.map(|_| read));
+        })
+        .map_err(|_| CheckFailure::Unavailable)?;
+    Ok(receiver)
 }
 
 /// Kills a live child and its process group, then reaps it. Only a child not

@@ -518,7 +518,9 @@ fn link(linker: &mut Linker<Host>, module: &Module) -> wasmtime::Result<()> {
                 if index % HOST_WORK_BLOCK == 0 {
                     host.on_time()?;
                 }
-                let entry = index.checked_mul(8).and_then(|offset| iovs.checked_add(offset));
+                let entry = index
+                    .checked_mul(8)
+                    .and_then(|offset| iovs.checked_add(offset));
                 let (Some(at), Some(length)) = (
                     entry.and_then(word),
                     entry.and_then(|entry| word(entry.checked_add(4)?)),

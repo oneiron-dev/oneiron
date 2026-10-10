@@ -158,6 +158,8 @@ pub enum CheckFailure {
     Crashed,
     UnreadableOutput,
     InvalidInput,
+    /// The checker does not check a program like this one.
+    Unsupported,
     /// The checker is missing, fails its pin, or cannot start.
     Unavailable,
 }
@@ -173,6 +175,7 @@ impl CheckFailure {
             Self::Crashed => "code_check_crashed",
             Self::UnreadableOutput => "code_check_unreadable_output",
             Self::InvalidInput => "code_check_invalid_input",
+            Self::Unsupported => "code_check_unsupported",
             Self::Unavailable => "code_check_unavailable",
         }
     }
@@ -300,12 +303,14 @@ fn project_files(input: &CheckInput<'_>) -> Result<Vec<(String, Vec<u8>)>, Check
         format!("{ENVELOPE_PREFIX}{}{ENVELOPE_SUFFIX}", input.program).into_bytes(),
     ));
     // JavaScript checked as written: strict, ES2022 with no DOM or Node
-    // globals, and no output.
+    // globals, and no output. The program is these files alone: an import
+    // adds no file, so a native checker reads nothing else it names.
     let project = serde_json::json!({
         "compilerOptions": {
             "allowJs": true,
             "checkJs": true,
             "noEmit": true,
+            "noResolve": true,
             "strict": true,
             "target": "ES2022",
             "lib": ["ES2022"],
