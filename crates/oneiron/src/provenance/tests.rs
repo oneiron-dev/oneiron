@@ -1,6 +1,7 @@
 use super::*;
 use crate::error::ErrorKind;
 use crate::store::Store;
+use crate::{Vault, VaultConfig};
 use core::assert_matches;
 
 use crate::error::ClaimError;
@@ -326,35 +327,57 @@ fn decode_negative_matrix_fail_closed() {
 }
 
 #[test]
-fn winner_ordering_pins_d14_precedence() {
-    let precedence = |learned_at, confidence, id_byte: u8| ProvenancePrecedence {
-        learned_at,
-        confidence,
-        claim_id: entity(id_byte),
+fn equal_time_equal_confidence_provenance_winner_flags_survive_both_write_orders() -> Result<()> {
+    let expected = crate::edge::EdgeProvenanceFlags {
+        confirmation_status: crate::edge::EdgeConfirmationStatus::Confirmed,
+        actor_class: EdgeActorClass::Human,
     };
-
-    // Empty slate → no winner.
-    assert_eq!(winner_index(&[]), None);
-
-    // learned_at DOMINATES confidence: t=2000/conf 0.1 beats
-    // t=1000/conf 0.9 — a confidence-first implementation fails here.
-    let by_learned = [precedence(1000, 0.9, 0x01), precedence(2000, 0.1, 0x02)];
-    assert_eq!(winner_index(&by_learned), Some(1));
-
-    // Confidence breaks learned_at ties.
-    let by_confidence = [
-        precedence(2000, 0.4, 0x01),
-        precedence(2000, 0.6, 0x02),
-        precedence(2000, 0.5, 0x03),
-    ];
-    assert_eq!(winner_index(&by_confidence), Some(1));
-
-    // Full (learned_at, confidence) tie → greatest claim-id bytes win
-    // (engine-defined determinism; order-of-input must not matter).
-    let by_id = [precedence(2000, 0.5, 0x09), precedence(2000, 0.5, 0x04)];
-    assert_eq!(winner_index(&by_id), Some(0));
-    let by_id_reversed = [precedence(2000, 0.5, 0x04), precedence(2000, 0.5, 0x09)];
-    assert_eq!(winner_index(&by_id_reversed), Some(1));
+    for order in [[0x70, 0x71], [0x71, 0x70]] {
+        let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let source = entity(0x60);
+        let target = entity(0x61);
+        let actor = entity(0x62);
+        for id in [source, target, actor] {
+            vault.put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )?;
+        }
+        vault.put_edge(&source, EdgeKind::Mentions, &target, 0.6)?;
+        let subject = EdgeRef::new(source, EdgeKind::Mentions, target);
+        for byte in order {
+            let (status, class) = if byte == 0x71 {
+                (SupersessionStatus::Confirmed, EdgeActorClass::Human)
+            } else {
+                (SupersessionStatus::Proposed, EdgeActorClass::Agent)
+            };
+            let body = EdgeProvenanceClaimBody::new(actor, 0.5, status);
+            vault.put_edge_provenance(&entity(byte), &subject, &body, class, 2000)?;
+        }
+        drop(vault);
+        let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+        let out = reopened.edges_out(&source)?;
+        let incoming = reopened.edges_in(&target)?;
+        assert_eq!(
+            out.iter()
+                .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == target)
+                .unwrap()
+                .provenance,
+            Some(expected)
+        );
+        assert_eq!(
+            incoming
+                .iter()
+                .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == source)
+                .unwrap()
+                .provenance,
+            Some(expected)
+        );
+    }
+    Ok(())
 }
 
 #[test]

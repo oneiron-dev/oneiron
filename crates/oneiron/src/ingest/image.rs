@@ -378,18 +378,53 @@ mod tests {
     }
 
     #[test]
-    fn caption_is_marked_and_locality_policy_is_honored() {
-        let batch = normalize_image(SCREENSHOT, &CannedOcr, Some(&CannedCaption)).expect("caption");
-        assert!(
-            batch.entities[0]
-                .body
-                .contains("[CAPTION source=caption_model]")
-        );
-        assert!(
-            batch.entities[0]
-                .body
-                .contains("[PROVENANCE caption_locality=0]")
-        );
+    fn persisted_caption_recall_preserves_model_source_and_processing_locality() -> crate::Result<()>
+    {
+        let cases: [(
+            &dyn ImageTextRecognizer,
+            &dyn ImageCaptionRecognizer,
+            &str,
+            &str,
+        ); 2] = [
+            (
+                &CannedOcr,
+                &CannedCaption,
+                "a receipt",
+                "[PROVENANCE caption_locality=0]\n[CAPTION source=caption_model]\na receipt\n",
+            ),
+            (
+                &HostLocalOcr,
+                &HostLocalCaption,
+                "host caption",
+                "[PROVENANCE caption_locality=1]\n[CAPTION source=caption_model]\nhost caption\n",
+            ),
+        ];
+        for (ocr, captioner, query, evidence) in cases {
+            let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+            let batch =
+                normalize_image(SCREENSHOT, ocr, Some(captioner)).expect("normalize real PNG");
+            assert_eq!(batch.entities.len(), 1);
+            let id = crate::test_util::entity(0x75);
+            crate::ingest::admit_imported_entity(
+                &vault,
+                &id,
+                &batch.entities[0],
+                TimeRange { start: 2, end: 2 },
+                2,
+            )?;
+            vault
+                .batch()
+                .text(&id, &[("body", batch.entities[0].body.as_str())])
+                .commit()?;
+            drop(vault);
+            let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device())?;
+            let recalled = vault.search_text(query, 10)?;
+            assert!(recalled.iter().any(|hit| hit.id == id));
+            let bytes = vault.get(&id)?.expect("hydrate recalled caption evidence");
+            let body = std::str::from_utf8(&bytes).unwrap();
+            assert!(body.contains(evidence));
+        }
+        Ok(())
     }
 
     #[test]

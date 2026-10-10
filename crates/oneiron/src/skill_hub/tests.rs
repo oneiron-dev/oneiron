@@ -318,7 +318,7 @@ fn audit_ingest_preserves_independent_provider_rows_and_lifecycle() -> Result<()
 }
 
 #[test]
-fn audit_ingest_rejects_bad_middle_receipt_atomically() -> Result<()> {
+fn malformed_audit_batch_preserves_content_anchor_verdict_rows() -> Result<()> {
     let (_temp, vault) = open_vault();
     let entity = EntityId::now();
     let imported = package(
@@ -326,7 +326,7 @@ fn audit_ingest_rejects_bad_middle_receipt_atomically() -> Result<()> {
         SkillCapabilitySurface::default(),
     );
     vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &imported, entity, t(1), 2)?;
-    let first = SkillScanReceipt::new(
+    let seed = SkillScanReceipt::new(
         "first",
         3,
         ScanVerdict::Clean,
@@ -334,26 +334,40 @@ fn audit_ingest_rejects_bad_middle_receipt_atomically() -> Result<()> {
         ScanCompleteness::Complete,
         SkillGovernance::Recommended,
     )?;
+    vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &seed, t(3), 4)?;
+    let anchor = skill_content_anchor_entity_id(fixture_hash())?;
+    let mut before = vault.active_claims_for_predicate(&anchor, PREDICATE_SKILL_SCAN_VERDICT)?;
+    before.sort_by_key(|row| row.0);
+    assert!(!before.is_empty());
+    let first = SkillScanReceipt::new(
+        "first",
+        5,
+        ScanVerdict::Malicious,
+        ScanRiskLevel::Critical,
+        ScanCompleteness::Complete,
+        SkillGovernance::Prohibited,
+    )?;
     let mut bad = first.clone();
     bad.provider.clear();
     let last = SkillScanReceipt::new(
         "last",
-        3,
+        5,
         ScanVerdict::Suspicious,
         ScanRiskLevel::High,
         ScanCompleteness::Partial,
         SkillGovernance::Discouraged,
     )?;
-
     let error = vault
-        .ingest_skill_audit_verdicts(&entity, fixture_hash(), &[first, bad, last], t(3), 4)
-        .expect_err("a malformed middle receipt must reject the whole batch");
+        .ingest_skill_audit_verdicts(&entity, fixture_hash(), &[first, bad, last], t(5), 6)
+        .expect_err("malformed middle receipt must reject the batch");
     assert_eq!(error.kind(), ErrorKind::InvalidSkillBody);
-    assert!(
-        vault
-            .active_claims_for_predicate(&entity, PREDICATE_SKILL_SCAN_VERDICT)?
-            .is_empty()
-    );
+    let mut after = vault.active_claims_for_predicate(&anchor, PREDICATE_SKILL_SCAN_VERDICT)?;
+    after.sort_by_key(|row| row.0);
+    assert_eq!(after, before);
+    let providers = third_party_verdicts(&vault, fixture_hash())?;
+    assert_eq!(providers.len(), 1);
+    assert_eq!(map_text(&providers[0].value, "provider"), Some("first"));
+    assert_eq!(map_text(&providers[0].value, "verdict"), Some("clean"));
     Ok(())
 }
 

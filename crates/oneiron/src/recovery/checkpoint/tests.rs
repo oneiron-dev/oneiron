@@ -1300,44 +1300,99 @@ fn checkpoint_refuses_unreconstructable_explicit_vectors_before_creating_image()
 }
 
 #[test]
-fn checkpoint_requeues_nonempty_summary_vectors_for_embedding() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut config = VaultConfig::device();
-    config.dimensions = 4;
-    config.embedding_model = Some("test/model@v1".into());
-    let source = Vault::open(dir.path().join("source"), config.clone()).unwrap();
-    // The bootstrap skills' seeded claims are embedding sources as well.
-    let seeded_claims = source
-        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)
-        .unwrap()
-        .len();
+fn restored_summary_is_reembedded_from_retained_prose_and_retrievable() -> Result<()> {
+    use crate::embed::{
+        Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload,
+    };
+    struct LocalSummaryEmbedder;
+    impl Embedder for LocalSummaryEmbedder {
+        fn model_id(&self) -> &str {
+            "test/model@v1"
+        }
+        fn dimensions(&self) -> usize {
+            4
+        }
+        fn locality(&self) -> EmbedderLocality {
+            EmbedderLocality::OnDevice
+        }
+        fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
+            assert_eq!(inputs.len(), 1);
+            assert_eq!(
+                inputs[0].payload,
+                PendingEmbeddingPayload::SummaryText("summary rebuild source".to_owned())
+            );
+            Ok(vec![vec![0.0, 1.0, 0.0, 0.0]])
+        }
+    }
+    let dir = tempfile::tempdir()?;
+    let config = crate::test_util::embedding_test_config();
+    let source = Vault::open(dir.path().join("source"), config.clone())?;
     let id = EntityId::now();
-    source
-        .put_entity(
-            &id,
-            crate::registry::ENTITY_TYPE_SUMMARY,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"summary rebuild source",
-        )
-        .unwrap();
-    source.put_vector(&id, &[1.0, 0.0, 0.0, 0.0]).unwrap();
+    let body =
+        crate::compaction::encode_epoch_summary_body(&crate::compaction::EpochSummaryBody {
+            v: 1,
+            session: "61616161616161616161616161616161".to_owned(),
+            epoch: 1,
+            turn_start: 1,
+            turn_end: 1,
+            level: 0,
+            text: "summary rebuild source".to_owned(),
+            actor: "62626262626262626262626262626262".to_owned(),
+        })?;
+    source.put_entity(
+        &id,
+        crate::registry::ENTITY_TYPE_SUMMARY,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &body,
+    )?;
+    source.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
     let checkpoint = dir.path().join("checkpoint");
-    source.snapshot_checkpoint(&checkpoint, 100).unwrap();
-    let (restored, report) = Vault::restore_checkpoint(
+    source.snapshot_checkpoint(&checkpoint, 100)?;
+    drop(source);
+    let (restored, _) = Vault::restore_checkpoint(
         &checkpoint,
         &dir.path().join("restored"),
         config,
         RestoreReason::Restore,
         101,
-    )
-    .unwrap();
-    assert_eq!(
-        restored.get(&id).unwrap(),
-        Some(b"summary rebuild source".to_vec())
+    )?;
+    assert!(restored.get_vector(&id)?.is_none());
+    assert!(
+        !restored
+            .search_vector(&[0.0, 1.0, 0.0, 0.0], 10)?
+            .iter()
+            .any(|hit| hit.id == id)
     );
-    assert_eq!(report.pending_embeddings, seeded_claims + 1);
-    assert!(restored.get_vector(&id).unwrap().is_none());
+    let token = {
+        let txn = restored.store.env.read_txn()?;
+        restored
+            .store
+            .pending_embedding_token(&txn, &id)?
+            .expect("restored summary queued")
+    };
+    let retained = restored.get(&id)?.expect("restored summary body");
+    let input = PendingEmbeddingInput {
+        entity_id: id,
+        payload: crate::embed::embeddable_payload(crate::registry::ENTITY_TYPE_SUMMARY, &retained)
+            .expect("retained prose is embeddable"),
+        pending_embedding_token: token,
+    };
+    let vectors = LocalSummaryEmbedder.embed(std::slice::from_ref(&input))?;
+    restored
+        .batch()
+        .vector_for_pending_embedding(&id, &vectors[0], &input.pending_embedding_token)
+        .commit()?;
+    assert_eq!(restored.get_vector(&id)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    assert!(
+        restored
+            .search_vector(&[0.0, 1.0, 0.0, 0.0], 10)?
+            .iter()
+            .any(|hit| hit.id == id)
+    );
+    let txn = restored.store.env.read_txn()?;
+    assert!(restored.store.pending_embedding_token(&txn, &id)?.is_none());
+    Ok(())
 }
 
 /// A restore refuses a job row of another kind in the owner-retained key
