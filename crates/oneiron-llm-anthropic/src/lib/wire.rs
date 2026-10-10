@@ -18,6 +18,11 @@ pub fn build_anthropic_messages_request(
     request: &LlmRequest,
     stream: bool,
 ) -> LlmResult<AnthropicMessagesHttpRequest> {
+    // The model id and the catalog row pick the model and the route; a param
+    // or provider option never does.
+    if request.route_selector_override().is_some() {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
     let catalog = config.catalog_entry(&request.model)?;
     let mut provider_options = AnthropicProviderOptions::from_request(request)?;
     if request.envelope.seat_effort.is_some() {

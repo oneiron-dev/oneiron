@@ -1,3 +1,4 @@
+mod dispatch;
 mod guard;
 mod ladders;
 mod ledger;
@@ -8,6 +9,9 @@ mod types;
 
 mod settlement;
 
+pub use self::dispatch::{
+    DispatchBinding, DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
+};
 pub use self::guard::BudgetGuard;
 pub use self::policy::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 pub use self::templates::{

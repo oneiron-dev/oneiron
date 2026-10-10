@@ -54,7 +54,8 @@ pub use budget::{
     BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE, BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE_ID,
     BudgetAdmission, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent, BudgetPromptTemplate,
     BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
-    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
+    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS, DispatchBinding, DispatchRefused,
+    FAILED_RUNGS_KEY, answered_units, answered_units_wide,
 };
 // Public so `oneiron`'s policy-manifest decoder and frontier hash (the only callers outside
 // this module) build and hash the policy rows a guard enforces. Rows are values; a guard
@@ -65,6 +66,7 @@ pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub use self::backend::{
     BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream, LlmStreamResult,
+    SingleRouteBackend, SingleSend,
 };
 pub use self::call::{
     CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality,
