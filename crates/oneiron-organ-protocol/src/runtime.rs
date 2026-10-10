@@ -287,7 +287,7 @@ fn work<O: Organ>(shared: &Shared<O>, queue: &Mutex<mpsc::Receiver<Job>>) {
 fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
     let Job { call, fds, cancel } = job;
     let Some(spec) = shared.verbs.iter().find(|spec| spec.name == call.verb) else {
-        let error = OrganError::new(ErrorCode::UnknownVerb, call.verb.clone());
+        let error = OrganError::new(ErrorCode::UnknownVerb, call.verb);
         return (Outcome::Error(error), Vec::new());
     };
     if spec.schema != call.schema {

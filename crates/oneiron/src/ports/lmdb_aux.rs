@@ -277,18 +277,19 @@ impl JobQueue for Vault {
 impl Vault {
     /// The borrowed twin of `port_blob_get`: the same liveness checks
     /// (tombstone, stale index, stale body, entity type), but the bytes stay
-    /// in the store's pages. The caller checks the content hash when it
+    /// in the store's pages whenever the store lends them. The caller checks the content hash when it
     /// first reads them ([`crate::blob_artifact::BlobBytes::verified`]).
     pub(crate) fn lend_blob_in_txn<'t>(
         &self,
         txn: &'t RoTxn<'_>,
         hash: &[u8; 32],
-    ) -> Result<Option<&'t [u8]>> {
+    ) -> Result<Option<std::borrow::Cow<'t, [u8]>>> {
+        use std::borrow::Cow;
         let id = blob_artifact_asset_entity_id(hash)?;
         let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
             return Ok(None);
         };
-        let header = crate::batch::EntityMetadataHeader::parse(raw)
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             return Err(Error::CorruptedIndex("blob content hash"));
@@ -298,8 +299,14 @@ impl Vault {
         {
             return Ok(None);
         }
-        let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
-        if super::safe_read::body_is_stale(body) {
+        let body = match raw {
+            Cow::Borrowed(raw) => Cow::Borrowed(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]),
+            Cow::Owned(mut raw) => {
+                raw.drain(..crate::batch::ENTITY_METADATA_HEADER_LEN);
+                Cow::Owned(raw)
+            }
+        };
+        if super::safe_read::body_is_stale(&body) {
             return Ok(None);
         }
         Ok(Some(body))

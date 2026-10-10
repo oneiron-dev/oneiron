@@ -304,17 +304,14 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
     Ok(())
 }
 
+/// Delivers replies until the organ closes, breaks a frame, or sends a
+/// second `hello_ack`; then fails every waiting call.
 fn read_replies(stream: &UnixStream, inbox: &Inbox, limit: u32) {
-    loop {
-        match recv_frame::<FromOrgan>(stream, limit) {
-            Ok((FromOrgan::Reply(reply), fds)) => {
-                let waiter = lock(&inbox.pending).remove(&reply.id);
-                // A reply nobody waits for came after its deadline: drop it.
-                if let Some(waiter) = waiter {
-                    let _ = waiter.try_send(Some((reply, fds)));
-                }
-            }
-            Ok((FromOrgan::HelloAck(_), _)) | Err(_) => break,
+    while let Ok((FromOrgan::Reply(reply), fds)) = recv_frame::<FromOrgan>(stream, limit) {
+        let waiter = lock(&inbox.pending).remove(&reply.id);
+        // A reply nobody waits for came after its deadline: drop it.
+        if let Some(waiter) = waiter {
+            let _ = waiter.try_send(Some((reply, fds)));
         }
     }
     inbox.close();

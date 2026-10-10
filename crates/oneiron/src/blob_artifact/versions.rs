@@ -624,7 +624,9 @@ impl Vault {
         lend: impl FnOnce(&BlobArtifactVersion, BlobBytes<'_>) -> R,
     ) -> Result<Option<R>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(record) = VERSIONS.get(&self.store, &rtxn, &(*artifact_id, version))? else {
+        let Some(record) =
+            self.blob_artifact_version_metadata_in_txn(&rtxn, artifact_id, version)?
+        else {
             return Ok(None);
         };
         let bytes = self
@@ -643,7 +645,7 @@ impl Vault {
 /// One version's bytes, borrowed from a read transaction.
 #[derive(Debug)]
 pub struct BlobBytes<'t> {
-    bytes: &'t [u8],
+    bytes: std::borrow::Cow<'t, [u8]>,
     hash: [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 }
 
@@ -663,8 +665,8 @@ impl<'t> BlobBytes<'t> {
     /// # Errors
     /// [`Error::CorruptedIndex`] when the stored bytes no longer hash to the
     /// version's content hash.
-    pub fn verified(self) -> Result<&'t [u8]> {
-        if blake3::hash(self.bytes).as_bytes() == &self.hash {
+    pub fn verified(self) -> Result<std::borrow::Cow<'t, [u8]>> {
+        if blake3::hash(&self.bytes).as_bytes() == &self.hash {
             Ok(self.bytes)
         } else {
             Err(Error::CorruptedIndex("blob content hash"))

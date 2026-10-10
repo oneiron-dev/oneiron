@@ -10,16 +10,14 @@ use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron_organ_protocol::{
-    ByteBuf, Call, CancelReason, Hash32, Input, MAX_FDS_PER_FRAME, MappedRegion, Output, Outcome,
+    ByteBuf, Call, CancelReason, Hash32, Input, MAX_FDS_PER_FRAME, MappedRegion, Outcome, Output,
     Payload, Proposal, SharedRegion, TypedBody,
 };
 
 use crate::budget::Budget;
 use crate::error::HostError;
 use crate::process::{CallFailure, OrganProcess};
-use crate::receipt::{
-    CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest,
-};
+use crate::receipt::{CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest};
 use crate::regions::RegionCache;
 use crate::slot::{OrganStatus, Slot};
 use crate::spec::{HostConfig, OrganCall, OrganInput, OrganSpec};
@@ -175,12 +173,13 @@ impl OrganHost {
     /// processes fail as crashed and may be retried.
     pub fn revoke_grant(&self, grant: &str) {
         lock(&self.revoked).insert(grant.to_owned());
-        let slots: Vec<Arc<Slot>> = lock(&self.slots).values().cloned().collect();
-        let holders: Vec<(Arc<Slot>, Arc<OrganProcess>)> = slots
-            .into_iter()
+        let holders: Vec<(Arc<Slot>, Arc<OrganProcess>)> = lock(&self.slots)
+            .values()
             .filter_map(|slot| {
-                let process = slot.current().filter(|process| process.holds_grant(grant))?;
-                Some((slot, process))
+                let process = slot
+                    .current()
+                    .filter(|process| process.holds_grant(grant))?;
+                Some((Arc::clone(slot), process))
             })
             .collect();
         for (_, process) in &holders {
@@ -326,7 +325,7 @@ impl OrganHost {
             } else if let Some(region) = self.regions.get(&record.content_hash) {
                 Held::Region(region)
             } else {
-                let region = SharedRegion::from_bytes(bytes.verified()?)?;
+                let region = SharedRegion::from_bytes(&bytes.verified()?)?;
                 Held::Region(self.regions.insert(record.content_hash, region))
             };
             Ok(Resolved {

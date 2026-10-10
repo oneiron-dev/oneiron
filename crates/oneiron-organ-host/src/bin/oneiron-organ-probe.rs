@@ -41,7 +41,9 @@ mod probe {
                             .map(|(_, value)| value.clone())
                     };
                     let ms = field("ms").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let obey = field("obey_cancel").and_then(|v| v.as_bool()).unwrap_or(true);
+                    let obey = field("obey_cancel")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
                     let until = Instant::now() + Duration::from_millis(ms);
                     while Instant::now() < until {
                         if obey {
