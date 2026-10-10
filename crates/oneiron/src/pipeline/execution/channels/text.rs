@@ -15,7 +15,8 @@ use crate::pipeline::filters::{
     pipeline_candidate_matches_filters_and_gate,
 };
 use crate::pipeline::types::{
-    ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PipelineFilterConfig, TurnFold,
+    ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
+    ScoredEntity, TurnFold,
 };
 use crate::query_expansion::{HydeExpansion, retry_channel_limit};
 use crate::retrieval_quality::RetrievalDiagnostics;
@@ -247,9 +248,8 @@ impl PipelineBuilder<'_> {
                 } else {
                     *limit
                 };
-                truncate_widened_channel_results_to_scope(
+                self.truncate_widened_text_results(
                     &mut text_results,
-                    &self.vault.store,
                     rtxn,
                     scoped_result_limit,
                     inputs.filter_config,
@@ -337,9 +337,8 @@ impl PipelineBuilder<'_> {
                     } else {
                         *limit
                     };
-                    truncate_widened_channel_results_to_scope(
+                    self.truncate_widened_text_results(
                         &mut results,
-                        &self.vault.store,
                         rtxn,
                         scoped_result_limit,
                         inputs.filter_config,
@@ -367,6 +366,53 @@ impl PipelineBuilder<'_> {
         }
         Ok(text_channel_index)
     }
+    /// Keeps the rows of a widened text read that the run's own scope
+    /// admits, up to `requested` results. A run that folds each MESSAGE into
+    /// its TURN counts results as the fold leaves them, as the unwidened
+    /// bound does ([`turn_fold::rows_holding_distinct_turns`]): several
+    /// messages of one turn are one result, so they cannot crowd the next
+    /// turn out. Like the unwidened read, it looks no further than
+    /// `PER_SCAN_CAP_FACTOR` times the bound.
+    fn truncate_widened_text_results(
+        &self,
+        rows: &mut Vec<ScoredEntity>,
+        rtxn: &RoTxn<'_>,
+        requested: usize,
+        filter_config: PipelineFilterConfig<'_>,
+        metadata_cache: &mut EntityMetadataCache,
+        claim_gate: &mut ClaimStatusGateCache,
+    ) -> Result<()> {
+        let kept = if self.turn_fold == TurnFold::Off {
+            requested
+        } else {
+            requested.saturating_mul(PER_SCAN_CAP_FACTOR)
+        };
+        truncate_widened_channel_results_to_scope(
+            rows,
+            &self.vault.store,
+            rtxn,
+            kept,
+            filter_config,
+            metadata_cache,
+            claim_gate,
+        )?;
+        if self.turn_fold != TurnFold::Off
+            && let Some(held) = turn_fold::rows_holding_distinct_turns(
+                rows,
+                requested,
+                self.turn_fold,
+                &self.vault.store,
+                rtxn,
+                filter_config,
+                metadata_cache,
+                claim_gate,
+            )?
+        {
+            rows.truncate(held);
+        }
+        Ok(())
+    }
+
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,

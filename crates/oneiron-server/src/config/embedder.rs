@@ -33,7 +33,7 @@ pub const DEFAULT_DIMENSIONS: usize = 1024;
 
 const DEFAULT_BATCH_SIZE: usize = 32;
 const DEFAULT_LEASE_MS: u64 = 30_000;
-const DEFAULT_MAX_INPUT_TOKENS: usize = 4_096;
+pub(crate) const DEFAULT_MAX_INPUT_TOKENS: usize = 4_096;
 const DEFAULT_IDLE_INTERVAL_MS: u64 = 15_000;
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 

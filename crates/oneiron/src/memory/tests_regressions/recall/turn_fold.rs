@@ -186,6 +186,113 @@ fn several_messages_of_one_turn_leave_room_for_the_next_turn() {
     assert_eq!(turns, 2, "both conversations' turns: {:?}", pack.items);
 }
 
+/// Witnesses one turn of three short `solar` messages, which rank first, and
+/// one of a long one, which ranks after them; returns the two turns.
+fn crowded_and_next_turn(facade: &Memory<'_>) -> [EntityId; 2] {
+    [
+        witness_turn(facade, 0xEB, &["solar", "solar panels", "solar roof"], 1_900),
+        witness_turn(
+            facade,
+            0xEC,
+            &["we spent the whole afternoon talking about the solar array on the barn roof"],
+            1_900,
+        ),
+    ]
+}
+
+/// CodeRabbit 1333: a strict scope widens the text read past its bound and
+/// then keeps what the scope admits. On a run that folds messages, that cut
+/// counts turns, as the unwidened bound does. Bug repro: it kept `limit`
+/// rows, so two messages of one turn filled it and the other conversation's
+/// turn never became a candidate.
+#[test]
+fn several_messages_of_one_turn_leave_room_for_the_next_turn_on_a_widened_read() {
+    let (_dir, vault) = open_vault();
+    let facade = facade_for(&vault, put_person(&vault, 0xEA));
+    let turns = crowded_and_next_turn(&facade);
+
+    let hits = vault
+        .query()
+        .search_text("solar", 2)
+        .filter_types(&[
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            crate::registry::ENTITY_TYPE_TURN,
+        ])
+        .fold_messages_into_turns(crate::pipeline::TurnFold::Fold)
+        .run()
+        .expect("widened read");
+    let found: Vec<_> = hits.iter().map(|hit| hit.id).collect();
+    assert!(
+        turns.iter().all(|turn| found.contains(turn)),
+        "both conversations' turns {turns:?} in {found:?}"
+    );
+}
+
+/// The same cut on a HyDE retry's extra text query, which widens on its own.
+/// Bug repro: the retry query kept `limit` rows, all of one turn.
+#[test]
+fn a_widened_retry_query_leaves_room_for_the_next_turn() {
+    use crate::query_expansion::{
+        CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander, HydeExpansion,
+        HydeOptions, HydeRequest,
+    };
+    /// Finds nothing with the query itself, then retries once with `solar`.
+    struct RetryWithSolar(std::sync::atomic::AtomicBool);
+    impl HydeExpander for RetryWithSolar {
+        fn id(&self) -> &str {
+            "test/retry-with-solar"
+        }
+        fn expand(&self, request: &HydeRequest) -> crate::Result<HydeExpansion> {
+            Ok(HydeExpansion {
+                grounded_query: request.query.clone(),
+                hypothetical_answer: String::new(),
+                embedding: vec![0.0, 0.0, 0.0, 1.0],
+                subqueries: vec!["solar".to_owned()],
+            })
+        }
+        fn assess_evidence(&self, _: &CompletionRequest) -> crate::Result<EvidenceVerdict> {
+            Ok(
+                if self.0.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    EvidenceVerdict::Sufficient
+                } else {
+                    EvidenceVerdict::Insufficient {
+                        gaps: vec!["solar".to_owned()],
+                    }
+                },
+            )
+        }
+    }
+    let (_dir, vault) = open_embedding_vault();
+    let facade = facade_for(&vault, put_person(&vault, 0xED));
+    let turns = crowded_and_next_turn(&facade);
+    let host = RetryWithSolar(std::sync::atomic::AtomicBool::new(false));
+
+    let hits = vault
+        .query()
+        .search_text("harbor", 2)
+        .filter_types(&[
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            crate::registry::ENTITY_TYPE_TURN,
+        ])
+        .fold_messages_into_turns(crate::pipeline::TurnFold::Fold)
+        .hyde(
+            &host,
+            GroundingContext::default(),
+            HydeOptions {
+                channel_limit: 2,
+                retry_once: true,
+            },
+        )
+        .run()
+        .expect("retried read");
+    assert!(host.0.load(std::sync::atomic::Ordering::SeqCst), "the run retried");
+    let found: Vec<_> = hits.iter().map(|hit| hit.id).collect();
+    assert!(
+        turns.iter().all(|turn| found.contains(turn)),
+        "both conversations' turns {turns:?} in {found:?}"
+    );
+}
+
 /// Greptile 1333 (allowed turns get skipped): the text channel reads on
 /// until its rows hold `limit` results as the fold leaves them. A message
 /// whose turn the reader may not retrieve is no such result in a TURN-only

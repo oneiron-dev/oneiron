@@ -279,10 +279,12 @@ impl Default for VectorEvidenceFloors {
 }
 
 impl VectorEvidenceFloors {
-    /// Both are cosine similarities, so each lies in `0.0..=1.0`, and a strong
-    /// match is no weaker than the floor: `0 <= floor <= strong <= 1`. A value
-    /// outside that, or not a number, would admit evidence the check exists
-    /// to withhold, so it is refused, never clamped.
+    /// Both are cosine similarities, which span `-1.0..=1.0`. A floor under
+    /// zero would count a vector pointing away from the query as evidence,
+    /// so each must lie in `0.0..=1.0`, and a strong match is no weaker than
+    /// the floor: `0 <= floor <= strong <= 1`. A value outside that, or not a
+    /// number, would admit evidence the check exists to withhold, so it is
+    /// refused, never clamped.
     pub fn validate(&self) -> crate::error::Result<()> {
         let in_range = |value: f32| value.is_finite() && (0.0..=1.0).contains(&value);
         if !in_range(self.floor) || !in_range(self.strong) || self.floor > self.strong {

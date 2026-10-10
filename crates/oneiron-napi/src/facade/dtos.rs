@@ -397,7 +397,8 @@ pub struct NapiNeighborHit {
 pub struct NapiMemoryProvenance {
     /// Claim source string, or `record` for structural records.
     pub source: String,
-    /// This revision plus superseded ancestors.
+    /// This revision plus superseded ancestors; a TURN's also names the
+    /// messages its text is read from.
     pub source_revision_ids: Vec<String>,
     /// Evidence TURN ids.
     pub evidence_turn_ids: Vec<String>,

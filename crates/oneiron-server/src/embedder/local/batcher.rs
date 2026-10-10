@@ -105,7 +105,7 @@ pub(super) fn prompt_tokens(tokenizer: &Tokenizer, prompt: &str) -> oneiron::Res
 
 /// Python's `str.strip()`: Unicode whitespace plus the four ASCII separators
 /// (`\x1c`–`\x1f`) Python also counts as space.
-fn strip(text: &str) -> &str {
+pub(super) fn strip(text: &str) -> &str {
     text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
 }
 
