@@ -62,6 +62,7 @@
 
 mod executor;
 mod registry;
+mod room;
 mod session;
 mod telemetry;
 mod types;
@@ -71,9 +72,11 @@ pub(crate) use self::registry::OffRecordSessionRegistry;
 pub(crate) use self::session::OverlayShellReservation;
 pub use self::session::{OffRecordSession, OffRecordSessionVault};
 pub(crate) use self::telemetry::SessionRetrievalTelemetry;
+pub use self::room::SavedTurns;
 pub use self::types::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode,
-    OffRecordSessionRecord,
+    OffRecordNotice, OffRecordNoticeAct, OffRecordSessionRecord, OffRecordTalk,
+    OffRecordTalkMessage, OffRecordTalkTurn,
 };
 
 #[cfg(test)]

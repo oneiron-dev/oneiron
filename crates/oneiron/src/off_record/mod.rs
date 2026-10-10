@@ -32,7 +32,8 @@ mod promote;
 
 pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode,
-    OffRecordSession, OffRecordSessionRecord, OffRecordSessionVault,
+    OffRecordNotice, OffRecordNoticeAct, OffRecordSession, OffRecordSessionRecord,
+    OffRecordSessionVault, OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn, SavedTurns,
 };
 pub use promote::{OffRecordPromoteReceipt, PromoteOutcome};
 

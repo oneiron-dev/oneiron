@@ -140,6 +140,42 @@ impl Memory<'_> {
         )
     }
 
+    /// [`Self::witness_into_session`] for a participant of the stretch's room
+    /// (ARCH-0052 D5): this handle's actor must be on the room's roster, and
+    /// that is checked again in the transaction that lands the turn, so a
+    /// witness queued behind a leave writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` when the actor is not in the stretch's room, or left it
+    /// while the witness waited; otherwise as [`Self::witness_into_session`].
+    pub fn witness_into_session_as_member(
+        &self,
+        session: &OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+    ) -> MemoryResult<WitnessReceipt> {
+        let refused = || {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the speaker is not in this stretch's room".to_owned(),
+                &["Join the room before speaking in it."],
+            )
+        };
+        let room = session.require_in_room(self.actor).map_err(|_| refused())?;
+        self.run_witness(
+            turn,
+            WitnessTarget::Session { session, summary },
+            WitnessDoor::Guest,
+            || {},
+            |_| Ok(()),
+            |wtxn| match session.is_member_in_txn(wtxn, room, self.actor) {
+                Ok(true) => Ok(()),
+                _ => Err(refused()),
+            },
+        )
+    }
+
     /// Host-bound variant for executor speech. `host_turn_ref` is derived from
     /// the run identity behind a crate-private capability; it is deliberately a
     /// separate parameter from guest [`WitnessTurn::turn_ref`], so preserving a

@@ -44,15 +44,19 @@ impl Vault {
         backend: OffRecordBackendClass,
         budget_bytes: usize,
     ) -> Result<OffRecordSessionRecord> {
-        let entry = self.enter_off_record_session_entry(session_ref, backend, budget_bytes)?;
+        let entry =
+            self.enter_off_record_session_entry(session_ref, backend, budget_bytes, None)?;
         Ok(session_entry_state(&entry)?.record.clone())
     }
 
+    /// `room` is `(room, started_by)` for a stretch a participant starts in a
+    /// room; the caller has checked the starter is a member of it.
     pub(super) fn enter_off_record_session_entry(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
         budget_bytes: usize,
+        room: Option<(crate::EntityId, crate::EntityId)>,
     ) -> Result<Arc<OffRecordSessionEntry>> {
         if !self.config.off_record_enabled {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
@@ -63,6 +67,7 @@ impl Vault {
             backend,
             budget_bytes,
             OffRecordMode::OffRecord,
+            room,
             &self.store.clock,
         )
     }
@@ -93,6 +98,7 @@ impl Vault {
             backend,
             0,
             OffRecordMode::Anonymous,
+            None,
             &self.store.clock,
         )
     }

@@ -64,6 +64,79 @@ pub struct OffRecordSessionRecord {
     /// would write into a room that is already going away.
     #[serde(default)]
     pub closing: bool,
+    /// The room (a conversation) this stretch runs in, when a participant
+    /// started it there. `None` is the stretch a vault's owner entered alone:
+    /// a 1:1 with their own companion, where no other person is present.
+    #[serde(default)]
+    pub room: Option<[u8; 16]>,
+    /// The person who started the stretch in its room.
+    #[serde(default)]
+    pub started_by: Option<[u8; 16]>,
+    /// The room's timeline of saves, exports and save suggestions (ARCH-0052
+    /// D5, the notice model), oldest first. Only a stretch in a room has
+    /// one: a 1:1 posts no notice. It names who and what, never the content,
+    /// and it evaporates with the room.
+    #[serde(default)]
+    pub notices: Vec<OffRecordNotice>,
+}
+
+/// What a person did with the talk, as the room hears of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OffRecordNoticeAct {
+    /// Saved the whole talk so far into their own vault.
+    SavedTalk,
+    /// Saved one turn into their own vault.
+    SavedTurn,
+    /// Put the room on record: later turns are saved as they land.
+    SavingFromHere,
+    /// Took an export file of the talk.
+    Exported,
+    /// An agent suggested a save. Nothing was saved.
+    SaveSuggested,
+}
+
+/// One notice in the room's timeline: who did what, and when.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OffRecordNotice {
+    pub act: OffRecordNoticeAct,
+    /// The person or agent that acted.
+    pub by: [u8; 16],
+    pub at: u64,
+}
+
+/// A copy of the talk, as one person may keep it (ARCH-0052 D5): every
+/// turn in the room they were a member for, saved or not, in the order the
+/// room took them, with each turn's visible messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OffRecordTalk {
+    pub session_ref: String,
+    pub room: Option<[u8; 16]>,
+    pub turns: Vec<OffRecordTalkTurn>,
+}
+
+/// One turn of a talk copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OffRecordTalkTurn {
+    pub turn: [u8; 16],
+    /// The person or agent who spoke it; `None` when it holds only system
+    /// messages.
+    pub speaker: Option<[u8; 16]>,
+    pub occurred_at: u64,
+    /// Whether someone already saved this turn into this vault.
+    pub saved: bool,
+    pub messages: Vec<OffRecordTalkMessage>,
+}
+
+/// One visible message of a talk copy. Hidden messages (an agent's own
+/// reasoning) stay out of every copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OffRecordTalkMessage {
+    /// `user`, `companion` or `system`.
+    pub author: String,
+    pub message_type: String,
+    pub content: String,
+    pub order: u64,
 }
 
 /// What evaporated at close and what was kept.

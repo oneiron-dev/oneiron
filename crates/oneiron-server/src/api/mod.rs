@@ -77,6 +77,7 @@ mod context_pack;
 mod conversation_dag;
 mod conversation_members;
 mod conversations;
+mod off_record_rooms;
 mod core;
 mod discover;
 mod entity;
@@ -385,6 +386,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
         // limit stays a property of this nest alone.
         .nest("/v1/core/facade", self::facade::facade_routes())
+        // ARCH-0052 D5: everyone in a room keeps their own copy of an
+        // off-record talk. Its own nest, outside the idempotency layer.
+        .nest("/v1/core/off-record", self::off_record_rooms::routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
         .route("/v1/usage/events", post(record_usage_event))

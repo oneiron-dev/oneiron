@@ -8,7 +8,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::SessionLocalReceiptLog;
-use crate::session_overlay::SessionOverlay;
+use crate::session_overlay::{JournalEntry, SessionOverlay};
 use crate::store::Store;
 
 use super::types::{
@@ -56,6 +56,12 @@ pub(super) struct OffRecordSessionEntryState {
     /// taint the K4 guard exists to reject — and would link on-record turns to
     /// a room that is supposed to be invisible from base.
     pub(super) continuation_shell: Option<EntityId>,
+    /// The transcript rows (TURN put, MESSAGE puts, attribution edges) of
+    /// every turn promoted out of the room, copied before promote retires
+    /// them from the overlay, so a later copy of the talk still holds the
+    /// turns someone already saved. In-memory and zeroized like the journal;
+    /// it evaporates with the room.
+    pub(super) saved_transcript: Vec<JournalEntry>,
 }
 
 impl Default for OffRecordSessionRegistry {
@@ -81,12 +87,15 @@ impl OffRecordSessionRegistry {
             .map_err(|_| Error::InvariantViolation("off-record session registry mutex poisoned"))
     }
 
+    /// `room` is `(room, started_by)` for a stretch a participant started in
+    /// a room, and `None` for one the owner entered alone.
     pub(super) fn enter(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
         budget_bytes: usize,
         mode: OffRecordMode,
+        room: Option<(EntityId, EntityId)>,
         clock: &crate::ports::StoreClock,
     ) -> Result<Arc<OffRecordSessionEntry>> {
         let mut sessions = self.sessions()?;
@@ -105,6 +114,9 @@ impl OffRecordSessionRegistry {
             entered_at: clock.now_recorded_at(),
             promoted_turns: Vec::new(),
             closing: false,
+            room: room.map(|(room, _)| *room.as_bytes()),
+            started_by: room.map(|(_, by)| *by.as_bytes()),
+            notices: Vec::new(),
         };
         let overlay = SessionOverlay::new(budget_bytes);
         if mode == OffRecordMode::Anonymous {
@@ -128,6 +140,7 @@ impl OffRecordSessionRegistry {
                 overlay_shell: clock.entity_id()?,
                 overlay_shell_staged: false,
                 continuation_shell: None,
+                saved_transcript: Vec::new(),
             }),
             published_record: ArcSwapOption::from(Some(Arc::new(record))),
         });

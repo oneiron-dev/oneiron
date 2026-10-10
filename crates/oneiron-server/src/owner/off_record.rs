@@ -121,6 +121,19 @@ pub(crate) struct ShortIdPair {
     pub(crate) vault: String,
 }
 
+/// What a save of the whole talk wrote to the vault.
+#[derive(Debug, Serialize)]
+pub(crate) struct Saved {
+    pub(crate) saved: Vec<SavedTurn>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SavedTurn {
+    pub(crate) turn: String,
+    #[serde(flatten)]
+    pub(crate) promoted: Promoted,
+}
+
 /// What close dropped and what it kept.
 #[derive(Debug, Serialize)]
 pub(crate) struct Closed {
@@ -164,7 +177,7 @@ pub(crate) fn flip(
     vault.recheck_owner(owner)?;
     let session = bind(vault, &request.session_ref)?;
     match request.mode {
-        OffRecordMode::OnRecord => session.flip_on_record(),
+        OffRecordMode::OnRecord => session.flip_on_record_as(owner),
         OffRecordMode::OffRecord => session.flip_off_record(),
         OffRecordMode::Anonymous => {
             return Err(OwnerError::Invalid(
@@ -226,6 +239,35 @@ pub(crate) fn promote(
             .short_id_mapping
             .into_iter()
             .map(|(room, vault)| ShortIdPair { room, vault })
+            .collect(),
+    })
+}
+
+/// Saves every turn of the talk nobody saved yet, in one transaction.
+pub(crate) fn save(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    request: &SessionName,
+) -> OwnerResult<Saved> {
+    vault.recheck_owner(owner)?;
+    let session = bind(vault, &request.session_ref)?;
+    let saved = session
+        .save_talk_as(owner)
+        .map_err(|error| session_error(error, &request.session_ref))?;
+    Ok(Saved {
+        saved: saved
+            .into_iter()
+            .map(|(turn, outcome)| SavedTurn {
+                turn: turn.to_hex(),
+                promoted: Promoted {
+                    replayed: outcome.replayed.iter().map(EntityId::to_hex).collect(),
+                    short_ids: outcome
+                        .short_id_mapping
+                        .into_iter()
+                        .map(|(room, vault)| ShortIdPair { room, vault })
+                        .collect(),
+                },
+            })
             .collect(),
     })
 }
