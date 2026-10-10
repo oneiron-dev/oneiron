@@ -314,12 +314,7 @@ impl Memory<'_> {
             .port_edges(txn, target, EdgeDirection::In, Some(kind), None)?
         {
             let id = edge?.target;
-            let raw = self
-                .vault
-                .store
-                .entities
-                .get(txn, id.as_bytes())
-                .map_err(Error::from)?;
+            let raw = self.vault.store.entities.get(txn, id.as_bytes())?;
             if let Some(header) = raw.as_deref().and_then(EntityMetadataHeader::parse) {
                 rows.push((id, header));
             }
