@@ -487,6 +487,8 @@ async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
     }
 }
 
+type Pick = fn(&mut LlmRequest);
+
 #[tokio::test]
 async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -521,7 +523,7 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     let server = Arc::new(server);
     let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-route-selector");
     let router = crate::api::api_routes(server.clone());
-    let picks: [(&str, fn(&mut LlmRequest)); 3] = [
+    let picks: [(&str, Pick); 3] = [
         ("model", |r| {
             r.params.insert("model".into(), "other/model@1".into());
         }),
