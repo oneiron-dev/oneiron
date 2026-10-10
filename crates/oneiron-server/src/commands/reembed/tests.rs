@@ -480,22 +480,54 @@ fn reembed_refuses_a_commit_that_is_not_a_plain_name_before_writing_anything() {
     open(&own).expect("the vault opens as it was");
 }
 
-/// An endpoint that answers `/v1/models` with `listing` and nothing else,
-/// which is all reembed asks of it; the address it serves. The thread ends
-/// with the test process.
-fn listing_endpoint(listing: &'static str) -> String {
+/// An endpoint that answers `/v1/models` with `listing` and every embedding
+/// request with one unit vector of `width` components: all reembed asks of
+/// it. The address it serves; the thread ends with the test process.
+fn listing_endpoint(listing: &'static str, width: usize) -> String {
+    use std::io::{Read, Write};
+
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
     let addr = listener.local_addr().expect("addr");
+    let mut vector = vec![0.0f32; width];
+    vector[0] = 1.0;
+    let embedded = serde_json::json!({ "data": [{ "index": 0, "embedding": vector }] }).to_string();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            let mut request = [0u8; 4096];
-            let _ = std::io::Read::read(&mut stream, &mut request);
+            // The whole request, so closing the connection resets nothing.
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let complete = |request: &[u8]| {
+                let text = String::from_utf8_lossy(request);
+                let Some(end) = text.find("\r\n\r\n") else {
+                    return false;
+                };
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                request.len() >= end + 4 + length
+            };
+            while !complete(&request) {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&chunk[..read]),
+                }
+            }
+            let body = if request.starts_with(b"POST") {
+                embedded.as_str()
+            } else {
+                listing
+            };
             let answer = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{listing}",
-                listing.len()
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
             );
-            let _ = std::io::Write::write_all(&mut stream, answer.as_bytes());
+            let _ = stream.write_all(answer.as_bytes());
         }
     });
     format!("http://{addr}/v1")
@@ -537,7 +569,7 @@ fn a_vault_moves_between_local_and_an_endpoint_of_the_same_model_without_a_reemb
     let dir = tempfile::tempdir().expect("vault dir");
     let own = local_config(dir.path(), EmbedderAttention::Auto);
     let id = filled(&own);
-    let endpoint = endpoint_config(dir.path(), &listing_endpoint(PLAIN_LISTING));
+    let endpoint = endpoint_config(dir.path(), &listing_endpoint(PLAIN_LISTING, WIDE));
     assert_eq!(
         refusal_kind(&endpoint),
         None,
@@ -572,7 +604,7 @@ fn reembed_moves_a_vault_to_the_transform_an_oneiron_endpoint_lists() {
     let dir = tempfile::tempdir().expect("vault dir");
     let own = local_config(dir.path(), EmbedderAttention::Auto);
     filled(&own);
-    let endpoint = endpoint_config(dir.path(), &listing_endpoint(SERVED_LISTING));
+    let endpoint = endpoint_config(dir.path(), &listing_endpoint(SERVED_LISTING, WIDE));
     assert_eq!(
         reembed_with_config(&endpoint, false).expect("reembed"),
         ReembedOutcome {
@@ -602,6 +634,20 @@ fn reembed_refuses_an_endpoint_whose_listing_does_not_answer() {
         format!("{error:#}").contains("/models listing"),
         "{error:#}"
     );
+    let vault = open(&own).expect("the vault opens as it was");
+    assert!(vault.get_vector(&id).expect("vector read").is_some());
+}
+
+/// A served model of another width cannot fill the vault, whatever its
+/// listing says, so reembed refuses before it moves anything.
+#[test]
+fn reembed_refuses_an_endpoint_whose_answers_do_not_fit_the_vault() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    let id = filled(&own);
+    let endpoint = endpoint_config(dir.path(), &listing_endpoint(SERVED_LISTING, WIDE * 2));
+    let error = reembed_with_config(&endpoint, false).expect_err("refused");
+    assert!(format!("{error:#}").contains("components"), "{error:#}");
     let vault = open(&own).expect("the vault opens as it was");
     assert!(vault.get_vector(&id).expect("vector read").is_some());
 }

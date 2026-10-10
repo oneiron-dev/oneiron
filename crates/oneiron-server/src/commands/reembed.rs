@@ -77,8 +77,8 @@ fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<Reem
         let context = match embedder.provider {
             EmbedderProvider::Endpoint => format!(
                 "reembed could not resolve how the configured model {target} makes vectors from \
-                 the endpoint's /models listing; the vault is unchanged. Fix the cause below \
-                 (the endpoint must answer) and run reembed again"
+                 the endpoint's /models listing and a probe at the configured width; the vault \
+                 is unchanged. Fix the cause below (the endpoint must answer) and run reembed again"
             ),
             _ => format!(
                 "reembed could not resolve how the configured model {target} makes vectors from its \

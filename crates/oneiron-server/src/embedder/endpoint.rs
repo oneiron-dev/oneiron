@@ -536,10 +536,20 @@ impl QueryEmbedder for HttpEmbedder {
 }
 
 /// How the configured remote makes vectors, asked now: what `embedder serve`
-/// lists for the model, `None` for any other remote. An error when the
-/// listing does not answer.
+/// lists for the model, `None` for any other remote. The remote must first
+/// pass the startup probe — it lists the model and answers at the configured
+/// width — so a vault is never moved to a remote that cannot fill it. An
+/// error when it does not answer or does not pass.
 pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
-    HttpEmbedder::from_config(config)?.served_transform()
+    let embedder = HttpEmbedder::from_config(config)?;
+    match probe_endpoint(&embedder) {
+        Ok(ProbeOutcome::Ready) => embedder.served_transform(),
+        Ok(ProbeOutcome::Unreachable(why)) => Err(oneiron::Error::UpstreamToolFailure {
+            tool: EMBEDDER_TOOL,
+            code: format!("embedder endpoint did not answer the probe: {why}"),
+        }),
+        Err(refused) => Err(oneiron::Error::InvalidConfig(refused.to_string())),
+    }
 }
 
 /// Startup probe: the remote must list the configured model and return the
