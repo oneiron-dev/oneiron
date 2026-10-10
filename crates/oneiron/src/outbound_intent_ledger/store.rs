@@ -225,7 +225,7 @@ pub(super) fn insert_pending_or_read(
     vault: &Vault,
     pending: &IntentLedgerRecord,
 ) -> IntentLedgerResult<(IntentLedgerRecord, bool)> {
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     if let Some(existing) =
         read_intent_for_attempt_in_txn(vault, &wtxn, pending.attempt_id, pending.call_seq)?
     {
@@ -372,7 +372,7 @@ pub(crate) fn record_possible_delivery(
     id: [u8; 32],
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
         IntentLedgerError::InvalidRecord("possible delivery target is missing"),
     )?;
@@ -459,7 +459,7 @@ fn update_pending_recorded_outcome(
     next: Option<RecordedOutboundOutcome>,
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
         IntentLedgerError::InvalidRecord("pending outcome target is missing"),
     )?;
@@ -495,7 +495,7 @@ fn transition_record_with_outcome(
     outcome: RecordedOutboundOutcome,
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
         IntentLedgerError::InvalidRecord("transition target is missing"),
     )?;
@@ -546,7 +546,7 @@ pub(crate) fn replace_intent_record_for_test(
     record: &IntentLedgerRecord,
 ) -> IntentLedgerResult<()> {
     validate_record(record)?;
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     if !LEDGER.contains(&vault.store, &wtxn, &record.id)? {
         return Err(IntentLedgerError::InvalidRecord(
             "test replacement target is missing",

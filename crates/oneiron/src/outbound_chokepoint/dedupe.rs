@@ -228,11 +228,7 @@ pub(crate) fn delivered_in_txn(
 /// After retry governance, refresh the conservative wire-start time before
 /// transport. A later definite failure cannot erase an older ambiguous send.
 pub(crate) fn touch_inflight(vault: &Vault, id: &IntentId) -> Result<(), IntentLedgerError> {
-    let mut txn = vault
-        .store
-        .env
-        .write_txn()
-        .map_err(crate::error::Error::from)?;
+    let mut txn = vault.store.env.write_txn()?;
     let Some(key) = intent_key(vault, &txn, id)? else {
         return Ok(());
     };

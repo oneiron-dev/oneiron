@@ -80,13 +80,19 @@ impl OwnerHost {
     /// Rehearses one of this vault's backups by its listed file name, the
     /// newest by default; never a caller-built path. The backup lock is held
     /// from choosing the file until the rehearsal has read it, so retention
-    /// cannot prune it in between.
-    pub(crate) fn rehearse(&self, file: Option<&str>) -> OwnerResult<Rehearsal> {
+    /// cannot prune it in between. `vault` is the open vault the backup is
+    /// of; the rehearsal reads only its key-custody state.
+    pub(crate) fn rehearse(
+        &self,
+        vault: &oneiron::Vault,
+        file: Option<&str>,
+    ) -> OwnerResult<Rehearsal> {
         self.with_chosen(file, |chosen| {
             Ok(backup::rehearse(
                 &chosen.path,
                 self.vault_config.clone(),
                 None,
+                &vault.side_restore_source()?,
             )?)
         })
     }
@@ -245,7 +251,9 @@ mod tests {
                 };
                 std::thread::sleep(Duration::from_millis(500));
                 assert!(!racing.is_finished(), "the backup waited");
-                let rehearsal = backup::rehearse(&chosen.path, host.vault_config.clone(), None);
+                let source = server.vault().side_restore_source()?;
+                let rehearsal =
+                    backup::rehearse(&chosen.path, host.vault_config.clone(), None, &source);
                 Ok((rehearsal?, racing))
             })
             .unwrap();

@@ -187,7 +187,11 @@ impl BoundVaultRoot {
     /// second refusal is what keeps a pre-created empty or headerless pair from
     /// reaching a read-write `mdb_env_open` that would initialize it.
     pub(super) fn bind(root: &Path) -> Result<Self> {
-        let dir = open_root_directory(root)?;
+        Self::bind_dir(root, open_root_directory(root)?)
+    }
+
+    /// [`Self::bind`] over `dir`, the root directory already open.
+    pub(super) fn bind_dir(root: &Path, dir: File) -> Result<Self> {
         let directory = file_identity(&dir.metadata()?);
         let data = bound_vault_root_entry(root, &dir, VaultRootEntry::Data)?;
         let lock = bound_vault_root_entry(root, &dir, VaultRootEntry::Lock)?;
@@ -202,6 +206,36 @@ impl BoundVaultRoot {
             directory,
             identity,
         })
+    }
+
+    /// The identity of the LMDB pair in `dir`, the open root directory, read
+    /// from metadata alone relative to the descriptor: neither file is
+    /// opened. Closing any descriptor of `lock.mdb` releases every `fcntl`
+    /// lock this process holds on it, an LMDB environment's included, so a
+    /// door that has yet to learn whether this process holds the pair reads
+    /// it this way, and checks it this way once its own environment is open.
+    pub(super) fn pair_by_metadata(root: &Path, dir: &File) -> Result<Option<VaultRootIdentity>> {
+        let at = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+        let entry = |entry: VaultRootEntry| {
+            inspect_vault_root_entry_at(root, &at.join(entry.file_name()), entry)
+        };
+        let pair = classify_vault_root_pair(
+            root,
+            entry(VaultRootEntry::Data)?,
+            entry(VaultRootEntry::Lock)?,
+        )?;
+        Ok(pair.identity)
+    }
+
+    /// [`Self::verify_unchanged`] from metadata alone
+    /// ([`Self::pair_by_metadata`]).
+    pub(super) fn verify_unchanged_by_metadata(&self, root: &Path) -> Result<()> {
+        if Self::pair_by_metadata(root, &self.dir)?.as_ref() != Some(&self.identity)
+            || named_directory_identity(root)?.as_ref() != Some(&self.directory)
+        {
+            return Err(existing_root_refusal(root, true));
+        }
+        Ok(())
     }
 
     /// The descriptor-bound path LMDB opens the environment through.
@@ -600,8 +634,17 @@ pub(super) fn inspect_vault_root_entry(
     root: &Path,
     entry: VaultRootEntry,
 ) -> Result<Option<VaultRootFile>> {
-    let path = root.join(entry.file_name());
-    let metadata = match std::fs::symlink_metadata(&path) {
+    inspect_vault_root_entry_at(root, &root.join(entry.file_name()), entry)
+}
+
+/// [`inspect_vault_root_entry`] of the entry at `path`, whose refusals name
+/// `root`.
+fn inspect_vault_root_entry_at(
+    root: &Path,
+    path: &Path,
+    entry: VaultRootEntry,
+) -> Result<Option<VaultRootFile>> {
+    let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
@@ -629,7 +672,7 @@ pub(super) fn inspect_vault_root_entry(
     }
     #[cfg(windows)]
     {
-        file_info(&path).map(Some)
+        file_info(path).map(Some)
     }
     #[cfg(not(any(unix, windows)))]
     {

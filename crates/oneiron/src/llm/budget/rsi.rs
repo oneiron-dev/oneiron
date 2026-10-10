@@ -227,7 +227,7 @@ impl Vault {
         {
             return Err(RsiBudgetError::InvalidConfig);
         }
-        let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
+        let mut txn = self.store.env.write_txn()?;
         if RSI_LINE.contains(&self.store, &txn, &())? {
             return Err(RsiBudgetError::InvalidConfig);
         }
@@ -268,7 +268,7 @@ impl Vault {
         purpose: Option<RsiSpendPurpose>,
         share: Option<String>,
     ) -> RsiResult<()> {
-        let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
+        let mut txn = self.store.env.write_txn()?;
         let mut line = load(self, &txn)?;
         if line.suspended {
             return Err(RsiBudgetError::Suspended);
@@ -373,7 +373,7 @@ impl Vault {
     }
 
     fn finish_rsi_reservation(&self, id: EntityId, settlement: RsiSettlement) -> RsiResult<()> {
-        let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
+        let mut txn = self.store.env.write_txn()?;
         let mut line = load(self, &txn)?;
         let row = line
             .reservations
@@ -407,7 +407,7 @@ impl Vault {
 
     /// A suspension holds new work; admitted work can still settle honestly.
     pub fn suspend_rsi_budget(&self, suspended: bool) -> RsiResult<()> {
-        let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
+        let mut txn = self.store.env.write_txn()?;
         let mut line = load(self, &txn)?;
         line.suspended = suspended;
         save(self, &mut txn, &line)?;

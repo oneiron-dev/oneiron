@@ -34,7 +34,7 @@ fn parked_refusal(
     intent_id: crate::outbound_intent_ledger::IntentId,
     prepared: &PreparedEffect,
 ) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     let effect = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let (decision_id, decision, _) =
@@ -71,7 +71,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             }
         });
     }
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
         if let Some(owner) = &prepared.owner_proof {
             owner.revalidate_in_txn(vault, &wtxn)?;

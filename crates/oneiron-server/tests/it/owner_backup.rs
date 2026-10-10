@@ -106,6 +106,22 @@ fn backup_rehearse_restore_and_doctor_through_the_cli() {
     drop(vault);
     let previous = Path::new(restored["previous_vault"].as_str().unwrap());
     assert!(open(previous).get(&later).unwrap().is_some());
+    // It shares the restored vault's key custody, so it is archived: it reads
+    // but takes no write until the owner activates it beside the vault.
+    let write = open(previous).put_entity(
+        &EntityId::now(),
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"into the archive",
+    );
+    assert!(write.is_err());
+    let activated = json(&oneiron(
+        &config,
+        &["restore", "--activate", previous.to_str().unwrap()],
+    ));
+    assert_eq!(activated["vault"], previous.to_str().unwrap());
+    add_person(previous, b"after the activation");
 
     // Where the data lives: path, size, last backup, last export.
     let export_file = dir.path().join("vault.md");

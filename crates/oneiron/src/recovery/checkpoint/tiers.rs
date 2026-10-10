@@ -28,6 +28,7 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"gate_pending:critical_confirm_expiry_cursor:v1",
                 b"gate_pending:critical_confirm_list_cursor:v1",
                 b"outbound:authorized_recovery_lease:v1",
+                b"vault_archived:v1",
             ]
             .iter()
             .any(|p| key.starts_with(p))

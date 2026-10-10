@@ -9,6 +9,7 @@ mod manifest_storage_gates;
 mod open_create_door;
 mod open_existing_door;
 mod open_version_keys;
+mod read_only_door;
 mod vault_root_bind;
 
 pub(crate) use self::embedding_transform_gates::{
@@ -31,6 +32,7 @@ pub(crate) use self::open_version_keys::{
     DefaultPolicySeedMode, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HnswCompatibilityState,
     MODEL_ID_KEY, TEXT_INDEX_SCHEMA_VERSION, VECTOR_VERSION_KEY,
 };
+pub(in crate::store) use self::read_only_door::read_existing_vault_meta;
 // Test-only seam (gate/mod.rs precedent): the store test suite names these
 // bare through `use super::*`, but no non-test code outside `open_gates/`
 // reaches them through the seam, so the re-exports live under `cfg(test)`.
