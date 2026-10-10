@@ -147,7 +147,8 @@ impl StepRunner {
         // one budget, never renew it. The try this one follows left what the
         // chain spent. After a restart nothing is left, and each earlier try
         // is replayed at one reservation per rung of the ladder it has now:
-        // exact unless the seat's ladder changed across the restart.
+        // an estimate, exact only when every earlier rung went out metered on
+        // the same ladder and routes.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
         let carried = step.attempt.retry_of.and_then(|parent| {
