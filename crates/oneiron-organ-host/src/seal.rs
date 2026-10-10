@@ -329,17 +329,31 @@ impl HostedSealer<'_> {
         self.vault.now_recorded_at().saturating_mul(1000)
     }
 
-    fn config(&self) -> ConfigArgs {
-        ConfigArgs {
+    /// The seal's configuration as the organ reads it. Verification gets
+    /// no timestamp authorities: it never fetches. A TSA URL that carries
+    /// credentials is refused here, so they never cross the socket.
+    fn config(&self, timestamps: bool) -> Result<ConfigArgs, EsignSealerError> {
+        let timestamp_authorities = if timestamps {
+            for tsa in &self.settings.timestamp_authorities {
+                let url = reqwest::Url::parse(&tsa.url).map_err(|_| invalid_configuration())?;
+                if !url.username().is_empty() || url.password().is_some() {
+                    return Err(invalid_configuration());
+                }
+            }
+            self.settings.timestamp_authorities.clone()
+        } else {
+            Vec::new()
+        };
+        Ok(ConfigArgs {
             trust_anchors: self
                 .settings
                 .trust_anchors
                 .iter()
                 .map(|anchor| ByteBuf::from(anchor.clone()))
                 .collect(),
-            timestamp_authorities: self.settings.timestamp_authorities.clone(),
+            timestamp_authorities,
             limits: self.settings.limits,
-        }
+        })
     }
 
     fn call(&self, verb: &str, args: rmpv::Value) -> OrganCall {
@@ -379,7 +393,7 @@ impl EsignSealer for HostedSealer<'_> {
             operation_id: request.operation_id.clone(),
             profile: request.profile,
             now_ms: self.now_ms(),
-            config: self.config(),
+            config: self.config(true)?,
         })
         .map_err(|_| reply_invalid())?;
         let lent = vec![LentInput {
@@ -422,7 +436,7 @@ impl EsignSealer for HostedSealer<'_> {
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
         let args = to_value(&VerifyArgs {
             now_ms: self.now_ms(),
-            config: self.config(),
+            config: self.config(false)?,
         })
         .map_err(|_| reply_invalid())?;
         let lent = vec![LentInput {
@@ -542,6 +556,14 @@ fn key_refusal(err: SealKeyError) -> AskRefusal {
         refusal.retryable()
     } else {
         refusal
+    }
+}
+
+/// The seal's own name for a configuration it cannot use.
+fn invalid_configuration() -> EsignSealerError {
+    EsignSealerError::Fatal {
+        stage: "input_validation".to_owned(),
+        code: "invalid_configuration".to_owned(),
     }
 }
 
