@@ -31,7 +31,7 @@ pub const PREDICATE_LAYER_NAMESPACES: [&str; 4] = [
 /// two they are the namespaces a pack may not take: not as its name, not in
 /// a declaration, and on neither side of a shipped migration map. Append a
 /// namespace when the engine starts writing a new family.
-pub const ENGINE_PREDICATE_NAMESPACES: [&str; 41] = [
+pub const ENGINE_PREDICATE_NAMESPACES: [&str; 43] = [
     "affect",
     "agent",
     "annotation",
@@ -57,6 +57,7 @@ pub const ENGINE_PREDICATE_NAMESPACES: [&str; 41] = [
     "federation",
     "import",
     "judgment",
+    "linkedin",
     "maintenance",
     "merge",
     "note",
@@ -69,6 +70,7 @@ pub const ENGINE_PREDICATE_NAMESPACES: [&str; 41] = [
     "provider",
     "repo",
     "review",
+    "room",
     "state",
     "tasks",
     "vault",
