@@ -4,7 +4,7 @@ use super::dedupe;
 use super::replay::{
     effect_result, gate_rejection, replay_record, send_pending, suppression_result,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::types::BEFORE_NEW_ADMISSION;
 use super::types::{
     OutboundEffectCommand, OutboundEffectError, OutboundEffectResult, OutboundTransport,
@@ -34,7 +34,7 @@ fn parked_refusal(
     intent_id: crate::outbound_intent_ledger::IntentId,
     prepared: &PreparedEffect,
 ) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     let effect = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let (decision_id, decision, _) =
@@ -63,7 +63,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         OutboundEffectCommand::Resume(intent_id) => *intent_id,
     };
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if matches!(&command, OutboundEffectCommand::New(_)) {
         BEFORE_NEW_ADMISSION.with(|hook| {
             if let Some(hook) = hook.take() {
@@ -71,8 +71,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             }
         });
     }
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
+        if let Some(owner) = &prepared.owner_proof {
+            owner.revalidate_in_txn(vault, &wtxn)?;
+        }
         if let Some((actor, actor_class)) = prepared.verified_actor {
             if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
                 return Err(IntentLedgerError::InvalidBoundActor);

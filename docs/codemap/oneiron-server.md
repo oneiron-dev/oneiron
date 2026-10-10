@@ -169,7 +169,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/memory_reason_repairs.rs` | test | s | — | — | — |
 | `src/api/tests/mod.rs` | test | L | 51 crate-vis | — | — |
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
-| `src/api/tests/owner_routes.rs` | test | m | — | — | `/v1/owner`: one owner door, receipted acts, whole-batch and whole-run consent |
+| `src/api/tests/owner_healer.rs` | test | m | — | — | `/v1/owner` safety and repair: the owner rotates a secret (ARCH-0069 S6), reads the three signed healer… |
+| `src/api/tests/owner_routes.rs` | test | L | 4 crate-vis | — | `/v1/owner`: one owner door, receipted acts, whole-batch and whole-run consent |
+| `src/api/tests/owner_surfaces.rs` | test | L | — | — | `/v1/owner` surfaces wired from built engine doors: cleanup review, persona export, off-record sessions, the… |
 | `src/api/tests/reactive.rs` | test | L | — | — | Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path |
 | `src/api/tests/relay_widen.rs` | test | m | — | — | Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it |
 | `src/api/tests/retrieval_depth_quality.rs` | test | s | — | — | Memory-reason route depths/spend/validation, raw-search depth tiers, retrieval-quality markers + snapshots |
@@ -195,11 +197,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands.rs` | src | L | 1 struct · 11 fn · 1 const · 7 re-export · 1 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | L | 1 fn · 19 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/dreamer.rs` | src | s | 1 fn | — | `oneiron dreamer grant`: the owner's weave grant, made offline, for a vault created before the Dreamer's… |
-| `src/commands/history_import.rs` | src | m | 3 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027) |
-| `src/commands/history_import/confined.rs` | src | s | 9 crate-vis | — | Reading under one folder without leaving it |
+| `src/commands/history_import.rs` | src | L | 3 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027) |
+| `src/commands/history_import/confined.rs` | src | m | 10 crate-vis | — | Reading under one folder without leaving it |
 | `src/commands/history_import/notes.rs` | src | m | 1 crate-vis | — | `oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner… |
 | `src/commands/history_import/notes/markdown.rs` | src | m | 5 crate-vis | — | What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code |
 | `src/commands/history_import/queue.rs` | src | m | 4 crate-vis | — | The import queue |
+| `src/commands/history_import/queue/tests.rs` | test | m | — | — | The queue's passes on a vault held as `serve` holds it, one pass at a time, over invented Claude Code… |
 | `src/commands/host_init.rs` | src | s | 1 fn | — | Reference deployment scaffolding and explicit encryption provisioning |
 | `src/commands/init.rs` | src | m | 1 fn | — | First-run embedder and tagger choices, using the same config and providers as serve |
 | `src/commands/mcp_bridge.rs` | src | m | 1 fn | — | `oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's… |
@@ -212,14 +215,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/tests.rs` | test | L | — | — | — |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
 | `src/config/backup.rs` | src | s | 2 struct · 2 fn · 3 crate-vis | BackupConfig, BackupConfigOverride | The `[backup]` section: where local backups go, whether `serve` takes them on its own, how often, and how… |
-| `src/config/embedder.rs` | src | m | 6 struct · 5 enum · 7 fn · 4 const · 2 crate-vis | AutoDevicePrecedence, EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant +3 | The `[embedder]` section: provider selection and the keys each provider reads |
+| `src/config/embedder.rs` | src | m | 6 struct · 5 enum · 7 fn · 4 const · 3 crate-vis | AutoDevicePrecedence, EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant +3 | The `[embedder]` section: provider selection and the keys each provider reads |
 | `src/config/embedder_shape.rs` | src | s | 2 enum · 2 fn · 2 crate-vis | EmbedderAttention, EmbedderOutputQuantization | Keys that override what a local checkpoint declares about its own shape |
 | `src/config/embedder_space.rs` | src | s | 3 crate-vis | — | The local provider's space id and the files that fill it, settled as one |
 | `src/config/embedder_tests.rs` | test | s | — | — | Resolution rows for the `[embedder]` section |
+| `src/config/feedback.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | FeedbackConfig | The `[feedback]` section: where the owner's feedback goes (OF-420) |
 | `src/config/import.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | ImportConfig, ImportConfigOverride | The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import… |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 1 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
-| `src/config/mod.rs` | src | s | 9 mod · 9 re-export | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `src/config/mod.rs` | src | s | 9 mod · 10 re-export | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 5 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
 | `src/config/models/mod.rs` | src | m | 5 struct · 1 fn · 2 re-export · 2 crate-vis | ChatSettings, CodeModeSettings, DreamerSettings, ModelsConfig, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
 | `src/config/models/provider.rs` | src | s | 1 struct · 2 enum · 2 fn · 3 crate-vis | OutputLimitField, ProviderConfig, ProviderKind | One provider entry: how to reach a model server, as data |
@@ -236,7 +240,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/control_keys/tests.rs` | test | s | — | — | — |
 | `src/embedder/endpoint.rs` | src | m | 5 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
-| `src/embedder/local/batcher.rs` | src | s | 5 crate-vis | — | Tokenisation and no-padding batching |
+| `src/embedder/local/batcher.rs` | src | s | 6 crate-vis | — | Tokenisation and no-padding batching |
 | `src/embedder/local/device.rs` | src | s | 3 crate-vis | — | Which candle device the local provider runs on, and at what precision |
 | `src/embedder/local/isq.rs` | src | s | 6 crate-vis | — | Quantise-at-load, in one function |
 | `src/embedder/local/mod.rs` | src | m | 15 crate-vis | — | The `local` provider: the model runs in this process, on candle |
@@ -252,7 +256,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/tests/turns.rs` | test | m | — | — | Turns are the embedding unit (ARCH-0004): a witnessed conversation is found by what it meant, through the… |
 | `src/error/mod.rs` | src | m | 4 struct · 2 enum · 25 fn · 1 const · 1 re-export · 1 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
 | `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
-| `src/feedback_delivery.rs` | src | s | 2 struct · 3 enum · 4 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
+| `src/feedback_delivery.rs` | src | s | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/handler/app_tier.rs` | src | s | 4 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
@@ -348,15 +352,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/tests/mod.rs` | test | m | — | — | The slot's laws: configuration, the endpoint's wire and identity probe, the typed refusals, `init`, and the… |
 | `src/oneironer/tests/support.rs` | test | m | 26 crate-vis | — | A stub tagger server inside the test process, and the vaults and servers the slot's tests share |
 | `src/oneironer/tests/worker.rs` | test | m | — | — | The worker against the stub tagger: shadow writes nothing but the job tables, a failing tagger never fails a… |
-| `src/owner/backup.rs` | src | m | 12 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
-| `src/owner/backup/tests.rs` | test | s | — | — | — |
+| `src/owner/backup.rs` | src | m | 14 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
+| `src/owner/backup/tests.rs` | test | m | — | — | — |
+| `src/owner/cleanup.rs` | src | s | 13 crate-vis | — | Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup… |
+| `src/owner/feedback.rs` | src | s | 6 crate-vis | — | Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that… |
+| `src/owner/graph_fs.rs` | src | s | 4 crate-vis | — | The whole vault as a read-only file tree (OF-355, ARCH-0051), read as its owner |
+| `src/owner/healer.rs` | src | s | 8 crate-vis | — | The owner reads the self-healing loop (ARCH-0066): the three signed oversight receipts the vault emits, and… |
 | `src/owner/imports.rs` | src | s | 9 crate-vis | — | Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202) |
-| `src/owner/location.rs` | src | s | 4 crate-vis | — | Where the owner's data lives: the vault path and size, the backups beside it, and the last time anything… |
-| `src/owner/mod.rs` | src | s | 11 crate-vis | — | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
+| `src/owner/location.rs` | src | s | 5 crate-vis | — | Where the owner's data lives: the vault path and size, the backups beside it, and the last time anything… |
+| `src/owner/mod.rs` | src | s | 19 crate-vis | — | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
 | `src/owner/note_imports.rs` | src | s | 11 crate-vis | — | A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole… |
+| `src/owner/off_record.rs` | src | s | 16 crate-vis | — | Off-record sessions (ARCH-0052, OF-326): enter a room whose writes land in an in-memory overlay, witness… |
+| `src/owner/pack_drift.rs` | src | s | 2 crate-vis | — | Pack drift (ARCH-0059 §4): what the repair ladder did to saved queries when a pack moved under them: a… |
+| `src/owner/persona.rs` | src | s | 6 crate-vis | — | Persona snapshot, mode A (OF-325): compile a shareable card about one person, let the owner strike rows at… |
 | `src/owner/runs.rs` | src | s | 9 crate-vis | — | Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act… |
 | `src/owner/schedule.rs` | src | s | 7 crate-vis | — | Scheduled backups for a running `serve` |
-| `src/owner/stamp.rs` | src | s | 4 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
+| `src/owner/secrets.rs` | src | s | 7 crate-vis | — | The owner rotates a secret (ARCH-0069 S6) |
+| `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 27 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
@@ -366,12 +378,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/mod.rs` | src | s | 5 re-export | — | — |
 | `src/runtime/mode.rs` | src | s | 3 enum · 5 fn · 1 const · 2 crate-vis | RuntimeMode, RuntimeProviderKind, RuntimeRole | Runtime mode, provider-kind, and role taxonomies with string conversions |
 | `src/runtime/routes.rs` | src | s | 4 struct · 3 enum · 2 fn | RuntimeHealthStatus, RuntimeRoute, RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus | Resolved route decisions and redacted/full status views for health and discovery |
-| `src/server/core.rs` | src | m | 1 struct · 7 fn · 11 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
+| `src/server/core.rs` | src | m | 1 struct · 7 fn · 12 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
 | `src/server/embedding.rs` | src | s | 4 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | m | 12 crate-vis | — | Periodic lifecycle jobs: lease expiry and reassert-drain with debounce |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
-| `src/server/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/oversight.rs` | src | s | 1 enum · 5 crate-vis | OversightStartError | The healer oversight receipts (ARCH-0066 §8): each vault signs three counts about review work, coverage… |
 | `src/server/recall.rs` | src | s | 3 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/slip_transport_tests.rs` | test | s | — | — | Slip-only transport admission with a historical receipt-key registry row |
 | `src/server/tagging.rs` | src | s | 2 crate-vis | — | The tagging worker: the one thing that drives the engine's tagging reconciler |
@@ -405,7 +418,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |
 | `tests/it/core_discover.rs` | test | s | — | — | — |
 | `tests/it/first_owner_bootstrap.rs` | test | s | — | — | Fresh self-host pairing through the shipped offline command and HTTP door |
-| `tests/it/history_import.rs` | test | m | — | — | `oneiron import <source> <path>` through the shipped binary, for each of the four sources (owner… |
+| `tests/it/history_import.rs` | test | L | — | — | `oneiron import <source> <path>` through the shipped binary, for each of the four sources (owner… |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |
 | `tests/it/mcp_stdio_agent.rs` | test | L | — | — | An agent that spawns a command (Claude Code, Codex) reaches a running vault over MCP with a scoped… |
@@ -415,7 +428,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/reopen_after_restart.rs` | test | s | — | — | Text saved through `oneiron serve` survives a restart (prune e2e row 4): witness one invented line, stop the… |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
-| `tests/managed_mode.rs` | test | L | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |
+| `tests/managed_mode.rs` | test | XL | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
 | `tests/support/fake_llm.rs` | test | m | 11 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |

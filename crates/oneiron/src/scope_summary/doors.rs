@@ -566,31 +566,6 @@ impl Vault {
         Ok(result)
     }
 
-    /// Resolves the selector and mints a summary in one transaction. A test
-    /// fixture: outside tests the Dreamer writes every body
-    /// ([`Vault::request_scope_summary`]).
-    #[cfg(test)]
-    pub(crate) fn mint_dag_scope_summary(
-        &self,
-        scope: &ScopeSelector,
-        text: &str,
-        actor: WriteActor,
-    ) -> Result<EntityId> {
-        self.with_write_txn_grouped(|txn| {
-            let sources = SummarySources::whole_scope(self, txn, scope)?;
-            mint_in_txn(
-                self,
-                txn,
-                self.store.clock.entity_id()?,
-                scope,
-                text,
-                actor,
-                self.store.clock.now_recorded_at(),
-                sources,
-            )
-        })
-    }
-
     /// Projects the first thread chain and lands its header on the trunk
     /// atomically. A test fixture: outside tests the Dreamer writes every body
     /// ([`Vault::request_scope_summary`]).

@@ -18,7 +18,29 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::core::SyncServer;
 
+/// A serve loop's background tasks: the lifecycle scheduler, then the board
+/// publisher. Stopped together, in that order, once serving ends.
+pub(crate) struct ServeBackground([tokio::task::JoinHandle<()>; 2]);
+
+impl ServeBackground {
+    /// Aborts each task and waits for it to end.
+    pub(crate) async fn stop(self) {
+        for handle in self.0 {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+}
+
 impl SyncServer {
+    /// Starts the lifecycle scheduler and the board publisher.
+    pub(crate) fn spawn_serve_background(self: &Arc<Self>) -> ServeBackground {
+        ServeBackground([
+            self.spawn_lifecycle_scheduler(),
+            self.spawn_board_publisher(),
+        ])
+    }
+
     /// Starts the publisher. It subscribes before it returns, so no TASK
     /// committed after this call is missed.
     pub(crate) fn spawn_board_publisher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {

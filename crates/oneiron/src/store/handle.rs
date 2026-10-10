@@ -13,7 +13,7 @@ use heed::{Database, Env, RwTxn};
 use crate::authority::AuthorityLocalClock;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration};
@@ -95,6 +95,105 @@ pub struct RawDatabases {
     pub(crate) attempt_dedupe: Database<Bytes, Bytes>,
 }
 
+/// The environment a store opens its transactions in. A vault archived by a
+/// restore in its place is sealed once its open is done, and a vault a
+/// restore swaps out is sealed under the writer that marks it: from then on
+/// every write transaction refuses, so neither its rows nor the key custody
+/// it shares with its replacement change through any handle on it.
+pub(crate) struct StoreEnv {
+    env: Env,
+    sealed: std::sync::atomic::AtomicBool,
+}
+
+impl StoreEnv {
+    pub(in crate::store) fn new(env: Env) -> Self {
+        Self {
+            env,
+            sealed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// A write transaction, refused on a sealed (archived) vault. The seal
+    /// is checked again once LMDB's writer is held: a vault is sealed while
+    /// the writer marking it archived holds it, so a writer that waited
+    /// behind that one refuses too.
+    pub(crate) fn write_txn(&self) -> Result<RwTxn<'_>> {
+        self.refuse_sealed()?;
+        #[cfg(test)]
+        run_after_seal_check();
+        let txn = self.env.write_txn()?;
+        self.refuse_sealed()?;
+        Ok(txn)
+    }
+
+    /// A write transaction past the seal, for the archive mark itself: the
+    /// mark a restore's swap rewrites, and an owner's activation, which
+    /// lifts it.
+    pub(in crate::store) fn past_seal_write_txn(&self) -> Result<RwTxn<'_>> {
+        Ok(self.env.write_txn()?)
+    }
+
+    fn refuse_sealed(&self) -> Result<()> {
+        if self.is_sealed() {
+            return Err(Error::Store(StoreError::ArchivedVault));
+        }
+        Ok(())
+    }
+
+    pub(in crate::store) fn is_sealed(&self) -> bool {
+        self.sealed.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(in crate::store) fn seal(&self) {
+        self.sealed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Only for the handle a restore builds its replacement through, which
+    /// is archived until a swap puts it in its place.
+    pub(in crate::store) fn unseal(&self) {
+        self.sealed
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_SEAL_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `callback` once, the next time this thread opens a write
+/// transaction, between the seal check and taking LMDB's writer.
+#[cfg(test)]
+pub(crate) fn arm_after_seal_check(callback: impl FnOnce() + 'static) {
+    AFTER_SEAL_CHECK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+#[cfg(test)]
+fn run_after_seal_check() {
+    if let Some(callback) = AFTER_SEAL_CHECK.with(|slot| slot.borrow_mut().take()) {
+        callback();
+    }
+}
+
+impl std::ops::Deref for StoreEnv {
+    type Target = Env;
+
+    fn deref(&self) -> &Env {
+        &self.env
+    }
+}
+
+impl StoreCore {
+    /// Whether the key custody this vault binds is its replacement's, so no
+    /// handle on it may mint or retire a key there: it was archived when it
+    /// opened, or a restore's swap has sealed it since.
+    pub(in crate::store) fn gate_custody_archived(&self) -> bool {
+        self.gate_custody_archived_at_open || self.env.is_sealed()
+    }
+}
+
 /// Arc-shared substrate of an open vault (ARCH-0052 store split).
 ///
 /// Everything here is safe to share across handles: the environment handle
@@ -111,11 +210,16 @@ pub struct StoreCore {
     /// Exterior key custody binding. On restore this remains the source vault's
     /// canonical path; it is never reset to the new LMDB image's location.
     pub(in crate::store) gate_custody_root: std::path::PathBuf,
+    /// The vault was archived when it opened: the custody it binds is its
+    /// replacement's, so from the first moment of its open no handle on it
+    /// mints or retires a key there. A vault archived later is sealed
+    /// ([`StoreCore::gate_custody_archived`]).
+    pub(in crate::store) gate_custody_archived_at_open: bool,
     /// Exterior retirement cannot race a live snapshot's decision decrypt.
     pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
-    pub(crate) env: Env,
+    pub(crate) env: StoreEnv,
     /// Raw handles; runtime access goes through the [`Store`] accessors.
     /// `pub(in crate::store)` so no code outside `crate::store` can bypass the
     /// [`OverlayDb`] seam — open-time machinery and accessor construction both
@@ -409,6 +513,7 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn gate_key_root(&self) -> &std::path::Path;
+            fn gate_custody_archived(&self) -> bool;
         }
 
         impl ManifestDbs for Store {
@@ -417,6 +522,7 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -425,6 +531,7 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
         }
     };
 }

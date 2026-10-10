@@ -1,10 +1,9 @@
 //! Receipt view component, deep-link kinds and commitment link resolver.
 
-use super::consent_eval::{atom_id, lens_text, meta_line, non_empty};
+use super::consent_eval::non_empty;
 use crate::claim::ClaimLifecycleStatus;
 use crate::commitment::decode_commitment_claim;
 use crate::entity_id::EntityId;
-use crate::lens::{LensAtom, LensNode, ReceiptAtom, SealAtom, SealLevel};
 use crate::receipt::{COMMITMENT_TRIGGER_PREFIX, ReceiptRecord, commitment_trigger_ref};
 use crate::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -62,32 +61,6 @@ impl ReceiptViewComponent {
     #[must_use]
     pub fn fallback_text(&self) -> String {
         self.receipt_lines().join(" | ")
-    }
-
-    pub(super) fn atom_kit_root(&self) -> Result<LensNode> {
-        let mut lines = vec![
-            meta_line("kind", self.receipt.receipt_kind.as_str())?,
-            meta_line("outcome", &self.receipt.outcome)?,
-            meta_line("occurred_at", &self.receipt.occurred_at.to_string())?,
-        ];
-        if let Some(trigger_ref) = self.receipt.trigger_ref.as_deref() {
-            lines.push(meta_line("trigger_ref", trigger_ref)?);
-        }
-        for link in &self.links {
-            lines.push(meta_line(&link.label, &link.fallback_text())?);
-        }
-
-        Ok(LensNode::new(
-            atom_id("receipt-view-root")?,
-            LensAtom::Receipt(ReceiptAtom {
-                title: lens_text(self.title())?,
-                lines,
-                seal: Some(SealAtom {
-                    level: SealLevel::Actor,
-                    label: lens_text("receipt_view")?,
-                }),
-            }),
-        ))
     }
 }
 

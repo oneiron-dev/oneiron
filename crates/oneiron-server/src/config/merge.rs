@@ -11,6 +11,7 @@ use serde::Deserialize;
 use super::backup::{BackupConfig, BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
+use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::import::ImportConfigOverride;
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
@@ -109,6 +110,7 @@ impl EnvConfig {
         values.embedder = lookup_embedder_override(&mut lookup)?;
         values.oneironer = lookup_oneironer_override(&mut lookup)?;
         values.backup = lookup_backup_override(&mut lookup)?;
+        values.feedback = lookup_feedback_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
         values.failure_signal_training =
@@ -259,6 +261,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         oneironer.validate()?;
     }
     config.backup.validate()?;
+    config.feedback.validate()?;
     config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
@@ -456,6 +459,7 @@ struct FileServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    feedback: Option<FeedbackConfigOverride>,
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -500,6 +504,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             embedder: value.embedder,
             oneironer: value.oneironer,
             backup: value.backup,
+            feedback: value.feedback,
             import: value.import,
             models: None,
             privacy_posture: value.privacy_posture,
@@ -545,6 +550,7 @@ struct PartialServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    feedback: Option<FeedbackConfigOverride>,
     import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
     models: Option<ModelsConfig>,
@@ -602,6 +608,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("feedback", &self.feedback)
             .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
@@ -723,6 +730,9 @@ impl PartialServeConfig {
         if let Some(value) = self.backup {
             resolved.backup.apply_override(value);
         }
+        if let Some(value) = self.feedback {
+            resolved.feedback.apply_override(value);
+        }
         if let Some(value) = self.import {
             resolved.import.apply_override(value);
         }
@@ -787,6 +797,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oneironer: Some(OneironerConfigOverride::from(&value.oneironer))
                 .filter(|over| !over.is_empty()),
             backup: None,
+            feedback: None,
             import: None,
             models: None,
             privacy_posture: value.privacy_posture,

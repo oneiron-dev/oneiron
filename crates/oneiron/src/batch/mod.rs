@@ -53,7 +53,7 @@ pub(crate) use self::base_apply::{
 };
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::claim_materialization::{
-    ClaimMaterialization, apply_owner_bound_claim_puts,
+    ClaimMaterialization, SuccessionWriter, apply_owner_bound_claim_puts,
     apply_owner_bound_claim_puts_with_transitions, authenticated_claim_author_in_txn,
 };
 #[cfg(test)]

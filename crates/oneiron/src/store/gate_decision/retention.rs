@@ -120,6 +120,51 @@ impl Store {
     }
 }
 
+/// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
+    [
+        RETIRE_PENDING.decl().prefix,
+        ERASE_PENDING.decl().prefix,
+        HOLD.decl().prefix,
+    ]
+}
+
+/// Each key-retirement intent among a checkpoint's `vault_meta` rows, with
+/// whether the finisher would carry it out now: an erase's always, a sweep's
+/// unless its partition is held. A restore treats a carried-out one as done,
+/// so it never brings back a key a vault has committed to destroy.
+pub(super) fn checkpoint_retirements(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<Vec<([u8; 16], u64, bool)>> {
+    let row = |key: Vec<u8>| {
+        rows.iter()
+            .find(|(stored, _)| *stored == key)
+            .map(|(_, value)| value.as_slice())
+    };
+    let mut retirements = Vec::new();
+    for (key, value) in rows {
+        let Some(claim) = key
+            .strip_prefix(RETIRE_PENDING.decl().prefix)
+            .and_then(<[u8; 16]>::decode_key)
+        else {
+            continue;
+        };
+        let erase = match row(ERASE_PENDING.key_bytes(&claim)) {
+            None => false,
+            Some([1]) => true,
+            Some(_) => return Err(Error::CorruptedIndex("gate decision partition erase")),
+        };
+        let held = match row(HOLD.key_bytes(&Partition(Some(claim)))) {
+            None => false,
+            Some([1]) => true,
+            Some(_) => return Err(Error::CorruptedIndex("gate decision partition hold")),
+        };
+        let through = RETIRE_PENDING.decode_value(value)?;
+        retirements.push((claim, through, erase || !held));
+    }
+    Ok(retirements)
+}
+
 #[cfg(test)]
 thread_local! {
     static BEFORE_RETIRE_LOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
@@ -314,6 +359,20 @@ impl Vault {
     pub(crate) fn finish_gate_decision_retirements(&self) -> Result<()> {
         let txn = self.store.env.read_txn()?;
         let pending = RETIRE_PENDING.scan(&self.store, &txn)?;
+        // An archived vault shares its custody with the vault that replaced
+        // it, and shreds none of it until an owner activates it.
+        if !pending.is_empty() && self.store.archived_in_txn(&txn)? {
+            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
+        }
+        // Only the custody this vault is bound to is ever shredded. A
+        // restore's first handle still names its destination while the
+        // image's binding already sits in LMDB; the reopened vault finishes.
+        if !pending.is_empty()
+            && let Some(bound) = super::ledger::CUSTODY_ROOT.get(&self.store, &txn, &())?
+            && bound != orcb::encode_custody_root(&self.store.core.gate_custody_root)?
+        {
+            return Err(Error::CorruptedIndex("gate decision custody binding"));
+        }
         drop(txn);
         for (claim, _) in pending {
             #[cfg(test)]
