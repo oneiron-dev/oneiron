@@ -78,9 +78,14 @@ fn attempt_queue_deadlines_skip_macro_when_designation_matches_but_vault_identit
 /// A Dreamer attempt that retries later waits as a Scheduled successor. The
 /// timer arms for its scheduled instant; without that an idle server never
 /// runs it again (review repro: a summary whose scope moved while composing).
+/// One an operator placed on another worker never arms it: the claim refuses
+/// it, so the supervisor would spin on that deadline (review repro).
 #[test]
 fn attempt_queue_deadlines_arm_a_scheduled_retry() {
-    use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome, RetryAttempt};
+    use oneiron::attempt_queue::{
+        AttemptInterventionKind, AttemptPlacement, ClaimAttempt, ClaimOutcome, InterveneAttempt,
+        RetryAttempt, RetryOutcome,
+    };
 
     let (_dir, vault) = open_vault();
     let local = vault_client_node_id(&vault);
@@ -98,7 +103,7 @@ fn attempt_queue_deadlines_arm_a_scheduled_retry() {
     else {
         panic!("the queued attempt was not claimed");
     };
-    queue
+    let RetryOutcome::Retried(successor) = queue
         .retry(RetryAttempt {
             id: claimed.id,
             lease_owner: "worker-a".to_owned(),
@@ -107,16 +112,38 @@ fn attempt_queue_deadlines_arm_a_scheduled_retry() {
             last_error: None,
             now: 10,
         })
-        .expect("retry");
-    assert_eq!(
+        .expect("retry")
+    else {
+        panic!("the retry scheduled no successor");
+    };
+    let due = Some(CommitmentDeadline {
+        due_at_ms: 70_000,
+        scope: DreamerConsolidationScope::Micro,
+    });
+    let deadline = |worker: &str| {
         AttemptQueueDeadlines::new(&vault, local)
+            .for_worker(worker)
             .next_deadline()
-            .expect("read"),
-        Some(CommitmentDeadline {
-            due_at_ms: 70_000,
-            scope: DreamerConsolidationScope::Micro,
-        })
-    );
+            .expect("read")
+    };
+    assert_eq!(deadline("worker-a"), due);
+    queue
+        .redirect(
+            InterveneAttempt {
+                id: successor.id,
+                kind: AttemptInterventionKind::Redirect,
+                actor: "operator".to_owned(),
+                note: None,
+                now: 10,
+            },
+            AttemptPlacement {
+                worker: Some("worker-b".to_owned()),
+                parent: None,
+            },
+        )
+        .expect("redirect");
+    assert_eq!(deadline("worker-a"), None);
+    assert_eq!(deadline("worker-b"), due);
 }
 
 /// CMT-2 (ONE-1539). Two independent durable sources, one merge rule:

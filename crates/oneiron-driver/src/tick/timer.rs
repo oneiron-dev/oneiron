@@ -28,9 +28,12 @@ use super::{CommitmentDeadline, DeadlineSource, NowMillis, system_now_ms};
 /// busy-spins the supervisor on the same overdue deadline, starving push
 /// lanes. Both checks are re-read every cycle; an unreadable vault identity
 /// is treated as not-admissible (macro suppressed, other lanes still flow).
+/// For the same reason an attempt an operator placed on another worker is
+/// never this node's deadline: the claim refuses it.
 pub struct AttemptQueueDeadlines<'v> {
     vault: &'v Vault,
     local_node_id: u64,
+    lease_owner: Option<String>,
     commitment_now: Option<NowMillis>,
 }
 
@@ -42,8 +45,17 @@ impl<'v> AttemptQueueDeadlines<'v> {
         Self {
             vault,
             local_node_id,
+            lease_owner: None,
             commitment_now: None,
         }
+    }
+
+    /// The supervisor's lease owner (`WakeSupervisorConfig::lease_owner`), so
+    /// an attempt placed on this worker still arms the timer.
+    #[must_use]
+    pub fn for_worker(mut self, lease_owner: impl Into<String>) -> Self {
+        self.lease_owner = Some(lease_owner.into());
+        self
     }
 
     /// [`Self::new`] with an injected clock for the commitment-due lane.
@@ -56,6 +68,7 @@ impl<'v> AttemptQueueDeadlines<'v> {
         Self {
             vault,
             local_node_id,
+            lease_owner: None,
             commitment_now: Some(now),
         }
     }
@@ -108,7 +121,18 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         let mut macro_error = None;
         let mut next: Option<CommitmentDeadline> = None;
         for attempt in queue.list()? {
-            if !matches!(attempt.state, AttemptState::Queued | AttemptState::Scheduled) {
+            if !matches!(
+                attempt.state,
+                AttemptState::Queued | AttemptState::Scheduled
+            ) {
+                continue;
+            }
+            let placed_elsewhere = attempt
+                .placement
+                .as_ref()
+                .and_then(|placement| placement.worker.as_deref())
+                .is_some_and(|worker| self.lease_owner.as_deref() != Some(worker));
+            if placed_elsewhere {
                 continue;
             }
             let Some(scope) = scope_for_attempt_kind(&attempt.kind) else {
