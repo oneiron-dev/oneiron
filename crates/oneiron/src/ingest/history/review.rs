@@ -55,7 +55,7 @@ pub(crate) fn imported_evidence_in_txn(
         let Some((header, body)) = row(vault, txn, id)? else {
             continue;
         };
-        let (turn, words) = match header.entity_type {
+        match header.entity_type {
             ENTITY_TYPE_CLAIM => {
                 // A claim built on imported words carries them on; it names no
                 // review of its own, so the Dreamer run's review holds it.
@@ -69,30 +69,44 @@ pub(crate) fn imported_evidence_in_txn(
                 imported |= decode_turn_body(&body).imported;
                 continue;
             }
-            // A message's words are its turn's, landed by the import that
-            // learned the message.
+            // A message's words were landed by the import that learned it. Its
+            // own import provenance or any imported turn it is part of makes it
+            // imported; no other parent edge can take that away.
             ENTITY_TYPE_MESSAGE => {
-                let parents = vault.filtered_edge_peers(
+                let mut source = message_import_source(&body);
+                let mut stamped = source.is_some();
+                for parent in vault.filtered_edge_peers(
                     txn,
                     EdgeDirection::Out,
                     id,
                     EdgeKind::PartOf,
                     Some(ENTITY_TYPE_TURN),
                     "imported message review scan",
-                )?;
-                let Some(turn) = parents.first() else {
-                    continue;
-                };
-                (*turn, Some(vec![*id]))
+                )? {
+                    let Some((parent_header, parent_body)) = row(vault, txn, &parent)? else {
+                        continue;
+                    };
+                    let facts = decode_turn_body(&parent_body);
+                    if parent_header.entity_type == ENTITY_TYPE_TURN && facts.imported {
+                        stamped = true;
+                        source = source.or(facts.import_source);
+                    }
+                }
+                imported |= stamped;
+                if let Some(source) = source.as_deref().and_then(HistorySource::parse)
+                    && latest
+                        .as_ref()
+                        .is_none_or(|(at, _)| header.learned_at > *at)
+                {
+                    latest = Some((header.learned_at, source));
+                }
+                continue;
             }
-            ENTITY_TYPE_TURN => (*id, None),
+            ENTITY_TYPE_TURN => {}
             _ => continue,
-        };
-        let Some((turn_header, turn_body)) = row(vault, txn, &turn)? else {
-            continue;
-        };
-        let facts = decode_turn_body(&turn_body);
-        if turn_header.entity_type != ENTITY_TYPE_TURN || !facts.imported {
+        }
+        let facts = decode_turn_body(&body);
+        if !facts.imported {
             continue;
         }
         imported = true;
@@ -104,25 +118,20 @@ pub(crate) fn imported_evidence_in_txn(
         else {
             continue;
         };
-        let words = match words {
-            Some(words) => words,
-            None => {
-                let messages = vault.filtered_edge_peers(
-                    txn,
-                    EdgeDirection::In,
-                    &turn,
-                    EdgeKind::PartOf,
-                    Some(ENTITY_TYPE_MESSAGE),
-                    "imported turn review scan",
-                )?;
-                let named: Vec<_> = messages
-                    .iter()
-                    .filter(|message| cited.contains(message))
-                    .copied()
-                    .collect();
-                if named.is_empty() { messages } else { named }
-            }
-        };
+        let messages = vault.filtered_edge_peers(
+            txn,
+            EdgeDirection::In,
+            id,
+            EdgeKind::PartOf,
+            Some(ENTITY_TYPE_MESSAGE),
+            "imported turn review scan",
+        )?;
+        let named: Vec<_> = messages
+            .iter()
+            .filter(|message| cited.contains(message))
+            .copied()
+            .collect();
+        let words = if named.is_empty() { messages } else { named };
         let mut imported_at = None;
         for message in &words {
             let learned = vault
@@ -132,7 +141,7 @@ pub(crate) fn imported_evidence_in_txn(
                 .map(|header| header.learned_at);
             imported_at = imported_at.max(learned);
         }
-        let imported_at = imported_at.unwrap_or(turn_header.learned_at);
+        let imported_at = imported_at.unwrap_or(header.learned_at);
         if latest.as_ref().is_none_or(|(at, _)| imported_at > *at) {
             latest = Some((imported_at, source));
         }
@@ -141,6 +150,24 @@ pub(crate) fn imported_evidence_in_txn(
         imported,
         review: latest.map(|(at, source)| history_import_review_id(source, at)),
     })
+}
+
+/// The source an imported MESSAGE's provenance names (`import.source` in its
+/// metadata).
+fn message_import_source(body: &[u8]) -> Option<String> {
+    let field = |value: &rmpv::Value, name: &str| match value {
+        rmpv::Value::Map(entries) => entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value.clone()),
+        _ => None,
+    };
+    let message = rmpv::decode::read_value(&mut &body[..]).ok()?;
+    let source = field(&field(&field(&message, "metadata")?, "import")?, "source")?;
+    source
+        .as_str()
+        .filter(|source| !source.is_empty())
+        .map(str::to_owned)
 }
 
 /// A row's header and body.

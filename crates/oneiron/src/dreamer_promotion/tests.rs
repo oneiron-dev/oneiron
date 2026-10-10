@@ -488,6 +488,33 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
         assert_eq!(row.dreamer_run_id.as_deref(), Some(group), "{predicate}");
     }
 
+    // No other parent edge takes the import away (Sol 9A-3B round 3 #2): a
+    // plain TURN that sorts first, made a second parent of the MESSAGE.
+    let plain = EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &Mp::Map(vec![
+            (Mp::from("txt"), Mp::from("my name is Ana")),
+            (Mp::from("spkr"), Mp::from("user")),
+        ]),
+    )
+    .expect("turn body");
+    vault.put_entity(&plain, ENTITY_TYPE_TURN, occurred(5), 5, &body)?;
+    vault.put_edge(&message, EdgeKind::PartOf, &plain, 1.0)?;
+    let promoted = candidate(&fixture, "profile.food", "ramen", vec![message]);
+    let id = promoted.claim_id;
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+    assert_eq!(outcome.pended, vec![id], "{outcome:?}");
+    let body = vault.get_claim(&id)?.expect("the proposed claim");
+    assert_eq!(body.source, Some(ClaimSource::Imported));
+    let pending = vault.store.pending_gate_consents(10)?;
+    let row = pending
+        .iter()
+        .find(|row| row.claim_id == *id.as_bytes())
+        .expect("its pending row");
+    assert_eq!(row.dreamer_run_id.as_deref(), Some(review.as_str()));
+
     // A claim built on an approved imported claim carries the import on: it
     // too waits for the owner, in the Dreamer run's review.
     let head = approved_head(&vault, &fixture, ClaimSource::Imported, "profile.home")?;

@@ -711,6 +711,45 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
             ("Check the qif.rs call site.", Some(super::DELEGATING_AGENT)),
         ]
     );
+
+    // Sol 9A-3B round 3 #1: a fork that names no start of its own, over a
+    // spawned thread's copy. The spawned thread's prompt stays its agent's;
+    // past it, the fork's own words cannot be told from that agent's, so they
+    // are left out too rather than read as the owner's.
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-24T12-00-00-s-fork",
+        &[
+            r#"{"timestamp":"2026-09-24T12:00:00.000Z","type":"session_meta","payload":{"id":"s-fork","forked_from_id":"s-spawned","timestamp":"2026-09-24T12:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.010Z","type":"session_meta","payload":{"id":"s-spawned","parent_thread_id":"s-parent","subagent_history_start_ordinal":4,"timestamp":"2026-09-24T10:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.020Z","type":"session_meta","payload":{"id":"s-parent","timestamp":"2026-09-24T09:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.030Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep every amount in integer cents."}],"id":"msg_parent_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.040Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cents it is."}],"id":"msg_parent_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.050Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.060Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"In this fork, try rust_decimal."}],"id":"msg_fork_u1"}}"#,
+        ],
+    );
+    let users: Vec<_> = conversations[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == HistoryRole::User)
+        .map(|message| (message.text.as_str(), message.said_by))
+        .collect();
+    assert_eq!(
+        users,
+        [
+            ("Keep every amount in integer cents.", None),
+            (
+                "List every call site of parse_amount.",
+                Some(super::DELEGATING_AGENT)
+            ),
+            (
+                "In this fork, try rust_decimal.",
+                Some(super::DELEGATING_AGENT)
+            ),
+        ]
+    );
 }
 
 /// Astra 1310 #3, Greptile 1310 (claude_code.rs:283): a prompt typed early

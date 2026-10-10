@@ -108,26 +108,33 @@ struct Rollout {
 
 /// A thread a rollout holds words of.
 struct Thread {
+    /// Its meta line.
+    line: usize,
     /// A parent agent spawned it, so its own user messages are that agent's.
     spawned: bool,
     /// The line its own history starts at: its meta line plus its own start
-    /// ordinal, or its meta line when it names none.
-    own_from: usize,
+    /// ordinal. `None` when it names none: its own history starts somewhere
+    /// past its meta line.
+    own_from: Option<usize>,
 }
 
 /// Whether the user message at `line` is a delegating agent's: the thread
 /// whose own history holds it was spawned. Copies nest, so each copied
 /// parent's own history ends where the thread that copied it starts its own.
-/// A message before every thread's own start falls to the deepest copy.
+/// Where a thread's own start is unknown, a spawned thread may hold any line
+/// past its meta, so those are its agent's; the owner's words are only those
+/// no spawned thread could hold.
 fn delegated(threads: &[Thread], line: usize) -> bool {
     let mut end = usize::MAX;
     for thread in threads {
-        if (thread.own_from..end).contains(&line) {
-            return thread.spawned;
+        match thread.own_from {
+            Some(start) if (start..end).contains(&line) => return thread.spawned,
+            Some(start) => end = end.min(start),
+            None if thread.spawned && (thread.line..end).contains(&line) => return true,
+            None => {}
         }
-        end = end.min(thread.own_from);
     }
-    threads.last().is_some_and(|thread| thread.spawned)
+    false
 }
 
 /// The thread that spawned this one, at the top level in current rollouts and
@@ -243,8 +250,9 @@ impl Rollout {
             .and_then(Value::as_u64)
             .and_then(|line| usize::try_from(line).ok());
         self.threads.push(Thread {
+            line,
             spawned: spawned_by(payload).is_some(),
-            own_from: ordinal.map_or(line, |ordinal| line.saturating_add(ordinal)),
+            own_from: ordinal.map(|ordinal| line.saturating_add(ordinal)),
         });
         // A forked or spawned thread's rollout carries its parent's meta again
         // inside the history it copied; the file's own meta comes first.
