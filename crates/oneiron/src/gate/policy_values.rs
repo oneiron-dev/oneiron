@@ -342,18 +342,6 @@ pub(super) fn unadmitted_row(rows: &[PolicyValueRow]) -> Option<&PolicyValueRow>
     rows.iter().find(|row| !row.key.admits(row.scope))
 }
 
-pub(super) fn resolve_row<'a>(
-    rows: &'a [PolicyValueRow],
-    key: PolicyValueKey,
-    context: &PolicyEvaluationScope,
-) -> Option<&'a PolicyValueRow> {
-    rows.iter()
-        .filter(|row| row.key == key)
-        .filter_map(|row| row.scope.rank(context).map(|rank| (rank, row)))
-        .max_by_key(|(rank, _)| *rank)
-        .map(|(_, row)| row)
-}
-
 /// Effective value and the row that actually determined it. A child row that
 /// only repeats or relaxes its parent is not the deciding row under narrowing.
 pub(super) struct ResolvedPolicyValue<'a> {

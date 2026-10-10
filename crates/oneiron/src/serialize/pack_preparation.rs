@@ -188,23 +188,6 @@ fn prepare_pack_with_l2(
     prepared
 }
 
-#[cfg(test)]
-pub(super) fn budget_split_sections(
-    results_source: &PreparedGroups,
-    neighbors_source: &PreparedGroups,
-    allocation: &TokenAllocation,
-    token_budget: usize,
-) -> (PreparedGroups, PreparedGroups) {
-    budget_split_sections_with_depth_limit(
-        results_source,
-        neighbors_source,
-        allocation,
-        token_budget,
-        DEFAULT_CONTEXT_PACK_TOKENIZER,
-        None,
-    )
-}
-
 fn budget_split_sections_with_depth_limit(
     results_source: &PreparedGroups,
     neighbors_source: &PreparedGroups,

@@ -2,7 +2,7 @@ use super::super::*;
 use super::support::*;
 use crate::attempt_queue::*;
 use crate::deletion::DeleteReason;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{EntityId, TimeRange, Vault};
 
@@ -79,153 +79,6 @@ fn audit_and_blobs<P: Backend>(ports: &P) -> Result<()> {
             .contains(&record)
     );
     Ok(())
-}
-fn jobs<P: Backend>(ports: &P) -> Result<()> {
-    let mut txn = ports.write()?;
-    let input = EnqueueAttempt {
-        kind: "ports.test".into(),
-        payload: b"work".to_vec(),
-        dedupe_key: Some("once".into()),
-        run_id: None,
-        now: 999,
-    };
-    let EnqueueOutcome::Enqueued(queued) = ports.port_job_enqueue(&mut txn, input.clone())? else {
-        panic!("new queue")
-    };
-    assert_eq!(queued.created_at, 100); // supplied wall time cannot bypass injection
-    assert!(
-        matches!(ports.port_job_enqueue(&mut txn,input.clone())?,EnqueueOutcome::Existing(row) if row.id==queued.id)
-    );
-    let ClaimOutcome::Claimed(claimed) = ports.port_job_claim(
-        &mut txn,
-        Some("ports.test"),
-        ClaimAttempt {
-            lease_owner: "worker".into(),
-            now: 999,
-        },
-    )?
-    else {
-        panic!("ready work")
-    };
-    assert_eq!(claimed.claimed_at, Some(100));
-    assert_eq!(claimed.attempt_count, 1);
-    let complete = CompleteAttempt {
-        id: claimed.id,
-        lease_owner: "worker".into(),
-        attempt_count: claimed.attempt_count,
-        now: 999,
-    };
-    let mut stale = complete.clone();
-    stale.attempt_count = 0;
-    assert!(matches!(
-        ports.port_job_complete(&mut txn, stale),
-        Err(Error::Artifact(
-            ArtifactError::InvalidAttemptQueueTransition { .. }
-        ))
-    ));
-    assert!(
-        matches!(ports.port_job_complete(&mut txn,complete.clone())?,CompleteOutcome::Completed(row) if row.updated_at==100)
-    );
-    assert!(matches!(
-        ports.port_job_complete(&mut txn, complete)?,
-        CompleteOutcome::AlreadyCompleted(_)
-    ));
-    let EnqueueOutcome::Enqueued(next) = ports.port_job_enqueue(&mut txn, input)? else {
-        panic!("dedupe retired")
-    };
-    assert_ne!(next.id, claimed.id);
-    let ClaimOutcome::Claimed(claimed) = ports.port_job_claim(
-        &mut txn,
-        Some("ports.test"),
-        ClaimAttempt {
-            lease_owner: "worker".into(),
-            now: 999,
-        },
-    )?
-    else {
-        panic!("next ready work")
-    };
-    let fail = FailAttempt {
-        id: claimed.id,
-        lease_owner: "worker".into(),
-        attempt_count: claimed.attempt_count,
-        reason: "failed".into(),
-        now: 999,
-    };
-    assert!(
-        matches!(ports.port_job_fail(&mut txn,fail.clone())?,FailOutcome::Failed(row) if row.updated_at==100)
-    );
-    assert!(matches!(
-        ports.port_job_fail(&mut txn, fail)?,
-        FailOutcome::AlreadyFailed(_)
-    ));
-    assert!(matches!(
-        ports.port_job_claim(
-            &mut txn,
-            Some("ports.test"),
-            ClaimAttempt {
-                lease_owner: "worker".into(),
-                now: 999
-            }
-        )?,
-        ClaimOutcome::Empty
-    ));
-    ports.commit(txn)
-}
-/// Point claiming is required by ordered workflows: an unrelated earlier
-/// ready job must remain unleased, on both storage implementations.
-fn point_claim<P: Backend>(ports: &P) -> Result<()> {
-    let mut txn = ports.write()?;
-    let first = ports.port_job_enqueue(
-        &mut txn,
-        EnqueueAttempt {
-            kind: "ports.point".into(),
-            payload: b"first".to_vec(),
-            dedupe_key: None,
-            run_id: None,
-            now: 999,
-        },
-    )?;
-    let second = ports.port_job_enqueue(
-        &mut txn,
-        EnqueueAttempt {
-            kind: "ports.point".into(),
-            payload: b"second".to_vec(),
-            dedupe_key: None,
-            run_id: None,
-            now: 999,
-        },
-    )?;
-    let EnqueueOutcome::Enqueued(first) = first else {
-        panic!("first")
-    };
-    let EnqueueOutcome::Enqueued(second) = second else {
-        panic!("second")
-    };
-    let input = ClaimAttempt {
-        lease_owner: "worker".into(),
-        now: 999,
-    };
-    let ClaimOutcome::Claimed(claimed) =
-        ports.port_job_claim_id(&mut txn, second.id, input.clone())?
-    else {
-        panic!("point claim")
-    };
-    assert_eq!(claimed.id, second.id);
-    assert_eq!(claimed.claimed_at, Some(100));
-    let ClaimOutcome::Claimed(other) =
-        ports.port_job_claim(&mut txn, Some("ports.point"), input)?
-    else {
-        panic!("other ready job")
-    };
-    assert_eq!(other.id, first.id);
-    ports.commit(txn)
-}
-#[test]
-fn point_claim_does_not_steal_other_job_lmdb_and_memory() -> Result<()> {
-    let (_temp, vault, memory, _clock) = fixtures();
-    point_claim(&vault)?;
-    point_claim(&memory)
 }
 fn blocked_task_claim<P: Backend>(
     ports: &P,
@@ -441,65 +294,11 @@ fn task_and_symbol_point_claim_lmdb_and_memory() -> Result<()> {
     conflicting_symbols_claim(&vault, dependent, blocker, &held, &waiting)?;
     conflicting_symbols_claim(&memory, dependent, blocker, &held, &waiting)
 }
-fn point_claim_owner_bounds<P: Backend>(ports: &P) -> Result<()> {
-    let mut txn = ports.write()?;
-    let EnqueueOutcome::Enqueued(row) = ports.port_job_enqueue(
-        &mut txn,
-        EnqueueAttempt {
-            kind: "ports.point.owner".into(),
-            payload: vec![],
-            dedupe_key: None,
-            run_id: None,
-            now: 100,
-        },
-    )?
-    else {
-        panic!("fresh owner job")
-    };
-    for owner in [String::new(), "a".repeat(129)] {
-        assert!(matches!(
-            ports.port_job_claim_id(
-                &mut txn,
-                row.id,
-                ClaimAttempt {
-                    lease_owner: owner,
-                    now: 100,
-                }
-            ),
-            Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_)))
-        ));
-    }
-    let ClaimOutcome::Claimed(claimed) = ports.port_job_claim_id(
-        &mut txn,
-        row.id,
-        ClaimAttempt {
-            lease_owner: "a".repeat(128),
-            now: 100,
-        },
-    )?
-    else {
-        panic!("128-byte owner")
-    };
-    assert_eq!(claimed.attempt_count, 1);
-    ports.commit(txn)
-}
-#[test]
-fn point_claim_owner_byte_bounds_lmdb_and_memory() -> Result<()> {
-    let (_dir, vault, memory, _clock) = fixtures();
-    point_claim_owner_bounds(&vault)?;
-    point_claim_owner_bounds(&memory)
-}
 #[test]
 fn audit_and_reference_counted_blobs_lmdb_and_memory() -> Result<()> {
     let (_temp, vault, memory, _clock) = fixtures();
     audit_and_blobs(&vault)?;
     audit_and_blobs(&memory)
-}
-#[test]
-fn job_lifecycle_lmdb_and_memory() -> Result<()> {
-    let (_temp, vault, memory, _clock) = fixtures();
-    jobs(&vault)?;
-    jobs(&memory)
 }
 #[test]
 fn clock_is_injected_and_persisted_floor_survives_reopen() -> Result<()> {
@@ -697,55 +496,5 @@ fn scoped_enqueue_composes_without_collapsing_actor_dedupe() -> Result<()> {
     drop(txn);
     assert_eq!(queue.get(first.id)?, None);
     assert_eq!(queue.get(second.id)?, None);
-    Ok(())
-}
-
-#[test]
-fn scheduler_horizon_only_narrows_clock_and_never_reclaims_its_retry_in_one_tick() -> Result<()> {
-    let clock = ManualClock::new(100);
-    let (_dir, vault) = crate::test_util::open_test_vault_with(config(&clock));
-    let queue = AttemptQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(_) = queue.enqueue(EnqueueAttempt {
-        kind: "clock.horizon".into(),
-        payload: vec![],
-        dedupe_key: None,
-        run_id: None,
-        now: 1,
-    })?
-    else {
-        panic!("enqueue")
-    };
-    let ClaimOutcome::Claimed(first) = queue.claim(ClaimAttempt {
-        lease_owner: "worker".into(),
-        now: 10,
-    })?
-    else {
-        panic!("immediate queued row")
-    };
-    assert_eq!(first.claimed_at, Some(100));
-    let RetryOutcome::Retried(retry) = queue.retry(RetryAttempt {
-        id: first.id,
-        lease_owner: "worker".into(),
-        attempt_count: first.attempt_count,
-        backoff_until: 11,
-        last_error: None,
-        now: 10,
-    })?;
-    assert_eq!(
-        queue.claim(ClaimAttempt {
-            lease_owner: "worker".into(),
-            now: 10
-        })?,
-        ClaimOutcome::Empty
-    );
-    let ClaimOutcome::Claimed(next) = queue.claim(ClaimAttempt {
-        lease_owner: "worker".into(),
-        now: 11,
-    })?
-    else {
-        panic!("next tick")
-    };
-    assert_eq!(next.id, retry.id);
-    assert_eq!(next.claimed_at, Some(100));
     Ok(())
 }

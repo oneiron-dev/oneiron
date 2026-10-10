@@ -228,14 +228,7 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 #[cfg(test)]
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, CallPurpose};
-#[cfg(test)]
-use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
-#[cfg(test)]
-use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_POLICY_MANIFEST,
-};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST};
 #[cfg(test)]
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 #[cfg(test)]

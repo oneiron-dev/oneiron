@@ -80,8 +80,6 @@ pub(crate) use self::doors::{
 // `decode_secret_custody_admission_body` is only consumed by in-crate tests
 // (`secret_lease/tests.rs`); a plain `pub(crate)` re-export would warn as
 // unused in non-test builds, so the seam provides it under `cfg(test)`.
-#[cfg(test)]
-pub(crate) use self::doors::decode_secret_custody_admission_body;
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 pub(crate) use self::replication::{
     plan_replicated_name_index, stage_replicated_name_index, validate_replicated_custody_put,
@@ -115,5 +113,3 @@ use crate::store::Store;
 use crate::vault::Vault;
 #[cfg(test)]
 use rmpv::Value;
-#[cfg(test)]
-use std::collections::BTreeMap;

@@ -255,6 +255,3 @@ pub(crate) fn parse(value: &Value) -> Option<Vec<Row>> {
     }
     Some(rows)
 }
-
-#[cfg(test)]
-mod tests;

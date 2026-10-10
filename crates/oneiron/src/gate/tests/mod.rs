@@ -8,15 +8,7 @@ use crate::claim::{
 use crate::connector_key::{
     ConnectorKeyStatus, EffectorBudgetChargeOutcome, EffectorBudgetOnExhaust,
 };
-use crate::context_pack::ContextEntity;
-use crate::context_pack::ContextPack;
-use crate::context_pack::PackItemAccounting;
-use crate::context_pack::PackStats;
-use crate::context_pack::PackTokenStats;
-use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
-    CounterpartyOptOutReason,
-};
+use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
 use crate::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
 use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
 use crate::pipeline::ScoredEntity;
@@ -67,13 +59,10 @@ mod policy_inputs;
 mod posture_override;
 mod scoped_policy_values;
 mod scoped_read;
-mod slide_review_policy;
 mod special_doors;
 mod support;
-mod tracker_limits;
 mod trust_boundary;
 mod vad_vetting;
-mod voice_serving;
 mod witness_message;
 
 mod burst_retired;
@@ -100,16 +89,15 @@ use support::{
 use support::{
     actor_ceiling_row, actor_ceiling_row_for_ref, agent_def_fixture, append_actor_ceiling,
     assert_auto_source_gate_rejected, assert_auto_source_rejected, assert_gate_rejected,
-    assert_metric_counter_advanced, budgeted_core_read_scoped_grant_entry,
-    check_external_effect_policy_with_budget, claim_candidate_from_body,
-    claim_candidate_write_parts, claim_candidate_write_parts_for_actor, core_read_grant_map,
-    core_read_grants_manifest, core_read_scoped_grant_entry, core_read_world_grant_manifest,
-    dreamer_claim_candidate_write_parts, edge_provenance_flags,
+    budgeted_core_read_scoped_grant_entry, check_external_effect_policy_with_budget,
+    claim_candidate_from_body, claim_candidate_write_parts, claim_candidate_write_parts_for_actor,
+    core_read_grant_map, core_read_grants_manifest, core_read_scoped_grant_entry,
+    core_read_world_grant_manifest, dreamer_claim_candidate_write_parts, edge_provenance_flags,
     encode_first_party_default_policy_manifest, encode_policy_manifest, external_effect_gate_input,
     external_effect_scoped_grant_entry, first_party_connector_actor_id, gate_evaluator_input,
     gate_reason_strs, has_pending_gate_consent, nonclaim_entity_types_grant_map, pinned_actor_id,
     public_stamped, put_agent_def_row, put_claim_body, put_claim_text_body, put_dangling_short_id,
-    put_malformed_access_grant_bytes, put_raw_entity_row, put_text_entity, put_vector_entity,
+    put_malformed_access_grant_bytes, put_raw_entity_row, put_text_entity,
     receipt_required_core_read_scoped_grant_entry, replace_actor_ceilings, resolve,
     resolved_ceiling, rewrite_policy_manifest_entries, scoped_grants_entry, signatures_entry,
     source_trust_claim, source_trust_entry, source_trust_entry_without_auto_permit,

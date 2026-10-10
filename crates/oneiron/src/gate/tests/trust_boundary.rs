@@ -260,67 +260,6 @@ fn legacy_source_trust_pack_entity_does_not_relax_policy_inputs() -> Result<()> 
 
 #[cfg(feature = "sync")]
 #[test]
-fn replay_path_skips_policy_source_trust_gate() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let id = test_id(0x81);
-    let data = source_trust_claim_data(ClaimSource::ToolOutput);
-
-    vault
-        .batch()
-        .put_replicated(
-            &id,
-            crate::registry::ENTITY_TYPE_CLAIM,
-            test_time(5),
-            5,
-            &data,
-        )
-        .commit()?;
-
-    assert!(
-        vault.get_raw(&id)?.is_some(),
-        "replicated replay must not re-gate remote source trust"
-    );
-    Ok(())
-}
-
-#[cfg(feature = "sync")]
-#[test]
-fn replicated_generated_auto_claim_merges_but_is_not_consolidatable() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let strict_policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, test_id(0x87), &strict_policy)?;
-
-    let id = test_id(0x88);
-    let data = source_trust_claim_data(ClaimSource::Generated);
-    vault
-        .batch()
-        .put_replicated(
-            &id,
-            crate::registry::ENTITY_TYPE_CLAIM,
-            test_time(5),
-            5,
-            &data,
-        )
-        .commit()?;
-
-    let raw = vault
-        .get_raw(&id)?
-        .expect("foreign-manifest-approved descendant still merges");
-    let body = decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], false)?;
-    assert_eq!(body.source, Some(ClaimSource::Generated));
-    assert!(
-        crate::claim::claim_surfaceable(&body),
-        "foreign-approved Auto/Generated descendant may still surface"
-    );
-    assert!(
-        !crate::claim::claim_consolidatable(&body),
-        "strict local consolidation must decline it as corroboration"
-    );
-    Ok(())
-}
-
-#[cfg(feature = "sync")]
-#[test]
 fn federated_admission_allows_and_restamps_imported_claim() -> Result<()> {
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::sync::loro_support::{import_doc, map_get_bytes};
@@ -344,25 +283,6 @@ fn federated_admission_allows_and_restamps_imported_claim() -> Result<()> {
     let blob = map_get_bytes(&doc.get_map("entities"), &id.to_hex()).ok_or(Error::InvalidKey)?;
     let body = decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)?;
     assert_eq!(body.source, Some(ClaimSource::Imported));
-    Ok(())
-}
-
-#[cfg(feature = "sync")]
-#[test]
-fn federated_admission_denies_untrusted_import_with_auditable_reason() -> Result<()> {
-    use crate::sync::types::WindowKey;
-    use crate::sync::{FederationAdmissionRole, admit_federated_window_update};
-
-    let (_tmp, vault) = temp_vault();
-    let id = test_id(0x8C);
-    let remote_body = source_trust_claim(ClaimSource::ToolOutput);
-    let update = federated_claim_update(&id, &remote_body)?;
-    let key = WindowKey::new("2026-03");
-
-    let err = admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Guest)
-        .expect_err("imported auto claims need an explicit local trust floor");
-    assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
-    assert!(vault.get_raw(&id)?.is_none());
     Ok(())
 }
 

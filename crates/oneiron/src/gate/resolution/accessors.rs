@@ -27,9 +27,8 @@ use crate::gate::ceiling::{
 };
 use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector};
 use crate::gate::policy_values::{
-    PolicyEvaluationScope, PolicyPrecedence, PolicyValue, PolicyValueKey, PolicyValueRow,
-    PolicyWhy, ResolvedPolicyValue, WhySource, precedence_row, resolve_row, resolve_value,
-    shipped_default_precedence,
+    PolicyEvaluationScope, PolicyPrecedence, PolicyValue, PolicyValueKey, PolicyWhy,
+    ResolvedPolicyValue, WhySource, precedence_row, resolve_value, shipped_default_precedence,
 };
 use crate::gate::project_conversion::ProjectConversionPolicy;
 
@@ -251,17 +250,6 @@ impl PolicyManifestResolution {
         }
     }
 
-    #[must_use]
-    pub(in crate::gate) fn policy_value_row(
-        &self,
-        key: PolicyValueKey,
-        scope: &PolicyEvaluationScope,
-    ) -> Option<&PolicyValueRow> {
-        (!self.is_fail_closed())
-            .then(|| resolve_row(&self.policy_values, key, scope))
-            .flatten()
-    }
-
     /// The meta-rule is read at vault scope only. Absence uses the shipped
     /// data default; callers can receipt the missing-row fallback distinctly.
     pub(in crate::gate) fn scope_precedence(&self) -> (PolicyPrecedence, Option<&str>) {
@@ -293,16 +281,6 @@ impl PolicyManifestResolution {
             self.scope_precedence().0,
             fallback,
         )
-    }
-
-    #[must_use]
-    pub(crate) fn proposal_check_threshold(&self) -> u64 {
-        self.proposal_check_threshold_in_scope(&PolicyEvaluationScope::default())
-    }
-
-    #[must_use]
-    pub(crate) fn proposal_check_threshold_in_scope(&self, scope: &PolicyEvaluationScope) -> u64 {
-        self.proposal_check_threshold_source(scope).threshold
     }
 
     pub(crate) fn proposal_check_threshold_source(
