@@ -1,6 +1,6 @@
 //! The owner's own commands on a stopped vault: doctor, backup, restore,
-//! window recovery, export, the secret scan switch, import consent and
-//! agent-run consent.
+//! window recovery, export, the secret scan switch, registering and rotating
+//! a secret, import consent and agent-run consent.
 //!
 //! Holding the vault's writer lease is the owner proof here, the same local
 //! door the embedded export uses; a running `serve` answers the same actions
@@ -14,13 +14,14 @@ use serde::Serialize;
 
 use crate::cli::{
     BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverWindowArgs, RestoreArgs, RunsCommand,
-    SecretScanArgs, SecretScanSwitch, WhoamiArgs,
+    SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs, SecretScanSwitch,
+    SecretsCommand, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
 };
 use crate::owner::backup::{self, BackupPlan};
-use crate::owner::{imports, local_owner, location, note_imports, runs};
+use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
 
 fn emit(value: &impl Serialize) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
@@ -356,6 +357,102 @@ pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
     };
     let owner = local_owner(&vault)?;
     emit(&vault.set_secret_scan_mode(&owner, mode, vault.now_recorded_at())?)
+}
+
+/// The largest value read from stdin, as for the route's whole body.
+const SECRET_VALUE_LIMIT: usize = 1 << 20;
+
+pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
+    let value = read_secret_value(raw_stdin()?)?;
+    match command {
+        SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
+        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
+    }
+}
+
+/// Stdin's own file, unbuffered. `io::Stdin` copies a short read through a
+/// process-wide buffer that is never wiped.
+fn raw_stdin() -> io::Result<std::fs::File> {
+    #[cfg(unix)]
+    let owned = std::os::fd::AsFd::as_fd(&io::stdin()).try_clone_to_owned()?;
+    #[cfg(windows)]
+    let owned = std::os::windows::io::AsHandle::as_handle(&io::stdin()).try_clone_to_owned()?;
+    Ok(std::fs::File::from(owned))
+}
+
+/// The value on stdin, exactly as given, in one buffer sized up front: the
+/// read never moves it, so no copy is left behind, and it is wiped on drop.
+fn read_secret_value(input: impl Read) -> anyhow::Result<zeroize::Zeroizing<Vec<u8>>> {
+    let mut value = zeroize::Zeroizing::new(Vec::with_capacity(SECRET_VALUE_LIMIT + 1));
+    input
+        .take(SECRET_VALUE_LIMIT as u64 + 1)
+        .read_to_end(&mut value)?;
+    anyhow::ensure!(
+        value.len() <= SECRET_VALUE_LIMIT,
+        "a secret value is at most 1 MiB"
+    );
+    anyhow::ensure!(
+        !value.is_empty(),
+        "the secret value is read from stdin, and stdin was empty"
+    );
+    Ok(value)
+}
+
+/// Registers through the engine door the route uses, as the local owner.
+fn register_secret(args: SecretRegisterArgs, value: &[u8]) -> anyhow::Result<secrets::Registered> {
+    use oneiron::secret_custody::{
+        CustodyClass, CustodyTier, ManifestSource, OwnerSecretRegistration, RequestedBinding,
+    };
+    let bindings = args
+        .bindings
+        .iter()
+        .map(|binding| {
+            let (effector, scopes) = binding.split_once('=').unwrap_or((binding, ""));
+            RequestedBinding {
+                effector: effector.to_owned(),
+                tier_ceiling: None,
+                scopes: scopes
+                    .split(',')
+                    .filter(|scope| !scope.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            }
+        })
+        .collect();
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/register --data -")?;
+    let owner = local_owner(&vault)?;
+    let registered = vault.register_secret_as_owner(
+        &owner,
+        &OwnerSecretRegistration {
+            name: &args.name,
+            class: match args.class {
+                SecretClass::CustodyPortable => CustodyClass::CustodyPortable,
+                SecretClass::CustodyDeviceBound => CustodyClass::CustodyDeviceBound,
+                SecretClass::CrossVault => CustodyClass::CrossVault,
+            },
+            device_only: args.device_only,
+            rung: CustodyTier::from_u8(args.rung)
+                .ok_or_else(|| anyhow::anyhow!("a rung is 0, 1 or 2"))?,
+            bindings,
+            manifest: args.repo.map(|repo| ManifestSource {
+                repo,
+                git_ref: args.git_ref,
+            }),
+            value,
+        },
+        vault.now_recorded_at(),
+    )?;
+    Ok(registered.into())
+}
+
+fn rotate_secret(args: SecretRotateArgs, value: &[u8]) -> anyhow::Result<secrets::Rotated> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/rotate --data -")?;
+    let owner = local_owner(&vault)?;
+    Ok(vault
+        .rotate_secret_as_owner(&owner, &args.name, value, vault.now_recorded_at())?
+        .into())
 }
 
 /// A batch file: imported claims, or the notes `import notes` wrote.

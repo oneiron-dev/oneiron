@@ -16,7 +16,8 @@
 //! register time the manifest entry is copied onto the record
 //! (`manifest_ref`, `declared_paths`, and the floor snapshot) so downstream
 //! consumers have a vault-side data source; see
-//! [`crate::Vault::register_secret`].
+//! [`crate::Vault::register_secret_as_owner`], which reads the manifest from a
+//! served repository through [`crate::Vault::origin_secret_manifest`].
 
 use serde::{Deserialize, Serialize};
 

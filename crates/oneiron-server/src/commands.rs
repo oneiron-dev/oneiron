@@ -76,7 +76,7 @@ mod dreamer;
 pub use self::dreamer::dreamer_grant;
 mod owner;
 pub use owner::{
-    backup, doctor, export, import, recover_window, restore, runs, secret_scan, whoami,
+    backup, doctor, export, import, recover_window, restore, runs, secret_scan, secrets, whoami,
 };
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
