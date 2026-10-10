@@ -18,6 +18,11 @@ pub fn build_openai_chat_request(
     request: &LlmRequest,
     stream: bool,
 ) -> LlmResult<OpenAiCompatHttpRequest> {
+    // The model id and the catalog row pick the model and the route; a param
+    // or provider option never does.
+    if request.route_selector_override().is_some() {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
     let catalog = config.catalog_entry(&request.model)?;
     let provider_options = OpenAiProviderOptions::from_request(request)?;
     validate_capabilities(catalog, request, &provider_options, stream)?;

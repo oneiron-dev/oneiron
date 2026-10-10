@@ -40,6 +40,38 @@ impl LlmRequest {
         let bytes = self.canonical_hash()?;
         Ok(bytes_to_hex_lower(&bytes))
     }
+
+    /// The first generic param, provider-option namespace or provider-option
+    /// key that would pick the model or the route on a provider's wire, as
+    /// `key` or `namespace.key`. The request's model id and the host's binding
+    /// pick both; an adapter refuses a request that names another.
+    #[must_use]
+    pub fn route_selector_override(&self) -> Option<String> {
+        if let Some(key) = self.params.keys().find(|key| is_route_selector(key)) {
+            return Some(key.clone());
+        }
+        for (namespace, options) in &self.provider_options {
+            if is_route_selector(namespace) {
+                return Some(namespace.clone());
+            }
+            if let Some(key) = options
+                .as_object()
+                .and_then(|options| options.keys().find(|key| is_route_selector(key)))
+            {
+                return Some(format!("{namespace}.{key}"));
+            }
+        }
+        None
+    }
+}
+
+/// Body fields that choose which model, or which upstream, serves a call:
+/// the model itself, a fallback model list, and a router's route or provider
+/// preference.
+const ROUTE_SELECTOR_KEYS: [&str; 4] = ["model", "models", "route", "provider"];
+
+fn is_route_selector(key: &str) -> bool {
+    ROUTE_SELECTOR_KEYS.contains(&key)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -259,3 +291,6 @@ fn canonicalize_json(value: JsonValue) -> JsonValue {
         scalar => scalar,
     }
 }
+
+#[cfg(test)]
+mod tests;
