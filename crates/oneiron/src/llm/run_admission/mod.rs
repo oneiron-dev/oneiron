@@ -6,9 +6,9 @@
 //! line in a named unit. The [`RunAdmission`] checks each call against that
 //! declaration and the host's inputs (the offer binding, the vault's
 //! allocation and the account's status) and issues a one-use [`RunPermit`]
-//! bound to the run, the model, the route and the locality. The
-//! [`GatedBackend`] a host hands the run checks and starts the permit where
-//! bytes leave. A paid job with a declared maximum stops there only under the
+//! bound to the run, the model, the route, the locality and the offer that
+//! pays. The [`GatedBackend`] a host hands the run for each offer checks and
+//! starts the permit where bytes leave. A paid job with a declared maximum stops there only under the
 //! owner's conditions ([`JobMaximum`]). Nothing here is a global list: a run
 //! that declares nothing is admitted to any bound offer, and only the run's
 //! own rules are enforced.

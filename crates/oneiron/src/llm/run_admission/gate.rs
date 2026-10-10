@@ -7,8 +7,9 @@ use std::task::{Context, Poll};
 use futures_core::Stream;
 
 use super::super::{
-    BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmRequest,
-    LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmUsage, ModelId, SingleRouteBackend,
+    BudgetLease, DispatchBinding, FatalLlmError, LlmBackend, LlmCapability, LlmError,
+    LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmUsage,
+    ModelId, SingleRouteBackend,
 };
 use super::admission::{RunDenied, RunInner};
 
@@ -16,10 +17,11 @@ use super::admission::{RunDenied, RunInner};
 /// model the provider said it served, the ladder's first.
 const SERVED_MODEL_KEYS: [&str; 2] = ["reported_model", "served_model"];
 
-/// A model backend that serves one run on one route. It refuses a call whose
-/// lease this run did not issue, that is closed or already used, or that names
-/// another model or route than its permit, and a call that picks its model or
-/// route through a param or provider option.
+/// A model backend that serves one run through one offer. It refuses a call
+/// whose lease this run did not issue, that is closed or already used, or that
+/// names another model, route or offer than its permit, and a call that picks
+/// its model or route through a param or provider option. Two offers at one
+/// route, paid differently, are two gates.
 ///
 /// It wraps only a [`SingleRouteBackend`]: a fallback ladder below a gate
 /// would pick its model after the check. One permit buys one physical call,
@@ -30,16 +32,17 @@ const SERVED_MODEL_KEYS: [&str; 2] = ["reported_model", "served_model"];
 pub struct GatedBackend {
     run: Arc<RunInner>,
     inner: Arc<dyn SingleRouteBackend>,
-    route: String,
+    /// The offer this gate sends for. A call's own model takes the subject.
+    offer: DispatchBinding,
 }
 
 impl GatedBackend {
     pub(super) fn new(
         run: Arc<RunInner>,
         inner: Arc<dyn SingleRouteBackend>,
-        route: String,
+        offer: DispatchBinding,
     ) -> Self {
-        Self { run, inner, route }
+        Self { run, inner, offer }
     }
 
     /// Checks and starts the call's permit; returns the digest of the request
@@ -59,7 +62,11 @@ impl GatedBackend {
         let digest = request
             .canonical_hash_hex()
             .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
-        self.run.begin_dispatch(lease, model, &self.route)?;
+        let call = DispatchBinding {
+            subject: model.to_owned(),
+            ..self.offer.clone()
+        };
+        self.run.begin_dispatch(lease, &call)?;
         Ok(digest)
     }
 
@@ -94,7 +101,7 @@ impl Pending<'_> {
             self.gate.run.dispatched(
                 &dispatch.lease,
                 dispatch.model.as_str(),
-                &self.gate.route,
+                &self.gate.offer.route,
                 dispatch.digest,
                 served_model,
                 answered,

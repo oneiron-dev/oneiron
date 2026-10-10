@@ -129,18 +129,18 @@ fn an_option_the_adapter_rejects_is_refused_before_the_permit_starts() {
         None,
         receipts.clone(),
     );
-    let route = OfferRoute::new("openai", "https://model.test").expect("route");
-    let gated = run.gate(backend, &route);
     let offer = OfferBinding {
         offer: "teacher@model.test".to_owned(),
         model: ModelId::new(MODEL).expect("model"),
-        route,
+        route: OfferRoute::new("openai", "https://model.test").expect("route"),
         locality: ModelLocality::ThirdParty,
         payer: Payer::CustomerKey,
+        credential_binding: Some("customer-key-1".to_owned()),
         catalog_revision: None,
         custody: KeyCustody::T0,
         rates: Vec::new(),
     };
+    let gated = run.gate(backend, &offer);
     let mut bad = request();
     bad.provider_options.insert(
         "openai".to_owned(),

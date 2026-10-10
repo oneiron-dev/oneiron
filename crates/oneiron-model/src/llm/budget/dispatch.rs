@@ -20,6 +20,11 @@ pub struct DispatchBinding {
     /// Where that route runs, as the host attests it. Never the request's own
     /// label.
     pub locality: ModelLocality,
+    /// The host's non-secret identity for the offer that pays for the call:
+    /// who pays, through which credential binding, at which catalog revision,
+    /// custody and price. Two offers on one subject and route that are paid
+    /// differently never start each other's leases.
+    pub offer: String,
 }
 
 /// Why [`BudgetGuard::begin_dispatch`] refused to start a lease. Every
@@ -45,6 +50,11 @@ pub enum DispatchRefused {
     /// The call goes out on another route than the lease was granted for.
     #[error("call takes another route than its lease")]
     RouteMismatch,
+    /// The call goes out under another offer than the lease was granted for:
+    /// another payer, credential binding, catalog revision, custody, price or
+    /// locality, even at the same subject and route.
+    #[error("call goes out under another offer than its lease")]
+    OfferMismatch,
 }
 
 impl From<DispatchRefused> for BudgetDenied {
@@ -87,14 +97,13 @@ impl BudgetGuard {
 
     /// Starts the one call a bound lease was granted for, before any byte
     /// leaves. It checks the issuer, that the lease is open and not yet
-    /// started, and that the call names the bound subject and route; then
+    /// started, and that `call` is the bound subject, route and offer; then
     /// marks the lease started in the same critical section. From then on an
     /// abort charges the reservation.
     pub fn begin_dispatch(
         &self,
         lease: &BudgetLease,
-        subject: &str,
-        route: &str,
+        call: &DispatchBinding,
     ) -> Result<(), DispatchRefused> {
         let mut state = self.lock_state();
         state
@@ -111,11 +120,14 @@ impl BudgetGuard {
         if record.dispatched {
             return Err(DispatchRefused::AlreadyDispatched);
         }
-        if binding.subject != subject {
+        if binding.subject != call.subject {
             return Err(DispatchRefused::SubjectMismatch);
         }
-        if binding.route != route {
+        if binding.route != call.route {
             return Err(DispatchRefused::RouteMismatch);
+        }
+        if binding.offer != call.offer || binding.locality != call.locality {
+            return Err(DispatchRefused::OfferMismatch);
         }
         record.dispatched = true;
         Ok(())
