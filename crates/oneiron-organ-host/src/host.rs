@@ -257,7 +257,8 @@ impl OrganHost {
         // The wire says a deadline in u32 milliseconds (about 49 days); a
         // longer one, up to `Duration::MAX`, waits that long and never
         // overflows the clock.
-        let deadline = begun + call.deadline.min(Duration::from_millis(u64::from(u32::MAX)));
+        let longest = Duration::from_millis(u64::from(u32::MAX));
+        let deadline = begun + call.deadline.min(longest);
         self.unload_idle();
         if self.grant_revoked(&call.grant) {
             return Err(HostError::Revoked);
