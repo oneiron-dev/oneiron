@@ -29,7 +29,8 @@ const MAX_WALK_DEPTH: usize = 6;
 
 /// The largest session log read whole. A log is decoded whole before a
 /// folder's decoded budget is checked, so this bounds what one log can add
-/// past that budget.
+/// past that budget. A larger log in a folder is left out with a warning and
+/// the rest of the folder lands.
 const MAX_LOG_BYTES: u64 = 1 << 30;
 
 /// The largest export read: its `conversations.json`, unzipped. The reader
@@ -46,12 +47,32 @@ const MAX_DECODED_BYTES: usize = 1 << 30;
 /// An export keeps its conversations in this file.
 const EXPORT_CONVERSATIONS: &str = "conversations.json";
 
-/// The files an import read, and the other `.jsonl` files it passed over
-/// under the given folder (a workflow journal, a tool's prompt history).
-#[derive(Serialize, Clone, Copy)]
+/// The files an import read, the other `.jsonl` files it passed over under
+/// the given folder (a workflow journal, a tool's prompt history), and the
+/// session logs it left out for being over [`MAX_LOG_BYTES`].
+#[derive(Serialize, Default)]
 struct Files {
     read: usize,
     passed: usize,
+    too_large: usize,
+    /// Each log left out, reported beside the counts.
+    #[serde(skip)]
+    warnings: Vec<ImportWarning>,
+}
+
+/// What an import left out, and why; the rest of it landed.
+#[derive(Serialize)]
+#[serde(tag = "warning", rename_all = "snake_case")]
+enum ImportWarning {
+    /// A session log over the per-log limit, never read. A rerun once the
+    /// limit allows it lands it; the import ledger lands only what is new.
+    /// The path is shown lossily, so a folder name that is not UTF-8 cannot
+    /// keep the report from being written after the rest has landed.
+    LogTooLarge {
+        path: String,
+        bytes: u64,
+        limit: u64,
+    },
 }
 
 #[derive(Serialize, Default)]
@@ -70,7 +91,8 @@ struct ImportOutcome<'a> {
     source: &'static str,
     path: &'a Path,
     dry_run: bool,
-    files: Files,
+    files: &'a Files,
+    warnings: &'a [ImportWarning],
     totals: Totals,
     /// Messages of this source the vault's import ledger holds afterwards.
     ledger: usize,
@@ -83,27 +105,19 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     let ImportSourceArgs {
         path,
         dry_run,
+        queue,
         serve,
     } = args;
     let config = resolve_serve_config(&serve)?;
+    if queue {
+        #[cfg(unix)]
+        return queue::enqueue(source, &path, &config);
+        #[cfg(not(unix))]
+        anyhow::bail!("the import queue needs a unix host");
+    }
     let started = Instant::now();
     let (files, mut conversations) = decode(source, &path)?;
-    // Earliest first, so a session's own lines land in it before a resumed
-    // or forked session's copies of them are seen. A resumed Claude Code
-    // session starts with copies of the original's lines, times and all; the
-    // original ends first.
-    conversations.sort_by_cached_key(|conversation| {
-        let ended = conversation
-            .messages
-            .iter()
-            .filter_map(|message| message.at_ms)
-            .max();
-        (
-            conversation.started_at_ms.unwrap_or(u64::MAX),
-            ended.unwrap_or(u64::MAX),
-            conversation.native_id.clone(),
-        )
-    });
+    earliest_first(&mut conversations);
     progress(&format!(
         "read {} file(s): {} conversation(s)",
         files.read,
@@ -130,13 +144,7 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
                     .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?
             }
         };
-        totals.conversations += 1;
-        totals.messages += u64::from(report.messages);
-        totals.new += u64::from(report.new);
-        totals.skipped += u64::from(report.skipped);
-        totals.changed += u64::from(report.changed);
-        totals.refused += u64::from(report.refused);
-        totals.not_kept.add(&report.not_kept);
+        totals.add(&report);
         reports.push(report);
         if (done + 1) % 100 == 0 {
             progress(&format!(
@@ -150,7 +158,8 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
         source: source.source_id(),
         path: &path,
         dry_run,
-        files,
+        files: &files,
+        warnings: &files.warnings,
         totals,
         ledger: match &target {
             Target::Plan(snapshot, _) => snapshot.ledger_len(source)?,
@@ -162,7 +171,49 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &outcome)?;
     writeln!(stdout)?;
+    if files.too_large > 0 {
+        progress(&format!(
+            "left out {} session log(s) over {MAX_LOG_BYTES} bytes; the report's \
+             `warnings` names each",
+            files.too_large
+        ));
+    }
     Ok(())
+}
+
+impl Totals {
+    fn add(&mut self, report: &HistoryImportReport) {
+        self.conversations += 1;
+        self.messages += u64::from(report.messages);
+        self.new += u64::from(report.new);
+        self.skipped += u64::from(report.skipped);
+        self.changed += u64::from(report.changed);
+        self.refused += u64::from(report.refused);
+        self.not_kept.add(&report.not_kept);
+    }
+}
+
+/// Earliest first, so a session's own lines land in it before a resumed or
+/// forked session's copies of them are seen. A resumed Claude Code session
+/// starts with copies of the original's lines, times and all; the original
+/// ends first.
+fn earliest_first(conversations: &mut [HistoryConversation]) {
+    conversations.sort_by_cached_key(order_key);
+}
+
+/// Where [`earliest_first`] puts a conversation: when it started, then when
+/// it ended.
+fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
+    let ended = conversation
+        .messages
+        .iter()
+        .filter_map(|message| message.at_ms)
+        .max();
+    (
+        conversation.started_at_ms.unwrap_or(u64::MAX),
+        ended.unwrap_or(u64::MAX),
+        conversation.native_id.clone(),
+    )
 }
 
 /// Where conversations go: planned against a read-only ledger, or landed.
@@ -203,7 +254,10 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             parent: None,
         };
         return Ok((
-            Files { read: 1, passed: 0 },
+            Files {
+                read: 1,
+                ..Files::default()
+            },
             decode_one(&text, &file, path)?,
         ));
     }
@@ -215,9 +269,13 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
         let text = read_limited(file, path, MAX_LOG_BYTES)?;
         let conversations = decode_one(&text, &history_file(source, path), path)?;
-        return Ok((Files { read: 1, passed: 0 }, conversations));
+        let files = Files {
+            read: 1,
+            ..Files::default()
+        };
+        return Ok((files, conversations));
     }
-    let mut files = Files { read: 0, passed: 0 };
+    let mut files = Files::default();
     let mut conversations = Vec::new();
     let mut decoded = Decoded::default();
     // Given the tool's whole home, only its history folder is read, never its
@@ -231,11 +289,13 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             files.passed += 1;
             return Ok(());
         }
-        let text = read_limited(file, shown, MAX_LOG_BYTES)?;
+        let Some(text) = files.read_log(&file, shown)? else {
+            return Ok(());
+        };
         let read = decode_one(&text, &history_file(source, shown), shown)?;
         decoded.add(&read);
         anyhow::ensure!(
-            decoded.messages <= MAX_DECODED_MESSAGES && decoded.bytes <= MAX_DECODED_BYTES,
+            decoded.fits(),
             "the session logs under {} hold more than {MAX_DECODED_MESSAGES} messages or \
              {MAX_DECODED_BYTES} bytes of them; nothing was imported. Import one project \
              folder, or one month of sessions, at a time",
@@ -248,15 +308,52 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
     Ok((files, conversations))
 }
 
+impl Files {
+    /// A session log under the folder, or `None` when it is over
+    /// [`MAX_LOG_BYTES`]: that log is left out with a warning, so one huge log
+    /// does not keep the rest from landing. Its size is checked before it is
+    /// read, so a log left out costs no memory, and the read holds a log that
+    /// grew since to the same bound.
+    fn read_log(&mut self, file: &File, shown: &Path) -> anyhow::Result<Option<String>> {
+        let size = || {
+            file.metadata()
+                .map(|metadata| metadata.len())
+                .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))
+        };
+        if size()? <= MAX_LOG_BYTES
+            && let Some(text) = read_within(file, shown, MAX_LOG_BYTES)?
+        {
+            return Ok(Some(text));
+        }
+        let bytes = size()?.max(MAX_LOG_BYTES + 1);
+        progress(&format!(
+            "left out {}: {bytes} bytes, over the {MAX_LOG_BYTES}-byte limit for one log",
+            shown.display()
+        ));
+        self.too_large += 1;
+        self.warnings.push(ImportWarning::LogTooLarge {
+            path: shown.to_string_lossy().into_owned(),
+            bytes,
+            limit: MAX_LOG_BYTES,
+        });
+        Ok(None)
+    }
+}
+
 /// What decoded conversations hold in memory: their messages, and every
 /// byte they keep, titles and ids included.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct Decoded {
     messages: usize,
     bytes: usize,
 }
 
 impl Decoded {
+    /// Within what one import may hold decoded.
+    fn fits(self) -> bool {
+        self.messages <= MAX_DECODED_MESSAGES && self.bytes <= MAX_DECODED_BYTES
+    }
+
     fn add(&mut self, conversations: &[HistoryConversation]) {
         for conversation in conversations {
             self.bytes += std::mem::size_of::<HistoryConversation>()
@@ -285,6 +382,106 @@ pub(super) mod notes;
 mod confined;
 #[cfg(unix)]
 use confined::{open_in, walk_logs, walk_notes};
+#[cfg(unix)]
+pub(super) mod queue;
+
+/// One session log queued for a running `serve`, read only below `root`:
+/// `path` must name a session log there, and every folder between `root` and
+/// it is opened relative to the one above and never through a link. A Claude
+/// Code session brings its own subagent logs from the folder beside it.
+///
+/// Also says whether a log ended mid-line, the session's or a subagent's: a
+/// live log whose last record was still being written, which a later pass
+/// reads whole.
+#[cfg(unix)]
+fn read_queued(
+    source: HistorySource,
+    root: &Path,
+    path: &Path,
+) -> anyhow::Result<(Vec<HistoryConversation>, bool)> {
+    let relative = below(root, path)?;
+    anyhow::ensure!(
+        session_log_name(source, path),
+        "{} is not a {} session log",
+        path.display(),
+        source.source_id()
+    );
+    let decode_one = |text: &str, shown: &Path| {
+        source
+            .decode(text, &history_file(source, shown))
+            .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))
+    };
+    let mut decoded = Decoded::default();
+    let mut keep = |read: &[HistoryConversation]| {
+        decoded.add(read);
+        anyhow::ensure!(
+            decoded.fits(),
+            "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
+             messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
+            path.display()
+        );
+        Ok(())
+    };
+    let (dir, file) = confined::open_below(root, relative)?;
+    let text = read_limited(file, path, MAX_LOG_BYTES)?;
+    let mut mid_line = cut(&text);
+    let mut conversations = decode_one(&text, path)?;
+    drop(text);
+    keep(&conversations)?;
+    if source == HistorySource::ClaudeCode
+        && let Some(stem) = path.file_stem()
+        && let Some(folder) = confined::open_dir_in(&dir, stem)?
+    {
+        confined::walk(
+            &folder,
+            &path.with_extension(""),
+            0,
+            confined::LOGS,
+            &mut |shown: &Path, file: File| {
+                if !session_log_name(source, shown) {
+                    return Ok(());
+                }
+                let text = read_limited(file, shown, MAX_LOG_BYTES)?;
+                mid_line |= cut(&text);
+                let read = decode_one(&text, shown)?;
+                drop(text);
+                keep(&read)?;
+                conversations.extend(read);
+                Ok(())
+            },
+        )?;
+    }
+    Ok((conversations, mid_line))
+}
+
+/// A log whose last record is not whole yet.
+#[cfg(unix)]
+fn cut(text: &str) -> bool {
+    !text.is_empty() && !text.ends_with('\n')
+}
+
+/// `path` relative to `root`, in plain names only, so it can name nothing
+/// outside `root`.
+#[cfg(unix)]
+fn below<'a>(root: &Path, path: &'a Path) -> anyhow::Result<&'a Path> {
+    let relative = path.strip_prefix(root).map_err(|_| {
+        anyhow::anyhow!(
+            "{} is not under {}, the folder this source's queued logs must sit under",
+            path.display(),
+            root.display()
+        )
+    })?;
+    anyhow::ensure!(
+        relative.components().next().is_some()
+            && relative
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+        "{} is not a plain path below {}",
+        path.display(),
+        root.display()
+    );
+    Ok(relative)
+}
 
 #[cfg(not(unix))]
 fn walk_logs(
@@ -377,18 +574,28 @@ fn read_zipped_export(path: &Path) -> anyhow::Result<String> {
 
 /// Reads at most `limit` bytes, whatever a header claimed, and refuses more.
 fn read_limited(reader: impl Read, path: &Path, limit: u64) -> anyhow::Result<String> {
+    read_within(reader, path, limit)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} is larger than {limit} bytes; nothing was imported",
+            path.display()
+        )
+    })
+}
+
+/// Reads at most `limit` bytes, whatever a header claimed; `None` when there
+/// are more.
+fn read_within(reader: impl Read, path: &Path, limit: u64) -> anyhow::Result<Option<String>> {
     let mut bytes = Vec::new();
     reader
         .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    anyhow::ensure!(
-        u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= limit,
-        "{} is larger than {limit} bytes; nothing was imported",
-        path.display()
-    );
-    Ok(String::from_utf8(bytes)
-        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8(bytes).unwrap_or_else(|error| {
+        String::from_utf8_lossy(error.as_bytes()).into_owned()
+    })))
 }
 
 /// The session a Claude Code subagent log ran in: the folder above the

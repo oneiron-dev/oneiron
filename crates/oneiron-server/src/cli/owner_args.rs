@@ -11,15 +11,28 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 
-use super::VaultArgs;
 use crate::config::ServeArgs;
 
 #[derive(Args, Clone, Debug)]
 pub struct DoctorArgs {
-    #[command(flatten)]
-    pub vault: VaultArgs,
+    /// Path to the LMDB vault directory.
+    pub path: PathBuf,
 
-    /// Config file whose `[backup]` section to report. Defaults to the XDG path.
+    /// Embedding vector dimension for the vault; overrides the config's.
+    #[arg(long)]
+    pub dimensions: Option<usize>,
+
+    /// LMDB map size in bytes; overrides the config's.
+    #[arg(long)]
+    pub map_size: Option<usize>,
+
+    /// Comma-separated trusted roots containing ja/ko/zh dictionary assets;
+    /// overrides the config's.
+    #[arg(long = "dict-search-paths", value_delimiter = ',', num_args = 1..)]
+    pub dict_search_paths: Option<Vec<PathBuf>>,
+
+    /// Config file the vault runs with, as `serve --config` reads it; its
+    /// `[backup]` section is reported. Defaults to the XDG path.
     #[arg(long)]
     pub config: Option<PathBuf>,
 }
@@ -133,6 +146,13 @@ pub struct ImportSourceArgs {
     /// works while `serve` runs.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Hand one session log to the running `serve` instead, which imports it
+    /// within seconds. Needs `[import] queue = true` in the serve config and
+    /// a log under that source's root; writes one small queue file, nothing
+    /// else.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub queue: bool,
 
     #[command(flatten)]
     pub serve: ServeArgs,
