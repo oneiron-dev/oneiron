@@ -81,8 +81,13 @@ struct Lifeline {
 
 impl Lifeline {
     /// Kills the organ and everything in its process group, shuts the
-    /// socket down and reaps the child. Safe to call twice.
+    /// socket down and reaps the child. Safe to call twice; once the reap is
+    /// done it returns without waiting, so dropping an ended process never
+    /// waits on the thread that reaped it.
     fn end(&self) {
+        if self.reaped.load(Ordering::SeqCst) {
+            return;
+        }
         let _ = self.socket.shutdown(Shutdown::Both);
         // Held through the reap, so whoever calls second returns only once
         // the process is gone.

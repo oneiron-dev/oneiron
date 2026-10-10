@@ -18,6 +18,21 @@ fn open_fds() -> usize {
         .count()
 }
 
+/// The open-file count once it has held still for 100 ms (at most 5 s): a
+/// reader thread may still be closing its socket.
+fn settled_fds() -> usize {
+    let until = Instant::now() + Duration::from_secs(5);
+    let mut last = open_fds();
+    let mut still = 0;
+    while still < 5 && Instant::now() < until {
+        thread::sleep(Duration::from_millis(20));
+        let now = open_fds();
+        still = if now == last { still + 1 } else { 0 };
+        last = now;
+    }
+    last
+}
+
 /// A host whose organ was started, then unloaded, revoked, or crashed under
 /// a call (by `n`), with nothing called after.
 fn stopped(vault: &Vault, n: usize) -> OrganHost {
@@ -60,19 +75,15 @@ fn stopped_organs_give_their_descriptors_back() {
     let vault = Vault::open_unseeded_for_test(dir.path(), config).expect("open vault");
     // The first starts may open what the process keeps for good.
     let mut hosts: Vec<OrganHost> = (0..3).map(|n| stopped(&vault, n)).collect();
-    let before = open_fds();
+    let before = settled_fds();
     for n in 3..66 {
         hosts.push(stopped(&vault, n));
     }
-    // Each reader thread closes its clone as it exits, just after the stop.
-    let until = Instant::now() + Duration::from_secs(5);
-    while open_fds() > before && Instant::now() < until {
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert_eq!(
-        open_fds(),
-        before,
-        "63 hosts with a stopped organ still hold descriptors"
+    // A leak would be two descriptors a host, 126 in all.
+    let after = settled_fds();
+    assert!(
+        after <= before,
+        "63 hosts with a stopped organ hold {after} descriptors, {before} before"
     );
     drop(hosts);
 }
