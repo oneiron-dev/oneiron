@@ -22001,7 +22001,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 8,
-      "mod": 7,
+      "mod": 8,
       "re-export": 10
      }
     },
@@ -22109,6 +22109,183 @@
      "path": "src/llm/routing/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RunAdmission",
+      "RunCall",
+      "RunCallError",
+      "RunDenied"
+     ],
+     "path": "src/llm/run_admission/admission.rs",
+     "purpose": "One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 2,
+      "fn": 14,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetLine",
+      "DeclarationEditor",
+      "DeclarationError",
+      "DeclaredTeachers",
+      "LeaseUnit",
+      "RunDeclaration"
+     ],
+     "path": "src/llm/run_admission/declaration.rs",
+     "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 15,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GatedBackend"
+     ],
+     "path": "src/llm/run_admission/gate.rs",
+     "purpose": "The run's model backend: every call starts its permit here, before any byte leaves, and leaves a dispatch…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AccountStatus",
+      "Allocation",
+      "AllocationGrantError",
+      "AllocationRef",
+      "AllocationRefusal",
+      "HostAccount",
+      "KeyCustody",
+      "OfferBinding",
+      "OfferRoute",
+      "PaidConnector",
+      "Payer",
+      "UnitRate"
+     ],
+     "path": "src/llm/run_admission/host.rs",
+     "purpose": "What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's…",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 4,
+      "fn": 5,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddFundsNotice",
+      "CheckpointRef",
+      "DeclaredMaximum",
+      "JobMaximum",
+      "JobSignal",
+      "JobStartRefused",
+      "MaximumShown",
+      "MaximumStop",
+      "ResumeOffer",
+      "ResumeRefused",
+      "StopRefused"
+     ],
+     "path": "src/llm/run_admission/job_maximum.rs",
+     "purpose": "The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2)",
+     "surface": {
+      "enum": 4,
+      "fn": 8,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/run_admission/mod.rs",
+     "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
+     "surface": {
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RunPermit"
+     ],
+     "path": "src/llm/run_admission/permit.rs",
+     "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalledTeacher",
+      "MemoryReceipts",
+      "PermitFacts",
+      "RunEvent",
+      "RunReceipt",
+      "RunReceiptSink",
+      "TeacherReport"
+     ],
+     "path": "src/llm/run_admission/receipt.rs",
+     "purpose": "The run admission's receipts: every admission, refusal, dispatch, settlement and revision, keyed by lease",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallOutcome"
+     ],
+     "path": "src/llm/run_admission/settle.rs",
+     "purpose": "Settling a run's permits: an answer pays its usage or its reservation, a started call that failed pays its…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/run_admission/tests.rs",
+     "purpose": "The research-connector fixture (ARCH-0053 `#training-fixture-cases`) on local fakes",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/run_admission/tests/support.rs",
+     "purpose": "Local fakes for the research-connector fixture",
+     "surface": {
+      "crate-vis": 14
+     }
     },
     {
      "bucket": "s",
@@ -39180,7 +39357,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 63,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39756,8 +39933,8 @@
    },
    "over_bar": 27,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2399,
-   "test_files": 788
+   "source_files": 2408,
+   "test_files": 790
   },
   "oneiron-android": {
    "files": [
@@ -44354,6 +44531,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DispatchBinding",
+      "DispatchRefused"
+     ],
+     "path": "src/llm/budget/dispatch.rs",
+     "purpose": "Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BudgetGuard"
      ],
      "path": "src/llm/budget/guard.rs",
@@ -44391,7 +44584,7 @@
      "path": "src/llm/budget/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -44418,6 +44611,7 @@
      "path": "src/llm/budget/settlement.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -44428,7 +44622,7 @@
      "path": "src/llm/budget/state.rs",
      "purpose": "Budget meter core: reserve planning and admission",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 27
      }
     },
     {
@@ -44449,6 +44643,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/llm/budget/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/budget/tests/dispatch.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -44693,9 +44895,17 @@
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
       "enum": 5,
-      "fn": 5,
+      "fn": 6,
       "struct": 7
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/protocol/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -44769,7 +44979,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 29,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44778,8 +44988,8 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 30,
-   "test_files": 4
+   "source_files": 31,
+   "test_files": 6
   },
   "oneiron-napi": {
    "files": [
