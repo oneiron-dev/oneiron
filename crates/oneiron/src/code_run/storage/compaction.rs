@@ -13,8 +13,10 @@ use crate::{EntityId, Error, Result, Vault};
 /// [`encode`] spells.
 const COVERAGE: SideTable<(EntityId, EntityId), CodeRunCompactionCoverage, Raw> =
     SideTable::new(&side_table::CODE_RUN_COMPACTION);
-const VERSION: u8 = 1;
-const BODY_LEN: usize = 1 + 16 * 3 + 8 * 3;
+/// Version 2 adds the accepted body's digest. No shipped server wrote a
+/// version 1 row: before it, no host ran a compaction backend.
+const VERSION: u8 = 2;
+const BODY_LEN: usize = 1 + 16 * 3 + 8 * 3 + 32;
 
 /// A run-local span derived from the durable replay and the sealed compaction
 /// request, not from model-supplied bytes or an assembled context-vector length.
@@ -84,6 +86,9 @@ pub(crate) struct CodeRunCompactionCoverage {
     epoch: u64,
     first: u64,
     last: u64,
+    /// BLAKE3 of the SUMMARY body the gate accepted: a generic write that
+    /// replaces it later never renders as the run's summary.
+    digest: [u8; 32],
 }
 
 impl CodeRunCompactionCoverage {
@@ -125,6 +130,7 @@ fn encode(row: &CodeRunCompactionCoverage) -> Vec<u8> {
     raw.extend_from_slice(&row.epoch.to_be_bytes());
     raw.extend_from_slice(&row.first.to_be_bytes());
     raw.extend_from_slice(&row.last.to_be_bytes());
+    raw.extend_from_slice(&row.digest);
     raw
 }
 
@@ -148,6 +154,7 @@ fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
         epoch: number(49)?,
         first: number(57)?,
         last: number(65)?,
+        digest: raw[73..].try_into().map_err(|_| corrupt())?,
     };
     if row.epoch == 0 || row.first > row.last {
         return Err(corrupt());
@@ -155,9 +162,10 @@ fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
     Ok(row)
 }
 
-/// The bound SUMMARY's prose, or `None` once it is withdrawn: erased, or
-/// stale because a record it was written from was erased. A withdrawn
-/// summary leaves its steps covered (as references) and renders no words.
+/// The bound SUMMARY's prose, or `None` once it is withdrawn: erased, stale
+/// because a record it was written from was erased, or replaced by a write
+/// the gate never judged. A withdrawn summary leaves its steps covered (as
+/// references) and renders no words.
 fn verify_summary(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -170,6 +178,9 @@ fn verify_summary(
     let state =
         crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &row.summary_id)?;
     if state.deleted || state.stale || summary.body.is_empty() {
+        return Ok(None);
+    }
+    if *blake3::hash(&summary.body).as_bytes() != row.digest {
         return Ok(None);
     }
     if summary.entity_type != ENTITY_TYPE_SUMMARY {
@@ -213,6 +224,12 @@ impl Vault {
                 "executor coverage exceeds durable replay",
             ));
         }
+        let minted = self
+            .store
+            .port_entity_record(&*txn, &mint.summary_id())?
+            .ok_or(Error::InvariantViolation(
+                "executor coverage names no live summary",
+            ))?;
         let row = CodeRunCompactionCoverage {
             run_id: span.run_id,
             session_ref: span.session_ref,
@@ -220,10 +237,24 @@ impl Vault {
             epoch: mint.epoch(),
             first: span.first,
             last: span.last,
+            digest: *blake3::hash(&minted.body).as_bytes(),
         };
         verify_summary(self, &*txn, &row)?.ok_or(Error::InvariantViolation(
             "executor coverage names no live summary",
         ))?;
+        // The mint took its epoch and boundary from the run's rows; they
+        // must still be the run's last ones in this transaction.
+        let mut last = None;
+        for item in COVERAGE.iter_from(&self.store, &*txn, span.run_id.as_bytes())? {
+            let (_, prior) = item?;
+            last = last.max(Some((prior.epoch, prior.last)));
+        }
+        let (epoch, first) = last.map_or((1, 0), |(epoch, end)| (epoch + 1, end + 1));
+        if row.epoch != epoch || row.first != first {
+            return Err(Error::InvariantViolation(
+                "executor coverage does not continue the run's last epoch",
+            ));
+        }
         let key = (row.run_id, row.summary_id);
         if COVERAGE.contains(&self.store, txn, &key)? {
             return Err(Error::InvariantViolation(

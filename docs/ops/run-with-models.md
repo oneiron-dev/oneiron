@@ -233,7 +233,7 @@ steps stay covered by their handles.
 ```toml
 [models.code_mode.compaction]   # optional; on by default when code mode is served
 enabled = true
-role = "checker"        # default: checker when a rung fills it, else generative_reasoner
+role = "checker"        # default: checker when its rungs take a whole window, else generative_reasoner
 window_tokens = 96000   # default: the smallest context the code-mode seat's rungs leave for input
 hot_steps = 2           # newest steps that never compact
 tries = 3
@@ -248,7 +248,8 @@ is a working example. Passes are metered on `budget_units`. Without the
 block, a seat for the role, or `[models]`, compaction is off and never calls
 a model; `GET /api/health` says `"compaction": "off"` with the reason
 (`no_model_configured`, `no_compaction_prompt`, `no_compaction_seat`,
-`disabled`, or `code_mode_off`). Each `execute_code` result carries the run's
+`compaction_seat_too_small` when the role's smallest rung leaves less input
+room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute_code` result carries the run's
 `compaction` object: `used_tokens`, `compact_at`, `window_tokens`,
 `in_flight`, `last_swap`, and `suppressed` (`auth`, `no_credit`,
 `turn_scoped` with the failed `check`, or `sticky` with `why`).

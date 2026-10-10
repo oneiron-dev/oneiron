@@ -355,6 +355,8 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
         .expect("epochs");
     assert_eq!(epochs.len(), 1, "the steps stay covered");
     assert_eq!(epochs[0].1, None, "the summary is withdrawn");
+    // Erasing the summary itself leaves the run's lineage in its coverage.
+    assert!(run.vault.delete_entity(&summary).expect("erase the summary"));
     // Step 7's boundary crosses again: steps 3-5 compact, from a window
     // whose run was served the erased note.
     let (outcome, requests) = run.call(&mut seat, 6..8, 2, 10);

@@ -155,7 +155,8 @@ impl ScopedRead<'_> {
 
     /// An epoch summary's sources are its `DerivedFrom` targets, through any
     /// nested epoch summary (agent-runtime-v1 §d7); `None` for any other
-    /// SUMMARY body.
+    /// SUMMARY body. A source that carries words of its own sources (a scope
+    /// summary, a reply copying one, a merge header) keeps that conjunct.
     fn epoch_sources_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -165,7 +166,17 @@ impl ScopedRead<'_> {
     ) -> Result<Option<bool>> {
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
-            self.is_entity_raw_readable_own_in(rtxn, policy, source, &row.encode(), &floor)
+            let raw = row.encode();
+            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor)? {
+                return Ok(false);
+            }
+            // The walk itself expands a nested epoch summary.
+            if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+                && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
+            {
+                return Ok(true);
+            }
+            self.derived_sources_readable_in(rtxn, policy, source, &raw)
         };
         match self.session_view {
             Some(view) => crate::compaction::epoch_sources_admitted_in(view, rtxn, id, body, admit),

@@ -33,15 +33,17 @@ impl CompactionDriver {
 
     /// [`Self::request_for`] for a host-numbered log (an executor run): the
     /// window stops at the recorded watermark's turn, `pins` occur verbatim
-    /// in it, and `sources` is the whole `DerivedFrom` set, refused above
-    /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut.
-    pub fn request_for_log(
+    /// in it, `sources` is the whole `DerivedFrom` set, refused above
+    /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut, and
+    /// `prior` is the host's last epoch and the last turn it covers.
+    pub(crate) fn request_for_log(
         &mut self,
         vault: &Vault,
         session_ref: &EntityId,
         window: Vec<CompactionWindowMessage>,
         pins: Vec<String>,
         sources: Vec<EntityId>,
+        prior: Option<crate::compaction::PriorEpoch>,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, .. } = &self.state else {
             return Err(Error::InvariantViolation(
@@ -73,6 +75,13 @@ impl CompactionDriver {
         }
         let mut seen = std::collections::BTreeSet::new();
         let sources = sources.into_iter().filter(|id| seen.insert(*id)).collect();
-        self.seal_request(vault, session_ref, window, pins, sources, false)
+        self.seal_request(
+            vault,
+            session_ref,
+            window,
+            pins,
+            sources,
+            WindowLog::Host { prior },
+        )
     }
 }

@@ -111,7 +111,8 @@ fn answer(base: &OnceLock<u64>, body: &Value) -> String {
 
 /// `oneiron mcp` on the code-mode surface, one JSON-RPC message per line.
 struct Bridge {
-    child: Running,
+    /// Killed when the bridge drops.
+    _child: Running,
     stdin: ChildStdin,
     lines: Receiver<String>,
 }
@@ -143,7 +144,7 @@ impl Bridge {
         });
         let stdin = child.stdin.take().unwrap();
         Self {
-            child: Running(child),
+            _child: Running(child),
             stdin,
             lines,
         }

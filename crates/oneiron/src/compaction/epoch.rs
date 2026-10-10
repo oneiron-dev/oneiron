@@ -13,7 +13,7 @@ use crate::tokenizer::count_context_pack_tokens;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
-use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage};
+use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage, WindowLog};
 use crate::error::OffRecordError;
 
 /// Pinned body keys for an epoch summary, in encode order.
@@ -331,9 +331,15 @@ fn is_epoch_candidate_for_session(bytes: &[u8], session_ref: &EntityId) -> bool 
 
 /// One durable prior epoch of a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct PriorEpoch {
+pub(crate) struct PriorEpoch {
     epoch: u64,
     turn_end: u64,
+}
+
+impl PriorEpoch {
+    pub(crate) const fn new(epoch: u64, turn_end: u64) -> Self {
+        Self { epoch, turn_end }
+    }
 }
 
 /// The claimed range must cover every distinct turn, in message-log order.
@@ -542,10 +548,14 @@ pub(super) fn mint_epoch_summary_with(
                 .window
                 .iter()
                 .map(|message| message.turn_id)
-                .filter(|_| request.folds_board_turns)
+                .filter(|_| request.log == WindowLog::Conversation)
                 .chain(request.sources.iter().copied()),
         )?;
-        let prior = prior_epoch_in_txn(&vault.store, &*wtxn, session_ref)?;
+        let prior = match request.log {
+            WindowLog::Conversation => prior_epoch_in_txn(&vault.store, &*wtxn, session_ref)?,
+            // The host's own rows re-check this position in `extra`.
+            WindowLog::Host { prior } => prior,
+        };
         validate_epoch_boundary(prior, turn_start)?;
         let epoch = match prior {
             Some(prior) => prior.epoch.checked_add(1).ok_or(Error::InvariantViolation(
@@ -570,17 +580,19 @@ pub(super) fn mint_epoch_summary_with(
             at,
             &body,
         );
-        for target in derived {
-            batch = batch.edge(&summary_id, EdgeKind::DerivedFrom, target, 1.0);
-        }
         // A source erased or withdrawn before this mint has already run its
         // invalidation, so the summary is born withdrawn, as it would be had
-        // the erasure come after it: never indexed, never embedded.
+        // the erasure come after it: never indexed, never embedded. Such a
+        // source takes no new dependency row; the summary is stale for good.
         let mut born_withdrawn = false;
         for target in derived {
             let state =
                 crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, wtxn, target)?;
-            born_withdrawn |= state.deleted || state.stale;
+            if state.deleted || state.stale {
+                born_withdrawn = true;
+            } else {
+                batch = batch.edge(&summary_id, EdgeKind::DerivedFrom, target, 1.0);
+            }
         }
         batch.apply(wtxn)?;
         // Explicitly scheduled for embedding inside the mint transaction, so
@@ -593,7 +605,7 @@ pub(super) fn mint_epoch_summary_with(
         }
         // The compacted turns leave their boards' retained history in the
         // same act: reconstructing one now fails explicitly (ARCH-0067).
-        if request.folds_board_turns {
+        if request.log == WindowLog::Conversation {
             crate::context_board::fold_board_turns_in_txn(
                 vault,
                 wtxn,

@@ -89,12 +89,14 @@ impl EngineNativeExecutor<'_> {
         };
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
-        let start = vault
+        // The run's position is its coverage rows, withdrawn summaries
+        // included: erasing a summary never moves where the next one starts.
+        let prior = vault
             .code_run_compaction_coverage(run_id)?
             .iter()
-            .map(|row| row.last().saturating_add(1))
-            .max()
-            .unwrap_or(0);
+            .map(|row| (row.epoch(), row.last()))
+            .max();
+        let start = prior.map_or(0, |(_, last)| last.saturating_add(1));
         if start > watermark {
             return Ok(None);
         }
@@ -117,9 +119,10 @@ impl EngineNativeExecutor<'_> {
         if vault.entity_exists(&turn_id)? {
             sources.push(turn_id);
         }
-        Ok(Some(
-            driver.request_for_log(vault, &session, window, pins, sources)?,
-        ))
+        let prior = prior.map(|(epoch, last)| crate::compaction::PriorEpoch::new(epoch, last));
+        Ok(Some(driver.request_for_log(
+            vault, &session, window, pins, sources, prior,
+        )?))
     }
 
     /// This run's swapped epochs with their summaries' prose.

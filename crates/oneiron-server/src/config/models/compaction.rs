@@ -16,8 +16,8 @@ pub(super) struct CompactionFile {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompactionSettings {
     pub enabled: bool,
-    /// The seat passes run on. Unset: `checker` when a rung fills it, else
-    /// the seat code mode itself runs on.
+    /// The seat passes run on. Unset: `checker` when its rungs take a whole
+    /// window, else the seat code mode itself runs on.
     pub role: Option<ModelRole>,
     /// The window budget a run parks at. Unset: the smallest context the
     /// code-mode seat's rungs leave for input.

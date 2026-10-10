@@ -74,7 +74,7 @@ pub use epoch::{
     EPOCH_SUMMARY_MAX_DERIVED_EDGES, EPOCH_SUMMARY_MAX_SOURCES, EpochSummaryBody,
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
-pub(crate) use epoch::{EpochMint, epoch_sources_admitted_in};
+pub(crate) use epoch::{EpochMint, PriorEpoch, epoch_sources_admitted_in};
 pub use gate::{
     CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionSuppression, GatedCompaction, compaction_reply_schema, compaction_request_input,

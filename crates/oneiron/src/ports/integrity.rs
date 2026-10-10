@@ -110,8 +110,34 @@ pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityI
         crate::hnsw::increment_vector_version(store, txn)?;
     }
     crate::ppr::invalidate_ppr_for_delete(store, txn, id, &[])?;
+    // Withdrawn words are never embedded: a queued or leased fill finds no
+    // current marker, so it neither sends them out nor writes a vector back.
+    store.clear_pending_embedding(txn, id)?;
     // A stale edge.provenance wrapper stops justifying its edge in this txn.
-    crate::provenance::refresh_stale_wrapper_in_txn(store, txn, id)
+    crate::provenance::refresh_stale_wrapper_in_txn(store, txn, id)?;
+    withdraw_epoch_dependents_in_txn(store, txn, id)
+}
+
+/// An epoch summary copies the words of what it was written from, so it is
+/// withdrawn with any of them, through nested epochs (agent-runtime-v1 §d7).
+/// Each is marked once: a stale one is not walked again.
+fn withdraw_epoch_dependents_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let prefix = [DEP, id.as_bytes()].concat();
+    for dependent in scan_dependents(store, txn, &prefix)? {
+        let epoch = super::EntityStoreRead::port_entity_record(store, txn, &dependent)?
+            .is_some_and(|row| {
+                row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+                    && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
+            });
+        if epoch && !stale_in_txn(store, txn, &dependent)? {
+            mark_stale_in_txn(store, txn, &dependent)?;
+        }
+    }
+    Ok(())
 }
 /// An entity delete erases every source version; one document-prefix scan
 /// visits only its k dependency rows. No entity or edge table is scanned.

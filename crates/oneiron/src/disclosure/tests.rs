@@ -577,5 +577,15 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
         !admits(&nested)?,
         "the summary it was written from is withheld"
     );
+
+    // Erasing the source withdraws both: the nested summary repeats its
+    // parent's words.
+    assert!(vault.delete_entity(&source)?);
+    let rtxn = vault.store.env.read_txn()?;
+    for id in [summary, nested] {
+        assert!(
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &rtxn, &id)?.stale
+        );
+    }
     Ok(())
 }

@@ -376,6 +376,9 @@ pub enum CompactionOff {
     NoPrompt,
     /// No configured seat serves the compaction role.
     NoSeat,
+    /// The compaction seat leaves less input room than a run's window, so
+    /// a sealed window could not reach it whole.
+    SeatTooSmall,
     /// The host's backend failed in a way no retry fixes.
     BackendFailed,
     /// The run lives in an off-record room, whose overlay compaction is not
@@ -392,6 +395,7 @@ impl CompactionOff {
             Self::Disabled => "disabled",
             Self::NoPrompt => "no_compaction_prompt",
             Self::NoSeat => "no_compaction_seat",
+            Self::SeatTooSmall => "compaction_seat_too_small",
             Self::BackendFailed => "backend_failed",
             Self::OffRecordRun => "off_record_run",
         }

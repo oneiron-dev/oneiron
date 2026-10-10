@@ -71,16 +71,33 @@ impl CodeModeCompaction {
         if !settings.enabled {
             return Self::Off(CompactionOff::Disabled);
         }
-        let role = settings
-            .role
-            .unwrap_or(if runtime.seat(ModelRole::Checker).is_some() {
+        let Some(window_tokens) = settings
+            .window_tokens
+            .or_else(|| input_tokens(models, CHAT_ROLE))
+        else {
+            return Self::Off(CompactionOff::NoSeat);
+        };
+        // A sealed window is at most the run's window: the seat must take it
+        // whole on its smallest rung.
+        let fits = |role| input_tokens(models, role).is_some_and(|room| room >= window_tokens);
+        let role = settings.role.unwrap_or(
+            if runtime.seat(ModelRole::Checker).is_some() && fits(ModelRole::Checker) {
                 ModelRole::Checker
             } else {
                 CHAT_ROLE
-            });
+            },
+        );
         let Some(seat) = runtime.seat(role) else {
             return Self::Off(CompactionOff::NoSeat);
         };
+        if !fits(role) {
+            tracing::warn!(
+                role = %role_key(role),
+                window_tokens,
+                "the compaction seat leaves less input room than a run's window; runs keep their raw window"
+            );
+            return Self::Off(CompactionOff::SeatTooSmall);
+        }
         let prompt = match oneiron::prompt::resolve_engine_executor_compaction_prompt(
             prompt_package,
         ) {
@@ -93,12 +110,6 @@ impl CodeModeCompaction {
                 );
                 return Self::Off(CompactionOff::NoPrompt);
             }
-        };
-        let Some(window_tokens) = settings
-            .window_tokens
-            .or_else(|| code_mode_input_tokens(models))
-        else {
-            return Self::Off(CompactionOff::NoSeat);
         };
         let backend = Arc::new(ServedCompactionBackend {
             vault: Arc::clone(vault),
@@ -176,12 +187,12 @@ impl CodeModeCompaction {
     }
 }
 
-/// The input a code-mode call may fill on its smallest rung: its context
+/// The input a call on `role` may fill on its smallest rung: its context
 /// less the output its provider reserves.
-fn code_mode_input_tokens(models: &ModelsConfig) -> Option<u64> {
+fn input_tokens(models: &ModelsConfig, role: ModelRole) -> Option<u64> {
     models
         .roles
-        .get(&CHAT_ROLE)?
+        .get(&role)?
         .iter()
         .filter_map(|rung| {
             let provider = models.providers.get(&rung.model.provider)?;

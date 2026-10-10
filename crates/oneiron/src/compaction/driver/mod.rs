@@ -138,8 +138,18 @@ pub struct CompactionRequest {
     /// `DerivedFrom` set, so erasing one retires the summary and a reader
     /// who may not read one reads no summary.
     pub sources: Vec<EntityId>,
-    /// Whether the window's turns are board turns the mint folds.
-    pub(crate) folds_board_turns: bool,
+    /// Whose log the window is cut from.
+    pub(crate) log: WindowLog,
+}
+
+/// Whose message log a window is cut from: a conversation, whose board turns
+/// the mint folds and whose lineage is its durable epoch summaries; or a log
+/// the host numbers itself (an executor run), whose lineage is the host's
+/// own coverage rows, so erasing a summary never moves the run's position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowLog {
+    Conversation,
+    Host { prior: Option<super::PriorEpoch> },
 }
 
 /// What a backend produced.
@@ -593,7 +603,14 @@ impl CompactionDriver {
                 sources.push(message.turn_id);
             }
         }
-        self.seal_request(vault, session_ref, window, Vec::new(), sources, true)
+        self.seal_request(
+            vault,
+            session_ref,
+            window,
+            Vec::new(),
+            sources,
+            WindowLog::Conversation,
+        )
     }
 
     pub(super) fn seal_request(
@@ -603,7 +620,7 @@ impl CompactionDriver {
         window: Vec<CompactionWindowMessage>,
         pins: Vec<String>,
         sources: Vec<EntityId>,
-        folds_board_turns: bool,
+        log: WindowLog,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, request } = &self.state else {
             return Err(Error::InvariantViolation(
@@ -618,10 +635,14 @@ impl CompactionDriver {
         let watermark = *watermark;
         let (turn_start, _) = validate_window_span(&window)?;
 
-        let rtxn = vault.store.env.read_txn()?;
-        let prior = prior_epoch_in_txn(&vault.store, &rtxn, session_ref)?;
+        let prior = match log {
+            WindowLog::Conversation => {
+                let rtxn = vault.store.env.read_txn()?;
+                prior_epoch_in_txn(&vault.store, &rtxn, session_ref)?
+            }
+            WindowLog::Host { prior } => prior,
+        };
         validate_epoch_boundary(prior, turn_start)?;
-        drop(rtxn);
 
         let request = CompactionRequest {
             request_id: vault.store.clock.entity_id()?,
@@ -632,7 +653,7 @@ impl CompactionDriver {
             watermark,
             pins,
             sources,
-            folds_board_turns,
+            log,
         };
         self.state = CompactionState::Compacting {
             watermark,
