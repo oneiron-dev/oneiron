@@ -449,20 +449,27 @@ fn escaped_credential_in_any_pack_md_value_is_refused() -> Result<()> {
             "migrations: [{{\"from\":\"0.9.0\",\"rewrites\":{{\"{old}\":{{\"kind\":\"equivalent\",\"to\":\"example.contacts.phone\",\"note\":\"{note}\"}}}}}}]"
         )
     };
-    let agent = |path: String| -> Result<PackSource> {
+    // The knowledge file carries the decoded name, so the facet resolves.
+    let agent = |word: &str| -> Result<PackSource> {
+        let decoded: String = serde_json::from_str(&format!("\"{word}\"")).unwrap();
         let mut files = agent_files()?;
-        let pack = files.iter_mut().find(|f| f.path == "PACK.md").unwrap();
-        pack.content = String::from_utf8(pack.content.clone())
-            .unwrap()
-            .replace("knowledge/selected.json", &path)
-            .into_bytes();
+        for file in &mut files {
+            if file.path == "PACK.md" {
+                file.content = String::from_utf8(file.content.clone())
+                    .unwrap()
+                    .replace("knowledge/selected.json", &format!("knowledge/{word}.json"))
+                    .into_bytes();
+            } else if file.path == "knowledge/selected.json" {
+                file.path = format!("knowledge/{decoded}.json");
+            }
+        }
         PackSource::from_files(files)
     };
     let classes = |word: &str| {
         [
             ("quoted scalar", capability(format!("license: \"{word}\""))),
             ("list item", capability(format!("grants: [\"{word}\"]"))),
-            ("facet", agent(format!("knowledge/{word}.json"))),
+            ("facet", agent(word)),
             (
                 "migration note",
                 capability(migration("example.contacts.tel", word)),
