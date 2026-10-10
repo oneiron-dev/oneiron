@@ -21,6 +21,7 @@ pub(super) mod attention;
 pub(super) mod batcher;
 pub(super) mod cpu_q8;
 pub(super) mod device;
+pub(super) mod evidence;
 pub(super) mod isq;
 pub(crate) mod model_manager;
 pub(super) mod prompts;
@@ -37,6 +38,7 @@ use candle_nn::VarBuilder;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
 use tokenizers::Tokenizer;
 
+use self::evidence::RunProfile;
 use self::isq::Q8Kernel;
 use self::prompts::Prompts;
 use self::qwen3_embedding::{Config, LoadContext, Model};
@@ -67,6 +69,8 @@ pub(crate) struct LocalEmbedder {
     tokenizer: Tokenizer,
     /// How this model turns text into stored vectors ([`LocalModelSpec::transform`]).
     transform: String,
+    /// The settings it runs with that its evidence floors depend on.
+    profile: RunProfile,
     /// Inputs one forward packs, at most.
     batch_size: usize,
     /// Tokens one forward packs, at most ([`FORWARD_TOKENS`]).
@@ -297,6 +301,7 @@ impl LocalEmbedder {
             document_prompt_tokens,
             tokenizer,
             transform,
+            profile: RunProfile::of(config),
             batch_size: config.batch_size.max(1),
             forward_tokens: FORWARD_TOKENS,
             truncations: AtomicU64::new(0),
@@ -306,6 +311,11 @@ impl LocalEmbedder {
     /// How this model turns text into stored vectors.
     pub(super) fn transform(&self) -> &str {
         &self.transform
+    }
+
+    /// The settings it runs with that its evidence floors depend on.
+    pub(super) fn profile(&self) -> &RunProfile {
+        &self.profile
     }
 
     /// Embeds texts in input order, each behind `side`'s prompt, or behind

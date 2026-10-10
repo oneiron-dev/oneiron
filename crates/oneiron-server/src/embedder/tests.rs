@@ -192,6 +192,8 @@ struct MockState {
     behaviour: Mutex<MockBehaviour>,
     /// The model the Oneiron-wire behaviours list and answer as loaded.
     model: Mutex<String>,
+    /// The profile they list and answer with; none until a row sets one.
+    profile: Mutex<Value>,
     requests: Mutex<Vec<Value>>,
 }
 
@@ -202,6 +204,10 @@ impl MockState {
 
     fn model(&self) -> String {
         self.model.lock().expect("mock model lock").clone()
+    }
+
+    fn profile(&self) -> Value {
+        self.profile.lock().expect("mock profile lock").clone()
     }
 }
 
@@ -228,6 +234,7 @@ impl MockEndpoint {
             pause: Mutex::new(None),
             behaviour: Mutex::new(behaviour),
             model: Mutex::new(MOCK_MODEL.to_owned()),
+            profile: Mutex::new(Value::Null),
             requests: Mutex::new(Vec::new()),
         });
         let app = Router::new()
@@ -263,6 +270,12 @@ impl MockEndpoint {
         *self.state.model.lock().expect("mock model lock") = model.to_owned();
     }
 
+    /// Runs the model with another profile, as a server restarted with other
+    /// settings that leave its transform as it was lists and answers it.
+    fn serve_profile(&self, profile: Value) {
+        *self.state.profile.lock().expect("mock profile lock") = profile;
+    }
+
     fn requests(&self) -> Vec<Value> {
         self.state
             .requests
@@ -291,6 +304,7 @@ async fn mock_models(State(state): State<Arc<MockState>>) -> Result<axum::Json<V
                 "oneiron_wire": 1,
                 "model_id": state.model(),
                 "transform": mock_transform(state.behaviour()),
+                "profile": state.profile(),
             }]
         })),
         _ => axum::Json(json!({ "data": [{ "id": MODEL_KEY }] })),
@@ -403,6 +417,7 @@ async fn mock_embeddings(
             "data": rows,
             "model_id": state.model(),
             "transform": transform,
+            "profile": state.profile(),
         })));
     }
     Ok(axum::Json(json!({ "data": rows })))
@@ -456,8 +471,8 @@ fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
         Err(EmbedQueryRefusal::NotReady),
         "no query before the worker admits the endpoint"
     );
-    let refused = slot.ensure_ready(|transform| {
-        assert_eq!(transform, MOCK_TRANSFORM);
+    let refused = slot.ensure_ready(|admission| {
+        assert_eq!(admission.transform, Some(MOCK_TRANSFORM));
         Err(oneiron::Error::InvalidConfig(
             "the vault pins another transform".to_owned(),
         ))
@@ -510,8 +525,8 @@ fn an_oneiron_endpoint_that_changes_how_it_embeds_is_refused_until_restored() {
     let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
         .expect("slot")
         .expect("active");
-    let pinned = |transform: &str| {
-        if transform == MOCK_TRANSFORM {
+    let pinned = |admission: Admission<'_>| {
+        if admission.transform == Some(MOCK_TRANSFORM) {
             Ok(())
         } else {
             Err(oneiron::Error::InvalidConfig(
@@ -567,7 +582,7 @@ fn an_alias_moved_to_another_revision_is_refused_and_nothing_is_stored() {
     let slot = EmbedderSlot::from_config(&config)
         .expect("slot")
         .expect("active");
-    let admit = |transform: &str| vault.adopt_embedding_transform(transform);
+    let admit = |admission: Admission<'_>| admission.into_vault(&vault);
     let embedder = slot
         .ensure_ready(admit)
         .expect("the vault's model, admitted");
@@ -611,6 +626,136 @@ fn an_alias_moved_to_another_revision_is_refused_and_nothing_is_stored() {
         endpoint::resolve_transform(&moved).expect("a move to the served revision"),
         Some(MOCK_TRANSFORM.to_owned())
     );
+}
+
+/// The profile `embedder serve` lists for the shipped model run as it was
+/// measured, with `changed` over it.
+fn shipped_profile(changed: Value) -> Value {
+    let mut profile = json!({
+        "model_dir": false,
+        "quant": "q8_0",
+        "attention": "auto",
+        "output_quantization": "int8",
+        "max_input_tokens": crate::config::embedder::DEFAULT_MAX_INPUT_TOKENS,
+    });
+    if let (Some(profile), Some(changed)) = (profile.as_object_mut(), changed.as_object()) {
+        profile.extend(changed.clone());
+    }
+    profile
+}
+
+/// The shipped model's measured floors.
+const MEASURED: oneiron::config::VectorEvidenceFloors = oneiron::config::VectorEvidenceFloors {
+    floor: 0.15,
+    strong: 0.25,
+};
+
+/// Review P3 (Astra, #1361): a shipped model's measured floors hold only for
+/// the profile they were measured under. Bug repro: an endpoint vault took
+/// them from its own `model_id` alone, so a server running the shipped model
+/// with binary output, which no one measured, was judged by them while a
+/// local vault on the same settings was not. A vault now takes its floors
+/// when it admits the server, from the model and profile the server names,
+/// by the local provider's rule; a profile it cannot read, or none, keeps the
+/// engine's default.
+#[test]
+fn an_endpoint_takes_measured_floors_only_for_the_profile_they_were_measured_with() {
+    let shipped_id = crate::config::embedder::DEFAULT_MODEL_ID;
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    mock.serve_model(shipped_id);
+    let shipped = EmbedderConfig {
+        model_id: shipped_id.to_owned(),
+        ..endpoint_config(&mock.base)
+    };
+    let floors = |profile: Value, config: &EmbedderConfig| {
+        mock.serve_profile(profile);
+        let dir = tempfile::tempdir().expect("vault dir");
+        let vault = vault_on(dir.path(), shipped_id);
+        EmbedderSlot::from_config(config)
+            .expect("slot")
+            .expect("active")
+            .ensure_ready(|admission| admission.into_vault(&vault))
+            .expect("admitted");
+        vault.vector_evidence()
+    };
+    assert_eq!(floors(shipped_profile(json!({})), &shipped), MEASURED);
+    let blank = EmbedderConfig {
+        query_instruction: Some(" \n".to_owned()),
+        ..shipped.clone()
+    };
+    assert_eq!(floors(shipped_profile(json!({})), &blank), MEASURED);
+    let default = oneiron::config::VectorEvidenceFloors::default();
+    for changed in [
+        json!({ "output_quantization": "binary" }),
+        json!({ "quant": "none" }),
+        json!({ "attention": "causal" }),
+        json!({ "attention": "bidirectional" }),
+        json!({ "max_input_tokens": 8 }),
+        json!({ "model_dir": true }),
+        json!({ "quant": "a precision this build does not know" }),
+    ] {
+        assert_eq!(
+            floors(shipped_profile(changed.clone()), &shipped),
+            default,
+            "{changed}"
+        );
+    }
+    assert_eq!(floors(Value::Null, &shipped), default, "no profile listed");
+    let prompted = EmbedderConfig {
+        query_instruction: Some("Represent this query: ".to_owned()),
+        ..shipped
+    };
+    assert_eq!(floors(shipped_profile(json!({})), &prompted), default);
+}
+
+/// A server restarted with another profile and the same transform keeps
+/// serving the vault, judged by the floors that profile takes: its answers
+/// are refused until the worker admits it again, and then fill.
+#[test]
+fn a_server_back_with_another_profile_is_admitted_again_with_its_floors() {
+    let shipped_id = crate::config::embedder::DEFAULT_MODEL_ID;
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    mock.serve_model(shipped_id);
+    mock.serve_profile(shipped_profile(json!({})));
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = vault_on(dir.path(), shipped_id);
+    let config = EmbedderConfig {
+        model_id: shipped_id.to_owned(),
+        idle_interval_ms: 20,
+        // A refused answer's row is leased again after this, inside the
+        // worker's first backoff.
+        lease_ms: 1_000,
+        ..endpoint_config(&mock.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let server = Arc::new(
+        crate::server::SyncServer::new(Arc::clone(&vault), Default::default())
+            .expect("sync server")
+            .with_embedder(Some(slot)),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("worker runtime");
+    runtime.block_on(async {
+        let worker = server.spawn_embedding_worker().expect("a worker");
+        let first = put_claim(&vault, 0xE3, "a claim the measured profile embeds");
+        assert!(wait_for_vectors(&vault, &[first]).await, "filled");
+        assert_eq!(vault.vector_evidence(), MEASURED);
+
+        mock.serve_profile(shipped_profile(json!({ "output_quantization": "binary" })));
+        let second = put_claim(&vault, 0xE4, "a claim the binary profile embeds");
+        let filled = wait_for_vectors(&vault, &[second]).await;
+        worker.abort();
+        assert!(filled, "admitted again and filled");
+        assert_eq!(
+            vault.vector_evidence(),
+            oneiron::config::VectorEvidenceFloors::default()
+        );
+    });
+    runtime.shutdown_background();
 }
 
 /// An endpoint has no model files to read a prompt from: a query carries
@@ -836,9 +981,14 @@ fn an_empty_projection_is_refused() {
 
 /// A vault whose width and space match the mock endpoint.
 fn test_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
+    vault_on(dir, MOCK_MODEL)
+}
+
+/// A vault of the mock endpoint's width in `model`'s space.
+fn vault_on(dir: &std::path::Path, model: &str) -> Arc<oneiron::Vault> {
     let mut config = oneiron::VaultConfig::device();
     config.dimensions = DIMS;
-    config.embedding_model = Some("test/model@rev".to_owned());
+    config.embedding_model = Some(model.to_owned());
     Arc::new(oneiron::Vault::open(dir, config).expect("test vault"))
 }
 

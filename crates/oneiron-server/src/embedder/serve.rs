@@ -22,10 +22,12 @@
 //! `input_type` is a document request. One input runs at query priority and
 //! more park for queries ([`super::local::Priority`]), whichever side they
 //! embed: a recall sends one input and the fill worker sends batches. Every
-//! listing row, an alias's too, and every answer names the model loaded and
-//! the transform that makes its vectors, which the vault's client holds to the
-//! listing it admitted: a restart with another model behind the same name is
-//! refused like one with other settings.
+//! listing row, an alias's too, and every answer names the model loaded, the
+//! transform that makes its vectors and the profile it runs with, which the
+//! vault's client holds to the listing it admitted: a restart with another
+//! model behind the same name is refused like one with other settings. The
+//! profile also decides whether the vault takes the model's measured evidence
+//! floors.
 //!
 //! A request's bearer key is checked from its headers before any of its body
 //! is read. A body is read only once the bytes it declares fit a budget,
@@ -49,6 +51,7 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
+use super::local::evidence::RunProfile;
 use super::local::model_manager::ModelManager;
 use super::local::{Embedded, LocalEmbedder, Priority, Side};
 use crate::config::{EmbedderConfig, EmbedderProvider};
@@ -129,6 +132,8 @@ pub(super) trait ServedModel: Send + Sync + 'static {
     fn dimensions(&self) -> usize;
     /// How it turns text into stored vectors.
     fn transform(&self) -> &str;
+    /// The settings it runs with that a vault's evidence floors depend on.
+    fn profile(&self) -> &RunProfile;
     /// Each text's module-chain output, in input order.
     fn embed_raw(
         &self,
@@ -150,6 +155,10 @@ impl ServedModel for LocalEmbedder {
 
     fn transform(&self) -> &str {
         LocalEmbedder::transform(self)
+    }
+
+    fn profile(&self) -> &RunProfile {
+        LocalEmbedder::profile(self)
     }
 
     fn embed_raw(
@@ -200,6 +209,7 @@ impl Served {
 
     /// Body bytes held now: reserved for bodies being read, or kept by
     /// requests whose work has not ended.
+    #[cfg(test)]
     fn body_bytes_held(&self) -> usize {
         SMALL_BODIES_BYTES - self.small_bodies.available_permits() + LARGE_BODIES_BYTES
             - self.large_bodies.available_permits()
@@ -249,10 +259,13 @@ struct ModelRow {
     owned_by: &'static str,
     /// Beyond OpenAI's fields: what an operator checks a vault against, and
     /// the mark the vault's client reads. `model_id` is the model loaded,
-    /// on an alias's row as on its own: a vault holds an alias to it.
+    /// on an alias's row as on its own: a vault holds an alias to it. The
+    /// profile decides whether the vault takes the model's measured
+    /// evidence floors.
     dimensions: usize,
     model_id: String,
     transform: String,
+    profile: RunProfile,
     oneiron_wire: u32,
 }
 
@@ -268,6 +281,7 @@ async fn models(State(served): State<Arc<Served>>) -> Response {
             dimensions: served.embedder.dimensions(),
             model_id: served.embedder.model_id().to_owned(),
             transform: served.embedder.transform().to_owned(),
+            profile: served.embedder.profile().clone(),
             oneiron_wire: ONEIRON_WIRE,
         })
         .collect();
@@ -305,12 +319,13 @@ struct EmbeddingsResponse {
     data: Vec<EmbeddingRow>,
     model: String,
     usage: Usage,
-    /// The model loaded, whichever name the request gave, and how these
-    /// vectors were made: a vault holds every answer to the listing it
-    /// admitted, so a server restarted with another model behind the same
+    /// The model loaded, whichever name the request gave, how these vectors
+    /// were made and how it runs: a vault holds every answer to the listing
+    /// it admitted, so a server restarted with another model behind the same
     /// name, or with other settings, is refused rather than mixed in.
     model_id: String,
     transform: String,
+    profile: RunProfile,
 }
 
 #[derive(Serialize)]
@@ -546,6 +561,7 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
         },
         model_id: served.embedder.model_id().to_owned(),
         transform: served.embedder.transform().to_owned(),
+        profile: served.embedder.profile().clone(),
     })
     .into_response()
 }

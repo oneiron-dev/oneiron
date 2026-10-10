@@ -137,7 +137,7 @@ impl SyncServer {
                     "embedding worker started without an embedder",
                 ))?;
             let embedder: Arc<dyn QueryEmbedder> =
-                slot.ensure_ready(|transform| server.vault().adopt_embedding_transform(transform))?;
+                slot.ensure_ready(|admission| admission.into_vault(server.vault()))?;
             let config = slot.config();
             server.vault.cold_attach_embedder()?;
             server
@@ -201,6 +201,7 @@ impl SyncServer {
                         tracing::warn!(?error, "embedding reconciliation failed; backing off");
                         failing = true;
                     }
+                    self.readmit_embedder().await;
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
@@ -213,6 +214,26 @@ impl SyncServer {
                     return;
                 }
             }
+        }
+    }
+
+    /// Admits the provider again after a failed pass. An endpoint whose
+    /// answers were refused because its server came back with another
+    /// profile is admitted with the floors that profile takes; one that came
+    /// back with another model or transform is refused here too, and answers
+    /// no query until it is restored.
+    async fn readmit_embedder(self: &Arc<Self>) {
+        let server = Arc::clone(self);
+        let readmitted = tokio::task::spawn_blocking(move || {
+            let slot = server.embedder.as_ref()?;
+            Some(
+                slot.ensure_ready(|admission| admission.into_vault(server.vault()))
+                    .map(drop),
+            )
+        })
+        .await;
+        if let Ok(Some(Err(error))) = readmitted {
+            tracing::debug!(?error, "embedder not admitted again after a failed pass");
         }
     }
 
@@ -281,8 +302,7 @@ impl SyncServer {
             .as_ref()
             .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
         let provider = IndexedProvider {
-            provider: slot
-                .ensure_ready(|transform| self.vault().adopt_embedding_transform(transform))?,
+            provider: slot.ensure_ready(|admission| admission.into_vault(self.vault()))?,
         };
         if provider.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
             return Err(oneiron::Error::InvalidConfig(

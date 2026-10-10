@@ -22,10 +22,7 @@ use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
-use crate::config::{
-    EmbedderAttention, EmbedderConfig, EmbedderOutputQuantization, EmbedderQuant,
-    LocalEmbedderConfig,
-};
+use crate::config::LocalEmbedderConfig;
 use oneiron::config::VectorEvidenceFloors;
 
 /// Where the pinned artifacts live. Only a test ever points this elsewhere.
@@ -135,8 +132,8 @@ pub(crate) struct PinnedModel {
     /// prompt file when the commit carries one.
     pub(crate) files: &'static [PinnedArtifact],
     /// Where vector evidence starts in this model's space, as measured with
-    /// its shipped settings ([`runs_as_measured`]); `None` keeps the
-    /// engine's default.
+    /// its shipped settings ([`super::evidence::RunProfile`]); `None` keeps
+    /// the engine's default.
     pub(crate) evidence: Option<VectorEvidenceFloors>,
 }
 
@@ -163,64 +160,6 @@ pub(crate) const PINNED_MODELS: [PinnedModel; 2] = [
         evidence: None,
     },
 ];
-
-/// Where vector evidence starts for the configured repository and commit,
-/// when it is a shipped default this build measured and the section runs it
-/// as it was measured ([`runs_as_measured`]).
-pub(crate) fn pinned_evidence(config: &EmbedderConfig) -> Option<VectorEvidenceFloors> {
-    if !runs_as_measured(config) {
-        return None;
-    }
-    PINNED_MODELS
-        .iter()
-        .find(|model| model.repo == config.local.repo && model.revision == config.local.revision)
-        .and_then(|model| model.evidence)
-}
-
-/// Where vector evidence starts for an endpoint section: the floors of the
-/// shipped model its `model_id` names, when the vault sends its queries with
-/// no instruction of its own. An endpoint's `model_id` promises the whole
-/// document embedding function, so naming a shipped model promises the
-/// profile its floors were measured under; `embedder serve` serving one also
-/// lists how it embeds, and the vault holds every answer to that.
-pub(crate) fn pinned_endpoint_evidence(config: &EmbedderConfig) -> Option<VectorEvidenceFloors> {
-    let unprompted = config
-        .query_instruction
-        .as_deref()
-        .is_none_or(|instruction| super::batcher::strip(instruction).is_empty());
-    if !unprompted {
-        return None;
-    }
-    PINNED_MODELS
-        .iter()
-        .find(|model| config.model_id == format!("{}@{}", model.repo, model.revision))
-        .and_then(|model| model.evidence)
-}
-
-/// Whether the section runs its model with the settings a pinned model's
-/// floors were measured under: the pinned files themselves (an operator's
-/// `model_dir` is taken as it stands, prompt file included), Q8_0 weights,
-/// the attention and output quantization the checkpoint declares, an input
-/// cap that reads at least what the shipped one does, and queries embedded
-/// with no prompt. Each of these moves where a paraphrase and noise score,
-/// so any other profile is unmeasured.
-fn runs_as_measured(config: &EmbedderConfig) -> bool {
-    let local = &config.local;
-    // The tokenizer strips what it encodes, so an instruction of blanks puts
-    // the same tokens through the model as none.
-    let unprompted = config
-        .query_instruction
-        .as_deref()
-        .map_or(config.query_prompt_name.is_none(), |instruction| {
-            super::batcher::strip(instruction).is_empty()
-        });
-    local.model_dir.is_none()
-        && local.quant == EmbedderQuant::Q8_0
-        && local.attention == EmbedderAttention::Auto
-        && local.output_quantization == EmbedderOutputQuantization::default()
-        && config.max_input_tokens >= crate::config::embedder::DEFAULT_MAX_INPUT_TOKENS
-        && unprompted
-}
 
 /// The pinned digests of the configured repository and commit, when it is a
 /// shipped default.

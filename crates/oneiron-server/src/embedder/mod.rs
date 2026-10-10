@@ -20,6 +20,7 @@ pub(crate) mod serve;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, payload_text};
 
 use crate::config::{EmbedderConfig, EmbedderProvider};
@@ -127,6 +128,25 @@ impl EmbedderCommon {
     }
 }
 
+/// What a vault admits a provider by ([`EmbedderSlot::ensure_ready`]).
+pub(crate) struct Admission<'a> {
+    /// How the provider makes vectors, when it says: held to the vault's pin.
+    pub(crate) transform: Option<&'a str>,
+    /// Where vector evidence starts in the space it serves.
+    pub(crate) evidence: VectorEvidenceFloors,
+}
+
+impl Admission<'_> {
+    /// Admits into `vault`: the transform against its pin, which a vault
+    /// that has none adopts, then the floors its context packs are judged by.
+    pub(crate) fn into_vault(self, vault: &oneiron::Vault) -> oneiron::Result<()> {
+        if let Some(transform) = self.transform {
+            vault.adopt_embedding_transform(transform)?;
+        }
+        vault.set_vector_evidence(self.evidence)
+    }
+}
+
 /// Why a query could not be embedded.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EmbedQueryRefusal {
@@ -219,26 +239,27 @@ impl EmbedderSlot {
     /// minutes and belongs on a blocking thread. Idempotent: once ready, it
     /// returns the same provider.
     ///
-    /// `admit` sees the loaded model's transform descriptor before the
-    /// provider serves anything, and its refusal leaves the slot not ready: a
-    /// model whose files only arrived after the vault opened is checked
-    /// against the vault's pinned transform here rather than at open. An
-    /// endpoint that says what it serves (`embedder serve`) is checked the
-    /// same way, once its listing has been read, and must name the vault's
-    /// model as the one it loaded.
+    /// `admit` sees the loaded model's transform descriptor and evidence
+    /// floors before the provider serves anything, and its refusal leaves the
+    /// slot not ready: a model whose files only arrived after the vault opened
+    /// is checked against the vault's pinned transform here rather than at
+    /// open. An endpoint that says what it serves (`embedder serve`) is
+    /// checked the same way, once its listing has been read, and must name the
+    /// vault's model as the one it loaded; its floors are known only then.
     pub(crate) fn ensure_ready(
         &self,
-        admit: impl FnOnce(&str) -> oneiron::Result<()>,
+        admit: impl FnOnce(Admission<'_>) -> oneiron::Result<()>,
     ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         if let Some(ready) = self.ready.get() {
             if let Some(http) = ready.as_endpoint() {
                 // Read afresh each time: a refused remote restored to the
                 // vault's model and settings is admitted on the worker's next
-                // try.
+                // try, and one restarted with another profile gets its floors.
                 let admitted = http.served().and_then(|served| {
-                    if let Some(transform) = served.transform() {
-                        admit(transform)?;
-                    }
+                    admit(Admission {
+                        transform: served.transform(),
+                        evidence: served.evidence(&self.config),
+                    })?;
                     Ok(served)
                 });
                 // The answers' pin goes in before queries are let through.
@@ -256,7 +277,10 @@ impl EmbedderSlot {
             return Ok(Arc::clone(ready));
         }
         let local = local::LocalEmbedder::load(&self.config, &self.models)?;
-        admit(local.transform())?;
+        admit(Admission {
+            transform: Some(local.transform()),
+            evidence: evidence_floors(&self.config),
+        })?;
         self.admitted.store(true, Ordering::Release);
         let embedder = local as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
@@ -301,19 +325,15 @@ pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
     }
 }
 
-/// Where vector evidence starts in this section's embedding space: the
-/// measured floors of a shipped local model run as it was measured, or of
-/// the shipped model an endpoint's `model_id` names, otherwise the engine's
-/// default.
-pub(crate) fn evidence_floors(config: &EmbedderConfig) -> oneiron::config::VectorEvidenceFloors {
+/// Where vector evidence starts in this section's embedding space, as far as
+/// the section says before its provider is admitted: the measured floors of a
+/// shipped local model run as it was measured, otherwise the engine's
+/// default. An endpoint's depend on what its server serves, and are set when
+/// the vault admits it ([`EmbedderSlot::ensure_ready`]).
+pub(crate) fn evidence_floors(config: &EmbedderConfig) -> VectorEvidenceFloors {
     match config.provider {
-        EmbedderProvider::Local => {
-            local::model_manager::pinned_evidence(config).unwrap_or_default()
-        }
-        EmbedderProvider::Endpoint => {
-            local::model_manager::pinned_endpoint_evidence(config).unwrap_or_default()
-        }
-        EmbedderProvider::None => Default::default(),
+        EmbedderProvider::Local => local::evidence::pinned_evidence(config).unwrap_or_default(),
+        EmbedderProvider::Endpoint | EmbedderProvider::None => VectorEvidenceFloors::default(),
     }
 }
 

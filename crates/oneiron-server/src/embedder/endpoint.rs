@@ -16,9 +16,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
 use oneiron::error::StoreError;
 
+use super::local::evidence::{self, RunProfile};
 use super::{EmbedderCommon, QueryEmbedder, engine_locality};
 use crate::config::EmbedderConfig;
 
@@ -99,6 +101,10 @@ struct EmbeddingsResponse {
     /// How these vectors were made, from `embedder serve`.
     #[serde(default)]
     transform: Option<String>,
+    /// How the model that made them runs, from `embedder serve`
+    /// ([`RunProfile`]), kept as sent.
+    #[serde(default)]
+    profile: Option<serde_json::Value>,
 }
 
 #[derive(serde::Deserialize)]
@@ -124,6 +130,8 @@ struct ModelRow {
     model_id: Option<String>,
     #[serde(default)]
     transform: Option<String>,
+    #[serde(default)]
+    profile: Option<serde_json::Value>,
 }
 
 /// What the vault admitted for a remote.
@@ -147,6 +155,10 @@ pub(crate) struct Listing {
     model_id: Option<String>,
     /// How the remote makes vectors, when it says ([`Wire::Oneiron`]).
     transform: Option<String>,
+    /// How it runs the model, when it says ([`Wire::Oneiron`]), as sent: a
+    /// profile this build cannot read is held to all the same, and judged
+    /// unmeasured.
+    profile: Option<serde_json::Value>,
 }
 
 impl Listing {
@@ -155,13 +167,38 @@ impl Listing {
         self.transform.as_deref()
     }
 
+    /// Where vector evidence starts in the space this listing serves: a
+    /// shipped model's measured floors when the remote names that model
+    /// loaded and runs it as it was measured ([`RunProfile`]), and the
+    /// vault's queries go unprompted; the engine's default otherwise, and for
+    /// any remote that does not say.
+    pub(crate) fn evidence(&self, config: &EmbedderConfig) -> VectorEvidenceFloors {
+        let profile = self
+            .profile
+            .clone()
+            .and_then(|profile| serde_json::from_value::<RunProfile>(profile).ok());
+        match (&self.model_id, profile) {
+            (Some(model_id), Some(profile)) => evidence::measured_floors(
+                model_id,
+                &profile,
+                evidence::endpoint_queries_unprompted(config),
+            )
+            .unwrap_or_default(),
+            _ => VectorEvidenceFloors::default(),
+        }
+    }
+
     /// Whether an answer names what this listing did: `embedder serve` names
-    /// the model it loaded and its transform in every answer, and any other
-    /// server neither.
+    /// the model it loaded, its transform and its profile in every answer,
+    /// and any other server none of them.
     fn agrees_with(&self, answer: &EmbeddingsResponse) -> bool {
         match self.wire {
             Wire::OpenAi => answer.transform.is_none(),
-            Wire::Oneiron => answer.model_id == self.model_id && answer.transform == self.transform,
+            Wire::Oneiron => {
+                answer.model_id == self.model_id
+                    && answer.transform == self.transform
+                    && answer.profile == self.profile
+            }
         }
     }
 }
@@ -173,7 +210,7 @@ pub(crate) struct HttpEmbedder {
     locality: EmbedderLocality,
     max_input_chars: usize,
     /// The vault's own query prompt, if it names one; an empty one for a vault
-    /// on a shipped model's measured evidence floors, which were measured
+    /// on a shipped model with measured evidence floors, which were measured
     /// with no query prompt, so the server's own never applies to it.
     query_instruction: Option<String>,
     /// The remote's last `/models` listing that answered, read before the
@@ -262,7 +299,7 @@ impl HttpEmbedder {
             locality: engine_locality(config.endpoint.locality),
             max_input_chars: config.max_input_tokens.saturating_mul(CHARS_PER_TOKEN),
             query_instruction: config.query_instruction.clone().or_else(|| {
-                super::local::model_manager::pinned_endpoint_evidence(config).map(|_| String::new())
+                super::local::evidence::names_measured_model(&config.model_id).then(String::new)
             }),
             listing: Mutex::new(None),
             admitted: Mutex::new(Admitted::Unchecked),
@@ -321,11 +358,12 @@ impl HttpEmbedder {
     }
 
     /// Records what the vault admitted. From then on an answer that names
-    /// another model or transform than the admitted listing, or names one
-    /// where none was listed, is refused: a remote restarted with another
-    /// model or other settings, or whose listing could not be read as
+    /// another model, transform or profile than the admitted listing, or
+    /// names one where none was listed, is refused: a remote restarted with
+    /// another model or other settings, or whose listing could not be read as
     /// `embedder serve`'s, fills and answers nothing until it is restored or
-    /// the vault is reembedded.
+    /// the vault is reembedded, or, for a profile alone, until the worker
+    /// admits it again with the floors that profile takes.
     pub(crate) fn admit(&self, listing: Listing) {
         *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Listing(listing);
     }
@@ -369,11 +407,13 @@ impl HttpEmbedder {
                 wire: Wire::Oneiron,
                 model_id: row.model_id.clone(),
                 transform: row.transform.clone(),
+                profile: row.profile.clone(),
             },
             None => Listing {
                 wire: Wire::OpenAi,
                 model_id: None,
                 transform: None,
+                profile: None,
             },
         }
     }

@@ -98,6 +98,7 @@ const KEY: &str = "synthetic-endpoint-key";
 struct Synthetic {
     model_id: &'static str,
     transform: &'static str,
+    profile: RunProfile,
 }
 
 impl ServedModel for Synthetic {
@@ -111,6 +112,10 @@ impl ServedModel for Synthetic {
 
     fn transform(&self) -> &str {
         self.transform
+    }
+
+    fn profile(&self) -> &RunProfile {
+        &self.profile
     }
 
     fn embed_raw(
@@ -143,6 +148,7 @@ fn synthetic() -> Arc<dyn ServedModel> {
     Arc::new(Synthetic {
         model_id: SYNTHETIC_MODEL,
         transform: SYNTHETIC_TRANSFORM,
+        profile: RunProfile::of(&EmbedderConfig::default()),
     })
 }
 
@@ -264,7 +270,8 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
 /// Review P1 (Astra, #1361): a vault may name the model by an alias, and the
 /// model behind an alias can change while the alias stays. Every listing row,
 /// an alias's too, and every answer names the model loaded, which the vault
-/// holds to its own.
+/// holds to its own, and the profile it runs with, which decides the vault's
+/// evidence floors (review P3).
 #[test]
 fn every_row_and_answer_names_the_model_loaded() {
     let (addr, _runtime) = on_loopback(router(synthetic(), vec!["shared".to_owned()], None));
@@ -276,9 +283,17 @@ fn every_row_and_answer_names_the_model_loaded() {
         .expect("listing");
     let rows = listed["data"].as_array().expect("rows");
     assert_eq!(rows.len(), 2);
+    let profile = serde_json::json!({
+        "model_dir": false,
+        "quant": "q8_0",
+        "attention": "auto",
+        "output_quantization": "int8",
+        "max_input_tokens": crate::config::embedder::DEFAULT_MAX_INPUT_TOKENS,
+    });
     for row in rows {
         assert_eq!(row["model_id"], SYNTHETIC_MODEL, "{row}");
         assert_eq!(row["transform"], SYNTHETIC_TRANSFORM, "{row}");
+        assert_eq!(row["profile"], profile, "{row}");
     }
     let answer: serde_json::Value = client
         .post(format!("http://{addr}/v1/embeddings"))
@@ -289,4 +304,5 @@ fn every_row_and_answer_names_the_model_loaded() {
     assert_eq!(answer["model"], "shared");
     assert_eq!(answer["model_id"], SYNTHETIC_MODEL);
     assert_eq!(answer["transform"], SYNTHETIC_TRANSFORM);
+    assert_eq!(answer["profile"], profile);
 }

@@ -159,19 +159,33 @@ same verified files, tokenizer, pooling and module chain, returns the chain's
 output, and the vault normalises and rounds it exactly as the local provider
 does. The vault's client recognises this server from its `/v1/models` listing
 and then sends whole texts marked query or document, so the server's tokenizer
-cuts long inputs and its prompts apply where a local vault's would. The vault
-also holds the server's transform to the one it pinned, on every answer: a
-server started, or restarted, with say another output quantization fills and
-answers nothing until its settings are restored or `oneiron-server reembed`,
-run with the endpoint configuration, moves the vault to it. A vault can move
-between `local` and this endpoint without `reembed`.
+cuts long inputs and its prompts apply where a local vault's would. The server
+names the model it loaded, its transform and the settings it runs with on
+every listing row (an alias's too, from `--model-alias`) and in every answer.
+The vault admits the server only when that model is the vault's own
+`model_id`, and holds every answer to the model and transform it admitted: a
+server started, or restarted, with another model behind the same name, or with
+say another output quantization, fills and answers nothing until it is
+restored or `oneiron-server reembed`, run with the endpoint configuration,
+moves the vault to it. A vault can move between `local` and this endpoint
+without `reembed`.
+
+A vault on the shipped model judges vector evidence by that model's measured
+floors only when the server runs it as it was measured (Q8_0 weights, the
+checkpoint's attention and output quantization, the shipped input cap or more,
+its own files) and the vault's queries carry no prompt of their own; any other
+profile, and any other endpoint, keeps the engine's default floors, as a
+`local` vault on the same settings does.
 `deploy/systemd/oneiron-embedder.service` runs it as a user service.
 
 `--config` or the `--embedder-*` flags pick another local model, as `serve`
 reads them. Off loopback the server needs `--api-key-env NAME` (vaults send the
 key with `--embedder-api-key-env`), and vaults refuse a network endpoint that is
 not HTTPS, so reach a remote embedder through a TLS proxy such as
-`tailscale serve`, or an SSH tunnel to a loopback port.
+`tailscale serve`, or an SSH tunnel to a loopback port. The server checks the
+key before it reads any of a request's body, and reads bodies only within a
+budget (16 MiB for bodies up to 256 KiB, 64 MiB for larger ones, each body at
+most 32 MiB), so neither strangers nor key holders can make it hold more.
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
 `PATH`) and ask for the device:
