@@ -51,6 +51,18 @@ pub(super) enum WitnessTarget<'a, 'v> {
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
     Imported { stamp: &'a ImportedTurnStamp },
+    /// Durable base, for a turn whose tags its importer already holds.
+    Held { held: HeldTags<'a> },
+}
+
+/// Tags an importer holds for the turn it lands, and the cell the program
+/// leaves what they did to the turn's tagging marker in. They are settled in
+/// the turn's own write, after its marker is committed (ARCH-0036: an import
+/// that already holds tags completes its marker without a tagger call).
+#[derive(Clone, Copy)]
+pub(super) struct HeldTags<'a> {
+    pub(super) tags: &'a crate::memory::extraction::EncoderOutput,
+    pub(super) outcome: &'a std::cell::Cell<Option<crate::tagging::HeldTagsOutcome>>,
 }
 
 /// What an imported transcript turn carries that a witnessed one does not: the
@@ -93,6 +105,7 @@ enum Landing<'a, 'v> {
         route: Option<&'a SessionWriteRoute>,
         continuation: Option<EntityId>,
         imported: Option<&'a ImportedTurnStamp>,
+        held: Option<HeldTags<'a>>,
     },
     Overlay {
         session: &'a OffRecordSession<'v>,
@@ -270,6 +283,13 @@ impl Memory<'_> {
                 route,
                 continuation: None,
                 imported: None,
+                held: None,
+            },
+            WitnessTarget::Held { held } => Landing::Base {
+                route: None,
+                continuation: None,
+                imported: None,
+                held: Some(held),
             },
             WitnessTarget::Imported { stamp } => {
                 if turn
@@ -292,6 +312,7 @@ impl Memory<'_> {
                     route: None,
                     continuation: None,
                     imported: Some(stamp),
+                    held: None,
                 }
             }
             WitnessTarget::Session { session, summary } => {
@@ -313,6 +334,7 @@ impl Memory<'_> {
                         route: Some(&session_route),
                         continuation: Some(session.on_record_continuation_shell()?),
                         imported: None,
+                        held: None,
                     }
                 } else {
                     Landing::Overlay {
@@ -325,6 +347,10 @@ impl Memory<'_> {
         };
 
         let plan = self.plan_witness(turn, &landing, door)?;
+        let held = match &landing {
+            Landing::Base { held, .. } => *held,
+            Landing::Overlay { .. } => None,
+        };
         let sink = match landing {
             Landing::Base { route, .. } => WitnessSink::Base(self.base_sink(&plan, route)?),
             Landing::Overlay {
@@ -383,6 +409,24 @@ impl Memory<'_> {
                     {
                         crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
                         crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                    }
+                    // Held tags settle the marker just committed, in this
+                    // write, so no worker ever claims it. Their spans index
+                    // the messages as sent.
+                    if let Some(held) = held {
+                        let sent: Vec<_> = plan
+                            .messages
+                            .iter()
+                            .map(|planned| (planned.id, planned.message.content.as_str()))
+                            .collect();
+                        held.outcome
+                            .set(Some(crate::tagging::settle_held_tags_in_txn(
+                                self.vault,
+                                wtxn,
+                                &plan.turn_id,
+                                held.tags,
+                                Some(&sent),
+                            )?));
                     }
                     Landed::Base
                 }

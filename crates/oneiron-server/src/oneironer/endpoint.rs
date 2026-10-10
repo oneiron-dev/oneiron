@@ -72,10 +72,6 @@ pub(crate) enum ProbeError {
     WrongLabelCount { expected: u32 },
     #[error("the tagger declares no spans")]
     NoSpans,
-    #[error(
-        "the tagger returns no mood; a spans-only tagger needs the optional-mood contract (ONE-2167)"
-    )]
-    NoMood,
     #[error("the tagger did not answer GET /v1/model with a model card")]
     NoModelCard,
 }
@@ -212,9 +208,6 @@ impl HttpTagger {
         }
         if !card.returns.spans {
             return Err(ProbeError::NoSpans);
-        }
-        if !card.returns.mood && !oneiron::tagging::spans_only_answers_admitted() {
-            return Err(ProbeError::NoMood);
         }
         Ok(ProbeOutcome::Ready(card))
     }

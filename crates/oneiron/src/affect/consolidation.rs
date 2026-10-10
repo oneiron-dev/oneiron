@@ -7,9 +7,10 @@ use std::collections::BTreeSet;
 use super::{
     CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimVadConsolidation, ClaimVadReappraisal,
     ClaimVadTurnEvidence, VAD_ANNOTATION_CLAIM_PREDICATE, VAD_ANNOTATION_META, Vad, VadAnnotation,
-    claim_vad_evidence_value, claim_vad_value, collect_claim_turn_evidence_refs,
-    decode_vad_annotation_claim_body_if_present, mean_vad, vad_annotation_claim_body,
-    vad_annotation_claim_id, vad_annotation_from_value, vad_annotation_meta_key,
+    VadAnnotationSource, claim_vad_evidence_value, claim_vad_value,
+    collect_claim_turn_evidence_refs, decode_vad_annotation_claim_body_if_present, mean_vad,
+    vad_annotation_claim_body, vad_annotation_claim_id, vad_annotation_from_value,
+    vad_annotation_meta_key,
 };
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
@@ -155,22 +156,6 @@ impl Vault {
         let result = self.consolidate_claim_vad_staged(&mut wtxn, claim_id, claim_body, now)?;
         wtxn.commit()?;
         Ok(result)
-    }
-
-    /// Stages the canonical consolidation in an enclosing atomic operation.
-    /// Unlike the standalone maintenance door, a decline leaves all rollback
-    /// decisions to that operation and never commits a partial clear.
-    pub(crate) fn consolidate_claim_vad_in_write_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        claim_id: &EntityId,
-        now: u64,
-    ) -> Result<ClaimVadConsolidation> {
-        let body = self.claim_body_for_claim_vad_in_txn(wtxn, claim_id)?;
-        if !claim_consolidatable(&body) {
-            return Err(Error::InvalidClaimBody("claim is not consolidatable"));
-        }
-        self.consolidate_claim_vad_staged(wtxn, claim_id, body, now)
     }
 
     fn consolidate_claim_vad_staged(
@@ -464,7 +449,7 @@ impl Vault {
 
         let key = vad_annotation_meta_key(ENTITY_TYPE_TURN, turn_id);
         let Some(annotation) = VAD_ANNOTATION_META.get(&self.store, txn, &key)? else {
-            return Ok(None);
+            return saved_turn_mood_in_txn(&self.store, txn, turn_id);
         };
         annotation.vad.validate()?;
         Ok(Some(annotation))
@@ -737,9 +722,31 @@ impl Vault {
 
         let key = vad_annotation_meta_key(expected_type, id);
         let Some(annotation) = VAD_ANNOTATION_META.get(&self.store, &rtxn, &key)? else {
+            if expected_type == ENTITY_TYPE_TURN {
+                return saved_turn_mood_in_txn(&self.store, &rtxn, id);
+            }
             return Ok(None);
         };
         annotation.vad.validate()?;
         Ok(Some(annotation))
     }
+}
+
+/// The mood the tagger saved on a turn (ARCH-0036: affect lands on the
+/// turn), read when no annotation was written on it: an explicit annotation,
+/// a self-report above all, stands over the tagger's read.
+fn saved_turn_mood_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<VadAnnotation>> {
+    Ok(
+        crate::tagging::saved_turn_mood_in_txn(store, txn, turn)?.map(|(vad, saved_at)| {
+            VadAnnotation {
+                vad,
+                source: VadAnnotationSource::ModelInference,
+                annotated_at: saved_at,
+            }
+        }),
+    )
 }

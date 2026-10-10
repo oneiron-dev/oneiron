@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::tagging::{TaggingOutcome, TaggingTrace};
 
-use crate::config::{OneironerConfig, OneironerMode, OneironerProvider};
+use crate::config::{OneironerConfig, OneironerProvider};
 
 pub(crate) mod endpoint;
 
@@ -31,10 +31,6 @@ pub(crate) enum TaggerNotBuilt {
         "oneironer.provider = \"local\" is not built yet; run a tagger server on this machine and set provider = \"endpoint\""
     )]
     LocalProvider,
-    #[error(
-        "oneironer.mode = \"save\" is not built yet (ONE-2167); set mode = \"shadow\" to tag without saving"
-    )]
-    SaveMode,
 }
 
 /// One trace as a test observes it.
@@ -114,18 +110,15 @@ impl TaggerSlot {
 /// Builds the slot for a resolved section, probing the tagger before the
 /// listener binds.
 ///
-/// `None` and an absent section build nothing. The local provider and save
-/// mode are refused, typed. A reachable tagger that is not the configured one
-/// stops `serve`; an unreachable one is logged and the worker probes again.
+/// `None` and an absent section build nothing. The local provider is refused,
+/// typed. A reachable tagger that is not the configured one stops `serve`; an
+/// unreachable one is logged and the worker probes again.
 pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Option<TaggerSlot>> {
     let Some(config) = config.filter(|config| config.is_active()) else {
         return Ok(None);
     };
     if config.provider == OneironerProvider::Local {
         return Err(TaggerNotBuilt::LocalProvider.into());
-    }
-    if config.mode == OneironerMode::Save {
-        return Err(TaggerNotBuilt::SaveMode.into());
     }
     let tagger = endpoint::HttpTagger::from_config(config)?;
     let slot = TaggerSlot {

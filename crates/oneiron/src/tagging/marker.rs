@@ -1,6 +1,8 @@
 //! The marker row: its kind, payload, dedupe key, derived id and the
 //! in-transaction doors that commit it.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome, RetryAttempt};
@@ -62,6 +64,29 @@ impl Default for TaggingTraceHistory {
     }
 }
 
+/// What a checked answer does to the vault.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TaggingMode {
+    /// The turn's tags are saved: a vault with a tagger saves its tags
+    /// (ARCH-0036, serving the tagger).
+    #[default]
+    Save,
+    /// The marker settles and nothing else is written: the test switch.
+    Shadow,
+}
+
+/// The longest model label the label table admits, in bytes.
+const MAX_LABEL_BYTES: usize = 64;
+
+/// Whether the label table may map a label to `kind`: only a kind with a
+/// declared identity key can be linked or minted, so a mention of any other
+/// kind (an event, say, which the Dreamer mints) stays a tag by leaving its
+/// label out of the table.
+#[must_use]
+pub fn label_kind_admitted(kind: u8) -> bool {
+    !crate::ingest::identity_fields_for_kind(kind).is_empty()
+}
+
 /// Arms the tagging marker on a vault ([`crate::VaultConfig::tagging`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaggingMarkerConfig {
@@ -79,16 +104,28 @@ pub struct TaggingMarkerConfig {
     pub live_window_tokens: u32,
     /// The traces kept once their markers leave the job ledger.
     pub trace_history: TaggingTraceHistory,
+    /// Save the tags, or settle in shadow.
+    pub mode: TaggingMode,
+    /// The label table: model label to the entity kind a span with that
+    /// label is linked as. It maps name labels only. A label absent here
+    /// stays a tag, and a coreferent span with one takes its antecedent's
+    /// link without a lookup: a pronoun's label (a tagger's reference or
+    /// pronoun mention class) stays out, so a pronoun is never linked by its
+    /// own text. No model's label names sit in engine code; the host
+    /// supplies the table.
+    pub labels: BTreeMap<String, u8>,
 }
 
 impl TaggingMarkerConfig {
     /// A validated marker configuration, with the default live window and
-    /// trace history.
+    /// trace history, saving its tags under an empty label table.
     pub fn new(checkpoint: impl Into<String>) -> Result<Self> {
         let config = Self {
             checkpoint: checkpoint.into(),
             live_window_tokens: DEFAULT_LIVE_WINDOW_TOKENS,
             trace_history: TaggingTraceHistory::default(),
+            mode: TaggingMode::Save,
+            labels: BTreeMap::new(),
         };
         config.validate()?;
         Ok(config)
@@ -106,9 +143,22 @@ impl TaggingMarkerConfig {
         self
     }
 
+    #[must_use]
+    pub fn with_mode(mut self, mode: TaggingMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    #[must_use]
+    pub fn with_labels(mut self, labels: BTreeMap<String, u8>) -> Self {
+        self.labels = labels;
+        self
+    }
+
     /// Refuses a checkpoint that is not 16 lowercase hex digits, a live
-    /// window past the runtime's input window, and a trace history past its
-    /// bounds or with no age.
+    /// window past the runtime's input window, a trace history past its
+    /// bounds or with no age, and a label table row that is empty, longer
+    /// than 64 bytes or maps to a kind with no identity key.
     pub fn validate(&self) -> Result<()> {
         let invalid = |reason: &str| Err(Error::InvalidConfig(reason.to_owned()));
         if !is_checkpoint(&self.checkpoint) {
@@ -122,6 +172,14 @@ impl TaggingMarkerConfig {
         }
         if self.trace_history.max_age_secs == 0 {
             return invalid("tagging trace history max age must be greater than zero");
+        }
+        for (label, kind) in &self.labels {
+            if label.is_empty() || label.len() > MAX_LABEL_BYTES {
+                return invalid("a tagging label must be 1 to 64 bytes");
+            }
+            if !label_kind_admitted(*kind) {
+                return invalid("a tagging label maps to a kind with no identity key");
+            }
         }
         Ok(())
     }

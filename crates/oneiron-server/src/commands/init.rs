@@ -59,8 +59,8 @@ fn init_with_env(
     let staged = stage_config(&path, &config_text)?;
     let result = (|| {
         let config = read_config(&staged, env)?;
-        // The same slot serve builds: the local provider and save mode are
-        // refused by name, and a reachable tagger must be the configured one.
+        // The same slot serve builds: the local provider is refused by name,
+        // and a reachable tagger must be the configured one.
         // Checked first, so a refusal comes before the local model download.
         crate::oneironer::build_slot(config.oneironer.as_ref())?;
         let device = match config.embedder.as_ref().filter(|c| c.is_active()) {
@@ -118,8 +118,8 @@ fn init_with_env(
 }
 
 /// Asks for the tagger the way the embedder is asked for. The local tagger is
-/// not built yet, so the default is none; save mode is not built yet either,
-/// so the mode defaults to shadow.
+/// not built yet, so the default is none. A vault with a tagger saves its
+/// tags, so the mode defaults to save; shadow is the test switch.
 fn ask_tagger(
     args: &mut InitArgs,
     input: &mut impl BufRead,
@@ -152,9 +152,9 @@ fn ask_tagger(
         args.oneironer_label_count = Some(ask("Tagger label count: ")?.parse()?);
     }
     if args.oneironer_mode.is_none() {
-        let mode = ask("Tagger mode shadow | save (save is not available yet) [shadow]: ")?;
+        let mode = ask("Tagger mode save | shadow [save]: ")?;
         args.oneironer_mode = Some(if mode.is_empty() {
-            OneironerMode::Shadow
+            OneironerMode::Save
         } else {
             mode.parse().map_err(anyhow::Error::msg)?
         });
@@ -174,11 +174,11 @@ fn tagger_table(args: &InitArgs) -> anyhow::Result<toml::Table> {
     }
     let mut table = toml::Table::new();
     table.insert("provider".into(), choice.as_str().into());
-    // An endpoint without a stated mode runs in shadow, as the interactive
-    // default does, while save is not built.
+    // An endpoint without a stated mode saves its tags, as the interactive
+    // default does.
     let mode = match (choice, args.oneironer_mode) {
         (_, Some(mode)) => Some(mode),
-        (OneironerProvider::Endpoint, None) => Some(OneironerMode::Shadow),
+        (OneironerProvider::Endpoint, None) => Some(OneironerMode::Save),
         _ => None,
     };
     if let Some(mode) = mode {
@@ -639,7 +639,7 @@ provider = "local"
     }
 
     #[test]
-    fn the_interactive_tagger_mode_defaults_to_shadow_while_save_is_not_built() {
+    fn the_interactive_tagger_mode_defaults_to_save() {
         let mut args = InitArgs::default();
         let mut shown = Vec::new();
         ask_tagger(
@@ -648,21 +648,18 @@ provider = "local"
             &mut shown,
         )
         .unwrap();
-        assert_eq!(args.oneironer_mode, Some(OneironerMode::Shadow));
+        assert_eq!(args.oneironer_mode, Some(OneironerMode::Save));
         let shown = String::from_utf8(shown).unwrap();
-        assert!(
-            shown.contains("save is not available yet) [shadow]"),
-            "{shown}"
-        );
+        assert!(shown.contains("save | shadow [save]"), "{shown}");
         let table = tagger_table(&args).unwrap();
         assert_eq!(
             table.get("mode").and_then(toml::Value::as_str),
-            Some("shadow")
+            Some("save")
         );
     }
 
     #[test]
-    fn a_non_interactive_endpoint_init_without_a_mode_writes_shadow() {
+    fn a_non_interactive_endpoint_init_without_a_mode_writes_save() {
         let args = InitArgs {
             oneironer: Some(OneironerProvider::Endpoint),
             oneironer_url: Some("http://127.0.0.1:9100".into()),
@@ -673,7 +670,7 @@ provider = "local"
         let table = tagger_table(&args).unwrap();
         assert_eq!(
             table.get("mode").and_then(toml::Value::as_str),
-            Some("shadow")
+            Some("save")
         );
         let none = tagger_table(&InitArgs::default()).unwrap();
         assert!(none.get("mode").is_none());

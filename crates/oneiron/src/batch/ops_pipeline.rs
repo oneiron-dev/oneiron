@@ -368,8 +368,10 @@ pub(crate) fn apply_ops_session(
                 // Same registry discipline as base: a room is not a place
                 // where unknown or engine-authored type bytes become writable.
                 // Promote replays these rows into base, so a byte that would
-                // be rejected there is rejected here.
+                // be rejected there is rejected here, and so is an id a base
+                // provisional entity holds.
                 crate::registry::validate_public_entity_type(*entity_type)?;
+                crate::tagging::refuse_held_id_in_txn(view, wtxn, id)?;
                 // D18, on the same terms: a CLAIM body is structurally
                 // validated before a byte of it is staged. The type-byte gate
                 // above is not enough — it admits the byte, not the shape.

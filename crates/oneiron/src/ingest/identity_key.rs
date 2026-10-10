@@ -58,17 +58,18 @@ fn hints(kind: u8, bytes: &[u8]) -> BTreeSet<String> {
 const IDENTITY_HINT: SideTable<([u8; 1], [u8; 32], EntityId), (), Raw> =
     SideTable::new(&side_table::INGEST_IDENTITY_HINT);
 
+/// The digest an identity hint is indexed under: the hint trimmed and
+/// lowercased, hashed. A local index of hints keys them the same way.
+pub(crate) fn identity_hint_digest(hint: &str) -> [u8; 32] {
+    *blake3::hash(hint.trim().to_lowercase().as_bytes()).as_bytes()
+}
 fn hint_prefix(kind: u8, hint: &str) -> Vec<u8> {
     let mut key = vec![kind];
-    key.extend_from_slice(blake3::hash(hint.trim().to_lowercase().as_bytes()).as_bytes());
+    key.extend_from_slice(&identity_hint_digest(hint));
     key
 }
 fn hint_key(kind: u8, hint: &str, id: &EntityId) -> ([u8; 1], [u8; 32], EntityId) {
-    (
-        [kind],
-        *blake3::hash(hint.trim().to_lowercase().as_bytes()).as_bytes(),
-        *id,
-    )
+    ([kind], identity_hint_digest(hint), *id)
 }
 
 pub(crate) fn reindex_identity_hints(
@@ -114,7 +115,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.lookup_identity_key_in_txn(&txn, kind, mention)
     }
-    pub(super) fn lookup_identity_key_in_txn(
+    pub(crate) fn lookup_identity_key_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         kind: u8,

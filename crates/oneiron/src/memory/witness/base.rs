@@ -66,6 +66,50 @@ impl Memory<'_> {
         )
     }
 
+    /// [`Self::witness`] for a turn whose tags the caller already holds: an
+    /// import or a backfill that tagged it elsewhere. On a vault with a
+    /// tagger, the tags are checked against the turn's text, saved, and the
+    /// turn's tagging marker settles, all in the turn's own write, so no
+    /// worker ever calls the tagger for it.
+    ///
+    /// A span's `message` indexes `turn.messages` as sent, in the order sent
+    /// and whatever their `order`; its offsets are bytes of that message's
+    /// `content`. In the write, each span moves by message id onto the text
+    /// the turn shows, which is what the tagger reads: its visible, non-empty
+    /// messages in `order`. Tags settle the turn only when they read all of
+    /// that text. So they are refused when a span names a message sent hidden
+    /// or empty, which the turn does not show, and when the turn shows a
+    /// message not sent with them: an append to a turn that already held
+    /// text, which the tagger then reads whole. Tags that break the contract
+    /// or are refused leave the marker to the tagger; the turn lands either
+    /// way. The outcome says which.
+    pub fn witness_with_held_tags(
+        &self,
+        turn: &WitnessTurn,
+        tags: &crate::memory::extraction::EncoderOutput,
+    ) -> MemoryResult<(WitnessReceipt, crate::tagging::HeldTagsOutcome)> {
+        let outcome = std::cell::Cell::new(None);
+        let receipt = self.run_witness(
+            turn,
+            WitnessTarget::Held {
+                held: super::program::HeldTags {
+                    tags,
+                    outcome: &outcome,
+                },
+            },
+            WitnessDoor::Guest,
+            || {},
+            |_| Ok(()),
+            |_| Ok(()),
+        )?;
+        Ok((
+            receipt,
+            outcome
+                .take()
+                .unwrap_or(crate::tagging::HeldTagsOutcome::NoMarker),
+        ))
+    }
+
     /// [`Self::witness`] under a session write route: the base landing a
     /// session's on-record continuation takes, with the route revalidated
     /// inside the write transaction.

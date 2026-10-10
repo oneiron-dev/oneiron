@@ -31,4 +31,5 @@ mod sync_sweep_executor;
 mod sync_tombstone_v2;
 mod sync_window_manager;
 mod sync_world_residence;
+mod tagging_local_only;
 mod task_authority_convergence;
