@@ -114,8 +114,9 @@ impl Vault {
     /// a code flag or rules hit leaves it Candidate, without registering verbs.
     ///
     /// A changed source for an installed pack is an update: in the same
-    /// transaction, every saved query reading a predicate the update dropped
-    /// or remapped runs the pack-drift repair ladder (ARCH-0059 §4).
+    /// transaction, the source's shipped migration map for the move is stored
+    /// and every saved query reading a predicate the update dropped or
+    /// remapped runs the pack-drift repair ladder (ARCH-0059 §4).
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
         self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
@@ -276,8 +277,13 @@ impl Vault {
                         pack: &source.manifest.name,
                         from_version: &from_version,
                         to_version: &source.manifest.version,
+                        from_source: &old.content_hash,
+                        to_source: &receipt.content_hash,
                         from_predicates: &from_predicates,
                         to_predicates: &source.manifest.predicates,
+                        shipped: source
+                            .manifest
+                            .migration_from(&from_version, &old.content_hash),
                     },
                     self.now_recorded_at(),
                 )?;

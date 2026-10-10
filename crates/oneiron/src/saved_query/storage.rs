@@ -16,7 +16,7 @@ use super::definition::{
 use super::evidence::{EVIDENCE_HASH_LEN, MatchVerdict, VerdictMemoKey, VerdictMemoRow};
 use super::filter::{FilterAst, MatcherSpec, parse_filter_ast};
 use super::membership::{MembershipCause, MembershipEvent, MembershipTransition};
-use super::pack_drift::{PackDrift, PackMigrationMap};
+use super::pack_drift::{PackDrift, PackMigrationMap, PackMove};
 use super::support::{canonical_json_bytes, hex_lower, invalid, parse_entity_ref};
 
 /// Node-local fast-path watermark for one `(query, entity)` pair's last-applied epoch.
@@ -94,8 +94,11 @@ impl RawValue for VerdictMemoRow {
     }
 }
 
-/// Operator-supplied predicate rewrite map for one pack move, keyed by
-/// `{from_pack_id}@{from_version}->{to_pack_id}@{to_version}`.
+/// Predicate rewrite map for one pack move. An operator's is keyed by
+/// `{from_pack_id}@{from_version}->{to_pack_id}@{to_version}`; one a pack
+/// shipped by its two sources' content hashes alone,
+/// `src:{from_source}->{to_source}`, which stays short whatever the pack's
+/// name and version (each PACK.md names both, so its hash pins them too).
 pub(super) const PACK_MIGRATION_MAPS: SideTable<String, PackMigrationMap, LegacyJson> =
     SideTable::new(&side_table::SAVED_QUERY_PACK_MIGRATION_MAP);
 
@@ -104,6 +107,10 @@ pub(super) fn migration_map_key(drift: &PackDrift) -> String {
         "{}@{}->{}@{}",
         drift.from_pack_id, drift.from_version, drift.to_pack_id, drift.to_version
     )
+}
+
+pub(super) fn source_migration_map_key(moved: &PackMove<'_>) -> String {
+    format!("src:{}->{}", moved.from_source, moved.to_source)
 }
 
 /// Receipt of one pack-drift repair action, keyed by its own id.
