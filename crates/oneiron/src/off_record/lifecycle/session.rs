@@ -197,7 +197,7 @@ impl OffRecordSession<'_> {
     }
 
     /// [`Self::write_route`] and, for a `Base` route in a room, the saver
-    /// whose vault it lands in ([`OnRecordSaver`]), read under the same lock.
+    /// whose vault it lands in, read under the same lock.
     pub(super) fn route_and_saver(&self) -> Result<(SessionWriteRoute, Option<OnRecordSaver>)> {
         let state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
@@ -494,7 +494,7 @@ impl OffRecordSession<'_> {
             }
             // A room on record writes here only while its saver holds.
             RouteTarget::Base => {
-                self.with_saver_write_txn(self.on_record_saver()?.as_ref(), |wtxn| {
+                self.with_saver_write_txn(self.saver_check()?, |wtxn| {
                     route.revalidate()?;
                     // Composed, not base-only: the row this run is updating
                     // may still be the overlay row an earlier off-record run
@@ -551,11 +551,11 @@ impl OffRecordSession<'_> {
         }
         let overlay = self.entry.overlay.clone();
         // A room on record writes into base only while its saver holds.
-        let saver = match target {
-            RouteTarget::Base => self.on_record_saver()?,
+        let check = match target {
+            RouteTarget::Base => self.saver_check()?,
             RouteTarget::Overlay | RouteTarget::Discard => None,
         };
-        let (segment, total) = self.with_saver_write_txn(saver.as_ref(), |wtxn| {
+        let (segment, total) = self.with_saver_write_txn(check, |wtxn| {
             let segment = match target {
                 RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
                 RouteTarget::Base | RouteTarget::Discard => None,

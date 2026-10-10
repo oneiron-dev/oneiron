@@ -279,7 +279,7 @@ impl Memory<'_> {
         }
         let session_route;
         let mut on_record_session = None;
-        // While a room is on record, its saver: the landing checks them again.
+        // A room on record's saver, checked again where the turn lands.
         let mut saver = None;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {
@@ -365,7 +365,6 @@ impl Memory<'_> {
         };
         before_txn();
 
-        let saver_lost = std::cell::Cell::new(false);
         let landed = self.with_verified_actor_write_txn_as(callback, |wtxn| {
             let mut mint_conversation = false;
             let mut leader_project = None;
@@ -473,29 +472,15 @@ impl Memory<'_> {
             if let WitnessSink::Base(base) = &sink
                 && let Some(route) = base.route
             {
-                // The room on record saves into its saver's vault only while
+                // A room on record saves into its saver's vault only while
                 // they hold it in the room, whoever speaks (ARCH-0052 D5).
-                if let (Some(session), Some(saver)) = (on_record_session, &saver)
-                    && !saver.holds_in_txn(self.vault, wtxn)?
-                {
-                    saver_lost.set(true);
-                    return Err(session.saving_stopped(saver).into());
+                if let Some(saver) = &saver {
+                    saver.in_txn(wtxn)?;
                 }
                 route.revalidate()?;
             }
             Ok(landed)
-        });
-        // Saving stops once its saver no longer holds; the stretch's later
-        // turns stay off record. Outside the transaction: stopping takes the
-        // state lock, which is never taken under the writer. The refusal
-        // stands whatever the stop meets (a stretch closing needs none).
-        if saver_lost.get()
-            && let (Some(session), Some(saver)) = (on_record_session, &saver)
-            && let Err(error) = session.stop_saving(saver)
-        {
-            tracing::warn!(error = %error, "a room on record lost its saver; the stop is deferred");
-        }
-        let landed = landed?;
+        })?;
 
         match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),

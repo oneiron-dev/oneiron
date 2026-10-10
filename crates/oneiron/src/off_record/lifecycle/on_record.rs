@@ -6,6 +6,8 @@
 //! someone who has left. Once they no longer hold, saving stops: the stretch
 //! goes back off record and the room hears `saving_stopped`.
 
+use std::cell::Cell;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
@@ -38,7 +40,41 @@ impl OnRecordSaver {
     }
 }
 
-impl OffRecordSession<'_> {
+/// A landing's check of the saver of a room on record. The landing runs it
+/// in its write transaction, and one that finds the saver no longer holds
+/// is refused. Once the check drops, after that transaction, the saving
+/// stops: stopping takes the session state lock, which is never taken under
+/// the writer.
+pub(crate) struct SaverCheck<'s, 'vault> {
+    session: &'s OffRecordSession<'vault>,
+    saver: OnRecordSaver,
+    lapsed: Cell<bool>,
+}
+
+impl SaverCheck<'_, '_> {
+    /// Refuses unless, in `txn`, the saver still holds.
+    pub(crate) fn in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if self.saver.holds_in_txn(self.session.vault, txn)? {
+            return Ok(());
+        }
+        self.lapsed.set(true);
+        Err(self.session.saving_stopped(&self.saver))
+    }
+}
+
+impl Drop for SaverCheck<'_, '_> {
+    fn drop(&mut self) {
+        // The refusal stands whatever the stop meets; the next landing tries
+        // again.
+        if self.lapsed.get()
+            && let Err(error) = self.session.stop_saving(&self.saver)
+        {
+            tracing::warn!(error = %error, "a room on record lost its saver; the stop is deferred");
+        }
+    }
+}
+
+impl<'vault> OffRecordSession<'vault> {
     /// Flips the stretch on record for the owner: later turns are saved as
     /// they land, and the room hears a `saving_from_here` notice. In a room
     /// the owner must be on the roster and own this vault, since the flip
@@ -92,15 +128,32 @@ impl OffRecordSession<'_> {
     /// The route a write lands by now and, while a room is on record, the
     /// saver its landing transaction checks again. A saver who no longer
     /// holds stops the saving here first, so the write stays off record.
-    pub(crate) fn landing_route(&self) -> Result<(SessionWriteRoute, Option<OnRecordSaver>)> {
+    pub(crate) fn landing_route(
+        &self,
+    ) -> Result<(SessionWriteRoute, Option<SaverCheck<'_, 'vault>>)> {
         self.lapse_saver()?;
-        self.route_and_saver()
+        let (route, saver) = self.route_and_saver()?;
+        Ok((route, saver.map(|saver| self.check_saver(saver))))
     }
 
-    /// The saver of this stretch's room while it is on record. A durable
-    /// landing reads it before its write transaction (the state lock is
-    /// never taken inside one) and checks it in there.
-    pub(crate) fn on_record_saver(&self) -> Result<Option<OnRecordSaver>> {
+    /// The check a landing in base runs while this stretch's room is on
+    /// record; `None` otherwise.
+    pub(crate) fn saver_check(&self) -> Result<Option<SaverCheck<'_, 'vault>>> {
+        Ok(self.on_record_saver()?.map(|saver| self.check_saver(saver)))
+    }
+
+    fn check_saver(&self, saver: OnRecordSaver) -> SaverCheck<'_, 'vault> {
+        SaverCheck {
+            session: self,
+            saver,
+            lapsed: Cell::new(false),
+        }
+    }
+
+    /// The saver of this stretch's room while it is on record, read before
+    /// a landing's write transaction (the state lock is never taken inside
+    /// one).
+    fn on_record_saver(&self) -> Result<Option<OnRecordSaver>> {
         let state = session_entry_state(&self.entry)?;
         Ok(match state.record.mode {
             OffRecordMode::OnRecord => state.saver.clone(),
@@ -111,7 +164,7 @@ impl OffRecordSession<'_> {
     /// Stops the saving `saver` started: the stretch goes back off record
     /// for later turns, and the room hears that saving stopped. Saving that
     /// someone else started since is theirs, and goes on.
-    pub(crate) fn stop_saving(&self, saver: &OnRecordSaver) -> Result<()> {
+    fn stop_saving(&self, saver: &OnRecordSaver) -> Result<()> {
         let mut state = session_entry_state(&self.entry)?;
         // A closing stretch takes no more landings, so it has none to stop.
         if state.record.closing
@@ -160,37 +213,24 @@ impl OffRecordSession<'_> {
         }
     }
 
-    /// One write transaction for this stretch: `write` runs only once
-    /// `saver` (read before it, [`Self::on_record_saver`]) is found to hold
-    /// in it. A saver who no longer holds stops the saving, and nothing is
-    /// written.
+    /// One write transaction for this stretch, in which `check` runs before
+    /// `write`: a room on record writes into base only while its saver holds.
     pub(crate) fn with_saver_write_txn<T>(
         &self,
-        saver: Option<&OnRecordSaver>,
+        check: Option<SaverCheck<'_, '_>>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<T> {
-        let lost = std::cell::Cell::new(false);
-        let written = self.vault.with_write_txn_grouped(|wtxn| {
-            if let Some(saver) = saver
-                && !saver.holds_in_txn(self.vault, wtxn)?
-            {
-                lost.set(true);
-                return Err(self.saving_stopped(saver));
+        self.vault.with_write_txn_grouped(|wtxn| {
+            if let Some(check) = &check {
+                check.in_txn(wtxn)?;
             }
             write(wtxn)
-        });
-        if lost.get()
-            && let Some(saver) = saver
-            && let Err(error) = self.stop_saving(saver)
-        {
-            tracing::warn!(error = %error, "a room on record lost its saver; the stop is deferred");
-        }
-        written
+        })
     }
 
     /// The refusal of a landing whose saver no longer holds: nothing of it
     /// was kept, and saving has stopped.
-    pub(crate) fn saving_stopped(&self, saver: &OnRecordSaver) -> Error {
+    fn saving_stopped(&self, saver: &OnRecordSaver) -> Error {
         Error::OffRecord(OffRecordError::OffRecordSavingStopped {
             session_ref: self.session_ref.clone(),
             saver_ref: saver.owner.actor().to_hex(),
