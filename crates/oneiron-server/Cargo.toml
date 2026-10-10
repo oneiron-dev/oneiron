@@ -85,6 +85,9 @@ candle-nn = "=0.11.0"
 # engine is in this tree whichever we ask for, and it is the engine the
 # reference runtime tokenized with — the parity row would find any difference.
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+# The local embedder's tiled Q8_0 kernel spreads its tiles over rayon's pool.
+# Already in the tree through candle, which runs its own CPU work on rayon.
+rayon = "1.12"
 # Model-artifact download rides the `reqwest` blocking client already in this
 # file. `hf-hub` 1.0 was the blueprint's choice, but its sync handle drives an
 # owned tokio runtime through `block_on`, which the embedding worker cannot call

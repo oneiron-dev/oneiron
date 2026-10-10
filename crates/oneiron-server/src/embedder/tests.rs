@@ -158,7 +158,25 @@ enum MockBehaviour {
     UnknownModel,
     /// Embed into [`concept_vector`]'s meaning space.
     Concepts,
+    /// List the model as `embedder serve` does: marked, with its transform,
+    /// and answer with that transform.
+    OneironWire,
+    /// [`Self::OneironWire`] restarted with other settings: it lists and
+    /// answers with [`OTHER_TRANSFORM`].
+    OneironWireOther,
+    /// The listing answers 503.
+    ListingDown,
+    /// No listing route (404), as many OpenAI-compatible servers have.
+    NoListing,
+    /// Lists the model as [`Self::OneironWire`] does, but answers with
+    /// [`OTHER_TRANSFORM`]: two backends behind one address.
+    ListingDisagrees,
 }
+
+/// The transform the [`MockBehaviour::OneironWire`] listing reports.
+const MOCK_TRANSFORM: &str = "attn=bidirectional;pool=mean;mock";
+/// The transform [`MockBehaviour::OneironWireOther`] reports.
+const OTHER_TRANSFORM: &str = "attn=bidirectional;pool=mean;mock;out=binary";
 
 struct EmbeddingPause {
     request: usize,
@@ -242,13 +260,31 @@ impl MockEndpoint {
     }
 }
 
-async fn mock_models(State(state): State<Arc<MockState>>) -> axum::Json<Value> {
-    let id = if state.behaviour() == MockBehaviour::UnknownModel {
-        "some-other-model"
-    } else {
-        MODEL_KEY
-    };
-    axum::Json(json!({ "data": [{ "id": id }] }))
+async fn mock_models(State(state): State<Arc<MockState>>) -> Result<axum::Json<Value>, StatusCode> {
+    Ok(match state.behaviour() {
+        MockBehaviour::UnknownModel => {
+            axum::Json(json!({ "data": [{ "id": "some-other-model" }] }))
+        }
+        MockBehaviour::ListingDown => return Err(StatusCode::SERVICE_UNAVAILABLE),
+        MockBehaviour::NoListing => return Err(StatusCode::NOT_FOUND),
+        MockBehaviour::OneironWire
+        | MockBehaviour::OneironWireOther
+        | MockBehaviour::ListingDisagrees => axum::Json(json!({
+            "data": [{
+                "id": MODEL_KEY,
+                "oneiron_wire": 1,
+                "transform": mock_transform(state.behaviour()),
+            }]
+        })),
+        _ => axum::Json(json!({ "data": [{ "id": MODEL_KEY }] })),
+    })
+}
+
+fn mock_transform(behaviour: MockBehaviour) -> &'static str {
+    match behaviour {
+        MockBehaviour::OneironWireOther => OTHER_TRANSFORM,
+        _ => MOCK_TRANSFORM,
+    }
 }
 
 /// The deterministic space the mock embeds into: one axis per input text, so a
@@ -336,6 +372,18 @@ async fn mock_embeddings(
     if state.behaviour() == MockBehaviour::Reversed {
         rows.reverse();
     }
+    if matches!(
+        state.behaviour(),
+        MockBehaviour::OneironWire
+            | MockBehaviour::OneironWireOther
+            | MockBehaviour::ListingDisagrees
+    ) {
+        let transform = match state.behaviour() {
+            MockBehaviour::ListingDisagrees => OTHER_TRANSFORM,
+            behaviour => mock_transform(behaviour),
+        };
+        return Ok(axum::Json(json!({ "data": rows, "transform": transform })));
+    }
     Ok(axum::Json(json!({ "data": rows })))
 }
 
@@ -362,6 +410,122 @@ fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
         json!(["first text", "second text"]),
         "documents carry no instruction prefix and keep input order"
     );
+}
+
+/// Against `embedder serve`, whose `/models` rows carry the Oneiron mark, the
+/// client sends what a local vault's provider would see: whole documents
+/// marked as documents, which the server's tokenizer caps, and a query marked
+/// as one with the vault's own instruction beside it rather than in it. And
+/// the slot holds the server's transform to the vault's pin: before it is
+/// admitted, or refused, the endpoint answers no query, as a local model
+/// answers none before it is loaded and admitted.
+#[test]
+fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let config = EmbedderConfig {
+        query_instruction: Some("query: ".to_owned()),
+        max_input_tokens: 4,
+        ..endpoint_config(&mock.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    assert_eq!(
+        slot.embed_query("cats"),
+        Err(EmbedQueryRefusal::NotReady),
+        "no query before the worker admits the endpoint"
+    );
+    let refused = slot.ensure_ready(|transform| {
+        assert_eq!(transform, MOCK_TRANSFORM);
+        Err(oneiron::Error::InvalidConfig(
+            "the vault pins another transform".to_owned(),
+        ))
+    });
+    assert!(refused.is_err());
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
+    let embedder = slot.ensure_ready(|_| Ok(())).expect("admitted");
+    let long = "word ".repeat(40);
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input(&long)]).expect("embedded");
+    slot.embed_query("cats").expect("query embedded");
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]["input"],
+        json!([long]),
+        "whole, past the client's cap"
+    );
+    assert_eq!(requests[0]["input_type"], json!("document"));
+    assert_eq!(requests[1]["input"], json!(["cats"]));
+    assert_eq!(requests[1]["input_type"], json!("query"));
+    assert_eq!(requests[1]["instruction"], json!("query: "));
+}
+
+/// Whole texts go to `embedder serve`, so a batch of long ones is split into
+/// requests a slow host answers inside the timeout; the vectors come back in
+/// input order.
+#[test]
+fn long_documents_reach_an_oneiron_endpoint_in_several_requests() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let embedder = mock.embedder();
+    let texts: Vec<String> = ["a", "b", "c"]
+        .iter()
+        .map(|word| format!("{word} ").repeat(10 * 1024))
+        .collect();
+    let inputs: Vec<_> = texts.iter().map(|text| summary_input(text)).collect();
+    let vectors = oneiron::embed::Embedder::embed(embedder.as_ref(), &inputs).expect("embedded");
+    assert_eq!(mock.requests().len(), 3, "20 KiB each, two never share one");
+    for (vector, text) in vectors.iter().zip(&texts) {
+        assert_eq!(*vector, mock_vector(text, DIMS), "in input order");
+    }
+}
+
+/// The vault holds `embedder serve` to the transform it admitted for as long
+/// as it runs: a listing that fails is not taken for a plain OpenAI server, a
+/// server restarted with other settings fills and answers nothing, and once
+/// restored it is admitted again without a vault restart.
+#[test]
+fn an_oneiron_endpoint_that_changes_how_it_embeds_is_refused_until_restored() {
+    let mock = MockEndpoint::start(MockBehaviour::ListingDown);
+    let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
+        .expect("slot")
+        .expect("active");
+    let pinned = |transform: &str| {
+        if transform == MOCK_TRANSFORM {
+            Ok(())
+        } else {
+            Err(oneiron::Error::InvalidConfig(
+                "the vault pins another transform".to_owned(),
+            ))
+        }
+    };
+    assert!(
+        slot.ensure_ready(pinned).is_err(),
+        "a listing that answers 503 admits nothing"
+    );
+    mock.set_behaviour(MockBehaviour::OneironWireOther);
+    assert!(
+        slot.ensure_ready(pinned).is_err(),
+        "another transform is refused"
+    );
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    let embedder = slot.ensure_ready(pinned).expect("restored, admitted");
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("first")])
+        .expect("embedded");
+    assert_eq!(
+        mock.requests().last().expect("a request")["input_type"],
+        json!("document"),
+        "the failed listing was not cached as the OpenAI wire"
+    );
+    mock.set_behaviour(MockBehaviour::OneironWireOther);
+    assert!(
+        oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("second")]).is_err(),
+        "vectors made another way are not stored"
+    );
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::Failed));
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("third")])
+        .expect("restored");
 }
 
 /// An endpoint has no model files to read a prompt from: a query carries
@@ -505,6 +669,64 @@ fn a_probe_against_an_unreachable_endpoint_is_not_fatal() {
         endpoint::probe_endpoint(embedder.as_ref()),
         Ok(ProbeOutcome::Unreachable(_))
     ));
+}
+
+/// Review R4-3: a remote with no listing route is the OpenAI wire with an
+/// unknown catalog. Bug repro: the probe called it unreachable, so `reembed`
+/// refused to move a vault to it; it now checks its width.
+#[test]
+fn a_remote_with_no_listing_route_is_probed_at_its_width() {
+    let mock = MockEndpoint::start(MockBehaviour::NoListing);
+    assert!(matches!(
+        endpoint::probe_endpoint(mock.embedder().as_ref()),
+        Ok(ProbeOutcome::Ready)
+    ));
+    assert_eq!(
+        endpoint::resolve_transform(&endpoint_config(&mock.base)).expect("resolved"),
+        None
+    );
+}
+
+/// Review R4-4: a vault moves to the transform an answer came from. Bug
+/// repro: the probe's answer was held to nothing and the listing was read
+/// again after it, so a remote whose listing names one transform while its
+/// answers carry another moved the vault to the listed one.
+#[test]
+fn a_move_is_refused_when_the_answers_do_not_carry_the_listed_transform() {
+    let mock = MockEndpoint::start(MockBehaviour::ListingDisagrees);
+    endpoint::resolve_transform(&endpoint_config(&mock.base))
+        .expect_err("answers from another transform than the listed one");
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    assert_eq!(
+        endpoint::resolve_transform(&endpoint_config(&mock.base)).expect("resolved"),
+        Some(MOCK_TRANSFORM.to_owned())
+    );
+}
+
+/// Review R4-1: a vault on the shipped model takes its measured evidence
+/// floors, which were measured with unprompted queries. Bug repro: with no
+/// instruction of its own the vault sent none, so the shared server's own
+/// query prompt applied.
+#[test]
+fn a_vault_on_the_shipped_model_sends_its_queries_unprompted() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let shipped = EmbedderConfig {
+        model_id: crate::config::embedder::DEFAULT_MODEL_ID.to_owned(),
+        ..endpoint_config(&mock.base)
+    };
+    for config in [shipped, endpoint_config(&mock.base)] {
+        endpoint::HttpEmbedder::from_config(&config)
+            .expect("http embedder")
+            .embed_query("cats")
+            .expect("query embedded");
+    }
+    let requests = mock.requests();
+    assert_eq!(requests[0]["instruction"], json!(""));
+    assert_eq!(
+        requests[1].get("instruction"),
+        None,
+        "another model's vault leaves the server's query prompt to it"
+    );
 }
 
 /// A pending row that projects to nothing is refused rather than embedded: the

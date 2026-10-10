@@ -480,9 +480,74 @@ fn reembed_refuses_a_commit_that_is_not_a_plain_name_before_writing_anything() {
     open(&own).expect("the vault opens as it was");
 }
 
-/// What `serve` resolves for a vault served by an endpoint under the same
-/// model and width as [`local_config`].
-fn endpoint_config(path: &Path) -> ServeConfig {
+/// An endpoint that answers `/v1/models` with `listing` and every embedding
+/// request with one unit vector of `width` components, naming the listed
+/// transform as `embedder serve` does: all reembed asks of it. The address
+/// it serves; the thread ends with the test process.
+fn listing_endpoint(listing: &'static str, width: usize) -> String {
+    use std::io::{Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+    let addr = listener.local_addr().expect("addr");
+    let mut vector = vec![0.0f32; width];
+    vector[0] = 1.0;
+    let listed: serde_json::Value = serde_json::from_str(listing).expect("listing json");
+    let mut embedded = serde_json::json!({ "data": [{ "index": 0, "embedding": vector }] });
+    if let Some(transform) = listed["data"][0].get("transform") {
+        embedded["transform"] = transform.clone();
+    }
+    let embedded = embedded.to_string();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            // The whole request, so closing the connection resets nothing.
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let complete = |request: &[u8]| {
+                let text = String::from_utf8_lossy(request);
+                let Some(end) = text.find("\r\n\r\n") else {
+                    return false;
+                };
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                request.len() >= end + 4 + length
+            };
+            while !complete(&request) {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&chunk[..read]),
+                }
+            }
+            let body = if request.starts_with(b"POST") {
+                embedded.as_str()
+            } else {
+                listing
+            };
+            let answer = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(answer.as_bytes());
+        }
+    });
+    format!("http://{addr}/v1")
+}
+
+/// A plain OpenAI-compatible server's listing: the model, unmarked.
+const PLAIN_LISTING: &str = r#"{"object":"list","data":[{"id":"k","object":"model"}]}"#;
+/// `embedder serve`'s listing of the model, made another way than
+/// [`local_config`]'s.
+const SERVED_LISTING: &str = r#"{"object":"list","data":[{"id":"k","object":"model","oneiron_wire":1,"transform":"served-elsewhere"}]}"#;
+
+/// What `serve` resolves for a vault served by the endpoint at `base` under
+/// the same model and width as [`local_config`].
+fn endpoint_config(path: &Path, base: &str) -> ServeConfig {
     ServeConfig {
         vault_path: path.to_path_buf(),
         dimensions: WIDE,
@@ -491,7 +556,7 @@ fn endpoint_config(path: &Path) -> ServeConfig {
             model_id: OLD.to_owned(),
             dimensions: WIDE,
             endpoint: crate::config::EndpointEmbedderConfig {
-                endpoint: Some("http://127.0.0.1:9/v1".to_owned()),
+                endpoint: Some(base.to_owned()),
                 model_key: Some("k".to_owned()),
                 ..crate::config::EndpointEmbedderConfig::default()
             },
@@ -510,7 +575,7 @@ fn a_vault_moves_between_local_and_an_endpoint_of_the_same_model_without_a_reemb
     let dir = tempfile::tempdir().expect("vault dir");
     let own = local_config(dir.path(), EmbedderAttention::Auto);
     let id = filled(&own);
-    let endpoint = endpoint_config(dir.path());
+    let endpoint = endpoint_config(dir.path(), &listing_endpoint(PLAIN_LISTING, WIDE));
     assert_eq!(
         refusal_kind(&endpoint),
         None,
@@ -534,4 +599,61 @@ fn a_vault_moves_between_local_and_an_endpoint_of_the_same_model_without_a_reemb
         Some(oneiron::ErrorKind::EmbeddingTransformChanged),
         "the local descriptor survived the endpoint"
     );
+}
+
+/// A vault moves to how `embedder serve` makes vectors only through reembed,
+/// which reads the server's listing: the vault is repinned to the served
+/// transform and refilled, after which the local transform it left is the
+/// one refused.
+#[test]
+fn reembed_moves_a_vault_to_the_transform_an_oneiron_endpoint_lists() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    filled(&own);
+    let endpoint = endpoint_config(dir.path(), &listing_endpoint(SERVED_LISTING, WIDE));
+    assert_eq!(
+        reembed_with_config(&endpoint, false).expect("reembed"),
+        ReembedOutcome {
+            from: None,
+            to: OLD.to_owned(),
+            transform: Some("served-elsewhere".to_owned()),
+            migrated: true,
+        }
+    );
+    assert_eq!(
+        refusal_kind(&own),
+        Some(oneiron::ErrorKind::EmbeddingTransformChanged),
+        "the vault now holds the served transform"
+    );
+}
+
+/// An endpoint whose listing does not answer leaves how it makes vectors
+/// unknown, so reembed refuses and the vault stays as it was.
+#[test]
+fn reembed_refuses_an_endpoint_whose_listing_does_not_answer() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    let id = filled(&own);
+    let endpoint = endpoint_config(dir.path(), "http://127.0.0.1:9/v1");
+    let error = reembed_with_config(&endpoint, false).expect_err("refused");
+    assert!(
+        format!("{error:#}").contains("/models listing"),
+        "{error:#}"
+    );
+    let vault = open(&own).expect("the vault opens as it was");
+    assert!(vault.get_vector(&id).expect("vector read").is_some());
+}
+
+/// A served model of another width cannot fill the vault, whatever its
+/// listing says, so reembed refuses before it moves anything.
+#[test]
+fn reembed_refuses_an_endpoint_whose_answers_do_not_fit_the_vault() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    let id = filled(&own);
+    let endpoint = endpoint_config(dir.path(), &listing_endpoint(SERVED_LISTING, WIDE * 2));
+    let error = reembed_with_config(&endpoint, false).expect_err("refused");
+    assert!(format!("{error:#}").contains("components"), "{error:#}");
+    let vault = open(&own).expect("the vault opens as it was");
+    assert!(vault.get_vector(&id).expect("vector read").is_some());
 }

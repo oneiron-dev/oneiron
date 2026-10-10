@@ -177,6 +177,26 @@ pub(crate) fn pinned_evidence(config: &EmbedderConfig) -> Option<VectorEvidenceF
         .and_then(|model| model.evidence)
 }
 
+/// Where vector evidence starts for an endpoint section: the floors of the
+/// shipped model its `model_id` names, when the vault sends its queries with
+/// no instruction of its own. An endpoint's `model_id` promises the whole
+/// document embedding function, so naming a shipped model promises the
+/// profile its floors were measured under; `embedder serve` serving one also
+/// lists how it embeds, and the vault holds every answer to that.
+pub(crate) fn pinned_endpoint_evidence(config: &EmbedderConfig) -> Option<VectorEvidenceFloors> {
+    let unprompted = config
+        .query_instruction
+        .as_deref()
+        .is_none_or(|instruction| super::batcher::strip(instruction).is_empty());
+    if !unprompted {
+        return None;
+    }
+    PINNED_MODELS
+        .iter()
+        .find(|model| config.model_id == format!("{}@{}", model.repo, model.revision))
+        .and_then(|model| model.evidence)
+}
+
 /// Whether the section runs its model with the settings a pinned model's
 /// floors were measured under: the pinned files themselves (an operator's
 /// `model_dir` is taken as it stands, prompt file included), Q8_0 weights,

@@ -555,6 +555,83 @@ fn an_artifact_with_a_wrong_digest_is_removed_and_fetched_again() {
     );
 }
 
+// ─── placing a forward's rows ────────────────────────────────────────────
+
+/// A packed forward answers one block per input, and its rows land at their
+/// own inputs' places, every one of them: a scatter that zipped the inputs
+/// ahead of each block lost one input per block and moved every later row
+/// onto the wrong input.
+#[test]
+fn a_forward_s_rows_land_at_their_own_inputs() {
+    let mut rows = vec![None; 6];
+    place(&mut rows, &[4, 1, 5], vec![vec![4.0], vec![1.0], vec![5.0]]).expect("placed");
+    assert_eq!(
+        rows,
+        vec![
+            None,
+            Some(vec![1.0]),
+            None,
+            None,
+            Some(vec![4.0]),
+            Some(vec![5.0])
+        ]
+    );
+    assert!(
+        place(&mut rows, &[0, 2], vec![vec![0.0]]).is_err(),
+        "a forward that answers fewer inputs than it carried is refused"
+    );
+}
+
+// ─── turns on the model ──────────────────────────────────────────────────
+
+/// Polls `ready` until it holds, for up to ten seconds.
+fn wait_for(what: &str, ready: impl Fn() -> bool) {
+    let started = std::time::Instant::now();
+    while !ready() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+/// Queries go first, but a stream of them in which the next always waits
+/// before the last ends does not starve a waiting bulk forward: it gets a
+/// layer after a bounded run of queries, and the queries then go on.
+#[test]
+fn a_bulk_forward_gets_its_layer_under_steady_query_traffic() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let turns = Turns::default();
+    let bulk_ran = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let mut running = turns.take(Priority::Query);
+        scope.spawn(|| {
+            let _turn = turns.take(Priority::Bulk);
+            bulk_ran.store(true, Ordering::SeqCst);
+        });
+        wait_for("the bulk forward to wait", || {
+            turns.state().bulk_waiting == 1
+        });
+        let mut queries = 0;
+        while !bulk_ran.load(Ordering::SeqCst) {
+            assert!(
+                queries <= QUERY_STREAK + 1,
+                "{queries} queries ran while the bulk forward waited"
+            );
+            let next = scope.spawn(|| turns.take(Priority::Query));
+            wait_for("the next query to wait", || {
+                turns.state().queries_waiting == 1
+            });
+            drop(running);
+            running = next.join().expect("query thread");
+            queries += 1;
+        }
+        assert!(queries >= QUERY_STREAK, "queries keep their priority");
+    });
+}
+
 // ─── rows that need the checkpoint ───────────────────────────────────────
 
 mod with_model {
@@ -705,7 +782,8 @@ mod with_model {
         let mut config = pplx_config(EmbedderDevice::Auto);
         config.local.quant = EmbedderQuant::None;
         for (dtype, floor) in [(DType::F32, 0.999), (DType::BF16, 0.99)] {
-            let embedder = LocalEmbedder::load_at(&config, &manager(), dtype).expect("model loads");
+            let embedder = LocalEmbedder::load_at(&config, &manager(), dtype, Q8Kernel::Tiled)
+                .expect("model loads");
             let measured = embedder
                 .embed_documents(&pplx_parity_texts())
                 .expect("embedded");
@@ -725,6 +803,79 @@ mod with_model {
             .expect("embedded");
         let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), 0.99);
         println!("pplx Q8_0 vs sentence-transformers: worst cosine {worst}, mean {mean}");
+    }
+
+    /// The packed forward on the tiled kernel against candle's kernel run one
+    /// input per forward, which is what every vault's vectors were made with
+    /// before. Hidden states and stored vectors both equal to the bit, for
+    /// inputs packed together and across forwards: an input's vector does not
+    /// depend on what it was embedded with.
+    #[test]
+    #[ignore = "needs the 2.38 GB pplx-embed-v1 checkpoint; run with --run-ignored=all"]
+    fn packed_forwards_on_the_tiled_kernel_keep_every_vector_to_the_bit() {
+        let config = pplx_config(EmbedderDevice::Cpu);
+        let packed = LocalEmbedder::load(&config, &manager()).expect("model loads");
+        let reference = LocalEmbedder::load_at(&config, &manager(), DType::F32, Q8Kernel::Candle)
+            .expect("model loads");
+        // The parity texts but the two longest, which run alone in any case
+        // and would cost the reference minutes, and a spread of documents.
+        let mut texts: Vec<String> = pplx_parity_texts()
+            .into_iter()
+            .filter(|text| text.len() < 4_000)
+            .collect();
+        texts.extend(super::super::bench::synthetic_documents(24, 9));
+        texts.push(texts[3].clone());
+        let tokenized = batcher::tokenize(&packed.tokenizer, &texts).expect("tokenized");
+        let inputs: Vec<&[u32]> = tokenized.iter().map(|item| item.ids.as_slice()).collect();
+        let mut differing_states = 0;
+        for chunk in inputs.chunks(16) {
+            let blocks = packed
+                .model
+                .forward(chunk, &mut || {})
+                .expect("packed forward");
+            let together: Vec<candle_core::Tensor> = blocks
+                .iter()
+                .flat_map(|block| {
+                    (0..block.dim(0).expect("rows"))
+                        .map(|row| block.narrow(0, row, 1).expect("row"))
+                })
+                .collect();
+            assert_eq!(together.len(), chunk.len());
+            for (input, state) in chunk.iter().zip(&together) {
+                let alone = reference
+                    .model
+                    .forward(&[*input], &mut || {})
+                    .expect("one input");
+                let bits = |tensor: &candle_core::Tensor| -> Vec<u32> {
+                    tensor
+                        .flatten_all()
+                        .and_then(|flat| flat.to_vec1::<f32>())
+                        .expect("states")
+                        .into_iter()
+                        .map(f32::to_bits)
+                        .collect()
+                };
+                if bits(state) != bits(&alone[0]) {
+                    differing_states += 1;
+                }
+            }
+        }
+        assert_eq!(differing_states, 0, "inputs whose hidden states moved");
+        let ours = packed.embed_documents(&texts).expect("embedded");
+        let theirs: Vec<Vec<f32>> = texts
+            .iter()
+            .map(|text| {
+                reference
+                    .embed_documents(std::slice::from_ref(text))
+                    .expect("embedded")
+                    .remove(0)
+            })
+            .collect();
+        assert_eq!(ours, theirs);
+        println!(
+            "{} inputs, every hidden state and vector equal to the bit",
+            texts.len()
+        );
     }
 
     fn bench_device() -> EmbedderDevice {

@@ -15,7 +15,9 @@ mod remote;
 pub(crate) use local::prepare as prepare_local;
 pub(crate) use remote::build_remote_rung;
 mod local;
+pub(crate) mod serve;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, payload_text};
@@ -154,6 +156,10 @@ pub(crate) struct EmbedderSlot {
     /// same reason `ready` is one: it belongs to this server, and it has to
     /// outlive the individual load attempts the worker makes.
     models: local::model_manager::ModelManager,
+    /// The vault has admitted how the provider makes vectors. An endpoint is
+    /// built at boot but answers no query until the worker has admitted it,
+    /// as a local model answers none before it has loaded and been admitted.
+    admitted: AtomicBool,
 }
 
 impl EmbedderSlot {
@@ -170,6 +176,7 @@ impl EmbedderSlot {
             config: config.clone(),
             ready: OnceLock::new(),
             models: local::model_manager::ModelManager::default(),
+            admitted: AtomicBool::new(false),
         };
         if config.provider == EmbedderProvider::Endpoint {
             let embedder = endpoint::HttpEmbedder::from_config(config)?;
@@ -215,16 +222,40 @@ impl EmbedderSlot {
     /// `admit` sees the loaded model's transform descriptor before the
     /// provider serves anything, and its refusal leaves the slot not ready: a
     /// model whose files only arrived after the vault opened is checked
-    /// against the vault's pinned transform here rather than at open.
+    /// against the vault's pinned transform here rather than at open. An
+    /// endpoint that says how it makes vectors (`embedder serve`) is checked
+    /// the same way, once its listing has been read.
     pub(crate) fn ensure_ready(
         &self,
         admit: impl FnOnce(&str) -> oneiron::Result<()>,
     ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         if let Some(ready) = self.ready.get() {
+            if let Some(http) = ready.as_endpoint() {
+                // Read afresh each time: a refused remote restored to the
+                // vault's settings is admitted on the worker's next try.
+                let admitted = http.served_transform().and_then(|served| {
+                    if let Some(transform) = &served {
+                        admit(transform)?;
+                    }
+                    Ok(served)
+                });
+                // The answers' pin goes in before queries are let through.
+                match admitted {
+                    Ok(served) => {
+                        http.admit(served);
+                        self.admitted.store(true, Ordering::Release);
+                    }
+                    Err(error) => {
+                        self.admitted.store(false, Ordering::Release);
+                        return Err(error);
+                    }
+                }
+            }
             return Ok(Arc::clone(ready));
         }
         let local = local::LocalEmbedder::load(&self.config, &self.models)?;
         admit(local.transform())?;
+        self.admitted.store(true, Ordering::Release);
         let embedder = local as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
         // `set` loses a race; the winner is the one every caller must see.
@@ -236,6 +267,9 @@ impl EmbedderSlot {
         let Some(embedder) = self.ready.get() else {
             return Err(EmbedQueryRefusal::NotReady);
         };
+        if !self.admitted.load(Ordering::Acquire) {
+            return Err(EmbedQueryRefusal::NotReady);
+        }
         embedder.embed_query(text).map_err(|error| {
             tracing::warn!(?error, "query embedding failed");
             EmbedQueryRefusal::Failed
@@ -250,13 +284,14 @@ impl EmbedderSlot {
 /// they are on this host, complete and verified, and from the loaded model
 /// otherwise ([`EmbedderSlot::ensure_ready`]).
 ///
-/// An endpoint declares none, and so neither writes nor checks one: a vault
-/// moves between the local provider and an endpoint serving the same
-/// `model_id` without a reembed, and the descriptor the local provider pinned
-/// stays in the vault for its return. The endpoint's `model_id` is the promise
-/// that it makes the same vectors — the same document embedding function, not
-/// only the same weights — which nothing on the wire can check. `none` pins
-/// nothing either.
+/// An endpoint declares none before it is asked: a vault moves between the
+/// local provider and an endpoint serving the same `model_id` without a
+/// reembed, and the descriptor the local provider pinned stays in the vault
+/// for its return. `embedder serve` lists its descriptor, which the worker
+/// admits like a local model's ([`EmbedderSlot::ensure_ready`]); any other
+/// endpoint's `model_id` is the promise that it makes the same vectors — the
+/// same document embedding function, not only the same weights — which
+/// nothing on its wire can check. `none` pins nothing either.
 pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
     match config.provider {
         EmbedderProvider::None | EmbedderProvider::Endpoint => None,
@@ -265,27 +300,34 @@ pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
 }
 
 /// Where vector evidence starts in this section's embedding space: the
-/// measured floors of a shipped local model run as it was measured,
-/// otherwise the engine's default.
+/// measured floors of a shipped local model run as it was measured, or of
+/// the shipped model an endpoint's `model_id` names, otherwise the engine's
+/// default.
 pub(crate) fn evidence_floors(config: &EmbedderConfig) -> oneiron::config::VectorEvidenceFloors {
     match config.provider {
         EmbedderProvider::Local => {
             local::model_manager::pinned_evidence(config).unwrap_or_default()
         }
-        EmbedderProvider::None | EmbedderProvider::Endpoint => Default::default(),
+        EmbedderProvider::Endpoint => {
+            local::model_manager::pinned_endpoint_evidence(config).unwrap_or_default()
+        }
+        EmbedderProvider::None => Default::default(),
     }
 }
 
 /// The descriptor a vault moves to under this section, resolved now: the
 /// local provider's from its model's verified metadata, fetching those small
-/// files when they are not on this host (never the weights); `None` for an
-/// endpoint and for `none`, which declare none.
+/// files when they are not on this host (never the weights); an endpoint's
+/// from its `/models` listing, which only `embedder serve` fills; `None` for
+/// any other endpoint and for `none`, which declare none.
 ///
 /// An error means the local model's metadata could not be fetched, verified
-/// or read, and the transform it makes is unknown.
+/// or read, or the endpoint's listing did not answer, and the transform the
+/// section makes is unknown.
 pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
     match config.provider {
-        EmbedderProvider::None | EmbedderProvider::Endpoint => Ok(None),
+        EmbedderProvider::None => Ok(None),
+        EmbedderProvider::Endpoint => endpoint::resolve_transform(config),
         EmbedderProvider::Local => local::resolve_transform(config).map(Some),
     }
 }

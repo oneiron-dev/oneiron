@@ -21,7 +21,7 @@ use oneiron::error::StoreError;
 use serde::Serialize;
 
 use crate::cli::ReembedArgs;
-use crate::config::{ServeConfig, resolve_serve_config};
+use crate::config::{EmbedderProvider, ServeConfig, resolve_serve_config};
 
 /// What `reembed` did, printed as one JSON line.
 #[derive(Debug, Eq, PartialEq, Serialize)]
@@ -32,7 +32,8 @@ struct ReembedOutcome {
     /// The configured space the vault holds now.
     to: String,
     /// The transform the vault holds now, when the configured embedder
-    /// declares one: the local provider always does, an endpoint never.
+    /// declares one: the local provider always does, an endpoint when it is
+    /// `embedder serve` and lists one.
     transform: Option<String>,
     /// Whether every embeddable record was queued to be embedded again.
     migrated: bool,
@@ -73,13 +74,21 @@ fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<Reem
     // Known before anything is decided: a vault is never left in, or moved to,
     // a transform nobody resolved.
     let transform = crate::embedder::resolve_transform(embedder).map_err(|error| {
-        anyhow::Error::from(error).context(format!(
-            "reembed could not resolve how the configured model {target} makes vectors from its \
-             metadata files (config.json, modules.json, the module configs, the prompt file); \
-             the vault is unchanged. Fix the cause below and run reembed again: on a host that \
-             can reach the model's source, or with embedder.model_dir set to a directory holding \
-             the model's files"
-        ))
+        let context = match embedder.provider {
+            EmbedderProvider::Endpoint => format!(
+                "reembed could not resolve how the configured model {target} makes vectors from \
+                 the endpoint's /models listing and a probe at the configured width; the vault \
+                 is unchanged. Fix the cause below (the endpoint must answer) and run reembed again"
+            ),
+            _ => format!(
+                "reembed could not resolve how the configured model {target} makes vectors from its \
+                 metadata files (config.json, modules.json, the module configs, the prompt file); \
+                 the vault is unchanged. Fix the cause below and run reembed again: on a host that \
+                 can reach the model's source, or with embedder.model_dir set to a directory holding \
+                 the model's files"
+            ),
+        };
+        anyhow::Error::from(error).context(context)
     })?;
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths =

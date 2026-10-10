@@ -74,6 +74,8 @@ mod serve;
 use self::serve::serve_with_config;
 mod dreamer;
 pub use self::dreamer::dreamer_grant;
+mod embedder_serve;
+pub use self::embedder_serve::embedder_serve;
 mod owner;
 pub use owner::{backup, doctor, export, import, restore, runs, secret_scan, whoami};
 mod msgpack_json;
