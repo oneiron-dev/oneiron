@@ -597,6 +597,10 @@
             "label": "Contract dream",
             "lastMessageSnippet": null,
             "name": "Contract dream",
+            "occurred": {
+              "end": 1782357700,
+              "start": 1782357700
+            },
             "type": 4,
             "updatedAt": 1782357735
           },
@@ -609,6 +613,10 @@
             "memberIds": [
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"
             ],
+            "occurred": {
+              "end": 0,
+              "start": 0
+            },
             "project_id": "<root-project-id>",
             "schema_version": 1,
             "type": 4,

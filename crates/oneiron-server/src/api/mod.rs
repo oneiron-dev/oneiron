@@ -76,6 +76,7 @@ mod consumer_usage;
 mod context_pack;
 mod conversation_dag;
 mod conversation_members;
+mod conversation_transcript;
 mod conversations;
 mod core;
 mod discover;
@@ -278,6 +279,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route(
             "/conversations/{conversation_id}/turns",
             get(list_core_conversation_turns),
+        )
+        .route(
+            "/conversations/{conversation_id}/transcript",
+            get(conversation_transcript::get_core_conversation_transcript),
         )
         .route(
             "/conversations/{conversation_id}/scope",

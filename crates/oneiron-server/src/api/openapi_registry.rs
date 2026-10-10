@@ -133,6 +133,7 @@ use utoipa::OpenApi;
         list_core_conversations,
         create_core_conversation,
         list_core_conversation_turns,
+        super::conversation_transcript::get_core_conversation_transcript,
         create_core_conversation_turn,
         get_core_turn,
         annotate_turn_vad,

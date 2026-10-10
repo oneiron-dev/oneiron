@@ -146,6 +146,7 @@ impl Memory<'_> {
                 salience: body.salience,
                 reactions: Vec::new(),
                 cited_messages: Vec::new(),
+                conversation_id: None,
             }))
         } else {
             let value_text = turn_text
@@ -179,6 +180,26 @@ impl Memory<'_> {
             } else {
                 Vec::new()
             };
+            // The conversation a TURN (by `ChildOf`) or a MESSAGE (by
+            // `BelongsTo`) is in, through an edge the lane admitted: one the
+            // actor may read.
+            let conversation_kind = match entity_type {
+                ENTITY_TYPE_TURN => Some(EdgeKind::ChildOf),
+                ENTITY_TYPE_MESSAGE => Some(EdgeKind::BelongsTo),
+                _ => None,
+            };
+            let mut conversation_id = None;
+            for edge in edges
+                .iter()
+                .filter(|edge| Some(edge.kind) == conversation_kind)
+            {
+                if self.vault.get_entity_type(&edge.target)?
+                    == Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+                {
+                    conversation_id = Some(edge.target.to_hex());
+                    break;
+                }
+            }
             // Each message a TURN took in is read through the same lane, so a
             // quote is one the actor may read. Its words are the ones the
             // turn's text joined in the turn's own snapshot, which the turn's
@@ -222,6 +243,7 @@ impl Memory<'_> {
                 salience: None,
                 reactions,
                 cited_messages,
+                conversation_id,
             }))
         }
     }

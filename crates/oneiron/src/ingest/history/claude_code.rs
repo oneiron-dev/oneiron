@@ -145,6 +145,11 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
         } else {
             (&mut main, said_by)
         };
+        // Every line names the folder Claude Code ran in; the first is where
+        // the session started.
+        if thread.conversation.cwd.is_none() {
+            thread.conversation.cwd = str_field(&value, "cwd").map(str::to_owned);
+        }
         let fallback_id = format!("{id}#L{line}");
         match str_field(&value, "type") {
             Some("user") => user_line(thread, &value, &fallback_id, said_by),
