@@ -56,8 +56,9 @@ const MAX_LINKED_CELLS: u64 = 4_000_000;
 const LINK_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
 
-/// `[0]` is the workbook itself (`[0]!Rate` is its own `Rate`), which the fork
-/// does not resolve that way.
+/// `[0]` is the workbook itself (`[0]!Rate` is its own `Rate`). The fork's
+/// parser reads it as the local name or reference, which this adapter has
+/// not checked against Excel's reading yet, so it stays the fallback's.
 const WORKBOOK_ITSELF: &str = "external reference to the workbook itself ([0])";
 
 const UNJOINED: &str = "external link list the edit gate cannot join";
@@ -227,7 +228,15 @@ impl LinkedBooks {
         while let Some((node, parent)) = pending.pop() {
             passed_on(node, &parent, names)?;
             match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => {
+                ASTNodeType::Reference {
+                    original,
+                    reference,
+                } => {
+                    // The parser reads `[0]!Rate` and `[0]Sheet1!A1` as local;
+                    // only the written text still names the workbook itself.
+                    if original.trim_start_matches('\'').starts_with("[0]") {
+                        return Err(unsupported(WORKBOOK_ITSELF));
+                    }
                     // A name holding an expression over linked values is
                     // checked as if its formula were written here.
                     if let Some(expression) = self.reference(reference, &parent, names)? {
@@ -369,6 +378,9 @@ impl LinkedBooks {
 
     fn external(&self, external: &ExternalReference, parent: &Parent<'_>) -> Result<()> {
         let book = self.book(external)?;
+        if reads_linked_location(parent) {
+            return Err(unsupported(LINKED_LOCATION));
+        }
         if !one_cell(external.kind) && !reads_a_range(parent, external.kind) {
             return Err(unsupported(
                 "external range returned or passed on as a reference",
@@ -924,6 +936,9 @@ fn passed_on(
     if matches!(node.node_type, ASTNodeType::Reference { .. }) || !mentions_link(node, names) {
         return Ok(());
     }
+    if reads_linked_location(parent) {
+        return Err(unsupported(LINKED_LOCATION));
+    }
     if criteria_range(parent) {
         return Err(unsupported(
             "external reference reaching a criteria function through another function",
@@ -935,6 +950,25 @@ fn passed_on(
         ));
     }
     Ok(())
+}
+
+/// CELL("filename") and CELL("address") of a linked workbook's cell name that
+/// workbook's file, whose location the engine does not read.
+const LINKED_LOCATION: &str = "CELL(\"filename\") or CELL(\"address\") of a linked workbook's cell reads that workbook's location";
+
+/// Whether `parent` is the reference of CELL("filename") or CELL("address").
+fn reads_linked_location(parent: &Parent<'_>) -> bool {
+    matches!(
+        parent,
+        Parent::Argument { function, index: 1, args, .. }
+            if function == "CELL"
+                && matches!(
+                    &args[0].node_type,
+                    ASTNodeType::Literal(formualizer_common::LiteralValue::Text(info))
+                        if info.eq_ignore_ascii_case("filename")
+                            || info.eq_ignore_ascii_case("address")
+                )
+    )
 }
 
 /// The fork binds a LET name or LAMBDA parameter to a linked reference's

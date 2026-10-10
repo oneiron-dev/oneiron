@@ -19,7 +19,7 @@ const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const OPAQUE: &str = "vendor/opaque.bin";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
-const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11";
+const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12";
 
 fn build(parts: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
     opc::write(&OpcPackage::from_parts(
@@ -374,7 +374,7 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         deep_chain.as_str(),
         // An Excel function the engine lacks: it would cache #NAME? where
         // Excel computes a value.
-        "<f>_xlfn.ANCHORARRAY(Input!A1)</f>",
+        "<f>_xlfn.STOCKHISTORY(Input!A1,0)</f>",
         // The edit gate requires the OOXML prefix in a recalculated sheet.
         "<f>XLOOKUP(2,Input!A1:A1,Input!A1:A1)</f>",
     ];
@@ -480,6 +480,66 @@ fn cached(xml: &str, cell: &str) -> String {
     let at = xml.find(&format!(r#"<c r="{cell}""#)).expect("cell");
     let start = at + xml[at..].find("<v>").expect("cache") + 3;
     xml[start..start + xml[start..].find("</v>").expect("cache end")].to_owned()
+}
+
+/// [`Host`] that opened the workbook as `C:\Reports\Budget.xlsx`.
+struct Located(Host);
+impl EditSession for Located {
+    fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+        self.0.apply_edits(doc, plan)
+    }
+    fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+        self.0.recalc(doc)
+    }
+    fn recalc_engine(&self) -> Option<CalcEngineStamp> {
+        self.0.recalc_engine()
+    }
+    fn recalc_location(&self) -> Option<DocumentLocation> {
+        DocumentLocation::from_path(r"C:\Reports\Budget.xlsx")
+    }
+}
+
+#[test]
+fn cell_filename_recalculates_natively_at_the_sessions_location() {
+    let input = workbook(
+        "",
+        r#"<c r="A1"><f>CELL(&quot;filename&quot;,A1)</f><v>0</v></c><c r="B1"><f>CELL(&quot;address&quot;,Input!B2)</f><v>0</v></c>"#,
+    );
+    let host = Located(Host::default());
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:session-location",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert_eq!(
+        cached(&xml, "A1"),
+        r"C:\Reports\[Budget.xlsx]Result",
+        "{xml}"
+    );
+    assert_eq!(cached(&xml, "B1"), "[Budget.xlsx]Input!$B$2", "{xml}");
+    assert!(
+        host.0.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+    // Without a session location or a cached path, the host's recalc.
+    let host = Host {
+        output: Some(input.clone()),
+        ..Host::default()
+    };
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:no-location",
+    ));
+    assert_eq!(host.seen.borrow().len(), 1);
+    assert_eq!(proposal.calc_engine.as_deref(), Some(&host_stamp()));
 }
 
 #[test]
