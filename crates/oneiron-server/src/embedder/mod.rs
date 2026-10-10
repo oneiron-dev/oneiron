@@ -265,11 +265,12 @@ pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
 }
 
 /// Where vector evidence starts in this section's embedding space: the
-/// measured floors of a shipped local model, otherwise the engine's default.
+/// measured floors of a shipped local model run as it was measured,
+/// otherwise the engine's default.
 pub(crate) fn evidence_floors(config: &EmbedderConfig) -> oneiron::config::VectorEvidenceFloors {
     match config.provider {
         EmbedderProvider::Local => {
-            local::model_manager::pinned_evidence(&config.local).unwrap_or_default()
+            local::model_manager::pinned_evidence(config).unwrap_or_default()
         }
         EmbedderProvider::None | EmbedderProvider::Endpoint => Default::default(),
     }
