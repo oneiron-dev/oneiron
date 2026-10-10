@@ -7839,6 +7839,7 @@ dependencies = [
  "ocrs",
  "oneiron",
  "oneiron-authority",
+ "oneiron-code-check",
  "oneiron-contracts",
  "oneiron-docedit",
  "oneiron-guest",
@@ -7942,6 +7943,19 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.26.2",
+]
+
+[[package]]
+name = "oneiron-code-check"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "wasmtime",
 ]
 
 [[package]]
@@ -8349,6 +8363,7 @@ dependencies = [
  "libc",
  "loro",
  "oneiron",
+ "oneiron-code-check",
  "oneiron-driver",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",

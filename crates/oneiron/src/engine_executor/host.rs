@@ -322,15 +322,32 @@ pub(super) fn executor_boundary_contract() -> EngineExecutorResult<SandboxBounda
 /// drift from prompt tooling or be hand-copied between call sites.
 pub(super) fn executor_system_prompt(wire: &str) -> String {
     let wire = wire.trim_end();
-    let runtime_types = include_str!("../../../../components/code-run-quickjs/runtime.d.ts");
-    let verbs = crate::task_verb::sdk::code_mode_declarations();
+    let [host_verbs, verbs, runtime_types] = executor_declarations().map(|file| file.text);
     format!(
         "You are Oneiron's engine-native executor.\n{wire}\n\
          The guest runs inside the CODE-1 Wasmtime WIT component boundary.\n\
          Clock and random values are host-controlled imports for replay determinism.\n\
          Use the prompt-side host verb types below as documentation only; runtime effects arrive \
-         as typed host imports:\n\n{PLAIN_JS_HOST_VERB_DTS}\n{verbs}\n{runtime_types}"
+         as typed host imports:\n\n{host_verbs}\n{verbs}\n{runtime_types}"
     )
+}
+
+/// The declarations the system prompt teaches, in its order: the WIT host
+/// verbs, the verb table's `self.memory`, and the interpreter's own
+/// functions. A shadow check reads these same texts.
+pub(super) fn executor_declarations() -> [oneiron_code_check::Declaration<'static>; 3] {
+    [
+        ("code-run.d.ts", PLAIN_JS_HOST_VERB_DTS),
+        (
+            "code-mode.d.ts",
+            crate::task_verb::sdk::code_mode_declarations(),
+        ),
+        (
+            "runtime.d.ts",
+            include_str!("../../../../components/code-run-quickjs/runtime.d.ts"),
+        ),
+    ]
+    .map(|(name, text)| oneiron_code_check::Declaration { name, text })
 }
 
 /// The per-turn trailing instruction: the SAME canonical wire teaching, bound

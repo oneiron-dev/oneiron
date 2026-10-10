@@ -1,5 +1,6 @@
 //! Durable REPL loop: run(), persistence helpers, and LLM request building.
 
+use super::code_check::ShadowStep;
 use super::driver::EngineNativeExecutor;
 use super::host::{
     RecordingJsHost, executor_boundary_contract, executor_system_prompt, executor_turn_instruction,
@@ -10,9 +11,10 @@ use super::record::{
     validate_executor_config_marker,
 };
 use super::store::{
-    RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
-    implicit_speak_output_path, load_utf8_output, observation_output_path, record_output,
-    record_text_output, recoverable_chunk_path, script_output_path, validate_runtime_outputs,
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, code_check_output_path,
+    fallback_speech_marker, implicit_speak_output_path, load_utf8_output, observation_output_path,
+    record_output, record_text_output, recoverable_chunk_path, script_output_path,
+    validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -31,6 +33,7 @@ use crate::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error, LlmMessage,
     LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
 };
+use oneiron_code_check::StepThen;
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 
@@ -139,6 +142,22 @@ impl EngineNativeExecutor<'_> {
                 script_output_path(completed_steps),
                 &script,
             )?;
+            // Shadow mode records what a type check finds and acts on none
+            // of it: a check that cannot be recorded is traced and dropped,
+            // never a reason for the step to fail.
+            let mut shadow = self
+                .code_check
+                .map(|shadow| ShadowStep::check(shadow, config.run_id, completed_steps, &script));
+            if let Some(shadow) = &shadow
+                && let Err(error) = record_text_output(
+                    &self.storage,
+                    &mut record,
+                    code_check_output_path(completed_steps),
+                    &shadow.record(),
+                )
+            {
+                tracing::warn!(target: "oneiron::code_check", %error, "shadow check not recorded");
+            }
 
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
@@ -344,6 +363,13 @@ impl EngineNativeExecutor<'_> {
                 self.emit_trailing_speak_fallback(&record, completed_steps, text, config)?;
             }
             steps_run += 1;
+            if let Some(shadow) = &mut shadow {
+                shadow.then(match &terminal_status {
+                    Some(EngineExecutorStatus::Complete) => StepThen::Completed,
+                    Some(EngineExecutorStatus::Waiting(_)) => StepThen::Waiting,
+                    _ => StepThen::Continued,
+                });
+            }
 
             if let Some(status) = terminal_status {
                 return Ok(EngineExecutorOutcome {

@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use oneiron::llm::manifest::ModelRole;
+use oneiron_code_check::{BackendKind, CheckMode};
 use serde::Deserialize;
 
 mod levels;
@@ -84,6 +85,16 @@ struct WorkflowFile {
 struct CodeModeFile {
     prompt_package: Option<PathBuf>,
     budget_units: Option<u64>,
+    #[serde(default)]
+    check: CodeCheckFile,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeCheckFile {
+    mode: Option<String>,
+    backend: Option<String>,
+    microsoft_tsc: Option<PathBuf>,
 }
 
 /// The resolved `[models]` section: providers plus one ladder per role.
@@ -137,6 +148,21 @@ pub struct CodeModeSettings {
     pub prompt_package: Option<PathBuf>,
     /// Process-lifetime meter for code mode's model calls.
     pub budget_units: u64,
+    pub check: CodeCheckSettings,
+}
+
+/// `[models.code_mode.check]`: an optional type check of each generated
+/// program before it runs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CodeCheckSettings {
+    /// `off` (the default), or `shadow`: check every program and record what
+    /// the check found, blocking nothing. `enforce` is reserved.
+    pub mode: CheckMode,
+    /// `tsc-rs` in process (the default), or `microsoft`.
+    pub backend: BackendKind,
+    /// Microsoft's native `tsc` at the pinned version: the `microsoft`
+    /// backend, and tsc-rs's fallback when it is set.
+    pub microsoft_tsc: Option<PathBuf>,
 }
 
 const DEFAULT_SESSION_CEILING_SECS: u64 = 12 * 60 * 60;
@@ -218,6 +244,7 @@ impl ModelsFile {
                 .code_mode
                 .budget_units
                 .unwrap_or(DEFAULT_CODE_MODE_BUDGET_UNITS),
+            check: self.code_mode.check.resolve(base)?,
         };
         if [
             dreamer.pass_budget_units,
@@ -248,6 +275,35 @@ impl ModelsFile {
             chat,
             workflows,
             code_mode,
+        })
+    }
+}
+
+impl CodeCheckFile {
+    fn resolve(self, base: Option<&Path>) -> anyhow::Result<CodeCheckSettings> {
+        let mode = match self.mode.as_deref() {
+            None => CheckMode::Off,
+            Some(mode) => mode
+                .parse()
+                .map_err(|error| anyhow::anyhow!("models.code_mode.check.mode: {error}"))?,
+        };
+        let backend = match self.backend.as_deref() {
+            None => BackendKind::TscRs,
+            Some(backend) => backend
+                .parse()
+                .map_err(|error| anyhow::anyhow!("models.code_mode.check.backend: {error}"))?,
+        };
+        let microsoft_tsc = self.microsoft_tsc.map(|path| match base {
+            Some(base) if path.is_relative() => base.join(path),
+            _ => path,
+        });
+        if backend == BackendKind::Microsoft && microsoft_tsc.is_none() {
+            anyhow::bail!("models.code_mode.check: the microsoft backend needs microsoft_tsc");
+        }
+        Ok(CodeCheckSettings {
+            mode,
+            backend,
+            microsoft_tsc,
         })
     }
 }

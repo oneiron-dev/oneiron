@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/pingdotgg/ts-rust.git",
+  "commit": "80f9944aab296595c4c9aa4d9d1ad65d1e5f76f6",
+  "typescript_commit": "673a5f17d713bdc8c7185f18a9c11e3c4ac5d781",
+  "crate": "ts_wasm",
+  "target": "wasm32-wasip1",
+  "profile": "wasm",
+  "opt_level": "z",
+  "wasm_opt": "none",
+  "rust_toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "license": "MIT AND Apache-2.0",
+  "sha256": "0f384de62ca87bb609a6a5ce82fabc8b02ffa0f3f28519337c1d048c1cf056e7",
+  "bytes": 5739887,
+  "notices": {
+    "LICENSE": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
+    "NOTICE.md": "dbddee0995c85466900e86cc176fca1974518fef2824ffe3445f1f95fc25bdb3",
+    "licenses/Go-LICENSE.txt": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+    "licenses/TypeScript-LICENSE.txt": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47",
+    "licenses/TypeScript-NOTICE.txt": "317cd4d9d8a4de4971222bd232bc45c010424bf0dae61be830e49532e62e4d33",
+    "licenses/Unicode-LICENSE.txt": "f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1",
+    "licenses/vscode-languageserver-node-LICENSE.txt": "05b6af84f5acd7186f031cf389c722350d2780608d24e6c237cf2d2d85d139bd"
+  },
+  "sources": {
+    "build.py": "ebff6c7b4c526db7b4fb3b5f96a403a83f927be7f188346b37b6866cbcc00055"
+  }
+}

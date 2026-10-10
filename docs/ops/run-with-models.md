@@ -207,6 +207,34 @@ task. A vault with a model
 manifest needs a seat judge this server does not bind yet, so its runs are
 refused with `code_run_binding_failed`.
 
+### Type check (shadow mode)
+
+Each generated program can be type-checked before it runs, against the same
+declarations the executor prompt teaches (`allowJs` + `checkJs`, strict,
+ES2022, no DOM or Node globals). It is off by default:
+
+```toml
+[models.code_mode.check]
+mode = "shadow"              # "off" (default) or "shadow"; "enforce" is reserved and refused
+backend = "tsc-rs"           # "tsc-rs" in process (default) or "microsoft"
+microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # optional
+```
+
+Shadow mode blocks nothing and changes no program's result: the check's
+report lands in the run's replay record as
+`executor/repl/<step>.code-check.json` (backend and pin, latency, diagnostics
+in program coordinates, or a failure code), and each check logs one
+`oneiron::code_check` line with the step's outcome (`completed`, `waiting`,
+`continued` or `failed`) and the running counts. A step that fails before any
+host call leaves no record, so its check is only in the log.
+
+`tsc-rs` is the pinned Wasm module in `components/tsc-rs`, compiled once at
+startup (a few seconds) and run in a fresh instance per check. `microsoft` runs
+Microsoft's native `tsc` (`@typescript/typescript-<platform>`, version
+`7.1.0-dev.20261010.1` only) as a process per check. With `tsc-rs` selected, a
+set `microsoft_tsc` is the fallback for a check tsc-rs cannot finish. When no
+checker loads, code mode runs unchecked and the server logs why.
+
 ## 7. Raw calls
 
 With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
