@@ -1,0 +1,29 @@
+[package]
+name = "oneiron-organ-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The open organ protocol: how an organ process talks to the Oneiron engine"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+# The open protocol depends on nothing in the engine, so a third-party organ
+# can link it without linking Oneiron (ARCH-0075 section 9).
+[dependencies]
+blake3 = { workspace = true }
+rmp-serde = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
+serde = { workspace = true }
+serde_bytes = "0.11"
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+memmap2 = "0.9"
+rustix = { version = "1", features = ["fs", "net", "shm", "std"] }
+
+[lints]
+workspace = true
