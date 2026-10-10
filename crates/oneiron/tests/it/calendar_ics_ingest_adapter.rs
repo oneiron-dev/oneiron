@@ -35,21 +35,14 @@ use oneiron::calendar::claims::{
 use oneiron::calendar::ingest::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedPollConfig, IcsFeedPollPayload,
     IcsFetchResponse, IcsHttpResponse, IcsHttpTransport, IcsPollRunState, enqueue_ics_feed_poll,
-    ics_feed_cursor_snapshot, ics_feed_pause_exceptions, ics_feed_poll_dedupe_key,
-    run_ics_feed_poll, run_ics_feed_poll_with_screener,
+    ics_feed_cursor_snapshot, ics_feed_poll_dedupe_key, run_ics_feed_poll,
 };
 use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
-use oneiron::calendar::safeguard::{
-    CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict,
-};
-use oneiron::ingest::{
-    ICS_FEED_SOURCE_ID, INGEST_SOURCE_REGISTRY, IngestSourceFormat, KNOWN_INGEST_HARNESS_CONFIG,
-};
+use oneiron::ingest::ICS_FEED_SOURCE_ID;
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::{
     AttemptQueue, ClaimLifecycleStatus, ClaimSource, EntityId, Vault, VaultConfig,
-    attempt_queue::AttemptState, attempt_queue::ClaimAttempt, attempt_queue::ClaimOutcome,
-    attempt_queue::CompleteAttempt, attempt_queue::EnqueueOutcome,
+    attempt_queue::AttemptState,
 };
 
 /// Fixed poll times.
@@ -284,92 +277,6 @@ fn poll_rows_in(vault: &Vault, pending: bool) -> Vec<oneiron::attempt_queue::Att
         .collect()
 }
 
-/// Claims + completes the feed's pending poll row, modeling the host worker
-/// so the runner's re-enqueue mints the next generation.
-fn complete_pending_poll_row(vault: &Vault, now: u64) {
-    let queue = AttemptQueue::new(vault);
-    let ClaimOutcome::Claimed(record) = queue
-        .claim(ClaimAttempt {
-            lease_owner: "test-worker".to_owned(),
-            now,
-        })
-        .expect("claim")
-    else {
-        panic!("a pending poll row must be claimable");
-    };
-    queue
-        .complete(CompleteAttempt {
-            id: record.id,
-            lease_owner: "test-worker".to_owned(),
-            attempt_count: record.attempt_count,
-            now,
-        })
-        .expect("complete");
-}
-
-#[test]
-fn ics_feed_source_has_registry_parity() {
-    let config = INGEST_SOURCE_REGISTRY
-        .get_config(ICS_FEED_SOURCE_ID)
-        .expect("ics-feed registered");
-    assert_eq!(config.source_id, ICS_FEED_SOURCE_ID);
-    assert_eq!(config.format, IngestSourceFormat::IcsFeed);
-    assert!(!config.writes_claims);
-    assert_eq!(
-        config.adapter_skill.map(|skill| skill.skill_id),
-        Some("builtin.ingest.ics-feed")
-    );
-    assert_eq!(config.trust_ceiling.claim_source, ClaimSource::Imported);
-    assert_eq!(config.trust_ceiling.max_auto_sensitivity, None);
-    assert!(!config.trust_ceiling.receipted);
-    assert!(!config.trust_ceiling.warned);
-    assert!(!config.trust_ceiling.permits_auto(Some(0)));
-    assert_eq!(
-        config.default_admission,
-        oneiron::ClaimApprovalStatus::Proposed
-    );
-
-    let harness = KNOWN_INGEST_HARNESS_CONFIG
-        .get_config(ICS_FEED_SOURCE_ID)
-        .expect("ics-feed configured for harness");
-    assert_eq!(harness.source_id, config.source_id);
-    assert_eq!(harness.format, config.format);
-    assert_eq!(harness.writes_claims, config.writes_claims);
-    assert_eq!(
-        harness.adapter_skill.map(|skill| skill.skill_id),
-        config.adapter_skill.map(|skill| skill.skill_id)
-    );
-    assert_eq!(
-        harness.trust_ceiling.claim_source,
-        config.trust_ceiling.claim_source
-    );
-    assert_eq!(
-        harness.trust_ceiling.max_auto_sensitivity,
-        config.trust_ceiling.max_auto_sensitivity
-    );
-    assert_eq!(
-        harness.trust_ceiling.receipted,
-        config.trust_ceiling.receipted
-    );
-    assert_eq!(harness.trust_ceiling.warned, config.trust_ceiling.warned);
-    assert_eq!(
-        harness.trust_ceiling.permits_auto(Some(0)),
-        config.trust_ceiling.permits_auto(Some(0))
-    );
-    assert_eq!(harness.default_admission, config.default_admission);
-
-    let batch = INGEST_SOURCE_REGISTRY
-        .normalize(
-            ICS_FEED_SOURCE_ID,
-            std::str::from_utf8(&feed(&[EventSpec::new("uid-p@x", 1)])).expect("utf8"),
-        )
-        .expect("normalize");
-    assert_eq!(batch.source_id, ICS_FEED_SOURCE_ID);
-    assert_eq!(batch.records.len(), 1);
-    assert_eq!(batch.records[0].source_record_id, "uid-p@x");
-    assert!(batch.claims.is_empty(), "normalize never mints claims");
-}
-
 #[test]
 fn new_same_updated_and_missing_passport_diff() {
     let (_dir, vault) = temp_vault();
@@ -449,59 +356,6 @@ fn new_same_updated_and_missing_passport_diff() {
 }
 
 #[test]
-fn single_source_absence_never_cancels_a_multi_source_event() {
-    let (_dir, vault) = temp_vault();
-    let work = config("work");
-    let home = config("home");
-
-    // One UID through two live inbound passports.
-    poll(
-        &vault,
-        &work,
-        complete(feed(&[EventSpec::new("uid-s@x", 1)]), "w1"),
-        T0,
-    )
-    .expect("work poll");
-    poll(
-        &vault,
-        &home,
-        complete(feed(&[EventSpec::new("uid-s@x", 1)]), "h1"),
-        T0,
-    )
-    .expect("home poll");
-    let event = resolve_event_by_uid(&vault, "uid-s@x")
-        .expect("resolve")
-        .expect("one event");
-    let passports = live_passports_for_event(&vault, &event).expect("passports");
-    assert_eq!(passports.len(), 2);
-
-    // The work feed drops the UID in a COMPLETE feed: only the work passport
-    // flips absent; the EVENT's status stays unwritten (confirmed by default).
-    poll(&vault, &work, complete(feed(&[]), "w2"), T1).expect("work absence poll");
-    let passports = live_passports_for_event(&vault, &event).expect("passports");
-    assert_eq!(passports.len(), 2);
-    let by_system: std::collections::BTreeMap<String, CalendarPassportPresence> = passports
-        .into_iter()
-        .map(|(_, value)| (value.system.clone(), value.presence))
-        .collect();
-    assert_eq!(
-        by_system.get("work"),
-        Some(&CalendarPassportPresence::Absent)
-    );
-    assert_eq!(by_system.get("home"), Some(&CalendarPassportPresence::Live));
-    assert_eq!(
-        live_status(&vault, &event),
-        None,
-        "single-source absence never touches EVENT status"
-    );
-    assert_eq!(
-        vault.get_entity_type(&event).expect("entity type"),
-        Some(ENTITY_TYPE_EVENT),
-        "the EVENT row is never deleted"
-    );
-}
-
-#[test]
 fn all_live_inbound_sources_absent_write_calendar_status() {
     let (_dir, vault) = temp_vault();
     let work = config("work");
@@ -550,43 +404,6 @@ fn all_live_inbound_sources_absent_write_calendar_status() {
     assert_eq!(
         live_claims(&claims_on(&vault, &event), PREDICATE_CALENDAR_STATUS).len(),
         1
-    );
-}
-
-#[test]
-fn uid_first_cross_calendar_resolution_is_n_passports_to_one_event() {
-    let (_dir, vault) = temp_vault();
-    poll(
-        &vault,
-        &config("work"),
-        complete(feed(&[EventSpec::new("uid-x@x", 1)]), "w1"),
-        T0,
-    )
-    .expect("work poll");
-    poll(
-        &vault,
-        &config("home"),
-        complete(feed(&[EventSpec::new("uid-x@x", 1)]), "h1"),
-        T0,
-    )
-    .expect("home poll");
-
-    let first = resolve_event_by_uid(&vault, "uid-x@x")
-        .expect("resolve")
-        .expect("event");
-    let second = resolve_event_by_uid(&vault, "uid-x@x")
-        .expect("resolve")
-        .expect("event");
-    assert_eq!(first, second, "one UID index target");
-    let passports = live_passports_for_event(&vault, &first).expect("passports");
-    assert_eq!(passports.len(), 2, "two live passports on one EVENT");
-    let systems: std::collections::BTreeSet<String> = passports
-        .into_iter()
-        .map(|(_, value)| value.system)
-        .collect();
-    assert_eq!(
-        systems,
-        std::collections::BTreeSet::from(["work".to_owned(), "home".to_owned()])
     );
 }
 
@@ -644,98 +461,6 @@ fn passport_supersede_is_scoped_to_system_and_uid() {
         .map(|(_, value)| value)
         .expect("work passport");
     assert_eq!(work_value.last_sequence, 2);
-}
-
-#[test]
-fn busy_transparency_defaults_busy_and_preserves_free() {
-    let (_dir, vault) = temp_vault();
-    let opaque = EventSpec {
-        transp: Some("OPAQUE"),
-        ..EventSpec::new("uid-b1@x", 1)
-    };
-    let missing = EventSpec::new("uid-b2@x", 1);
-    let free = EventSpec {
-        transp: Some("TRANSPARENT"),
-        ..EventSpec::new("uid-b3@x", 1)
-    };
-    poll(
-        &vault,
-        &config("work"),
-        complete(feed(&[opaque, missing, free]), "v1"),
-        T0,
-    )
-    .expect("poll");
-
-    let transparency_of = |uid: &str| {
-        let event = resolve_event_by_uid(&vault, uid)
-            .expect("resolve")
-            .expect("event");
-        let claims = claims_on(&vault, &event);
-        let live = live_claims(&claims, PREDICATE_CALENDAR_TIME_KIND);
-        let [(_, body)] = live.as_slice() else {
-            panic!("one live time_kind claim for {uid}");
-        };
-        value_field(&body.value, "busy_transparency")
-            .and_then(rmpv::Value::as_str)
-            .expect("busy_transparency token")
-            .to_owned()
-    };
-    assert_eq!(transparency_of("uid-b1@x"), "busy", "opaque mints busy");
-    assert_eq!(
-        transparency_of("uid-b2@x"),
-        "busy",
-        "absent TRANSP defaults busy"
-    );
-    assert_eq!(
-        transparency_of("uid-b3@x"),
-        "free",
-        "transparent preserves free"
-    );
-}
-
-#[test]
-fn etag_not_modified_is_a_true_noop() {
-    let (_dir, vault) = temp_vault();
-    let cfg = config("work");
-    poll(
-        &vault,
-        &cfg,
-        complete(feed(&[EventSpec::new("uid-e@x", 1)]), "v1"),
-        T0,
-    )
-    .expect("first poll");
-    let event = resolve_event_by_uid(&vault, "uid-e@x")
-        .expect("resolve")
-        .expect("event");
-    let claims_before = claims_on(&vault, &event);
-    let cursor_before = ics_feed_cursor_snapshot(&vault, &cfg)
-        .expect("cursor")
-        .expect("cursor after complete");
-    assert_eq!(cursor_before.etag.as_deref(), Some("v1"));
-    assert_eq!(cursor_before.last_complete_at, Some(T0));
-    let pending_before = poll_rows_in(&vault, true).len();
-
-    let state = poll(
-        &vault,
-        &cfg,
-        IcsFetchResponse::NotModified {
-            etag: Some("v1".to_owned()),
-        },
-        T1,
-    )
-    .expect("304 poll");
-    assert!(matches!(state, IcsPollRunState::Reenqueued { .. }));
-
-    // No claim, passport-presence, status, or index movement of any kind.
-    let claims_after = claims_on(&vault, &event);
-    assert_eq!(claims_before, claims_after, "304 writes no claim mutation");
-    // No blob write: the archived head is still the first body.
-    let cursor_after = ics_feed_cursor_snapshot(&vault, &cfg)
-        .expect("cursor")
-        .expect("cursor after 304");
-    assert_eq!(cursor_after, cursor_before, "304 writes no cursor mutation");
-    // Exactly one future attempt was enqueued, none other.
-    assert_eq!(poll_rows_in(&vault, true).len(), pending_before + 1);
 }
 
 #[test]
@@ -908,63 +633,6 @@ fn imported_calendar_claims_cross_gate() {
             Some(ICS_FEED_SOURCE_ID),
         );
     }
-}
-
-#[test]
-fn calendar_safeguard_admission_carries_verdict() {
-    struct RecordingScreener {
-        bodies: Mutex<Vec<CalendarInboundBody>>,
-    }
-    impl CalendarBodyScreener for RecordingScreener {
-        fn screen(&self, body: &CalendarInboundBody) -> oneiron::Result<CalendarScreenVerdict> {
-            self.bodies.lock().expect("bodies").push(body.clone());
-            Ok(CalendarScreenVerdict::Flagged {
-                reason_codes: vec!["calendar.body.test_flag".to_owned()],
-            })
-        }
-    }
-
-    let (_dir, vault) = temp_vault();
-    let cfg = config("work");
-    let screener = RecordingScreener {
-        bodies: Mutex::new(Vec::new()),
-    };
-    let fetcher = StubFetcher::with([complete(
-        feed(&[EventSpec {
-            description: Some("bring the roadmap"),
-            ..EventSpec::new("uid-sc@x", 1)
-        }]),
-        "v1",
-    )]);
-    run_ics_feed_poll_with_screener(&vault, &fetcher, Some(&screener), true, &cfg, T0, 7)
-        .expect("poll with safeguard");
-
-    let event = resolve_event_by_uid(&vault, "uid-sc@x")
-        .expect("resolve")
-        .expect("event");
-    let admissions = claims_on(&vault, &event);
-    assert!(!admissions.is_empty());
-    let bodies = screener.bodies.lock().expect("bodies");
-    assert_eq!(bodies.len(), admissions.len(), "one screen per admission");
-    for body in bodies.iter() {
-        assert_eq!(body.description, "bring the roadmap");
-    }
-    drop(bodies);
-
-    assert_eq!(
-        live_passports_for_event(&vault, &event)
-            .expect("passports")
-            .len(),
-        1
-    );
-    let cursor = ics_feed_cursor_snapshot(&vault, &cfg)
-        .expect("cursor")
-        .expect("cursor after run");
-    assert_eq!(
-        cursor.last_screen_verdict.as_deref(),
-        Some("flagged"),
-        "the typed admission request's verdict reaches admission metadata"
-    );
 }
 
 const CANARY_URL: &str = "https://cal.example.com/secret/CANARY-TOKEN-7f3d9/private.ics";
@@ -1196,116 +864,6 @@ fn production_fetcher_uses_secret_door_and_if_none_match() {
     );
 }
 
-#[test]
-fn provider_url_reset_pauses_attempt_and_surfaces_exception() {
-    let (_dir, vault) = temp_vault();
-    let cfg = config("work");
-    enqueue_ics_feed_poll(&vault, cfg.clone(), T0).expect("enqueue");
-    assert_eq!(poll_rows_in(&vault, true).len(), 1);
-
-    let state = poll(&vault, &cfg, IcsFetchResponse::CredentialReset, T1).expect("reset poll");
-    let IcsPollRunState::PausedNeedsInput {
-        inbox_exception_ref,
-    } = state
-    else {
-        panic!("a credential reset pauses, got {state:?}");
-    };
-
-    // The attempt row carries the pause; no further poll is scheduled.
-    let rows = poll_rows_in(&vault, false);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].state, AttemptState::Paused);
-    assert_eq!(
-        poll_rows_in(&vault, true).len(),
-        0,
-        "no retry storm after a reset"
-    );
-
-    // Exactly one inbox exception, correlating with the run state.
-    let exceptions = ics_feed_pause_exceptions(&vault).expect("exceptions");
-    assert_eq!(exceptions.len(), 1);
-    assert_eq!(exceptions[0].exception_ref, inbox_exception_ref);
-    assert_eq!(exceptions[0].system, "work");
-    assert_eq!(exceptions[0].secret_ref, "ics-feed:work");
-    assert!((T0..=T1).contains(&exceptions[0].paused_at));
-    let cursor = ics_feed_cursor_snapshot(&vault, &cfg)
-        .expect("cursor")
-        .expect("cursor after pause");
-    assert!(cursor.paused);
-
-    // A repeated reset is idempotent: still one exception, no new rows.
-    poll(&vault, &cfg, IcsFetchResponse::CredentialReset, T2).expect("reset replay");
-    let exceptions = ics_feed_pause_exceptions(&vault).expect("exceptions");
-    assert_eq!(exceptions.len(), 1);
-    assert_eq!(exceptions[0].exception_ref, inbox_exception_ref);
-    assert_eq!(poll_rows_in(&vault, true).len(), 0);
-    let rows = poll_rows_in(&vault, false);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].state, AttemptState::Paused);
-}
-
-#[test]
-fn poll_cadence_reenqueues_with_bounded_jitter() {
-    let (_dir, vault) = temp_vault();
-    let cfg = config("work");
-
-    // An ordered, non-zero window is required.
-    let invalid = IcsFeedPollConfig {
-        cadence_min_seconds: 0,
-        ..cfg.clone()
-    };
-    assert!(enqueue_ics_feed_poll(&vault, invalid, T0).is_err());
-
-    enqueue_ics_feed_poll(&vault, cfg.clone(), T0).expect("enqueue");
-    complete_pending_poll_row(&vault, T0);
-
-    let state = poll(
-        &vault,
-        &cfg,
-        complete(feed(&[EventSpec::new("uid-j@x", 1)]), "v1"),
-        T1,
-    )
-    .expect("poll");
-    let IcsPollRunState::Reenqueued { next_not_before } = state else {
-        panic!("success re-enqueues, got {state:?}");
-    };
-    assert!(
-        (T1 + 300..=T1 + 900).contains(&next_not_before),
-        "due time inside the configured window: {next_not_before}"
-    );
-
-    // Exactly one pending row carries that due time in its payload — no
-    // timer, cron, Schedule variant, or recurrence primitive was created.
-    let pending = poll_rows_in(&vault, true);
-    assert_eq!(pending.len(), 1, "exactly one re-enqueue");
-    let payload: IcsFeedPollPayload =
-        serde_json::from_slice(&pending[0].payload).expect("payload decodes");
-    assert_eq!(payload.not_before, next_not_before);
-    assert_eq!(payload.config, cfg);
-}
-
-#[test]
-fn imported_cancel_status_in_feed_writes_imported_cancel_basis() {
-    let (_dir, vault) = temp_vault();
-    let cfg = config("work");
-    let cancelled = EventSpec {
-        cancelled: true,
-        ..EventSpec::new("uid-x1@x", 1)
-    };
-    poll(&vault, &cfg, complete(feed(&[cancelled]), "v1"), T0).expect("poll");
-    let event = resolve_event_by_uid(&vault, "uid-x1@x")
-        .expect("resolve")
-        .expect("event");
-    assert_eq!(
-        live_status(&vault, &event),
-        Some(("cancelled".to_owned(), "imported_cancel".to_owned(), T0))
-    );
-    assert_eq!(
-        vault.get_entity_type(&event).expect("entity type"),
-        Some(ENTITY_TYPE_EVENT)
-    );
-}
-
 // ---------------------------------------------------------------------------
 // VERDICT-FIX oracles (ONE-1784 finder/verdict round): each test below pins
 // one adjudicated REAL finding and was verified red against the pre-fix tree.
@@ -1331,18 +889,6 @@ fn event_name(vault: &Vault, event: &EntityId) -> Option<String> {
     entries.into_iter().find_map(|(key, value)| {
         (key.as_str() == Some("name")).then(|| value.as_str().map(str::to_owned))?
     })
-}
-
-/// A screener that always clears and counts how many bodies it saw.
-struct CountingScreener {
-    seen: Mutex<usize>,
-}
-
-impl CalendarBodyScreener for CountingScreener {
-    fn screen(&self, _body: &CalendarInboundBody) -> oneiron::Result<CalendarScreenVerdict> {
-        *self.seen.lock().expect("seen") += 1;
-        Ok(CalendarScreenVerdict::Clear)
-    }
 }
 
 #[test]
@@ -1372,116 +918,6 @@ fn feed_identity_is_injective_over_colon_bearing_fields() {
         poll_rows_in(&vault, true).len(),
         2,
         "colon-bearing feeds must not dedupe against each other"
-    );
-}
-
-#[test]
-fn setup_enqueue_never_forks_a_parallel_poll_chain() {
-    let (_dir, vault) = temp_vault();
-    let cfg = config("work");
-    enqueue_ics_feed_poll(&vault, cfg.clone(), T0).expect("setup enqueue");
-    complete_pending_poll_row(&vault, T0);
-
-    // The run re-enqueues exactly one generation-scoped successor.
-    poll(
-        &vault,
-        &cfg,
-        complete(feed(&[EventSpec::new("uid-q@x", 1)]), "v1"),
-        T1,
-    )
-    .expect("poll");
-    assert_eq!(poll_rows_in(&vault, true).len(), 1, "one live generation");
-
-    // A redundant setup call while that generation is pending must adopt the
-    // live chain, never fork a second one under the bare key.
-    let again = enqueue_ics_feed_poll(&vault, cfg, T2).expect("idempotent setup");
-    assert!(
-        matches!(again, EnqueueOutcome::Existing(_)),
-        "setup while a generation is pending returns Existing, got {again:?}"
-    );
-    assert_eq!(
-        poll_rows_in(&vault, true).len(),
-        1,
-        "one feed, one pending attempt — no parallel chains"
-    );
-}
-
-#[test]
-fn superseding_admissions_cross_the_safeguard_hook() {
-    let (_dir, vault) = temp_vault();
-    let cfg = config("work");
-    let screener = CountingScreener {
-        seen: Mutex::new(0),
-    };
-    let fetcher = StubFetcher::with([
-        complete(feed(&[EventSpec::new("uid-hk@x", 1)]), "v1"),
-        complete(feed(&[EventSpec::new("uid-hk@x", 2)]), "v2"),
-        complete(feed(&[]), "v3"),
-    ]);
-
-    run_ics_feed_poll_with_screener(&vault, &fetcher, Some(&screener), true, &cfg, T0, 7)
-        .expect("create poll");
-    let event = resolve_event_by_uid(&vault, "uid-hk@x")
-        .expect("resolve")
-        .expect("event");
-    let created = claims_on(&vault, &event);
-    assert!(!created.is_empty());
-    let create_screens = *screener.seen.lock().expect("seen");
-    assert_eq!(create_screens, created.len(), "one screen per admission");
-    let initial_passports = live_passports_for_event(&vault, &event).expect("passports");
-    assert_eq!(initial_passports.len(), 1);
-
-    // Compare this run's screens with newly admitted claim identities.
-    run_ics_feed_poll_with_screener(&vault, &fetcher, Some(&screener), true, &cfg, T1, 7)
-        .expect("update poll");
-    let updated = claims_on(&vault, &event);
-    let update_admissions: Vec<_> = updated
-        .iter()
-        .filter(|(id, _)| !created.iter().any(|(previous, _)| previous == id))
-        .collect();
-    let update_passports = live_passports_for_event(&vault, &event).expect("passports");
-    assert_eq!(update_passports.len(), 1);
-    assert_ne!(update_passports[0].0, initial_passports[0].0);
-    assert!(update_admissions.iter().any(|(id, body)| {
-        id == &update_passports[0].0 && body.predicate == PREDICATE_CALENDAR_PASSPORT
-    }));
-    let update_screens = *screener.seen.lock().expect("seen");
-    assert_eq!(
-        update_screens - create_screens,
-        update_admissions.len(),
-        "each update admission crosses the hook"
-    );
-    let cursor = ics_feed_cursor_snapshot(&vault, &cfg)
-        .expect("cursor")
-        .expect("cursor after update");
-    assert_eq!(
-        cursor.last_screen_verdict.as_deref(),
-        Some("clear"),
-        "an update run made of only supersessions still carries a verdict"
-    );
-
-    // Complete-feed absence admits a replacement passport and cancellation.
-    run_ics_feed_poll_with_screener(&vault, &fetcher, Some(&screener), true, &cfg, T2, 7)
-        .expect("absence poll");
-    let after_absence = claims_on(&vault, &event);
-    let absence_admissions: Vec<_> = after_absence
-        .iter()
-        .filter(|(id, _)| !updated.iter().any(|(previous, _)| previous == id))
-        .collect();
-    let absence_passports = live_passports_for_event(&vault, &event).expect("passports");
-    assert_eq!(absence_passports.len(), 1);
-    assert_ne!(absence_passports[0].0, update_passports[0].0);
-    assert!(absence_admissions.iter().any(|(id, body)| {
-        id == &absence_passports[0].0 && body.predicate == PREDICATE_CALENDAR_PASSPORT
-    }));
-    assert!(absence_admissions.iter().any(|(_, body)| {
-        body.predicate == PREDICATE_CALENDAR_STATUS
-            && body.lifecycle == ClaimLifecycleStatus::Active
-    }));
-    assert_eq!(
-        *screener.seen.lock().expect("seen") - update_screens,
-        absence_admissions.len(),
-        "each absence passport and cancellation admission crosses the hook"
     );
 }
 

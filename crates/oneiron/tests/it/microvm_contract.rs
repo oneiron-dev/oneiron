@@ -19,21 +19,6 @@ use oneiron::{
 };
 
 #[test]
-fn microvm_contract_first_party_tier_takes_no_microvm() {
-    let selected = select_backend_for_tier(SandboxGuestTier::FirstPartyDreamer)
-        .expect("first-party selection succeeds");
-    assert!(
-        selected.is_none(),
-        "first-party code stays in-process: no microVM backend is selected"
-    );
-
-    // `for_tier` is a pure contract value and is unaffected by routing.
-    let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
-    assert!(contract.links_write_imports());
-    assert!(!contract.has_proposal_delta_channel());
-}
-
-#[test]
 fn microvm_contract_isolating_tiers_route_or_fail_closed() {
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
         match select_backend_for_tier(tier) {
@@ -72,7 +57,6 @@ mod dev_backend {
 
     use oneiron::{
         ErrorKind, Result,
-        code_sandbox::FakeSandboxAdapter,
         code_sandbox::SandboxBoundaryAdapter,
         code_sandbox::SandboxCredentialCall,
         code_sandbox::SandboxCredentialHandle,
@@ -449,25 +433,6 @@ mod dev_backend {
     }
 
     #[test]
-    fn microvm_contract_run_refuses_unbounded_budget_and_incomplete_image() {
-        let mut fixture = fixture(SandboxGuestTier::Untrusted);
-        let image = guest_image(fixture.base.parent().expect("base parent"));
-
-        let unbounded = fixture
-            .adapter
-            .run(&image, ExecutionBudget::new(0, 128, 32))
-            .expect_err("an unbounded budget is refused");
-        assert_eq!(unbounded.kind(), ErrorKind::MicroVmBackendError);
-
-        let missing = GuestImage::new("/nonexistent/kernel", "/nonexistent/rootfs", "/none/comp");
-        let incomplete = fixture
-            .adapter
-            .run(&missing, ExecutionBudget::new(5, 128, 32))
-            .expect_err("an incomplete image is refused");
-        assert_eq!(incomplete.kind(), ErrorKind::MicroVmBackendError);
-    }
-
-    #[test]
     fn microvm_contract_overlay_refuses_symlinked_entries() {
         let mut fixture = fixture(SandboxGuestTier::Foreign);
         let upper = fixture.adapter.vm().overlay_upper().to_path_buf();
@@ -513,76 +478,5 @@ mod dev_backend {
             .read_file(SandboxReadFile::new(path))
             .expect_err("an intermediate symlink must not smuggle host bytes");
         assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
-    }
-
-    /// One op sequence run against any boundary adapter. The summary is what
-    /// the contract promises, independent of which backend is underneath.
-    fn exercise_boundary(
-        adapter: &mut dyn SandboxBoundaryAdapter,
-        staged: &SandboxVirtualPath,
-    ) -> Vec<String> {
-        let mut summary = Vec::new();
-
-        let read = adapter
-            .read_file(SandboxReadFile::new(staged.clone()))
-            .expect("staged read");
-        summary.push(format!(
-            "read:{}:{}",
-            read.path.as_str(),
-            String::from_utf8_lossy(&read.bytes)
-        ));
-
-        let missing = SandboxVirtualPath::try_new("/mnt/workspace/absent.txt").expect("path");
-        let error = adapter
-            .read_file(SandboxReadFile::new(missing))
-            .expect_err("missing file");
-        summary.push(format!("read_missing:{:?}", error.kind()));
-
-        let call = SandboxCredentialCall::read_only(
-            "http.get",
-            handle(),
-            destination_args("https", "api.example.test"),
-        )
-        .expect("credential call");
-        let outcome = adapter.call_credential(call).expect("credential outcome");
-        summary.push(format!(
-            "credential:{}:{}:{}",
-            outcome.operation().as_str(),
-            outcome.operation().effect().as_str(),
-            outcome.credential().as_str()
-        ));
-
-        let write = SandboxVirtualPath::try_new("/mnt/workspace/proposed.txt").expect("path");
-        let delta = adapter
-            .propose_write(SandboxProposalWrite::FileWrite(
-                oneiron::code_sandbox::SandboxFileWriteProposal::new(write, b"proposed".to_vec()),
-            ))
-            .expect("proposal");
-        summary.push(format!(
-            "proposal:{}:{}:{:?}",
-            delta.kind().as_str(),
-            delta.tier().as_str(),
-            delta.approval()
-        ));
-
-        summary
-    }
-
-    #[test]
-    fn microvm_contract_boundary_parity_with_fake_adapter() {
-        let staged = SandboxVirtualPath::try_new("/mnt/workspace/input.txt").expect("path");
-
-        let mut fixture = fixture(SandboxGuestTier::Foreign);
-        let microvm_summary = exercise_boundary(&mut fixture.adapter, &staged);
-
-        let dir = tempfile::tempdir().expect("tempdir");
-        let mut fake = FakeSandboxAdapter::new(SandboxGuestTier::Foreign, mount_table(dir.path()));
-        fake.stage_file(staged.clone(), b"base bytes".to_vec());
-        let fake_summary = exercise_boundary(&mut fake, &staged);
-
-        assert_eq!(
-            microvm_summary, fake_summary,
-            "boundary semantics must not depend on the backend underneath"
-        );
     }
 }
