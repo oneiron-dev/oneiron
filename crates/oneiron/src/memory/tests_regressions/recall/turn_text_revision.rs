@@ -57,7 +57,6 @@ fn pinned_pack_text(
 }
 
 /// The first message of `turn`, in message order.
-#[cfg(feature = "sync")]
 fn first_message(vault: &crate::Vault, turn: &EntityId) -> EntityId {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let messages = crate::tagging::turn_messages_in_txn(vault, &rtxn, turn)
@@ -298,8 +297,9 @@ fn a_turn_reference_hydrates_after_its_row_takes_new_metadata() {
 /// original row stays in the revision ledger (its pinned short ref was taken
 /// before its text moved into the document), which the purge does not
 /// reach. Bug repro: the search took that retained row as a state of the
-/// message and served the purged words.
-#[cfg(feature = "sync")]
+/// message and served the purged words. After the first fix, a build
+/// without `sync`, which reads no document, still did (Astra's final
+/// re-check).
 #[test]
 fn a_turn_reference_never_reads_back_purged_words() {
     use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};

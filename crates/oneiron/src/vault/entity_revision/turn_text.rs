@@ -339,7 +339,8 @@ fn current_state_in_txn(
 /// The member `message` as a search may pick it: every state it retains in
 /// which it shows text, `current` first. A row-backed message's are its
 /// row at each retained revision; a document-backed one's are its
-/// document's retained states alone ([`MAX_SOURCE_STATES`] of each).
+/// document's retained states alone, which a build without `sync` does not
+/// read ([`MAX_SOURCE_STATES`] of each).
 fn source_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -363,22 +364,27 @@ fn source_in_txn(
         }
         None => source.may_be_absent = true,
     };
-    #[cfg(feature = "sync")]
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &message)?
-        && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
-        && let Some(history) = crate::entity_doc::record_body_history_in_txn(
-            &vault.store,
-            txn,
-            &message,
-            body,
-            MAX_SOURCE_STATES,
-        )?
-    {
-        for state in history {
-            push(
-                document_commitment(&message, &raw, &state.frontier),
-                crate::tagging::shown_message_text(&state.body),
-            );
+    // Whether its text lives in its document is read in every build: its
+    // rows from before the move never stand for it then.
+    if crate::entity_doc::has_record_head(&vault.store, txn, &message)? {
+        #[cfg(feature = "sync")]
+        if let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &message)?
+            && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
+            && let Some(history) = crate::entity_doc::record_body_history_in_txn(
+                &vault.store,
+                txn,
+                &message,
+                body,
+                MAX_SOURCE_STATES,
+            )?
+        {
+            for state in history {
+                push(
+                    document_commitment(&message, &raw, &state.frontier),
+                    crate::tagging::shown_message_text(&state.body),
+                );
+            }
         }
         return Ok(source);
     }
