@@ -10,6 +10,14 @@ MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text()
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row]
 DEFINITIONS = [row for row in MANIFEST['verbs'] if 'call' not in row]
 if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): raise ValueError('duplicate SDK verb')
+# A `context: "run"` row is answered by the code run itself, over its own
+# dispatcher and storage route, as the typed `self.*` call its `effect` names.
+# Code mode serves it beside the host's rows; no host door, tool, route or
+# binding can carry a run, so it projects nowhere else.
+RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
+for row in RUN_ROWS:
+    if set(row) != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope and effect, and nothing else')
 # ARCH-0028: the MCP tool list and the code-mode method table ARE the verb table,
 # so a row carries no opt-out. A row's tool takes its whole typed input as `spec`
 # unless it names a projection, and refuses a world/facet-narrowed connector
@@ -357,6 +365,23 @@ fn mcp_agent_verb_output(
 '''
     return result
 
+def run_catalog():
+    'RunVerb: the rows code mode serves that the run answers itself.'
+    variants = {r['name']: ''.join(part.title() for part in r['name'].split('_')) for r in RUN_ROWS}
+    out = HEADER + '/// The verb-table rows a code run answers itself, as the typed `self.*` call\n'
+    out += '/// each names: code mode serves them beside the host\'s rows, and no host door,\n'
+    out += '/// tool, route or binding carries them.\n'
+    out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum RunVerb { ' + ','.join(variants.values()) + ' }\nimpl RunVerb {\n'
+    out += 'pub const ALL: &[Self] = &[' + ','.join('Self::' + variant for variant in variants.values()) + '];\n'
+    out += "pub fn from_name(name: &str) -> Option<Self> { Self::ALL.iter().copied().find(|verb| verb.as_str() == name) }\n"
+    out += "pub const fn as_str(self) -> &'static str { match self {\n"
+    out += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r['name']) + ',\n' for r in RUN_ROWS) + '} }\n'
+    writes = ['Self::' + variants[r['name']] for r in RUN_ROWS if r['scope'] == 'Write']
+    out += 'pub const fn writes(self) -> bool { matches!(self, ' + (' | '.join(writes) if writes else '_ if false') + ') }\n'
+    out += 'pub const fn effect(self) -> crate::code_run::SelfEffect { match self {\n'
+    out += ''.join('Self::' + variants[r['name']] + ' => crate::code_run::SelfEffect::' + r['effect'] + ',\n' for r in RUN_ROWS) + '} }\n'
+    return out + '}\n'
+
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"]
     core = HEADER
@@ -365,7 +390,7 @@ def outputs():
     # Sharing one immutable schema table avoids repeated schemars generation on tool listing.
     core += "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n"
     core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n"
-    for r in ROWS:
+    for r in ROWS + RUN_ROWS:
         core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
     core += "])); SCHEMAS.get(verb) }\n"
     core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
@@ -680,6 +705,7 @@ export function agentVerbs(invoke: AgentInvoke) {
         uniffi += f'"{js_method(row["name"])}" => fn {row["name"]}(&self, {args}) -> {signature["output"]};\n'
     uniffi += '}\n'
     files = {
+        'crates/oneiron/src/task_verb/run_verb_catalog.rs': run_catalog(),
         'crates/oneiron-uniffi/src/facade_generated.rs': uniffi,
         'crates/oneiron/src/task_verb/sdk_generated.rs':core,
         'crates/oneiron/src/task_verb/verb_catalog.rs':catalog,

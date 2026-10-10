@@ -6,7 +6,6 @@ package oneiron:code-run@1.0.0;
 // SelfCall ABI; the host still performs the normal per-operation admission.
 world guest {
     record time-range { start: u64, end: u64 }
-    record search-input { query: string, limit: option<u32> }
     record claim-input {
         id: string,
         predicate: string,
@@ -18,12 +17,6 @@ world guest {
         occurred: option<time-range>,
         learned-at: option<u64>,
     }
-    record search-output {
-        // @json-list
-        results: list<string>,
-    }
-    record claim-output { id: string }
-    record edge-output { src: string, kind: string, tgt: string }
     record wait-output { wait-id: string }
     record speech-output { order: u32, is-visible: bool }
     record blocked-output { receipt: string }
@@ -33,8 +26,6 @@ world guest {
         definition: string,
     }
     record agent-put-output { id: string, disposition: string }
-    record supersede-input { new-id: string, old-id: string, now: u64 }
-    record edge-input { src: string, kind: string, tgt: string, weight: option<f32> }
     record prompt-input { prompt: string }
     record text-input { text: string }
     record credential-input {
@@ -77,17 +68,10 @@ world guest {
         // @json
         value: string
     ) -> result<bool, string>;
-    // @js self.memory.search
-    import memory-search: func(input: search-input) -> result<search-output, string>;
-    // @js self.memory.put_claim
-    import memory-put-claim: func(input: claim-input) -> result<claim-output, string>;
-    // @js self.memory.supersede_claim
-    import memory-supersede-claim: func(input: supersede-input) -> result<claim-output, string>;
-    // @js self.memory.put_edge
-    import memory-put-edge: func(input: edge-input) -> result<edge-output, string>;
     // The SDK verb table, served from the host's generated catalog, and one
     // call of any verb in it. Bootstrap builds `self.memory.<verb>` from these
-    // two, so a verb row reaches the guest with no component rebuild.
+    // two, so a verb row reaches the guest with no component rebuild. The
+    // memory reads and writes the run answers itself are rows too.
     // @js self.verbs.names @sync @abi
     import verb-names: func() -> result<list<string>, string>;
     // @js self.verbs.call @abi

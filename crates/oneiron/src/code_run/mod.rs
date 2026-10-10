@@ -18,6 +18,7 @@ mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod replay;
+mod run_verbs;
 mod storage;
 mod support;
 mod types;
@@ -60,7 +61,11 @@ pub use self::types::{
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
     SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall, peer_result_wait,
 };
-pub use types::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
+pub use run_verbs::{
+    JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
+    MemoryTimeRange,
+};
+pub use types::{AGENT_VERB_DOOR_UNBOUND, AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
 
 // The flat code_run.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so

@@ -313,8 +313,7 @@ impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
         _: &oneiron::memory::HostWriteOrigin,
     ) -> Result<serde_json::Value, oneiron::code_run::AgentVerbRefusal> {
         Err(oneiron::code_run::AgentVerbRefusal {
-            code: "agent_verb_door_unbound".to_owned(),
-            message: "the oracle binds no verb door".to_owned(),
+            code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
         })
     }
 }

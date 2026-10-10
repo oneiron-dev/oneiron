@@ -58,11 +58,9 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .recv()
             .map_err(|_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
-                message: "the verb door stopped before answering".to_owned(),
             })?
             .map_err(|error| AgentVerbRefusal {
                 code: error.kind.to_owned(),
-                message: error.message,
             })
     }
 }

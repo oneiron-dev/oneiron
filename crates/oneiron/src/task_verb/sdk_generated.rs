@@ -139,6 +139,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "rooms.speak",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
+            (
+                "search",
+                crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
+            ),
+            (
+                "put_claim",
+                crate::code_run::vault_read::request_schema::<crate::code_run::MemoryClaimInput>(),
+            ),
+            (
+                "supersede_claim",
+                crate::code_run::vault_read::request_schema::<crate::code_run::MemorySupersedeInput>(
+                ),
+            ),
+            (
+                "put_edge",
+                crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)

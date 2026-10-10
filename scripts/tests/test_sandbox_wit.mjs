@@ -4,16 +4,17 @@ import { createHostSdk } from '../../crates/oneiron/wit/generated/code-run.mjs';
 const calls = [];
 const sdk = createHostSdk({
   'ask': input => ({waitId: input.prompt}),
-  'memory-put-claim': input => { calls.push(input); return { id: input.id }; },
-  'memory-search': input => ({results: [JSON.stringify({value: input.query})]}),
+  // self.memory's rows, the run's own memory rows among them, ride these two.
+  'verb-names': () => ['put_claim', 'search'],
+  'verb-call': (verb, input) => { calls.push({verb, input}); return JSON.stringify({id: JSON.parse(input).id}); },
   'json-validate': (schema, value) => { calls.push({schema, value}); return true; },
   'clock-now-unix-ms': () => 1234,
   'random-bytes': length => new Uint8Array(length).fill(7),
 });
-assert.deepEqual(await sdk.self.memory.put_claim({id:'id', predicate:'profile.test', subject:{entity:'person'}, value:{text:'hello'}}), {id:'id'});
-assert.equal(calls[0].subject, '{"entity":"person"}');
-assert.equal(calls[0].value, '{"text":"hello"}');
-assert.deepEqual(await sdk.self.memory.search({query:'hello'}), {results:[{value:'hello'}]});
+assert.equal(sdk.self.memory, undefined);
+assert.deepEqual(sdk.self.verbs.names(), ['put_claim', 'search']);
+assert.equal(await sdk.self.verbs.call('put_claim', {id:'id', subject:'s', value:{text:'hello'}}), '{"id":"id"}');
+assert.deepEqual(calls[0], {verb:'put_claim', input:'{"id":"id","subject":"s","value":{"text":"hello"}}'});
 assert.deepEqual(await sdk.ask({prompt:'hello'}), {waitId:'hello'});
 assert.equal(sdk.self.ask_human, undefined);
 assert.equal(sdk.self.askHuman, undefined);

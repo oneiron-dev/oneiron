@@ -911,6 +911,34 @@
         "output": "OutboundIntentReceipt"
       },
       "context": "definition"
+    },
+    {
+      "name": "search",
+      "input": "crate::code_run::MemorySearchInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "MemorySearch"
+    },
+    {
+      "name": "put_claim",
+      "input": "crate::code_run::MemoryClaimInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "MemoryPutClaim"
+    },
+    {
+      "name": "supersede_claim",
+      "input": "crate::code_run::MemorySupersedeInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "MemorySupersedeClaim"
+    },
+    {
+      "name": "put_edge",
+      "input": "crate::code_run::MemoryEdgeInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "MemoryPutEdge"
     }
   ]
 }

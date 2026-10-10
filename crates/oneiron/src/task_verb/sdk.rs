@@ -215,7 +215,16 @@ pub struct ReceiptsRequest {
 }
 
 include!("verb_catalog.rs");
+include!("run_verb_catalog.rs");
 include!("sdk_generated.rs");
+
+/// The verb table as code mode serves it, one `self.memory.<name>` per row:
+/// the rows a host door answers, then the rows the run answers itself. The
+/// guest's method table, the executor prompt and dispatch all read this list.
+pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> {
+    let host = AgentVerb::ALL.iter().map(|verb| verb.as_str());
+    host.chain(RunVerb::ALL.iter().map(|verb| verb.as_str()))
+}
 
 /// The verb table as code mode's `self.memory` declarations: one signature
 /// per row, rendered from that verb's own input schema, so the methods a
@@ -226,15 +235,15 @@ pub fn code_mode_declarations() -> &'static str {
     // immutable and vault-independent.
     static DECLARATIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         let mut tree = std::collections::BTreeMap::new();
-        for verb in AgentVerb::ALL {
+        for verb in code_mode_verb_names() {
             let mut node = &mut tree;
-            let mut parts = verb.as_str().split('.').peekable();
+            let mut parts = verb.split('.').peekable();
             while let Some(part) = parts.next() {
                 let entry = node
                     .entry(part)
                     .or_insert_with(|| DeclarationNode::Namespace(Default::default()));
                 if parts.peek().is_none() {
-                    *entry = DeclarationNode::Verb(*verb);
+                    *entry = DeclarationNode::Verb(verb);
                     break;
                 }
                 let DeclarationNode::Namespace(next) = entry else {
@@ -253,7 +262,7 @@ pub fn code_mode_declarations() -> &'static str {
 
 enum DeclarationNode {
     Namespace(std::collections::BTreeMap<&'static str, DeclarationNode>),
-    Verb(AgentVerb),
+    Verb(&'static str),
 }
 
 fn render_declarations(
@@ -270,8 +279,7 @@ fn render_declarations(
                 out.push_str(&format!("{indent}}}\n"));
             }
             DeclarationNode::Verb(verb) => {
-                let input =
-                    input_schema(verb.as_str()).map_or_else(|| "object".to_owned(), schema_type);
+                let input = input_schema(verb).map_or_else(|| "object".to_owned(), schema_type);
                 out.push_str(&format!(
                     "{indent}function {name}(input: {input}): Promise<unknown>;\n"
                 ));
