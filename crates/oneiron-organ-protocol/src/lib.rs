@@ -30,8 +30,8 @@ pub use frame::{FrameError, recv_frame, recv_frame_until, send_frame, send_frame
 pub use region::{MappedRegion, SharedRegion};
 #[cfg(unix)]
 pub use runtime::{
-    Answer, AskBytes, AskReply, CallContext, InputBytes, Organ, OutputBytes, VERB_ECHO, VERB_TOUCH,
-    serve, serve_stream, touch_fold,
+    Answer, AskBytes, AskReply, Asker, CallContext, InputBytes, Organ, OutputBytes, VERB_ECHO,
+    VERB_TOUCH, serve, serve_stream, touch_fold,
 };
 pub use serde_bytes::ByteBuf;
 #[cfg(unix)]

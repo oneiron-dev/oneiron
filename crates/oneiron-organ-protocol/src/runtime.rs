@@ -84,7 +84,7 @@ pub struct CallContext<'a> {
     pub inputs: &'a [InputBytes],
     pub limits: Limits,
     cancel: &'a AtomicBool,
-    asker: Option<&'a Asker<'a>>,
+    asker: Asker,
 }
 
 impl<'a> CallContext<'a> {
@@ -108,12 +108,12 @@ impl<'a> CallContext<'a> {
             inputs,
             limits,
             cancel,
-            asker: None,
+            asker: Asker::default(),
         }
     }
 
-    fn with_asker(mut self, asker: &'a Asker<'a>) -> Self {
-        self.asker = Some(asker);
+    fn with_asker(mut self, asker: Asker) -> Self {
+        self.asker = asker;
         self
     }
 
@@ -143,13 +143,15 @@ impl<'a> CallContext<'a> {
     /// once the call is cancelled; [`AskCode::TooLarge`] for a value over
     /// [`ASK_VALUE_MAX`], refused before it is sent.
     pub fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
-        match self.asker {
-            Some(asker) => asker.ask(verb, value),
-            None => Err(AskRefusal::new(
-                AskCode::Unsupported,
-                "this session carries no asks",
-            )),
-        }
+        self.asker.ask(verb, value)
+    }
+
+    /// This call's way to ask, for code that must own it, such as a library
+    /// that takes a `'static` signer or fetcher. It is good for the call
+    /// only: once the call has replied, it refuses without sending.
+    #[must_use]
+    pub fn asker(&self) -> Asker {
+        self.asker.clone()
     }
 }
 
@@ -215,19 +217,44 @@ enum Wake {
     Cancelled,
 }
 
-/// How a served verb asks: the socket's writer, this call's state.
+/// One call's way to ask the engine ([`CallContext::ask`]). Cloning it
+/// shares the call's one ask in flight.
+#[derive(Debug, Clone, Default)]
+pub struct Asker {
+    line: Option<Arc<AskLine>>,
+}
+
+impl Asker {
+    /// [`CallContext::ask`], from code that owns the asker.
+    ///
+    /// # Errors
+    /// As [`CallContext::ask`]; outside a served call, or once the call has
+    /// replied, [`AskCode::Unsupported`] or [`AskCode::Cancelled`] without
+    /// sending.
+    pub fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+        match &self.line {
+            Some(line) => line.ask(verb, value),
+            None => Err(AskRefusal::new(
+                AskCode::Unsupported,
+                "this call has no engine to ask",
+            )),
+        }
+    }
+}
+
+/// How a served call asks: the socket's writer, this call's state.
 #[derive(Debug)]
-struct Asker<'a> {
-    writer: &'a Mutex<UnixStream>,
+struct AskLine {
+    writer: Arc<Mutex<UnixStream>>,
     limit: u32,
     call: u64,
-    state: &'a CallState,
+    state: Arc<CallState>,
     asks: bool,
     next: AtomicU32,
     one: Mutex<()>,
 }
 
-impl Asker<'_> {
+impl AskLine {
     fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
         if !self.asks {
             return Err(AskRefusal::new(
@@ -257,7 +284,7 @@ impl Asker<'_> {
             verb: verb.to_owned(),
             value,
         });
-        if send_frame(&lock(self.writer), &ask, &[], self.limit).is_err() {
+        if send_frame(&lock(&self.writer), &ask, &[], self.limit).is_err() {
             lock(&self.state.waiting).take();
             return Err(AskRefusal::new(AskCode::Failed, "the ask was not sent"));
         }
@@ -351,7 +378,7 @@ pub fn serve<O: Organ>(organ: O) -> ExitCode {
 struct Shared<O> {
     organ: Arc<O>,
     verbs: Vec<VerbSpec>,
-    writer: Mutex<UnixStream>,
+    writer: Arc<Mutex<UnixStream>>,
     calls: Mutex<HashMap<u64, Arc<CallState>>>,
     limits: Limits,
     /// The version this session speaks: the lower minor of both sides.
@@ -394,7 +421,7 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
     let shared = Arc::new(Shared {
         organ,
         verbs,
-        writer: Mutex::new(stream.try_clone()?),
+        writer: Arc::new(Mutex::new(stream.try_clone()?)),
         calls: Mutex::new(HashMap::new()),
         limits,
         session,
@@ -508,13 +535,15 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
         Err(error) => return (Outcome::Error(error), Vec::new()),
     };
     let asker = Asker {
-        writer: &shared.writer,
-        limit: shared.limits.max_reply_frame,
-        call: call.id,
-        state: &state,
-        asks: shared.session.asks(),
-        next: AtomicU32::new(0),
-        one: Mutex::new(()),
+        line: Some(Arc::new(AskLine {
+            writer: Arc::clone(&shared.writer),
+            limit: shared.limits.max_reply_frame,
+            call: call.id,
+            state: Arc::clone(&state),
+            asks: shared.session.asks(),
+            next: AtomicU32::new(0),
+            one: Mutex::new(()),
+        })),
     };
     let ctx = CallContext::new(
         &call.verb,
@@ -525,7 +554,7 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
         shared.limits,
         &state.cancel,
     )
-    .with_asker(&asker);
+    .with_asker(asker);
     let result = catch_unwind(AssertUnwindSafe(|| match call.verb.as_str() {
         VERB_TOUCH => Ok(touch(&ctx)),
         VERB_ECHO => Ok(Answer {
@@ -535,6 +564,8 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
         _ => shared.organ.call(&ctx),
     }))
     .unwrap_or_else(|_| Err(OrganError::new(ErrorCode::Internal, "the verb panicked")));
+    // An asker the verb kept refuses from here on, without sending.
+    state.cancel();
     drop(inputs);
     match result.and_then(encode_answer) {
         Ok((proposal, fds)) => (Outcome::Proposal(proposal), fds),
