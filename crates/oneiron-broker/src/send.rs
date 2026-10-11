@@ -3,7 +3,9 @@
 
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue, TRANSFER_ENCODING};
+use reqwest::header::{
+    ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue, TRANSFER_ENCODING,
+};
 use reqwest::{Certificate, Client, Method, Url};
 use zeroize::Zeroizing;
 

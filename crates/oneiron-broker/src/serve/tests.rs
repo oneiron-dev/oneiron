@@ -316,7 +316,10 @@ async fn a_coding_in_any_value_of_either_header_returns_nothing() {
     let broker = broker(None, &[fake.ca_pem()]).await;
     let codings: [&[(&str, &str)]; 3] = [
         // The first value alone says nothing is encoded.
-        &[("content-encoding", "identity"), ("content-encoding", "gzip")],
+        &[
+            ("content-encoding", "identity"),
+            ("content-encoding", "gzip"),
+        ],
         &[("content-encoding", "identity, br")],
         // A transfer coding the HTTP stack leaves on the bytes.
         &[("transfer-encoding", "gzip, chunked")],
@@ -407,7 +410,10 @@ async fn a_second_broker_never_takes_a_live_socket() {
         .call(&chat(fake.origin(), BODY), BODY, key())
         .await
         .expect("call");
-    assert!(matches!(reply.outcome, Outcome::Answered { status: 200, .. }));
+    assert!(matches!(
+        reply.outcome,
+        Outcome::Answered { status: 200, .. }
+    ));
 
     // A broker holding the path's lock may be between its stale check and
     // its bind: a second one is refused and leaves the path alone.
@@ -443,14 +449,22 @@ async fn a_live_socket_with_a_full_queue_is_refused_at_once() {
     // neither blocks on it nor takes its path.
     let dir = tempfile::tempdir().expect("dir");
     let socket = dir.path().join("broker.sock");
-    let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("listener");
+    // A one-slot queue: std's default (somaxconn, 4096 on gce) runs the test
+    // out of descriptors before the queue fills.
+    let unbound = tokio::net::UnixSocket::new_stream().expect("socket");
+    unbound.bind(&socket).expect("bind");
+    let _listener = unbound.listen(1).expect("listener");
     let mut held = Vec::new();
-    while let Ok(Ok(stream)) =
-        tokio::time::timeout(Duration::from_millis(200), UnixStream::connect(&socket)).await
-    {
-        held.push(stream);
-        assert!(held.len() < 100_000, "the queue never filled");
-    }
+    let full = loop {
+        match tokio::time::timeout(Duration::from_millis(200), UnixStream::connect(&socket)).await
+        {
+            Ok(Ok(stream)) => held.push(stream),
+            Ok(Err(error)) => break error.kind(),
+            Err(_) => break std::io::ErrorKind::TimedOut,
+        }
+        assert!(held.len() < 64, "the queue never filled");
+    };
+    assert_eq!(full, std::io::ErrorKind::WouldBlock, "the queue is full");
     let second = tokio::time::timeout(
         Duration::from_secs(10),
         serve(ServeConfig {
