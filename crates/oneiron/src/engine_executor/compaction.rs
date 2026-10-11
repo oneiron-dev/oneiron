@@ -55,7 +55,8 @@ struct LiveSeat {
 }
 
 enum PassOutcome {
-    Accepted(GatedCompaction),
+    /// Boxed: it carries the whole sealed request.
+    Accepted(Box<GatedCompaction>),
     Rejected(CompactionGateFailure),
     Refused(CompactionRefusal),
 }
@@ -171,7 +172,7 @@ impl RunCompaction {
         seat.flight = None;
         self.report.in_flight = false;
         match outcome {
-            PassOutcome::Accepted(gated) => Some(Ok(gated)),
+            PassOutcome::Accepted(gated) => Some(Ok(*gated)),
             PassOutcome::Rejected(failure) => {
                 tracing::warn!(%failure, "a compaction pass failed the pre-swap gate on every try");
                 Some(Err(CompactionSuppression::TurnScoped {
@@ -302,7 +303,7 @@ fn run_pass(
             Err(refusal) => return PassOutcome::Refused(refusal),
         };
         match gate_compaction(request, &product, policy) {
-            Ok(gated) => return PassOutcome::Accepted(gated),
+            Ok(gated) => return PassOutcome::Accepted(Box::new(gated)),
             Err(failure) => {
                 retry = Some(failure.check);
                 last = Some(failure);
