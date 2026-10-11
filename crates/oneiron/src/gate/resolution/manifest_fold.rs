@@ -13,16 +13,14 @@ use crate::write_envelope::{SourceLineage, WriteActor};
 
 use super::manifest_types::ConnectorClassPrecedence;
 use super::manifest_types::{
-    GateDecisionRetentionPolicy, PolicyManifestResolution, SheetAnswerPrecedence, TeacherProbeRow,
+    GateDecisionRetentionPolicy, PolicyManifestResolution, TeacherProbeRow,
 };
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
 };
 use crate::gate::decode::ConnectorClassRole;
-use crate::gate::decode::{
-    DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
-};
+use crate::gate::decode::{DecodedManifestCarrier, decode_policy_manifest};
 
 /// The vault ceiling on any project's depth row: the resolved manifest row,
 /// capped by the shipped ceiling. A loaded malformed manifest fails closed to
@@ -57,43 +55,6 @@ pub(crate) fn resolve_credential_lifetimes(
 
 // One fold per manifest row, in manifest order: splitting it would scatter one manifest.
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
-/// What a resolution takes from the shipped manifest: its sheet-answer
-/// default and precedence. The shipped manifest is a constant of the build,
-/// so a store decodes it once and keeps these rows beside its handle.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ShippedPolicyRows {
-    sheet_answer_default_max_count: u64,
-    sheet_answer_precedence: SheetAnswerPrecedence,
-}
-
-fn shipped_policy_rows(store: &impl crate::store::ManifestDbs) -> Result<ShippedPolicyRows> {
-    if let Some(rows) = store.shipped_policy_rows().get() {
-        return Ok(*rows);
-    }
-    let shipped =
-        decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest()?).ok_or(
-            Error::InvariantViolation("shipped sheet-answer policy manifest invalid"),
-        )?;
-    let default_max_count = shipped
-        .sheet_answer_limits
-        .iter()
-        .find(|row| row.artifact_ref.is_none() && row.sheet.is_none())
-        .map(|row| row.max_count);
-    let (Some(sheet_answer_default_max_count), Some(sheet_answer_precedence)) =
-        (default_max_count, shipped.sheet_answer_precedence)
-    else {
-        return Err(Error::InvariantViolation(
-            "shipped sheet-answer policy rows missing",
-        ));
-    };
-    Ok(*store
-        .shipped_policy_rows()
-        .get_or_init(|| ShippedPolicyRows {
-            sheet_answer_default_max_count,
-            sheet_answer_precedence,
-        }))
-}
-
 pub(crate) fn resolve_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -101,7 +62,7 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     // The shipped manifest supplies bootstrap policy even when a replacement
     // omits optional count rows; a peer cannot replace these trusted defaults.
-    let shipped = shipped_policy_rows(store)?;
+    let shipped = store.manifest_memo().shipped()?;
     resolution.sheet_answer_default_max_count = Some(shipped.sheet_answer_default_max_count);
     resolution.sheet_answer_precedence = Some(shipped.sheet_answer_precedence);
     let mut untrusted_source_rows = Vec::new();
@@ -144,11 +105,10 @@ pub(crate) fn resolve_policy_manifest(
         }
 
         let body = &raw.body;
-        if crate::gate::project_depth::is_project_depth_id(&id)
-            || crate::gate::project_depth::is_project_depth_contribution(body)
-        {
-            match crate::gate::decode::decode_manifest_carrier(body) {
-                Some(crate::gate::decode::DecodedManifestCarrier::ProjectDepth(row)) => {
+        let decoded_row = store.manifest_memo().row(body);
+        if crate::gate::project_depth::is_project_depth_id(&id) || decoded_row.project_depth {
+            match &decoded_row.carrier {
+                Some(DecodedManifestCarrier::ProjectDepth(row)) => {
                     // Its policy is resolved by the project-scoped causal fold,
                     // not by a local manifest:trusted sidecar or a global pack.
                     let _ = row;
@@ -162,8 +122,9 @@ pub(crate) fn resolve_policy_manifest(
         }
         let trusted =
             crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
-        match decode_manifest_carrier(body) {
-            Some(DecodedManifestCarrier::Pack(decoded)) => {
+        match &decoded_row.carrier {
+            Some(DecodedManifestCarrier::Pack(pack)) => {
+                let decoded = pack.clone();
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);

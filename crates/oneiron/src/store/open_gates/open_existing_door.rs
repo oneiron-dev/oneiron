@@ -163,7 +163,7 @@ impl Store {
             retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             authority_fold_cache: Mutex::new(None),
-            shipped_policy_rows: std::sync::OnceLock::new(),
+            manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             machine_history_issuer: Mutex::new(None),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
