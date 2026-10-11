@@ -16,6 +16,11 @@ struct Room {
 /// A room off record holding the vault's owner, an agent, and another
 /// person, who hears its notices.
 fn room_off_record(vault: &Vault) -> (Room, OffRecordSession<'_>) {
+    room_off_record_seeing(vault, HistoryChoice::Share)
+}
+
+/// [`room_off_record`], each member seeing the room's history as `history`.
+fn room_off_record_seeing(vault: &Vault, history: HistoryChoice) -> (Room, OffRecordSession<'_>) {
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let agent = seed_first_party_actor(vault);
     let listener = seed_person(vault, 0x51);
@@ -26,7 +31,7 @@ fn room_off_record(vault: &Vault) -> (Room, OffRecordSession<'_>) {
         .expect("room");
     for (at, member) in [(2, owner), (3, agent), (4, listener)] {
         vault
-            .join_member(id, member, by, at, HistoryChoice::Share)
+            .join_member(id, member, by, at, history)
             .expect("join the room");
     }
     install_self_memory_allow_policy(vault, agent).expect("policy");
@@ -237,7 +242,8 @@ fn a_save_keeps_nothing_of_a_saved_turn_moved_out_of_sight_while_it_waits() {
     use std::sync::mpsc::sync_channel;
 
     let (_dir, vault) = open_test_vault();
-    let (room, session) = room_off_record(&vault);
+    // The owner sees the room from when they joined it, at 2.
+    let (room, session) = room_off_record_seeing(&vault, HistoryChoice::None);
     let run = bind_run(&session, &room);
     run.dispatch(said(0, "the lighthouse key is under the blue stone"))
         .expect("the run speaks");
@@ -254,7 +260,7 @@ fn a_save_keeps_nothing_of_a_saved_turn_moved_out_of_sight_while_it_waits() {
     let refused = std::thread::scope(|scope| {
         let save = scope.spawn(|| session.save_talk_by(room.owner, None));
         save_planned.recv().expect("the save cuts its plan");
-        // The owner joined the room at 2; the turn now says it began at 1.
+        // The turn now says it began at 1, before the owner joined.
         let body = vault.get(&turn).expect("read").expect("the saved turn");
         vault
             .put_entity(
@@ -269,8 +275,19 @@ fn a_save_keeps_nothing_of_a_saved_turn_moved_out_of_sight_while_it_waits() {
         save.join().expect("the save must not panic").err()
     });
     assert!(
-        refused.is_some(),
-        "the save kept a turn its saver cannot see whole"
+        matches!(
+            refused,
+            Some(Error::OffRecord(
+                crate::error::OffRecordError::OffRecordNotInRoom { .. }
+            ))
+        ),
+        "the save kept a turn its saver cannot see whole: {refused:?}"
     );
     assert!(vault.get_raw(&message(1)).expect("read").is_none());
+    assert!(
+        session
+            .overlay()
+            .contains_entity(&message(1))
+            .expect("probe")
+    );
 }
