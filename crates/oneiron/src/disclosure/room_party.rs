@@ -4,6 +4,7 @@
 use super::disclosable_set::contact_clearance_in;
 use crate::Vault;
 use crate::authority::AuthorityFold;
+use crate::counterparty_contact::CounterpartyContactStatus;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -12,6 +13,7 @@ use crate::ports::EdgeDirection;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_PERSON,
 };
+use crate::vault::LiveEntityRow;
 
 /// How the room meet sees a member who is not the vault owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +48,9 @@ impl RoomParty {
 
 /// `member` as `txn` and its authority `fold` read it. A contact link is
 /// read first: a member with any contact is that contact's party or, when
-/// the link is ambiguous, unknown, never the vault's own agent.
+/// the link is ambiguous or the contact is not live, decodable and Active,
+/// unknown; never the vault's own agent. A contact names its member when it
+/// is About that member alone, a PERSON or an AGENT_DEF.
 pub(crate) fn room_party_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -62,15 +66,18 @@ pub(crate) fn room_party_in(
         "room contacts",
     )?;
     if let [contact] = contacts.as_slice() {
-        let people = vault.filtered_edge_peers(
-            txn,
-            EdgeDirection::Out,
-            contact,
-            EdgeKind::About,
-            Some(ENTITY_TYPE_PERSON),
-            "room contacts",
-        )?;
-        if people.as_slice() == [member] {
+        let mut actors = Vec::new();
+        for kind in [ENTITY_TYPE_PERSON, ENTITY_TYPE_AGENT_DEF] {
+            actors.extend(vault.filtered_edge_peers(
+                txn,
+                EdgeDirection::Out,
+                contact,
+                EdgeKind::About,
+                Some(kind),
+                "room contacts",
+            )?);
+        }
+        if actors.as_slice() == [member] && active_contact_in(vault, txn, contact)? {
             return Ok(RoomParty::Contact(*contact));
         }
     }
@@ -79,16 +86,35 @@ pub(crate) fn room_party_in(
     }
     let bound = fold.vault_id.is_some()
         && crate::authority::actor_binding_is_active(fold, &member, "agent");
-    let defined = crate::vault::live_entity_row_in_txn(&vault.store, txn, &member)?.is_live()
-        && vault
-            .store
-            .port_entity_record(txn, &member)?
-            .is_some_and(|record| record.entity_type == ENTITY_TYPE_AGENT_DEF);
+    let defined = matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, &member)?,
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_AGENT_DEF,
+            ..
+        }
+    );
     Ok(if bound || defined {
         RoomParty::VaultAgent
     } else {
         RoomParty::Unknown
     })
+}
+
+/// Whether `contact` is a live contact row that decodes and is Active in
+/// `txn`. A revoked contact keeps its disclosure-scope row, so its status,
+/// not that row, decides. Only storage I/O errors surface.
+fn active_contact_in(vault: &Vault, txn: &heed::RoTxn<'_>, contact: &EntityId) -> Result<bool> {
+    let LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        body,
+    } = crate::vault::live_entity_row_in_txn(&vault.store, txn, contact)?
+    else {
+        return Ok(false);
+    };
+    Ok(
+        crate::counterparty_contact::decode_counterparty_contact_body(&body)
+            .is_ok_and(|record| record.status == CounterpartyContactStatus::Active),
+    )
 }
 
 impl Vault {
@@ -97,7 +123,7 @@ impl Vault {
     /// question: this never answers it.
     pub fn room_parties(&self, members: &[EntityId]) -> Result<Vec<RoomParty>> {
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         members
             .iter()
             .map(|member| room_party_in(self, &txn, &fold, *member))

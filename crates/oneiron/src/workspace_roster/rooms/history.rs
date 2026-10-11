@@ -355,7 +355,7 @@ impl Memory<'_> {
             .collect();
         // Task and result reads run inside the room too, on every transport.
         let tasks = crate::task_verb::room_thread_tasks(
-            self.for_room_turn(room)?.memory(),
+            self.for_room_projection(room)?.memory(),
             &roots,
             &members,
             policy.now,
@@ -411,7 +411,7 @@ impl Memory<'_> {
             .filter(|(_, root)| root_ids.contains(root))
             .collect();
         let tasks = crate::task_verb::room_thread_tasks(
-            self.for_room_turn(room)?.memory(),
+            self.for_room_projection(room)?.memory(),
             &roots,
             &members,
             crate::unix_seconds_now(),
@@ -502,7 +502,7 @@ impl Memory<'_> {
             .filter(|(_, root)| *root == handle)
             .collect();
         let tasks = crate::task_verb::room_thread_tasks(
-            self.for_room_turn(room)?.memory(),
+            self.for_room_projection(room)?.memory(),
             &selected,
             &members,
             now,

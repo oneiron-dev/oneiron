@@ -12,7 +12,7 @@ use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
     run_context_pack_builder,
 };
-use super::{bound_room_owner, resolve_core_disclosure, resolve_core_interlocutor_set};
+use super::{RoomAudience, resolve_core_disclosure, resolve_core_interlocutor_set};
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -79,16 +79,15 @@ pub(crate) async fn run_context_pack(
                 .map_err(|error| core_engine_error("room audience failed", error))
         })
         .transpose()?;
-    let room_owner = match room_members.as_deref() {
-        Some(members) => bound_room_owner(&server.vault, auth, members)?,
-        None => None,
-    };
+    let room = room_members
+        .as_deref()
+        .map(|members| RoomAudience::resolve(&server.vault, auth, members))
+        .transpose()?;
     let interlocutors = resolve_core_interlocutor_set(
         &server.vault,
         auth,
         req.interlocutors.as_ref(),
-        room_members.as_deref(),
-        room_owner,
+        room.as_ref(),
     )?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
@@ -118,8 +117,10 @@ pub(crate) async fn run_context_pack(
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let scoped_read = if let Some(members) = room_members.as_deref() {
-        scoped_read.for_audience(members)
+    let scoped_read = if let (Some(members), Some(room)) = (room_members.as_deref(), &room) {
+        scoped_read
+            .for_audience(members)
+            .with_peer_reads(room.agent_reads())
     } else if let Some(set) = interlocutors.as_ref().filter(|set| set.has_non_owner()) {
         // Contact records are not PERSON identities. Only a unique explicit
         // person link may resolve one; unresolved participants fail closed.
@@ -169,7 +170,7 @@ pub(crate) async fn run_context_pack(
     let disclosure = resolve_core_disclosure(
         &server.vault,
         interlocutors.as_ref(),
-        room_members.as_ref().map(|_| room_owner.is_some()),
+        room.as_ref().map(|room| room.owner.is_some()),
     )?;
 
     let mut builder = server

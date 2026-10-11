@@ -71,13 +71,23 @@ impl RosterParty for Option<Scope> {
 /// public or sits under it (P7). No party present gives bottom, and a party
 /// who joins can only narrow the result.
 pub fn room_scope<P: RosterParty>(roster: &[P]) -> Result<Scope> {
-    let mut scope = room_worlds(roster)?;
-    for party in roster.iter().filter(|party| party.present()) {
-        if let Some(clearance) = party.clearance() {
-            scope = scope.meet(clearance);
-        }
-    }
-    Ok(scope)
+    let worlds = room_worlds(roster)?;
+    Ok(match room_clearance(roster) {
+        Some(clearance) => worlds.meet(&clearance),
+        None => worlds,
+    })
+}
+
+/// The clearance half of [`room_scope`]: the meet of the present parties'
+/// clearances, `None` while no present party brings one.
+pub(crate) fn room_clearance<P: RosterParty>(roster: &[P]) -> Option<Scope> {
+    roster
+        .iter()
+        .filter(|party| party.present())
+        .filter_map(RosterParty::clearance)
+        .fold(None, |met, term| {
+            crate::claim::meet_clearance(met.as_ref(), Some(term))
+        })
 }
 
 /// The world ceiling of [`room_scope`]: the meet of the present parties'

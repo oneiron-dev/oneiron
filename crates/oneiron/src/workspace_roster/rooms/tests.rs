@@ -663,6 +663,17 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         }]
     );
     assert_eq!(folded.quiet.rows[0].result_header, Some(result));
+    // Read directly, the trunk and its header are the owner's own read. A
+    // room turn holds them to P7 under its members' clearances as well, and
+    // neither member here is anyone the vault knows: public only.
+    assert!(
+        human
+            .for_room_turn(room)
+            .unwrap()
+            .memory()
+            .rooms_trunk(room, trunk)
+            .is_err()
+    );
     // A TASK-only grant must not reveal the referenced TURN or its header.
     permit_room_reads_with_types(
         &vault,

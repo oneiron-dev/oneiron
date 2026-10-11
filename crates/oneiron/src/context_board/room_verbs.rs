@@ -1,9 +1,9 @@
 //! The rooms.* facade family delegates to existing reads, witness and claim gates.
 
 use super::room::{
-    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope, room_worlds,
+    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_clearance, room_worlds,
 };
-use crate::claim::{PointRead, RoomTurnCeiling};
+use crate::claim::{PointRead, RoomTerms, RoomTurnCeiling};
 use crate::federation::Scope;
 use crate::memory::{ClaimListFilter, Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
@@ -62,18 +62,50 @@ impl Memory<'_> {
         Ok(read.value.into_iter().flatten().next().is_some())
     }
 
-    /// P7 for one record a room reads under `scope`; see
+    /// P7 for one rule `room` renders under `terms`, judged in the snapshot
+    /// that reads the rule: the clearance `terms` captured with `roster`
+    /// meets the room's clearance in this snapshot, so a clearance narrowed
+    /// since never renders the rule. A member who joined since, whose own
+    /// read the render never checked, keeps the rule out. See
     /// [`crate::disclosure::discloses_raw`].
-    fn room_discloses(&self, scope: &Scope, id: EntityId) -> MemoryResult<bool> {
+    pub(super) fn room_discloses(
+        &self,
+        room: EntityId,
+        terms: &RoomTerms,
+        roster: &[EntityId],
+        id: EntityId,
+    ) -> MemoryResult<bool> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let Some(now) = room_roster_in(vault, &txn, room)? else {
+            return Ok(false);
+        };
+        if now
+            .iter()
+            .any(|member| roster.binary_search(member).is_err())
+        {
+            return Ok(false);
+        }
+        let fresh = if terms.p7 {
+            room_clearance_in(vault, &txn, &now)?
+        } else {
+            None
+        };
+        if let Some(turn) = self.room_turn() {
+            turn.terms.meet_clearance(fresh.as_ref());
+        }
+        let Some(clearance) =
+            crate::claim::meet_clearance(terms.clearance.as_ref(), fresh.as_ref())
+        else {
+            return Ok(true);
+        };
         let Some(record) = vault.store.port_entity_record(&txn, &id)? else {
             return Ok(false);
         };
         Ok(crate::disclosure::discloses_raw(
-            &vault.store,
+            vault,
             &txn,
-            scope,
+            &terms.worlds.meet(&clearance),
             id,
             &record.encode(),
         )?)
@@ -95,22 +127,16 @@ impl Memory<'_> {
     /// roster: a grant added mid-turn cannot widen it, and a removal narrows it.
     pub fn room_read_scope(&self, room: EntityId) -> MemoryResult<Scope> {
         self.refuse_other_room(room)?;
-        Ok(self.within_turn_scope(room_scope(&self.roster_of(room)?)?))
-    }
-
-    /// Meets the room Scope `current` with the turn this handle is bound to,
-    /// if any.
-    fn within_turn_scope(&self, current: Scope) -> Scope {
-        match self.room_turn() {
-            Some(turn) => turn.room_scope().meet(&current),
-            None => current,
-        }
+        Ok(self
+            .turn_terms_now(room, &self.roster_of(room)?)?
+            .room_scope())
     }
 
     /// The world ceiling of [`Self::room_read_scope`], the same way: every
     /// row `room` reads lies in it, public or not.
     pub(crate) fn room_read_worlds(&self, room: EntityId) -> MemoryResult<Scope> {
-        self.within_room_turn(room, room_worlds(&self.roster_of(room)?)?)
+        self.refuse_other_room(room)?;
+        Ok(self.turn_terms_now(room, &self.roster_of(room)?)?.worlds)
     }
 
     /// A turn bound to one room reads no other room, and says nothing about it.
@@ -124,13 +150,19 @@ impl Memory<'_> {
         }
     }
 
-    /// Meets the world ceiling `current` with the turn this handle is bound
-    /// to, if any. A turn bound to another room refuses.
-    fn within_room_turn(&self, room: EntityId, current: Scope) -> MemoryResult<Scope> {
+    /// The terms `roster` gives `room`, met into the turn this handle is
+    /// bound to, if any: the turn keeps what it held and narrows with the
+    /// roster now. A turn bound to another room refuses.
+    fn turn_terms_now(&self, room: EntityId, roster: &[RoomPresence]) -> MemoryResult<RoomTerms> {
         self.refuse_other_room(room)?;
+        let now = RoomTerms {
+            worlds: room_worlds(roster)?,
+            clearance: room_clearance(roster),
+            p7: true,
+        };
         Ok(match self.room_turn() {
-            Some(turn) => turn.worlds.meet(&current),
-            None => current,
+            Some(turn) => turn.terms.meet(&now),
+            None => now,
         })
     }
 
@@ -141,22 +173,20 @@ impl Memory<'_> {
         room_ceiling_in(vault, &txn, room, self.actor())?.ok_or_else(unknown_room)
     }
 
-    /// The ceiling a bound handle reads under now: the Scope the turn opened
-    /// with, met with the room's current roster, and the current roster as
-    /// the audience, the same membership the room's own history reads check.
-    /// A change mid-turn can only narrow the Scope. Each row is checked again
-    /// against the room as its own snapshot reads it.
+    /// The ceiling a bound handle reads under now: the room's current terms
+    /// met into the turn's, and the current roster as the audience, the same
+    /// membership the room's own history reads check. A change mid-turn can
+    /// only narrow the turn, and the turn keeps the narrowing for its later
+    /// reads. Each row is checked again against the room as its own snapshot
+    /// reads it.
     pub(crate) fn room_turn_now(&self) -> MemoryResult<Option<RoomTurnCeiling>> {
         let Some(turn) = self.room_turn() else {
             return Ok(None);
         };
         let now = self.room_ceiling(turn.room)?;
+        turn.terms.meet(&now.terms.get());
         Ok(Some(RoomTurnCeiling {
-            worlds: turn.worlds.meet(&now.worlds),
-            clearance: crate::claim::meet_clearance(
-                turn.clearance.as_ref(),
-                now.clearance.as_ref(),
-            ),
+            terms: turn.terms.clone(),
             ..now
         }))
     }
@@ -191,13 +221,8 @@ impl Memory<'_> {
                 &[],
             ));
         }
-        let worlds = self.within_room_turn(room, room_worlds(&roster)?)?;
-        let scope = self.within_turn_scope(room_scope(&roster)?);
-        // A clearance in the meet holds each rule to P7 as well.
-        let cleared = roster.iter().any(|member| member.clearance.is_some())
-            || self
-                .room_turn()
-                .is_some_and(|turn| turn.clearance.is_some());
+        let terms = self.turn_terms_now(room, &roster)?;
+        let scope = terms.room_scope();
         let read = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
         // Each rule must also pass every present peer's ordinary read.
         let present: Vec<_> = roster
@@ -242,13 +267,21 @@ impl Memory<'_> {
                 .transpose()?
                 .unwrap_or_else(crate::claim::base_world_id);
             if own.value[index].is_none()
-                || !worlds.worlds.contains(&crate::federation::ScopeId(world))
+                || !terms
+                    .worlds
+                    .worlds
+                    .contains(&crate::federation::ScopeId(world))
             {
                 continue;
             }
+            // A clearance in the meet holds each rule to P7 as well.
             if peer_rows.iter().any(|rows| rows[index].is_none())
-                || (cleared
-                    && !self.room_discloses(&scope, EntityId::from_hex(&claim.claim_ref)?)?)
+                || !self.room_discloses(
+                    room,
+                    &terms,
+                    &present,
+                    EntityId::from_hex(&claim.claim_ref)?,
+                )?
             {
                 receipt.add_suppressed(1);
                 continue;
@@ -379,7 +412,7 @@ fn clearances_in(
     members: &[EntityId],
 ) -> crate::Result<Vec<Option<Scope>>> {
     let embedded_owner = crate::vault::embedded_owner_actor_id()?;
-    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
     members
         .iter()
         .map(|member| {
@@ -389,6 +422,16 @@ fn clearances_in(
             crate::disclosure::room_party_in(vault, txn, &fold, *member)?.clearance_in(vault, txn)
         })
         .collect()
+}
+
+/// The met clearance of `members` as `txn` reads it: [`room_clearance`]
+/// over [`clearances_in`]. Cheap enough for every row a turn serves.
+pub(crate) fn room_clearance_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    members: &[EntityId],
+) -> crate::Result<Option<Scope>> {
+    Ok(room_clearance(&clearances_in(vault, txn, members)?))
 }
 
 /// One read key per member other than `caller`. A member positively known
@@ -465,18 +508,15 @@ pub(crate) fn room_ceiling_in(
             clearance,
         })
         .collect();
-    let worlds = room_worlds(&roster)?;
-    let clearance = roster
-        .iter()
-        .filter_map(|member| member.clearance.as_ref())
-        .fold(None, |met, term| {
-            crate::claim::meet_clearance(met.as_ref(), Some(term))
-        });
+    let terms = RoomTerms {
+        worlds: room_worlds(&roster)?,
+        clearance: room_clearance(&roster),
+        p7: true,
+    };
     Ok(Some(RoomTurnCeiling {
         room,
         caller,
-        worlds,
-        clearance,
+        terms: crate::claim::TurnTerms::new(terms),
         peers: peer_read_keys_in(vault, txn, caller, &members)?,
         roster: members,
     }))

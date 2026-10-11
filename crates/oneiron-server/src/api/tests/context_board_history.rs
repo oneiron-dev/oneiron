@@ -68,7 +68,7 @@ fn cleared_reader(server: &SyncServer, principal: oneiron::EntityId, identity: o
 /// Narrows `principal`'s reads to the `allowed` entity types with a policy
 /// manifest grant. Its credential stays live; rows of any other type stop
 /// being readable to it.
-fn restrict_principal_read_types(
+pub(super) fn restrict_principal_read_types(
     server: &SyncServer,
     principal: oneiron::EntityId,
     allowed: &[u8],

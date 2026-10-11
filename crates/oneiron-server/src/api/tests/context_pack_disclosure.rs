@@ -990,9 +990,11 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
 }
 
 /// Engine-lane ruling 2026-10-11 (ARCH-0067 §8): the vault's own agent acts
-/// for the owner and adds no clearance term. A room holding the bound owner
-/// and that agent assembles its own default-Sensitive history, owner present
-/// or away. Before, the agent was an unknown party and the room public-only.
+/// for the owner and adds no clearance term; its own grant bounds what the
+/// room reads instead. A room holding the bound owner and that agent
+/// assembles its own default-Sensitive history, owner present or away, once
+/// the agent may read it too. Before, the agent was an unknown party and
+/// the room public-only.
 #[tokio::test]
 async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     let (_dir, server) = interlocutor_test_server();
@@ -1068,22 +1070,95 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
         .expect("speak");
     let spoken = [turn.to_hex(), message.to_hex()];
 
-    for (owner_present, mode) in [(None, "absence_clamp"), (Some(true), "owner_alone")] {
-        let mut request = json!({"conversation_id": room.to_hex(), "query": "room2094"});
-        if let Some(present) = owner_present {
-            request["interlocutors"] = json!({ "owner_present": present });
+    for granted in [false, true] {
+        if granted {
+            super::context_board_history::restrict_principal_read_types(
+                &server,
+                agent,
+                &[
+                    oneiron::registry::ENTITY_TYPE_TURN,
+                    oneiron::registry::ENTITY_TYPE_MESSAGE,
+                ],
+            );
         }
-        let (status, body) = room_owner_json(server.clone(), owner, &request).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["disclosure"]["mode"], mode, "{body}");
-        assert!(
-            body["results"]
+        for (owner_present, mode) in [(None, "absence_clamp"), (Some(true), "owner_alone")] {
+            let mut request = json!({"conversation_id": room.to_hex(), "query": "room2094"});
+            if let Some(present) = owner_present {
+                request["interlocutors"] = json!({ "owner_present": present });
+            }
+            let (status, body) = room_owner_json(server.clone(), owner, &request).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["disclosure"]["mode"], mode, "{body}");
+            let reads = body["results"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .filter_map(|row| row["id"].as_str())
-                .any(|id| spoken.iter().any(|spoken| spoken == id)),
-            "the room reads its own history ({mode}): {body}"
+                .any(|id| spoken.iter().any(|spoken| spoken == id));
+            assert_eq!(
+                reads, granted,
+                "the room reads its history only as its agent may ({mode}): {body}"
+            );
+        }
+    }
+}
+
+/// A bare host secret proves no PERSON, so the vault's own agents stay
+/// unknown parties to it: a room of agents alone never reads as the owner
+/// alone, presence asserted or not, and keeps Tier A out.
+#[tokio::test]
+async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
+    let (_dir, server) = interlocutor_test_server();
+    let agent = seeded_test_entity_id(0x2094_0401);
+    server
+        .vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"room agent",
+        )
+        .expect("onboard agent");
+    bind_room_actor(&server, agent, "agent");
+    let creator = server.vault.ensure_embedded_owner_actor().unwrap();
+    let room = oneiron::EntityId::now();
+    server
+        .vault
+        .create_conversation(
+            room,
+            &oneiron::conversation::ConversationBody {
+                kind: oneiron::conversation::ConversationKind::Channel,
+                member_ids: vec![agent],
+                ..Default::default()
+            },
+            oneiron::WriteActor::new(creator, oneiron::EdgeActorClass::Human),
+            1,
+        )
+        .expect("agent-only room");
+    let private = seed_text_turn(&server, "agent room private2094");
+    server.vault.set_disclosure_tier_a(&private, 101).unwrap();
+    for interlocutors in [None, Some(json!({"owner_present": true}))] {
+        let mut request = json!({"conversation_id": room.to_hex(), "query": "private2094"});
+        if let Some(interlocutors) = interlocutors {
+            request["interlocutors"] = interlocutors;
+        }
+        let (status, body) = owner_json(
+            server.clone(),
+            "POST",
+            "/v1/core/context-pack",
+            Some(&request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["disclosure"]["mode"], "owner_alone", "{body}");
+        assert!(
+            !body["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"] == private.to_hex()),
+            "a bare host cannot disclose Tier A through an agent-only room: {body}"
         );
     }
 }

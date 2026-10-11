@@ -1,7 +1,7 @@
 //! ARCH-0067 §8 acceptance: one roster-to-Scope function, and every read a
 //! room turn makes runs inside the Scope it returns.
 use super::*;
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, PointRead};
 use crate::edge::EdgeActorClass;
 use crate::memory::{ClaimInput, ClaimListFilter, WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::pipeline::{PREDICATE_WORLD_ACCESS_ALLOWED_SET, world_access_claim_body};
@@ -352,7 +352,10 @@ fn a_member_who_leaves_mid_read_still_binds_the_rows_it_serves() -> Result<()> {
         1,
         b"agent",
     )?;
-    // The agent holds no read grant, so its own read withholds the note.
+    // The agent is the vault's own, so it adds no clearance term, and it
+    // holds no read grant, so its own read withholds the note.
+    crate::test_util::bind_test_agent(&vault, agent);
+    crate::test_util::bind_test_owner(&vault, owner);
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
@@ -664,6 +667,171 @@ fn a_guests_clearance_bounds_every_read_a_room_turn_makes() -> Result<()> {
     let mut both = vec![tier_b.clone(), public.clone()];
     both.sort();
     let wide = host.for_room_turn(room).expect("open room turn");
-    assert_eq!(reads(&wide), (both, true, true, 1));
+    assert_eq!(reads(&wide), (both.clone(), true, true, 1));
+
+    // A turn only narrows. A clearance narrowed after the turn opened
+    // withholds the note from the lane already reading it and from the
+    // turn's next verb, and neither reads it again once the clearance
+    // widens. Only a new turn does.
+    let tier_b_id = EntityId::from_hex(&tier_b)?;
+    let lane = wide
+        .memory()
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .expect("room lane");
+    let lane_reads = || {
+        lane.read(&[PointRead::id(tier_b_id)], None)
+            .expect("lane read")
+            .value[0]
+            .is_some()
+    };
+    let set = |scope: Scope, at: u64| {
+        vault.set_counterparty_disclosure_scope(
+            &contact,
+            &DisclosureScope::new(scope, "room guest", at).expect("clearance"),
+        )
+    };
+    assert!(lane_reads());
+    set(Scope::default(), 300)?;
+    assert!(!lane_reads(), "the lane narrows in the snapshot it serves");
+    assert!(
+        wide.get_entity(&tier_b).expect("read").value.is_none(),
+        "and so does the turn's next verb"
+    );
+    set(Scope::top(), 400)?;
+    assert!(!lane_reads(), "neither widens back");
+    assert_eq!(reads(&wide), (vec![public.clone()], false, true, 0));
+    assert_eq!(
+        reads(&host.for_room_turn(room).expect("open room turn")),
+        (both, true, true, 1)
+    );
+
+    // A render judges each rule's P7 in the snapshot that reads the rule:
+    // a clearance captured wide before a narrowing renders nothing it no
+    // longer admits, and a member the render never checked keeps it out.
+    let captured = crate::claim::RoomTerms {
+        worlds: Scope::top(),
+        clearance: Some(Scope::top()),
+        p7: true,
+    };
+    let mut members = vec![owner, guest];
+    members.sort();
+    let renders = |members: &[EntityId]| {
+        host.room_discloses(room, &captured, members, tier_b_id)
+            .expect("render p7")
+    };
+    assert!(renders(&members));
+    assert!(!renders(&[owner]), "a member who joined since");
+    set(Scope::default(), 500)?;
+    assert!(!renders(&members), "a clearance narrowed since");
+    set(Scope::top(), 600)?;
+
+    // A revoked contact keeps its clearance row, yet its member is unknown
+    // again: bottom, as the context-pack resolver reads the same contact.
+    vault.revoke_counterparty_contact(&contact, 700)?;
+    assert_eq!(
+        reads(&host.for_room_turn(room).expect("open room turn")),
+        (vec![public.clone()], false, true, 0)
+    );
+    let terms: Vec<_> = host
+        .room_roster(room)
+        .expect("roster")
+        .iter()
+        .map(|member| member.clearance.clone())
+        .collect();
+    let revoked = vault.resolve_interlocutors(&crate::InterlocutorResolutionInput {
+        owner_session: true,
+        parties: vec![crate::InterlocutorPartyInput::ContactRef(contact)],
+        voice_session_ref: None,
+    })?;
+    assert_eq!(disclosable_set(&terms)?, Scope::default());
+    assert_eq!(
+        &disclosable_set(&terms)?,
+        DisclosableSet::resolve(&vault, &revoked, false)?.clearance()
+    );
+    Ok(())
+}
+
+/// ARCH-0067 §8, the Engine lane's rule 3: an agent bound to a contact
+/// takes that contact's clearance, an AGENT_DEF as much as a PERSON. A
+/// second contact About it makes the link ambiguous, so it is unknown.
+#[test]
+fn a_contact_bound_agent_definition_takes_its_contacts_clearance() -> Result<()> {
+    use crate::counterparty_contact::CounterpartyContactRecord;
+    use crate::disclosure::RoomParty;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let agent = crate::test_util::seed_agent_definition(&vault, id(0x81), "room agent");
+    assert_eq!(vault.room_parties(&[agent])?, vec![RoomParty::VaultAgent]);
+    let contact = |seed: u8, counterparty: &str| -> Result<EntityId> {
+        let contact = id(seed);
+        let record = CounterpartyContactRecord::user_introduction(id(seed + 1), counterparty, 10)
+            .expect("contact record");
+        vault.create_counterparty_contact(&contact, &record)?;
+        vault.put_edge(&contact, crate::edge::EdgeKind::About, &agent, 1.0)?;
+        Ok(contact)
+    };
+    let first = contact(0x82, "agent@example.com")?;
+    assert_eq!(
+        vault.room_parties(&[agent])?,
+        vec![RoomParty::Contact(first)]
+    );
+    contact(0x84, "other@example.com")?;
+    assert_eq!(vault.room_parties(&[agent])?, vec![RoomParty::Unknown]);
+    Ok(())
+}
+
+/// P7 follows a record's words to where they came from (ILDF2): a room
+/// TURN is disclosed only with its messages, and a summary's TURN copy,
+/// which has no messages of its own, only with the records and messages
+/// the summary came from. A clearance that reads TURNs but not MESSAGEs
+/// discloses neither; one that reads both discloses both.
+#[test]
+fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
+    use crate::ports::EntityStoreRead;
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, record) = project_room(&vault, owner, &[])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let turn = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .rooms_speak(&spoken(room, turn, 2))
+        .expect("speak");
+    let scope = crate::conversation_dag::ScopeSelector {
+        conversation: room,
+        session: None,
+        path: crate::conversation_dag::ScopePath::Canonical,
+        include_forks: false,
+    };
+    let (_, landed) = vault.mint_and_land_scope_summary(
+        &scope,
+        "lantern summary",
+        crate::WriteActor::new(owner, EdgeActorClass::Human),
+        Some(turn),
+        true,
+    )?;
+    let copy = landed.and_then(|landed| landed.record).expect("TURN copy");
+    let clearance = |bands: &[u8]| Scope {
+        bands: ScopeAxis::Some(bands.iter().copied().collect()),
+        ..Scope::top()
+    };
+    let discloses = |id: EntityId, scope: &Scope| -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .port_entity_record(&txn, &id)?
+            .expect("row")
+            .encode();
+        crate::disclosure::discloses_raw(&vault, &txn, scope, id, &raw)
+    };
+    let turns = clearance(&[ENTITY_TYPE_TURN]);
+    let both = clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE]);
+    assert!(!discloses(turn, &turns)?);
+    assert!(
+        !discloses(copy, &turns)?,
+        "the copy carries the messages' words"
+    );
+    assert!(discloses(turn, &both)?);
+    assert!(discloses(copy, &both)?);
     Ok(())
 }

@@ -12,7 +12,7 @@ use crate::federation::{Scope, Sensitivity, SensitivityCeiling};
 use crate::interlocutor::{InterlocutorClass, InterlocutorSet};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
-use crate::store::Store;
+use crate::scope_summary::WordSources;
 
 pub use crate::context_board::room_scope as disclosable_set;
 
@@ -77,20 +77,37 @@ fn admits(clearance: &Scope, record: &Scope) -> bool {
 
 /// P7 for the stored revision `raw` of `id` under a [`disclosable_set`]
 /// Scope: [`DisclosableSet::admits`] over the revision's own stamp. A
-/// revision with no stamp is never public. A TURN's text and vector are its
-/// messages' (`embed::turn_text_in_txn`), so a turn is disclosed only with
-/// each live message `PartOf` it.
+/// revision with no stamp is never public. A revision's words may be other
+/// records', so it is disclosed only with each of them: a TURN's text and
+/// vector are its messages' (`embed::turn_text_in_txn`), so each live
+/// message `PartOf` it, and a scope summary, a TURN copying one, or a merge
+/// header naming one carries the words of every record and MESSAGE the
+/// summary came from. Sources that no longer resolve disclose nothing.
 pub(crate) fn discloses_raw(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     scope: &Scope,
     id: EntityId,
     raw: &[u8],
 ) -> Result<bool> {
+    let store = &vault.store;
     if !crate::federation::record_scope::scope_for_blob(store, txn, id, raw)?
         .is_some_and(|record| admits(scope, &record))
     {
         return Ok(false);
+    }
+    let sources = match crate::scope_summary::word_sources_in(vault, txn, &id, raw)? {
+        WordSources::Own => Vec::new(),
+        WordSources::From(sources) => sources,
+        WordSources::Unresolved => return Ok(false),
+    };
+    for source in sources {
+        let Some(row) = store.port_entity_record(txn, &source)? else {
+            return Ok(false);
+        };
+        if !discloses_raw(vault, txn, scope, source, &row.encode())? {
+            return Ok(false);
+        }
     }
     if EntityMetadataHeader::parse(raw).is_none_or(|header| header.entity_type != ENTITY_TYPE_TURN)
     {
@@ -104,7 +121,7 @@ pub(crate) fn discloses_raw(
         if row.entity_type != ENTITY_TYPE_MESSAGE || row.body.is_empty() {
             continue;
         }
-        if !discloses_raw(store, txn, scope, message, &row.encode())? {
+        if !discloses_raw(vault, txn, scope, message, &row.encode())? {
             return Ok(false);
         }
     }

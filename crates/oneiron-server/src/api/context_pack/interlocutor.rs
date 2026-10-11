@@ -19,16 +19,15 @@ use crate::error::ApiError;
 /// Owner-grade is `CoreAuth::is_owner_grade` — un-narrowed on BOTH axes. A
 /// delegated token narrowed by scope alone is NOT owner-grade, so it takes
 /// the clamp like any other narrowed credential rather than silently
-/// skipping the gate. `bound_room_owner` is [`bound_room_owner`] over
-/// `room_members`.
+/// skipping the gate. `room` is a room read's [`RoomAudience`].
 pub(crate) fn resolve_core_interlocutor_set(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     controls: Option<&CoreInterlocutorControls>,
-    room_members: Option<&[oneiron::EntityId]>,
-    bound_room_owner: Option<oneiron::EntityId>,
+    room: Option<&RoomAudience>,
 ) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
-    if controls.is_none() && room_members.is_none() && auth.is_owner_grade() {
+    let bound_room_owner = room.and_then(|room| room.owner);
+    if controls.is_none() && room.is_none() && auth.is_owner_grade() {
         return Ok(None);
     }
 
@@ -59,21 +58,18 @@ pub(crate) fn resolve_core_interlocutor_set(
     // remove a room participant from the disclosure meet. A member maps to a
     // contact dial only through a unique About link; ambiguous/missing links
     // remain unknown and therefore grant no absent-owner clearance. The
-    // vault's own agents act for the owner and add no term (ARCH-0067 §8).
-    if let Some(members) = room_members {
-        let others: Vec<_> = members
-            .iter()
-            .copied()
-            .filter(|member| bound_room_owner != Some(*member))
-            .collect();
-        let resolved = vault
-            .room_parties(&others)
-            .map_err(|error| core_engine_error("room contact resolution failed", error))?;
-        for (member, party) in others.into_iter().zip(resolved) {
+    // vault's own agents act for the owner, so they add no term when the
+    // room's proven owner reads (ARCH-0067 §8); their own reads bound it
+    // instead (`RoomAudience::agent_reads`). For any other caller they stay
+    // unknown: an agent-only room never reads as the owner alone.
+    if let Some(room) = room {
+        for (member, party) in &room.others {
             parties.push(match party {
-                oneiron::disclosure::RoomParty::VaultAgent => continue,
+                oneiron::disclosure::RoomParty::VaultAgent if bound_room_owner.is_some() => {
+                    continue;
+                }
                 oneiron::disclosure::RoomParty::Contact(contact) => {
-                    oneiron::InterlocutorPartyInput::ContactRef(contact)
+                    oneiron::InterlocutorPartyInput::ContactRef(*contact)
                 }
                 _ => oneiron::InterlocutorPartyInput::UnknownLabel {
                     label: member.to_hex(),
@@ -121,7 +117,7 @@ pub(crate) fn resolve_core_interlocutor_set(
     // A room's roster cannot prove presence. The embedder must explicitly
     // assert owner presence on an owner-grade credential; absent assertion
     // never promotes an in-room assembly to Supervised or OwnerAlone.
-    let owner_session = auth.is_owner_grade() && owner_present.unwrap_or(room_members.is_none());
+    let owner_session = auth.is_owner_grade() && owner_present.unwrap_or(room.is_none());
     let input = oneiron::InterlocutorResolutionInput {
         owner_session,
         parties,
@@ -136,13 +132,62 @@ pub(crate) fn resolve_core_interlocutor_set(
         })
 }
 
+/// A room read's audience: every member but the room's proven owner, each
+/// as the room meet sees it, resolved in one snapshot.
+pub(crate) struct RoomAudience {
+    /// The member the caller is proven to be the vault owner as; see
+    /// [`bound_room_owner`].
+    pub(crate) owner: Option<oneiron::EntityId>,
+    /// Every other member and its party.
+    pub(crate) others: Vec<(oneiron::EntityId, oneiron::disclosure::RoomParty)>,
+}
+
+impl RoomAudience {
+    pub(crate) fn resolve(
+        vault: &oneiron::Vault,
+        auth: &CoreAuth,
+        members: &[oneiron::EntityId],
+    ) -> Result<Self, ApiError> {
+        let owner = bound_room_owner(vault, auth, members)?;
+        let others: Vec<_> = members
+            .iter()
+            .copied()
+            .filter(|member| owner != Some(*member))
+            .collect();
+        let parties = vault
+            .room_parties(&others)
+            .map_err(|error| core_engine_error("room contact resolution failed", error))?;
+        Ok(Self {
+            owner,
+            others: others.into_iter().zip(parties).collect(),
+        })
+    }
+
+    /// The read key of each of the vault's own agents the room's proven
+    /// owner reads with: they add no clearance term, so the room reads only
+    /// what each of them may read too, as a room turn's peers do.
+    pub(crate) fn agent_reads(&self) -> Vec<oneiron::claim::ScopedReadActorKey> {
+        if self.owner.is_none() {
+            return Vec::new();
+        }
+        self.others
+            .iter()
+            .filter(|(_, party)| *party == oneiron::disclosure::RoomParty::VaultAgent)
+            .filter_map(|(member, _)| {
+                oneiron::claim::ScopedReadActorKey::new(member.to_hex())
+                    .map(|key| key.require_access_grants(Some(*member)))
+            })
+            .collect()
+    }
+}
+
 /// The room member the caller is proven to be the vault owner as, if any.
 /// A bare host credential authenticates the caller but identifies no PERSON
 /// in the room. Only an identified, owner-grade human slip with a live
 /// owner-capable actor binding can exclude its exact holder from the
 /// non-owner meet. The presence flag and PROJECT leader are not identity
 /// evidence.
-pub(crate) fn bound_room_owner(
+fn bound_room_owner(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     members: &[oneiron::EntityId],
