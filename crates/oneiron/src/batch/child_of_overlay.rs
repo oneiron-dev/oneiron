@@ -632,7 +632,7 @@ pub(super) fn recompute_touched_habit_streaks_in_txn(
     Ok(())
 }
 
-pub(super) fn validate_task_checkin_immutable(
+pub(super) fn validate_immutable_task_record(
     old_record: &[u8],
     old_occurred: TimeRange,
     old_learned: u64,
@@ -644,11 +644,15 @@ pub(super) fn validate_task_checkin_immutable(
     let old_role =
         crate::habit::task_role_from_body_bytes(&old_record[ENTITY_METADATA_HEADER_LEN..])?;
     let new_role = crate::habit::task_role_from_body_bytes(data)?;
-    if old_role != TaskRole::HabitCheckin && new_role != TaskRole::HabitCheckin {
+    // A habit check-in and an engine-authored authority fact (the proof of a
+    // task's owner) are immutable: only an exact echo, local or replicated,
+    // may land at their id. A same-type put can neither rewrite the fact's
+    // owner nor replace the fact with an ordinary TASK body.
+    let immutable = |role: TaskRole| matches!(role, TaskRole::HabitCheckin | TaskRole::AuthorityFact);
+    if !immutable(old_role) && !immutable(new_role) {
         return Ok(());
     }
-    if old_role == TaskRole::HabitCheckin
-        && new_role == TaskRole::HabitCheckin
+    if old_role == new_role
         && !body_changed
         && old_occurred == occurred
         && old_learned == learned_at
@@ -656,7 +660,11 @@ pub(super) fn validate_task_checkin_immutable(
         return Ok(());
     }
     Err(Error::Record(RecordError::InvalidTaskBody(
-        "habit check-in records are immutable",
+        if old_role == TaskRole::AuthorityFact || new_role == TaskRole::AuthorityFact {
+            "task authority facts are immutable"
+        } else {
+            "habit check-in records are immutable"
+        },
     )))
 }
 

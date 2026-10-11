@@ -43,6 +43,7 @@ mod mesh_machine;
 mod observation_policy;
 mod op_apply;
 mod readonly_fold;
+mod retired_signers;
 mod revoke_proof;
 mod sequence_ancestry;
 mod sequence_observation;

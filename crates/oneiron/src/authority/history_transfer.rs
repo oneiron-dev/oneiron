@@ -89,6 +89,15 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
+        // A key a handoff here retired signs nothing new into this history.
+        let local = self.authority_fold_readonly_in_txn(&txn)?;
+        if decoded.iter().any(|(hash, _, entry)| {
+            !merged.contains_key(hash) && local.signed_by_retired_key(hash, entry)
+        }) {
+            return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+                "authority history signed by a key a handoff retired",
+            )));
+        }
         for (hash, bytes, entry) in &decoded {
             merged.insert(*hash, (bytes.clone(), entry.clone()));
         }

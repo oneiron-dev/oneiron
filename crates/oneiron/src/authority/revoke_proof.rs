@@ -1,4 +1,5 @@
-//! Log-derived, typed actor revocation facts, independent of roster survivors.
+//! Log-derived, typed restrictive facts (actor revocations, slip withdrawals
+//! and slip burns), independent of roster survivors.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -7,21 +8,35 @@ use super::*;
 /// One fully verified restrictive fact. Scratch ancestry is proof only; it
 /// never enters `valid_entries`, the roster, or the permissive merged state.
 #[derive(Clone, Debug)]
-struct VerifiedActorRevoke {
+struct VerifiedRestriction {
     vault_id: AuthorityVaultId,
     entry_hash: AuthorityEntryHash,
-    authority_key: AuthorityKey,
-    epoch: u64,
+    kind: Restriction,
+}
+
+#[derive(Clone, Debug)]
+enum Restriction {
+    Actor {
+        authority_key: AuthorityKey,
+        epoch: u64,
+    },
+    /// A verified `SlipRevoke`: the withdrawn id.
+    SlipRevoke([u8; 32]),
+    /// A verified `SlipConsume`: every id its proven branch had burnt, the
+    /// single-use ancestors it spent among them.
+    SlipBurn(BTreeSet<[u8; 32]>),
 }
 
 #[derive(Default)]
 pub(super) struct RevokeFacts {
-    by_hash: BTreeMap<AuthorityEntryHash, VerifiedActorRevoke>,
+    by_hash: BTreeMap<AuthorityEntryHash, VerifiedRestriction>,
 }
 
 impl RevokeFacts {
     /// Join only restrictions scoped to the surviving vault. The ordinary
-    /// transition and this projection use the same max/union implementation.
+    /// transition and this projection use the same max/union implementation:
+    /// every set here only grows, so a restriction proved on its own signed
+    /// branch stays applied whichever sibling wins the projection.
     pub(super) fn apply_to(&self, state: &mut FoldState) {
         let vault_id = state.vault_id;
         for fact in self
@@ -29,7 +44,19 @@ impl RevokeFacts {
             .values()
             .filter(|fact| fact.vault_id == vault_id)
         {
-            record_actor_revoke(state, &fact.authority_key, fact.epoch, fact.entry_hash);
+            match &fact.kind {
+                Restriction::Actor {
+                    authority_key,
+                    epoch,
+                } => record_actor_revoke(state, authority_key, *epoch, fact.entry_hash),
+                Restriction::SlipRevoke(slip_id) => {
+                    state.slips.revoked.insert(*slip_id);
+                    state.slips.explicit_revoked.insert(*slip_id);
+                }
+                Restriction::SlipBurn(burnt) => {
+                    state.slips.consumed.extend(burnt.iter().copied());
+                }
+            }
         }
     }
 }
@@ -52,14 +79,16 @@ pub(super) fn derive_revoke_facts(
         else {
             continue;
         };
-        if let Some(vault_id) = verify_signed_branch(*hash, entries, ancestors, context) {
+        if let Some(state) = verify_signed_branch(*hash, entries, ancestors, context) {
             facts.by_hash.insert(
                 *hash,
-                VerifiedActorRevoke {
-                    vault_id,
+                VerifiedRestriction {
+                    vault_id: state.vault_id,
                     entry_hash: *hash,
-                    authority_key: authority_key.clone(),
-                    epoch: *epoch,
+                    kind: Restriction::Actor {
+                        authority_key: authority_key.clone(),
+                        epoch: *epoch,
+                    },
                 },
             );
         }
@@ -67,12 +96,55 @@ pub(super) fn derive_revoke_facts(
     facts
 }
 
+impl RevokeFacts {
+    /// Adds the slip withdrawals and burns the projection dropped. Selecting
+    /// one of two colliding confirmations removes the loser and every entry
+    /// after it, a `SlipRevoke` or `SlipConsume` among them, and a revoked or
+    /// spent slip would live again. An entry in `survivors` already applied
+    /// its restriction through the ordinary fold; each dropped one is proved
+    /// on its own signed branch, as an actor revocation is.
+    pub(super) fn add_dropped_slip_restrictions(
+        &mut self,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        context: FoldContext<'_>,
+        survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        for (hash, entry) in entries {
+            if survivors.contains_key(hash) {
+                continue;
+            }
+            let restriction = match &entry.op {
+                AuthorityOp::SlipRevoke { slip_id } => Restriction::SlipRevoke(*slip_id),
+                AuthorityOp::SlipConsume { .. } => Restriction::SlipBurn(BTreeSet::new()),
+                _ => continue,
+            };
+            let Some(state) = verify_signed_branch(*hash, entries, ancestors, context) else {
+                continue;
+            };
+            let kind = match restriction {
+                Restriction::SlipBurn(_) => Restriction::SlipBurn(state.slips.consumed),
+                other => other,
+            };
+            self.by_hash.insert(
+                *hash,
+                VerifiedRestriction {
+                    vault_id: state.vault_id,
+                    entry_hash: *hash,
+                    kind,
+                },
+            );
+        }
+    }
+}
+
+/// The target's own folded state, proved over its signed ancestry alone.
 fn verify_signed_branch(
     target: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
-) -> Option<AuthorityVaultId> {
+) -> Option<FoldState> {
     let mut pending = ancestors.get(&target)?.clone();
     pending.insert(target);
     let mut signer_seqs = BTreeMap::new();
@@ -123,8 +195,8 @@ fn verify_signed_branch(
                 EntryFold::Waiting => {}
             }
         }
-        if let Some(state) = states.get(&target) {
-            return Some(state.vault_id);
+        if let Some(state) = states.remove(&target) {
+            return Some(state);
         }
         if progressed {
             continue;
@@ -145,7 +217,12 @@ fn verify_signed_branch(
             .collect();
         let mut rescued = false;
         for hash in pending.clone() {
-            if !matches!(entries[&hash].op, AuthorityOp::RevokeActor { .. }) {
+            if !matches!(
+                entries[&hash].op,
+                AuthorityOp::RevokeActor { .. }
+                    | AuthorityOp::SlipRevoke { .. }
+                    | AuthorityOp::SlipConsume { .. }
+            ) {
                 continue;
             }
             if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(

@@ -466,7 +466,7 @@ fn fold_authority_log_once(
     };
 
     // Restrictive facts are proved independently of the surviving roster.
-    let revoke_facts =
+    let mut revoke_facts =
         super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     let mut rejected_retired = BTreeSet::new();
@@ -572,6 +572,13 @@ fn fold_authority_log_once(
     // Confirmations are consumable across branches, not only in ancestry.
     // Only entries already proven against their live roster can contend.
     reject_replayed_federation_confirms(&mut states, &by_hash, &entry_ancestors, &mut issues);
+    // A handoff's predecessor stays retired on every branch, not only its own.
+    let retired_keys = super::retired_signers::reject_retired_signer_forks(
+        &mut states,
+        &by_hash,
+        &entry_ancestors,
+        &mut issues,
+    );
     let mut vault_ids = BTreeSet::new();
     for state in states.values() {
         vault_ids.insert(state.vault_id);
@@ -593,6 +600,7 @@ fn fold_authority_log_once(
             vault_id: None,
             valid_entries: BTreeSet::new(),
             roster: BTreeMap::new(),
+            retired_keys: BTreeSet::new(),
             tier_floor: None,
             genesis_fragile: false,
             federation_pacts: BTreeMap::new(),
@@ -606,6 +614,7 @@ fn fold_authority_log_once(
         };
     }
 
+    revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = BTreeSet::new();
     for (hash, state) in &states {
@@ -632,6 +641,11 @@ fn fold_authority_log_once(
     }
     if let Some(state) = &mut merged {
         revoke_facts.apply_to(state);
+        for key in &retired_keys {
+            if let Some(device) = state.roster.get_mut(key) {
+                device.revoked = true;
+            }
+        }
     }
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         folded_actor_bindings(state, context.consent_arm)
@@ -660,6 +674,7 @@ fn fold_authority_log_once(
         roster: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.clone()),
+        retired_keys,
         tier_floor: merged.as_ref().map(|state| state.tier_floor),
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established

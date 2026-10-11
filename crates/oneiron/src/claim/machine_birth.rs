@@ -6,7 +6,7 @@
 
 use std::io::Cursor;
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::Signature;
 use rmpv::Value;
 
 use super::{ClaimApprovalStatus, ClaimLifecycleStatus, decode_claim_body, encode_claim_body};
@@ -123,9 +123,9 @@ impl SignedClaimBirth {
         let transcript =
             crate::authority::machine_claim_transcript(&self.vault_id, &self.target, &body)
                 .map_err(|_| invalid())?;
-        VerifyingKey::from_bytes(&self.machine_public_key)
+        crate::authority::strong_ed25519_key(&self.machine_public_key)
             .map_err(|_| invalid())?
-            .verify(&transcript, &Signature::from_bytes(&self.machine_signature))
+            .verify_strict(&transcript, &Signature::from_bytes(&self.machine_signature))
             .map_err(|_| invalid())?;
         if self.compute_digest()? != self.digest {
             return Err(invalid());

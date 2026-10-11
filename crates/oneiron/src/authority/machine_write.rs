@@ -4,7 +4,7 @@
 //! its entity id and the genesis-bound vault id. The log fold, not a transport
 //! credential or a row in MACHINE, grants the signer authority.
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use rmpv::Value;
 
 use crate::batch::EntityMetadataHeader;
@@ -197,7 +197,7 @@ impl Vault {
         public_key: [u8; 32],
         sign: impl Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync + 'static,
     ) -> Result<()> {
-        VerifyingKey::from_bytes(&public_key).map_err(|_| denied())?;
+        super::strong_ed25519_key(&public_key).map_err(|_| denied())?;
         let txn = self.store.env.read_txn()?;
         let raw = self
             .store
@@ -536,8 +536,9 @@ pub(crate) fn machine_claim_read_admitted(
     let Some(vault_id) = fold.vault_id else {
         return Ok(false);
     };
-    let key = VerifyingKey::from_bytes(&proof.public_key);
-    let Ok(key_bytes) = key else { return Ok(false) };
+    let Ok(key_bytes) = super::strong_ed25519_key(&proof.public_key) else {
+        return Ok(false);
+    };
     // The immutable signed origin is verified against the exact stored birth
     // bytes. Current approval/lifecycle comes from the signed operation fold.
     let Ok(projection) =
@@ -550,7 +551,7 @@ pub(crate) fn machine_claim_read_admitted(
         return Ok(false);
     };
     if key_bytes
-        .verify(&transcript, &Signature::from_bytes(&proof.signature))
+        .verify_strict(&transcript, &Signature::from_bytes(&proof.signature))
         .is_err()
         || crate::claim::history_projection::project_machine_claim(&projection) != *body
     {
@@ -720,7 +721,7 @@ pub(crate) fn verify_machine_claim_in_txn(
     }
     let proof = proof.ok_or_else(|| invalid_origin(replicated))?;
     let key =
-        VerifyingKey::from_bytes(&proof.public_key).map_err(|_| invalid_origin(replicated))?;
+        super::strong_ed25519_key(&proof.public_key).map_err(|_| invalid_origin(replicated))?;
     if let Some(vault_id) = fold.vault_id {
         match crate::claim::history_projection::resolved_machine_history(store, txn, &fold, *id) {
             Ok(projection) => {
@@ -747,7 +748,7 @@ pub(crate) fn verify_machine_claim_in_txn(
                 // Origin-verifiable rows are provisional; malformed proofs
                 // quarantine without requiring enrollment arrival order.
                 let transcript = machine_claim_transcript(&vault_id, id, body)?;
-                key.verify(&transcript, &Signature::from_bytes(&proof.signature))
+                key.verify_strict(&transcript, &Signature::from_bytes(&proof.signature))
                     .map_err(|_| invalid_origin(replicated))?;
             }
             Err(Error::Claim(ClaimError::InvalidMachineClaimProof)) => {

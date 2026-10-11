@@ -215,3 +215,100 @@ fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
     entries.reverse();
     assert_eq!(fold_authority_log(&entries), after);
 }
+
+/// engine-crates-05: a slip withdrawal or burn signed below a confirmation
+/// that later loses a nonce collision stays applied. The dropped entries stay
+/// dropped; only their restrictions survive, so no revoked or spent slip
+/// lives again.
+#[test]
+fn a_lost_confirmation_never_revives_a_revoked_or_spent_slip() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let issuer = HostSlipIssuer::from_secret(b"confirmation collision host root").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let (withdrawn, spent) = ([91; 32], [92; 32]);
+    for slip_id in [withdrawn, spent] {
+        let mut claims = root.claims.clone();
+        claims.slip_id = slip_id;
+        claims.parent_id = Some(root.claims.slip_id);
+        vault.mint_capability_slip(&issuer, claims).unwrap();
+    }
+    let minted = vault.authority_fold().unwrap();
+    let mut entries: Vec<AuthorityLogEntry> = minted
+        .valid_entries
+        .iter()
+        .map(|hash| {
+            vault
+                .get_authority_log_entry(&authority_log_entity_id_from_hash(hash).unwrap())
+                .unwrap()
+                .unwrap()
+        })
+        .collect();
+    let head = minted.slips.mints[&spent].entry_hash;
+    let seq = entries.iter().map(|entry| entry.seq).max().unwrap();
+    let vault_id = Some(root.claims.vault_id);
+    let at = root.claims.issued_at;
+    let confirm = |seq: u64, id: u8| {
+        issuer
+            .sign_entry(
+                vault_id,
+                seq,
+                vec![head],
+                AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+                    kind: AuthorityConfirmKind::Accept,
+                    confirm_id: [id; 32],
+                    peer_vault_id: [77; 32],
+                    epoch: 1,
+                    nonce: [77; 16],
+                }),
+                at,
+            )
+            .unwrap()
+    };
+    let first = confirm(seq + 1, 55);
+    let first_hash = authority_entry_hash(&first).unwrap();
+    let revoke = issuer
+        .sign_entry(
+            vault_id,
+            seq + 2,
+            vec![first_hash],
+            AuthorityOp::SlipRevoke { slip_id: withdrawn },
+            at,
+        )
+        .unwrap();
+    let burn = issuer
+        .sign_entry(
+            vault_id,
+            seq + 3,
+            vec![authority_entry_hash(&revoke).unwrap()],
+            AuthorityOp::SlipConsume { slip_id: spent },
+            at,
+        )
+        .unwrap();
+    let burn_hash = authority_entry_hash(&burn).unwrap();
+    entries.extend([first, revoke, burn]);
+    let before = fold_authority_log(&entries);
+    assert!(before.valid_entries.contains(&burn_hash));
+    assert!(before.slips.explicit_revoked.contains(&withdrawn));
+    assert!(before.slips.consumed.contains(&spent));
+    assert!(before.slip_is_live(&root.claims.slip_id));
+
+    // A sibling confirmation reuses the nonce and hashes lower, so it wins
+    // the collision and drops `first` with everything signed after it.
+    let sibling = (1..=u8::MAX)
+        .map(|id| confirm(seq + 4, id))
+        .find(|entry| authority_entry_hash(entry).unwrap() < first_hash)
+        .expect("a distinct confirmation hashes below the first");
+    entries.push(sibling);
+    let after = fold_authority_log(&entries);
+    assert!(!after.valid_entries.contains(&first_hash));
+    assert!(!after.valid_entries.contains(&burn_hash));
+    assert!(after.slips.revoked.contains(&withdrawn));
+    assert!(after.slips.explicit_revoked.contains(&withdrawn));
+    assert!(after.slips.consumed.contains(&spent));
+    assert!(!after.slip_is_live(&withdrawn));
+    assert!(!after.slip_is_live(&spent));
+    assert!(after.slip_is_live(&root.claims.slip_id));
+    entries.reverse();
+    assert_eq!(fold_authority_log(&entries), after);
+}

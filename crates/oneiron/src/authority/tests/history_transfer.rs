@@ -452,3 +452,131 @@ fn handoff_only_preserves_its_valid_pre_handoff_ancestors() {
         }
     }
 }
+
+fn re_root_entry(
+    id: AuthorityVaultId,
+    parent: &AuthorityLogEntry,
+    signer: &ed25519_dalek::SigningKey,
+    seq: u64,
+    successor: &ed25519_dalek::SigningKey,
+) -> AuthorityLogEntry {
+    sign_ed(
+        unsigned_entry(
+            Some(id),
+            seq,
+            vec![authority_entry_hash(parent).unwrap()],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    authority_key_from_ed(successor),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(signer),
+            2,
+        ),
+        signer,
+    )
+}
+
+/// engine-crates-03: a handoff retires its predecessor on every branch. The
+/// old root signs a second handoff parented to the genesis, before the first;
+/// it installs no second root, on any arrival order, and the fork's own
+/// successor signs nothing that stands.
+#[test]
+fn a_retired_root_installs_no_second_root() {
+    let old = ed_key(160);
+    let next = ed_key(161);
+    let fork = ed_key(162);
+    let after_fork = ed_key(163);
+    let genesis = genesis_entry(160, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let handoff = re_root_entry(id, &genesis, &old, 1, &next);
+    let forked = re_root_entry(id, &genesis, &old, 2, &fork);
+    let onward = re_root_entry(id, &forked, &fork, 1, &after_fork);
+    let (handoff_hash, forked_hash, onward_hash) = (
+        authority_entry_hash(&handoff).unwrap(),
+        authority_entry_hash(&forked).unwrap(),
+        authority_entry_hash(&onward).unwrap(),
+    );
+    let mut entries = vec![genesis.clone(), handoff.clone(), forked.clone(), onward];
+    for _ in 0..2 {
+        let fold = fold_authority_log(&entries);
+        assert!(fold.valid_entries.contains(&handoff_hash));
+        assert!(!fold.valid_entries.contains(&forked_hash));
+        assert!(!fold.valid_entries.contains(&onward_hash));
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::RetiredSigner(forked_hash))
+        );
+        assert!(fold.roster[&authority_key_from_ed(&old)].revoked);
+        assert!(!fold.roster[&authority_key_from_ed(&next)].revoked);
+        assert!(
+            fold.roster
+                .get(&authority_key_from_ed(&fork))
+                .is_none_or(|device| device.revoked)
+        );
+        assert!(
+            !fold
+                .roster
+                .contains_key(&authority_key_from_ed(&after_fork))
+        );
+        assert!(fold.retired_keys.contains(&authority_key_from_ed(&old)));
+        entries.reverse();
+    }
+
+    // At the handoff's own sequence the order is undecidable: neither
+    // successor stands, and the old root stays retired.
+    let twin = re_root_entry(id, &genesis, &old, 1, &fork);
+    let fold = fold_authority_log(&[genesis, handoff, twin]);
+    assert!(!fold.valid_entries.contains(&handoff_hash));
+    assert!(fold.roster[&authority_key_from_ed(&old)].revoked);
+    assert!(fold.roster.values().all(|device| device.revoked));
+}
+
+/// engine-crates-03 at the doors: after a handoff, a row the old root signs
+/// is refused by the signed re-root door, by replicated replay and by
+/// signed-history import, so the fork never reaches the log.
+#[test]
+fn every_door_refuses_a_row_the_retired_root_signs() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let old = ed_key(164);
+    let next = ed_key(165);
+    let fork = ed_key(166);
+    let genesis = genesis_entry(164, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    store(&vault, &genesis);
+    let handoff = re_root_entry(id, &genesis, &old, 1, &next);
+    vault.apply_signed_re_root(&handoff).unwrap();
+    let forked = re_root_entry(id, &genesis, &old, 2, &fork);
+    let before = vault.export_signed_authority_history().unwrap();
+
+    assert!(vault.apply_signed_re_root(&forked).is_err());
+    let body = encode_authority_log_entry_body(&forked).unwrap();
+    assert!(
+        vault
+            .import_signed_authority_history(std::slice::from_ref(&body))
+            .is_err()
+    );
+    #[cfg(feature = "sync")]
+    assert_eq!(
+        vault
+            .batch()
+            .put_replicated(
+                &authority_log_entity_id(&forked).unwrap(),
+                crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+                TimeRange { start: 2, end: 2 },
+                2,
+                &body,
+            )
+            .commit()
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAuthorityLogBody
+    );
+    assert_eq!(vault.export_signed_authority_history().unwrap(), before);
+    let fold = vault.authority_fold().unwrap();
+    assert!(!fold.roster[&authority_key_from_ed(&next)].revoked);
+    assert!(!fold.roster.contains_key(&authority_key_from_ed(&fork)));
+}

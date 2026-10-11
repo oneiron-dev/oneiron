@@ -43,7 +43,7 @@
 //! signed-time backdating defeats any time bound (residual R2), so expiry
 //! is server-side liveness bookkeeping, never a door predicate.
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use loro::LoroDoc;
 
 use crate::Vault;
@@ -310,7 +310,7 @@ pub fn verify_lease_pop(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -
         return false;
     };
     let msg = lease_pop_transcript(client_id, pubkey);
-    key.verify(&msg, &Signature::from_bytes(pop_sig)).is_ok()
+    key.verify_strict(&msg, &Signature::from_bytes(pop_sig)).is_ok()
 }
 
 fn parse_hex_component(component: &str) -> Result<u64> {
@@ -390,7 +390,7 @@ pub(super) fn verify_new_receipt_origin_for_vault_in_txn(
     msg.extend_from_slice(&body[..parts.verification_value_offset]);
     msg.push(ATT_EMPTY_MAP_BYTE);
     verifying_key
-        .verify(&msg, &Signature::from_bytes(&parts.signature))
+        .verify_strict(&msg, &Signature::from_bytes(&parts.signature))
         .map_err(|_| Error::Sync(SyncError::ReceiptAttestationInvalid { id: *id }))?;
 
     // Step 4 — claimed-row lease binding (OD-7: status only, never time).

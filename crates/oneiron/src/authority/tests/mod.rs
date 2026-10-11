@@ -34,6 +34,7 @@ mod retired_device_ops;
 mod revoke_proof_matrix;
 mod support;
 mod tier_floor;
+mod weak_keys;
 
 mod causal_claim;
 mod checkpoint;
