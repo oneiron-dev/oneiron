@@ -87,7 +87,7 @@ impl Vault {
         } else {
             Err(Error::Secret(SecretError::SecretBindingDenied {
                 effector: effector.to_owned(),
-                secret_ref: rec.name.clone(),
+                secret_ref: rec.name,
             }))
         }
     }

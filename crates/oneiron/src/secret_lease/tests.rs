@@ -415,10 +415,21 @@ fn the_door_check_agrees_with_the_door_without_reading_the_value() {
     for (name, bindings) in cases {
         register(
             &vault,
-            record(name, CustodyClass::CustodyPortable, VALUE_V1, bindings, Vec::new()),
+            record(
+                name,
+                CustodyClass::CustodyPortable,
+                VALUE_V1,
+                bindings,
+                Vec::new(),
+            ),
         );
     }
-    for name in ["released", "other-effector", "first-unread", "never-registered"] {
+    for name in [
+        "released",
+        "other-effector",
+        "first-unread",
+        "never-registered",
+    ] {
         let checked = vault.check_secret_at_door(name, EFFECTOR);
         let injected = vault.inject_secret_at_door(name, EFFECTOR, &mut |_value| Ok(()));
         assert_eq!(checked.is_ok(), injected.is_ok(), "{name}: {checked:?}");

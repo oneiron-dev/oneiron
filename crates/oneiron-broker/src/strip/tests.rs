@@ -103,7 +103,9 @@ fn json_unescaped(text: &[u8]) -> Vec<u8> {
                 Some(high @ 0xD800..=0xDBFF) => unit(at + 8)
                     .filter(|low| (0xDC00..=0xDFFF).contains(low))
                     .filter(|_| text.get(at + 6..at + 8) == Some(b"\\u".as_slice()))
-                    .and_then(|low| char::from_u32(0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)))
+                    .and_then(|low| {
+                        char::from_u32(0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00))
+                    })
                     .map(|character| (character, 12)),
                 Some(code) => char::from_u32(code).map(|character| (character, 6)),
                 None => None,
@@ -251,7 +253,11 @@ fn only_the_key_goes_from_an_escaped_run_that_percent_decodes_to_it() {
     let body = format!("{{\"error\":\"prefix\\u0020{every_byte}\\u0020suffix\"}}");
     assert!(leaks(body.as_bytes(), KEY));
     let stripped = strip(KEY.as_bytes(), body.as_bytes());
-    assert!(!leaks(&stripped, KEY), "{}", String::from_utf8_lossy(&stripped));
+    assert!(
+        !leaks(&stripped, KEY),
+        "{}",
+        String::from_utf8_lossy(&stripped)
+    );
     let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
     assert_eq!(parsed["error"], "prefix [redacted] suffix");
     // The key's own quote joins the string's quotes to the run; they stay.

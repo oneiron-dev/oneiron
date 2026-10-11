@@ -1003,14 +1003,22 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
             reads: AtomicUsize::new(0),
         });
         let runtime = ModelRuntime::build_with_keys(Some(&config), Some(door.clone()));
-        let model = runtime.seat(ModelRole::Checker).expect("seat").model.clone();
+        let model = runtime
+            .seat(ModelRole::Checker)
+            .expect("seat")
+            .model
+            .clone();
         let receipts = Arc::new(MemoryReceipts::default());
         let meter = BudgetGuard::new("broker-test", 100_000, BudgetExhaustionPolicy::Suspend);
         let run = undeclared_run("broker-test", meter.clone(), receipts.clone());
         let (_, ladder) = runtime.router().unwrap().served(&model).unwrap();
         let refused = ladder.generate(&run, request(&model, "hi"), None).await;
         assert!(refused.is_err(), "{case}");
-        assert_eq!(door.reads.load(Ordering::SeqCst), 0, "{case}: the key was read");
+        assert_eq!(
+            door.reads.load(Ordering::SeqCst),
+            0,
+            "{case}: the key was read"
+        );
         assert_eq!(
             (meter.read().used_units, meter.read().reserved_units),
             (0, 0),
