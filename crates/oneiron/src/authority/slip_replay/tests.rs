@@ -268,6 +268,13 @@ fn a_clock_recovery_admits_the_next_fresh_proof_and_no_proof_signed_before_it() 
         matches!(holder.recover(), Ok(ProofClockRecovery::NotAhead { .. })),
         "nothing left to recover"
     );
+    holder.clock.set(start + 200);
+    holder.admit(start + 200, 6).unwrap();
+    holder.clock.set(start + 100);
+    assert!(
+        holder.admit(start + 100, 7).is_err(),
+        "after a recovery, a wall clock that steps back fails closed again"
+    );
 
     let replayed = Holder::paired(start);
     replayed.admit(start, 1).unwrap();
