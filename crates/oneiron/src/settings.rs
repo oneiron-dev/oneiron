@@ -616,8 +616,9 @@ pub(crate) fn device_only_worlds_in(
 }
 
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD
-/// row itself, a CLAIM whose `worldId` is flagged, or a NOTE with a stored
-/// `InWorld` edge to a flagged world.
+/// row itself, a CLAIM whose `worldId` is flagged (an erased one by the world
+/// address its deletion kept), or a NOTE with a stored `InWorld` edge to a
+/// flagged world.
 pub(crate) fn device_only_withholds(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -636,11 +637,22 @@ pub(crate) fn device_only_withholds(
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("entity header"))?;
     match header.entity_type {
-        crate::registry::ENTITY_TYPE_CLAIM => Ok(crate::claim::decode_claim_body(
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            true,
-        )
-        .is_ok_and(|body| body.world.is_some_and(|world| flagged.contains(&world)))),
+        crate::registry::ENTITY_TYPE_CLAIM => {
+            if let Ok(body) = crate::claim::decode_claim_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                true,
+            ) {
+                return Ok(body.world.is_some_and(|world| flagged.contains(&world)));
+            }
+            // An erased claim keeps only its shell; its deletion kept the
+            // world window's address (`m:dw:`, `<month>@<world>`).
+            Ok(store
+                .sync_state
+                .get(txn, &format!("m:dw:{}", id.to_hex()))?
+                .and_then(|label| std::str::from_utf8(label).ok()?.split_once('@'))
+                .and_then(|(_, world)| EntityId::from_hex(world).ok())
+                .is_some_and(|world| flagged.contains(&world)))
+        }
         crate::registry::ENTITY_TYPE_NOTE => {
             for edge in store.port_edges(
                 txn,
