@@ -294,7 +294,8 @@ pub struct McpVerbToolArgs {
     pub payload: McpVerbToolPayload,
 }
 
-/// Validates arguments for a tool THIS endpoint registered.
+/// Validates arguments for a tool THIS endpoint registered. With no
+/// credential to name the caller, the arguments must carry their `actor`.
 ///
 /// # Errors
 ///
@@ -304,14 +305,35 @@ pub fn validate_mcp_endpoint_tool_args(
     tool: McpEndpointTool,
     args: impl Into<McpToolArguments>,
 ) -> Result<McpValidatedToolArgs, McpToolValidationError> {
-    let args = args.into();
+    validate_endpoint_tool_args(tool, args.into(), None)
+}
+
+/// [`validate_mcp_endpoint_tool_args`] for a call whose caller the credential
+/// already named. Calling code never supplies WHO (ARCH-0028 #surface): when
+/// the arguments carry no `actor` block, they take `actor`, the block the
+/// credential resolved to. A block the caller does send is decoded as sent, so
+/// the gateway's match check still refuses one that names someone else.
+pub(crate) fn validate_mcp_endpoint_tool_args_as(
+    tool: McpEndpointTool,
+    args: McpToolArguments,
+    actor: &Value,
+) -> Result<McpValidatedToolArgs, McpToolValidationError> {
+    validate_endpoint_tool_args(tool, args, Some(actor))
+}
+
+fn validate_endpoint_tool_args(
+    tool: McpEndpointTool,
+    args: McpToolArguments,
+    actor: Option<&Value>,
+) -> Result<McpValidatedToolArgs, McpToolValidationError> {
     // The tool's OWN advertised schema is what says where an integer lives, so
     // the raw number text is judged against the very document `tools/list`
     // published for this name (ONE-1704 repair).
     let schema = tool.input_schema();
     match tool {
         McpEndpointTool::Setup => {
-            let parsed = decode_endpoint_args::<McpSetupToolArgs>(MCP_SETUP_TOOL, &schema, args)?;
+            let parsed =
+                decode_endpoint_args::<McpSetupToolArgs>(MCP_SETUP_TOOL, &schema, args, actor)?;
             parsed.validate()?;
             Ok(McpValidatedToolArgs::Setup(Box::new(parsed)))
         }
@@ -320,12 +342,14 @@ pub fn validate_mcp_endpoint_tool_args(
                 MCP_EXECUTE_CODE_TOOL,
                 &schema,
                 args,
+                actor,
             )?;
             parsed.validate()?;
             Ok(McpValidatedToolArgs::ExecuteCode(Box::new(parsed)))
         }
         McpEndpointTool::Verb(tool) => {
-            let payload = decode_endpoint_args::<McpVerbToolPayload>(tool.name, &schema, args)?;
+            let payload =
+                decode_endpoint_args::<McpVerbToolPayload>(tool.name, &schema, args, actor)?;
             validate_schema_version(tool.name, &payload.schema_version)?;
             payload.actor.validate(tool.name)?;
             payload.consent.validate(tool.name)?;
@@ -343,9 +367,15 @@ fn decode_endpoint_args<T: DeserializeOwned>(
     tool: &'static str,
     schema: &Value,
     args: McpToolArguments,
+    actor: Option<&Value>,
 ) -> Result<T, McpToolValidationError> {
-    let args = schema_normalized_arguments(schema, args)
+    let mut args = schema_normalized_arguments(schema, args)
         .map_err(|message| McpToolValidationError::Decode { tool, message })?;
+    // Only an absent block is filled: a `null` or malformed one the caller
+    // sent still fails to decode, as before.
+    if let (Some(actor), Value::Object(fields)) = (actor, &mut args) {
+        fields.entry("actor").or_insert_with(|| actor.clone());
+    }
     serde_json::from_value::<T>(args).map_err(|error| McpToolValidationError::Decode {
         tool,
         message: error.to_string(),
