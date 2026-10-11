@@ -1594,6 +1594,7 @@
      "path": "src/authority/engine_machine.rs",
      "purpose": "Host-provisioned software identities for the engine's own MACHINE writers",
      "surface": {
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -1659,7 +1660,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultRecoveryRequest"
@@ -1667,9 +1668,24 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostReRoot",
+      "RetiredSlip"
+     ],
+     "path": "src/authority/host_re_root.rs",
+     "purpose": "A self-host root move to a new host secret, in-chain (OF-455)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -1688,14 +1704,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_enroll.rs",
+     "purpose": "Host-landed MACHINE enrollment: one EnrollDevice and its BindActor",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/machine_write.rs",
-     "purpose": "MACHINE software-key enrollment and origin signatures for claim writes",
+     "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 8,
-      "fn": 5
+      "crate-vis": 9,
+      "fn": 4
      }
     },
     {
@@ -1731,7 +1758,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 7,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -1882,7 +1909,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 24,
       "struct": 1
      }
@@ -1983,6 +2010,14 @@
      "notable": [],
      "path": "src/authority/tests/history_transfer.rs",
      "purpose": "Full signed-history portability, account auth and independent recovery composition",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/host_re_root.rs",
+     "purpose": "A self-host root move keeps the vault's own writing (OF-455)",
      "surface": {}
     },
     {
@@ -7557,7 +7592,7 @@
      "path": "src/claim/history_projection.rs",
      "purpose": "Verified MACHINE history residence: exact birth + transition closure at a trusted pin",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 4,
       "struct": 1
      }
@@ -39203,7 +39238,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 58,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40486,8 +40521,8 @@
    },
    "over_bar": 34,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2458,
-   "test_files": 780
+   "source_files": 2460,
+   "test_files": 781
   },
   "oneiron-android": {
    "files": [
@@ -50023,6 +50058,7 @@
       "EmbedderServeArgs",
       "HostCommand",
       "HostInitArgs",
+      "HostReRootArgs",
       "InitArgs",
       "McpArgs",
       "McpSurface",
@@ -50044,7 +50080,7 @@
       "enum": 8,
       "fn": 3,
       "re-export": 1,
-      "struct": 17
+      "struct": 18
      }
     },
     {
@@ -50092,7 +50128,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 11,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 1
      }
     },
@@ -50209,6 +50245,16 @@
      "notable": [],
      "path": "src/commands/host_init.rs",
      "purpose": "Reference deployment scaffolding and explicit encryption provisioning",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/host_re_root.rs",
+     "purpose": "`oneiron host re-root`: moves a stopped self-host vault's root to a new host secret, in-chain (OF-455)",
      "surface": {
       "fn": 1
      }
@@ -52729,6 +52775,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/it/host_re_root.rs",
+     "purpose": "A self-host owner moves the vault's root off a leaked host secret (OF-455; ARCH-0028 #host-key-warning)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/import_claims.rs",
      "purpose": "Claims from imported history wait for the owner's review (ARCH-0027 trust tier: \"imported material never…",
      "surface": {}
@@ -52902,7 +52956,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -53079,8 +53133,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 318,
-   "test_files": 133
+   "source_files": 319,
+   "test_files": 134
   },
   "oneiron-uniffi": {
    "files": [
