@@ -193,6 +193,10 @@ impl Memory<'_> {
     /// still-`Proposed` row counts — once the owner settles or withdraws one,
     /// the next create parks a fresh proposal.
     ///
+    /// And only one parked where this ask would be born (`persist_task_proposal`):
+    /// the same ask from a surface bound to another world or facet is a
+    /// different proposal, which that surface's reviewers must be able to see.
+    ///
     /// THIS actor's, on the envelope's word. The index is claims-about-subject,
     /// so being the subject of a row says nothing about who wrote it: a match
     /// on payload alone would let this caller's ask be answered by a claim
@@ -219,6 +223,11 @@ impl Memory<'_> {
         let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
         let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let actor = self.actor();
+        let position = self.birth_position();
+        let facet = match position.facet {
+            Some(facet) => facet,
+            None => crate::claim::default_facet_in(&self.vault().store, &rtxn)?,
+        };
         Ok(self
             .vault()
             .find_claim_for_subject_in_txn(&rtxn, &actor, |id, body| {
@@ -230,6 +239,8 @@ impl Memory<'_> {
                     // produce would answer its ask with a foreign actor's
                     // provenance and skip the gate receipt this create owes.
                     && crate::claim::session_claim_producer(body) == Some(actor)
+                    && body.world == position.claim_world()
+                    && body.scope_facet == facet
                     && create_proposal_identity(&body.value) == wanted)
                     .then_some(*id)
             })?)

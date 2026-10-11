@@ -85,6 +85,13 @@ pub struct BirthPosition {
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
 }
+impl BirthPosition {
+    /// The world a CLAIM born here names; base reality is a CLAIM with none.
+    pub(crate) fn claim_world(self) -> Option<EntityId> {
+        self.world
+            .filter(|world| *world != crate::claim::base_world_id())
+    }
+}
 pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
     Scope {
         worlds: singleton(ScopeId(crate::claim::base_world_id())),

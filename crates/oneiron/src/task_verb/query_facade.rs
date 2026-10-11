@@ -605,7 +605,7 @@ impl Memory<'_> {
         );
         // A parked proposal is born where its writer's TASK would be.
         let position = self.birth_position();
-        if let Some(world) = position.world {
+        if let Some(world) = position.claim_world() {
             candidate = candidate.with_world(world);
         }
         if let Some(facet) = position.facet {
