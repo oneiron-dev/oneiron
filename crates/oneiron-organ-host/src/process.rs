@@ -18,7 +18,9 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
+use std::sync::{
+    Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, TryLockError,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -293,11 +295,56 @@ pub(crate) enum CallFailure {
     Ended(HostError),
 }
 
+/// The call grants a host has withdrawn. A revocation is recorded by a
+/// write, and an answer's first byte goes under a read
+/// ([`Grant::holding_unrevoked`]), so each revocation comes either before
+/// the answer's check or after that byte.
+#[derive(Debug, Default)]
+pub(crate) struct Revocations(RwLock<HashSet<String>>);
+
+impl Revocations {
+    pub(crate) fn record(&self, grant: &str) {
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(grant.to_owned());
+    }
+
+    pub(crate) fn contains(&self, grant: &str) -> bool {
+        self.read().contains(grant)
+    }
+
+    fn read(&self) -> Unrevoked<'_> {
+        self.0.read().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+type Unrevoked<'a> = RwLockReadGuard<'a, HashSet<String>>;
+
+/// A call's grant, as the host's revocations see it.
+#[derive(Clone, Copy)]
+pub(crate) struct Grant<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) revocations: &'a Revocations,
+}
+
+impl<'a> Grant<'a> {
+    fn revoked(self) -> bool {
+        self.revocations.contains(self.name)
+    }
+
+    /// A read of the revocations while this grant is not among them: none
+    /// is recorded until it drops.
+    fn holding_unrevoked(self) -> Option<Unrevoked<'a>> {
+        let revoked = self.revocations.read();
+        (!revoked.contains(self.name)).then_some(revoked)
+    }
+}
+
 /// How a call waits for its reply: until `deadline`, answering asks
 /// through `asks`, then `grace` for a cancel to take.
 pub(crate) struct Wait<'a, 'b> {
-    /// Whether the call's grant was withdrawn.
-    pub(crate) revoked: &'a dyn Fn() -> bool,
+    pub(crate) grant: Grant<'a>,
     pub(crate) asks: &'a mut CallAsks<'b>,
     pub(crate) deadline: Instant,
     pub(crate) grace: Duration,
@@ -492,14 +539,13 @@ impl OrganProcess {
     /// the organ's asks through `asks` as they come; then cancels, waits
     /// `grace`, and kills the process if it still has not answered.
     ///
-    /// The process is marked as holding `grant` before `revoked` is asked,
-    /// and a revocation records itself before it looks for holders, so one
-    /// of the two always sees the other.
+    /// The process is marked as holding the call's grant before the grant
+    /// is checked, and a revocation records itself before it looks for
+    /// holders, so one of the two always sees the other.
     pub(crate) fn call(
         &self,
         mut call: Call,
         fds: &[BorrowedFd<'_>],
-        grant: &str,
         wait: Wait<'_, '_>,
     ) -> Result<(Reply, Vec<OwnedFd>), CallFailure> {
         self.take_seat(wait.deadline)?;
@@ -518,18 +564,18 @@ impl OrganProcess {
             id,
             grace: wait.grace,
         };
-        lock(&self.grants).insert(grant.to_owned());
         let Wait {
-            revoked,
+            grant,
             asks,
             deadline,
             grace,
         } = wait;
-        let result = if revoked() {
+        lock(&self.grants).insert(grant.name.to_owned());
+        let result = if grant.revoked() {
             Err(CallFailure::Revoked)
         } else {
             let wait = Wait {
-                revoked,
+                grant,
                 asks: &mut *asks,
                 deadline,
                 grace,
@@ -577,12 +623,13 @@ impl OrganProcess {
     /// while the answer still waits for the writer or at its deadline, drops
     /// it there, so a call that has replied takes its reply, not a deadline.
     /// The answer's first byte goes under the lock the reader routes replies
-    /// and asks under and a revocation marks its calls under, with the call
-    /// checked in flight, unmarked and its grant unrevoked again. So an
-    /// answer never goes after the reply the reader has taken, nor once its
-    /// revocation is recorded; one that waits for room meanwhile is dropped
-    /// when either comes. (A reply the organ sends once the answer has
-    /// started crosses it, as an ask crosses a cancel.)
+    /// and asks under and `cancel_all` marks calls under, with the call
+    /// checked in flight and unmarked again, and under a read of the host's
+    /// revocations, with its grant checked unrevoked again. So an answer
+    /// never goes after the reply the reader has taken, nor once its call is
+    /// marked or its grant's revocation is recorded; one that waits for room
+    /// meanwhile is dropped when any of them comes. (A reply the organ sends
+    /// once the answer has started crosses it, as an ask crosses a cancel.)
     ///
     /// The call may ask again from the moment that first byte leaves, not
     /// when the write returns: the organ can read the whole answer and ask
@@ -596,9 +643,9 @@ impl OrganProcess {
         answer: &ToOrgan,
         fds: &[BorrowedFd<'_>],
         deadline: Instant,
-        revoked: &dyn Fn() -> bool,
+        grant: Grant<'_>,
     ) -> Result<bool, FrameError> {
-        let dropped = || revoked() || self.inbox.holding_answerable(id).is_none();
+        let dropped = || grant.revoked() || self.inbox.holding_answerable(id).is_none();
         let Some(writer) = lock_until(&self.writer, deadline, dropped) else {
             return if dropped() {
                 Ok(false)
@@ -609,12 +656,16 @@ impl OrganProcess {
         if dropped() {
             return Ok(false);
         }
-        // The grant is asked under the guard as well: a revocation records
-        // itself before it marks the calls of its holders, one process at a
-        // time. (Lock order: the writer, `pending`, the host's revoked set.)
-        let still = || self.inbox.holding_answerable(id).filter(|_| !revoked());
-        let started = |pending: &mut MutexGuard<'_, HashMap<u64, Pending>>| {
-            if let Some(call) = pending.get_mut(&id) {
+        // The first byte also holds a read of the host's revocations, taken
+        // only while the grant is not among them: recording a revocation
+        // waits for that byte. (Lock order: the writer, `pending`, the
+        // revocations.)
+        let still = || {
+            let pending = self.inbox.holding_answerable(id)?;
+            Some((pending, grant.holding_unrevoked()?))
+        };
+        let started = |held: &mut (MutexGuard<'_, HashMap<u64, Pending>>, Unrevoked<'_>)| {
+            if let Some(call) = held.0.get_mut(&id) {
                 call.asking = false;
             }
         };
@@ -713,7 +764,7 @@ impl OrganProcess {
         wait: Wait<'_, '_>,
     ) -> Result<(Reply, Vec<OwnedFd>), CallFailure> {
         let Wait {
-            revoked,
+            grant,
             asks,
             deadline,
             grace,
@@ -745,7 +796,7 @@ impl OrganProcess {
                     // already replied (the reader took the call's entry, and
                     // the reply waits behind this ask): run and answer
                     // nothing more. Past the deadline, the call is cancelled.
-                    if revoked() || !self.inbox.in_flight(id) {
+                    if grant.revoked() || !self.inbox.in_flight(id) {
                         asks.skipped(&ask);
                         continue;
                     }
@@ -777,7 +828,7 @@ impl OrganProcess {
                         asks.unsent();
                         return Err(CallFailure::Crashed);
                     }
-                    if revoked() {
+                    if grant.revoked() {
                         asks.unsent();
                         continue;
                     }
@@ -791,7 +842,7 @@ impl OrganProcess {
                             let held: Vec<BorrowedFd<'_>> =
                                 region.iter().map(|region| region.fd()).collect();
                             let answer = ToOrgan::Answer(answer);
-                            let sent = self.send_answer(id, &answer, &held, deadline, revoked);
+                            let sent = self.send_answer(id, &answer, &held, deadline, grant);
                             if !matches!(sent, Ok(true)) {
                                 asks.unsent();
                             }
