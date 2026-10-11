@@ -384,10 +384,17 @@ async fn a_coding_in_any_value_of_either_header_returns_nothing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_key_with_a_byte_outside_visible_ascii_is_never_sent() {
     // The strip forms are read over visible ASCII, so a key they could not
-    // find in a reply is refused before the send.
+    // find in a reply is refused before the send. So is a key with a byte a
+    // reply's JSON or escapes could supply: a quote, a backslash, a percent.
     let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
     let broker = broker(None, &[fake.ca_pem()]).await;
-    for key in [&b"sk-test-\xe9t\xe9"[..], b"sk-test sentinel"] {
+    for key in [
+        &b"sk-test-\xe9t\xe9"[..],
+        b"sk-test sentinel",
+        b"sk-test-sentinel\"",
+        b"sk-test\\sentinel",
+        b"sk-test%41sentinel",
+    ] {
         let reply = client(&broker.socket, broker.uid)
             .connect()
             .await
@@ -486,8 +493,7 @@ async fn a_live_socket_with_a_full_queue_is_refused_at_once() {
     let _listener = unbound.listen(1).expect("listener");
     let mut held = Vec::new();
     let full = loop {
-        match tokio::time::timeout(Duration::from_millis(200), UnixStream::connect(&socket)).await
-        {
+        match tokio::time::timeout(Duration::from_millis(200), UnixStream::connect(&socket)).await {
             Ok(Ok(stream)) => held.push(stream),
             Ok(Err(error)) => break error.kind(),
             Err(_) => break std::io::ErrorKind::TimedOut,

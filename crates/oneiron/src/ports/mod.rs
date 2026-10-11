@@ -17,6 +17,8 @@ mod maintenance;
 pub(crate) use maintenance::*;
 mod lmdb_phonetic;
 mod lmdb_query;
+#[cfg(test)]
+pub(crate) use lmdb_query::RECORD_COPIES;
 mod lmdb_staging;
 mod lmdb_timeline;
 mod lmdb_visibility;

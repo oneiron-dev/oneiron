@@ -430,7 +430,15 @@ fn the_door_check_agrees_with_the_door_without_reading_the_value() {
         "first-unread",
         "never-registered",
     ] {
+        crate::ports::RECORD_COPIES.with(|copies| copies.borrow_mut().clear());
         let checked = vault.check_secret_at_door(name, EFFECTOR);
+        // The check copies no custody record, and so no value, out of the
+        // transaction.
+        let copied = crate::ports::RECORD_COPIES.with(|copies| copies.borrow().clone());
+        assert!(
+            !copied.contains(&crate::registry::ENTITY_TYPE_SECRET_CUSTODY),
+            "{name}: the check copied the record"
+        );
         let injected = vault.inject_secret_at_door(name, EFFECTOR, &mut |_value| Ok(()));
         assert_eq!(checked.is_ok(), injected.is_ok(), "{name}: {checked:?}");
     }

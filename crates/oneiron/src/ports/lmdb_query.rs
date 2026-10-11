@@ -216,8 +216,18 @@ impl EntityStoreRead for Vault {
         self.store.port_entity_ids_by_type(txn, kind, after)
     }
 }
+#[cfg(test)]
+thread_local! {
+    /// The entity type of each record this thread copied out of a
+    /// transaction, for tests that prove a read borrows instead.
+    pub(crate) static RECORD_COPIES: std::cell::RefCell<Vec<u8>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 pub(super) fn decode_record(raw: &[u8]) -> Result<EntityRecord> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    #[cfg(test)]
+    RECORD_COPIES.with(|copies| copies.borrow_mut().push(header.entity_type));
     Ok(EntityRecord {
         entity_type: header.entity_type,
         occurred: crate::TimeRange {

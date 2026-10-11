@@ -49,7 +49,8 @@ pub enum Refusal {
     /// The selector is not the offer's wire model.
     #[error("model is not the admitted one")]
     WireModel,
-    /// The key is empty, too short, too long or not a valid header value.
+    /// The key is empty, too short or too long, or holds a byte that is not
+    /// visible ASCII, or a quote, backslash or percent sign.
     #[error("secret refused")]
     Secret,
     /// The provider could not be reached; no request byte was written.

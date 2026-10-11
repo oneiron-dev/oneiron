@@ -128,10 +128,15 @@ impl Sender {
         secret: &[u8],
     ) -> Result<reqwest::Request, Refusal> {
         // Visible ASCII only: every form the strip rule matches is then
-        // spelled in ASCII, and no key byte hides inside a multibyte one.
+        // spelled in ASCII, and no key byte hides inside a multibyte one. And
+        // no quote, backslash or percent sign: no provider issues a key with
+        // one, and without them no byte of a reply's own JSON or escapes can
+        // complete a key the strip rule reads.
         if secret.len() < MIN_SECRET
             || secret.len() > MAX_SECRET
-            || !secret.iter().all(u8::is_ascii_graphic)
+            || !secret
+                .iter()
+                .all(|byte| byte.is_ascii_graphic() && !b"\"\\%".contains(byte))
         {
             return Err(Refusal::Secret);
         }
