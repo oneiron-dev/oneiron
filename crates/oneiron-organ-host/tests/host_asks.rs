@@ -3,13 +3,14 @@
 //! only an ask the grant names and the caller answers gets an answer, a
 //! refusal leaves the call to the organ, an ask runs inside its call's
 //! deadline, a flooding organ is cut off, a handler cannot nest a call, a
-//! fetch reaches only its allowlist, and an organ built for 1.0 still runs.
+//! fetch reaches only its allowlist and redirects a POST as RFC 9110 says,
+//! and an organ built for 1.0 still runs.
 //! An answer goes only to a call still in flight under a live grant, counts
 //! its value against the call's answer bytes, and every ask stays on record
 //! however the call ends.
 #![cfg(unix)]
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, mpsc};
@@ -22,8 +23,8 @@ use oneiron_organ_host::{
     HostConfig, HostError, OrganCall, OrganHost, OrganSpec, Unanswered,
 };
 use oneiron_organ_protocol::{
-    ASK_NET_FETCH, AskCode, AskRefusal, FetchAsk, FetchMethod, Hash32, PROTOCOL, ProtocolVersion,
-    touch_fold,
+    ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FetchAsk, FetchMethod, Hash32, PROTOCOL,
+    ProtocolVersion, touch_fold,
 };
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
@@ -645,6 +646,114 @@ fn a_fetch_that_drips_its_body_ends_at_the_deadline() {
     assert!(closed, "{:?}", served.lock().expect("log"));
 }
 
+/// A one-thread HTTP server on loopback: `/301`, `/302`, `/303`, `/307` and
+/// `/308` redirect to `/landed` with that status; any other path answers
+/// `hello`. Returns its port and each request as `METHOD path content-type
+/// body`.
+fn serve_redirects() -> (u16, std::sync::Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let log = std::sync::Arc::clone(&asked);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut first = String::new();
+            if reader.read_line(&mut first).is_err() {
+                continue;
+            }
+            let (mut content_type, mut len) = ("-".to_owned(), 0);
+            loop {
+                let mut header = String::new();
+                match reader.read_line(&mut header) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) if header == "\r\n" => break,
+                    Ok(_) => {}
+                }
+                let (name, value) = header.split_once(':').unwrap_or_default();
+                match name.to_ascii_lowercase().as_str() {
+                    "content-type" => value.trim().clone_into(&mut content_type),
+                    "content-length" => len = value.trim().parse().unwrap_or_default(),
+                    _ => {}
+                }
+            }
+            let mut body = vec![0; len];
+            if reader.read_exact(&mut body).is_err() {
+                continue;
+            }
+            let mut words = first.split_whitespace();
+            let (method, path) = (
+                words.next().unwrap_or_default(),
+                words.next().unwrap_or_default(),
+            );
+            log.lock().expect("log").push(format!(
+                "{method} {path} {content_type} {}",
+                String::from_utf8_lossy(&body)
+            ));
+            let response = match path.trim_start_matches('/').parse::<u16>() {
+                Ok(code) => format!(
+                    "HTTP/1.1 {code} Moved\r\nLocation: /landed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                ),
+                Err(_) => "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".into(),
+            };
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    (port, asked)
+}
+
+#[test]
+fn a_redirected_post_keeps_its_body_only_on_307_and_308() {
+    // CodeRabbit (#1378): every hop re-sent the POST and its body. A
+    // timestamp request is the first POST an organ sends.
+    let (_dir, vault) = vault();
+    let (port, asked) = serve_redirects();
+    let host = fetching(port);
+    let asks = AskHandlers::none().with(ASK_NET_FETCH, &GuardedFetch);
+    for (code, then) in [
+        (301, "GET /landed - "),
+        (302, "GET /landed - "),
+        (303, "GET /landed - "),
+        (307, "POST /landed application/timestamp-query query"),
+        (308, "POST /landed application/timestamp-query query"),
+    ] {
+        asked.lock().expect("log").clear();
+        let bytes = rmp_serde::to_vec_named(&FetchAsk {
+            purpose: "test".into(),
+            method: FetchMethod::Post,
+            url: format!("http://127.0.0.1:{port}/{code}"),
+            content_type: Some("application/timestamp-query".into()),
+            body: Some(ByteBuf::from(b"query".to_vec())),
+        })
+        .expect("fetch encodes");
+        let post = rmpv::decode::read_value(&mut bytes.as_slice()).expect("fetch value");
+        let outcome = host
+            .call_with(
+                &vault,
+                ask_call(ASK_NET_FETCH, post, 1, Duration::from_secs(10)),
+                Vec::new(),
+                &asks,
+            )
+            .expect("the organ goes on");
+        let line = &lines(&outcome.report)[0];
+        let answer = field(line, "answered").expect("answered");
+        assert_eq!(
+            field(answer, "status").and_then(rmpv::Value::as_u64),
+            Some(200),
+            "{code}"
+        );
+        assert_eq!(
+            *asked.lock().expect("log"),
+            vec![
+                format!("POST /{code} application/timestamp-query query"),
+                then.to_owned()
+            ],
+            "{code}"
+        );
+    }
+}
+
 #[test]
 fn an_answer_value_counts_against_the_answer_bytes() {
     // Astra (#1378) P2: only an answer's data was charged, so a fetch's 4 KiB
@@ -776,6 +885,205 @@ fn an_answer_that_waits_for_the_writer_never_follows_a_revoked_cancel() {
     // The host stopped the organ for the revocation; it never exited on an
     // answer, which would count as a crash.
     assert_eq!(host.status("probe").expect("installed").recent_crashes, 0);
+}
+
+/// Answers at once, and tells the organ so through a file.
+#[cfg(target_os = "linux")]
+struct Signal(std::path::PathBuf, AtomicUsize);
+
+#[cfg(target_os = "linux")]
+impl AskHandler for Signal {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        self.1.fetch_add(1, Ordering::SeqCst);
+        std::fs::write(self.0.join("handled"), b"").expect("signal");
+        Ok(Answered::default())
+    }
+}
+
+/// Linux: a Unix socket stops polling writable once more than a quarter
+/// of its send buffer waits unread, while a send blocks only at the whole
+/// buffer. So a call of half the buffer goes whole yet leaves the next
+/// frame waiting for room before its first byte.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_answer_that_waits_for_room_never_follows_its_calls_reply() {
+    // Astra (#1378) P2: the call was checked in flight under the writer,
+    // but its answer could then wait for room in the socket while the
+    // reader took the call's reply, and go after it. The organ leaves this
+    // call unread in the socket, asks, and replies once the handler has
+    // run; it reads again only once the call has returned. The answer must
+    // not go (the organ exits if it is answered), and the reply stands.
+    let send_buffer: usize = std::fs::read_to_string("/proc/sys/net/core/wmem_default")
+        .expect("wmem_default")
+        .trim()
+        .parse()
+        .expect("a byte count");
+    let (_dir, vault) = vault();
+    let signals = tempfile::tempdir().expect("signals");
+    let mut full_spec = spec(vec![AskGrant::new(ANSWER, 4)]);
+    full_spec.args = vec![
+        "--reply-while-full".into(),
+        signals.path().as_os_str().to_owned(),
+    ];
+    full_spec.verbs = vec!["organ.echo".into()];
+    let host = host(full_spec);
+    host.warm("probe").expect("warm");
+    let signal = Signal(signals.path().to_owned(), AtomicUsize::new(0));
+    let asks = AskHandlers::none().with(ANSWER, &signal);
+    let full = OrganCall {
+        args: "x".repeat(send_buffer / 2).into(),
+        ..echo(Duration::from_secs(20))
+    };
+    let outcome = host.call_with(&vault, full, Vec::new(), &asks);
+    std::fs::write(signals.path().join("go"), b"").expect("signal");
+    // Before the fix the answer kept waiting behind the routed reply, to go
+    // at the first room, and the call ended at its deadline instead.
+    let outcome = outcome.expect("the reply stands");
+    assert_eq!(signal.1.load(Ordering::SeqCst), 1);
+    assert_eq!(outcome.receipt.asks.len(), 1);
+    assert_eq!(
+        outcome.receipt.asks[0].unanswered,
+        Some(Unanswered::NotSent)
+    );
+    // An answer would reach the organ before this call.
+    host.call(&vault, echo(Duration::from_secs(10)))
+        .expect("the organ was never answered");
+    let status = host.status("probe").expect("installed");
+    assert_eq!(status.spawns, 1);
+    assert_eq!(status.recent_crashes, 0);
+}
+
+/// Polls `done` for up to a minute.
+#[cfg(target_os = "linux")]
+fn wait_until(done: impl Fn() -> bool) {
+    let until = Instant::now() + Duration::from_secs(60);
+    while !done() && Instant::now() < until {
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Linux, as above.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_answer_that_waits_for_room_never_goes_once_its_grant_is_revoked() {
+    // Astra (#1395) P2: an answer waiting for room checked only that its
+    // call was in flight, so it went at the first room though its grant was
+    // revoked meanwhile (the revocation's cancel waited for the writer the
+    // answer held). The organ leaves the call unread in the socket and
+    // asks; the grant is revoked once the answer waits for room, and the
+    // organ reads again only once the revocation is on record. It notes any
+    // answer it is sent.
+    let send_buffer: usize = std::fs::read_to_string("/proc/sys/net/core/wmem_default")
+        .expect("wmem_default")
+        .trim()
+        .parse()
+        .expect("a byte count");
+    let (_dir, vault) = vault();
+    let signals = tempfile::tempdir().expect("signals");
+    let mut full_spec = spec(vec![AskGrant::new(ANSWER, 4)]);
+    full_spec.args = vec![
+        "--revoked-while-full".into(),
+        signals.path().as_os_str().to_owned(),
+    ];
+    full_spec.verbs = vec!["organ.echo".into()];
+    // The revocation's cancel waits for the writer up to the grace.
+    let host = OrganHost::new(HostConfig {
+        cancel_grace: Duration::from_secs(3),
+        ..HostConfig::default()
+    });
+    host.install(full_spec);
+    host.warm("probe").expect("warm");
+    let signal = Signal(signals.path().to_owned(), AtomicUsize::new(0));
+    let asks = AskHandlers::none().with(ANSWER, &signal);
+    let full = OrganCall {
+        args: "x".repeat(send_buffer / 2).into(),
+        grant: "a".into(),
+        ..echo(Duration::from_secs(20))
+    };
+    let (host, vault, signals) = (&host, &vault, signals.path());
+    let result = thread::scope(|scope| {
+        scope.spawn(move || {
+            // The handler has run, and its answer has had 200 ms to start
+            // waiting for room.
+            wait_until(|| signals.join("handled").exists());
+            thread::sleep(Duration::from_millis(200));
+            host.revoke_grant("a");
+        });
+        scope.spawn(move || {
+            // A call under a revoked grant is refused before its organ is
+            // looked up; until then this one names no organ.
+            let refused = OrganCall {
+                organ: "none".into(),
+                grant: "a".into(),
+                ..echo(Duration::from_secs(1))
+            };
+            wait_until(|| matches!(host.call(vault, refused.clone()), Err(HostError::Revoked)));
+            std::fs::write(signals.join("revoked"), b"").expect("signal");
+        });
+        host.call_with(vault, full, Vec::new(), &asks)
+    });
+    assert!(matches!(result, Err(HostError::Revoked)), "{result:?}");
+    // Before the fix the answer went once the organ read again.
+    assert!(
+        !signals.join("answered").exists(),
+        "an answer reached the organ after its grant was revoked"
+    );
+    assert_eq!(signal.1.load(Ordering::SeqCst), 1);
+    let asked = asks.asked();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].unanswered, Some(Unanswered::NotSent));
+}
+
+/// Tells the organ through a file that it has started, then outlasts the
+/// call's deadline.
+struct Overstays(std::path::PathBuf, Duration);
+
+impl AskHandler for Overstays {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        std::fs::write(self.0.join("handled"), b"").expect("signal");
+        thread::sleep(self.1);
+        Ok(Answered::default())
+    }
+}
+
+#[test]
+fn a_reply_before_the_deadline_stands_while_its_handler_overruns() {
+    // Astra (#1395) P2: at the deadline the handler's watchdog cancelled the
+    // call before it looked for the call's reply, and the call failed on its
+    // deadline though the reader had queued the reply in time. The organ
+    // replies once the handler has started; the handler outlasts the
+    // deadline. The organ notes any cancel, and exits if it is answered.
+    let (_dir, vault) = vault();
+    let signals = tempfile::tempdir().expect("signals");
+    let mut replying = spec(vec![AskGrant::new(ANSWER, 4)]);
+    replying.args = vec![
+        "--reply-while-handled".into(),
+        signals.path().as_os_str().to_owned(),
+    ];
+    replying.verbs = vec!["organ.echo".into()];
+    let host = host(replying);
+    host.warm("probe").expect("warm");
+    let handler = Overstays(signals.path().to_owned(), Duration::from_secs(3));
+    let asks = AskHandlers::none().with(ANSWER, &handler);
+    // Before the fix the call ended DeadlineExceeded, its reply dropped.
+    let outcome = host
+        .call_with(&vault, echo(Duration::from_secs(2)), Vec::new(), &asks)
+        .expect("the reply stands");
+    assert_eq!(outcome.receipt.asks.len(), 1);
+    assert_eq!(
+        outcome.receipt.asks[0].unanswered,
+        Some(Unanswered::NotSent)
+    );
+    // A cancel would reach the organ before this call.
+    host.call(&vault, echo(Duration::from_secs(10)))
+        .expect("the next call runs");
+    assert!(
+        !signals.path().join("cancelled").exists(),
+        "a call that had its reply was cancelled"
+    );
+    let status = host.status("probe").expect("installed");
+    assert_eq!(status.spawns, 1);
+    assert_eq!(status.recent_crashes, 0);
 }
 
 #[test]

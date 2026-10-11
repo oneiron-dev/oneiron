@@ -1,6 +1,6 @@
 //! The organ host: install, call, unload, revoke.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -16,7 +16,7 @@ use oneiron_organ_protocol::{
 use crate::asks::{AskHandlers, CallAsks, in_handler};
 use crate::budget::{Budget, Kept, Permit};
 use crate::error::{HostError, Unavailable};
-use crate::process::{CallFailure, OrganProcess, Wait};
+use crate::process::{CallFailure, Grant, OrganProcess, Revocations, Wait};
 use crate::receipt::{
     AskReceipt, CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest,
 };
@@ -95,7 +95,7 @@ pub struct OrganHost {
     /// are retired (no call can start a process in them) and no process of
     /// theirs runs.
     retired: Mutex<Vec<Arc<Slot>>>,
-    revoked: Mutex<HashSet<String>>,
+    revoked: Revocations,
 }
 
 impl OrganHost {
@@ -107,7 +107,7 @@ impl OrganHost {
             config,
             slots: Mutex::new(HashMap::new()),
             retired: Mutex::new(Vec::new()),
-            revoked: Mutex::new(HashSet::new()),
+            revoked: Revocations::default(),
         }
     }
 
@@ -213,8 +213,10 @@ impl OrganHost {
     pub fn revoke_grant(&self, grant: &str) {
         // Recorded before the holders are sought: a call marks its process
         // as a holder before it checks this set, so a call this scan misses
-        // sees the revocation and is never sent.
-        lock(&self.revoked).insert(grant.to_owned());
+        // sees the revocation and is never sent. An answer's first byte holds
+        // a read of this set, so recording waits for one in progress, and
+        // no answer under the grant starts after it.
+        self.revoked.record(grant);
         let slots = self.all_slots();
         let holders: Vec<(Arc<Slot>, Arc<OrganProcess>)> = slots
             .iter()
@@ -240,7 +242,7 @@ impl OrganHost {
     }
 
     fn grant_revoked(&self, grant: &str) -> bool {
-        lock(&self.revoked).contains(grant)
+        self.revoked.contains(grant)
     }
 
     /// Drops every kept region; later calls copy their inputs again.
@@ -280,6 +282,35 @@ impl OrganHost {
         lent: Vec<LentInput>,
         asks: &AskHandlers<'_>,
     ) -> Result<OrganOutcome, HostError> {
+        self.run(vault, call, lent, asks, false)
+    }
+
+    /// [`Self::call_with`], in a process started for this call alone: it
+    /// never served another call, never serves a later one, and is stopped
+    /// when this call ends, however it ends. The organ's warm process, if
+    /// any, does not serve it. A second opinion runs this way, so nothing an
+    /// earlier call left in a process can decide it.
+    ///
+    /// # Errors
+    /// As [`Self::call_with`].
+    pub fn call_fresh_with(
+        &self,
+        vault: &Vault,
+        call: OrganCall,
+        lent: Vec<LentInput>,
+        asks: &AskHandlers<'_>,
+    ) -> Result<OrganOutcome, HostError> {
+        self.run(vault, call, lent, asks, true)
+    }
+
+    fn run(
+        &self,
+        vault: &Vault,
+        call: OrganCall,
+        lent: Vec<LentInput>,
+        asks: &AskHandlers<'_>,
+        fresh: bool,
+    ) -> Result<OrganOutcome, HostError> {
         if in_handler() {
             return Err(HostError::Reentrant);
         }
@@ -316,7 +347,15 @@ impl OrganHost {
         for input in lent {
             inputs.push(self.lend(&slot.spec, input)?);
         }
-        let process = slot.process(&self.config, Some(deadline))?;
+        let process = if fresh {
+            slot.fresh_process(&self.config, Some(deadline))?
+        } else {
+            slot.process(&self.config, Some(deadline))?
+        };
+        let _one_call = fresh.then(|| OneCall {
+            slot: slot.as_ref(),
+            process: Arc::clone(&process),
+        });
         let offered = process
             .hello
             .verbs
@@ -390,12 +429,15 @@ impl OrganHost {
         let revoked = || self.grant_revoked(&call.grant);
         let grace = self.config.cancel_grace;
         let wait = Wait {
-            revoked: &revoked,
+            grant: Grant {
+                name: &call.grant,
+                revocations: &self.revoked,
+            },
             asks: asked,
             deadline,
             grace,
         };
-        match process.call(wire, &fds, &call.grant, wait) {
+        match process.call(wire, &fds, wait) {
             Ok((reply, fds)) => Ok((reply.outcome, fds)),
             Err(CallFailure::Deadline { stopped }) => {
                 // An organ that took the cancel lives on, still tracked;
@@ -512,6 +554,28 @@ impl OrganHost {
             len,
             held,
         })
+    }
+}
+
+/// Stops a one-call process when its call ends.
+struct OneCall<'a> {
+    slot: &'a Slot,
+    process: Arc<OrganProcess>,
+}
+
+impl Drop for OneCall<'_> {
+    /// A process that ended on its own before its call let it go crashed,
+    /// as a warm process found dead does, even when the reader has not yet
+    /// seen its socket close; one the host stopped did not.
+    fn drop(&mut self) {
+        let ended = !self.process.is_alive() || self.process.exited();
+        if ended && !self.process.stopped_by_host() {
+            self.slot.crashed(&self.process);
+        } else {
+            self.slot.stopped(&self.process);
+        }
+        self.process.stop();
+        self.slot.prune();
     }
 }
 

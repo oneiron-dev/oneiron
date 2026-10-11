@@ -38,6 +38,9 @@ pub struct VoiceOutputs<B, T, C> {
 
 /// Trusted, process-local dependencies. Never deserialize these from the peer.
 pub struct VoiceHostBindings {
+    /// The pass's own backend, as the pass attachment hands it over. On this
+    /// server that is the Dreamer's, which admits every call through a run's
+    /// gate; never a provider backend.
     pub backend: Arc<dyn LlmBackend>,
     /// Clone the lifecycle owner's meter; never allocate a per-request budget.
     pub budget: BudgetGuard,
