@@ -369,7 +369,9 @@ impl Store {
     ) -> Result<()> {
         if cfg!(not(unix)) {
             // No exterior custody exists here, so none is shared.
-            fence(&self.env.write_txn()?)?;
+            let txn = self.env.write_txn()?;
+            fence(&txn)?;
+            drop(txn);
             return Ok(swap()?);
         }
         let mark = live_only_at(self.env.path())?;
