@@ -24,6 +24,9 @@ pub struct EngineNativeExecutor<'a> {
     pub(super) output_decay: OutputDecayPolicy,
     /// The host's compaction seat for this run, when it keeps one.
     pub(super) compaction: Option<&'a mut super::compaction::RunCompaction>,
+    /// Shadow mode: each program is type-checked before it runs, and the
+    /// check is recorded, never acted on.
+    pub(super) code_check: Option<&'a oneiron_code_check::ShadowCheck>,
     /// Next order for the public compatibility witness door, whose callers do
     /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
     /// bypass this allocator and retain their exact order.
@@ -59,6 +62,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 stub_after_turns: 5,
             },
             compaction: None,
+            code_check: None,
             next_witness_order: AtomicU32::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -100,6 +104,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 stub_after_turns: 5,
             },
             compaction: None,
+            code_check: None,
             next_witness_order: AtomicU32::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -119,6 +124,15 @@ impl<'a> EngineNativeExecutor<'a> {
     #[must_use]
     pub fn with_legibility(mut self, legibility: ExecutorLegibility<'a>) -> Self {
         self.legibility = Some(legibility);
+        self
+    }
+
+    /// Shadow mode: type-check each generated program before it runs and
+    /// record what the check found beside the step. The program runs as it
+    /// would unchecked; nothing is blocked.
+    #[must_use]
+    pub fn with_code_check(mut self, shadow: &'a oneiron_code_check::ShadowCheck) -> Self {
+        self.code_check = Some(shadow);
         self
     }
 

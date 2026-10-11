@@ -1944,57 +1944,45 @@ fn coreference_status_claim(
         })
 }
 
-/// ONE-1414 done-means 2 (write half) + the explicit `0.0` stored weight.
-///
-/// Both statuses in one test because the pairing is one rule: `Confirmed`
-/// writes `Approved`, `Proposed` writes `Proposed`, and the claim validator
-/// would reject either mismatch at the same door.
 #[test]
-fn put_coreference_link_writes_the_link_and_its_status_atomically() {
-    for (status, wire, approval) in [
-        (
-            CoreferenceStatus::Confirmed,
-            "confirmed",
-            ClaimApprovalStatus::Approved,
-        ),
-        (
-            CoreferenceStatus::Proposed,
-            "proposed",
-            ClaimApprovalStatus::Proposed,
-        ),
-    ] {
-        let (_dir, vault) = coreference_vault();
-        let local = entity(COREFERENCE_LOCAL_SEED);
-        let other = entity(COREFERENCE_OTHER_SEED);
-
-        let claim_id = put_coreference_link(
+fn coreference_commit_failure_leaves_neither_link_nor_status_claim() -> Result<()> {
+    let (_dir, vault) = coreference_vault();
+    let local = entity(COREFERENCE_LOCAL_SEED);
+    let other = entity(COREFERENCE_OTHER_SEED);
+    let before = crate::test_util::row_dump::dump_rows(&vault);
+    vault.store.group_commit.hooks.fail_next_commit();
+    assert!(
+        put_coreference_link(
             &vault,
             &coreference_actor(),
             local,
             other,
-            status,
+            CoreferenceStatus::Confirmed,
             coreference_time(),
-            1,
+            1
         )
-        .expect("the owning door writes the link");
-
-        // src = local_person, tgt = other_person, weight EXACTLY 0.0.
-        let edge = vault
-            .edges_out(&local)
-            .expect("read outbound edges")
-            .into_iter()
-            .find(|edge| edge.kind == EdgeKind::SameAs)
-            .expect("the same_as link is stored in the written orientation");
-        assert_eq!(edge.target, other);
-        assert_eq!(edge.weight.to_bits(), 0.0_f32.to_bits());
-
-        let body = coreference_status_claim(&vault, local, other)
-            .expect("the status claim landed with the link");
-        assert_eq!(body.value.as_str(), Some(wire));
-        assert_eq!(body.approval, approval);
-        assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
-        assert!(vault.get_claim(&claim_id).expect("read claim").is_some());
-    }
+        .is_err()
+    );
+    assert!(!vault.edge_exists(&local, EdgeKind::SameAs, &other)?);
+    assert!(!vault.edge_exists(&other, EdgeKind::SameAs, &local)?);
+    assert!(coreference_status_claim(&vault, local, other).is_none());
+    assert_eq!(crate::test_util::row_dump::dump_rows(&vault), before);
+    let claim = put_coreference_link(
+        &vault,
+        &coreference_actor(),
+        local,
+        other,
+        CoreferenceStatus::Confirmed,
+        coreference_time(),
+        1,
+    )?;
+    assert!(vault.edge_exists(&local, EdgeKind::SameAs, &other)?);
+    let status = vault
+        .get_claim(&claim)?
+        .expect("status committed with link");
+    assert_eq!(status.value.as_str(), Some("confirmed"));
+    assert_eq!(status.approval, ClaimApprovalStatus::Approved);
+    Ok(())
 }
 
 /// ONE-1414 done-means 8 — prevalidation failure leaves NEITHER row.

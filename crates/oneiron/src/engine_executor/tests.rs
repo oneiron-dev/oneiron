@@ -19,6 +19,7 @@ use crate::{
 use super::*;
 
 mod agent_verb_regressions;
+mod code_check;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod compaction_host;
 mod memory_rows;

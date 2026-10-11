@@ -190,6 +190,11 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn seat_facet(&self) -> Option<&str> {
         None
     }
+    /// Shadow mode's type check of each generated program; absent when the
+    /// host's `[models.code_mode.check]` mode is `off`.
+    fn code_check(&self) -> Option<&oneiron_code_check::ShadowCheck> {
+        None
+    }
 }
 
 /// Builds one run's compaction seat from the run's write actor.
@@ -384,6 +389,9 @@ fn run_engine_native_code_mode(
     }
     if let Some(seat) = compaction {
         executor = executor.with_compaction(seat);
+    }
+    if let Some(shadow) = provider.code_check() {
+        executor = executor.with_code_check(shadow);
     }
     reactor
         .block_on(executor.run(&routed_config))

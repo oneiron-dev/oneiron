@@ -15,11 +15,15 @@ use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError,
     LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelTierRef, Vault,
 };
+use oneiron_code_check::{
+    BackendKind, CheckFailure, CheckMode, CodeCheck, Fallback, MicrosoftTsc, ShadowCheck,
+    TscRsBudget, TscRsWasm,
+};
 
 use super::CHAT_ROLE;
 use super::compaction::CodeModeCompaction;
 use super::status::StatusCell;
-use crate::config::models::ModelsConfig;
+use crate::config::models::{CodeCheckSettings, ModelsConfig};
 use crate::mcp::McpQuickJsProvider;
 use crate::models::{ModelRuntime, settle_answered};
 use crate::server::SyncServer;
@@ -105,15 +109,75 @@ pub(super) async fn bind(
         determinism: CodeRunDeterminism::new(0, [0; CODE_RUN_RNG_SEED_LEN]),
         limits: EngineExecutorLimits::default(),
     };
-    match McpQuickJsProvider::new(Arc::new(component), backend, lease, config) {
-        Ok(provider) => server.with_mcp_quickjs_provider(
-            compaction.attach(provider.with_clock_from_first_start(), status),
-        ),
+    let provider = match McpQuickJsProvider::new(Arc::new(component), backend, lease, config) {
+        Ok(provider) => provider.with_clock_from_first_start(),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
-            server
+            return server;
+        }
+    };
+    let provider = match shadow_check(&models.code_mode.check).await {
+        Some(shadow) => provider.with_code_check(shadow),
+        None => provider,
+    };
+    server.with_mcp_quickjs_provider(compaction.attach(provider, status))
+}
+
+/// Shadow mode's checker, per `[models.code_mode.check]`; none when the mode
+/// is `off`. A check never gates code mode: when no checker loads,
+/// `execute_code` is served unchecked.
+async fn shadow_check(settings: &CodeCheckSettings) -> Option<Arc<ShadowCheck>> {
+    if settings.mode != CheckMode::Shadow {
+        return None;
+    }
+    let settings = settings.clone();
+    // Compiling the tsc-rs module takes seconds.
+    match tokio::task::spawn_blocking(move || code_checker(&settings)).await {
+        Ok(Ok(checker)) => {
+            let backend = checker.backend();
+            tracing::info!(backend = backend.name, pin = %backend.pin, "code mode checks each program in shadow mode");
+            Some(Arc::new(ShadowCheck::new(checker)))
+        }
+        Ok(Err(failure)) => {
+            tracing::error!(%failure, "no code checker loaded; code mode runs unchecked");
+            None
+        }
+        Err(error) => {
+            tracing::error!(%error, "the code checker load stopped");
+            None
         }
     }
+}
+
+/// The configured backend. tsc-rs falls back to Microsoft's `tsc` when it is
+/// set: for a check tsc-rs cannot finish, or for every check when tsc-rs
+/// does not load.
+fn code_checker(settings: &CodeCheckSettings) -> Result<Arc<dyn CodeCheck>, CheckFailure> {
+    let microsoft = settings
+        .microsoft_tsc
+        .as_ref()
+        .map(MicrosoftTsc::new)
+        .transpose();
+    if let Err(failure) = &microsoft {
+        tracing::warn!(%failure, "models.code_mode.check.microsoft_tsc is not the pinned tsc");
+    }
+    let microsoft = microsoft.ok().flatten();
+    let checker: Arc<dyn CodeCheck> = match (settings.backend, microsoft) {
+        (BackendKind::Microsoft, microsoft) => {
+            Arc::new(microsoft.ok_or(CheckFailure::Unavailable)?)
+        }
+        (BackendKind::TscRs, microsoft) => {
+            match (TscRsWasm::load(TscRsBudget::default()), microsoft) {
+                (Ok(tsc_rs), Some(microsoft)) => {
+                    Arc::new(Fallback::new(Box::new(tsc_rs), Box::new(microsoft)))
+                }
+                (Ok(tsc_rs), None) => Arc::new(tsc_rs),
+                (Err(_), Some(microsoft)) => Arc::new(microsoft),
+                (Err(failure), None) => return Err(failure),
+            }
+        }
+    };
+    Ok(checker)
 }
 
 /// Each executor step's model call, admitted like a chat turn against the
