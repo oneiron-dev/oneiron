@@ -150,6 +150,8 @@ export type MemoryItem = {
   salience?: number
   /** For a TURN item, the messages whose words the query matched, best first. */
   citedMessages: CitedMessage[]
+  /** For a TURN or MESSAGE item, the conversation it is in (32 hex), when the reader may read it. */
+  conversationId?: string
 }
 
 /** A MESSAGE a TURN item quotes: the words a query matched, as they were said. */
