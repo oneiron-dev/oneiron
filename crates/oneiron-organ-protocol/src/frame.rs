@@ -6,9 +6,10 @@
 //! the deadline with [`FrameError::TimedOut`]. A timed frame waits with
 //! poll(2) and moves bytes without blocking; it never sets a socket timeout
 //! or mode, which every clone of the socket would share. A timed send needs
-//! a socket the caller made nonblocking ([`prepare_timed`]): macOS ignores
-//! `MSG_DONTWAIT` while a send waits for room, so only the socket's own mode
-//! keeps it from blocking past the deadline.
+//! a socket the caller made nonblocking: macOS ignores `MSG_DONTWAIT` while
+//! a send waits for room, so only the socket's own mode keeps it from
+//! blocking past the deadline. An untimed read on such a socket, or a
+//! clone of it, waits in poll(2) through [`recv_frame_polled`].
 
 use std::io::{self, IoSlice, IoSliceMut};
 use std::mem::MaybeUninit;
@@ -114,6 +115,10 @@ impl Wait {
         matches!(self, Self::Poll(_))
     }
 
+    fn passed(self) -> bool {
+        matches!(self, Self::Poll(Some(deadline)) if Instant::now() >= deadline)
+    }
+
     /// Whether a failed syscall is tried again. An interrupt always is.
     /// EAGAIN is only where [`ready`] waits first; a frame that waits in
     /// its syscall returns it, so a caller's own nonblocking mode or socket
@@ -158,26 +163,14 @@ fn ready(stream: &UnixStream, wait: Wait, write: bool) -> Result<(), FrameError>
 }
 
 /// A send to a closed peer fails with EPIPE rather than raising SIGPIPE in
-/// a host that has not ignored it. macOS has no `MSG_NOSIGNAL`: there
-/// [`prepare_timed`] sets the socket's `SO_NOSIGPIPE` instead.
+/// a host that has not ignored it. rustix has no `MSG_NOSIGNAL` for macOS,
+/// so there each frame sets the socket's `SO_NOSIGPIPE` instead: the one
+/// option a frame sets, since no clone of the socket could want the
+/// signal.
 #[cfg(target_os = "linux")]
 const SEND_FLAGS: SendFlags = SendFlags::NOSIGNAL;
 #[cfg(not(target_os = "linux"))]
 const SEND_FLAGS: SendFlags = SendFlags::empty();
-
-/// Readies `stream` for timed sends ([`send_frame_until`]): it becomes
-/// nonblocking, and on macOS a send to a closed peer fails with EPIPE
-/// rather than raising SIGPIPE. Both hold for every clone of the socket,
-/// so an untimed read on one waits in poll(2) ([`recv_frame_polled`]).
-///
-/// # Errors
-/// As fcntl(2) and setsockopt(2).
-pub fn prepare_timed(stream: &UnixStream) -> io::Result<()> {
-    stream.set_nonblocking(true)?;
-    #[cfg(target_vendor = "apple")]
-    rustix::net::sockopt::set_socket_nosigpipe(stream, true)?;
-    Ok(())
-}
 
 /// Encodes `msg` and sends it with `fds` attached.
 ///
@@ -193,8 +186,8 @@ pub fn send_frame<T: Serialize>(
 }
 
 /// [`send_frame`], with the whole frame bounded by `deadline`, on a socket
-/// the caller made nonblocking ([`prepare_timed`]). A frame cut off by the
-/// deadline leaves the stream out of step: close it.
+/// the caller made nonblocking. A frame cut off by the deadline leaves the
+/// stream out of step: close it.
 ///
 /// # Errors
 /// As [`send_frame`], plus [`FrameError::Refused`] for a frame the receiver
@@ -216,7 +209,9 @@ pub fn send_frame_until<T: Serialize>(
 /// again, and the guard it returns is held across that try. So whatever
 /// `still` locks orders the frame's start against the lock's other holders:
 /// once they have withdrawn the frame, no byte of it leaves. A frame that
-/// has started is finished.
+/// has started is finished. The deadline is checked again once `still`
+/// returns, but not while it waits: it should take only a lock its holders
+/// keep briefly.
 ///
 /// # Errors
 /// As [`send_frame_until`], plus [`FrameError::Withdrawn`] when `still`
@@ -244,6 +239,8 @@ fn send_frame_with<T: Serialize, G>(
     if wait.polls() && !fcntl_getfl(stream).is_ok_and(|mode| mode.contains(OFlags::NONBLOCK)) {
         return Err(FrameError::Blocking);
     }
+    #[cfg(target_vendor = "apple")]
+    rustix::net::sockopt::set_socket_nosigpipe(stream, true).map_err(io::Error::from)?;
     let body = rmp_serde::to_vec_named(msg)?;
     // Refused here, not by the receiver, which would end the connection.
     shape::check(&body).map_err(FrameError::Refused)?;
@@ -288,6 +285,9 @@ fn send_frame_with<T: Serialize, G>(
             let Some(guard) = still() else {
                 return Err(FrameError::Withdrawn);
             };
+            if wait.passed() {
+                return Err(FrameError::Late);
+            }
             let first = sendmsg(stream, &iov, &mut control, SEND_FLAGS);
             drop(guard);
             first
@@ -341,7 +341,9 @@ const RECV_FLAGS: RecvFlags = RecvFlags::CMSG_CLOEXEC;
 const RECV_FLAGS: RecvFlags = RecvFlags::empty();
 
 /// Linux set close-on-exec as the descriptors arrived (`RECV_FLAGS`).
-/// Elsewhere there is no atomic flag: set it at once, before anything else.
+/// Elsewhere there is no atomic flag: set it at once on each batch, before
+/// the frame waits for more, so a peer that holds back the rest of its
+/// header cannot hold the descriptors open to a process started meanwhile.
 fn mark_cloexec(fds: &[OwnedFd]) -> io::Result<()> {
     if cfg!(target_os = "linux") {
         return Ok(());
@@ -387,11 +389,13 @@ fn recv_frame_with<T: DeserializeOwned>(
             Err(errno) if wait.retry(errno) => continue,
             Err(errno) => return Err(io::Error::from(errno).into()),
         };
+        let before = fds.len();
         for message in control.drain() {
             if let RecvAncillaryMessage::ScmRights(received) = message {
                 fds.extend(received);
             }
         }
+        mark_cloexec(&fds[before..])?;
         if msg.flags.contains(ReturnFlags::CTRUNC) {
             return Err(FrameError::FdsTruncated);
         }
@@ -400,7 +404,6 @@ fn recv_frame_with<T: DeserializeOwned>(
         }
         got += msg.bytes;
     }
-    mark_cloexec(&fds)?;
     if fds.len() > MAX_FDS_PER_FRAME {
         return Err(FrameError::TooManyFds(fds.len()));
     }

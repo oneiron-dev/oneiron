@@ -18,8 +18,7 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
-    PROTOCOL, Reply, ToOrgan, prepare_timed, recv_frame_polled, recv_frame_until, send_frame_until,
-    spin,
+    PROTOCOL, Reply, ToOrgan, recv_frame_polled, recv_frame_until, send_frame_until, spin,
 };
 
 use crate::error::HostError;
@@ -221,7 +220,7 @@ impl OrganProcess {
         // Nonblocking for its whole life, and so for its clones: a timed
         // send needs it (macOS ignores MSG_DONTWAIT while a send waits for
         // room), and the reader waits in poll(2) instead.
-        prepare_timed(&ours)?;
+        ours.set_nonblocking(true)?;
         let reader = ours.try_clone()?;
         let shutdown = ours.try_clone()?;
         let mut command = Command::new(&spec.program);

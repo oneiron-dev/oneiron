@@ -315,7 +315,9 @@ fn an_organ_that_stops_reading_cannot_hold_a_call_past_its_deadline() {
         Vec::new(),
         "g",
     );
-    stuck.deadline = Duration::from_millis(500);
+    // Long enough for the frame's first byte to leave even on a loaded
+    // host: a frame cut off part way is what stops the organ.
+    stuck.deadline = Duration::from_secs(1);
     let bound = stuck.deadline + grace;
     let started = Instant::now();
     let err = host.call(&vault, stuck).expect_err("deadline");

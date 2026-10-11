@@ -174,16 +174,19 @@ fn a_timed_send_to_a_peer_that_stops_reading_ends_by_its_deadline() {
     // past its deadline (vel repro). It is refused before its first byte.
     let (ours, _deaf) = UnixStream::pair().expect("pair");
     let big = "x".repeat(8 * 1024 * 1024);
+    let deadline = Duration::from_secs(1);
     let started = Instant::now();
-    let soon = Some(started + Duration::from_millis(300));
+    let soon = Some(started + deadline);
     let refused = send_frame_until(&ours, &big, &[], DEFAULT_FRAME_LIMIT, soon);
     assert!(matches!(refused, Err(FrameError::Blocking)), "{refused:?}");
     ours.set_nonblocking(true).expect("nonblocking");
+    // Cut off part way, or, on a host too loaded to send a byte in time,
+    // late before the first.
     let cut = send_frame_until(&ours, &big, &[], DEFAULT_FRAME_LIMIT, soon);
-    assert!(matches!(cut, Err(FrameError::TimedOut)), "{cut:?}");
     assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        started.elapsed()
+        matches!(cut, Err(FrameError::TimedOut | FrameError::Late)),
+        "{cut:?}"
     );
+    let took = started.elapsed();
+    assert!(took < deadline + Duration::from_secs(2), "{took:?}");
 }
