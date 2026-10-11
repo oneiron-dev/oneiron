@@ -68,39 +68,11 @@ fn room(server: &SyncServer) -> Room {
     }
 }
 
-/// One of this vault's own agents: a live AGENT_DEF row.
+/// One of this vault's own agents: a person bound as an agent in the
+/// vault's authority log. A room's members are people.
 fn agent(server: &SyncServer, name: &str) -> EntityId {
-    let id = EntityId::now();
-    let definition = oneiron::agent_def::AgentDefinition::new(
-        format!("agent.{name}"),
-        "off-record room fixture",
-        "1.0.0",
-        None,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        None,
-        oneiron::agent_def::AgentScope::All,
-        oneiron::agent_def::AgentCeiling::Proposed,
-        None,
-        oneiron::ClaimApprovalStatus::Approved,
-        oneiron::ClaimLifecycleStatus::Active,
-        oneiron::ClaimSource::UserStated,
-        1.0,
-        false,
-        true,
-        rmpv::Value::Map(vec![(
-            rmpv::Value::from("definedVia"),
-            rmpv::Value::from("test"),
-        )]),
-        None,
-        true,
-        None,
-    );
-    server
-        .vault()
-        .put_agent_definition(&id, &definition, TimeRange { start: 1, end: 1 }, 1)
-        .unwrap();
+    let id = person(server, name);
+    crate::test_credentials::bind_actor(server.vault(), "secret", id, "agent");
     id
 }
 

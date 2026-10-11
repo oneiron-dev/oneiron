@@ -606,7 +606,7 @@ async fn the_owners_off_record_routes_keep_no_wire_receipt() {
         ("GET", "/v1/owner/off-record?session_ref=quiet", None),
         ("POST", "/v1/owner/off-record/close", Some(&name)),
         // The owner's other routes still count.
-        ("GET", "/v1/owner/status", None),
+        ("GET", "/v1/owner/secret-scan", None),
     ] {
         let (status, reply) = call(&server, method, path, owner.clone(), body).await;
         assert_eq!(status, StatusCode::OK, "{path}: {reply}");
@@ -620,7 +620,10 @@ async fn the_owners_off_record_routes_keep_no_wire_receipt() {
             verbs.extend(receipt.by_verb.into_keys());
         }
     }
-    assert!(verbs.iter().any(|verb| verb == "GET /v1/owner/status"), "{verbs:?}");
+    assert!(
+        verbs.iter().any(|verb| verb == "GET /v1/owner/secret-scan"),
+        "{verbs:?}"
+    );
     assert!(
         verbs.iter().all(|verb| !verb.contains("off-record")),
         "{verbs:?}"
