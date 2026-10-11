@@ -12,6 +12,9 @@ use crate::{
     registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST},
 };
 
+#[path = "tests_room_saver.rs"]
+mod room_saver;
+
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), embedding_test_config()).expect("open vault");

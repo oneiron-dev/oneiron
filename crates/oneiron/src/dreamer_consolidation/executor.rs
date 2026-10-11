@@ -19,8 +19,8 @@ use super::provenance::{
 };
 use super::step_charge::StepChargeTally;
 use super::support::{
-    DREAMER_GAP_SCAN_ATTEMPT_TYPE, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, TURN_BODY_FACET_REF_KEY,
-    invalid_consolidation,
+    DREAMER_GAP_SCAN_ATTEMPT_TYPE, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, SCOPE_PROJECT_KEY,
+    TURN_BODY_FACET_REF_KEY, invalid_consolidation,
 };
 use super::watermark::{WorkingSetTurn, conversation_of, read_turn_facts};
 use crate::claim::{ClaimSource, ClaimSubject};
@@ -591,6 +591,7 @@ fn merged_candidate(
         conflict.identity.world,
         conflict.identity.facet,
         conflict.identity.rel,
+        conflict.identity.project,
         conflict.identity.topic.as_deref(),
     )?;
     let mut candidate = ClaimCandidate::new(
