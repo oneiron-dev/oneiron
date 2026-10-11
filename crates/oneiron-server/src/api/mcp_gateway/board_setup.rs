@@ -164,7 +164,8 @@ pub(super) struct McpBoardState {
     /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
     pub(super) epoch: u64,
     pub(super) changes: oneiron::context_board::ChangedLine,
-    /// TASKS rows the credential's REQUESTED SCOPE ceiling removed.
+    /// TASKS rows the credential's REQUESTED SCOPE withheld inside its own
+    /// world and facet (`mcp_scoped_tasks_section`).
     scope_omitted: usize,
     /// TASKS rows the engine's own render row cap truncated away. A page
     /// WINDOW fact, kept apart from the scope fact above (ONE-1704 repair).

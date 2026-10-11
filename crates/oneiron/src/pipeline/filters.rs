@@ -466,7 +466,9 @@ fn record_world(
         return Ok(Some(None));
     };
     if raw.entity_type == ENTITY_TYPE_CLAIM {
-        return Ok(Some(crate::claim::decode_claim_body(&raw.body, true)?.world));
+        return Ok(Some(
+            crate::claim::decode_claim_body(&raw.body, true)?.world,
+        ));
     }
     crate::federation::record_scope::record_world_in(store, rtxn, *id, raw.entity_type, &raw.body)
 }

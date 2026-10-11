@@ -309,9 +309,10 @@ impl ScopedReadActorKey {
         self
     }
 
-    /// Read only rows in `worlds`, a claim by its own world and any other
-    /// record as base reality. The ceiling only narrows: it meets any the
-    /// key already holds.
+    /// Read only rows in `worlds`, each where `record_world_in` places it: a
+    /// claim by its own world, a TASK and its facts by their birth, any
+    /// other record as base reality. The ceiling only narrows: it meets any
+    /// the key already holds.
     #[must_use]
     pub(crate) fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
         self.worlds = Some(match self.worlds.take() {

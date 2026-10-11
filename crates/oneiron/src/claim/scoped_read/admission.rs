@@ -69,8 +69,9 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
-    /// Read only rows in `worlds`, a claim by its own world and any other
-    /// record as base reality. The ceiling rides the key, so a lane built
+    /// Read only rows in `worlds`, each where `record_world_in` places it: a
+    /// claim by its own world, a TASK and its facts by their birth, any
+    /// other record as base reality. The ceiling rides the key, so a lane built
     /// from it keeps it too, and it meets any ceiling the key already holds.
     /// A room assembly passes the room's world set (ARCH-0067 §8).
     #[must_use]
@@ -410,9 +411,11 @@ impl ScopedRead<'_> {
         // Inside a room turn a withheld row may be another room's or a peer's
         // private one; its count would say it exists, so it reads as absent.
         // A row outside the worlds the read asked for is not withheld by
-        // policy; scope honesty names its world instead.
+        // policy; scope honesty names its world instead. A TASK outside the
+        // credential's worlds or facets has no name and no count.
         if self.actor_key.room_turn.is_none()
             && !self.outside_asked_worlds_in(txn, id, &row)?
+            && !self.outside_credential_task_position_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
         {
             Ok(ReadAdmission::Suppressed)
@@ -433,6 +436,34 @@ impl ScopedRead<'_> {
         Ok(self
             .record_world_in(txn, id, row.entity_type, &row.body)?
             .is_none_or(|world| !worlds.admits(world)))
+    }
+
+    /// Whether `row` of `id` is a TASK, or one of its authority facts, whose
+    /// birth stamp sits outside the worlds or facets the read's verified
+    /// credential grants (ARCH-0067 §5, DEC-0005). One that cannot prove its
+    /// position counts as outside.
+    fn outside_credential_task_position_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &EntityRecord,
+    ) -> Result<bool> {
+        use crate::federation::record_scope::scope_for_blob;
+        let Some(granted) = self.actor_key.authority_scope() else {
+            return Ok(false);
+        };
+        if row.entity_type != crate::registry::ENTITY_TYPE_TASK {
+            return Ok(false);
+        }
+        let raw = row.encode();
+        let position = match self.session_view {
+            Some(view) => scope_for_blob(view, txn, *id, &raw)?,
+            None => scope_for_blob(&self.vault.store, txn, *id, &raw)?,
+        };
+        Ok(position.is_none_or(|position| {
+            position.worlds.meet(&granted.worlds).is_bottom()
+                || position.facets.meet(&granted.facets).is_bottom()
+        }))
     }
 
     /// The world the stored row `id` sits in, read in `txn` over this read's
@@ -465,4 +496,3 @@ impl ScopedRead<'_> {
         })
     }
 }
-
