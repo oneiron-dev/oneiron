@@ -43,10 +43,18 @@ impl FrozenGitArgv {
 
     /// `for-each-ref` over exact full ref names. A ref that does not exist is
     /// simply absent from the output; the status stays zero.
+    ///
+    /// git matches a plain pattern "completely or up to a slash", so an absent
+    /// name would list every ref beneath it. Each name goes in with its last
+    /// byte escaped: no ref name holds a backslash, so the plain match never
+    /// applies, and the glob match takes the name alone.
     pub(super) fn read_refs(names: &[GitRefName]) -> Self {
         let mut tail = os_args(&["for-each-ref", "--format=%(objectname) %(refname)"]);
         for name in names {
-            tail.push(OsString::from(name.as_str()));
+            // A GitRefName is [A-Za-z0-9._-/], never empty and never ends in
+            // `/`: it holds no glob byte, and its last byte escapes to itself.
+            let (head, last) = name.as_str().split_at(name.as_str().len() - 1);
+            tail.push(OsString::from(format!("{head}\\{last}")));
         }
         Self::frozen(GitWireOperation::ReadRefs, tail)
     }
@@ -87,6 +95,19 @@ impl FrozenGitArgv {
     pub(super) fn read_tree(tree: &GitOid) -> Self {
         let tail = os_args(&["ls-tree", "-z", tree.as_str()]);
         Self::frozen(GitWireOperation::ReadTree, tail)
+    }
+
+    /// `ls-tree -z <tree> -- :(top,literal)<name>`: only the entry `name`
+    /// names in one tree, so the output stays one entry however wide the tree
+    /// is. The magic reads `name` as one literal component from the root,
+    /// never as a glob or as relative to the working directory.
+    pub(super) fn read_tree_entry(tree: &GitOid, name: &str) -> GitWireResult<Self> {
+        if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
+            return Err(invalid("git tree entry name must be one path component"));
+        }
+        let mut tail = os_args(&["ls-tree", "-z", tree.as_str(), "--"]);
+        tail.push(OsString::from(format!(":(top,literal){name}")));
+        Ok(Self::frozen(GitWireOperation::ReadTree, tail))
     }
 
     /// `cat-file <type> <oid>`: the raw stored bytes of one object.
