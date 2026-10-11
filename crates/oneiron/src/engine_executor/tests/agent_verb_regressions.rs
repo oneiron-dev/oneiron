@@ -2,7 +2,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use super::*;
-use crate::code_run::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall, SelfMemorySearchCall};
+use crate::code_run::{
+    AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfMemorySearchCall,
+};
 use crate::memory::HostWriteOrigin;
 use crate::task_verb::sdk::{AgentVerb, TaskCreateRequest};
 
@@ -40,7 +42,7 @@ impl AgentVerbDoor for TaskCreateDoor {
 
     fn admit_run_call(
         &self,
-        _: SelfEffect,
+        _: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
         Ok(None)
     }
@@ -390,4 +392,166 @@ fn resumed_write_whose_answer_holds_a_float_still_closes_its_step() {
         outcome.expect("the resumed run").status,
         EngineExecutorStatus::Complete
     );
+}
+
+/// A host door that admits a run's own calls until it closes, as a connector
+/// credential stops admitting them once it is revoked.
+struct ClosingDoor {
+    closed: std::sync::atomic::AtomicBool,
+}
+
+impl ClosingDoor {
+    fn new(closed: bool) -> Arc<Self> {
+        Arc::new(Self {
+            closed: std::sync::atomic::AtomicBool::new(closed),
+        })
+    }
+
+    fn set_closed(&self, closed: bool) {
+        self.closed
+            .store(closed, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl AgentVerbDoor for ClosingDoor {
+    fn call(
+        &self,
+        _: &SelfAgentVerbCall,
+        _: &HostWriteOrigin,
+    ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+        Err(AgentVerbRefusal {
+            code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+        })
+    }
+
+    fn admit_run_call(
+        &self,
+        _: RunCall,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(AgentVerbRefusal {
+                code: "door_closed".to_owned(),
+            });
+        }
+        Ok(None)
+    }
+}
+
+const RECORDED_OBSERVATION: &str = "the heron lantern hangs by the north gate";
+
+/// Step 0 records an observation. Step 1 reads it back through its context
+/// reference, closes the door, and reads it again.
+struct ReadsBackItsOutput {
+    door: Arc<ClosingDoor>,
+    steps: u64,
+    reads: Vec<Result<Option<Vec<u8>>>>,
+}
+
+impl JsCodeModeRuntime for ReadsBackItsOutput {
+    fn run_step(
+        &mut self,
+        _step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> Result<JsCodeModeStepOutcome> {
+        self.steps += 1;
+        if self.steps == 1 {
+            return Ok(JsCodeModeStepOutcome::pending(RECORDED_OBSERVATION));
+        }
+        let path = super::super::store::recoverable_chunk_path(
+            0,
+            crate::compaction::output::OutputRef::from_bytes(RECORDED_OBSERVATION.as_bytes()),
+            0,
+        );
+        self.reads.push(host.read_recoverable_output(&path));
+        self.door.set_closed(true);
+        self.reads.push(host.read_recoverable_output(&path));
+        Ok(JsCodeModeStepOutcome::complete(""))
+    }
+}
+
+/// Review repro (Sol, burn engine-prs-03 R1): a run read its own recorded
+/// output back after its door stopped admitting it, though every bridge call
+/// was refused. The read is a call the run serves itself: the door rules on
+/// it too.
+#[test]
+fn a_closed_door_ends_a_runs_reads_of_its_recorded_output() {
+    let (_dir, vault) = open_test_vault();
+    let door = ClosingDoor::new(false);
+    let gated =
+        gated_actor_write(&vault, "run-recorded-output-door").with_agent_verb_door(door.clone());
+    let config = executor_config(
+        entity(0xE8),
+        EngineExecutorLimits {
+            soft_steps: 4,
+            hard_steps: 8,
+        },
+    );
+    let backend = FixtureBackend::new(["const first = 1;", "const second = 2;"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime = ReadsBackItsOutput {
+        door,
+        steps: 0,
+        reads: Vec::new(),
+    };
+    let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
+    let _ = block_on_ready(executor.run(&config));
+    drop(executor);
+    let [open, closed] = runtime.reads.as_slice() else {
+        panic!("step 1 read twice: {:?}", runtime.reads);
+    };
+    let read = open
+        .as_ref()
+        .expect("the open door's read")
+        .as_deref()
+        .expect("the recorded output");
+    assert!(
+        String::from_utf8_lossy(read).contains("north gate"),
+        "fixture check: the reference names the recorded observation"
+    );
+    let refused = closed
+        .as_ref()
+        .expect_err("the closed door's read is refused");
+    assert!(refused.to_string().contains("door_closed"), "{refused}");
+}
+
+/// Review repro (Sol, burn engine-prs-03 R1): a run whose door stopped
+/// admitting its calls still spoke its answer, through the executor's
+/// trailing implicit speech. That bubble is the run's own `self.speak`: a
+/// closed door refuses it, typed, and the checkpointed intent is delivered by
+/// a later run the door admits.
+#[test]
+fn a_closed_door_speaks_no_trailing_bubble_until_it_opens() {
+    let (_dir, vault) = open_test_vault();
+    let door = ClosingDoor::new(true);
+    let gated =
+        gated_actor_write(&vault, "run-trailing-speech-door").with_agent_verb_door(door.clone());
+    let config = executor_config(entity(0xE9), EngineExecutorLimits::default());
+    let backend =
+        FixtureBackend::new(["```js\nconst done = true;\n```\nThe amber kettle is warm."]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let messages = || {
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .len()
+    };
+    let before = messages();
+
+    let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("runtime done")]);
+    let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
+    let refused = block_on_ready(executor.run(&config)).expect_err("the bubble is refused");
+    drop(executor);
+    assert!(
+        matches!(&refused, EngineExecutorError::HostRefused { code } if code == "door_closed"),
+        "{refused}"
+    );
+    assert_eq!(messages(), before, "a closed door speaks nothing");
+
+    door.set_closed(false);
+    let mut runtime = FixtureRuntime::new(Vec::new());
+    let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
+    let outcome = block_on_ready(executor.run(&config)).expect("the admitted retry");
+    drop(executor);
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(messages(), before + 1, "the retry delivers the kept intent");
 }

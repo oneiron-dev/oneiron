@@ -15,7 +15,7 @@ use super::{McpCallContext, McpGatewayError};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
 use oneiron::claim::ScopedReadActorKey;
-use oneiron::code_run::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall, SelfEffect};
+use oneiron::code_run::{AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect};
 use oneiron::memory::HostWriteOrigin;
 use oneiron::task_verb::sdk::RunVerb;
 use serde_json::Value;
@@ -72,16 +72,18 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     /// under that credential's grants, as `recall` does.
     fn admit_run_call(
         &self,
-        effect: SelfEffect,
+        call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         let refused = |error: McpGatewayError| AgentVerbRefusal {
             code: error.kind.to_owned(),
         };
-        if let Some(verb) = RunVerb::ALL.iter().find(|verb| verb.effect() == effect) {
+        if let RunCall::Bridge(effect) = call
+            && let Some(verb) = RunVerb::ALL.iter().find(|verb| verb.effect() == effect)
+        {
             mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
         }
         mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
-        if effect != SelfEffect::MemorySearch {
+        if call != RunCall::Bridge(SelfEffect::MemorySearch) {
             return Ok(None);
         }
         self.actor

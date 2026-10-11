@@ -113,8 +113,10 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
 /// slip's own words on its read lane.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
-    let script = "let found = 'refused'; try { const hits = await self.memory.search({query: \
-        'heron lantern'}); found = 'searched'; } catch (error) {} finish(found);";
+    // An empty answer: the run's trailing speech meets the door too, and this
+    // test reads the search's own refusal.
+    let script = "try { await self.memory.search({query: 'heron lantern'}); } catch (error) {} \
+        finish('');";
     let mode = code_mode_server(vec![script.to_owned(), script.to_owned()]);
     let actor = seeded_test_entity_id(0x0024_65b5);
     let credential = "quickjs-rows-revoked";
@@ -156,7 +158,10 @@ async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
     ));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while mode.judge.calls.load(Ordering::SeqCst) == judged {
-        assert!(std::time::Instant::now() < deadline, "the run never chose a seat");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the run never chose a seat"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();

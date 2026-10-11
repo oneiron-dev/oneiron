@@ -8,12 +8,13 @@ mod wake_policy;
 
 use std::cell::Cell;
 
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
-    SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome,
-    SelfDispatcher, SelfDurableWaitReason, SelfEffect,
+    AgentVerbRefusal, RunCall, SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult,
+    SelfDispatchOutcome, SelfDispatcher, SelfDurableWaitReason, SelfEffect,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -183,6 +184,17 @@ impl<'a> HostSelfDispatcher<'a> {
         self
     }
 
+    /// Asks the bound door to admit one call the run serves itself. A run
+    /// whose host binds no door admits it as its own.
+    pub(crate) fn admit_run_call(
+        &self,
+        call: RunCall,
+    ) -> std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        self.agent_verbs
+            .as_ref()
+            .map_or(Ok(None), |door| door.admit_run_call(call))
+    }
+
     /// Binds a host-authenticated owner proof to one agent action dispatch.
     /// The guest payload has no field from which it could construct this.
     pub(crate) fn with_authenticated_owner(
@@ -279,20 +291,19 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         // A bound door rules on every call the run serves itself, not only on
         // the verb calls it runs, so its ceiling and credential hold at each.
-        let read_as = match &self.agent_verbs {
-            Some(door) if !matches!(call, SelfCall::Context(_) | SelfCall::AgentVerb(_)) => {
-                match door.admit_run_call(call.effect()) {
-                    Ok(read_as) => read_as,
-                    Err(refusal) => {
-                        return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                            effect: call.effect(),
-                            outcome: refusal.code,
-                            reason_codes: Vec::new(),
-                        }));
-                    }
+        let read_as = if matches!(call, SelfCall::Context(_) | SelfCall::AgentVerb(_)) {
+            None
+        } else {
+            match self.admit_run_call(RunCall::Bridge(call.effect())) {
+                Ok(read_as) => read_as,
+                Err(refusal) => {
+                    return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        effect: call.effect(),
+                        outcome: refusal.code,
+                        reason_codes: Vec::new(),
+                    }));
                 }
             }
-            _ => None,
         };
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),

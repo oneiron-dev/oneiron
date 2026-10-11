@@ -319,7 +319,7 @@ impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
 
     fn admit_run_call(
         &self,
-        _: oneiron::code_run::SelfEffect,
+        _: oneiron::code_run::RunCall,
     ) -> Result<Option<oneiron::claim::ScopedReadActorKey>, oneiron::code_run::AgentVerbRefusal>
     {
         Ok(None)

@@ -10,7 +10,7 @@ use super::types::{
 };
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorCallSite,
-    ExecutorStorage, GatedActorWrite, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
+    ExecutorStorage, GatedActorWrite, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
     SelfDurableWait, SelfEffect, SelfFailedResult,
 };
 use crate::code_sandbox::{
@@ -107,6 +107,13 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor recoverable output storage unavailable".into(),
         ))?;
+        // The run's recorded outputs hold what its calls read: a bound door
+        // rules on reading them back as on any other call the run serves.
+        self.gated_write
+            .admit_run_call(RunCall::RecordedOutput)
+            .map_err(|refusal| {
+                Error::InvalidConfig(format!("recorded output read refused: {}", refusal.code))
+            })?;
         for (seq, output) in &self.recoverable {
             if !path.starts_with(&format!("/mnt/outputs/.oneiron-context-ref/{seq}/")) {
                 continue;

@@ -493,6 +493,16 @@ impl EngineNativeExecutor<'_> {
         if self.storage.get_code_run_raw_output(&marker)?.is_some() {
             return Ok(());
         }
+        // The bubble is the run's own `self.speak`: a bound door rules on it
+        // as on any other. A refused bubble stays a checkpointed intent that
+        // a later admitted retry delivers.
+        self.gated_write
+            .admit_run_call(crate::code_run::RunCall::Bridge(
+                crate::code_run::SelfEffect::Speak,
+            ))
+            .map_err(|refusal| super::types::EngineExecutorError::HostRefused {
+                code: refusal.code,
+            })?;
         let occurred_at = config
             .determinism
             .frozen_unix_ms

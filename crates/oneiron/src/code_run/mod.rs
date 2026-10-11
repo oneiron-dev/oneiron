@@ -65,7 +65,9 @@ pub use run_verbs::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
     MemoryTimeRange,
 };
-pub use types::{AGENT_VERB_DOOR_UNBOUND, AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
+pub use types::{
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+};
 
 // The flat code_run.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so
