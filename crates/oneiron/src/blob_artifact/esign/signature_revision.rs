@@ -5,14 +5,19 @@
 //! the trailer, and patches the ByteRange. The seal organ builds only the CMS
 //! that fills the hole, so it never chooses a PDF object of the revision the
 //! key signs. One revision is written for each contents capacity. The layout
-//! is the native seal writer's, byte for byte, so its verifier reads it as
-//! its own.
+//! is the native seal writer's, so its verifier reads it as its own, but for
+//! numbers: the objects it re-emits keep each number as the prepare step's
+//! lopdf wrote it, never rounded, so no fact of the page changes.
 
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 use sha2::{Digest, Sha256};
 
 use super::render::PdfPreparationError;
 use super::sealer::{EsignSealInput, EsignSignatureRevision};
+
+#[cfg(test)]
+#[path = "signature_revision_tests.rs"]
+mod tests;
 
 /// The contents ladder: the DER bytes each revision's hole holds.
 pub const SEAL_CONTENTS_LADDER: [usize; 3] = [64 * 1024, 128 * 1024, 256 * 1024];
@@ -371,7 +376,9 @@ fn write_object(object: &Object, out: &mut Vec<u8>) -> Result<()> {
         Object::Null => out.extend_from_slice(b"null"),
         Object::Boolean(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
         Object::Integer(value) => out.extend_from_slice(value.to_string().as_bytes()),
-        Object::Real(value) => out.extend_from_slice(format!("{value:.6}").as_bytes()),
+        // The shortest decimal that reads back as the same value, as lopdf
+        // writes it: six places would turn 0.0000004 into 0.
+        Object::Real(value) => out.extend_from_slice(value.to_string().as_bytes()),
         Object::Name(name) => write_name(name, out),
         Object::String(bytes, _) => write_hex_string(bytes, out),
         Object::Array(items) => {
