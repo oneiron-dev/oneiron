@@ -404,6 +404,92 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn cyclic_or_overdeep_dss_cannot_grant_archival_authority() {
+        let signer = test_ca("dss-ref-signer");
+        let tsa = tsa_ca();
+        let signed = append_sig_revision(&base_input(), &signer, "dss-refs", Some(&tsa), AT_UNIX);
+        let engine = verify_engine(vec![signer.cert_der.clone(), tsa.cert_der.clone()], AT_UNIX);
+        for (mode, valid_material) in [("128", true), ("129", false), ("cycle", false)] {
+            let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+            let material = profile::DssMaterial {
+                certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+                crls_der: vec![],
+                ocsps_der: vec![],
+            };
+            let (mut objects, dss_num) =
+                profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+            let first = dss_num + 1;
+            let ocsp = build_ocsp(
+                &signer,
+                signer.cert.tbs_certificate.serial_number.clone(),
+                AT_UNIX - 60,
+                Some(AT_UNIX + 3600),
+                x509_ocsp::CertStatus::good(),
+            );
+            objects.push((first, stream_body(&ocsp)));
+            // Every row also lists the response directly, so only the chain
+            // can fail the material; the cycle is the passing 128-hop chain
+            // with its bottom link bent back to the head.
+            let hops: u32 = if mode == "cycle" {
+                128
+            } else {
+                mode.parse().unwrap()
+            };
+            let head = first + hops - 1;
+            for offset in 1..hops {
+                let target = if mode == "cycle" && offset == 1 {
+                    head
+                } else {
+                    first + offset - 1
+                };
+                objects.push((first + offset, format!("{target} 0 R").into_bytes()));
+            }
+            let dss = objects.iter_mut().find(|(n, _)| *n == dss_num).unwrap();
+            dss.1.truncate(dss.1.len() - 2);
+            dss.1
+                .extend_from_slice(format!(" /OCSPs [{first} 0 R {head} 0 R] >>").as_bytes());
+            objects.push((state.root.0, catalog_body(&state, Some(dss_num))));
+            let (with_dss, _) = emit_revision(&signed, &state, &objects, None);
+            let archived = append_doc_ts_revision(&with_dss, &tsa, AT_UNIX);
+            let report = engine.verify_sealed_pdf(&archived).unwrap();
+            assert_eq!(
+                report.signatures[0].integrity,
+                crate::api::VerifyVerdict::Passed
+            );
+            let material: Vec<_> = report
+                .checks()
+                .filter(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+                .map(|c| (c.status, c.finding))
+                .collect();
+            assert!(
+                material.iter().any(|(status, finding)| if valid_material {
+                    *status == VerifyCheckStatus::Pass
+                } else {
+                    (*status, *finding)
+                        == (
+                            VerifyCheckStatus::Fail,
+                            Some(VerifyFindingCode::ValidationMaterialInvalid),
+                        )
+                }),
+                "{mode}: {material:?}"
+            );
+            if valid_material {
+                assert_eq!(
+                    report.signatures[0].profile,
+                    Some(PadesProfile::BaselineLta)
+                );
+            } else {
+                assert!(
+                    report
+                        .signatures
+                        .iter()
+                        .all(|s| s.profile != Some(PadesProfile::BaselineLta))
+                );
+            }
+        }
+    }
+
     // --- bot-fix leg 3b pins: DSS stream decode, object cap, typeless ----
 
     // --- signature discovery, hex whitespace in /Contents -----------------

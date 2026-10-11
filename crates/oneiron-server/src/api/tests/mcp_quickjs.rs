@@ -96,9 +96,12 @@ fn factory() -> QuickJsRuntimeFactory {
 
 /// One server bound to the production QuickJS provider over a real component,
 /// whose code-seat model answers with `scripts`, one per executor step.
-struct CodeMode {
-    server: Arc<SyncServer>,
-    vault: Arc<oneiron::Vault>,
+pub(super) struct CodeMode {
+    pub(super) server: Arc<SyncServer>,
+    pub(super) vault: Arc<oneiron::Vault>,
+    /// The config the provider gives a fixed run, so two providers' settings
+    /// compare apart from their runs' identities.
+    pub(super) config: EngineExecutorConfig,
     backend: Arc<Backend>,
     judge: Arc<Judge>,
     seat_model: ModelId,
@@ -106,6 +109,14 @@ struct CodeMode {
 }
 
 fn code_mode_server(scripts: Vec<String>) -> CodeMode {
+    code_mode_server_with(scripts, None)
+}
+
+/// [`code_mode_server`], with shadow mode's type check when `check` is set.
+pub(super) fn code_mode_server_with(
+    scripts: Vec<String>,
+    check: Option<Arc<oneiron_code_check::ShadowCheck>>,
+) -> CodeMode {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     let seat_model = ModelId::new("fixture/code-seat@v2").unwrap();
@@ -213,6 +224,17 @@ fn code_mode_server(scripts: Vec<String>) -> CodeMode {
     )
     .unwrap()
     .with_model_seat_router(judge.clone(), "code-task");
+    let provider = match check {
+        Some(check) => provider.with_code_check(check),
+        None => provider,
+    };
+    let config = crate::mcp::McpCodeModeProvider::executor_config(
+        &provider,
+        &vault,
+        seeded_test_entity_id(0x0024_6505),
+        "probe",
+    )
+    .unwrap();
     let server = Arc::new(
         SyncServer::new(
             vault.clone(),
@@ -227,6 +249,7 @@ fn code_mode_server(scripts: Vec<String>) -> CodeMode {
     CodeMode {
         server,
         vault,
+        config,
         backend,
         judge,
         seat_model,
@@ -254,6 +277,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         judge,
         seat_model,
         _dir,
+        ..
     } = code_mode_server(scripts);
     vault
         .put_entity(
@@ -613,6 +637,17 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Proposed);
 }
 
+/// What `initialize` on `path` says of `label` running code there.
+async fn code_admitted(mode: &CodeMode, path: &str, label: &str) -> Value {
+    let request = json!({ "jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {} });
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_request(path, label, request),
+    )
+    .await;
+    body["result"]["executeCodeAdmitted"].clone()
+}
+
 /// Done means (ARCH-0028 propose-only, #1360): the verb-table rows a run
 /// answers itself (`self.memory.put_claim`, `supersede_claim`, `put_edge`)
 /// write from no propose-only slip. `execute_code` needs write, so a slip
@@ -728,6 +763,53 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         "a refused run reaches no model"
     );
     assert!(mode.vault.get_claim(&claim).unwrap().is_none());
+    // So `/mcp` tells it, and a read-only slip, that they may not run code,
+    // and the stdio bridge keeps them on the tool-first verbs (drift E4, Astra).
+    assert_eq!(code_admitted(&mode, "/mcp", label).await, json!(false));
+    let reader = seeded_test_entity_id(0x0024_65a6);
+    mode.vault
+        .put_entity(
+            &reader,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"read-only actor",
+        )
+        .unwrap();
+    pair_mcp_credential(
+        &mode.server,
+        "quickjs-read-only",
+        reader,
+        oneiron::EdgeActorClass::Human,
+        &crate::mcp::McpConnectorScope::vault_wide(),
+    );
+    let mut reads = oneiron::federation::Scope::top();
+    reads.verbs = oneiron::federation::ScopeAxis::Some(["core:read".to_owned()].into());
+    let token = attenuate_mcp_credential(
+        &mode.server,
+        "quickjs-read-only",
+        oneiron::authority::SlipCaveat {
+            scope: Some(reads),
+            ..Default::default()
+        },
+    );
+    mode.server
+        .mcp_registry
+        .lock()
+        .await
+        .register(
+            &token,
+            crate::mcp::McpConnectorActorRecord::new(
+                reader,
+                oneiron::EdgeActorClass::Human,
+                crate::mcp::McpConnectorScope::vault_wide(),
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        code_admitted(&mode, "/mcp", "quickjs-read-only").await,
+        json!(false)
+    );
 
     let writer = seeded_test_entity_id(0x0024_65a5);
     register_mcp_actor(
@@ -737,6 +819,14 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    assert_eq!(
+        code_admitted(&mode, "/mcp", "quickjs-writer").await,
+        json!(true)
+    );
+    assert_eq!(
+        code_admitted(&mode, MCP_TOOL_FIRST_PATH, "quickjs-writer").await,
+        json!(false)
+    );
     let args = mcp_merge_args(
         mcp_endpoint_envelope(writer, "write_memory"),
         json!({"run_ref": "quickjs-full-access", "task": "state a favorite drink"}),

@@ -9,7 +9,8 @@ mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
     ImportNotesArgs, ImportSourceArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs,
-    RunsCommand, SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
+    RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
+    SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -63,6 +64,10 @@ pub enum Command {
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
     SecretScan(Box<SecretScanArgs>),
+    /// Register a secret in a stopped vault's custody, or rotate one. The
+    /// value is read from stdin.
+    #[command(subcommand)]
+    Secrets(SecretsCommand),
     /// Import your own history into a stopped vault (ChatGPT and Claude.ai
     /// exports, Claude Code and Codex sessions, a folder of markdown notes),
     /// or preview, approve or decline one whole import batch.
@@ -414,7 +419,7 @@ pub enum ApiCommand {
 
 /// `oneiron mcp`: a stdio MCP server in front of a running server's MCP
 /// endpoint. The endpoint is the operator's choice, made here in the agent's
-/// MCP config; nothing the agent sends can change it.
+/// MCP config, or else the server's; nothing the agent sends can change it.
 #[derive(Args, Clone, Debug)]
 pub struct McpArgs {
     /// The running server's origin. The default is where `oneiron serve`
@@ -422,9 +427,12 @@ pub struct McpArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
-    /// Which MCP endpoint to forward to.
-    #[arg(long, value_enum, default_value_t = McpSurface::ToolFirst)]
-    pub surface: McpSurface,
+    /// Which MCP endpoint to forward to. Without it, the bridge asks the
+    /// server at the first request: `primary` when this credential may run
+    /// code there (a bound code host, and a credential `execute_code`
+    /// admits), `tool-first` otherwise.
+    #[arg(long, value_enum)]
+    pub surface: Option<McpSurface>,
 
     /// File holding the paired credential, as `token agent --out` writes it.
     /// Only its owner may be able to read it. Without this flag the slip and
@@ -645,6 +653,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::RecoverWindow(args) => commands::recover_window(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
+        Command::Secrets(command) => commands::secrets(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
         // Blocking: an endpoint's transform is read over blocking HTTP.

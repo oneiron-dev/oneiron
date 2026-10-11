@@ -1,0 +1,16 @@
+error[E0624]: method `put_replicated` is private
+ --> tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs:5:27
+  |
+5 |       let _ = vault.batch().put_replicated(
+  |                             ^^^^^^^^^^^^^^ private method
+  |
+ ::: src/batch/builder/puts.rs
+  |
+  | /     pub(crate) fn put_replicated(
+  | |         mut self,
+  | |         id: &EntityId,
+  | |         entity_type: u8,
+... |
+  | |         data: &[u8],
+  | |     ) -> Self {
+  | |_____________- private method defined here

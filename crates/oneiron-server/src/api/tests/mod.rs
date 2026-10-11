@@ -17,6 +17,7 @@ mod off_record_rooms;
 mod org_admin;
 mod owner_healer;
 mod owner_routes;
+mod owner_secrets;
 mod owner_surfaces;
 mod slips;
 use crate::test_credentials as slip_credentials;
@@ -33,6 +34,8 @@ mod conversation_dag;
 mod conversation_reactions;
 mod conversation_rooms;
 mod core_memory_conversations;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod mcp_code_check;
 mod mcp_memory;
 mod mcp_paging_cursors;
 #[cfg(feature = "code-sandbox-wasmtime")]
