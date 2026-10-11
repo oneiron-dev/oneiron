@@ -161,14 +161,15 @@ pub(crate) fn is_project_depth_contribution(bytes: &[u8]) -> bool {
     // to an ordinary locally trusted policy pack.
     rmpv::decode::read_value(&mut std::io::Cursor::new(bytes))
         .ok()
-        .and_then(|value| value.as_map().cloned())
-        .is_some_and(|entries| {
-            entries.iter().any(|(key, value)| {
-                key.as_str() == Some("kind")
-                    && matches!(
-                        value.as_str(),
-                        Some("default" | "default_edit" | "birth" | "edit")
-                    )
+        .is_some_and(|value| {
+            value.as_map().is_some_and(|entries| {
+                entries.iter().any(|(key, value)| {
+                    key.as_str() == Some("kind")
+                        && matches!(
+                            value.as_str(),
+                            Some("default" | "default_edit" | "birth" | "edit")
+                        )
+                })
             })
         })
 }

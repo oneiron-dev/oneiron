@@ -142,10 +142,10 @@ impl Memory<'_> {
     /// Bounded first trunk page: the original thread is a pointer card,
     /// followed by trunk turns. Thread replies never consume trunk slots.
     pub fn room_trunk(&self, room: EntityId) -> MemoryResult<Vec<RoomTrunkItem>> {
-        let scope = self.room_read_scope(room)?;
+        let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let project_room = require_member(self.vault(), &txn, room, self.actor())?;
-        if !turns_readable(&scope) {
+        if !turns_readable(&worlds) {
             return Ok(Vec::new());
         }
         let heads = HEADS
@@ -189,9 +189,10 @@ impl Memory<'_> {
             return Err(MemoryError::from(invalid()));
         }
         let scope = self.room_read_scope(room)?;
+        let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
-        if !turns_readable(&scope) {
+        if !turns_readable(&worlds) {
             return Ok(RoomPage {
                 rows: Vec::new(),
                 next_after: None,
@@ -286,10 +287,10 @@ impl Memory<'_> {
     /// Canonical HEAD is a room-local indexed read; branch turns are excluded.
     /// A head this reader may not read is no head for it.
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
-        let scope = self.room_read_scope(room)?;
+        let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
-        if !turns_readable(&scope) {
+        if !turns_readable(&worlds) {
             return Ok(None);
         }
         let head = HEADS
@@ -310,10 +311,10 @@ impl Memory<'_> {
     /// the working-set census to the first `rooms.messages` page. Empty when
     /// the room Scope reads no turns.
     pub(super) fn room_turn_snapshot(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
-        let scope = self.room_read_scope(room)?;
+        let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
-        if !turns_readable(&scope) {
+        if !turns_readable(&worlds) {
             return Ok(Vec::new());
         }
         let mut turns = Vec::new();
@@ -354,7 +355,7 @@ impl Memory<'_> {
             .collect();
         // Task and result reads run inside the room too, on every transport.
         let tasks = crate::task_verb::room_thread_tasks(
-            self.for_room_turn(room)?.memory(),
+            self.for_room_projection(room)?.memory(),
             &roots,
             &members,
             policy.now,
@@ -380,13 +381,13 @@ impl Memory<'_> {
     /// replay, without duplicating a result into a synthetic message or a
     /// local liveness cache. Task and result visibility use scoped reads.
     pub fn rooms_trunk(&self, room: EntityId, trunk: EntityId) -> MemoryResult<super::RoomTrunk> {
-        let scope = self.room_read_scope(room)?;
+        let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let members = require_member(self.vault(), &txn, room, self.actor())?
             .member_ids
             .into_iter()
             .collect();
-        if !turns_readable(&scope) {
+        if !turns_readable(&worlds) {
             return Err(outside_scope());
         }
         let turn = turn_in(self.vault(), &txn, trunk)?;
@@ -410,7 +411,7 @@ impl Memory<'_> {
             .filter(|(_, root)| root_ids.contains(root))
             .collect();
         let tasks = crate::task_verb::room_thread_tasks(
-            self.for_room_turn(room)?.memory(),
+            self.for_room_projection(room)?.memory(),
             &roots,
             &members,
             crate::unix_seconds_now(),
@@ -501,7 +502,7 @@ impl Memory<'_> {
             .filter(|(_, root)| *root == handle)
             .collect();
         let tasks = crate::task_verb::room_thread_tasks(
-            self.for_room_turn(room)?.memory(),
+            self.for_room_projection(room)?.memory(),
             &selected,
             &members,
             now,
