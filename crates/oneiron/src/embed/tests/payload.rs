@@ -251,3 +251,26 @@ fn real_claim_and_minted_summary_reconcile_through_typed_embedder_and_egress() -
     }
     Ok(())
 }
+
+/// agent-runtime-v1 §d7: an epoch summary withdrawn by an erasure stays out
+/// of the embedder, through a refill of the embedding space too.
+#[test]
+fn a_withdrawn_epoch_summary_is_never_queued_again() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let summary = mint_pending_summary(&vault)?;
+    assert!(pending_token(&vault, &summary)?.is_some());
+    // The TURN the summary was written from.
+    assert!(vault.delete_entity(&entity_id(0x72))?);
+    assert!(pending_token(&vault, &summary)?.is_none(), "withdrawn");
+    let model = vault.config.embedding_model.clone().expect("model");
+    vault.with_write_txn(|wtxn| {
+        vault
+            .swap_embedding_space_in_txn(wtxn, &model, None, true)
+            .map(drop)
+    })?;
+    assert!(
+        pending_token(&vault, &summary)?.is_none(),
+        "a refill does not queue it again"
+    );
+    Ok(())
+}

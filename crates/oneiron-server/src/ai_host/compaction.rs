@@ -42,6 +42,10 @@ const CALL_FLOOR_UNITS: u64 = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
 /// tokenizer may count up to twice as long as the engine's.
 const REPLY_FRAME_TOKENS: u64 = 64;
 
+/// The share of a pass's input room (one part in this many) kept for each
+/// step's JSON frame and the escapes its text gains in it.
+const STEP_FRAME_SHARE: u64 = 8;
+
 /// Code mode's compaction, settled once when code mode is bound.
 pub(super) enum CodeModeCompaction {
     Off(CompactionOff),
@@ -111,6 +115,9 @@ impl CodeModeCompaction {
                 return Self::Off(CompactionOff::NoPrompt);
             }
         };
+        let Some(ladder_context) = role_contexts(models, role).min() else {
+            return Self::Off(CompactionOff::NoSeat);
+        };
         let backend = Arc::new(ServedCompactionBackend {
             vault: Arc::clone(vault),
             models: Arc::clone(runtime),
@@ -118,7 +125,14 @@ impl CodeModeCompaction {
             role,
             model: seat.model.clone(),
             locality: seat.locality,
+            prompt_tokens: oneiron::count_context_pack_tokens(&prompt) as u64,
             prompt,
+            contexts: models
+                .providers
+                .iter()
+                .map(|(name, provider)| (name.clone(), provider.context_tokens))
+                .collect(),
+            ladder_context,
             handle: tokio::runtime::Handle::current(),
         });
         let mut registry = CompactionBackendRegistry::new();
@@ -187,6 +201,17 @@ impl CodeModeCompaction {
     }
 }
 
+/// Each rung's whole context on `role`.
+fn role_contexts(models: &ModelsConfig, role: ModelRole) -> impl Iterator<Item = u64> + '_ {
+    models
+        .roles
+        .get(&role)
+        .into_iter()
+        .flatten()
+        .filter_map(|rung| models.providers.get(&rung.model.provider))
+        .map(|provider| provider.context_tokens)
+}
+
 /// The input a call on `role` may fill on its smallest rung: its context
 /// less the output its provider reserves.
 fn input_tokens(models: &ModelsConfig, role: ModelRole) -> Option<u64> {
@@ -232,10 +257,25 @@ struct ServedCompactionBackend {
     model: ModelId,
     locality: ModelLocality,
     prompt: String,
+    prompt_tokens: u64,
+    /// Each configured provider's context, by provider name.
+    contexts: BTreeMap<String, u64>,
+    /// The smallest context on the role's ladder, which a call may fall to.
+    ladder_context: u64,
     handle: tokio::runtime::Handle,
 }
 
 impl ServedCompactionBackend {
+    /// The context a pass on `model` may fill: its provider's, and never more
+    /// than the ladder's smallest rung.
+    fn context_for(&self, model: &ModelId) -> u64 {
+        self.contexts
+            .get(model.provider())
+            .map_or(self.ladder_context, |context| {
+                (*context).min(self.ladder_context)
+            })
+    }
+
     fn llm_request(
         &self,
         request: &CompactionRequest,
@@ -275,12 +315,7 @@ impl ServedCompactionBackend {
             tools: Vec::new(),
             params: BTreeMap::from([(
                 "max_output_tokens".to_owned(),
-                serde_json::json!(
-                    request
-                        .summary_token_budget
-                        .saturating_mul(2)
-                        .saturating_add(REPLY_FRAME_TOKENS)
-                ),
+                serde_json::json!(output_tokens(request.summary_token_budget)),
             )]),
             provider_options: BTreeMap::new(),
         }
@@ -294,6 +329,19 @@ impl CompactionBackend for ServedCompactionBackend {
 
     fn tier_class(&self) -> CompactionTierClass {
         CompactionTierClass::Cheap
+    }
+
+    /// Read on the vault's live route, as a pass is admitted.
+    fn window_token_limit(&self, summary_token_budget: u64) -> Option<u64> {
+        let routed = self
+            .models
+            .seat(self.role)
+            .and_then(|seat| self.models.route_role(&self.vault, self.role, seat).ok());
+        let context = routed.map_or(self.ladder_context, |route| self.context_for(&route.model));
+        let room = context
+            .saturating_sub(output_tokens(summary_token_budget))
+            .saturating_sub(self.prompt_tokens);
+        Some(room - room / STEP_FRAME_SHARE)
     }
 
     fn compact(
@@ -314,6 +362,27 @@ impl CompactionBackend for ServedCompactionBackend {
                 };
                 refused(suppression, refusal.to_string())
             })?;
+        // The admitted model, not the configured ladder, must hold the call.
+        let context = self.context_for(&call.request.model);
+        let input = call
+            .request
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .map(|part| match part {
+                ContentPart::Text { text } => oneiron::count_context_pack_tokens(text) as u64,
+                _ => 0,
+            })
+            .sum::<u64>();
+        if input.saturating_add(output_tokens(request.summary_token_budget)) > context {
+            return Err(refused(
+                CompactionSuppression::TurnScoped { check: None },
+                format!(
+                    "a {input}-token window and its reply exceed {}'s {context}-token context",
+                    call.request.model
+                ),
+            ));
+        }
         // A route that cannot hold a reply to a schema (an Anthropic-style
         // one) is asked in plain text: the prompt asks for the same JSON, and
         // the gate's schema check refuses anything else.
@@ -366,6 +435,14 @@ impl CompactionBackend for ServedCompactionBackend {
             }
         }
     }
+}
+
+/// The output a pass reserves: a summary the provider's tokenizer may count
+/// up to twice as long as the engine's, and its reply frame.
+const fn output_tokens(summary_token_budget: u64) -> u64 {
+    summary_token_budget
+        .saturating_mul(2)
+        .saturating_add(REPLY_FRAME_TOKENS)
 }
 
 fn refused(suppression: CompactionSuppression, detail: String) -> CompactionRefusal {

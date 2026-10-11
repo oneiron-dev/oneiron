@@ -37,6 +37,8 @@ impl CompactionSpawn for InlineSpawn {
 struct Compactor {
     fail: Mutex<Option<CompactionCheck>>,
     tries: Mutex<Vec<Option<CompactionCheck>>>,
+    /// The window tokens one call takes whole; `None` takes any window.
+    limit: Option<u64>,
 }
 
 struct CompactorSeat(Arc<Compactor>);
@@ -48,6 +50,10 @@ impl CompactionBackend for CompactorSeat {
 
     fn tier_class(&self) -> CompactionTierClass {
         CompactionTierClass::Cheap
+    }
+
+    fn window_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
+        self.0.limit
     }
 
     fn compact(
@@ -356,7 +362,11 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
     assert_eq!(epochs.len(), 1, "the steps stay covered");
     assert_eq!(epochs[0].1, None, "the summary is withdrawn");
     // Erasing the summary itself leaves the run's lineage in its coverage.
-    assert!(run.vault.delete_entity(&summary).expect("erase the summary"));
+    assert!(
+        run.vault
+            .delete_entity(&summary)
+            .expect("erase the summary")
+    );
     // Step 7's boundary crosses again: steps 3-5 compact, from a window
     // whose run was served the erased note.
     let (outcome, requests) = run.call(&mut seat, 6..8, 2, 10);
@@ -385,6 +395,39 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
             .collect::<Vec<_>>(),
         vec![false, false]
     );
+}
+
+/// The compactor's input bounds what one pass seals, not the run's decayed
+/// request: a window longer than the backend takes whole compacts as the
+/// contiguous prefixes it can take, each its own epoch.
+#[test]
+fn a_window_the_compactor_cannot_take_whole_compacts_in_prefixes() {
+    let run = LongRun::start(10);
+    let compactor = Arc::new(Compactor {
+        limit: Some(run.step_tokens * 3 / 2),
+        ..Compactor::default()
+    });
+    let compact_at = run.base_tokens + run.step_tokens * 7 / 2;
+    let mut seat = run.seat(compact_at, &compactor);
+    let (outcome, _) = run.call(&mut seat, 2..8, 8, 10);
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 8 }
+    );
+    let report = outcome.compaction.expect("report");
+    assert_eq!(report.suppressed, None);
+    let spans = run
+        .vault
+        .code_run_compaction_coverage(run.run_id)
+        .expect("coverage")
+        .iter()
+        .map(|row| (row.epoch(), row.first(), row.last()))
+        .collect::<Vec<_>>();
+    assert!(spans.len() >= 2, "{spans:?}");
+    for (index, span) in spans.iter().enumerate() {
+        let step = index as u64;
+        assert_eq!(*span, (step + 1, step, step), "one step per pass");
+    }
 }
 
 /// Canon §d7: every check fails closed. A pass that fails one check on every

@@ -56,6 +56,12 @@ pub trait CompactionBackend: Send + Sync {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> std::result::Result<CompactionProduct, CompactionRefusal>;
+    /// The most window tokens (the messages' `tokens`) one call takes whole
+    /// beside a reply of `summary_token_budget`, or `None` when nothing
+    /// bounds it. A host that numbers its own log seals no larger window.
+    fn window_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
+        None
+    }
 }
 
 /// One message-log row the host hands the backend.
@@ -670,7 +676,7 @@ impl CompactionDriver {
     /// Half-up rounding, not `ceil`: a stored `f32` fraction of `0.4` widens
     /// to `0.4000000059…` in `f64`, and ceiling that would answer 401 tokens
     /// for a 40% share of 1000 — an arithmetic artifact, not a budget.
-    fn summary_token_budget(&self) -> u64 {
+    pub(crate) fn summary_token_budget(&self) -> u64 {
         let fraction = self
             .profile
             .budget_split

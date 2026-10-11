@@ -76,7 +76,9 @@ impl EngineNativeExecutor<'_> {
     }
 
     /// Steps from the first uncovered one through `watermark`, with their
-    /// failure pins and every record the run was served.
+    /// failure pins and every record the run was served. A window longer
+    /// than the backend takes whole stops at the last step that fits; the
+    /// next crossing seals the rest.
     fn seal_compaction_window(
         &self,
         driver: &mut crate::compaction::CompactionDriver,
@@ -102,8 +104,12 @@ impl EngineNativeExecutor<'_> {
         }
         let session = crate::code_run::executor_compaction_session_id(run_ref, run_id)?;
         let turn_id = crate::code_run::executor_speech_turn_id_for_run(run_ref, run_id)?;
+        let limit = driver
+            .backend()
+            .window_token_limit(driver.summary_token_budget());
         let mut window = Vec::new();
         let mut pins = Vec::new();
+        let mut sealed = 0_u64;
         for seq in start..=watermark {
             let message = super::compaction::window_message(
                 super::compaction::step_message_id(run_id, seq),
@@ -112,6 +118,16 @@ impl EngineNativeExecutor<'_> {
                 load_utf8_output(&self.storage, record, &script_output_path(seq))?,
                 load_utf8_output(&self.storage, record, &observation_output_path(seq))?,
             );
+            sealed = sealed.saturating_add(message.tokens);
+            if limit.is_some_and(|limit| sealed > limit) {
+                if window.is_empty() {
+                    return Err(crate::Error::InvalidConfig(
+                        "one step's output is larger than the compaction backend takes".into(),
+                    )
+                    .into());
+                }
+                break;
+            }
             pins.extend(super::compaction::failure_pin(&message.content));
             window.push(message);
         }

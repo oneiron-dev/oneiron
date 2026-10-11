@@ -85,6 +85,23 @@ pub(crate) fn stale_in_txn(
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
 }
 pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    mark_one_stale_in_txn(store, txn, id)?;
+    // An epoch summary copies the words of what it was written from, so it
+    // is withdrawn with any of them, through nested epochs (agent-runtime-v1
+    // §d7). A worklist, not recursion: no chain's depth reaches the stack.
+    // Each is marked once: a stale one is not walked again.
+    let mut pending = epoch_dependents_in_txn(store, txn, id)?;
+    while let Some(next) = pending.pop() {
+        if stale_in_txn(store, txn, &next)? {
+            continue;
+        }
+        mark_one_stale_in_txn(store, txn, &next)?;
+        pending.extend(epoch_dependents_in_txn(store, txn, &next)?);
+    }
+    Ok(())
+}
+
+fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     // A derived claim can retain erased upstream bytes while its own entity
     // body remains. Remove every saved digest that copied it in this txn;
     // clearing the stale bit on regeneration must never revive an old copy.
@@ -114,30 +131,24 @@ pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityI
     // current marker, so it neither sends them out nor writes a vector back.
     store.clear_pending_embedding(txn, id)?;
     // A stale edge.provenance wrapper stops justifying its edge in this txn.
-    crate::provenance::refresh_stale_wrapper_in_txn(store, txn, id)?;
-    withdraw_epoch_dependents_in_txn(store, txn, id)
+    crate::provenance::refresh_stale_wrapper_in_txn(store, txn, id)
 }
 
-/// An epoch summary copies the words of what it was written from, so it is
-/// withdrawn with any of them, through nested epochs (agent-runtime-v1 §d7).
-/// Each is marked once: a stale one is not walked again.
-fn withdraw_epoch_dependents_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    id: &EntityId,
-) -> Result<()> {
+/// The epoch summaries written from `id`.
+fn epoch_dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
     let prefix = [DEP, id.as_bytes()].concat();
+    let mut epochs = Vec::new();
     for dependent in scan_dependents(store, txn, &prefix)? {
         let epoch = super::EntityStoreRead::port_entity_record(store, txn, &dependent)?
             .is_some_and(|row| {
                 row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
                     && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
             });
-        if epoch && !stale_in_txn(store, txn, &dependent)? {
-            mark_stale_in_txn(store, txn, &dependent)?;
+        if epoch {
+            epochs.push(dependent);
         }
     }
-    Ok(())
+    Ok(epochs)
 }
 /// An entity delete erases every source version; one document-prefix scan
 /// visits only its k dependency rows. No entity or edge table is scanned.
