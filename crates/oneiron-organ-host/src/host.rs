@@ -1,6 +1,6 @@
 //! The organ host: install, call, unload, revoke.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -16,7 +16,7 @@ use oneiron_organ_protocol::{
 use crate::asks::{AskHandlers, CallAsks, in_handler};
 use crate::budget::{Budget, Kept, Permit};
 use crate::error::{HostError, Unavailable};
-use crate::process::{CallFailure, OrganProcess, Wait};
+use crate::process::{CallFailure, Grant, OrganProcess, Revocations, Wait};
 use crate::receipt::{
     AskReceipt, CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest,
 };
@@ -95,7 +95,7 @@ pub struct OrganHost {
     /// are retired (no call can start a process in them) and no process of
     /// theirs runs.
     retired: Mutex<Vec<Arc<Slot>>>,
-    revoked: Mutex<HashSet<String>>,
+    revoked: Revocations,
 }
 
 impl OrganHost {
@@ -107,7 +107,7 @@ impl OrganHost {
             config,
             slots: Mutex::new(HashMap::new()),
             retired: Mutex::new(Vec::new()),
-            revoked: Mutex::new(HashSet::new()),
+            revoked: Revocations::default(),
         }
     }
 
@@ -213,8 +213,10 @@ impl OrganHost {
     pub fn revoke_grant(&self, grant: &str) {
         // Recorded before the holders are sought: a call marks its process
         // as a holder before it checks this set, so a call this scan misses
-        // sees the revocation and is never sent.
-        lock(&self.revoked).insert(grant.to_owned());
+        // sees the revocation and is never sent. An answer's first byte holds
+        // a read of this set, so recording waits for one in progress, and
+        // no answer under the grant starts after it.
+        self.revoked.record(grant);
         let slots = self.all_slots();
         let holders: Vec<(Arc<Slot>, Arc<OrganProcess>)> = slots
             .iter()
@@ -240,7 +242,7 @@ impl OrganHost {
     }
 
     fn grant_revoked(&self, grant: &str) -> bool {
-        lock(&self.revoked).contains(grant)
+        self.revoked.contains(grant)
     }
 
     /// Drops every kept region; later calls copy their inputs again.
@@ -427,12 +429,15 @@ impl OrganHost {
         let revoked = || self.grant_revoked(&call.grant);
         let grace = self.config.cancel_grace;
         let wait = Wait {
-            revoked: &revoked,
+            grant: Grant {
+                name: &call.grant,
+                revocations: &self.revoked,
+            },
             asks: asked,
             deadline,
             grace,
         };
-        match process.call(wire, &fds, &call.grant, wait) {
+        match process.call(wire, &fds, wait) {
             Ok((reply, fds)) => Ok((reply.outcome, fds)),
             Err(CallFailure::Deadline { stopped }) => {
                 // An organ that took the cancel lives on, still tracked;

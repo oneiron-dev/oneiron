@@ -1,17 +1,23 @@
-//! One role's ladder as one backend: the engine sees a single seat model;
-//! the ladder hands each call to its rungs in order until one answers.
+//! One role's ladder under a run: the engine sees a single seat model; each
+//! rung a call reaches is admitted on its own one-use permit and sent through
+//! the run's gate for that rung's offer, and a rung that fails hands the call
+//! to the next.
 use std::sync::Arc;
 
 use futures_util::StreamExt;
+use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunPermit};
 use oneiron::{
-    BudgetLease, ContentPart, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, ModelId,
+    ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
+    LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
 };
+use tokio::sync::mpsc::Sender;
 
+use super::driven::Driven;
+use super::offer::ServedOffer;
 use super::served::served_receipt;
 
-/// One rung: a provider backend, the engine id of its model, and the
-/// instruction prepended to every call it serves.
+/// One rung: a provider's offer for one model, and the instruction prepended
+/// to every call it serves.
 #[derive(Clone)]
 pub(super) struct LadderRung {
     pub(super) provider: String,
@@ -21,12 +27,15 @@ pub(super) struct LadderRung {
     pub(super) model: ModelId,
     pub(super) wire_model: String,
     pub(super) prompt: Option<String>,
-    pub(super) backend: Arc<dyn LlmBackend>,
+    pub(super) offer: ServedOffer,
 }
 
 impl LadderRung {
+    /// The call as this rung sends it: its model at its route, its
+    /// instruction first.
     fn bind(&self, mut request: LlmRequest) -> LlmRequest {
         request.model = self.model.clone();
+        request.envelope.locality = self.offer.binding.locality;
         if let Some(prompt) = &self.prompt {
             request.messages.insert(
                 0,
@@ -54,171 +63,285 @@ impl LadderRung {
     }
 }
 
-/// A rung that fails hands the call on, unless the budget said no: a denied
-/// lease is the same lease on every rung.
+/// A rung that fails hands the call on, unless the run refused it: the next
+/// rung's admission meets the same line.
 fn falls_through(error: &LlmError) -> bool {
     !matches!(error, LlmError::BudgetDenied(_))
 }
 
-/// The seat backend. Its only model is the seat id; every rung model is
-/// private to it.
-pub(super) struct LadderBackend {
-    seat: ModelId,
-    rungs: Vec<LadderRung>,
+/// A started rung that failed keeps its reservation as spend; a settlement
+/// the meter refuses is on the run's `Settled` row.
+fn settle_failed(permit: RunPermit) {
+    if let Err(denied) = permit.settle(CallOutcome::Failed) {
+        tracing::error!(%denied, "a failed rung's settlement was refused");
+    }
 }
 
-impl LadderBackend {
-    pub(super) fn new(seat: ModelId, rungs: Vec<LadderRung>) -> Self {
-        Self { seat, rungs }
-    }
+/// What one rung's stream came to.
+enum Ended {
+    Done {
+        message: LlmMessage,
+        usage: LlmUsage,
+        finish_reason: oneiron::llm::FinishReason,
+    },
+    Failed {
+        error: LlmError,
+        spoken: bool,
+    },
+    /// The caller stopped reading, or the stream ended with no terminal.
+    Gone,
+}
 
-    fn admits(&self, request: &LlmRequest) -> LlmResult<()> {
-        if request.model == self.seat && !self.rungs.is_empty() {
-            Ok(())
-        } else {
-            Err(oneiron::FatalLlmError::InvalidRequest.into())
+/// How a model is reached: a seat's ladder, one rung of it alone, or a
+/// configured model by its own id. Every model call this server makes goes
+/// through one of these under a run, never to a provider backend directly.
+pub struct OfferLadder {
+    name: ModelId,
+    rungs: Vec<LadderRung>,
+    /// An answer carries the ladder's served receipt (a seat, or a rung of
+    /// one), or the provider's usage as it came (a model called by its id).
+    receipt: bool,
+}
+
+impl OfferLadder {
+    pub(super) fn seat(name: ModelId, rungs: Vec<LadderRung>) -> Self {
+        Self {
+            name,
+            rungs,
+            receipt: true,
         }
     }
-}
 
-impl LlmBackend for LadderBackend {
+    /// A configured model called by its own engine id.
+    pub(super) fn bare(rung: LadderRung) -> Self {
+        Self {
+            name: rung.model.clone(),
+            rungs: vec![rung],
+            receipt: false,
+        }
+    }
+
+    /// A host-injected backend serving `request`'s model as one offer.
+    pub(crate) fn injected(offer: ServedOffer) -> Self {
+        let model = offer.binding.model.clone();
+        Self::bare(LadderRung {
+            provider: offer.binding.route.adapter().to_owned(),
+            position: 0,
+            wire_model: model.as_str().to_owned(),
+            model,
+            prompt: None,
+            offer,
+        })
+    }
+
+    /// The id callers name.
+    #[must_use]
+    pub fn model(&self) -> &ModelId {
+        &self.name
+    }
+
+    /// How many provider calls a call that fails makes: one per rung.
+    #[must_use]
+    pub fn rungs(&self) -> usize {
+        self.rungs.len()
+    }
+
     /// A capability holds only if every rung has it: a fallback rung must
     /// be able to serve the very request the first rung was sent.
-    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
-        *model == self.seat
+    #[must_use]
+    pub fn supports(&self, model: &ModelId, capability: &LlmCapability) -> bool {
+        *model == self.name
             && !self.rungs.is_empty()
             && self
                 .rungs
                 .iter()
-                .all(|rung| rung.backend.supports(&rung.model, capability.clone()))
+                .all(|rung| rung.offer.backend.supports(&rung.model, capability.clone()))
     }
 
-    fn generate<'a>(
-        &'a self,
+    fn admits(&self, request: &LlmRequest) -> LlmResult<()> {
+        if request.model == self.name && !self.rungs.is_empty() {
+            Ok(())
+        } else {
+            Err(FatalLlmError::InvalidRequest.into())
+        }
+    }
+
+    /// Admits `request` as a call of `rung` under `run`: its own permit,
+    /// bound to that rung's model, route, locality and offer.
+    fn admit(
+        &self,
+        run: &RunAdmission,
+        rung: &LadderRung,
+        request: &LlmRequest,
+        selector: Option<&str>,
+    ) -> LlmResult<(LlmRequest, RunPermit)> {
+        let call = rung.bind(request.clone());
+        let permit = run.admit(RunCall {
+            selector: Some(selector.unwrap_or(self.name.as_str())),
+            request: &call,
+            offer: &rung.offer.binding,
+        })?;
+        Ok((call, permit))
+    }
+
+    /// The usage an answer of the rung at `index` reports, with this ladder's
+    /// receipt. Stamped after its permit settled: the permit already charged
+    /// each failed rung on its own.
+    fn answered(&self, index: usize, mut usage: LlmUsage) -> LlmUsage {
+        if self.receipt {
+            let raw = std::mem::take(&mut usage.raw_provider);
+            usage.raw_provider = self.rungs[index].stamp(index, raw);
+        }
+        usage
+    }
+
+    /// One call under `run`, rung by rung. Each rung that is reached is
+    /// admitted, sent through the run's gate and settled on its own: an
+    /// answer pays its usage (or its reservation when it reports none), a
+    /// rung that failed after it went out pays its reservation. `selector`
+    /// is what the caller named, for the receipt (the ladder's id if none).
+    pub async fn generate(
+        &self,
+        run: &RunAdmission,
         request: LlmRequest,
-        lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        Box::pin(async move {
-            self.admits(&request)?;
-            let mut last = None;
-            // A rung is reached only when every rung before it failed.
-            for (failed, rung) in self.rungs.iter().enumerate() {
-                match rung
-                    .backend
-                    .generate(rung.bind(request.clone()), lease)
-                    .await
-                {
-                    Ok(mut response) => {
-                        let raw = std::mem::take(&mut response.usage.raw_provider);
-                        response.usage.raw_provider = rung.stamp(failed, raw);
-                        return Ok(response);
+        selector: Option<&str>,
+    ) -> LlmResult<LlmResponse> {
+        self.admits(&request)?;
+        let mut last = None;
+        for (index, rung) in self.rungs.iter().enumerate() {
+            let (call, permit) = self.admit(run, rung, &request, selector)?;
+            let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+            match gate.generate(call, permit.lease()).await {
+                Ok(mut response) => {
+                    permit.settle(CallOutcome::Answered(&response.usage))?;
+                    response.usage = self.answered(index, response.usage);
+                    return Ok(response);
+                }
+                Err(error) => {
+                    settle_failed(permit);
+                    if !falls_through(&error) {
+                        return Err(error);
                     }
-                    Err(error) if falls_through(&error) => {
-                        tracing::warn!(seat = %self.seat, rung = rung.position, provider = %rung.provider, ?error, "rung failed; trying the next");
-                        last = Some(error);
-                    }
-                    Err(error) => return Err(error),
+                    tracing::warn!(seat = %self.name, rung = rung.position, provider = %rung.provider, ?error, "rung failed; trying the next");
+                    last = Some(error);
                 }
             }
-            Err(last.unwrap_or_else(|| oneiron::FatalLlmError::InvalidRequest.into()))
-        })
+        }
+        Err(last.unwrap_or_else(|| FatalLlmError::InvalidRequest.into()))
     }
 
-    /// Falls through only before the first event: a rung whose stream fails
-    /// or ends unspoken hands the call on; once a rung has spoken, its stream
-    /// is the answer, cut or whole.
-    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+    /// One call under `run` as a stream. The first rung is admitted now, so a
+    /// call the run refuses is refused before anything starts. A rung whose
+    /// stream fails before its first event hands the call on; once a rung
+    /// has spoken, its stream is the answer, cut or whole. Dropping the
+    /// stream ends the call and settles its rung as failed.
+    pub fn stream(
+        self: &Arc<Self>,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+    ) -> LlmResult<LlmStream<'static>> {
         self.admits(&request)?;
-        let state = StreamState {
-            ladder: self,
-            request,
-            lease,
-            next_rung: 0,
-            live: None,
-            last_error: None,
-            done: false,
-        };
-        Ok(LlmStream::new(futures_util::stream::unfold(
-            state, next_event,
-        )))
+        let first = self.admit(run, &self.rungs[0], &request, selector)?;
+        let (ladder, run) = (Arc::clone(self), run.clone());
+        let selector = selector.map(str::to_owned);
+        Ok(LlmStream::new(Driven::new(move |events| async move {
+            ladder
+                .stream_rungs(&run, &request, selector.as_deref(), first, &events)
+                .await;
+        })))
     }
-}
 
-struct StreamState<'a> {
-    ladder: &'a LadderBackend,
-    request: LlmRequest,
-    lease: &'a BudgetLease,
-    next_rung: usize,
-    /// The rung streaming now, and whether it has produced an event yet.
-    live: Option<(usize, LlmStream<'a>, bool)>,
-    last_error: Option<LlmError>,
-    /// Set after a terminal item; no further rung is tried.
-    done: bool,
-}
-
-async fn next_event(
-    mut state: StreamState<'_>,
-) -> Option<(LlmResult<LlmStreamEvent>, StreamState<'_>)> {
-    if state.done {
-        return None;
-    }
-    loop {
-        let Some((index, mut stream, started)) = state.live.take() else {
-            let index = state.next_rung;
-            let Some(rung) = state.ladder.rungs.get(index) else {
-                let error = state
-                    .last_error
-                    .take()
-                    .unwrap_or_else(|| oneiron::FatalLlmError::InvalidRequest.into());
-                return Some((Err(error), state.finished()));
+    async fn stream_rungs(
+        &self,
+        run: &RunAdmission,
+        request: &LlmRequest,
+        selector: Option<&str>,
+        first: (LlmRequest, RunPermit),
+        events: &Sender<LlmResult<LlmStreamEvent>>,
+    ) {
+        let mut admitted = Some(first);
+        let mut last = None;
+        for (index, rung) in self.rungs.iter().enumerate() {
+            let next = match admitted.take() {
+                Some(first) => Ok(first),
+                None => self.admit(run, rung, request, selector),
             };
-            state.next_rung += 1;
-            match rung
-                .backend
-                .stream(rung.bind(state.request.clone()), state.lease)
-            {
-                Ok(stream) => state.live = Some((index, stream, false)),
-                Err(error) if falls_through(&error) => state.last_error = Some(error),
-                Err(error) => return Some((Err(error), state.finished())),
+            let (call, permit) = match next {
+                Ok(next) => next,
+                Err(error) => {
+                    let _ = events.send(Err(error)).await;
+                    return;
+                }
+            };
+            let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+            let ended = match gate.stream(call, permit.lease()) {
+                Ok(stream) => forward(stream, events).await,
+                Err(error) => Ended::Failed {
+                    error,
+                    spoken: false,
+                },
+            };
+            match ended {
+                Ended::Done {
+                    message,
+                    usage,
+                    finish_reason,
+                } => {
+                    let done = match permit.settle(CallOutcome::Answered(&usage)) {
+                        Ok(_) => Ok(LlmStreamEvent::Done {
+                            message,
+                            usage: self.answered(index, usage),
+                            finish_reason,
+                        }),
+                        Err(denied) => Err(denied.into()),
+                    };
+                    let _ = events.send(done).await;
+                    return;
+                }
+                Ended::Failed { error, spoken } => {
+                    settle_failed(permit);
+                    if spoken || !falls_through(&error) {
+                        let _ = events.send(Err(error)).await;
+                        return;
+                    }
+                    tracing::warn!(seat = %self.name, rung = rung.position, ?error, "rung stream failed before its first event; trying the next");
+                    last = Some(error);
+                }
+                Ended::Gone => return,
             }
-            continue;
-        };
+        }
+        let error = last.unwrap_or_else(|| FatalLlmError::InvalidRequest.into());
+        let _ = events.send(Err(error)).await;
+    }
+}
+
+/// Hands one rung's events to the caller until its terminal or its failure.
+async fn forward(mut stream: LlmStream<'_>, events: &Sender<LlmResult<LlmStreamEvent>>) -> Ended {
+    let mut spoken = false;
+    loop {
         match stream.next().await {
             Some(Ok(LlmStreamEvent::Done {
                 message,
-                mut usage,
+                usage,
                 finish_reason,
             })) => {
-                let raw = std::mem::take(&mut usage.raw_provider);
-                usage.raw_provider = state.ladder.rungs[index].stamp(index, raw);
-                let done = LlmStreamEvent::Done {
+                return Ended::Done {
                     message,
                     usage,
                     finish_reason,
                 };
-                return Some((Ok(done), state.finished()));
             }
             Some(Ok(event)) => {
-                state.live = Some((index, stream, true));
-                return Some((Ok(event), state));
+                spoken = true;
+                if events.send(Ok(event)).await.is_err() {
+                    return Ended::Gone;
+                }
             }
-            Some(Err(error)) if !started && falls_through(&error) => {
-                tracing::warn!(seat = %state.ladder.seat, rung = state.ladder.rungs[index].position, ?error, "rung stream failed before its first event; trying the next");
-                state.last_error = Some(error);
-            }
-            Some(Err(error)) => return Some((Err(error), state.finished())),
-            // Unreached: an `LlmStream` that ends before its terminal yields
-            // `StreamCut` first, so a rung that ends unspoken (an empty body,
-            // a lone `[DONE]`) falls through on the arm above.
-            None => return None,
+            Some(Err(error)) => return Ended::Failed { error, spoken },
+            // An `LlmStream` that ends before its terminal yields `StreamCut`
+            // first, so this is a caller that stopped reading.
+            None => return Ended::Gone,
         }
-    }
-}
-
-impl StreamState<'_> {
-    fn finished(mut self) -> Self {
-        self.done = true;
-        self.live = None;
-        self
     }
 }
