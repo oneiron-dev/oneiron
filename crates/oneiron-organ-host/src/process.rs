@@ -48,6 +48,8 @@ struct Pending {
     deliver: SyncSender<Delivery>,
     /// An ask of this call waits for its answer.
     asking: bool,
+    /// A revocation is cancelling the call: no answer of it starts now.
+    revoked: bool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -123,11 +125,15 @@ impl Inbox {
         lock(&self.pending).contains_key(&id)
     }
 
-    /// Holds the calls in flight while call `id` is one of them: no reply
-    /// or ask is routed until the guard drops.
-    fn holding_in_flight(&self, id: u64) -> Option<MutexGuard<'_, HashMap<u64, Pending>>> {
+    /// Holds the calls in flight while call `id` is one of them and no
+    /// revocation has marked it: no reply or ask is routed, and no
+    /// revocation marks it, until the guard drops.
+    fn holding_answerable(&self, id: u64) -> Option<MutexGuard<'_, HashMap<u64, Pending>>> {
         let pending = lock(&self.pending);
-        pending.contains_key(&id).then_some(pending)
+        pending
+            .get(&id)
+            .is_some_and(|call| !call.revoked)
+            .then_some(pending)
     }
 }
 
@@ -254,6 +260,9 @@ impl Drop for Seated<'_> {
 enum Overrun {
     /// The handler returned before the deadline.
     InTime,
+    /// The deadline passed after the reader had taken the call's entry, for
+    /// its reply or as the process ended: nothing was cancelled.
+    Ended,
     /// The deadline passed and the call was cancelled; within the grace
     /// the reader took the call's entry, for its reply or as the process
     /// ended.
@@ -501,6 +510,7 @@ impl OrganProcess {
         let pending = Pending {
             deliver,
             asking: false,
+            revoked: false,
         };
         lock(&self.inbox.pending).insert(id, pending);
         let _seated = Seated {
@@ -567,11 +577,12 @@ impl OrganProcess {
     /// while the answer still waits for the writer or at its deadline, drops
     /// it there, so a call that has replied takes its reply, not a deadline.
     /// The answer's first byte goes under the lock the reader routes replies
-    /// and asks under, with the call checked in flight again, so an answer
-    /// never goes after the reply the reader has taken; one that waits for
-    /// room meanwhile is dropped when the reply comes. (A reply the organ
-    /// sends once the answer has started crosses it, as an ask crosses a
-    /// cancel.)
+    /// and asks under and a revocation marks its calls under, with the call
+    /// checked in flight, unmarked and its grant unrevoked again. So an
+    /// answer never goes after the reply the reader has taken, nor once its
+    /// revocation is recorded; one that waits for room meanwhile is dropped
+    /// when either comes. (A reply the organ sends once the answer has
+    /// started crosses it, as an ask crosses a cancel.)
     ///
     /// The call may ask again from the moment that first byte leaves, not
     /// when the write returns: the organ can read the whole answer and ask
@@ -587,7 +598,7 @@ impl OrganProcess {
         deadline: Instant,
         revoked: &dyn Fn() -> bool,
     ) -> Result<bool, FrameError> {
-        let dropped = || revoked() || !self.inbox.in_flight(id);
+        let dropped = || revoked() || self.inbox.holding_answerable(id).is_none();
         let Some(writer) = lock_until(&self.writer, deadline, dropped) else {
             return if dropped() {
                 Ok(false)
@@ -598,7 +609,10 @@ impl OrganProcess {
         if dropped() {
             return Ok(false);
         }
-        let still = || self.inbox.holding_in_flight(id);
+        // The grant is asked under the guard as well: a revocation records
+        // itself before it marks the calls of its holders, one process at a
+        // time. (Lock order: the writer, `pending`, the host's revoked set.)
+        let still = || self.inbox.holding_answerable(id).filter(|_| !revoked());
         let started = |pending: &mut MutexGuard<'_, HashMap<u64, Pending>>| {
             if let Some(call) = pending.get_mut(&id) {
                 call.asking = false;
@@ -644,9 +658,10 @@ impl OrganProcess {
     }
 
     /// Keeps call `id`'s deadline while one of its ask handlers runs. At
-    /// the deadline, or when the handler panics, it cancels the call; if
-    /// the organ has not replied when the grace ends, it stops the process.
-    /// It waits out the grace itself, whatever the handler does meanwhile.
+    /// the deadline, or when the handler panics, it cancels the call if it
+    /// is still in flight; if the organ has not replied when the grace ends,
+    /// it stops the process. It waits out the grace itself, whatever the
+    /// handler does meanwhile.
     fn watch(
         &self,
         id: u64,
@@ -661,6 +676,11 @@ impl OrganProcess {
             // The handler panicked: the call is over for its caller.
             Err(RecvTimeoutError::Disconnected) => CancelReason::Caller,
         };
+        // Settled before any cancel: a call the reader has taken has its
+        // reply queued (or its process ended), and there is nothing to cancel.
+        if !self.inbox.in_flight(id) {
+            return Overrun::Ended;
+        }
         let until = Instant::now() + grace;
         self.cancel(id, reason, until);
         loop {
@@ -740,6 +760,8 @@ impl OrganProcess {
                     }
                     match overrun {
                         Overrun::InTime => {}
+                        // The settle point below takes the reply.
+                        Overrun::Ended => break,
                         // A reply in the grace counts even if the organ then
                         // ended: its end is the reader's to report, as a crash.
                         Overrun::Cancelled if taken(reply, asks).is_some() => {
@@ -852,9 +874,17 @@ impl OrganProcess {
         }
     }
 
-    /// Cancels every call in flight, as a revoked grant does.
+    /// Cancels every call in flight, as a revoked grant does. Each is first
+    /// marked revoked under the lock an answer's first byte goes under, so
+    /// an answer that has not started by then never does.
     pub(crate) fn cancel_all(&self, reason: CancelReason, deadline: Instant) {
-        let ids: Vec<u64> = lock(&self.inbox.pending).keys().copied().collect();
+        let ids: Vec<u64> = lock(&self.inbox.pending)
+            .iter_mut()
+            .map(|(id, call)| {
+                call.revoked = true;
+                *id
+            })
+            .collect();
         for id in ids {
             self.cancel(id, reason, deadline);
         }

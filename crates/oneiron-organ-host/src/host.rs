@@ -213,7 +213,10 @@ impl OrganHost {
     pub fn revoke_grant(&self, grant: &str) {
         // Recorded before the holders are sought: a call marks its process
         // as a holder before it checks this set, so a call this scan misses
-        // sees the revocation and is never sent.
+        // sees the revocation and is never sent. An answer under the grant
+        // asks this set again under the lock its first byte goes under, and
+        // `cancel_all` marks its call under that lock before the cancel: one
+        // that has not started by then never does.
         lock(&self.revoked).insert(grant.to_owned());
         let slots = self.all_slots();
         let holders: Vec<(Arc<Slot>, Arc<OrganProcess>)> = slots
