@@ -1,9 +1,11 @@
 //! The checked-in `src/task_verb/code-mode.d.ts`, which a shadow check's
-//! oracle fixtures read, is the verb table's rendering of `self.memory`; and a
-//! shadow check never changes how a step ends.
+//! oracle fixtures read, is the verb table's rendering of `self.memory`; a
+//! shadow check never changes how a step ends; and a step's record names the
+//! checker whose answer it holds.
 use super::*;
+use crate::engine_executor::code_check::ShadowStep;
 use oneiron_code_check::{
-    BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Diagnostic, ShadowCheck,
+    BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Diagnostic, Fallback, ShadowCheck,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -99,4 +101,49 @@ fn a_shadow_check_leaves_a_parked_step_parked() {
             );
         }
     }
+}
+
+/// A checker that takes no program.
+struct FailingCheck {
+    name: &'static str,
+    failure: CheckFailure,
+}
+
+impl CodeCheck for FailingCheck {
+    fn backend(&self) -> BackendId {
+        BackendId {
+            name: self.name,
+            pin: self.name.to_owned(),
+        }
+    }
+
+    fn check(&self, _input: &CheckInput<'_>) -> std::result::Result<CheckReport, CheckFailure> {
+        Err(self.failure)
+    }
+}
+
+/// A busy tsc-rs hands the program to the fallback; when the fallback fails
+/// too, the step's record holds the fallback's failure under the fallback's
+/// name, not tsc-rs's.
+#[test]
+fn a_step_record_names_the_checker_whose_failure_it_holds() {
+    let first = FailingCheck {
+        name: "tsc-rs",
+        failure: CheckFailure::Busy,
+    };
+    let then = FailingCheck {
+        name: "microsoft",
+        failure: CheckFailure::Unsupported,
+    };
+    let shadow = ShadowCheck::new(Arc::new(Fallback::new(Box::new(first), Box::new(then))));
+    let step = ShadowStep::check(&shadow, entity(0x8E), 0, "await ask('continue?');");
+    let record: serde_json::Value = serde_json::from_str(&step.record()).unwrap();
+    assert_eq!(
+        (&record["backend"], &record["pin"], &record["failure"]),
+        (
+            &serde_json::json!("microsoft"),
+            &serde_json::json!("microsoft"),
+            &serde_json::json!("code_check_unsupported"),
+        )
+    );
 }

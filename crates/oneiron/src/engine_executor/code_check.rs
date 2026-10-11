@@ -44,12 +44,10 @@ impl<'a> ShadowStep<'a> {
         let started = Instant::now();
         // A checker that panics is a crashed check; the step runs on.
         let checked = catch_unwind(AssertUnwindSafe(|| {
-            let checker = shadow.checker();
-            let result = checker.check(&CheckInput {
+            shadow.checker().check_attributed(&CheckInput {
                 declarations: &declarations,
                 program,
-            });
-            (checker.backend(), result)
+            })
         }));
         let (backend, result) = checked.unwrap_or_else(|_| {
             let backend = BackendId {

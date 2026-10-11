@@ -245,8 +245,9 @@ resolving a module would read or probe the path it names, it leaves unchecked
 (`code_check_unsupported`) any program that could name one: one containing
 `import`, `export`, `require`, `reference`, `module` or a `\u` escape, in any
 case.
-With `tsc-rs` selected, a set `microsoft_tsc` is the fallback for a check
-tsc-rs cannot finish. When no checker loads, code mode runs unchecked and the
+With `tsc-rs` selected, a set `microsoft_tsc` is the fallback for any check
+tsc-rs cannot finish, a busy one included. A step's report names the checker
+whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
 

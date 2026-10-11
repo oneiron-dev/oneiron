@@ -191,7 +191,7 @@ impl std::error::Error for CheckFailure {}
 
 /// A type checker for code-mode programs.
 pub trait CodeCheck: Send + Sync {
-    /// The checker this is when it answers.
+    /// The checker this is; a [`Fallback`] names the one it tries first.
     fn backend(&self) -> BackendId;
 
     /// Checks one program.
@@ -200,9 +200,19 @@ pub trait CodeCheck: Send + Sync {
     ///
     /// A [`CheckFailure`] when the checker gives no diagnostics.
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure>;
+
+    /// Checks one program, and names the checker whose report or failure the
+    /// result is.
+    fn check_attributed(
+        &self,
+        input: &CheckInput<'_>,
+    ) -> (BackendId, Result<CheckReport, CheckFailure>) {
+        (self.backend(), self.check(input))
+    }
 }
 
-/// Runs `then` when `first` gives no report.
+/// Runs `then` when `first` gives no report, whatever the failure: a busy
+/// first checker could not check either.
 pub struct Fallback {
     first: Box<dyn CodeCheck>,
     then: Box<dyn CodeCheck>,
@@ -221,7 +231,18 @@ impl CodeCheck for Fallback {
     }
 
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
-        self.first.check(input).or_else(|_| self.then.check(input))
+        self.check_attributed(input).1
+    }
+
+    /// When `then` fails too, the failure is `then`'s own, under its name.
+    fn check_attributed(
+        &self,
+        input: &CheckInput<'_>,
+    ) -> (BackendId, Result<CheckReport, CheckFailure>) {
+        match self.first.check_attributed(input) {
+            (backend, Ok(report)) => (backend, Ok(report)),
+            (_, Err(_)) => self.then.check_attributed(input),
+        }
     }
 }
 
@@ -364,3 +385,76 @@ const MAX_NAME_BYTES: usize = 64;
 const DEFAULT_WALL_TIME: Duration = Duration::from_secs(10);
 /// The most diagnostic text a check may print.
 const DEFAULT_OUTPUT_BYTES: usize = 1 << 20;
+
+#[cfg(test)]
+mod tests {
+    use super::{BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Fallback};
+
+    /// A checker that answers every program the same way.
+    struct Fixed {
+        name: &'static str,
+        answer: Result<(), CheckFailure>,
+    }
+
+    impl CodeCheck for Fixed {
+        fn backend(&self) -> BackendId {
+            BackendId {
+                name: self.name,
+                pin: String::new(),
+            }
+        }
+
+        fn check(&self, _: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
+            self.answer.map(|()| CheckReport {
+                backend: self.backend(),
+                diagnostics: Vec::new(),
+                peak_memory_bytes: None,
+            })
+        }
+    }
+
+    fn fallback(first: Result<(), CheckFailure>, then: Result<(), CheckFailure>) -> Fallback {
+        let first = Fixed {
+            name: "first",
+            answer: first,
+        };
+        let then = Fixed {
+            name: "then",
+            answer: then,
+        };
+        Fallback::new(Box::new(first), Box::new(then))
+    }
+
+    const PROGRAM: CheckInput<'static> = CheckInput {
+        declarations: &[],
+        program: "",
+    };
+
+    /// The fallback answers a program a busy first checker could not take,
+    /// and is not asked when the first checker answers.
+    #[test]
+    fn the_fallback_answers_when_the_first_checker_is_busy() {
+        let busy = fallback(Err(CheckFailure::Busy), Ok(()));
+        let (backend, report) = busy.check_attributed(&PROGRAM);
+        assert_eq!(backend.name, "then");
+        assert_eq!(report.map(|report| report.backend.name), Ok("then"));
+        let answered = busy.check(&PROGRAM);
+        assert_eq!(answered.map(|report| report.backend.name), Ok("then"));
+
+        let first = fallback(Ok(()), Err(CheckFailure::Unsupported));
+        let (backend, report) = first.check_attributed(&PROGRAM);
+        assert_eq!(backend.name, "first");
+        assert_eq!(report.map(|report| report.backend.name), Ok("first"));
+    }
+
+    /// When the fallback fails too, the failure is the fallback's own, under
+    /// the fallback's name.
+    #[test]
+    fn a_failed_fallback_keeps_its_own_failure_and_name() {
+        let both = fallback(Err(CheckFailure::Busy), Err(CheckFailure::Unsupported));
+        let (backend, failure) = both.check_attributed(&PROGRAM);
+        assert_eq!(backend.name, "then");
+        assert_eq!(failure, Err(CheckFailure::Unsupported));
+        assert_eq!(both.check(&PROGRAM), Err(CheckFailure::Unsupported));
+    }
+}
