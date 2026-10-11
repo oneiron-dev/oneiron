@@ -172,10 +172,6 @@ fn tier_rule_3_unstamped_claim_fails_closed_to_tier_a() -> Result<()> {
 #[test]
 fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let ctx = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::with_session_owner(vec![Interlocutor::unknown("guest", true)]),
-    )?;
     let rtxn = vault.store.env.read_txn()?;
     let id = test_id(0x15);
 
@@ -192,7 +188,13 @@ fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
             DisclosureTier::TierA,
             "predicate {predicate} must be Tier A"
         );
-        assert!(!ctx.admits(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&body))?);
+        assert!(!DisclosureContext::below_tier_a(
+            &vault.store,
+            &rtxn,
+            &id,
+            ENTITY_TYPE_CLAIM,
+            Some(&body)
+        )?);
     }
     // Public sensitivity isolates rule 4 from the unstamped rule-3 floor.
     let control = claim_with_scope("profile.hobby", Some(sensitivity_scope("public")));
@@ -200,7 +202,13 @@ fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
         disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&control))?,
         DisclosureTier::TierB
     );
-    assert!(ctx.admits(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&control))?);
+    assert!(DisclosureContext::below_tier_a(
+        &vault.store,
+        &rtxn,
+        &id,
+        ENTITY_TYPE_CLAIM,
+        Some(&control)
+    )?);
     Ok(())
 }
 
@@ -289,16 +297,22 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         Ok(())
     };
 
-    // OwnerAlone and Supervised do not require a contact clearance.
+    // P1: with no non-owner present the met clearance is the top of the
+    // lattice, never bottom, so the owner alone sees everything.
+    assert_eq!(
+        crate::disclosure::disclosable_set(&vault, &InterlocutorSet::owner_alone())?.clearance(),
+        &crate::federation::Scope::top()
+    );
     let ctx = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
     assert_eq!(ctx.mode(), DisclosureMode::OwnerAlone);
     check_admission(&ctx, [true, true, true])?;
+    // Owner presence is no clearance: a contact without one sees nothing.
     let ctx = DisclosureContext::resolve(
         &vault,
         InterlocutorSet::with_session_owner(vec![known(contact_a, "a@example.com")]),
     )?;
     assert_eq!(ctx.mode(), DisclosureMode::Supervised);
-    check_admission(&ctx, [true, true, true])?;
+    check_admission(&ctx, [false, false, false])?;
 
     // Unknown party -> Scope bottom.
     let ctx = DisclosureContext::resolve(

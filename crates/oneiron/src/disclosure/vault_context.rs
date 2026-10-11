@@ -16,7 +16,7 @@ use crate::claim::{
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{Error, Result};
 use crate::federation::{Scope, record_scope::scope_for_blob};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
@@ -27,6 +27,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 
+use super::disclosable_set::{DisclosableSet, disclosable_set};
 use super::disclosure_tier;
 use super::scope_codec::{DisclosureScope, disclosure_scope_body_value};
 
@@ -262,71 +263,45 @@ impl Vault {
 }
 
 /// The resolved disclosure state one context assembly is clamped against:
-/// mode, interlocutor set, and the met six-axis contact clearances. Room
-/// assemblies keep the meet even when the owner is present. One value feeds
-/// builder, board, and response so the response can
-/// never describe a different clamp than the one applied (design §11 rule 6).
+/// mode, interlocutor set, and the audience's [`DisclosableSet`]. One value
+/// feeds builder, board, and response so the response can never describe a
+/// different clamp than the one applied (design §11 rule 6).
 #[derive(Debug, Clone)]
 pub struct DisclosureContext {
     mode: DisclosureMode,
     interlocutors: InterlocutorSet,
-    scope: Option<Scope>,
-    room: bool,
+    disclosable: DisclosableSet,
 }
 
 impl DisclosureContext {
-    /// Derives the mode and, under `AbsenceClamp`, loads and intersects every
-    /// non-owner interlocutor's Scope. Fail-closed: an unknown party, a
-    /// revoked scope, a missing row, or a row that FAILS TO DECODE
-    /// contributes lattice bottom, so the meet denies everything.
-    /// Corruption never propagates as an error from this path (§14.5: the
-    /// clamp only ever narrows — an abort here could surface partial state
-    /// or be swallowed by a caller into a wider-than-intended pack); only
-    /// storage I/O failures stay loud. The owner-facing read
+    /// Derives the mode and the audience's [`disclosable_set`]. Owner
+    /// presence never widens a non-owner's clearance: only a separate
+    /// explicit owner request may override it (ILDF2 room rule), and a
+    /// presence signal is not such a request. Corruption in a clearance row
+    /// narrows to bottom rather than erroring (§14.5: the clamp only ever
+    /// narrows); only storage I/O failures stay loud. The owner-facing read
     /// (`Vault::counterparty_disclosure_scope`) keeps erroring loudly so
     /// corruption stays visible on the consent surface.
+    ///
+    /// With no owner session and no one identified, the assembly still has a
+    /// reader the roster does not name (a delegated caller). That reader is
+    /// an unknown party and holds the empty clearance: public-only.
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
-        Self::resolve_with_room(vault, set, false)
-    }
-
-    /// Room disclosure never treats owner presence as permission to widen a
-    /// peer's contact clearance. Only a separate explicit owner request can
-    /// override that clearance; a presence signal is not such a request.
-    pub fn resolve_room(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
-        Self::resolve_with_room(vault, set, true)
-    }
-
-    fn resolve_with_room(vault: &Vault, set: InterlocutorSet, room: bool) -> Result<Self> {
-        let mode = DisclosureMode::from_set(&set);
-        let scope = if (room || mode == DisclosureMode::AbsenceClamp) && set.has_non_owner() {
-            let mut folded = Scope::top();
-            for entry in set.non_owner() {
-                let entry_scope = match entry.contact_ref() {
-                    Some(hex) => {
-                        let contact_id = EntityId::from_hex(hex)?;
-                        match vault.counterparty_disclosure_scope(&contact_id) {
-                            Ok(Some(clearance)) => clearance.effective_scope(),
-                            Ok(_) => Scope::default(),
-                            Err(error) if error.kind() == ErrorKind::InvalidDisclosureScope => {
-                                Scope::default()
-                            }
-                            Err(error) => return Err(error),
-                        }
-                    }
-                    None => Scope::default(),
-                };
-                folded = folded.meet(&entry_scope);
-            }
-            Some(folded)
+        let disclosable = if set.supervised() || set.has_non_owner() {
+            disclosable_set(vault, &set)?
         } else {
-            None
+            DisclosableSet::unknown_reader()
         };
         Ok(Self {
-            mode,
+            mode: DisclosureMode::from_set(&set),
+            disclosable,
             interlocutors: set,
-            scope,
-            room,
         })
+    }
+
+    /// A room assembly follows the same rule as any other audience.
+    pub fn resolve_room(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
+        Self::resolve(vault, set)
     }
 
     #[must_use]
@@ -339,19 +314,17 @@ impl DisclosureContext {
         &self.interlocutors
     }
 
-    /// The met contact clearance a scoped admission checks a record against:
-    /// `None` where the mode admits without one, or where no non-owner is
-    /// present to clear anything.
-    pub(crate) fn scope(&self) -> Option<&Scope> {
-        self.scope.as_ref()
+    /// The met contact clearance a scoped admission checks a record against;
+    /// the top of the lattice when no non-owner is present (P1).
+    pub(crate) fn scope(&self) -> &Scope {
+        self.disclosable.clearance()
     }
 
     /// The clamp's admission predicate: `OwnerAlone` admits everything;
-    /// `Supervised` admits non-Tier-A records (within the room's contact
-    /// clearance if in a room); `AbsenceClamp` admits only non-Tier-A records
-    /// whose record-position Scope is admitted by the intersected contact Scope.
-    /// Tier is checked FIRST so clearance can
-    /// never override tier (never-widen, I2).
+    /// with anyone else present, a record is admitted only below Tier A and
+    /// inside the audience's [`DisclosableSet`] (ONE-1646, P7), whether or
+    /// not the owner is present. Tier is checked FIRST so clearance can never
+    /// override tier (never-widen, I2).
     ///
     /// A TURN's text and vector are its messages' (`embed::turn_text_in_txn`),
     /// so the clamp admits a turn only when it admits each of them too: a
@@ -368,8 +341,33 @@ impl DisclosureContext {
         if self.mode == DisclosureMode::OwnerAlone {
             return Ok(true);
         }
+        if !Self::below_tier_a(store, rtxn, id, entity_type, claim_body)? {
+            return Ok(false);
+        }
+        if entity_type == ENTITY_TYPE_TURN && !self.admits_turn_messages(store, rtxn, id)? {
+            return Ok(false);
+        }
+        let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
+            return Ok(false);
+        };
+        let Some(record_scope) = scope_for_blob(store, rtxn, *id, &raw)? else {
+            return Ok(false);
+        };
+        Ok(self.disclosable.admits(&record_scope))
+    }
+
+    /// Whether a record may reach anyone but the owner at all: never a
+    /// signed history control, never a Tier-A record. No clearance widens
+    /// past this (never-widen, I2).
+    pub(crate) fn below_tier_a(
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
         // Signed claim-history controls are transport/audit bytes, never
-        // agent-visible content even under the supervised disclosure posture.
+        // agent-visible content to any audience but the owner alone.
         // Scoped sync has its own authenticated closure and effective-scope door.
         if entity_type == ENTITY_TYPE_CLAIM {
             let stored;
@@ -398,25 +396,7 @@ impl DisclosureContext {
         } else {
             None
         };
-        if disclosure_tier(store, rtxn, id, entity_type, body)? == DisclosureTier::TierA {
-            return Ok(false);
-        }
-        if entity_type == ENTITY_TYPE_TURN && !self.admits_turn_messages(store, rtxn, id)? {
-            return Ok(false);
-        }
-        if self.mode == DisclosureMode::Supervised && !self.room {
-            return Ok(true);
-        }
-        let Some(scope) = self.scope.as_ref() else {
-            return Ok(false);
-        };
-        let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
-            return Ok(false);
-        };
-        let Some(record_scope) = scope_for_blob(store, rtxn, *id, &raw)? else {
-            return Ok(false);
-        };
-        Ok(scope.admits("read", &record_scope, &Scope::top()))
+        Ok(disclosure_tier(store, rtxn, id, entity_type, body)? != DisclosureTier::TierA)
     }
 
     /// Whether the clamp admits every MESSAGE `PartOf` `turn`. An erased

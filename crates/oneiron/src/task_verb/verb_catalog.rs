@@ -231,6 +231,9 @@ impl AgentVerb {
                 | Self::RoomsSpeak
         )
     }
+    pub const fn proposes(self) -> bool {
+        matches!(self, Self::Cancel | Self::TasksCreate | Self::ClaimUpsert)
+    }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::BoardExpand => &["key", "frame_epoch"],

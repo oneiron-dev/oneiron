@@ -112,6 +112,66 @@ fn prior_head_disagreement_opens_one_persistent_marker_and_close_audit() -> Resu
     Ok(())
 }
 
+/// Sol review #1364 round 3: a close lands in the marker's own project, its
+/// body stamp, even when the marker's scope map carries no project entry,
+/// and refuses evidence from another project (ONE-1592 P3).
+#[test]
+fn conflict_close_stays_in_the_marker_project() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    auto_policy(&vault);
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let project = EntityId::now();
+    let conversation = seed_session(&vault, 0xB5, 1);
+    let default_turn = seed_turn(&vault, &conversation, "user", "no coffee", 2);
+    let project_turn = seed_turn(&vault, &conversation, "user", "no tea", 3);
+    vault.with_write_txn_grouped(|txn| {
+        crate::federation::record_scope::stamp_leader_project(
+            &vault.store,
+            txn,
+            project_turn,
+            project,
+        )
+    })?;
+    let mut marker = prior_head(
+        subject,
+        crate::claim::PREDICATE_CONFLICT_OPEN,
+        "tea or coffee",
+        ClaimApprovalStatus::Approved,
+        ClaimSource::UserStated,
+    );
+    marker.body.scope_project = project;
+    vault.put_claim(&marker.claim_id, &marker.body, occurred(4), 4)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, _, _) = admitted_attempt_fixture(&vault, &store, 0xB6, &[("user", "tea")])?;
+    let run = DreamerRunContext {
+        run_id: "conflict-project-test".into(),
+        attempt_id: admitted.status.attempt.id,
+        agent_actor: vault.dreamer_actor_for_attempt(admitted.status.attempt.id)?,
+        now_ms: 10,
+    };
+    let close = |evidence| {
+        close_persistent_conflict(
+            &vault,
+            &run,
+            marker.claim_id,
+            Value::from("tea"),
+            vec![evidence],
+        )
+    };
+    assert!(matches!(
+        close(default_turn),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    let closed = close(project_turn)?;
+    assert_eq!(closed.landed.len(), 1, "{:?}", closed.rejected);
+    assert_eq!(
+        vault.get_claim(&closed.landed[0])?.unwrap().scope_project,
+        project
+    );
+    Ok(())
+}
+
 #[test]
 fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Result<()> {
     let (_dir, vault) = open_vault();
