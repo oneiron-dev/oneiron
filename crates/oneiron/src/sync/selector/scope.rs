@@ -529,7 +529,7 @@ pub(super) fn band_filter(
 pub(super) fn settled_world_selected(
     raw: &[u8],
     record: &crate::federation::Scope,
-    position: &crate::federation::Scope,
+    position: &FederationDirectionScope,
 ) -> bool {
     raw.first().copied() != Some(crate::registry::ENTITY_TYPE_SUMMARY)
         || record.worlds == crate::federation::base_world_axis()
