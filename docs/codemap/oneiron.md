@@ -1478,8 +1478,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/resolution/evaluation.rs` | src | m | 7 crate-vis | — | Decision core: ceilings, source-trust, and gate evaluation |
 | `src/gate/resolution/frontier_hash.rs` | src | L | 5 crate-vis | — | Read-frontier hash worker plus byte-level hash encoders |
 | `src/gate/resolution/manifest_fold.rs` | src | L | 2 fn · 6 crate-vis | — | Store-scanning manifest fold plus budget-guard and trust adapters |
+| `src/gate/resolution/manifest_memo.rs` | src | s | 5 crate-vis | — | Decodes a store keeps between policy resolutions |
 | `src/gate/resolution/manifest_types.rs` | src | m | 52 crate-vis | — | Resolved-view types plus the `PolicyManifestResolution` struct definition |
-| `src/gate/resolution/mod.rs` | src | s | 6 crate-vis | — | — |
+| `src/gate/resolution/mod.rs` | src | s | 7 crate-vis | — | — |
 | `src/gate/resolution/weave_reach.rs` | src | s | 2 crate-vis | — | What a resolved policy lets one Dreamer actor do: read the whole vault, and land a `Generated`-lineage claim… |
 | `src/gate/retrieval_filter.rs` | src | m | 1 re-export · 5 crate-vis | — | Retrieval authority projection and narrowing, independent of result filtering |
 | `src/gate/retrieval_filter/tests.rs` | test | s | — | — | — |
@@ -2702,9 +2703,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/checkpoint_custody.rs` | src | m | 18 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
 | `src/store/gate_decision/claim_refs.rs` | src | s | 8 crate-vis | — | Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars… |
 | `src/store/gate_decision/keys.rs` | src | s | 15 crate-vis | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
-| `src/store/gate_decision/ledger.rs` | src | L | 1 fn · 28 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
-| `src/store/gate_decision/lookup.rs` | src | s | 1 crate-vis | — | First-match reads on the caller's gate-decision ledger transaction |
-| `src/store/gate_decision/mod.rs` | src | s | 1 re-export · 15 crate-vis | — | The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar… |
+| `src/store/gate_decision/ledger.rs` | src | L | 1 fn · 31 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
+| `src/store/gate_decision/lookup.rs` | src | s | 3 crate-vis | — | First-match reads on the caller's gate-decision ledger transaction |
+| `src/store/gate_decision/mod.rs` | src | s | 1 re-export · 16 crate-vis | — | The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar… |
 | `src/store/gate_decision/orcb.rs` | src | m | 19 crate-vis | — | ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody |
 | `src/store/gate_decision/retention.rs` | src | m | 7 fn · 11 crate-vis | — | Opt-in gate-decision age sweep over the actual ORCB custody unit |
 | `src/store/gate_decision/retention_scope.rs` | src | s | 4 crate-vis | — | Append-time retention scope: a decision keeps its verified ancestry after its claim body or source is removed |
@@ -2754,6 +2755,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/structural_kind_registry/registry.rs` | src | m | 14 crate-vis | — | Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules |
 | `src/store/test_hooks.rs` | src | m | 27 crate-vis | — | The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it |
 | `src/store/tests.rs` | test | XL | — | — | — |
+| `src/store/tests/gate_claim_lookup.rs` | test | s | — | — | The lookup behind a claim write's receipt: the newest decision about a claim among the newest ledger rows… |
 | `src/store/writer_lease.rs` | src | s | 1 struct · 4 fn · 2 const · 3 crate-vis | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `src/store/writer_lease/tests.rs` | test | s | — | — | Focused process-owner lease and bootstrap regressions |
 | `src/subject_model.rs` | src | m | 1 struct · 2 enum · 12 fn · 3 const · 1 re-export · 7 crate-vis | ActorSubjectAnchor, PersonSubstrate, SubjectKind | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
