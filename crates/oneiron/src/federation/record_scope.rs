@@ -510,7 +510,8 @@ impl Vault {
     /// Scoped reads bind a selector, the authenticated slip's Scope and channel.
     /// Debug additionally requires an explicit `debug` class on that slip.
     /// A SECRET_CUSTODY row is never a scoped record, in either view: its body
-    /// carries the value, which only its binding door reads.
+    /// carries the value, which only its binding door reads. Nor is an LFS
+    /// chunk that no published object holds yet.
     pub fn records_in_scope(
         &self,
         selector: &Scope,
@@ -533,7 +534,14 @@ impl Vault {
             let (id, raw) = row?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-            if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                    &self.store,
+                    &txn,
+                    &id,
+                    h.entity_type,
+                )?
+            {
                 continue;
             }
             let scope = disclosure_scope_for_stored_row(
@@ -559,7 +567,7 @@ impl Vault {
         Ok(out)
     }
     /// Export never has a debug mode and requires the export verb class, and
-    /// never carries a SECRET_CUSTODY row.
+    /// never carries a SECRET_CUSTODY row or an unpublished LFS chunk.
     pub fn export_records_in_scope(
         &self,
         selector: &Scope,
@@ -572,7 +580,14 @@ impl Vault {
             let (id, raw) = row?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-            if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                    &self.store,
+                    &txn,
+                    &id,
+                    h.entity_type,
+                )?
+            {
                 continue;
             }
             if let Some(scope) = disclosure_scope_for_stored_row(

@@ -451,7 +451,8 @@ fn a_repeated_chunk_is_supplied_from_the_store_once_it_landed() {
         size_bytes: whole.len() as u64,
         chunks: vec![chunk; 3],
     };
-    // A sync pull asks its peer only for a chunk the store lacks.
+    // A sync pull asks its peer only for a chunk the store lacks, through the
+    // store's own read: a generic reader finds no chunk before publication.
     let mut fetched = 0;
     vault
         .install_lfs_manifest(
@@ -460,7 +461,10 @@ fn a_repeated_chunk_is_supplied_from_the_store_once_it_landed() {
             time(),
             time().start,
             |chunk| {
-                if vault.get_raw(&chunks::chunk_id(&chunk.hash)?)?.is_none() {
+                if vault
+                    .get_raw_unsealed(&chunks::chunk_id(&chunk.hash)?)?
+                    .is_none()
+                {
                     fetched += 1;
                 }
                 Ok(part.to_vec())
@@ -468,6 +472,47 @@ fn a_repeated_chunk_is_supplied_from_the_store_once_it_landed() {
         )
         .unwrap();
     assert_eq!(fetched, 1);
+}
+
+#[test]
+fn no_generic_reader_returns_a_chunk_before_its_object_is_published() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    // Each chunk passes alone; the object they make is refused when read whole.
+    let parts: [&[u8]; 3] = [br#"{"pass\u0077ord":"#, br#""private fixture"}"#, b"\n"];
+    let id = |part: &[u8]| chunks::chunk_id(blake3::hash(part).as_bytes()).unwrap();
+    let read = |vault: &Vault, wanted: &[&[u8]]| -> Vec<Vec<u8>> {
+        let mut bodies: Vec<Vec<u8>> = vault
+            .latest_entity_bodies_by_type(ENTITY_TYPE_ASSET, 64, 4096)
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, body)| body)
+            .collect();
+        for &part in wanted {
+            bodies.extend(vault.get(&id(part)).unwrap());
+            bodies.extend(
+                vault
+                    .get_raw(&id(part))
+                    .unwrap()
+                    .map(|raw| raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec()),
+            );
+        }
+        bodies.retain(|body| wanted.contains(&body.as_slice()));
+        bodies
+    };
+    let mut paused = Vec::new();
+    refused_as_sensitive(install_parts_with(&vault, &parts, None, |index| {
+        if index == 2 {
+            // The first two chunks have landed; the third is on its way.
+            assert!(vault.get_raw_unsealed(&id(parts[1])).unwrap().is_some());
+            paused = read(&vault, &parts[..2]);
+        }
+    }));
+    assert!(paused.is_empty(), "read before publication: {paused:?}");
+    assert!(read(&vault, &parts[..]).is_empty());
+    // A published object's chunks read as any ASSET does.
+    let published: [&[u8]; 2] = [b"host = db.internal\n", b"port = 5432\n"];
+    install_parts(&vault, &published).unwrap();
+    assert_eq!(read(&vault, &published[..]).len(), 3 * published.len());
 }
 
 struct RepeatingReader {

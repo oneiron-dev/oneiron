@@ -84,7 +84,8 @@ impl Vault {
     }
 
     /// Serializes an entity bundle through the whole-vault export boundary.
-    /// Off-record rows are excluded; custody containers are always nulled.
+    /// Off-record rows and unpublished LFS chunks are excluded; custody
+    /// containers are always nulled.
     /// The manifest is derived from the bytes, not a caller's declaration.
     pub fn export_entity_bundle_json(&self, ids: &[EntityId]) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
@@ -100,6 +101,14 @@ impl Vault {
             };
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::InvariantViolation("invalid export entity header"))?;
+            if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                &self.store,
+                &txn,
+                id,
+                header.entity_type,
+            )? {
+                continue;
+            }
             let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
             let mut cursor = std::io::Cursor::new(bytes);
             let mut body = if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
