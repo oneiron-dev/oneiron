@@ -68,6 +68,14 @@ fn room(server: &SyncServer) -> Room {
     }
 }
 
+/// One of this vault's own agents: a person bound as an agent in the
+/// vault's authority log. A room's members are people.
+fn agent(server: &SyncServer, name: &str) -> EntityId {
+    let id = person(server, name);
+    crate::test_credentials::bind_actor(server.vault(), "secret", id, "agent");
+    id
+}
+
 fn slip(name: &str, who: EntityId, class: &str) -> String {
     test_bearer(&recipe(name, who, class))
 }
@@ -362,7 +370,7 @@ async fn a_members_save_writes_only_their_own_vault() {
         "a save wrote another vault"
     );
 
-    // A second save has nothing left to save and tells nobody.
+    // A second save has nothing left to save, and the room still hears it.
     let (status, again) = act(&server, "save", owner.clone(), room.id, "harbour").await;
     assert_eq!(status, StatusCode::OK, "{again}");
     assert_eq!(again["saved"], json!([]));
@@ -376,14 +384,16 @@ async fn a_members_save_writes_only_their_own_vault() {
         notices(&server, mina, room.id, "harbour").await,
         [
             ("saved_talk".to_owned(), room.owner.to_hex()),
+            ("saved_talk".to_owned(), room.owner.to_hex()),
             ("exported".to_owned(), room.mina.to_hex()),
         ]
     );
 }
 
 /// Every save and every export posts a notice to the room, naming who and
-/// what; the owner's own one-turn save and on-record flip count too. A copy
-/// holds the turns said on record. A 1:1 the owner entered alone posts none.
+/// what, even a save that finds nothing new to keep or a turn saved again;
+/// the owner's own one-turn save and on-record flip count too. A copy holds the turns said on
+/// record. A 1:1 the owner entered alone posts none.
 #[tokio::test]
 async fn every_save_and_export_leaves_a_room_notice() {
     let (_dir, server) = auth_test_server();
@@ -399,6 +409,10 @@ async fn every_save_and_export_leaves_a_room_notice() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = act(&server, "save", owner.clone(), room.id, "kitchen").await;
     assert_eq!(status, StatusCode::OK);
+    // Nothing new to keep: the save keeps nothing, and the room still hears it.
+    let (status, again) = act(&server, "save", owner.clone(), room.id, "kitchen").await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["saved"], json!([]));
     let later = say(
         &server,
         mina.clone(),
@@ -417,6 +431,18 @@ async fn every_save_and_export_leaves_a_room_notice() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{promoted}");
+    // The same turn again: it is already kept, and the room hears this save
+    // too (Astra #1392, P2).
+    let (status, again) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/promote",
+        owner_door.clone(),
+        Some(&json!({ "session_ref": key, "turn": later.to_hex() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, promoted);
     let (status, flipped) = call(
         &server,
         "POST",
@@ -448,6 +474,8 @@ async fn every_save_and_export_leaves_a_room_notice() {
         [
             ("exported".to_owned(), mina_hex),
             ("saved_talk".to_owned(), owner_hex.clone()),
+            ("saved_talk".to_owned(), owner_hex.clone()),
+            ("saved_turn".to_owned(), owner_hex.clone()),
             ("saved_turn".to_owned(), owner_hex.clone()),
             ("saving_from_here".to_owned(), owner_hex.clone()),
             ("exported".to_owned(), owner_hex),
@@ -488,6 +516,50 @@ async fn every_save_and_export_leaves_a_room_notice() {
     let alone = server.vault().off_record_session("alone").unwrap().unwrap();
     assert!(alone.notices.is_empty());
     assert!(alone.room.is_none());
+}
+
+/// The owner's 1:1 with their own companion has nobody else to tell, in a
+/// room as out of one: a room holding only the owner and this vault's own
+/// agent posts no notice. An agent that a contact is About acts for that
+/// contact's person, so once a contact names it, it is someone else's agent
+/// and the room hears every act again.
+#[tokio::test]
+async fn a_room_with_only_the_owner_and_their_own_agent_posts_no_notice() {
+    let (_dir, server) = auth_test_server();
+    let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
+    let companion_id = agent(&server, "companion");
+    let room = conversation(&server, owner_id, &[owner_id, companion_id]);
+    let owner = slip("owner", owner_id, "human");
+    let companion = slip("companion", companion_id, "agent");
+
+    start(&server, owner.clone(), room, "den").await;
+    say(&server, owner.clone(), room, "den", 100, SECRET_WORDS).await;
+    for (path, who) in [
+        ("suggest-save", companion),
+        ("export", owner.clone()),
+        ("save", owner.clone()),
+    ] {
+        let (status, reply) = act(&server, path, who, room, "den").await;
+        assert_eq!(status, StatusCode::OK, "{path}: {reply}");
+    }
+    assert!(
+        notices(&server, owner.clone(), room, "den")
+            .await
+            .is_empty()
+    );
+
+    let contact = EntityId::now();
+    seed_counterparty_contact(&server, contact, EntityId::now(), "visitor@example.com");
+    server
+        .vault()
+        .put_edge(&contact, oneiron::EdgeKind::About, &companion_id, 1.0)
+        .unwrap();
+    let (status, file) = act(&server, "export", owner.clone(), room, "den").await;
+    assert_eq!(status, StatusCode::OK, "{file}");
+    assert_eq!(
+        notices(&server, owner, room, "den").await,
+        [("exported".to_owned(), owner_id.to_hex())]
+    );
 }
 
 /// The agent may suggest a save, and everyone in the room sees it. The
