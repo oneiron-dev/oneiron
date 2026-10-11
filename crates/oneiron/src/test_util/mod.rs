@@ -381,7 +381,7 @@ pub(crate) fn clear_test_contact(vault: &Vault, member: EntityId) {
     let contact = EntityId::now();
     let record = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
         EntityId::now(),
-        &format!("{}@example.test", member.to_hex()),
+        format!("{}@example.test", member.to_hex()),
         1,
     )
     .expect("contact record");
