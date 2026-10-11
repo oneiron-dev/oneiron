@@ -44,6 +44,7 @@ mod reactive;
 mod relay_widen;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
+mod run_gate;
 mod run_tree;
 mod support_contract;
 mod support_mcp;

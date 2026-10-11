@@ -523,6 +523,62 @@ fn n6_a_lease_from_another_run_is_refused_before_the_provider() {
     assert_eq!(world.provider.sent().len(), 0);
 }
 
+/// Runs on one meter share its line, never their permits: run A's permit
+/// does not start at the gate of a run that shares A's meter, even one that
+/// never declared A's teacher.
+#[test]
+fn n6_a_permit_from_a_run_on_the_same_meter_is_refused_before_the_provider() {
+    let provider = FakeProvider::new();
+    let meter = crate::llm::BudgetGuard::with_reserve_units(
+        "shared-line",
+        line().limit_units,
+        line().reserve_units,
+        crate::llm::BudgetExhaustionPolicy::Suspend,
+    );
+    let receipts = Arc::new(MemoryReceipts::default());
+    let start = |run: &str, teacher: &str| {
+        RunAdmission::with_meter(
+            run,
+            RunDeclaration::declared(line()).with_teachers(teachers(&[teacher], &host_aliases())),
+            meter.clone(),
+            None,
+            receipts.clone(),
+        )
+    };
+    let a = start("run-a", SMALL);
+    let b = start("run-b", LARGE);
+    let permit = a
+        .admit(RunCall {
+            selector: None,
+            request: &request(SMALL),
+            offer: &offer(SMALL),
+        })
+        .expect("run A permit");
+    let gated_b = b.gate(provider.clone(), &offer(SMALL));
+    assert_eq!(
+        block_on(gated_b.generate(request(SMALL), permit.lease())).map(|_| ()),
+        Err(LlmError::BudgetDenied(BudgetDenied::LeaseInvalid))
+    );
+    assert!(
+        provider.sent().is_empty(),
+        "a foreign permit reached the fake"
+    );
+    assert!(receipts.rows().iter().any(|row| row.run == "run-b"
+        && matches!(
+            row.event,
+            RunEvent::Denied {
+                reason: RunDenied::Dispatch {
+                    refused: DispatchRefused::ForeignLease
+                },
+                ..
+            }
+        )));
+    // At its own run's gate the permit starts, once.
+    let gated_a = a.gate(provider.clone(), &offer(SMALL));
+    assert!(block_on(gated_a.generate(request(SMALL), permit.lease())).is_ok());
+    assert_eq!(provider.sent().len(), 1);
+}
+
 #[test]
 fn n7_a_settled_aborted_or_cloned_permit_dispatches_at_most_once() {
     let world = World::new();

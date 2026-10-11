@@ -573,3 +573,106 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     assert!(name_claims(&vault, &subject).is_empty());
     host.shutdown().await;
 }
+
+/// The generative seat on two rungs, the first failing and the second
+/// answering; each workflow step's line is `step_units`.
+fn two_rung_steps(failing: &FakeLlm, answering: &FakeLlm, step_units: u64) -> ModelsConfig {
+    models_toml(&format!(
+        r#"
+[providers.first]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.second]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
+[dreamer]
+enabled = false
+[workflows]
+retry_backoff_secs = 0
+step_budget_units = {step_units}
+"#,
+        failing.base_url, answering.base_url
+    ))
+}
+
+/// Runs a one-step workflow under `config` until it stops, and returns the
+/// run receipts its step wrote.
+async fn one_step(config: &ModelsConfig) -> Vec<oneiron::llm::run_admission::RunReceipt> {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+    use oneiron::llm::run_admission::MemoryReceipts;
+    let (_dir, vault) = rooted_vault();
+    let only = saved_agent(&vault, "gated", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("gated", vec![only]).unwrap(),
+            2,
+        )
+        .unwrap();
+    let receipts = Arc::new(MemoryReceipts::default());
+    let host = AiHost::start_receipted(vault.clone(), Some(config), true, receipts.clone()).await;
+    let dispatcher = AgentDispatcher::new(&vault);
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("gated-test".into()),
+            run_id: Some("gated-test".into()),
+            now: 10,
+        })
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty()))
+        .await,
+        "the workflow never stopped; status {:?}",
+        host.handle().status().workflows
+    );
+    host.shutdown().await;
+    receipts.rows()
+}
+
+fn run_events(rows: &[oneiron::llm::run_admission::RunReceipt]) -> Vec<&'static str> {
+    use oneiron::llm::run_admission::RunEvent;
+    rows.iter()
+        .map(|row| match row.event {
+            RunEvent::Admitted(_) => "admitted",
+            RunEvent::Denied { .. } => "denied",
+            RunEvent::Dispatched { .. } => "dispatched",
+            RunEvent::Settled { .. } => "settled",
+            RunEvent::Revised { .. } => "revised",
+        })
+        .collect()
+}
+
+/// A step's call falls through a failing rung to an answering one: two
+/// provider calls, each admitted, dispatched and settled on its own permit.
+#[tokio::test]
+async fn a_workflow_step_writes_one_dispatched_row_per_provider_call() {
+    let failing = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let answering = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::text("word"))).await;
+    let rows = one_step(&two_rung_steps(&failing, &answering, 100_000)).await;
+    assert_eq!((failing.seen().len(), answering.seen().len()), (1, 1));
+    let call = ["admitted", "dispatched", "settled"];
+    assert_eq!(run_events(&rows), [call, call].concat());
+}
+
+/// A step line of one reservation: the failing rung spends it, so the
+/// answering rung's admission is denied with a row and it is never sent.
+#[tokio::test]
+async fn a_step_rung_its_line_cannot_cover_is_denied_and_never_sent() {
+    let failing = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let answering = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::text("word"))).await;
+    let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
+    let rows = one_step(&two_rung_steps(&failing, &answering, reserve)).await;
+    assert_eq!(failing.seen().len(), 1);
+    assert!(answering.seen().is_empty(), "the second rung went out");
+    assert_eq!(
+        run_events(&rows),
+        ["admitted", "dispatched", "settled", "denied"]
+    );
+}
