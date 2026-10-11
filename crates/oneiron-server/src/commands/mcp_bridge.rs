@@ -50,14 +50,6 @@ const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 /// The largest answer the bridge takes from the server for one request.
 const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
 
-/// Credential variables curl never inherits from this process, beside the
-/// two the operator named: the defaults, and the host's issuer key.
-const WITHHELD_ENV: [&str; 3] = [
-    "ONEIRON_SECRET",
-    "ONEIRON_BINDING_KEY",
-    "ONEIRON_AUTH_SECRET",
-];
-
 /// The `initialize` the bridge sends for itself when a tool call arrives
 /// before it has seen the client's own.
 const BRIDGE_INITIALIZE: &str =
@@ -218,8 +210,9 @@ struct Bridge {
     /// How long one request may take, and how long its answer may stall.
     deadline: Duration,
     idle: Duration,
-    /// Variables curl does not inherit: every name a credential may be in.
-    withheld_env: Vec<String>,
+    /// The two variables the operator named for the credential, which curl
+    /// does not inherit (nor any default credential variable).
+    named_env: Vec<String>,
     /// The `actor` block the server returned at `initialize`, as JSON text.
     actor: Mutex<Option<String>>,
 }
@@ -250,11 +243,7 @@ impl Bridge {
             // The slip and seed stay in this process: curl gets the slip and
             // a signed proof on its config stdin, and no variable either may
             // be in.
-            withheld_env: [&args.secret_env, &args.binding_key_env]
-                .into_iter()
-                .cloned()
-                .chain(WITHHELD_ENV.map(str::to_owned))
-                .collect(),
+            named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
             actor: Mutex::new(None),
         })
     }
@@ -366,11 +355,14 @@ impl Bridge {
             deadline: self.deadline,
             idle: self.idle,
             max_reply_bytes: MAX_REPLY_BYTES,
-            withheld_env: &self.withheld_env,
         };
-        let (output, status) =
-            api::post_json_captured(&self.endpoint, &self.token, &binding, body, &bounds)
-                .map_err(|cut| self.refusal_for(cut))?;
+        let credential = api::CurlCredential {
+            secret: Some(&self.token),
+            binding: Some(&binding),
+            env: &self.named_env,
+        };
+        let (output, status) = api::post_json_captured(&self.endpoint, credential, body, &bounds)
+            .map_err(|cut| self.refusal_for(cut))?;
         match output.status.code() {
             // `--fail-with-body`: an HTTP error status, with the server's body.
             Some(0 | api::CURL_HTTP_ERROR_EXIT) => Ok(Reply {
@@ -566,22 +558,12 @@ fn credential_env(name: &str) -> anyhow::Result<String> {
 }
 
 /// The credential file holds the one-string form and nothing else, and only
-/// its owner may read it: a file the agent's other users can read is a
-/// credential they hold too.
+/// its owner may read it, by its mode and by any ACL: a file the agent's
+/// other users can read is a credential they hold too.
 fn read_credential_file(path: &Path) -> anyhow::Result<(String, String)> {
     let mut file = std::fs::File::open(path)
         .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = file.metadata()?.permissions().mode();
-        anyhow::ensure!(
-            mode & 0o077 == 0,
-            "{} can be read by other users (mode {:o}); run `chmod 600` on it",
-            path.display(),
-            mode & 0o777
-        );
-    }
+    super::credential_file::admit(path, &file)?;
     let mut text = String::new();
     file.read_to_string(&mut text)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
