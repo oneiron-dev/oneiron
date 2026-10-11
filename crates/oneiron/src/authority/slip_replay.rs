@@ -93,7 +93,8 @@ pub enum ProofClockRecovery {
     /// Wall time is at or past the floor: nothing to recover.
     NotAhead { floor: u64, wall: u64 },
     /// Nonce rows of proofs signed up to `forgotten_before` are gone: the
-    /// host clock stayed ahead for over a day while proofs were admitted.
+    /// host clock stayed ahead for over a day while proofs were admitted, or
+    /// admissions that kept rows for the window only admitted them.
     /// Lowering the clock would reopen those proofs, so nothing changed, and
     /// fresh proofs get in once wall time reaches `floor`.
     Forgotten {
