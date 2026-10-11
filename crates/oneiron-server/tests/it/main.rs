@@ -3,6 +3,7 @@
 
 mod agent_credentials;
 mod ai_serve;
+mod api_cli;
 mod booking_agent_api;
 mod campaign_surface_oracle;
 mod core_discover;
@@ -14,6 +15,9 @@ mod history_import;
 #[cfg(unix)]
 mod host_re_root;
 mod import_claims;
+// The wake ledger talks to Hypnos over a Unix socket.
+#[cfg(unix)]
+mod managed_ledger_wire;
 mod mcp_oracle;
 // The credential file's owner-only mode and SIGTERM are Unix-only.
 #[cfg(unix)]

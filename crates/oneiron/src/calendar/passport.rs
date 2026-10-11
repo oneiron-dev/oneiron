@@ -427,17 +427,63 @@ fn is_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, Calendar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::calendar::claims::CalendarPassportDirection;
+    use crate::calendar::test_support::{CalendarEventFixture, open_calendar_vault};
 
     #[test]
-    fn index_key_is_prefixed_sha256_of_the_uid() {
-        let digest = passport_digest("uid-1@example.com");
-        let key = PASSPORT_INDEX.key_bytes(&digest);
-        assert!(key.starts_with(side_table::CALENDAR_PASSPORT_UID_INDEX.prefix));
-        assert_eq!(
-            key.len(),
-            side_table::CALENDAR_PASSPORT_UID_INDEX.prefix.len() + 32
-        );
-        assert_ne!(digest, passport_digest("uid-2@example.com"));
-        assert_eq!(digest, passport_digest("uid-1@example.com"));
+    fn passport_uid_index_pins_literal_key_and_survives_vault_reopen() {
+        let uid = "uid-1@example.com";
+        let digest: [u8; 32] = [
+            0x66, 0x56, 0xa0, 0x0b, 0xd3, 0x3b, 0x8a, 0xd1, 0x86, 0xc8, 0x2a, 0x6a, 0xbe, 0xc0,
+            0xc2, 0x74, 0x2d, 0xc4, 0x8b, 0xf5, 0x8c, 0x34, 0xab, 0x07, 0x54, 0x7f, 0x2d, 0x16,
+            0x62, 0x9a, 0x13, 0xbe,
+        ];
+        let key = [b"calendar.passport.v1:".as_slice(), digest.as_slice()].concat();
+        let (dir, vault) = open_calendar_vault();
+        let event = CalendarEventFixture::new(0x52, "UID index fixture", 100, 200).store(&vault);
+        let passport = CalendarPassportValue {
+            system: "fixture".to_owned(),
+            uid: uid.to_owned(),
+            last_sequence: 3,
+            content_hash: [7; 32],
+            direction: CalendarPassportDirection::Outbound,
+            last_seen_at: 100,
+            presence: CalendarPassportPresence::Live,
+        };
+        let claim = crate::ClaimBody::new(
+            PREDICATE_CALENDAR_PASSPORT,
+            crate::ClaimSubject::Entity(event),
+            encode_passport_value(&passport),
+            1.0,
+            crate::ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        let claim_id = EntityId::now();
+        vault
+            .put_claim(
+                &claim_id,
+                &claim,
+                crate::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )
+            .unwrap();
+        index_passport_uid(&vault, uid, &event).unwrap();
+        {
+            let txn = vault.store.env.read_txn().unwrap();
+            let stored = vault.store.vault_meta.get(&txn, &key).unwrap().unwrap();
+            assert_eq!(stored.as_ref(), event.as_bytes());
+        }
+        drop(vault);
+        let reopened = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        {
+            let txn = reopened.store.env.read_txn().unwrap();
+            let stored = reopened.store.vault_meta.get(&txn, &key).unwrap().unwrap();
+            assert_eq!(stored.as_ref(), event.as_bytes());
+        }
+        assert_eq!(resolve_event_by_uid(&reopened, uid).unwrap(), Some(event));
     }
 }

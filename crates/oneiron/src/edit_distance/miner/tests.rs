@@ -12,6 +12,7 @@ use crate::edit_distance::{
     put_finalized_proposal_text,
 };
 use crate::error::GateError;
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 
@@ -343,45 +344,47 @@ fn a_content_cluster_mints_a_gated_skill_edit_proposal() -> Result<()> {
 
 // ─── dedup + hysteresis ─────────────────────────────────────────────────
 
-/// The crash-replay property, at the level a test can observe it: because a
-/// proposal and its mint-mark commit in ONE transaction, the only reachable
-/// states are BOTH and NEITHER — so a replay finds the mark and emits once.
-///
-/// It does not kill the process mid-transaction; the harness has no abort seam.
-/// What it checks is the invariant that guarantee buys, across three passes that
-/// each see genuinely new evidence: exactly one live proposal, and a mark that
-/// names it.
 #[test]
-fn a_replayed_pass_emits_once_and_leaves_no_half_state() -> Result<()> {
-    let (_dir, vault) = temp_vault();
+fn aborted_miner_pass_reopens_without_claim_evidence_or_mint_mark() -> Result<()> {
+    let (dir, vault) = temp_vault();
     let actor = put_actor(&vault);
     let run = miner_run(&vault);
     land_sign_offs(&vault, actor, "outbound", 3)?;
-
-    for round in 0..3_usize {
-        sign_off(
-            &format!("gate:replay-{round}"),
-            "outbound",
-            actor,
-            10 + round,
-            300 + round as u64,
-        )
-        .land(&vault)?;
-        run_substitution_miner(&vault, &run)?;
-
-        let claims = preference_ids(&vault, &actor)?;
-        assert_eq!(claims.len(), 1, "a replay never double-proposes");
-        let cluster = sign_off_cluster(&vault, "outbound")?;
-        let rtxn = vault.store.env.read_txn()?;
-        let mark = mint_mark_in_txn(&vault, &rtxn, &cluster_handle(&cluster))?
-            .expect("the emission left a mark");
-        assert_eq!(mark.kind, MARK_KIND_PREFERENCE);
-        assert_eq!(
-            mark.reference,
-            claims[0].to_hex(),
-            "the mark names the claim it committed with"
-        );
+    let cluster = sign_off_cluster(&vault, "outbound")?;
+    let handle = cluster_handle(&cluster);
+    let evidence_id = mined_evidence_record_id(&handle)?;
+    let before_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
+    assert!(vault.get(&evidence_id)?.is_none());
+    let mut refused_run = run.clone();
+    let absent_agent = EntityId::now();
+    assert!(vault.get_entity_type(&absent_agent)?.is_none());
+    refused_run.agent = WriteActor::new(absent_agent, EdgeActorClass::Agent);
+    assert!(run_substitution_miner(&vault, &refused_run).is_err());
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    assert_eq!(reopened.entities_by_type(ENTITY_TYPE_CLAIM)?, before_claims);
+    assert!(preference_rows(&reopened, &actor)?.is_empty());
+    assert!(reopened.get(&evidence_id)?.is_none());
+    {
+        let rtxn = reopened.store.env.read_txn()?;
+        assert!(mint_mark_in_txn(&reopened, &rtxn, &handle)?.is_none());
     }
+    run_substitution_miner(&reopened, &run)?;
+    let rows = preference_rows(&reopened, &actor)?;
+    assert_eq!(rows.len(), 1);
+    let claim_id = rows[0].0;
+    drop(reopened);
+    let committed = Vault::open(dir.path(), VaultConfig::default())?;
+    assert_eq!(preference_rows(&committed, &actor)?[0].0, claim_id);
+    assert!(committed.get(&evidence_id)?.is_some());
+    {
+        let rtxn = committed.store.env.read_txn()?;
+        let mark = mint_mark_in_txn(&committed, &rtxn, &handle)?.unwrap();
+        assert_eq!(mark.kind, MARK_KIND_PREFERENCE);
+        assert_eq!(mark.reference, claim_id.to_hex());
+    }
+    run_substitution_miner(&committed, &run)?;
+    assert_eq!(preference_rows(&committed, &actor)?.len(), 1);
     Ok(())
 }
 
