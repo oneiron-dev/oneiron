@@ -83,7 +83,7 @@ pub(super) fn setup_tool_schema() -> Value {
             "page": page_request_schema(),
             "cache": cache_hint_schema(),
         }),
-        &["schema_version", "actor", "consent"],
+        &["schema_version", "consent"],
     )
 }
 
@@ -103,7 +103,7 @@ pub(super) fn execute_code_tool_schema() -> Value {
             "page": page_request_schema(),
             "cache": cache_hint_schema(),
         }),
-        &["schema_version", "actor", "consent", "run_ref", "task"],
+        &["schema_version", "consent", "run_ref", "task"],
     )
 }
 
@@ -139,9 +139,9 @@ pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
         "properties": Value::Object(properties),
     });
     let required: &[&'static str] = if tool.required_fields().is_empty() {
-        &["schema_version", "actor", "consent"]
+        &["schema_version", "consent"]
     } else {
-        &["schema_version", "actor", "consent", "arguments"]
+        &["schema_version", "consent", "arguments"]
     };
     tool_schema_root_owned(
         format!(

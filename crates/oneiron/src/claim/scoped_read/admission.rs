@@ -305,7 +305,9 @@ impl<'a> ScopedRead<'a> {
         if now < claims.issued_at || now >= claims.expires_at {
             return Ok(false);
         }
-        let fold = self.vault.authority_fold_readonly_in_txn(txn)?;
+        // The shared view of this snapshot's fold: a copy of the fold costs
+        // as much as the vault has agents, and this runs once per candidate.
+        let fold = self.vault.authority_view_readonly_in_txn(txn)?;
         if fold.vault_id != Some(claims.vault_id) {
             return Ok(false);
         }

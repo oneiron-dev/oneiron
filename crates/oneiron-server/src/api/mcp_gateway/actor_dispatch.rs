@@ -369,9 +369,7 @@ pub(crate) async fn execute_mcp_tool(
         McpValidatedToolArgs::Setup(_) => {
             mcp_credential_gate(server, actor, true, McpCallEffect::Reads)?;
         }
-        McpValidatedToolArgs::ExecuteCode(_) => {
-            mcp_credential_gate(server, actor, false, McpCallEffect::Commits)?;
-        }
+        McpValidatedToolArgs::ExecuteCode(_) => mcp_execute_code_gate(server, actor)?,
     }
     match args {
         McpValidatedToolArgs::Setup(args) => execute_mcp_setup(server, *args, actor).await,
@@ -380,6 +378,15 @@ pub(crate) async fn execute_mcp_tool(
         }
         McpValidatedToolArgs::Verb(args) => execute_mcp_generated_verb(server, *args, actor).await,
     }
+}
+
+/// `execute_code`'s credential gate: a run commits at once, so it needs the
+/// whole record scope and Write.
+pub(super) fn mcp_execute_code_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_credential_gate(server, actor, false, McpCallEffect::Commits)
 }
 
 /// One generated verb's credential gate, whichever door the call arrived at.
