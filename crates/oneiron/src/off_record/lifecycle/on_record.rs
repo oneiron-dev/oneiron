@@ -2,9 +2,10 @@
 //! its stretch on record ("from here on"): later turns land in this vault,
 //! which is theirs. The saving stays bound to them. Every landing checks
 //! again, in its own transaction, that they own this vault on a live proof
-//! and are still in the room; checking only who speaks would keep saving for
-//! someone who has left. Once they no longer hold, saving stops: the stretch
-//! goes back off record and the room hears `saving_stopped`.
+//! and are still in the room, in the membership they saved in; checking only
+//! who speaks would keep saving for someone who has left. Once they no longer
+//! hold, saving stops: the stretch goes back off record and the room hears
+//! `saving_stopped`. Joining the room again does not restart it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -25,15 +26,21 @@ use super::types::{OffRecordMode, OffRecordNoticeAct};
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct OnRecordSaver {
     room: EntityId,
+    /// Where the join that opened the membership they put the room on record
+    /// in sits in the room's ledger. The saving is bound to that membership.
+    joined: u64,
     owner: crate::consent::AuthenticatedOwner,
 }
 
 impl OnRecordSaver {
     /// Whether, in `txn`, the saver still owns this vault on a live proof
-    /// and is on the room's roster.
+    /// and is still in the room in the membership they saved in. Leaving
+    /// ends the saving for good: joining again does not bring it back.
     pub(crate) fn holds_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
         match self.owner.revalidate_as_vault_owner_in_txn(vault, txn) {
-            Ok(()) => is_member_in_txn(vault, txn, self.room, self.owner.actor()),
+            Ok(()) => Ok(is_member_in_txn(vault, txn, self.room, self.owner.actor())?
+                && vault.current_join_in_txn(txn, self.room, self.owner.actor())?
+                    == Some(self.joined)),
             Err(Error::Gate(_)) => Ok(false),
             Err(error) => Err(error),
         }
@@ -110,7 +117,8 @@ impl<'vault> OffRecordSession<'vault> {
     /// the owner must be on the roster and own this vault, since the flip
     /// saves everyone's later turns into it. The saving stays bound to them:
     /// every later landing checks again that they own this vault on a live
-    /// proof and are still in the room, and once they are not, saving stops.
+    /// proof and are still in the room, in the membership they flipped in.
+    /// Once they are not, saving stops, and only a new flip starts it again.
     pub fn flip_on_record_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<()> {
         let in_room = self.room()?.is_some();
         {
@@ -122,7 +130,17 @@ impl<'vault> OffRecordSession<'vault> {
             }
         }
         let room = if in_room {
-            Some(self.require_in_room(owner.actor())?)
+            let room = self.require_in_room(owner.actor())?;
+            let joined = self
+                .vault
+                .current_join_in_txn(&self.vault.store.env.read_txn()?, room, owner.actor())?
+                .ok_or_else(|| {
+                    Error::OffRecord(OffRecordError::OffRecordNotInRoom {
+                        session_ref: self.session_ref.clone(),
+                        actor_ref: owner.actor().to_hex(),
+                    })
+                })?;
+            Some((room, joined))
         } else {
             None
         };
@@ -142,8 +160,9 @@ impl<'vault> OffRecordSession<'vault> {
         )?;
         // A room already on record hears nothing new, and keeps its saver.
         if was != OffRecordMode::OnRecord {
-            state.saver = room.map(|room| OnRecordSaver {
+            state.saver = room.map(|(room, joined)| OnRecordSaver {
                 room,
+                joined,
                 owner: owner.clone(),
             });
             let hearing = Hearing::now(self.vault, state.record.room);
