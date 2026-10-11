@@ -10,6 +10,7 @@
 //! on returned vectors. Two providers that differed in any of those would open
 //! two embedding spaces inside one vault.
 
+mod admitted;
 mod endpoint;
 mod remote;
 pub(crate) use local::prepare as prepare_local;
@@ -320,9 +321,12 @@ impl EmbedderSlot {
 
     /// The section's remote rung, if it configures one, held to the vault's
     /// model and to the space the vault admits from the provider
-    /// ([`Self::ensure_ready`]).
-    pub(crate) fn remote_rung(&self) -> oneiron::Result<Option<oneiron::embed::RemoteRung>> {
-        build_remote_rung(&self.config, Arc::clone(&self.rung_hold))
+    /// ([`Self::ensure_ready`]). Its batches' run rows go to `receipts`.
+    pub(crate) fn remote_rung(
+        &self,
+        receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+    ) -> oneiron::Result<Option<oneiron::embed::RemoteRung>> {
+        build_remote_rung(&self.config, Arc::clone(&self.rung_hold), receipts)
     }
 
     /// Embeds a query, or says why it cannot.
@@ -407,8 +411,12 @@ fn engine_locality(config: crate::config::EmbedderLocality) -> EmbedderLocality 
 /// `serve`: filling one vault from two embedding spaces is not recoverable, so
 /// it is refused before anything is written. An UNREACHABLE remote is logged and
 /// started anyway — the vault answers lexical and graph reads meanwhile, which
-/// is the two-tier write rule, not a degraded mode.
-pub(crate) fn build_slot(config: Option<&EmbedderConfig>) -> anyhow::Result<Option<EmbedderSlot>> {
+/// is the two-tier write rule, not a degraded mode. The remote rung's probe is
+/// a paid call like its batches, its rows written to `receipts`.
+pub(crate) fn build_slot(
+    config: Option<&EmbedderConfig>,
+    receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+) -> anyhow::Result<Option<EmbedderSlot>> {
     let Some(config) = config else {
         return Ok(None);
     };
@@ -434,6 +442,11 @@ pub(crate) fn build_slot(config: Option<&EmbedderConfig>) -> anyhow::Result<Opti
     }
     if let Some(remote) = &config.remote {
         let http = endpoint::HttpEmbedder::from_config(&remote.endpoint_config(config))?;
+        http.pay_through(Arc::new(admitted::AdmittedRequests::unmetered(
+            remote,
+            oneiron::embed::Embedder::locality(&*http),
+            receipts,
+        )?));
         // Unreachable routes can fall back locally; a reachable wrong model cannot.
         endpoint::probe_endpoint(&http)?;
     }

@@ -13,7 +13,7 @@
 
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use oneiron::config::VectorEvidenceFloors;
@@ -207,6 +207,17 @@ impl Listing {
     }
 }
 
+/// The door each embedding request of a paid remote goes through, admitted
+/// before it is sent and settled after ([`HttpEmbedder::pay_through`]).
+pub(crate) trait PaidRequests: Send + Sync {
+    /// Sends `texts` by `post`, which makes exactly one request.
+    fn send(
+        &self,
+        texts: &[&str],
+        post: &mut dyn FnMut() -> oneiron::Result<Vec<Vec<f32>>>,
+    ) -> oneiron::Result<Vec<Vec<f32>>>;
+}
+
 pub(crate) struct HttpEmbedder {
     common: EmbedderCommon,
     endpoint: String,
@@ -225,6 +236,9 @@ pub(crate) struct HttpEmbedder {
     admitted: Mutex<Admitted>,
     client: reqwest::blocking::Client,
     truncations: AtomicU64,
+    /// A remote's paid door: every embedding request goes through it once it
+    /// is set. An on-device endpoint has none.
+    paid: OnceLock<Arc<dyn PaidRequests>>,
 }
 
 impl HttpEmbedder {
@@ -312,6 +326,7 @@ impl HttpEmbedder {
             admitted: Mutex::new(Admitted::Unchecked),
             client,
             truncations: AtomicU64::new(0),
+            paid: OnceLock::new(),
         }))
     }
 
@@ -401,6 +416,14 @@ impl HttpEmbedder {
         *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Rung(hold);
     }
 
+    /// Sends every embedding request of this remote through `door`, from
+    /// now on. A door set once stays.
+    pub(crate) fn pay_through(&self, door: Arc<dyn PaidRequests>) {
+        if self.paid.set(door).is_err() {
+            tracing::warn!(endpoint = %self.endpoint, "a remote embedder's paid door is set once");
+        }
+    }
+
     /// Reads the remote's `/models` listing and keeps it. A listing that does
     /// not answer, or answers with a failure, is an error and keeps nothing:
     /// it is asked again next time. A remote with no listing route, or one
@@ -451,8 +474,16 @@ impl HttpEmbedder {
         }
     }
 
-    /// Posts `texts`; the answer is held to what the vault admitted.
+    /// Posts `texts` as one request, through the paid door when this remote
+    /// has one; the answer is held to what the vault admitted.
     fn post_embeddings(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Vec<Vec<f32>>> {
+        match self.paid.get() {
+            Some(door) => door.send(texts, &mut || self.post_once(texts, side)),
+            None => self.post_once(texts, side),
+        }
+    }
+
+    fn post_once(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.endpoint);
         let body = EmbeddingsRequest {
             model: &self.model_key,
