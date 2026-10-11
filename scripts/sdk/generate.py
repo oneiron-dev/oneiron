@@ -772,9 +772,25 @@ export function agentVerbs(invoke: AgentInvoke) {
     files.update({path: None for path in ['crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs', 'crates/oneiron-server/src/mcp/agent_catalog.rs']})
     return files
 
+# The code-mode declarations a model is taught and a shadow type check reads.
+# The engine renders each row's signature from its compiled input schema
+# (`code_mode_declarations`), which this script cannot see, and its test keeps
+# the checked-in copy current; here the copy must declare exactly the rows code
+# mode serves, so a table edit flags it without a build.
+CODE_MODE_DTS = 'crates/oneiron/src/task_verb/code-mode.d.ts'
+CODE_MODE_DTS_REGENERATE = 'ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron --lib code_mode_declarations_file_is_the_verb_table'
+def code_mode_dts_current():
+    declared, scope = set(), []
+    for line in (ROOT/CODE_MODE_DTS).read_text().splitlines():
+        text = line.strip()
+        if text.endswith('{'): scope.append(text.split()[-2].rstrip(':'))
+        elif text in ('}', '};'): scope.pop()
+        elif '(input: ' in text: declared.add('.'.join(scope[2:] + [text[:text.index('(')]]))
+    return declared == {r['name'] for r in ROWS + RUN_ROWS}
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');args=parser.parse_args()
-    stale=[]
+    stale=[] if code_mode_dts_current() else [f'{CODE_MODE_DTS} (regenerate: {CODE_MODE_DTS_REGENERATE})']
     for path,text in outputs().items():
         p=ROOT/path
         if text is None:
@@ -788,4 +804,6 @@ def main():
             p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
     if args.check and stale:
         raise SystemExit('SDK-GENERATED-STALE: '+', '.join(stale))
+    if not args.check and not code_mode_dts_current():
+        print(f'{CODE_MODE_DTS} is stale; regenerate: {CODE_MODE_DTS_REGENERATE}')
 if __name__=='__main__': main()
