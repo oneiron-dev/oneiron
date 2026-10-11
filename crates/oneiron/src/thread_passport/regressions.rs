@@ -700,7 +700,11 @@ fn a_thread_claim_about_a_custody_row_copies_none_of_it_unwiped() {
     raw.extend_from_slice(&[0; 24]);
     raw.extend_from_slice(VALUE);
     let mut txn = vault.store.env.write_txn().unwrap();
-    vault.store.entities.put(&mut txn, custody.as_bytes(), &raw).unwrap();
+    vault
+        .store
+        .entities
+        .put(&mut txn, custody.as_bytes(), &raw)
+        .unwrap();
     crate::ports::row_copies::watch(VALUE);
     let body = alias_body(custody, "thread-a", "thread-b");
     for replicated in [false, true] {

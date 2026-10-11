@@ -992,7 +992,12 @@ fn bulk_body_readers_never_hand_out_a_custody_row() {
     let (_tmp, vault) = temp_vault();
     let value = b"Zq8-custody-fixture-value";
     let id = vault
-        .register_secret(record("bulk-reader", CustodyClass::CrossVault, value, vec![]))
+        .register_secret(record(
+            "bulk-reader",
+            CustodyClass::CrossVault,
+            value,
+            vec![],
+        ))
         .expect("register");
     let err = vault
         .latest_entity_bodies_by_type(ENTITY_TYPE_SECRET_CUSTODY, 10, 100)
@@ -1003,7 +1008,9 @@ fn bulk_body_readers_never_hand_out_a_custody_row() {
     );
     let top = Scope::top();
     for view in [ScopeView::Normal, ScopeView::Debug] {
-        let rows = vault.records_in_scope(&top, &top, &top, view).expect("scoped read");
+        let rows = vault
+            .records_in_scope(&top, &top, &top, view)
+            .expect("scoped read");
         assert!(!rows.iter().any(|row| row.id == id), "{view:?}");
     }
     let exported = vault
