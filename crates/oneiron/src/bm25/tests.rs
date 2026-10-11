@@ -26,6 +26,7 @@ fn test_config() -> VaultConfig {
         embedding_model: None,
         embedding_transform: None,
         vector_evidence: crate::config::VectorEvidenceFloors::default(),
+        call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
         tagging: None,
         max_readers: 16,
         hnsw: HnswConfig {

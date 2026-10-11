@@ -1102,3 +1102,6 @@ async fn failed_rungs_spend_code_modes_meter() {
     .await;
     assert_eq!(all_failed, (2, 2), "the failed run, then none");
 }
+
+/// Call mode through code mode.
+mod call_mode;

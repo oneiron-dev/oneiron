@@ -66,6 +66,38 @@ pub fn check_query(query: &str) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// Longest recall deadline a request or a vault may name, in milliseconds:
+/// one minute. Past it a deadline stops being a cut and becomes a wait.
+pub const MAX_RECALL_DEADLINE_MS: u64 = 60_000;
+
+/// Refuses a recall deadline outside 1 to [`MAX_RECALL_DEADLINE_MS`].
+pub fn check_deadline_ms(deadline_ms: Option<u64>) -> Result<(), MemoryError> {
+    if deadline_ms.is_some_and(|ms| ms == 0 || ms > MAX_RECALL_DEADLINE_MS) {
+        return Err(deadline_out_of_range());
+    }
+    Ok(())
+}
+
+/// A binding's `deadline_ms` number as engine milliseconds. JavaScript has
+/// no integer type, so a fractional, non-finite or out-of-range value is
+/// refused here, before it narrows.
+pub fn check_deadline_ms_number(value: f64) -> Result<u64, MemoryError> {
+    // MAX_RECALL_DEADLINE_MS is far below 2^53, so the cast is exact.
+    let max = MAX_RECALL_DEADLINE_MS as f64;
+    if !value.is_finite() || value.fract() != 0.0 || !(1.0..=max).contains(&value) {
+        return Err(deadline_out_of_range());
+    }
+    // Proven finite, whole and within 1..=MAX_RECALL_DEADLINE_MS above.
+    Ok(value as u64)
+}
+
+fn deadline_out_of_range() -> MemoryError {
+    MemoryError::bad_request_with(
+        format!("deadline_ms must be a whole number between 1 and {MAX_RECALL_DEADLINE_MS}"),
+        &["Send the milliseconds the caller can wait, or omit deadline_ms for no deadline."],
+    )
+}
+
 /// Latest reference time a recall may name: 9999-12-31T23:59:59Z.
 pub const MAX_AS_OF_SECONDS: u64 = crate::temporal::TEMPORAL_MAX_REFERENCE_SECS;
 
