@@ -3113,7 +3113,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1
      }
     },
@@ -31946,7 +31946,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PackAdapter",
@@ -31956,7 +31956,7 @@
      "path": "src/skill_hub/pack_catalog/manifest.rs",
      "purpose": "Closed PACK.md manifest parser",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 1,
       "struct": 1
