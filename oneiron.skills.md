@@ -123,7 +123,7 @@ the host's curl rather than carrying an HTTP stack, so curl is required either w
 and plain `curl` is equivalent wherever the binary is absent.
 
 ```bash
-export ONEIRON_URL=http://127.0.0.1:3000
+export ONEIRON_URL=http://127.0.0.1:9090  # where `oneiron serve` listens by default
 export ONEIRON_SECRET='<logged-v2.slip-token>'  # the `api` CLI bearer environment
 export ONEIRON_BINDING_KEY='<64-hex-holder-seed>'  # keep outside argv and commits
 

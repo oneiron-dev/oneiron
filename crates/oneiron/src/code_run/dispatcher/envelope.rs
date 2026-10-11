@@ -156,6 +156,7 @@ impl HostSelfDispatcher<'_> {
                 body,
                 envelope,
                 can_resolve_pending_consent,
+                |_| Ok(()),
             ),
             ExecutorStorage::Session(binding) => binding.session.executor_check_write_gate(
                 &binding.route,
@@ -174,15 +175,21 @@ impl HostSelfDispatcher<'_> {
 /// canonical and post-flip session paths cannot drift into two gate bodies.
 /// The session side reaches it through
 /// [`OffRecordSession::executor_check_write_gate`], which owns the routing.
+///
+/// `landing` runs first in the gate's write transaction, before any decision
+/// is recorded: the decision is a durable write, so a session run's room
+/// keeps it only while the write it decides could land there.
 pub(crate) fn check_write_gate_against_vault(
     vault: &Vault,
     id: EntityId,
     body: &ClaimBody,
     envelope: &WriteEnvelope,
     can_resolve_pending_consent: bool,
+    landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
     validate_write_actor_binding(vault, envelope)?;
     let mut wtxn = vault.store.env.write_txn()?;
+    landing(&wtxn)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let gate_result = crate::gate::check_claim_policy_for_write(
         &vault.store,
