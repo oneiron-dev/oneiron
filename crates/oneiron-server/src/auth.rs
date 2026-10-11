@@ -299,6 +299,13 @@ impl CoreAuth {
         if scope != CoreScope::Read {
             self.require_unrestricted_record_scope()?;
         }
+        self.require_granted(scope)
+    }
+
+    /// [`Self::require`] for a caller that already judged the record bounds
+    /// its write carries (`require_record_scope_carried`): only the grant is
+    /// left to check.
+    pub(crate) fn require_granted(&self, scope: CoreScope) -> Result<(), ApiError> {
         if self.scopes.contains(&scope) {
             Ok(())
         } else {

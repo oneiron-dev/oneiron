@@ -461,6 +461,11 @@ fn mcp_credential_gate(
             "this facade cannot project the credential's record bounds",
         )
     })?;
-    auth.require(mcp_call_scope(server, actor, auth, effect))
-        .map_err(|_| mcp_proof_error())
+    let scope = mcp_call_scope(server, actor, auth, effect);
+    match bounds {
+        // The world and facet it carries were judged just above.
+        McpRecordBounds::Born => auth.require_granted(scope),
+        McpRecordBounds::Filtered | McpRecordBounds::Unrestricted => auth.require(scope),
+    }
+    .map_err(|_| mcp_proof_error())
 }
