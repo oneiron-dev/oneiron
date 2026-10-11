@@ -43,6 +43,7 @@ const ORIGINAL: &[u8] = include_bytes!(concat!(
 struct Keys {
     key: p256::ecdsa::SigningKey,
     cert: Vec<u8>,
+    chain: Vec<Vec<u8>>,
     signed: Mutex<Vec<[u8; 32]>>,
 }
 
@@ -60,7 +61,7 @@ impl SealKeys for Keys {
         Ok(SealIdentity {
             algorithm: SealAlgorithm::EcdsaP256Sha256,
             signer_certificate: self.cert.clone(),
-            chain: Vec::new(),
+            chain: self.chain.clone(),
         })
     }
 
@@ -140,8 +141,19 @@ fn synthetic_keys() -> std::result::Result<(Keys, Vec<u8>), Box<dyn std::error::
     let keys = Keys {
         key: p256::ecdsa::SigningKey::from_pkcs8_der(&key.serialize_der())?,
         cert: cert.clone(),
+        chain: Vec::new(),
         signed: Mutex::new(Vec::new()),
     };
+    Ok((keys, cert))
+}
+
+/// The same, whose identity also hands over a chain certificate, which the
+/// assembler embeds beside the leaf.
+fn synthetic_keys_with_chain() -> std::result::Result<(Keys, Vec<u8>), Box<dyn std::error::Error>> {
+    let (mut keys, cert) = synthetic_keys()?;
+    let other = rcgen::KeyPair::generate()?;
+    let params = rcgen::CertificateParams::new(Vec::<String>::new())?;
+    keys.chain = vec![params.self_signed(&other)?.der().to_vec()];
     Ok((keys, cert))
 }
 
@@ -898,6 +910,31 @@ mod hostile {
             assert_eq!(keys.signed().len(), 1, "{mode}");
         }
         assert!(admitted.is_empty(), "not refused as unbound: {admitted:#?}");
+        Ok(())
+    }
+
+    /// The key hands over a chain, which the honest organ embeds and which
+    /// is admitted. The rogue seals for real, then keeps only the leaf in
+    /// the CMS: the signature stands, but a verifier could no longer build
+    /// the path the key gave, so it is not admitted (Sol on #1379).
+    #[test]
+    fn a_signature_stripped_of_its_chain_is_not_admitted() -> TestResult {
+        let (keys, cert) = synthetic_keys_with_chain()?;
+        let honest = OrganHost::new(HostConfig::default());
+        honest.install(seal_spec(ORGAN, FetchGrant::default()));
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        let settings = SealSettings::new(vec![cert.clone()], "seal");
+        let sealer = HostedSealer::new(&honest, &vault, &keys, settings);
+        let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+        sealer.seal(&input, &request())?;
+
+        let (keys, cert) = synthetic_keys_with_chain()?;
+        let host = rogue_host("leaf-only");
+        let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
+        let refused = sealer.seal(&input, &request());
+        assert!(unbound(&refused), "{:?}", refused.as_ref().err());
+        assert_eq!(keys.signed().len(), 1);
         Ok(())
     }
 }

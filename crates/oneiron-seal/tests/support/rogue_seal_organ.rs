@@ -18,8 +18,9 @@
 //! - `drop-certs`: seals for real, then rebuilds the CMS in the hole
 //!   without its certificates;
 //! - `signed-data-v0`, `signer-info-v3`, `crls-empty`, `other-cert`,
-//!   `sig-alg-null`: seals for real, then rebuilds the CMS in the hole with
-//!   that one part of the envelope changed.
+//!   `sig-alg-null`, `leaf-only`: seals for real, then rebuilds the CMS in
+//!   the hole with that one part of the envelope changed (`leaf-only` keeps
+//!   the signer's certificate and drops its chain).
 //!
 //! Its `seal.verify` always passes.
 
@@ -60,6 +61,7 @@ mod rogue {
         CrlsEmpty,
         OtherCert,
         SignatureAlgorithmNull,
+        LeafOnly,
     }
 
     impl Mode {
@@ -75,6 +77,7 @@ mod rogue {
                 "crls-empty" => Some(Self::CrlsEmpty),
                 "other-cert" => Some(Self::OtherCert),
                 "sig-alg-null" => Some(Self::SignatureAlgorithmNull),
+                "leaf-only" => Some(Self::LeafOnly),
                 _ => None,
             }
         }
@@ -238,7 +241,8 @@ mod rogue {
                 | Mode::SignerInfoV3
                 | Mode::CrlsEmpty
                 | Mode::OtherCert
-                | Mode::SignatureAlgorithmNull => {
+                | Mode::SignatureAlgorithmNull
+                | Mode::LeafOnly => {
                     let backend = Backend {
                         asker: call.asker(),
                         identity: Mutex::new(None),
@@ -516,6 +520,26 @@ mod rogue {
                     }
                     info
                 }))?;
+            }
+            Mode::LeafOnly => {
+                let serial = match signed.signer_infos.0.iter().next().map(|info| &info.sid) {
+                    Some(cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(id)) => {
+                        id.serial_number.clone()
+                    }
+                    _ => return Ok(()),
+                };
+                let leaf = signed
+                    .certificates
+                    .take()
+                    .map(|set| set.0.into_vec())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|choice| {
+                        matches!(choice, cms::cert::CertificateChoices::Certificate(cert)
+                            if cert.tbs_certificate.serial_number == serial)
+                    });
+                signed.certificates =
+                    Some(cms::signed_data::CertificateSet(SetOfVec::from_iter(leaf)?));
             }
             Mode::ForgeSigns | Mode::Unsigned | Mode::AlterPrefix | Mode::AppendUpdate => {}
         }

@@ -374,8 +374,9 @@ fn expected_attributes(content: &[u8; 32], signer: &Signer) -> Vec<u8> {
 
 /// Whether a hole's hex holds one canonical CMS ContentInfo, then zero
 /// padding, in the one shape the native assembler emits: SignedData v1,
-/// detached id-data under SHA-256, X.509 certificates only (the key's among
-/// them), no revocation set, and one SignerInfo v1: that certificate's
+/// detached id-data under SHA-256, X.509 certificates only (the key's and
+/// every one of its chain among them), no revocation set, and one SignerInfo
+/// v1: that certificate's
 /// issuer and serial, the issued signature, over the issued attributes.
 /// Each algorithm is checked with its parameters (RFC 5754). The DER types
 /// accept any version, choice and parameter, so the shape is checked here
@@ -418,19 +419,23 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
         }
         SignerIdentifier::SubjectKeyIdentifier(_) => false,
     };
-    // signingCertificateV2 names the leaf: a verifier must find it here,
-    // among X.509 certificates only.
-    let carries_leaf = signed.certificates.as_ref().is_some_and(|set| {
-        set.0
+    // signingCertificateV2 names the leaf, and the chain the key gave is
+    // what a verifier builds its path from: both must be here, among X.509
+    // certificates only.
+    let carries_identity = signed.certificates.as_ref().is_some_and(|set| {
+        let held: Option<Vec<Vec<u8>>> = set
+            .0
             .iter()
-            .all(|choice| matches!(choice, CertificateChoices::Certificate(_)))
-            && set.0.iter().any(|choice| match choice {
-                CertificateChoices::Certificate(cert) => {
-                    cert.to_der().ok().as_deref()
-                        == Some(signer.identity.signer_certificate.as_slice())
-                }
-                CertificateChoices::Other(_) => false,
+            .map(|choice| match choice {
+                CertificateChoices::Certificate(cert) => cert.to_der().ok(),
+                CertificateChoices::Other(_) => None,
             })
+            .collect();
+        held.is_some_and(|held| {
+            std::iter::once(&signer.identity.signer_certificate)
+                .chain(&signer.identity.chain)
+                .all(|der| held.contains(der))
+        })
     });
     matches!((signed.to_der(), info.content.to_der()), (Ok(ours), Ok(theirs)) if ours == theirs)
         && signed.version == CmsVersion::V1
@@ -446,7 +451,7 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
         && is_algorithm(&signer_info.digest_alg, ID_SHA256, true)
         && is_algorithm(&signer_info.signature_algorithm, algorithm, null_parameters)
         && same_signer
-        && carries_leaf
+        && carries_identity
         && signer_info
             .signed_attrs
             .as_ref()
