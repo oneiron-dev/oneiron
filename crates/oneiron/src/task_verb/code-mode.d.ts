@@ -19,7 +19,7 @@ declare namespace self {
     peek(input: { group_ref: string }): Promise<unknown>;
     put_claim(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
     put_edge(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
-    recall(input: { as_of?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
+    recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
     receipts(input: { limit?: number | null }): Promise<unknown>;
     rooms: {
       claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
