@@ -178,7 +178,10 @@ pub struct RecallRequest {
 /// A door that can stop waiting at the deadline (an async server door) starts
 /// the clock when the request arrives, and answers with the last pack
 /// `on_cut` received: the empty one before the query embeds and retrieval
-/// runs, then the assembled one before the scope census.
+/// runs, then the assembled one before the scope census. Given `on_cut`, the
+/// recall takes it that its door answers at the deadline: past it, the recall
+/// stops at its next check and returns the empty pack, so it burns no time
+/// on an answer no one reads.
 pub struct RecallDoor<'a> {
     pub arrived: std::time::Instant,
     pub on_cut: Option<&'a (dyn Fn(crate::memory::MemoryPack) + Sync)>,

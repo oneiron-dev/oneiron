@@ -363,3 +363,58 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
     assert!(before.items.is_empty());
     assert_eq!(assembled.items, pack.items);
 }
+
+/// A door that stops waiting at the deadline has answered by then with the
+/// last pack recall published. A recall still running past it stops before
+/// it reads its items: it returns the pack published before retrieval, and
+/// publishes no other.
+#[test]
+fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
+    use crate::memory::{MemoryPack, RecallEffort};
+    use crate::retrieval_depth::SlowRetrievalStage;
+    use crate::store::RetrievalSignal;
+    use crate::task_verb::sdk::{RecallDoor, RecallRequest, recall_at_door};
+    use std::sync::Mutex;
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x8d);
+    let facade = facade_for(&vault, actor);
+    witness_said(&facade, 0x8e, "the lighthouse keeper rang twice", 2);
+    // The text stage finds the turn; the temporal stage after it stalls
+    // past the deadline.
+    vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
+        signal: RetrievalSignal::Temporal,
+        duration: std::time::Duration::from_millis(300),
+        yields: false,
+    }));
+    let published: Mutex<Vec<MemoryPack>> = Mutex::default();
+    let publish = |pack| published.lock().expect("published packs").push(pack);
+    let pack = recall_at_door(
+        &facade,
+        RecallRequest {
+            query: "lighthouse keeper".to_owned(),
+            effort: Some(RecallEffort::Call),
+            scope: None,
+            limit: Some(10),
+            format: None,
+            as_of: None,
+            deadline_ms: Some(100),
+        },
+        |_| None,
+        &RecallDoor {
+            arrived: std::time::Instant::now(),
+            on_cut: Some(&publish),
+        },
+    )
+    .expect("call-mode recall");
+    vault.arm_slow_retrieval_stage_for_test(None);
+    assert!(pack.items.is_empty(), "{pack:?}");
+    assert!(pack.retrieval_meta.partial);
+    assert!(pack.scope_honesty.census_capped);
+    let published = std::mem::take(&mut *published.lock().expect("published packs"));
+    let [before] = published.as_slice() else {
+        panic!("only the pack before retrieval: {published:?}");
+    };
+    assert!(before.items.is_empty());
+    assert_eq!(before.narrowing.applied, pack.narrowing.applied);
+}
