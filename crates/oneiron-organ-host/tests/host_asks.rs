@@ -778,6 +778,19 @@ fn an_answer_that_waits_for_the_writer_never_follows_a_revoked_cancel() {
     assert_eq!(host.status("probe").expect("installed").recent_crashes, 0);
 }
 
+/// Answers at once, and tells the organ so through a file.
+#[cfg(target_os = "linux")]
+struct Signal(std::path::PathBuf, AtomicUsize);
+
+#[cfg(target_os = "linux")]
+impl AskHandler for Signal {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        self.1.fetch_add(1, Ordering::SeqCst);
+        std::fs::write(self.0.join("handled"), b"").expect("signal");
+        Ok(Answered::default())
+    }
+}
+
 /// Linux: a Unix socket stops polling writable once more than a quarter
 /// of its send buffer waits unread, while a send blocks only at the whole
 /// buffer. So a call of half the buffer goes whole yet leaves the next
@@ -788,27 +801,34 @@ fn an_answer_that_waits_for_room_never_follows_its_calls_reply() {
     // Astra (#1378) P2: the call was checked in flight under the writer,
     // but its answer could then wait for room in the socket while the
     // reader took the call's reply, and go after it. The organ leaves this
-    // call unread in the socket, asks, replies while the answer waits for
-    // room, and only then reads. The answer must not go (the organ exits
-    // if it is answered), and the reply stands.
+    // call unread in the socket, asks, and replies once the handler has
+    // run; it reads again only once the call has returned. The answer must
+    // not go (the organ exits if it is answered), and the reply stands.
     let send_buffer: usize = std::fs::read_to_string("/proc/sys/net/core/wmem_default")
         .expect("wmem_default")
         .trim()
         .parse()
         .expect("a byte count");
     let (_dir, vault) = vault();
-    let host = rogue("--reply-while-full");
+    let signals = tempfile::tempdir().expect("signals");
+    let mut full_spec = spec(vec![AskGrant::new(ANSWER, 4)]);
+    full_spec.args = vec![
+        "--reply-while-full".into(),
+        signals.path().to_string_lossy().into_owned(),
+    ];
+    full_spec.verbs = vec!["organ.echo".into()];
+    let host = host(full_spec);
     host.warm("probe").expect("warm");
-    let slow = Slow(Duration::ZERO, AtomicUsize::new(0));
-    let asks = AskHandlers::none().with(ANSWER, &slow);
+    let signal = Signal(signals.path().to_owned(), AtomicUsize::new(0));
+    let asks = AskHandlers::none().with(ANSWER, &signal);
     let full = OrganCall {
         args: "x".repeat(send_buffer / 2).into(),
         ..echo(Duration::from_secs(20))
     };
-    let outcome = host
-        .call_with(&vault, full, Vec::new(), &asks)
-        .expect("the reply stands");
-    assert_eq!(slow.1.load(Ordering::SeqCst), 1);
+    let outcome = host.call_with(&vault, full, Vec::new(), &asks);
+    std::fs::write(signals.path().join("go"), b"").expect("signal");
+    let outcome = outcome.expect("the reply stands");
+    assert_eq!(signal.1.load(Ordering::SeqCst), 1);
     assert_eq!(outcome.receipt.asks.len(), 1);
     assert_eq!(
         outcome.receipt.asks[0].unanswered,

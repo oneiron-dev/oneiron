@@ -311,7 +311,7 @@ fn an_organ_that_stops_reading_cannot_hold_a_call_past_its_deadline() {
     host.warm("probe").expect("warm");
     // A call cut off part way stops the organ. One late before its first
     // byte (a host too loaded to send for a whole second) leaves it warm
-    // and in step: call again.
+    // and in step, which is right too: call again.
     for _ in 0..3 {
         let mut stuck = call(
             "organ.echo",
@@ -327,16 +327,13 @@ fn an_organ_that_stops_reading_cannot_hold_a_call_past_its_deadline() {
         assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
         // Within its deadline and the grace, and a margin for a loaded host.
         assert!(took < bound + Duration::from_secs(1), "{took:?}");
-        if !matches!(
-            host.status("probe").expect("installed").state,
-            OrganState::Warm
-        ) {
+        let status = host.status("probe").expect("installed");
+        assert_eq!(status.recent_crashes, 0);
+        if !matches!(status.state, OrganState::Warm) {
+            assert!(matches!(status.state, OrganState::Cold), "{status:?}");
             break;
         }
     }
-    let status = host.status("probe").expect("installed");
-    assert!(matches!(status.state, OrganState::Cold), "{status:?}");
-    assert_eq!(status.recent_crashes, 0);
 }
 
 #[test]

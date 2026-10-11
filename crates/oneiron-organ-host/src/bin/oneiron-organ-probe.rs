@@ -159,7 +159,8 @@ mod rogue {
     use std::io::Write;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::net::UnixStream;
-    use std::time::Duration;
+    use std::path::Path;
+    use std::time::{Duration, Instant};
 
     use oneiron_organ_protocol::{
         Ask, DEFAULT_FRAME_LIMIT, FromOrgan, HelloAck, Notes, OrganIdentity, Outcome, PROTOCOL,
@@ -318,13 +319,22 @@ mod rogue {
         });
     }
 
+    /// Waits up to 10 s for the test to create `path`.
+    fn signalled(path: &Path) {
+        let until = Instant::now() + Duration::from_secs(10);
+        while !path.exists() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// Asks for its first call without reading it, once the call has
     /// landed and fills the socket (the call is the first on the socket, so
-    /// its id is 1); replies to it 500 ms later, while the call still fills
-    /// the socket; and reads again 500 ms after that. The host's answer
-    /// waits for room while the reply is routed. Later calls get a reply at
-    /// once. It exits if it is ever sent an answer.
-    pub(super) fn reply_while_full() {
+    /// its id is 1). Once the test's handler has run (`signals/handled`)
+    /// and its answer has had 200 ms to start waiting for room, it replies,
+    /// while the call still fills the socket; it reads again only once the
+    /// test has its reply (`signals/go`). Later calls get a reply at once.
+    /// It exits if it is ever sent an answer.
+    pub(super) fn reply_while_full(signals: &Path) {
         let stream = socket();
         let Some(organ) = hello_organ(&stream) else {
             return;
@@ -343,12 +353,15 @@ mod rogue {
         }
         // The call went in one write; let all of it land.
         std::thread::sleep(Duration::from_millis(200));
-        for frame in [ask(1, 1), reply(1)] {
-            if send_frame(&stream, &frame, &[], DEFAULT_FRAME_LIMIT).is_err() {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(500));
+        if send_frame(&stream, &ask(1, 1), &[], DEFAULT_FRAME_LIMIT).is_err() {
+            return;
         }
+        signalled(&signals.join("handled"));
+        std::thread::sleep(Duration::from_millis(200));
+        if send_frame(&stream, &reply(1), &[], DEFAULT_FRAME_LIMIT).is_err() {
+            return;
+        }
+        signalled(&signals.join("go"));
         let mut first = true;
         while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
             match message {
@@ -447,7 +460,8 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         }
         Some("--reply-while-full") => {
-            rogue::reply_while_full();
+            let signals = std::env::args().nth(2).unwrap_or_default();
+            rogue::reply_while_full(std::path::Path::new(&signals));
             std::process::ExitCode::SUCCESS
         }
         Some("--ask-then-nap") => {
