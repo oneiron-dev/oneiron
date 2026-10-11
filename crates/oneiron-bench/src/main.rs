@@ -26,6 +26,9 @@
 //! * `swarm` — seeded one-vault, in-process write/recall/mixed agent curve.
 //! * `fleet` — authenticated fleet writes, recall and real held sockets, plus
 //!   paired full/resumed PPR measurements and receipt-derived regression floors.
+//! * `load` — the shipped server binary under synthetic load: facade ingest,
+//!   recall per grade and agent count, fairness and memory, as one JSON result
+//!   (`docs/ops/load-bench.md`).
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix is not shipped here; this binary only ships the bench skeleton,
@@ -41,6 +44,7 @@ mod beam;
 mod eval;
 mod fleet;
 mod interface_bench;
+mod load;
 mod oneironer_shadow;
 mod perf;
 mod retrieval_trace_export;
@@ -83,6 +87,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "teacher-probe" => teacher_probe::run(rest),
         [cmd, rest @ ..] if cmd == "fleet" => fleet::run(rest),
         [cmd, rest @ ..] if cmd == "swarm" => swarm::run(rest),
+        [cmd, rest @ ..] if cmd == "load" => load::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -152,6 +157,11 @@ fn print_help() {
                                        --out APPROVED.json\n\
                                        score pinned CoNLL BIO spans before releasing a teacher pin\n\
           fleet --help                authenticated fleet load and PPR pair receipts\n\
+          load run --server BIN --work DIR --out FILE.json\n\
+                                       the shipped server under synthetic load:\n\
+                                       ingest, recall per grade x agents, fairness,\n\
+                                       memory (docs/ops/load-bench.md)\n\
+          load compare A.json B.json  markdown table of two load results\n\
           swarm --matrix              three seeded trials each of write, recall,\n\
                                        mixed at 1/10/100/300 agents; JSONL\n\
           swarm --mode write|recall|mixed --agents 1|10|100|300\n\
