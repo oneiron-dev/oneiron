@@ -649,6 +649,7 @@ pub(crate) fn device_only_withholds(
             Ok(store
                 .sync_state
                 .get(txn, &format!("m:dw:{}", id.to_hex()))?
+                .as_deref()
                 .and_then(|label| std::str::from_utf8(label).ok()?.split_once('@'))
                 .and_then(|(_, world)| EntityId::from_hex(world).ok())
                 .is_some_and(|world| flagged.contains(&world)))
