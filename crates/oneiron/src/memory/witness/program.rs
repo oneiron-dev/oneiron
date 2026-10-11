@@ -8,7 +8,7 @@ use super::codec::{
     ImportStamp, encode_imported_turn_body, encode_witness_turn_body, import_stamp,
     incoming_turn_speaker, session_short_ref_string,
 };
-use super::session::OverlaySink;
+use super::session::{Admit, OverlaySink};
 use super::validation::{
     validate_existing_witness_message, validate_existing_witness_message_orders,
     validate_existing_witness_turn,
@@ -48,8 +48,8 @@ pub(super) enum WitnessTarget<'a, 'v> {
     Session {
         session: &'a OffRecordSession<'v>,
         summary: Option<&'a str>,
-        /// The room whose roster admits a participant's speech into its
-        /// overlay ([`Memory::with_witness_write_txn_as`]).
+        admit: Option<Admit<'a>>,
+        /// The room whose roster admits speech into its overlay.
         rostered: Option<EntityId>,
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
@@ -182,7 +182,7 @@ enum WitnessSink<'a, 'v> {
 }
 
 enum Landed {
-    Base,
+    Base(WitnessReceipt),
     HardDeleted(EntityId),
     Overlay {
         segment: TxnSegmentGuard,
@@ -197,10 +197,10 @@ impl Memory<'_> {
     ///
     /// Order, for both landings: request shape, target resolution, the plan
     /// (containers, speaker, message ids and bodies), the landing's pre-write
-    /// state, `before_txn`, then ONE write transaction that runs the landing's
-    /// guards, the erased-PERSON refusal, the ceiling door on every envelope,
-    /// the create-or-verify checks, the landing's staging, `effect`, and the
-    /// route revalidation.
+    /// state, `before_txn`, then ONE write transaction that runs a session
+    /// door's [`Admit`], the landing's guards, the erased-PERSON refusal, the
+    /// ceiling door on every envelope, the create-or-verify checks, the
+    /// landing's staging and receipt, `effect`, and the route revalidation.
     ///
     /// `before_txn` runs in the window between the ADVISORY container
     /// create-or-get and the transaction, which is the race the in-transaction
@@ -274,6 +274,7 @@ impl Memory<'_> {
         let mut on_record_session = None;
         // A room on record's saver, checked again where the turn lands.
         let mut saver = None;
+        let mut admit = None;
         let mut room_speech = None;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {
@@ -315,9 +316,11 @@ impl Memory<'_> {
             WitnessTarget::Session {
                 session,
                 summary,
+                admit: session_admit,
                 rostered,
             } => {
                 on_record_session = Some(session);
+                admit = session_admit;
                 (session_route, saver) = session.landing_route()?;
                 // WitnessReceipt promises materialized turns and messages.
                 // Anonymous sessions cannot fulfill that promise, so refuse
@@ -349,7 +352,7 @@ impl Memory<'_> {
             }
         };
 
-        let plan = self.plan_witness(turn, &landing, door)?;
+        let plan = self.plan_witness(turn, &landing, door, admit)?;
         let held = match &landing {
             Landing::Base { held, .. } => *held,
             Landing::Overlay { .. } => None,
@@ -365,6 +368,7 @@ impl Memory<'_> {
         before_txn();
 
         let landed = self.with_witness_write_txn_as(callback, room_speech, |wtxn| {
+            admit.map_or(Ok(()), |admit| admit(wtxn))?;
             let mut mint_conversation = false;
             let mut leader_project = None;
             let admission = match &sink {
@@ -431,7 +435,8 @@ impl Memory<'_> {
                                 Some(&sent),
                             )?));
                     }
-                    Landed::Base
+                    // Read here: a body put after this commit is not its receipt.
+                    Landed::Base(self.base_receipt_in_txn(&plan, wtxn)?)
                 }
                 WitnessSink::Overlay(overlay) => {
                     let (segment, aliases) =
@@ -483,7 +488,7 @@ impl Memory<'_> {
 
         match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
-            Landed::Base => {
+            Landed::Base(receipt) => {
                 // A room on record took this turn into base; a copy of the
                 // talk reads its messages there.
                 if let Some(session) = on_record_session {
@@ -496,7 +501,7 @@ impl Memory<'_> {
                         .collect();
                     session.note_on_record_messages(plan.turn_id, &messages);
                 }
-                self.base_receipt(&plan)
+                Ok(receipt)
             }
             Landed::Overlay { segment, aliases } => {
                 // The overlay segment and the base txn commit together: the
@@ -516,10 +521,11 @@ impl Memory<'_> {
         turn: &'t WitnessTurn,
         landing: &Landing<'_, '_>,
         door: WitnessDoor,
+        admit: Option<Admit<'_>>,
     ) -> MemoryResult<WitnessPlan<'t>> {
         let ((conversation_id, conversation_is_new), (turn_id, turn_is_new)) = match landing {
             Landing::Base { continuation, .. } => {
-                self.resolve_base_containers(turn, *continuation, door)?
+                self.resolve_base_containers(turn, *continuation, door, admit)?
             }
             // The room's one shell; the TURN is fresh, or the host's
             // deterministic id, create-or-verified in the transaction.

@@ -316,3 +316,84 @@ fn a_run_speech_waiting_for_the_writer_lands_nothing_once_its_agent_left() {
     let unsaid = crate::code_run::executor_speech_message_id("room-run", 0).expect("message id");
     assert!(vault.get_raw(&unsaid).expect("read the message").is_none());
 }
+
+/// Sol on engine-prs-01, round 2: a run whose agent was removed still read
+/// the room before its check ran, and its refusal told what it read. Its
+/// next bubble at an order another member had since taken, or its first
+/// bubble at a TURN id someone else's row now held, came back as a broken
+/// invariant instead of `NotInRoom`. The check runs first in every read the
+/// speech makes, so the refusal is the same whatever the room holds.
+#[test]
+fn a_removed_agents_run_learns_nothing_of_the_room_from_its_refusal() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_on_record(&vault);
+    let run = bind_run(&session, &room);
+    let fresh = HostSelfDispatcher::for_off_record_session(
+        &session,
+        WriteActor::new(room.agent, EdgeActorClass::Agent),
+        "room-run-fresh",
+    )
+    .expect("bind a second run");
+    run.dispatch(spoken(0))
+        .expect("the agent speaks in the room");
+    vault
+        .leave_member(
+            room.id,
+            room.agent,
+            WriteActor::new(room.owner, EdgeActorClass::Human),
+            50,
+        )
+        .expect("the owner removes the agent");
+
+    // The owner takes order 1 of the run's TURN.
+    let turn_id =
+        crate::code_run::storage::executor_speech_turn_id("room-run", None).expect("turn id");
+    vault
+        .memory(room.owner, EdgeActorClass::Human)
+        .witness_into_session_as_member(
+            &session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: room.id.to_hex(),
+                turn_ref: Some(turn_id.to_hex()),
+                messages: vec![crate::memory::WitnessMessage {
+                    id: None,
+                    author: crate::memory::WitnessAuthor::Companion,
+                    message_type: "text".to_owned(),
+                    content: "the owner's word at order 1".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 1,
+                }],
+                occurred_at: 70,
+            },
+            None,
+            None,
+        )
+        .expect("the owner speaks into the run's turn");
+    // Someone else's row sits where the fresh run's TURN would go.
+    let fresh_turn =
+        crate::code_run::storage::executor_speech_turn_id("room-run-fresh", None).expect("turn id");
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &Value::Map(vec![(Value::from("name"), Value::from("Gil"))]),
+    )
+    .expect("encode the person");
+    vault
+        .put_entity(
+            &fresh_turn,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .expect("a person at that id");
+
+    let at_a_taken_order = run.dispatch(spoken(1)).err();
+    let at_a_taken_turn = fresh.dispatch(spoken(0)).err();
+    assert!(
+        not_in_room(at_a_taken_order.as_ref(), room.agent)
+            && not_in_room(at_a_taken_turn.as_ref(), room.agent),
+        "{at_a_taken_order:?} / {at_a_taken_turn:?}"
+    );
+}
