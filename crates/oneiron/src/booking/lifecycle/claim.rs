@@ -436,6 +436,9 @@ fn live_claims_with_predicate(
 }
 
 /// Reads the booking facts one EVENT's live claims and structural row carry.
+///
+/// Only surfaceable heads count, as in the cap tally: a pending proposal
+/// beside the engine's record must not move, cancel or retype a booking.
 pub(super) fn read_booking_facts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -448,7 +451,9 @@ pub(super) fn read_booking_facts(
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
         };
-        if body.lifecycle != ClaimLifecycleStatus::Active {
+        if !crate::claim::claim_surfaceable(&body)
+            || body.subject != ClaimSubject::Entity(*event_ref)
+        {
             continue;
         }
         match body.predicate.as_str() {
