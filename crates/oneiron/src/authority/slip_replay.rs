@@ -209,6 +209,11 @@ impl Vault {
         if verified.claims().single_use {
             return Ok(None);
         }
+        // A proof the vault admitted before stays refused on any clock.
+        let admitted = nonce_key(&verified.claims().binding_key, nonce, timestamp);
+        if REPLAY_NONCE.contains(&self.store, &txn, &admitted)? {
+            return Ok(None);
+        }
         Ok(Some((
             ProofClockAhead {
                 floor: clock.now,
@@ -286,6 +291,17 @@ impl SideKey for NonceKey {
             timestamp: u64::from_str_radix(ts_hex, 16).ok()?,
             digest_hex: digest_hex.to_owned(),
         })
+    }
+}
+
+/// The row an admitted proof leaves: its signed time, and the keyed digest of
+/// the binding key and nonce.
+fn nonce_key(binding_key: &[u8; 32], nonce: &[u8], timestamp: u64) -> NonceKey {
+    let mut material = binding_key.to_vec();
+    material.extend_from_slice(nonce);
+    NonceKey {
+        timestamp,
+        digest_hex: blake3::hash(&material).to_hex().to_string(),
     }
 }
 
@@ -385,12 +401,7 @@ pub(super) fn record_nonce(
     for key in expired {
         REPLAY_NONCE.delete(&vault.store, txn, &key)?;
     }
-    let mut material = binding_key.to_vec();
-    material.extend_from_slice(nonce);
-    let key = NonceKey {
-        timestamp,
-        digest_hex: blake3::hash(&material).to_hex().to_string(),
-    };
+    let key = nonce_key(binding_key, nonce, timestamp);
     if REPLAY_NONCE.contains(&vault.store, txn, &key)? {
         return Err(invalid_authority());
     }

@@ -165,7 +165,7 @@ impl Holder {
 
     /// What the 401 diagnosis finds for the proof `key` signed at `timestamp`.
     fn ahead(&self, key: &ed25519_dalek::SigningKey, timestamp: u64) -> Option<ProofClockAhead> {
-        self.ahead_on(&self.slip, key, timestamp)
+        self.ahead_on(&self.slip, key, timestamp, 99)
     }
 
     fn ahead_on(
@@ -173,9 +173,10 @@ impl Holder {
         slip: &crate::authority::CapabilitySlip,
         key: &ed25519_dalek::SigningKey,
         timestamp: u64,
+        n: u32,
     ) -> Option<ProofClockAhead> {
         use ed25519_dalek::Signer;
-        let nonce = format!("{:032x}", 99);
+        let nonce = format!("{n:032x}");
         let challenge = holder_proof_challenge(timestamp, &nonce);
         let signature = key
             .sign(&slip.binding_transcript(&challenge).unwrap())
@@ -240,7 +241,7 @@ fn a_clock_recovery_admits_the_next_fresh_proof_and_no_proof_signed_before_it() 
     )
     .unwrap();
     assert_eq!(
-        holder.ahead_on(&once, &holder.key, start + 40),
+        holder.ahead_on(&once, &holder.key, start + 40, 99),
         None,
         "a one-shot slip, which no transport takes"
     );
@@ -266,6 +267,18 @@ fn a_clock_recovery_admits_the_next_fresh_proof_and_no_proof_signed_before_it() 
     assert!(
         matches!(holder.recover(), Ok(ProofClockRecovery::NotAhead { .. })),
         "nothing left to recover"
+    );
+
+    let replayed = Holder::paired(start);
+    replayed.admit(start, 1).unwrap();
+    replayed.clock.set(start + 120);
+    replayed.admit(start + 120, 2).unwrap();
+    replayed.clock.set(start);
+    assert!(replayed.ahead(&replayed.key, start).is_some());
+    assert_eq!(
+        replayed.ahead_on(&replayed.slip, &replayed.key, start, 1),
+        None,
+        "a proof the vault admitted before, which no recovery lets in"
     );
 
     let first = Holder::paired(start);
