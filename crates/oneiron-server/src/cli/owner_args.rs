@@ -113,6 +113,12 @@ pub struct RecoverWindowArgs {
 }
 
 #[derive(Args, Clone, Debug)]
+pub struct RecoverClockArgs {
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
 pub struct ExportArgs {
     /// `toon`, `md`, `json`, `yaml` or `txt`.
     #[arg(long, default_value = "toon")]
