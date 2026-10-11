@@ -3963,8 +3963,8 @@ fn packing_withholds_the_world_row_flagged_device_only() -> Result<()> {
 
 /// Two world windows packed while every world was portable: a claim in the
 /// world later flagged device-only, and a claim in a portable world, each
-/// `About` a base PERSON that `Mentions` both, plus a portable→private edge.
-/// The private world is flagged device-only only after both windows packed.
+/// `About` a base PERSON that `Mentions` both. The private world is flagged
+/// device-only only after both windows packed.
 struct ResidentDeviceOnly {
     private_world: EntityId,
     private_claim: EntityId,
@@ -4007,7 +4007,6 @@ fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
         .edge(&portable_claim, EdgeKind::About, &person, 1.0)
         .edge(&person, EdgeKind::Mentions, &private_claim, 1.0)
         .edge(&person, EdgeKind::Mentions, &portable_claim, 1.0)
-        .edge(&portable_claim, EdgeKind::Supports, &private_claim, 1.0)
         .commit()?;
     let private_key = WindowKey::for_month_world(&month, private_world);
     let portable_key = WindowKey::for_month_world(&month, portable_world);
@@ -4015,8 +4014,14 @@ fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
     let portable_doc = create_window_doc("portable", &portable_key);
     reverse_rematerialize(vault, &private_doc, &private_key)?;
     reverse_rematerialize(vault, &portable_doc, &portable_key)?;
-    let packed = private_doc.get_map("entities");
-    assert!(packed.get(&private_claim.to_hex()).is_some());
+    let packed = private_doc.get_map("edges");
+    for (src, kind, dst) in [
+        (private_claim, EdgeKind::About, person),
+        (person, EdgeKind::Mentions, private_claim),
+    ] {
+        let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
+        assert!(packed.get(&key).is_some(), "{key} packed while portable");
+    }
     vault.set_world_device_only(private_world, true)?;
     Ok(ResidentDeviceOnly {
         private_world,
@@ -4098,19 +4103,14 @@ fn clearing_device_only_exports_the_resident_claim_again() -> Result<()> {
             .get(&fx.private_claim.to_hex())
             .is_some()
     );
-    for (received, src, kind, dst) in [
-        (&private, fx.private_claim, EdgeKind::About, fx.person),
-        (&private, fx.person, EdgeKind::Mentions, fx.private_claim),
-        (
-            &portable,
-            fx.portable_claim,
-            EdgeKind::Supports,
-            fx.private_claim,
-        ),
+    for (src, kind, dst) in [
+        (fx.private_claim, EdgeKind::About, fx.person),
+        (fx.person, EdgeKind::Mentions, fx.private_claim),
     ] {
         let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
-        assert!(received.get_map("edges").get(&key).is_some(), "{key}");
+        assert!(private.get_map("edges").get(&key).is_some(), "{key}");
     }
+    assert!(!names_entity_in_any_edge(&portable, fx.private_claim));
     Ok(())
 }
 

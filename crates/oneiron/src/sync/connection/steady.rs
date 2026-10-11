@@ -229,6 +229,13 @@ impl SyncConnection {
                     let opened = client.config.residence_mode == crate::sync::SyncResidenceMode::Opened;
                     let mut queued_count = 0;
                     for (i, local_update) in pending.iter().enumerate() {
+                        // A world flagged device-only since this commit keeps
+                        // it; the window's next export reads the flag again.
+                        if crate::sync::WindowKey::try_new(&local_update.window_key).is_some_and(|key| {
+                            crate::sync::window::window_is_device_only(&client.vault, &key).unwrap_or(true)
+                        }) {
+                            continue;
+                        }
                         let seq = if opened {
                             match self.queue.push(&local_update.window_key, &local_update.update_bytes) {
                                 Ok(seq) => {

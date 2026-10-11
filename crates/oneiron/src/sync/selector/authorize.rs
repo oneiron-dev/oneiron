@@ -336,6 +336,11 @@ pub(super) fn filter_window_doc(
     crate::sync::note::refresh(vault, &refreshed, key)?;
     let source = &refreshed;
     let grant_raw = live_federation_grant(vault, &selector.grant_id)?;
+    if crate::sync::window::window_is_device_only(vault, key)? {
+        let out = create_window_doc("selector", key);
+        out.commit();
+        return Ok(out);
+    }
     let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
     // One read snapshot for the whole export: withheld claims, facet scope, coreference
     // consent, causal admission, and record stamps all read through this

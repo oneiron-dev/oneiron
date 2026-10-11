@@ -261,11 +261,19 @@ pub(super) async fn handle_window_sync(
                 )));
             }
 
-            let broadcast_msg =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
-                    .into_result()
-                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-            let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
+            // A world flagged device-only on this server stays here, even as
+            // another device's relayed update.
+            if !oneiron::sync::window::window_is_device_only(server.vault.as_ref(), &key)
+                .map_err(map_delta_export_err)?
+            {
+                let broadcast_msg =
+                    protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
+                        .into_result()
+                        .map_err(|e| {
+                            ProtocolError::InvalidPayload(protocol::transport_err_msg(e))
+                        })?;
+                let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
+            }
             if let Some(seq) = residence_seq {
                 let mut ack = seq.to_be_bytes().to_vec();
                 ack.extend_from_slice(blake3::hash(update).as_bytes());

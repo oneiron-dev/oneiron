@@ -330,7 +330,16 @@ impl SyncConnection {
         }
 
         // Phase 3: Drain offline queue
-        let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
+        let mut queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
+        if client.config.residence_mode != crate::sync::SyncResidenceMode::Opened {
+            // Bytes queued while a world was portable stay here once it is
+            // flagged device-only; its window's next export reads the flag.
+            queued.retain(|update| {
+                !crate::sync::WindowKey::try_new(&update.window_key).is_some_and(|key| {
+                    crate::sync::window::window_is_device_only(&client.vault, &key).unwrap_or(true)
+                })
+            });
+        }
         let full_resync_markers = self.full_resync_markers()?;
         let force_resync: BTreeSet<String> = full_resync_markers
             .iter()
