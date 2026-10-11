@@ -867,14 +867,23 @@ mod hostile {
         Ok(())
     }
 
-    /// The organ seals for real, then rebuilds the CMS in the hole with one
-    /// version RFC 5652 forbids for its shape: SignedData 0, or SignerInfo 3
-    /// beside an issuer-and-serial signer. The signature, its attributes and
-    /// the certificate are the ones issued, and the DER types accept any
-    /// version, so only admission can refuse it (Astra re-check on #1379).
+    /// The organ seals for real, then rebuilds the CMS in the hole in a shape
+    /// the native assembler never emits: SignedData v0, SignerInfo v3 beside
+    /// an issuer-and-serial signer (RFC 5652 §5.1, §5.3), an empty revocation
+    /// set, a non-X.509 certificate beside the leaf, or NULL ECDSA parameters
+    /// (RFC 5754 §3.3). The signature, its attributes and the leaf are the
+    /// ones issued, and the DER types accept each, so only admission can
+    /// refuse them (Astra and Sol on #1379).
     #[test]
-    fn a_signature_in_a_misversioned_envelope_is_not_admitted() -> TestResult {
-        for mode in ["signed-data-v0", "signer-info-v3"] {
+    fn a_signature_in_a_reshaped_envelope_is_not_admitted() -> TestResult {
+        let mut admitted = Vec::new();
+        for mode in [
+            "signed-data-v0",
+            "signer-info-v3",
+            "crls-empty",
+            "other-cert",
+            "sig-alg-null",
+        ] {
             let (keys, cert) = synthetic_keys()?;
             let host = rogue_host(mode);
             let dir = tempfile::tempdir()?;
@@ -882,10 +891,13 @@ mod hostile {
             let sealer =
                 HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
             let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-            let refused = sealer.seal(&input, &request());
-            assert!(unbound(&refused), "{mode}: {refused:?}");
+            let result = sealer.seal(&input, &request());
+            if !unbound(&result) {
+                admitted.push(format!("{mode}: {:?}", result.as_ref().err()));
+            }
             assert_eq!(keys.signed().len(), 1, "{mode}");
         }
+        assert!(admitted.is_empty(), "not refused as unbound: {admitted:#?}");
         Ok(())
     }
 }

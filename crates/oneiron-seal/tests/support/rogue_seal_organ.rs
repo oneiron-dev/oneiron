@@ -17,8 +17,9 @@
 //!   signed revision and still calls it B-B;
 //! - `drop-certs`: seals for real, then rebuilds the CMS in the hole
 //!   without its certificates;
-//! - `signed-data-v0` / `signer-info-v3`: seals for real, then rebuilds the
-//!   CMS in the hole with that one version field changed.
+//! - `signed-data-v0`, `signer-info-v3`, `crls-empty`, `other-cert`,
+//!   `sig-alg-null`: seals for real, then rebuilds the CMS in the hole with
+//!   that one part of the envelope changed.
 //!
 //! Its `seal.verify` always passes.
 
@@ -56,6 +57,9 @@ mod rogue {
         DropCerts,
         SignedDataV0,
         SignerInfoV3,
+        CrlsEmpty,
+        OtherCert,
+        SignatureAlgorithmNull,
     }
 
     impl Mode {
@@ -68,6 +72,9 @@ mod rogue {
                 "drop-certs" => Some(Self::DropCerts),
                 "signed-data-v0" => Some(Self::SignedDataV0),
                 "signer-info-v3" => Some(Self::SignerInfoV3),
+                "crls-empty" => Some(Self::CrlsEmpty),
+                "other-cert" => Some(Self::OtherCert),
+                "sig-alg-null" => Some(Self::SignatureAlgorithmNull),
                 _ => None,
             }
         }
@@ -228,7 +235,10 @@ mod rogue {
                 | Mode::AppendUpdate
                 | Mode::DropCerts
                 | Mode::SignedDataV0
-                | Mode::SignerInfoV3 => {
+                | Mode::SignerInfoV3
+                | Mode::CrlsEmpty
+                | Mode::OtherCert
+                | Mode::SignatureAlgorithmNull => {
                     let backend = Backend {
                         asker: call.asker(),
                         identity: Mutex::new(None),
@@ -252,27 +262,8 @@ mod rogue {
                             b"\n9999 0 obj\n<< /Type /Annot /Subtype /FreeText \
                               /Contents (paid in full) >>\nendobj\n",
                         ),
-                        Mode::DropCerts => {
-                            rebuild_cms(&mut bytes, pdf.len(), &revisions, |signed| {
-                                signed.certificates = None;
-                                Ok(())
-                            })?
-                        }
-                        Mode::SignedDataV0 => {
-                            rebuild_cms(&mut bytes, pdf.len(), &revisions, |signed| {
-                                signed.version = cms::content_info::CmsVersion::V0;
-                                Ok(())
-                            })?
-                        }
-                        _ => rebuild_cms(&mut bytes, pdf.len(), &revisions, |signed| {
-                            let infos = signed.signer_infos.0.clone().into_vec();
-                            signed.signer_infos.0 = der::asn1::SetOfVec::from_iter(
-                                infos.into_iter().map(|mut info| {
-                                    info.version = cms::content_info::CmsVersion::V3;
-                                    info
-                                }),
-                            )?;
-                            Ok(())
+                        mode => rebuild_cms(&mut bytes, pdf.len(), &revisions, |signed| {
+                            reshape(mode, signed)
                         })?,
                     }
                     (bytes, PadesProfile::BaselineB)
@@ -484,6 +475,51 @@ mod rogue {
                 code: BackendRejectCode::Unauthorized,
             })
         }
+    }
+
+    /// Changes one part of the envelope; the issued signature, its
+    /// attributes and the leaf certificate stay as they are.
+    fn reshape(mode: Mode, signed: &mut cms::signed_data::SignedData) -> der::Result<()> {
+        use cms::content_info::CmsVersion;
+        use der::asn1::{Any, SetOfVec};
+        match mode {
+            Mode::DropCerts => signed.certificates = None,
+            Mode::SignedDataV0 => signed.version = CmsVersion::V0,
+            Mode::CrlsEmpty => {
+                signed.crls = Some(cms::revocation::RevocationInfoChoices(SetOfVec::new()));
+            }
+            Mode::OtherCert => {
+                let mut certificates = signed
+                    .certificates
+                    .take()
+                    .map(|set| set.0.into_vec())
+                    .unwrap_or_default();
+                certificates.push(cms::cert::CertificateChoices::Other(
+                    cms::cert::OtherCertificateFormat {
+                        other_cert_format: der::oid::ObjectIdentifier::new_unwrap(
+                            "1.3.6.1.4.1.99999.1",
+                        ),
+                        other_cert: Any::null(),
+                    },
+                ));
+                signed.certificates = Some(cms::signed_data::CertificateSet(SetOfVec::from_iter(
+                    certificates,
+                )?));
+            }
+            Mode::SignerInfoV3 | Mode::SignatureAlgorithmNull => {
+                let infos = signed.signer_infos.0.clone().into_vec();
+                signed.signer_infos.0 = SetOfVec::from_iter(infos.into_iter().map(|mut info| {
+                    if mode == Mode::SignerInfoV3 {
+                        info.version = CmsVersion::V3;
+                    } else {
+                        info.signature_algorithm.parameters = Some(Any::null());
+                    }
+                    info
+                }))?;
+            }
+            Mode::ForgeSigns | Mode::Unsigned | Mode::AlterPrefix | Mode::AppendUpdate => {}
+        }
+        Ok(())
     }
 
     /// Rebuilds the CMS in the signed revision's hole after `edit`; the

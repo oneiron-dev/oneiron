@@ -12,12 +12,13 @@ use cms::cert::CertificateChoices;
 use cms::content_info::{CmsVersion, ContentInfo};
 use cms::signed_data::{SignedAttributes, SignedData, SignerIdentifier};
 use const_oid::ObjectIdentifier;
-use der::asn1::OctetString;
+use der::asn1::{Any, OctetString};
 use der::{Decode, Encode, Reader, SliceReader};
 use oneiron::blob_artifact::esign::{EsignSealInput, EsignSealerError, SEAL_CONTENTS_LADDER};
 use oneiron_organ_protocol::{AskCode, AskRefusal, ByteBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use x509_cert::spki::AlgorithmIdentifierOwned;
 
 use super::{SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealLimits};
 use crate::asks::AskRequest;
@@ -372,12 +373,14 @@ fn expected_attributes(content: &[u8; 32], signer: &Signer) -> Vec<u8> {
 }
 
 /// Whether a hole's hex holds one canonical CMS ContentInfo, then zero
-/// padding, whose SignedData is detached id-data under SHA-256, carries the
-/// key's certificate, and has one SignerInfo: that certificate's issuer and
-/// serial, the issued signature, over the issued attributes. Both carry
-/// version 1, the only version RFC 5652 (§5.1, §5.3) allows that shape; the
-/// DER types accept any version, so it is checked here. The signature is
-/// read where CMS puts it, never searched for.
+/// padding, in the one shape the native assembler emits: SignedData v1,
+/// detached id-data under SHA-256, X.509 certificates only (the key's among
+/// them), no revocation set, and one SignerInfo v1: that certificate's
+/// issuer and serial, the issued signature, over the issued attributes.
+/// Each algorithm is checked with its parameters (RFC 5754). The DER types
+/// accept any version, choice and parameter, so the shape is checked here
+/// (Astra and Sol on #1379). The signature is read where CMS puts it, never
+/// searched for.
 fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
     let Some(der) = unhex(hex) else {
         return false;
@@ -403,9 +406,10 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
     let [signer_info] = signed.signer_infos.0.as_slice() else {
         return false;
     };
-    let algorithm = match signer.identity.algorithm {
-        SealAlgorithm::EcdsaP256Sha256 => ID_ECDSA_SHA256,
-        SealAlgorithm::RsaPkcs1v15Sha256 => ID_SHA256_WITH_RSA,
+    // RFC 5754 §3: ECDSA takes no parameters; RSA PKCS#1 v1.5 absent or NULL.
+    let (algorithm, null_parameters) = match signer.identity.algorithm {
+        SealAlgorithm::EcdsaP256Sha256 => (ID_ECDSA_SHA256, false),
+        SealAlgorithm::RsaPkcs1v15Sha256 => (ID_SHA256_WITH_RSA, true),
     };
     let same_signer = match &signer_info.sid {
         SignerIdentifier::IssuerAndSerialNumber(id) => {
@@ -414,27 +418,33 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
         }
         SignerIdentifier::SubjectKeyIdentifier(_) => false,
     };
-    // signingCertificateV2 names the leaf: a verifier must find it here.
+    // signingCertificateV2 names the leaf: a verifier must find it here,
+    // among X.509 certificates only.
     let carries_leaf = signed.certificates.as_ref().is_some_and(|set| {
-        set.0.iter().any(|choice| match choice {
-            CertificateChoices::Certificate(cert) => {
-                cert.to_der().ok().as_deref() == Some(signer.identity.signer_certificate.as_slice())
-            }
-            CertificateChoices::Other(_) => false,
-        })
+        set.0
+            .iter()
+            .all(|choice| matches!(choice, CertificateChoices::Certificate(_)))
+            && set.0.iter().any(|choice| match choice {
+                CertificateChoices::Certificate(cert) => {
+                    cert.to_der().ok().as_deref()
+                        == Some(signer.identity.signer_certificate.as_slice())
+                }
+                CertificateChoices::Other(_) => false,
+            })
     });
     matches!((signed.to_der(), info.content.to_der()), (Ok(ours), Ok(theirs)) if ours == theirs)
         && signed.version == CmsVersion::V1
         && signer_info.version == CmsVersion::V1
+        && signed.crls.is_none()
         && signed.encap_content_info.econtent_type == ID_DATA
         && signed.encap_content_info.econtent.is_none()
         && signed.digest_algorithms.len() == 1
         && signed
             .digest_algorithms
             .iter()
-            .all(|alg| alg.oid == ID_SHA256)
-        && signer_info.digest_alg.oid == ID_SHA256
-        && signer_info.signature_algorithm.oid == algorithm
+            .all(|alg| is_algorithm(alg, ID_SHA256, true))
+        && is_algorithm(&signer_info.digest_alg, ID_SHA256, true)
+        && is_algorithm(&signer_info.signature_algorithm, algorithm, null_parameters)
         && same_signer
         && carries_leaf
         && signer_info
@@ -444,6 +454,16 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
             .as_deref()
             == Some(issued.attributes.as_slice())
         && signer_info.signature.as_bytes() == issued.signature.as_slice()
+}
+
+/// Whether `id` names `oid` with no parameters, or NULL ones where
+/// `null_allowed`; any other value is refused.
+fn is_algorithm(id: &AlgorithmIdentifierOwned, oid: ObjectIdentifier, null_allowed: bool) -> bool {
+    id.oid == oid
+        && match &id.parameters {
+            None => true,
+            Some(parameters) => null_allowed && *parameters == Any::null(),
+        }
 }
 
 fn unhex(hex: &[u8]) -> Option<Vec<u8>> {
