@@ -396,6 +396,9 @@ fn measure(
     stub: Option<&StubEmbedder>,
     vault: &Vault,
 ) -> Result<(), String> {
+    if let Some(stub) = stub {
+        stub.watch_passes(ctx.server.log_counter(phases::PASS_DONE));
+    }
     let single = plan.single_writes.min(records);
     say("ingest: one caller on the empty vault");
     run.ingest

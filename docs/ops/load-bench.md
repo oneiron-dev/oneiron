@@ -31,9 +31,10 @@ vault:
    or about the vault owner with probability `--hot-subject`).
 4. With vectors: wait until the stub has answered a text carrying every
    record's tag, the server has since logged the embedding pass that stored
-   the last of them (`serve` runs with
-   `RUST_LOG=<level>,oneiron_server::server::embedding=info` for these lines),
-   and `--drain-settle-seconds` (35, beyond the worker's 15 s idle sleep and
+   the last of them (the stub reads the pass count as each new tag arrives;
+   the worker runs one pass at a time, so the next pass line is that pass's;
+   `serve` runs with `RUST_LOG=<level or your RUST_LOG>,oneiron_server::server::embedding=info`
+   for these lines), and `--drain-settle-seconds` (35, beyond the worker's 15 s idle sleep and
    its publication of what it staged) pass with no further pass
    (`drain_seconds`). The run fails instead when the server exits, logs a
    failed embedding pass, or an hour passes. **steady** memory and

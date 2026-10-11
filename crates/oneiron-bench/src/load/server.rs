@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::embedder::{MODEL_ID, MODEL_KEY};
+use super::embedder::{MODEL_ID, MODEL_KEY, PassCount};
 
 /// How the vault embeds: not at all, through the loopback stub, or with the
 /// shipped local model.
@@ -216,6 +216,13 @@ fn read_memory(pid: u32) -> Option<Memory> {
     })
 }
 
+/// How many lines of the file at `log` contain `text`; 0 when it is unreadable.
+fn count_lines(log: &Path, text: &str) -> usize {
+    fs::read_to_string(log).map_or(0, |log| {
+        log.lines().filter(|line| line.contains(text)).count()
+    })
+}
+
 /// User + system CPU seconds the process has used, from `/proc/<pid>/stat`.
 pub(super) fn cpu_seconds(pid: u32) -> Option<f64> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -267,14 +274,21 @@ impl Running {
             .arg(&vault.path)
             .args(["--host", "127.0.0.1", "--port", &port.to_string()])
             .args(["--log-level", log_level])
-            // The embedding worker's pass lines are the drain's evidence.
-            .env(
-                "RUST_LOG",
-                format!("{log_level},oneiron_server::server::embedding=info"),
-            )
             .env("ONEIRON_AUTH_SECRET", &vault.secret)
             .env("NO_COLOR", "1")
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            // The embedding worker's pass lines are the drain's evidence, so
+            // they stay on under a caller's own `RUST_LOG`.
+            .env(
+                "RUST_LOG",
+                format!(
+                    "{},oneiron_server::server::embedding=info",
+                    env.iter()
+                        .rev()
+                        .find(|(k, _)| k == "RUST_LOG")
+                        .map_or(log_level, |(_, v)| v.as_str())
+                ),
+            )
             .stdin(Stdio::null())
             .stdout(log)
             .stderr(err)
@@ -345,9 +359,13 @@ impl Running {
 
     /// How many lines of the server's log so far contain `text`.
     pub(super) fn log_count(&self, text: &str) -> usize {
-        fs::read_to_string(&self.log).map_or(0, |log| {
-            log.lines().filter(|line| line.contains(text)).count()
-        })
+        count_lines(&self.log, text)
+    }
+
+    /// [`Self::log_count`] as a function another thread can call.
+    pub(super) fn log_counter(&self, text: &'static str) -> PassCount {
+        let log = self.log.clone();
+        Box::new(move || count_lines(&log, text))
     }
 
     /// Sends `signal` (a `kill -s` name such as `USR2`) to the server.

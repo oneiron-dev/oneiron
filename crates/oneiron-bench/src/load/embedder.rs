@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::extract::State;
 use axum::routing::{get, post};
@@ -22,11 +22,23 @@ use super::corpus::{Rng, tag_index};
 pub(super) const MODEL_KEY: &str = "bench-bag-of-words";
 pub(super) const MODEL_ID: &str = "bench/bag-of-words@v1";
 
+/// Counts the server's completed embedding passes so far.
+pub(super) type PassCount = Box<dyn Fn() -> usize + Send + Sync>;
+
+/// Which records' tagged texts were embedded, and the server's pass count
+/// read as the last text carrying a new tag arrived.
+#[derive(Default)]
+struct Seen {
+    records: HashSet<usize>,
+    passes_before_last: usize,
+}
+
 #[derive(Clone)]
 struct Stub {
     dimensions: usize,
     embedded: Arc<AtomicU64>,
-    records: Arc<Mutex<HashSet<usize>>>,
+    seen: Arc<Mutex<Seen>>,
+    passes: Arc<OnceLock<PassCount>>,
 }
 
 /// The running stub: its address, how many inputs it has embedded, and which
@@ -34,7 +46,8 @@ struct Stub {
 pub(super) struct StubEmbedder {
     addr: SocketAddr,
     embedded: Arc<AtomicU64>,
-    records: Arc<Mutex<HashSet<usize>>>,
+    seen: Arc<Mutex<Seen>>,
+    passes: Arc<OnceLock<PassCount>>,
     _runtime: tokio::runtime::Runtime,
 }
 
@@ -46,11 +59,13 @@ impl StubEmbedder {
             .build()
             .map_err(|e| format!("stub embedder runtime: {e}"))?;
         let embedded = Arc::new(AtomicU64::new(0));
-        let records = Arc::new(Mutex::new(HashSet::new()));
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let passes = Arc::new(OnceLock::new());
         let stub = Stub {
             dimensions,
             embedded: Arc::clone(&embedded),
-            records: Arc::clone(&records),
+            seen: Arc::clone(&seen),
+            passes: Arc::clone(&passes),
         };
         let listener = runtime
             .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
@@ -66,7 +81,8 @@ impl StubEmbedder {
         Ok(Self {
             addr,
             embedded,
-            records,
+            seen,
+            passes,
             _runtime: runtime,
         })
     }
@@ -80,9 +96,18 @@ impl StubEmbedder {
         self.embedded.load(Ordering::Relaxed)
     }
 
-    /// How many distinct records had a text carrying their tag embedded.
-    pub(super) fn records(&self) -> usize {
-        self.records.lock().map_or(0, |seen| seen.len())
+    /// Reads the server's pass count from now on; set it before any record
+    /// is written.
+    pub(super) fn watch_passes(&self, count: PassCount) {
+        let _ = self.passes.set(count);
+    }
+
+    /// How many distinct records had a text carrying their tag embedded, and
+    /// the server's pass count read as the last new one arrived.
+    pub(super) fn records(&self) -> (usize, usize) {
+        self.seen
+            .lock()
+            .map_or((0, 0), |seen| (seen.records.len(), seen.passes_before_last))
     }
 }
 
@@ -104,8 +129,16 @@ async fn embeddings(State(stub): State<Stub>, Json(request): Json<Value>) -> Jso
     // Counted once the vectors exist, just before they are answered.
     stub.embedded
         .fetch_add(inputs.len() as u64, Ordering::Relaxed);
-    if let Ok(mut seen) = stub.records.lock() {
-        seen.extend(inputs.iter().filter_map(|text| tag_index(text)));
+    if let Ok(mut seen) = stub.seen.lock() {
+        let before = seen.records.len();
+        seen.records
+            .extend(inputs.iter().filter_map(|text| tag_index(text)));
+        if seen.records.len() > before {
+            // The worker's passes run one at a time, and the pass that sent
+            // these texts waits on this answer: every pass line counted now
+            // was logged before it, and its own is logged after its fills.
+            seen.passes_before_last = stub.passes.get().map_or(0, |count| count());
+        }
     }
     Json(json!({"object": "list", "model": MODEL_KEY, "data": data}))
 }
