@@ -62,6 +62,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/cleanup/restore", post(restore_archived))
         .route("/persona", get(preview_persona))
         .route("/persona/export", post(export_persona))
+        .route("/graph-fs", get(read_graph_fs))
+        .route("/feedback/preview", post(preview_feedback))
+        .route("/feedback/send", post(send_feedback))
+        .route("/pack-drift", get(pack_drift_repairs))
+}
+
+/// The owner's off-record routes, nested apart from [`routes`]: like the
+/// participant routes, they stay out of the wire receipts, which keep who
+/// called which route in the vault (ARCH-0052: no durable session trace).
+pub(super) fn off_record_routes() -> Router<Arc<SyncServer>> {
+    Router::new()
         .route(
             "/off-record",
             get(off_record_session).post(enter_off_record),
@@ -71,10 +82,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/off-record/promote", post(promote_off_record))
         .route("/off-record/save", post(save_off_record))
         .route("/off-record/close", post(close_off_record))
-        .route("/graph-fs", get(read_graph_fs))
-        .route("/feedback/preview", post(preview_feedback))
-        .route("/feedback/send", post(send_feedback))
-        .route("/pack-drift", get(pack_drift_repairs))
 }
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
