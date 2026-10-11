@@ -55,8 +55,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Waits for `mutex` until `deadline`, so a stuck holder cannot hold a
-/// caller past its own deadline.
-fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T>> {
+/// caller past its own deadline; `None` then, or as soon as `give_up` says
+/// the wait is for nothing.
+fn lock_until<T>(
+    mutex: &Mutex<T>,
+    deadline: Instant,
+    give_up: impl Fn() -> bool,
+) -> Option<MutexGuard<'_, T>> {
     let mut pause = Duration::from_micros(20);
     loop {
         match mutex.try_lock() {
@@ -65,7 +70,7 @@ fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T
             Err(TryLockError::WouldBlock) => {}
         }
         let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
+        if left.is_zero() || give_up() {
             return None;
         }
         thread::sleep(pause.min(left));
@@ -539,7 +544,7 @@ impl OrganProcess {
         limit: u32,
         deadline: Instant,
     ) -> Result<(), FrameError> {
-        let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
+        let writer = lock_until(&self.writer, deadline, || false).ok_or(FrameError::Late)?;
         send_frame_until(&writer, msg, fds, limit, Some(deadline))
     }
 
@@ -549,12 +554,15 @@ impl OrganProcess {
     /// Once it holds the writer, it drops the answer if the call's grant was
     /// revoked or the call is no longer in flight. A revocation records
     /// itself before its cancel takes the writer, so an answer that waited
-    /// for the writer never follows its call's revoked cancel. The answer's
-    /// first byte goes under the lock the reader routes replies and asks
-    /// under, with the call checked in flight again, so an answer never
-    /// goes after the reply the reader has taken; one that waits for room
-    /// meanwhile is dropped when the reply comes. (A reply the organ sends
-    /// once the answer has started crosses it, as an ask crosses a cancel.)
+    /// for the writer never follows its call's revoked cancel. Either one,
+    /// while the answer still waits for the writer or at its deadline, drops
+    /// it there, so a call that has replied takes its reply, not a deadline.
+    /// The answer's first byte goes under the lock the reader routes replies
+    /// and asks under, with the call checked in flight again, so an answer
+    /// never goes after the reply the reader has taken; one that waits for
+    /// room meanwhile is dropped when the reply comes. (A reply the organ
+    /// sends once the answer has started crosses it, as an ask crosses a
+    /// cancel.)
     ///
     /// The call may ask again from the moment that first byte leaves, not
     /// when the write returns: the organ can read the whole answer and ask
@@ -570,8 +578,11 @@ impl OrganProcess {
         deadline: Instant,
         revoked: &dyn Fn() -> bool,
     ) -> Result<bool, FrameError> {
-        let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
-        if revoked() || !self.inbox.in_flight(id) {
+        let dropped = || revoked() || !self.inbox.in_flight(id);
+        let Some(writer) = lock_until(&self.writer, deadline, dropped) else {
+            return if dropped() { Ok(false) } else { Err(FrameError::Late) };
+        };
+        if dropped() {
             return Ok(false);
         }
         let still = || self.inbox.holding_in_flight(id);
