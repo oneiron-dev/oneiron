@@ -266,28 +266,32 @@ impl Memory<'_> {
         )
     }
 
-    // ── the overlay landing ─────────────────────────────────────────────
-
-    /// The writer a witness lands in. Speech by a participant of a stretch's
-    /// room into its overlay (`rostered`) is the room's to admit (ARCH-0052
-    /// D5): the actor's identity, and in a shared vault their current
-    /// binding, are checked as for any write, then the room's roster, in the
-    /// same transaction (the door's [`Admit`] checks their credential there
-    /// too). A shared vault's content grant does not decide it, because
-    /// nothing staged in the overlay reaches the shared vault; only a save
-    /// does, through every base check. So a rostered Viewer speaks off record
-    /// and still writes nothing durable. Every other witness, in base or in
-    /// an overlay, runs the full check of any actor write.
+    /// The writer a witness lands in: a session door's [`Admit`] first, so a
+    /// speaker it refuses learns nothing the actor checks would have read,
+    /// then those checks and `write`.
+    ///
+    /// Speech by a participant of a stretch's room into its overlay
+    /// (`rostered`) is the room's to admit (ARCH-0052 D5): the actor's
+    /// identity, and in a shared vault their current binding, are checked as
+    /// for any write, then the room's roster. A shared vault's content grant
+    /// does not decide it, because nothing staged in the overlay reaches the
+    /// shared vault; only a save does, through every base check. So a
+    /// rostered Viewer speaks off record and still writes nothing durable.
+    /// Every other witness, in base or in an overlay, runs the full check of
+    /// any actor write ([`Self::verify_actor_write_in_txn`]).
     pub(super) fn with_witness_write_txn_as<T>(
         &self,
         callback: crate::store::Callback,
+        admit: Option<Admit<'_>>,
         rostered: Option<(&OffRecordSession<'_>, EntityId)>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
-        let Some((session, room)) = rostered else {
-            return self.with_verified_actor_write_txn_as(callback, write);
-        };
         self.vault.write_txn_door(callback, |wtxn| {
+            admit.map_or(Ok(()), |admit| admit(wtxn))?;
+            let Some((session, room)) = rostered else {
+                self.verify_actor_write_in_txn(wtxn)?;
+                return write(wtxn);
+            };
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
             if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
                 self.vault.verify_write_actor_in_txn(
@@ -305,6 +309,8 @@ impl Memory<'_> {
             write(wtxn)
         })
     }
+
+    // ── the overlay landing ─────────────────────────────────────────────
 
     pub(super) fn overlay_sink<'a, 'v>(
         &self,

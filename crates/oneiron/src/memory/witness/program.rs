@@ -198,9 +198,10 @@ impl Memory<'_> {
     /// Order, for both landings: request shape, target resolution, the plan
     /// (containers, speaker, message ids and bodies), the landing's pre-write
     /// state, `before_txn`, then ONE write transaction that runs a session
-    /// door's [`Admit`], the landing's guards, the erased-PERSON refusal, the
-    /// ceiling door on every envelope, the create-or-verify checks, the
-    /// landing's staging and receipt, `effect`, and the route revalidation.
+    /// door's [`Admit`], the actor checks, the landing's guards, the
+    /// erased-PERSON refusal, the ceiling door on every envelope, the
+    /// create-or-verify checks, the landing's staging and receipt, `effect`,
+    /// and the route revalidation.
     ///
     /// `before_txn` runs in the window between the ADVISORY container
     /// create-or-get and the transaction, which is the race the in-transaction
@@ -367,8 +368,7 @@ impl Memory<'_> {
         };
         before_txn();
 
-        let landed = self.with_witness_write_txn_as(callback, room_speech, |wtxn| {
-            admit.map_or(Ok(()), |admit| admit(wtxn))?;
+        let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
             let mut mint_conversation = false;
             let mut leader_project = None;
             let admission = match &sink {
