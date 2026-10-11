@@ -101,7 +101,7 @@ async fn public_path_signing_bypasses_hosted_lease_but_not_capability_admission(
     // A logged owner slip, not a historical lease, reaches the editor shell.
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"editor-owner-issuer").unwrap();
     let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
-    let timestamp = server.vault().capability_slip_now().unwrap();
+    let timestamp = server.vault().now_recorded_at();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature: String = issuer
