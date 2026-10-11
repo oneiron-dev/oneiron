@@ -19,7 +19,10 @@ fn write_object(obj: &Object, out: &mut Vec<u8>) -> Result<(), SealError> {
         Object::Null => out.extend_from_slice(b"null"),
         Object::Boolean(b) => out.extend_from_slice(if *b { b"true" } else { b"false" }),
         Object::Integer(i) => out.extend_from_slice(i.to_string().as_bytes()),
-        Object::Real(r) => out.extend_from_slice(format!("{r:.6}").as_bytes()),
+        // The shortest decimal that reads back as the same value, as lopdf
+        // writes it: six places would turn 0.0000004 into 0, and the
+        // verifier, comparing catalogs, would refuse the revision.
+        Object::Real(r) => out.extend_from_slice(r.to_string().as_bytes()),
         Object::Name(n) => write_name(n, out),
         Object::String(s, _) => write_hex_string(s, out),
         Object::Array(a) => {

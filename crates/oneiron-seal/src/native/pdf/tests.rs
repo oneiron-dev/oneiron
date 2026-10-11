@@ -407,6 +407,55 @@ fn dts_revision_registers_a_signature_field_in_acroform() {
     );
 }
 
+/// Sol R12 on #1379: the writer re-emitted the catalog with six decimal
+/// places, so a DSS revision turned a catalog value of 0.0000004 into 0,
+/// and the verifier, comparing catalogs, refused the organ's own B-LT seal.
+/// What the signature and DSS revisions re-emit reads back as it was.
+#[test]
+fn revisions_keep_the_numbers_of_the_catalog_they_re_emit() {
+    let mut intent = Dictionary::new();
+    intent.set("S", Object::Name(b"GTS_PDFA1".to_vec()));
+    intent.set("VendorThreshold", Object::Real(0.000_000_4));
+    let media = Object::Array(vec![
+        Object::Integer(0),
+        Object::Integer(0),
+        Object::Real(200.125),
+        Object::Integer(200),
+    ]);
+    let (mut doc, _) = doc_with_page(
+        &[(b"MediaBox", media)],
+        &[(
+            b"OutputIntents",
+            Object::Array(vec![Object::Dictionary(intent)]),
+        )],
+    );
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("save");
+    let signed = sign_revision(&prepared(&bytes), 1024);
+    let state =
+        reparse_revision(&signed.bytes, &SealResourceLimits::default()).expect("reparse signed");
+    let dss_obj = state.max_obj + 1;
+    let kind = RevisionKind::Dss {
+        material_objects: vec![(dss_obj, b"<< /Type /DSS >>".to_vec())],
+        dss_obj,
+    };
+    let dss = append_revision(&signed.bytes, &state, &kind, 0).expect("dss revision");
+    for out in [&signed.bytes, &dss.bytes] {
+        let doc = Document::load_mem(out).expect("reload");
+        let catalog = doc.catalog().expect("catalog");
+        let intents = catalog
+            .get(b"OutputIntents")
+            .and_then(Object::as_array)
+            .expect("intents");
+        let threshold = intents[0]
+            .as_dict()
+            .and_then(|intent| intent.get(b"VendorThreshold"))
+            .and_then(Object::as_float)
+            .expect("threshold");
+        assert_eq!(threshold.to_bits(), 0.000_000_4_f32.to_bits());
+    }
+}
+
 #[test]
 fn direct_acroform_dict_fields_survive_signing() {
     let mut doc = Document::with_version("1.4");
