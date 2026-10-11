@@ -12,8 +12,8 @@ use crate::code_run::consent;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
-    SelfCall, SelfContextCall, SelfContextResult, SelfDispatchOutcome, SelfDispatcher,
-    SelfDurableWaitReason, SelfEffect,
+    SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome,
+    SelfDispatcher, SelfDurableWaitReason, SelfEffect,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -277,6 +277,23 @@ impl<'a> HostSelfDispatcher<'a> {
         if !matches!(call, SelfCall::Context(_)) {
             self.enforce_off_record_effect_policy(call.effect())?;
         }
+        // A bound door rules on every call the run serves itself, not only on
+        // the verb calls it runs, so its ceiling and credential hold at each.
+        let read_as = match &self.agent_verbs {
+            Some(door) if !matches!(call, SelfCall::Context(_) | SelfCall::AgentVerb(_)) => {
+                match door.admit_run_call(call.effect()) {
+                    Ok(read_as) => read_as,
+                    Err(refusal) => {
+                        return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                            effect: call.effect(),
+                            outcome: refusal.code,
+                            reason_codes: Vec::new(),
+                        }));
+                    }
+                }
+            }
+            _ => None,
+        };
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
             SelfCall::AgentsPut(call) => {
@@ -295,7 +312,7 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
             SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
-            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
+            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),

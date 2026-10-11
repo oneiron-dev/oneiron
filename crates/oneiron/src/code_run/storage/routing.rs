@@ -1,5 +1,6 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
+use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
 use crate::session_overlay::RouteTarget;
@@ -247,6 +248,29 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.search_text(query, limit),
             Self::Session(binding) => binding.search_text(query, limit),
+        }
+    }
+
+    /// [`Self::search_text`] on `reader`'s lane: the hits its grants admit,
+    /// surfaceable claims only, as the memory surface's own BM25 channel
+    /// serves them.
+    pub(crate) fn search_text_as(
+        &self,
+        query: &str,
+        limit: usize,
+        reader: ScopedReadActorKey,
+    ) -> Result<Vec<ScoredEntity>> {
+        match self {
+            Self::Canonical(vault) => Ok(vault
+                .scoped_read(reader)
+                .with_claim_status(ClaimReadStatus::Surfaceable)
+                .filter_scored_entities(vault.search_text(query, limit)?)?
+                .value),
+            // A room's hits include overlay rows the vault's grants cannot
+            // name, and no host narrows a room run's reads.
+            Self::Session(_) => Err(crate::Error::InvalidConfig(
+                "a narrowed search reads the canonical vault".into(),
+            )),
         }
     }
 

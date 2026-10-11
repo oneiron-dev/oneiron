@@ -2,6 +2,7 @@
 
 use rmpv::Value;
 
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
@@ -94,12 +95,17 @@ impl HostSelfDispatcher<'_> {
         }
     }
 
+    /// A search its door admitted with a key reads on that key's lane.
     pub(super) fn dispatch_memory_search(
         &self,
         call: SelfMemorySearchCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
-        let results = self.storage.search_text(&call.query, limit)?;
+        let results = match read_as {
+            Some(reader) => self.storage.search_text_as(&call.query, limit, reader)?,
+            None => self.storage.search_text(&call.query, limit)?,
+        };
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,

@@ -8,14 +8,16 @@
 //! since the guest receives the verb's whole output. Its writes carry the
 //! run's host-owned origin, not a source the guest's input names.
 
-use super::actor_dispatch::{mcp_tool_validation_error, mcp_verb_gate};
-use super::admission::mcp_admit_scoped_verb;
+use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
+use super::admission::{mcp_admit_run_verb, mcp_admit_scoped_verb};
 use super::tasks_response::{execute_agent_verb_input, mcp_agent_verb_arguments};
 use super::{McpCallContext, McpGatewayError};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
-use oneiron::code_run::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
+use oneiron::claim::ScopedReadActorKey;
+use oneiron::code_run::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall, SelfEffect};
 use oneiron::memory::HostWriteOrigin;
+use oneiron::task_verb::sdk::RunVerb;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -61,6 +63,35 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             })?
             .map_err(|error| AgentVerbRefusal {
                 code: error.kind.to_owned(),
+            })
+    }
+
+    /// A call the run serves itself meets this connector's door at each call
+    /// too: a run row needs its own binding, and every call needs the
+    /// credential `execute_code` was admitted on, still live. A search reads
+    /// under that credential's grants, as `recall` does.
+    fn admit_run_call(
+        &self,
+        effect: SelfEffect,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        let refused = |error: McpGatewayError| AgentVerbRefusal {
+            code: error.kind.to_owned(),
+        };
+        if let Some(verb) = RunVerb::ALL.iter().find(|verb| verb.effect() == effect) {
+            mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
+        }
+        mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
+        if effect != SelfEffect::MemorySearch {
+            return Ok(None);
+        }
+        self.actor
+            .auth
+            .as_ref()
+            .and_then(crate::auth::CoreAuth::verified_slip)
+            .and_then(ScopedReadActorKey::from_verified_slip)
+            .map(Some)
+            .ok_or_else(|| AgentVerbRefusal {
+                code: "mcp_auth_required".to_owned(),
             })
     }
 }

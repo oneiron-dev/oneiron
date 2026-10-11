@@ -465,6 +465,16 @@ pub trait AgentVerbDoor: Send + Sync {
         call: &SelfAgentVerbCall,
         origin: &crate::memory::HostWriteOrigin,
     ) -> std::result::Result<serde_json::Value, AgentVerbRefusal>;
+
+    /// Admits one call the run serves itself, before it runs: a run row such
+    /// as `self.memory.search` or `put_claim`, or a `self.*` import. The
+    /// host's ceiling and credential bind these as they bind [`Self::call`],
+    /// so a run keeps no authority its door has lost or never had. A search
+    /// admitted with a key reads only what that key's lane admits.
+    fn admit_run_call(
+        &self,
+        effect: SelfEffect,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
 }
 
 /// Result of dispatching a `self.*` call.

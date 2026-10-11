@@ -37,6 +37,13 @@ impl AgentVerbDoor for TaskCreateDoor {
         }
         Ok(answer)
     }
+
+    fn admit_run_call(
+        &self,
+        _: SelfEffect,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(None)
+    }
 }
 
 /// One step that makes its bridge calls and keeps their answers. One that

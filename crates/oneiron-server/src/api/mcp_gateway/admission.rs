@@ -81,6 +81,17 @@ pub(crate) fn mcp_admit_scoped_verb(
     mcp_admit_verb_scope(server, tool, arguments, actor)
 }
 
+/// One verb-table row a code run serves itself (`self.memory.search`,
+/// `put_claim`, …). No tool carries it, so the bound-verb ceiling names it by
+/// its row name. Its world/facet axis is the run's: `execute_code` admits no
+/// narrowed credential.
+pub(crate) fn mcp_admit_run_verb(
+    actor: &McpCallContext,
+    verb: oneiron::task_verb::sdk::RunVerb,
+) -> Result<(), McpGatewayError> {
+    mcp_admit_bound_tool(actor, verb.as_str())
+}
+
 fn mcp_admit_bound_tool(actor: &McpCallContext, tool_name: &str) -> Result<(), McpGatewayError> {
     if actor.admits_tool(tool_name) {
         return Ok(());
