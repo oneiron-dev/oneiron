@@ -274,6 +274,25 @@ fn a_reader_lists_only_what_it_may_read() {
     // that the preview read passed over.
     assert_eq!(read.withheld, all.rows.len() - 1 + 1);
 
+    // A filter sees only rows the reader may read: the receipt withholds
+    // every conversation it may not read, whatever kind the filter names.
+    let unlike = ConversationKind::Mirror;
+    let filtered = |reader| {
+        let filter = ConversationListFilter {
+            kind: Some(unlike),
+            external_id: None,
+        };
+        vault
+            .memory(reader, EdgeActorClass::Human)
+            .conversation_list(filter, None, 50, true)
+            .expect("list conversations")
+    };
+    assert!(filtered(owner).value.rows.is_empty(), "no mirror here");
+    assert_eq!(
+        filtered(reader).receipt.suppressed_count,
+        all.rows.len() - 1
+    );
+
     let first = list(&vault, reader, 1);
     assert_eq!(first.rows.len(), 1);
     assert_eq!(

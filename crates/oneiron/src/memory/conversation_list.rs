@@ -12,7 +12,7 @@ use super::*;
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
-use crate::conversation::{ConversationKind, body_in, latest_message_text, snippet, turn_text};
+use crate::conversation::{ConversationBody, ConversationKind, LatestMessage, snippet, turn_text};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::{EntityStoreRead, TombstoneStore};
@@ -21,8 +21,17 @@ use crate::registry::ENTITY_TYPE_CONVERSATION;
 /// Conversations read through the lane at a time when the list counts them.
 const COUNT_CHUNK: usize = 256;
 
+/// Conversations read through the lane at a time while a page fills, however
+/// few slots it has left, so rows the reader may not read cost one read per
+/// chunk, never one each.
+const PAGE_CHUNK: usize = 64;
+
 /// Turns a preview reads through the lane at a time, the preferred first.
 const PREVIEW_TURNS_PER_READ: usize = 4;
+
+/// Messages of one turn a preview reads through the lane at a time; only the
+/// latest one's text is kept between reads.
+const PREVIEW_MESSAGES_PER_READ: usize = 256;
 
 /// Which conversations a list names.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -31,6 +40,22 @@ pub struct ConversationListFilter<'f> {
     pub kind: Option<ConversationKind>,
     /// Only conversations with this external id.
     pub external_id: Option<&'f str>,
+}
+
+impl ConversationListFilter<'_> {
+    /// Whether the conversation body `body` is one this filter names. A body
+    /// that does not decode is named only by the empty filter.
+    fn names(&self, body: &[u8]) -> bool {
+        if *self == Self::default() {
+            return true;
+        }
+        ConversationBody::from_bytes(body).is_ok_and(|body| {
+            self.kind.is_none_or(|kind| kind == body.kind)
+                && self
+                    .external_id
+                    .is_none_or(|external| body.external_id.as_deref() == Some(external))
+        })
+    }
 }
 
 /// One conversation on a list page.
@@ -122,9 +147,9 @@ impl Memory<'_> {
         }
         let mut cursor = after.copied();
         loop {
-            let (ids, more) = self.listed_ids(filter, cursor.as_ref(), limit + 1 - rows.len())?;
+            let (ids, more) = self.listed_ids(cursor.as_ref(), PAGE_CHUNK)?;
             for row in self
-                .read_conversations(lane, &ids, &mut receipt)?
+                .read_conversations(lane, filter, &ids, &mut receipt)?
                 .into_iter()
                 .flatten()
             {
@@ -152,8 +177,8 @@ impl Memory<'_> {
         let mut receipt = None;
         let mut cursor = None;
         loop {
-            let (ids, more) = self.listed_ids(filter, cursor.as_ref(), COUNT_CHUNK)?;
-            let read = self.read_conversations(lane, &ids, &mut receipt)?;
+            let (ids, more) = self.listed_ids(cursor.as_ref(), COUNT_CHUNK)?;
+            let read = self.read_conversations(lane, filter, &ids, &mut receipt)?;
             total = total.saturating_add(read.iter().flatten().count() as u64);
             match ids.last() {
                 Some(last) if more => cursor = Some(*last),
@@ -163,12 +188,11 @@ impl Memory<'_> {
     }
 
     /// Up to `want` conversation ids after `after` in index order, without
-    /// erased ones or, by their stored body, ones the filter does not name;
-    /// and whether the walk stopped at `want`. Only the listing reads here:
-    /// every row the list returns is read again through the lane.
+    /// erased ones, and whether the walk stopped at `want`. Only the listing
+    /// reads here, and no body: every row the list returns is read again
+    /// through the lane, and the filter sees only rows the lane admitted.
     fn listed_ids(
         &self,
-        filter: ConversationListFilter<'_>,
         after: Option<&EntityId>,
         want: usize,
     ) -> MemoryResult<(Vec<EntityId>, bool)> {
@@ -182,16 +206,6 @@ impl Memory<'_> {
             if TombstoneStore::port_tombstone_is_deleted(self.vault, &txn, &id)? {
                 continue;
             }
-            if filter != ConversationListFilter::default() {
-                let body = body_in(self.vault, &txn, id)?;
-                if filter.kind.is_some_and(|kind| kind != body.kind)
-                    || filter
-                        .external_id
-                        .is_some_and(|external| body.external_id.as_deref() != Some(external))
-                {
-                    continue;
-                }
-            }
             ids.push(id);
             if ids.len() == want {
                 return Ok((ids, true));
@@ -201,10 +215,13 @@ impl Memory<'_> {
     }
 
     /// Reads `ids` through the lane: each slot is the conversation's row with
-    /// its body, or `None` for a row the reader may not read.
+    /// its body, or `None` for a row the reader may not read or the filter
+    /// does not name. The filter reads only admitted bodies, so what the
+    /// receipt withholds says nothing about a hidden row's fields.
     fn read_conversations(
         &self,
         lane: &ScopedRead<'_>,
+        filter: ConversationListFilter<'_>,
         ids: &[EntityId],
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Vec<Option<ReadRow>>> {
@@ -218,57 +235,53 @@ impl Memory<'_> {
             .value
             .into_iter()
             .map(|row| {
-                row.filter(|row| row.entity_type == ENTITY_TYPE_CONVERSATION && row.body.is_some())
+                row.filter(|row| {
+                    row.entity_type == ENTITY_TYPE_CONVERSATION
+                        && row.body.as_deref().is_some_and(|body| filter.names(body))
+                })
             })
             .collect())
     }
 
     /// `conversation`'s preview as the reader may read it. The turns a
-    /// preview looks at are listed, then read through the lane with their
-    /// messages a few at a time, the preferred first, until one has text. A
-    /// turn the reader may not read shows none of its messages.
+    /// preview looks at are listed, then read through the lane a few at a
+    /// time, the preferred first, each readable one's messages after it in
+    /// bounded reads, until one has text. A turn the reader may not read
+    /// shows none of its messages.
     fn preview(
         &self,
         lane: &ScopedRead<'_>,
         conversation: &EntityId,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Option<String>> {
-        let turns: Vec<EntityId> = {
+        let turns = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-            self.vault
-                .preview_turns_in(&txn, conversation)?
-                .into_iter()
-                .map(|turn| turn.id)
-                .collect()
+            self.vault.preview_turns_in(&txn, conversation)?
         };
         for chunk in turns.chunks(PREVIEW_TURNS_PER_READ) {
-            let members = {
-                let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-                chunk
-                    .iter()
-                    .map(|turn| self.vault.turn_message_ids_in(&txn, turn))
-                    .collect::<crate::Result<Vec<_>>>()?
-            };
-            let reads: Vec<_> = chunk
-                .iter()
-                .chain(members.iter().flatten())
-                .copied()
-                .map(PointRead::id)
-                .collect();
+            let reads: Vec<_> = chunk.iter().copied().map(PointRead::id).collect();
             let read = lane.read(&reads, None)?;
             fold_receipt(receipt, read.receipt);
-            let (turn_rows, mut message_rows) = read.value.split_at(chunk.len());
-            for (turn, ids) in turn_rows.iter().zip(&members) {
-                let (own, rest) = message_rows.split_at(ids.len());
-                message_rows = rest;
-                let Some(body) = turn.as_ref().and_then(|row| row.body.as_deref()) else {
+            for (turn, row) in chunk.iter().zip(read.value) {
+                let Some(body) = row.and_then(|row| row.body) else {
                     continue;
                 };
-                let messages = own
-                    .iter()
-                    .flatten()
-                    .filter_map(|row| Some((row.id, row.body.as_deref()?)));
-                if let Some(text) = latest_message_text(messages).or_else(|| turn_text(body)) {
+                let messages = {
+                    let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+                    self.vault.turn_message_ids_in(&txn, turn)?
+                };
+                let mut latest = LatestMessage::default();
+                for ids in messages.chunks(PREVIEW_MESSAGES_PER_READ) {
+                    let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+                    let read = lane.read(&reads, None)?;
+                    fold_receipt(receipt, read.receipt);
+                    for row in read.value.into_iter().flatten() {
+                        if let Some(body) = row.body.as_deref() {
+                            latest.offer(row.id, body);
+                        }
+                    }
+                }
+                if let Some(text) = latest.text().or_else(|| turn_text(&body)) {
                     return Ok(Some(snippet(&text)));
                 }
             }

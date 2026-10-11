@@ -21,6 +21,10 @@ impl Vault {
     ) -> Result<Option<String>> {
         let txn = self.store.env.read_txn()?;
         for turn in self.preview_turns_in(&txn, conversation)? {
+            let turn = RetainedTurn {
+                row: retained_row(&self.store, &txn, &turn, ENTITY_TYPE_TURN)?,
+                id: turn,
+            };
             if let Some(text) = self.visible_turn_text(&txn, &turn)? {
                 return Ok(Some(snippet(&text)));
             }
@@ -28,16 +32,19 @@ impl Vault {
         Ok(None)
     }
 
-    /// The live turns a preview looks at, the one it prefers first: the
-    /// selected path from its HEAD back, or with no selected DAG state the
-    /// ChildOf turns from the latest learned.
+    /// The turns a preview looks at, the one it prefers first: the selected
+    /// path from its HEAD back, or with no selected DAG state the live
+    /// ChildOf turns from the latest learned. Only ids: a caller reads each
+    /// turn's body when it gets to it.
     pub(crate) fn preview_turns_in(
         &self,
         txn: &RoTxn<'_>,
         conversation: &EntityId,
-    ) -> Result<Vec<RetainedTurn>> {
+    ) -> Result<Vec<EntityId>> {
         match SelectedPathSnapshot::read(self, txn, conversation)? {
-            PreviewTopology::Selected(path) => return Ok(path.turns.into_iter().rev().collect()),
+            PreviewTopology::Selected(path) => {
+                return Ok(path.turns.into_iter().rev().map(|turn| turn.id).collect());
+            }
             PreviewTopology::ChildOfOnly => {}
             PreviewTopology::ProvenEmpty => return Ok(Vec::new()),
         }
@@ -58,13 +65,14 @@ impl Vault {
             {
                 continue;
             }
-            let row = retained_row(&self.store, txn, &id, ENTITY_TYPE_TURN)?;
-            if let RetainedRow::Live { learned_at, .. } = row {
-                turns.push((learned_at, RetainedTurn { id, row }));
+            if let RetainedRow::Live { learned_at, .. } =
+                retained_row(&self.store, txn, &id, ENTITY_TYPE_TURN)?
+            {
+                turns.push((learned_at, id));
             }
         }
-        turns.sort_by(|(left, a), (right, b)| (right, b.id).cmp(&(left, a.id)));
-        Ok(turns.into_iter().map(|(_, turn)| turn).collect())
+        turns.sort_by(|left, right| right.cmp(left));
+        Ok(turns.into_iter().map(|(_, id)| id).collect())
     }
 
     /// The MESSAGE rows that are part of `turn`.
@@ -97,7 +105,7 @@ impl Vault {
         if self.archive_tombstone_in_txn(txn, &turn.id)?.is_some() {
             return Ok(None);
         }
-        let mut messages = Vec::new();
+        let mut latest = LatestMessage::default();
         for id in self.turn_message_ids_in(txn, &turn.id)? {
             let RetainedRow::Live { body, .. } =
                 retained_row(&self.store, txn, &id, ENTITY_TYPE_MESSAGE)?
@@ -109,10 +117,9 @@ impl Vault {
             }
             #[cfg(feature = "sync")]
             let body = crate::entity_doc::resolve_record_body(&self.store, txn, &id, &body)?;
-            messages.push((id, body));
+            latest.offer(id, &body);
         }
-        if let Some(text) = latest_message_text(messages.iter().map(|(id, body)| (*id, &body[..])))
-        {
+        if let Some(text) = latest.text() {
             return Ok(Some(text));
         }
         #[cfg(feature = "sync")]
@@ -123,31 +130,36 @@ impl Vault {
     }
 }
 
-/// The text of the latest visible message among `messages` (id and live
-/// body), by its order inside the turn and then its id.
-pub(crate) fn latest_message_text<'b>(
-    messages: impl IntoIterator<Item = (EntityId, &'b [u8])>,
-) -> Option<String> {
-    let mut latest: Option<(u64, EntityId, String)> = None;
-    for (id, body) in messages {
+/// The latest visible message of one turn, kept as its messages are offered
+/// (id and live body): by its order inside the turn, then its id. Only the
+/// winner's text is held.
+#[derive(Debug, Default)]
+pub(crate) struct LatestMessage(Option<(u64, EntityId, String)>);
+
+impl LatestMessage {
+    pub(crate) fn offer(&mut self, id: EntityId, body: &[u8]) {
         let Some(message) = rmp_serde::from_slice::<Value>(body).ok() else {
-            continue;
+            return;
         };
         if message.get("is_visible").and_then(Value::as_bool) != Some(true) {
-            continue;
+            return;
         }
         let Some(text) = message.get("content").and_then(Value::as_str) else {
-            continue;
+            return;
         };
         let order = message.get("order").and_then(Value::as_u64).unwrap_or(0);
-        if latest
+        if self
+            .0
             .as_ref()
             .is_none_or(|(old_order, old_id, _)| (order, id) > (*old_order, *old_id))
         {
-            latest = Some((order, id, text.to_owned()));
+            self.0 = Some((order, id, text.to_owned()));
         }
     }
-    latest.map(|(_, _, text)| text)
+
+    pub(crate) fn text(self) -> Option<String> {
+        self.0.map(|(_, _, text)| text)
+    }
 }
 
 /// A turn's own text, the preview of a turn with no visible message.
