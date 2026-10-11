@@ -183,12 +183,7 @@ impl crate::store::Store {
         // Persist ONLY clock authority here: a read must not also commit the
         // floor of IDs allocated in RAM but not yet used by a mutation.
         let mut txn = self.env.write_txn()?;
-        let persisted = authorization_floor_in_txn(self, &txn)?;
-        let now = self.clock.observe_floor(persisted)?;
-        if now != persisted {
-            self.vault_meta
-                .put(&mut txn, CLOCK_FLOOR, &now.to_be_bytes())?;
-        }
+        let now = observe_clock_floor_in_txn(self, &mut txn)?;
         txn.commit()?;
         Ok(now)
     }
@@ -200,16 +195,19 @@ pub(crate) fn recorded_at_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
-    let persisted = match store.vault_meta().get(txn, CLOCK_FLOOR)? {
-        Some(bytes) => u64::from_be_bytes(
-            bytes
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("recorded clock floor"))?,
-        ),
-        None => 0,
-    };
     persist_id_floor_in_txn(store, txn)?;
+    observe_clock_floor_in_txn(store, txn)
+}
+
+/// This store's clock, observed against the floor the vault has committed,
+/// with the observation persisted as the new floor in the caller's
+/// transaction. Only the clock floor: the id floor stays where the vault's
+/// mutations put it.
+pub(crate) fn observe_clock_floor_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<u64> {
+    let persisted = authorization_floor_in_txn(store, txn)?;
     let now = store.clock().observe_floor(persisted)?;
     if now != persisted {
         store

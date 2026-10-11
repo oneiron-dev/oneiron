@@ -11,17 +11,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/bin/oneiron-organ-probe.rs` | src | s | 3 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
+| `src/asks.rs` | src | m | 3 struct · 1 trait · 3 fn · 8 crate-vis | Answered, AskHandler, AskHandlers, AskRequest | Protocol 1.1 asks, the engine side: who answers, within which caps, and what the receipt records |
+| `src/bin/oneiron-organ-probe.rs` | src | m | 9 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
 | `src/budget.rs` | src | s | 1 struct · 1 fn · 6 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
 | `src/error.rs` | src | s | 2 enum | HostError, Unavailable | What can go wrong on the engine side of an organ call |
-| `src/host.rs` | src | m | 3 struct · 10 fn | OrganHost, OrganOutcome, OrganOutput | The organ host: install, call, unload, revoke |
-| `src/lib.rs` | src | s | 6 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
-| `src/process.rs` | src | m | 15 crate-vis | — | One live organ process: spawn, handshake, a reader thread, calls |
-| `src/receipt.rs` | src | s | 3 struct · 3 crate-vis | CallReceipt, ReceiptInput, ReceiptOutput | The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes |
+| `src/fetch.rs` | src | m | 1 struct · 1 crate-vis | GuardedFetch | The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the… |
+| `src/host.rs` | src | m | 3 struct · 11 fn | OrganHost, OrganOutcome, OrganOutput | The organ host: install, call, unload, revoke |
+| `src/lib.rs` | src | s | 8 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
+| `src/process.rs` | src | L | 16 crate-vis | — | One live organ process: spawn, handshake, a reader thread, calls |
+| `src/receipt.rs` | src | s | 5 struct · 1 enum · 3 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes |
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
 | `src/sandbox.rs` | src | s | 2 crate-vis | — | What the host does to an organ process between fork and exec |
 | `src/slot.rs` | src | s | 1 struct · 1 enum · 13 crate-vis | OrganState, OrganStatus | One installed organ: its process, its crash history, its condition |
-| `src/spec.rs` | src | s | 4 struct · 2 enum · 1 fn | CallClass, HostConfig, OrganCall, OrganInput, OrganSpec, OrganTier | What the engine installs and what a caller asks |
+| `src/spec.rs` | src | s | 8 struct · 2 enum · 3 fn | AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput +2 | What the engine installs and what a caller asks |
+| `tests/host_asks.rs` | test | L | — | — | Protocol 1.1 asks against a real organ process (the probe) |
 | `tests/host_e2e.rs` | test | m | — | — | The host against a real organ process (the probe), over real vault blobs |
 | `tests/host_fds.rs` | test | s | — | — | A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
