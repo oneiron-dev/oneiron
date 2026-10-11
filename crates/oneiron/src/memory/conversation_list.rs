@@ -337,14 +337,19 @@ impl Memory<'_> {
 
     /// The `turns` whose session, where they sit in one, the lane admits. A
     /// session's body and edges decide whether its turns may be previewed,
-    /// so a turn whose session the reader may not read is left out rather
-    /// than judged by what it may not read.
+    /// so a turn whose session a reader other than the owner may not read is
+    /// left out rather than judged by what it may not read.
     fn in_readable_sessions(
         &self,
         lane: &ScopedRead<'_>,
         turns: Vec<(u64, EntityId)>,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Vec<(u64, EntityId)>> {
+        // The vault owner may inspect every session, a retained shell too, as
+        // its own preview does: the proof judges each one.
+        if lane.actor_key().vault_owner_ref().is_some() {
+            return Ok(turns);
+        }
         let sessions = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             turns
@@ -374,10 +379,12 @@ impl Memory<'_> {
 }
 
 /// Folds a preview read's narrowing into the list's receipt without its
-/// count: a count of what a listed conversation's turns and messages
-/// withheld would say what that conversation holds.
+/// count, nor the row axis derived from that count: either would say what a
+/// listed conversation's turns and messages hold.
 fn fold_scope(receipt: &mut Option<ScopedReadReceipt>, mut read: ScopedReadReceipt) {
     read.suppressed_count = 0;
+    read.narrowed_axes.retain(|axis| axis != "row_authority");
+    read.record_axes();
     fold_receipt(receipt, read);
 }
 

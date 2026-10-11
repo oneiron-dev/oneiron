@@ -58,6 +58,7 @@ struct Listed {
     next: Option<EntityId>,
     total: Option<u64>,
     withheld: usize,
+    axes: Vec<String>,
 }
 
 fn list(vault: &Vault, reader: EntityId, limit: usize) -> Listed {
@@ -75,6 +76,7 @@ fn list(vault: &Vault, reader: EntityId, limit: usize) -> Listed {
         next: read.value.next,
         total: read.value.total,
         withheld: read.receipt.suppressed_count,
+        axes: read.receipt.narrowed_axes,
     }
 }
 
@@ -550,10 +552,10 @@ fn a_hidden_turns_topology_never_decides_a_preview() {
 }
 
 /// Two vaults the reader reads alike: one conversation whose two turns it may
-/// read, neither with text it may read. A message outside its grant is part
-/// of the earlier turn, and in one vault part of the later one as well. The
-/// list and its receipt are the same in both: nothing says which turns a
-/// hidden message belongs to.
+/// read, the later one with a message it may read. A message outside its
+/// grant is part of the earlier turn, and in one vault part of the later one
+/// as well. The list and its whole receipt are the same in both: nothing,
+/// not even a narrowed axis, says which turns a hidden message belongs to.
 #[test]
 fn a_hidden_message_in_two_turns_changes_nothing() {
     let (room, earlier, later) = (entity(0xF4), entity(0xF5), entity(0xF6));
@@ -576,10 +578,7 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
                     room,
                     later,
                     AT + 10,
-                    WitnessMessage {
-                        is_visible: false,
-                        ..said(WitnessAuthor::Companion, "never shown", space)
-                    },
+                    said(WitnessAuthor::Companion, "the latest it may read", space),
                 ),
             ],
             &[room, earlier, later],
@@ -597,15 +596,12 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
         }
         let listed = list(&vault, reader, 50);
         let others = others(&vault, owner, 1);
-        (
-            listed.rows,
-            listed.next,
-            listed.total,
-            listed.withheld,
-            others,
-        )
+        (listed.rows, listed.withheld, others, listed.axes)
     });
-    assert_eq!(listed[0].0, [(room, None)]);
-    assert_eq!(listed[0].3, listed[0].4, "only the other conversations");
+    assert_eq!(
+        listed[0].0,
+        [(room, Some("the latest it may read".to_owned()))]
+    );
+    assert_eq!(listed[0].1, listed[0].2, "only the other conversations");
     assert_eq!(listed[0], listed[1]);
 }
