@@ -250,6 +250,22 @@ impl Memory<'_> {
         )
     }
 
+    /// The writer a witness lands in: a session door's [`Admit`] first, so a
+    /// speaker it refuses learns nothing the actor checks would have read,
+    /// then those checks ([`Self::verify_actor_write_in_txn`]) and `write`.
+    pub(super) fn with_witness_write_txn_as<T>(
+        &self,
+        callback: crate::store::Callback,
+        admit: Option<Admit<'_>>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        self.vault.write_txn_door(callback, |wtxn| {
+            admit.map_or(Ok(()), |admit| admit(wtxn))?;
+            self.verify_actor_write_in_txn(wtxn)?;
+            write(wtxn)
+        })
+    }
+
     // ── the overlay landing ─────────────────────────────────────────────
 
     pub(super) fn overlay_sink<'a, 'v>(
