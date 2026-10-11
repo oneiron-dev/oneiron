@@ -1852,98 +1852,74 @@ fn selector_target_must_resolve_to_a_facet_before_any_scope_is_honored() {
     }
 }
 
-/// A CONFLICTING document blob is NEVER CONSULTED — the stored type carries
-/// the scope, in the WITHHOLD direction as much as the seed direction.
-///
-/// This pin previously asserted the opposite (conflict ⇒ no scope ⇒ the EVENT
-/// exports), and the r7 finder proved that expectation was pinning the bug:
-/// reading a source conflict as `None` makes the row inert, which ERASES a
-/// withhold a valid stored EVENT + stored FACET pair had already established.
-/// A peer that cannot otherwise touch this entity gets to publish it by
-/// forging one rejected blob — non-monotone disclosure, peer-controlled. The
-/// unified rule is that stored truth never loses to a rejected write in EITHER
-/// role, so a conflicting blob can neither buy scope nor erase a withhold.
-///
-/// The suppression worry the old expectation answered is answered better by
-/// the unified rule: the withholds that survive are exactly the ones the
-/// STORED types already justified. A forged stamp aimed at a source stored as
-/// a PERSON is off the table and stays inert — no new suppression primitive
-/// appears (`selector_forged_facet_blob_cannot_retype_a_stored_person_target`
-/// and the three-frame LWW pin hold that line).
-///
-/// The fixture puts the stamp on an UNSELECTED facet so the two readings
-/// diverge: under a conflict-to-None source rule the EVENT rides the adjacent
-/// seed's closure and exports; under stored-wins it stays WITHHELD.
-///
-/// (Renamed from `selector_conflicting_document_blob_carries_no_scope_in_
-/// either_direction`, whose name stated the erasing rule the r7 ruling
-/// removed.)
 #[test]
-fn selector_conflicting_document_blob_never_displaces_the_stored_type() {
+fn valid_claim_retype_cannot_erase_stored_event_facet_withhold() {
     let member = entity_id(0x26);
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-12");
-
-    let facet_selected = entity_id(0x7F);
-    let facet_unselected = entity_id(0x8F);
-    let claim_seed = entity_id(0x9F);
+    let key = WindowKey::new("2026-12");
+    let selected = entity_id(0x7F);
+    let unselected = entity_id(0x8F);
+    let seed = entity_id(0x9F);
     let conflicted = entity_id(0xAF);
-
-    // Stored as an ADMITTED source type against a stored FACET target: BOTH
-    // halves of this withhold are stored truth, which is exactly why a
-    // rejected blob may not dissolve it.
-    for (id, entity_type) in [
-        (facet_selected, ENTITY_TYPE_FACET),
-        (facet_unselected, ENTITY_TYPE_FACET),
+    for (id, kind) in [
+        (selected, ENTITY_TYPE_FACET),
+        (unselected, ENTITY_TYPE_FACET),
         (conflicted, ENTITY_TYPE_EVENT),
     ] {
         vault
-            .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, b"row")
+            .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, b"row")
             .unwrap();
     }
-
-    let doc = create_window_doc("source", &window_key);
-    insert_entity(&doc, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
-    insert_entity(&doc, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
-    insert_blob(&doc, claim_seed, &claim_blob(None));
-    // The CONFLICT: the doc types this id PERSON while LMDB holds EVENT.
-    insert_entity(&doc, conflicted, ENTITY_TYPE_PERSON, b"rejected-retype");
-    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_selected);
-    insert_edge(&doc, conflicted, EdgeKind::FacetOf, facet_unselected);
-    insert_edge(&doc, claim_seed, EdgeKind::Supports, conflicted);
+    let doc = create_window_doc("source", &key);
+    insert_entity(&doc, selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_entity(&doc, unselected, ENTITY_TYPE_FACET, b"facet-b");
+    let claim = ClaimBody::new(
+        "selector.test",
+        ClaimSubject::Entity(selected),
+        Value::from("valid claim"),
+        0.8,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    let blob = entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap());
+    insert_blob(&doc, seed, &blob);
+    insert_blob(&doc, conflicted, &blob);
+    insert_edge(&doc, seed, EdgeKind::FacetOf, selected);
+    insert_edge(&doc, conflicted, EdgeKind::FacetOf, unselected);
+    insert_edge(&doc, seed, EdgeKind::Supports, conflicted);
     doc.commit();
     seed_doc_stamps(&vault, &doc);
-
-    let selector = SyncSelector::new(
+    let broad = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
-        vec![facet_selected],
+        vec![],
         vec![SelectorRange::Semantic, SelectorRange::Core],
     );
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+    let broad_bytes = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &broad)
         .unwrap()
         .export(ExportMode::all_updates())
         .unwrap();
-    let ids = import_ids(&update);
-
     assert!(
-        ids.contains(&claim_seed),
-        "control: the selected-facet claim must seed closure, or the assertion \
-         below would hold vacuously"
+        import_ids(&broad_bytes).contains(&conflicted),
+        "valid conflicting claim must not be masked by another export gate"
     );
-    assert!(
-        !ids.contains(&conflicted),
-        "the stored EVENT's stamp to a stored UNSELECTED facet is a withhold \
-         BOTH endpoints' stored truth already justified, so it must survive a \
-         conflicting blob: reading the source conflict as no-type would make \
-         the row inert and let a peer PUBLISH this entity by forging one write \
-         the immutability gate rejected (r7 — non-monotone disclosure)"
+    let limited = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![selected],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
     );
-    assert!(
-        !ids.contains(&facet_unselected),
-        "unselected facet entity leaked"
-    );
+    let bytes = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &limited)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&bytes);
+    assert!(ids.contains(&seed));
+    assert!(!ids.contains(&conflicted));
+    assert!(!ids.contains(&unselected));
 }
 
 /// A REJECTED RETYPE MUST NOT ERASE A VALID SCOPE — the TARGET-side arm of

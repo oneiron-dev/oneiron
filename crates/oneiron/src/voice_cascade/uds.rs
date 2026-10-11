@@ -54,6 +54,9 @@ pub struct BridgeLimits {
     pub max_fires: u8,
     pub fire_limit: usize,
     pub final_limit: usize,
+    /// The hard deadline of each fire and finalize; `None` waits for them.
+    /// A live-call host sets the vault's call-mode deadline.
+    pub deadline: Option<std::time::Duration>,
 }
 
 impl Default for BridgeLimits {
@@ -62,6 +65,7 @@ impl Default for BridgeLimits {
             max_fires: 4,
             fire_limit: 8,
             final_limit: 32,
+            deadline: None,
         }
     }
 }
@@ -85,6 +89,7 @@ impl BridgeLimits {
             max_fires: self.max_fires,
             fire_limit: self.fire_limit,
             final_limit: self.final_limit,
+            deadline: self.deadline,
         }
     }
 }

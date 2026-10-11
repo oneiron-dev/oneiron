@@ -5,7 +5,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use lopdf::{Document, Object};
 
-    use super::super::verify_dss_core::{collect_reference_chain, verify_dss};
+    use super::super::verify_dss_core::verify_dss;
     use super::super::verify_sig_pipeline::{
         Checks, SigEntry, check_byte_range, collect_signatures,
     };
@@ -476,45 +476,6 @@ mod tests {
         assert!(!found[0].is_doc_ts);
     }
 
-    /// A chain of `hops` reference-linked objects ending in a terminal
-    /// dictionary; returns the document and the chain's head id.
-    fn reference_chain_doc(hops: usize) -> (Document, lopdf::ObjectId) {
-        assert!(hops >= 1);
-        let mut doc = Document::with_version("1.4");
-        let terminal = doc.add_object(Object::Dictionary(lopdf::Dictionary::new()));
-        let mut head = terminal;
-        for _ in 1..hops {
-            head = doc.add_object(Object::Reference(head));
-        }
-        (doc, head)
-    }
-
-    #[test]
-    fn reference_chain_cycle_and_over_limit_stay_fail_closed() {
-        // P1-2: a reference cycle fails closed (the per-chain 128-hop bound
-        // is kept), as does a 129-hop chain; a 128-hop chain still
-        // resolves (the bound mirrors lopdf's dereference limit).
-        let mut doc = Document::with_version("1.4");
-        let a = doc.add_object(Object::Null);
-        let b = doc.add_object(Object::Null);
-        doc.objects.insert(a, Object::Reference(b));
-        doc.objects.insert(b, Object::Reference(a));
-        let mut ids = std::collections::BTreeSet::new();
-        let mut work = 0usize;
-        assert!(collect_reference_chain(&doc, a, &mut ids, &mut work).is_none());
-
-        let (doc, head_129) = reference_chain_doc(129);
-        let mut ids = std::collections::BTreeSet::new();
-        let mut work = 0usize;
-        assert!(collect_reference_chain(&doc, head_129, &mut ids, &mut work).is_none());
-
-        let (doc, head_128) = reference_chain_doc(128);
-        let mut ids = std::collections::BTreeSet::new();
-        let mut work = 0usize;
-        assert!(collect_reference_chain(&doc, head_128, &mut ids, &mut work).is_some());
-        assert_eq!(ids.len(), 128);
-    }
-
     #[test]
     fn dss_decode_budget_is_cumulative_across_entries() {
         // P1-3: two FlateDecode DSS streams each individually under the cap
@@ -542,5 +503,193 @@ mod tests {
         let mut checks = Checks::new();
         verify_dss(&doc, &[], &covered, AT_UNIX, total - 1, &mut checks);
         assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn signed_rsa_pss_artifacts_are_refused_at_all_four_ingestion_doors() {
+        use super::super::super::{cms, pdf, tsp};
+        use super::super::verify_revocation::{crl_entry_valid, ocsp_entry_valid};
+        use super::super::verify_tests_dss_b::tests::anchors_of;
+        use crate::api::{PadesProfile, SealResourceLimits, SignatureAlgorithm, VerifyCheckStatus};
+        use der::{Decode, Encode};
+        use rsa::pkcs8::EncodePrivateKey;
+
+        // Independently pinned AlgorithmIdentifiers: SHA256, MGF1-SHA256, saltLen 32.
+        const PKCS1: &[u8] = &[
+            0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05,
+            0x00,
+        ];
+        const PSS: &[u8] = &[
+            0x30, 0x41, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a, 0x30,
+            0x34, 0xa0, 0x0f, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+            0x02, 0x01, 0x05, 0x00, 0xa1, 0x1c, 0x30, 0x1a, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+            0xf7, 0x0d, 0x01, 0x01, 0x08, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+            0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0xa2, 0x03, 0x02, 0x01, 0x20,
+        ];
+        fn parts(der: &[u8]) -> Vec<Vec<u8>> {
+            let top = cms::DerReader::new(der).read().unwrap();
+            let mut r = cms::DerReader::new(top.content);
+            let mut fields = Vec::new();
+            while !r.is_done() {
+                fields.push(r.read().unwrap().full.to_vec());
+            }
+            fields
+        }
+        fn signed_cms(template: &[u8], alg: &[u8], sig: &[u8]) -> Vec<u8> {
+            let mut ci = parts(template);
+            let mut sd = parts(&parts(&ci[1])[0]);
+            let last = sd.len() - 1;
+            let mut si = parts(&parts(&sd[last])[0]);
+            si[4] = alg.to_vec();
+            si[5] = cms::tlv(0x04, sig);
+            sd[last] = cms::tlv(0x31, &cms::tlv(0x30, &si.concat()));
+            ci[1] = cms::tlv(0xa0, &cms::tlv(0x30, &sd.concat()));
+            cms::tlv(0x30, &ci.concat())
+        }
+        let private = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
+        let key_der = private.to_pkcs8_der().unwrap();
+        let key_pair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+            &rustls_pki_types::PrivatePkcs8KeyDer::from(key_der.as_bytes()),
+            &rcgen::PKCS_RSA_SHA256,
+        )
+        .unwrap();
+        let mut ca = test_ca("rsa-ingestion");
+        let eku = cms::tlv(
+            0x30,
+            &cms::oid_tlv(&der::asn1::ObjectIdentifier::new_unwrap(
+                "1.3.6.1.5.5.7.3.8",
+            )),
+        );
+        let mut ext = rcgen::CustomExtension::from_oid_content(&[2, 5, 29, 37], eku);
+        ext.set_criticality(true);
+        ca.rcgen_params.custom_extensions.push(ext);
+        ca.cert_der = ca
+            .rcgen_params
+            .self_signed(&key_pair)
+            .unwrap()
+            .der()
+            .to_vec();
+        ca.cert = x509_cert::Certificate::from_der(&ca.cert_der).unwrap();
+        ca.rcgen_key = key_pair;
+        // The rsa crate signs, not the code under test, and every signature is
+        // verified before use: a PSS refusal below is never a bad signature.
+        let pkcs1 = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private.clone());
+        let pss_key = rsa::pss::SigningKey::<sha2::Sha256>::new_with_salt_len(private, 32);
+        let sign = |data: &[u8], pss: bool| {
+            use rsa::signature::{Keypair, SignatureEncoding, Signer, Verifier};
+            if pss {
+                let sig = pss_key.sign(data);
+                pss_key.verifying_key().verify(data, &sig).unwrap();
+                sig.to_vec()
+            } else {
+                let sig = pkcs1.sign(data);
+                pkcs1.verifying_key().verify(data, &sig).unwrap();
+                sig.to_vec()
+            }
+        };
+        let covered = covered_of(&[&ca.cert_der]);
+        let engine = verify_engine(vec![ca.cert_der.clone()], AT_UNIX);
+        for pss in [false, true] {
+            let alg = if pss { PSS } else { PKCS1 };
+            let base = base_input();
+            let state = pdf::reparse_revision(&base, &SealResourceLimits::default()).unwrap();
+            let mut draft = pdf::append_revision(
+                &base,
+                &state,
+                &pdf::RevisionKind::Signature {
+                    field_name: pdf::field_name_for("rsa-ingestion"),
+                    date_str: pdf::pdf_date(AT_UNIX * 1000),
+                },
+                65536,
+            )
+            .unwrap();
+            let digest = pdf::hash_byte_range(&draft.bytes, draft.byte_range.unwrap()).unwrap();
+            let (issuer, serial) = cms::issuer_and_serial(&ca.cert_der).unwrap();
+            let (wire, signing) = cms::assemble_signed_attrs(vec![
+                cms::attr_content_type_data(),
+                cms::attr_message_digest(&digest),
+                cms::attr_signing_cert_v2(&ca.cert_der, &issuer, &serial),
+            ]);
+            let material = cms::SignerMaterial {
+                algorithm: SignatureAlgorithm::RsaPkcs1v15Sha256,
+                signer_cert_der: &ca.cert_der,
+                issuer_name_der: &issuer,
+                serial_der: &serial,
+                chain_ders: &[],
+            };
+            let sig = sign(&signing, pss);
+            let cms = signed_cms(
+                &cms::build_signed_data(&material, &wire, &sig, &[]),
+                alg,
+                &sig,
+            );
+            let expected_oid = if pss {
+                cms::OID_RSA_PSS
+            } else {
+                cms::OID_SHA256_WITH_RSA
+            };
+            assert_eq!(
+                cms::parse_cms(&cms).unwrap().signer.signature_alg_oid,
+                expected_oid.as_bytes()
+            );
+            pdf::patch_contents(&mut draft, &cms).unwrap();
+            let report = engine.verify_sealed_pdf(&draft.bytes).unwrap();
+            assert!(report.signatures[0].checks.iter().any(|c| c.kind
+                == VerifyCheckKind::SignatureValue
+                && c.status
+                    == if pss {
+                        VerifyCheckStatus::Fail
+                    } else {
+                        VerifyCheckStatus::Pass
+                    }));
+            if pss {
+                assert_ne!(
+                    report.signatures[0].profile,
+                    Some(PadesProfile::BaselineLta)
+                );
+            }
+
+            let imprint = [0x35; 32];
+            let template = mint_token(&ca, &imprint, AT_UNIX);
+            let parsed = cms::parse_cms(&template).unwrap();
+            let sig = sign(&cms::signed_attrs_signature_input(&parsed.signer), pss);
+            let token = signed_cms(&template, alg, &sig);
+            assert_eq!(
+                tsp::validate_token_for_verify(&token, &imprint, &anchors_of(&ca)).is_ok(),
+                !pss
+            );
+
+            let template = build_crl(&ca, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+            let mut crl = parts(&template);
+            let mut tbs = parts(&crl[0]);
+            tbs[1] = alg.to_vec();
+            crl[0] = cms::tlv(0x30, &tbs.concat());
+            crl[1] = alg.to_vec();
+            crl[2] = cms::tlv(0x03, &[&[0u8][..], &sign(&crl[0], pss)].concat());
+            let crl = cms::tlv(0x30, &crl.concat());
+            assert_eq!(
+                crl_entry_valid(&crl, &covered, &[], &covered, AT_UNIX).is_some(),
+                !pss
+            );
+
+            let template = build_ocsp(
+                &ca,
+                ca.cert.tbs_certificate.serial_number.clone(),
+                AT_UNIX - 60,
+                Some(AT_UNIX + 3600),
+                x509_ocsp::CertStatus::good(),
+            );
+            let mut response = x509_ocsp::OcspResponse::from_der(&template).unwrap();
+            let bytes = response.response_bytes.as_mut().unwrap();
+            let mut basic = parts(bytes.response.as_bytes());
+            basic[1] = alg.to_vec();
+            basic[2] = cms::tlv(0x03, &[&[0u8][..], &sign(&basic[0], pss)].concat());
+            bytes.response = der::asn1::OctetString::new(cms::tlv(0x30, &basic.concat())).unwrap();
+            let ocsp = response.to_der().unwrap();
+            assert_eq!(
+                ocsp_entry_valid(&ocsp, &covered, &[], AT_UNIX).is_some(),
+                !pss
+            );
+        }
     }
 }

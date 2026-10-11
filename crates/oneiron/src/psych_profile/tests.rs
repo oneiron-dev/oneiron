@@ -2,7 +2,7 @@ use rmpv::Value;
 
 use super::*;
 use crate::config::VaultConfig;
-use crate::{ErrorKind, Vault};
+use crate::{EntityId, ErrorKind, Vault};
 
 use crate::test_util::entity;
 
@@ -151,54 +151,82 @@ fn psych_profile_public_put_rejects_maintenance_type() -> Result<()> {
 }
 
 #[test]
-fn psych_profile_keying_is_deterministic_and_facet_isolated() -> Result<()> {
-    let person = entity(0x61);
-    let facet = entity(0x62);
-    let world = entity(0x63);
-    let key = PsychProfileKey {
-        person,
-        facet: Some(facet),
-        world: Some(world),
-    };
-    assert_eq!(psych_profile_entity_id(&key), psych_profile_entity_id(&key));
-    assert_ne!(
-        psych_profile_entity_id(&key),
-        psych_profile_entity_id(&PsychProfileKey {
-            person,
-            facet: None,
-            world: Some(world)
-        })
-    );
-    assert_ne!(
-        psych_profile_entity_id(&key),
-        psych_profile_entity_id(&PsychProfileKey {
-            person,
-            facet: Some(entity(0x64)),
-            world: Some(world)
-        })
-    );
-    assert_ne!(
-        psych_profile_entity_id(&key),
-        psych_profile_entity_id(&PsychProfileKey {
-            person,
-            facet: Some(facet),
-            world: Some(entity(0x65))
-        })
-    );
-
-    let (_dir, vault) = test_vault();
-    vault.put_psych_profile(&psych_profile_entity_id(&key), &test_profile())?;
-    assert!(matches!(
-        vault.psych_profile_for(&key)?,
-        PsychProfileState::Fresh(_)
-    ));
-    assert!(matches!(
-        vault.psych_profile_for(&PsychProfileKey {
-            person,
-            facet: None,
-            world: Some(world)
-        })?,
-        PsychProfileState::Missing
-    ));
+fn psych_profile_address_bytes_and_person_facet_world_isolation_survive_reopen() -> Result<()> {
+    let cases = [
+        (
+            PsychProfileKey {
+                person: entity(0x61),
+                facet: Some(entity(0x62)),
+                world: Some(entity(0x63)),
+            },
+            "03b1eb4d88bd18e36ed1bb815d1cdb7b",
+        ),
+        (
+            PsychProfileKey {
+                person: entity(0x64),
+                facet: Some(entity(0x62)),
+                world: Some(entity(0x63)),
+            },
+            "9c14be15b61125026becf21c0f603c16",
+        ),
+        (
+            PsychProfileKey {
+                person: entity(0x61),
+                facet: None,
+                world: Some(entity(0x63)),
+            },
+            "09a2dc84b608c95950a41e09108bdc14",
+        ),
+        (
+            PsychProfileKey {
+                person: entity(0x61),
+                facet: Some(entity(0x64)),
+                world: Some(entity(0x63)),
+            },
+            "d0fbd354164458a5e4de2d170669d45e",
+        ),
+        (
+            PsychProfileKey {
+                person: entity(0x61),
+                facet: Some(entity(0x62)),
+                world: None,
+            },
+            "1263ff2b847c9d8d62404993bd7ba9d8",
+        ),
+        (
+            PsychProfileKey {
+                person: entity(0x61),
+                facet: Some(entity(0x62)),
+                world: Some(entity(0x65)),
+            },
+            "fd30cdd3fa91b67f93bc099152e4a8a5",
+        ),
+    ];
+    let (dir, vault) = test_vault();
+    for (index, (key, expected_hex)) in cases.iter().enumerate() {
+        let id = EntityId::from_hex(expected_hex)?;
+        assert_eq!(psych_profile_entity_id(key), id);
+        assert!(matches!(
+            vault.psych_profile_for(key)?,
+            PsychProfileState::Missing
+        ));
+        let mut profile = test_profile();
+        profile.subject_ref = key.person;
+        profile.compact = format!("profile cell {index}");
+        vault.put_psych_profile(&id, &profile)?;
+    }
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    for (index, (key, expected_hex)) in cases.iter().enumerate() {
+        let PsychProfileState::Fresh(profile) = reopened.psych_profile_for(key)? else {
+            panic!("profile cell missing or stale")
+        };
+        assert_eq!(profile.subject_ref, key.person);
+        assert_eq!(profile.compact, format!("profile cell {index}"));
+        assert_eq!(
+            reopened.get_psych_profile(&EntityId::from_hex(expected_hex)?)?,
+            Some(profile)
+        );
+    }
     Ok(())
 }
