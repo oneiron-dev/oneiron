@@ -1002,3 +1002,130 @@ async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
         StatusCode::NOT_FOUND
     );
 }
+
+/// The whole answer the /v1 read lane gives `credential` for `id`'s timeline:
+/// its status and body, with the addressed id and the per-response request
+/// id written out, so two answers compare as wholes.
+async fn timeline_answer(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    id: oneiron::EntityId,
+) -> (StatusCode, String) {
+    let (status, mut body) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "GET",
+            &format!("/v1/core/memory/{}/timeline", id.to_hex()),
+            format!("Bearer {credential}"),
+            None,
+        ),
+    )
+    .await;
+    if let Some(request) = body.pointer_mut("/error/requestId") {
+        *request = Value::from("<request>");
+    }
+    (status, body.to_string().replace(&id.to_hex(), "<id>"))
+}
+
+/// The whole `describe` page `credential` reads with no TASK named.
+async fn describe_page(server: &Arc<SyncServer>, credential: &str, envelope: Value) -> Value {
+    let (status, described) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "describe-page",
+            "describe",
+            envelope,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{described}");
+    described["result"]["structuredContent"].clone()
+}
+
+/// Astra on #1401 (P2): a TASK born in a world a credential cannot read adds
+/// to none of that credential's counts (ARCH-0067 §5, DEC-0005). A
+/// base-only credential's `describe` page is the same whole page before and
+/// after another world's writer creates a TASK, and the /v1 timeline gives
+/// it the same whole 404 for that TASK and for an id nothing holds.
+#[tokio::test]
+async fn a_task_born_outside_a_credential_moves_no_count() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0xb1a5_0020);
+    let world = seeded_test_entity_id(0xb1a5_0021);
+    let base_world = oneiron::claim::base_world_id();
+    narrowed_stream(&server, actor, "count-inside", world).await;
+    let (base, _) = narrowed_stream(&server, actor, "count-base", base_world).await;
+    let own = mcp_create(&server, "count-base", actor, base_world, "base work").await;
+    let before = describe_page(&server, "count-base", base.clone()).await;
+    assert!(
+        board_lists(&server, "count-base", base.clone(), own).await,
+        "{before:#}"
+    );
+
+    let born = mcp_create(&server, "count-inside", actor, world, "work in its world").await;
+    assert_eq!(
+        describe_page(&server, "count-base", base).await,
+        before,
+        "a TASK born outside the credential changed its page"
+    );
+    let absent = seeded_test_entity_id(0xb1a5_0022);
+    let answer = timeline_answer(&server, "count-base", absent).await;
+    assert_eq!(answer.0, StatusCode::NOT_FOUND, "{}", answer.1);
+    assert_eq!(timeline_answer(&server, "count-base", born).await, answer);
+}
+
+/// Astra on #1401 (P2): deleting a TASK does not move it out of the world it
+/// was born in. A credential narrowed to another world gets the same whole
+/// 404 for the TASK's timeline while it lives, once its owner has deleted
+/// it, and for an id nothing holds. The owner and the writer's vault-wide
+/// credential still read the deleted TASK's timeline.
+#[tokio::test]
+async fn a_deleted_task_stays_in_the_world_it_was_born_in() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0xb1a5_0030);
+    let world = seeded_test_entity_id(0xb1a5_0031);
+    narrowed_stream(&server, actor, "deleted-inside", world).await;
+    narrowed_stream(
+        &server,
+        actor,
+        "deleted-outside",
+        seeded_test_entity_id(0xb1a5_0032),
+    )
+    .await;
+    register_mcp_actor(
+        &server,
+        "deleted-vault-wide",
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let task = mcp_create(&server, "deleted-inside", actor, world, "deleted later").await;
+    let absent = seeded_test_entity_id(0xb1a5_0033);
+    let answer = timeline_answer(&server, "deleted-outside", absent).await;
+    assert_eq!(answer.0, StatusCode::NOT_FOUND, "{}", answer.1);
+    assert_eq!(
+        timeline_answer(&server, "deleted-outside", task).await,
+        answer,
+        "live"
+    );
+
+    server
+        .vault()
+        .delete_entity_with_reason(&task, oneiron::DeleteReason::UserDelete)
+        .expect("the owner deletes the TASK");
+    assert_eq!(
+        timeline_answer(&server, "deleted-outside", task).await,
+        answer,
+        "deleted"
+    );
+    assert_eq!(
+        timeline_status(&server, owner_bearer(), task).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        timeline_answer(&server, "deleted-vault-wide", task).await.0,
+        StatusCode::OK
+    );
+}

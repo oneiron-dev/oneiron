@@ -270,6 +270,124 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     Ok(())
 }
 
+/// Astra on #1401 (P1): a TASK and its authority facts sit in the world they
+/// were born in (ARCH-0067 §5), and every world check reads them there. A
+/// room whose Scope holds base reality but not that world serves neither,
+/// by id or hydrated, beside a base TASK it does serve; a retrieval filtered
+/// to base reality finds only the base TASK, and one filtered to the world
+/// only the TASK born there.
+#[test]
+fn a_room_reads_no_task_born_outside_its_worlds() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let fiction = id(0x72);
+    let writer = id(0x74);
+    vault.put_entity(
+        &writer,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"writer",
+    )?;
+    let mint = |world: Option<EntityId>| -> Result<Vec<EntityId>> {
+        let task = vault
+            .memory(writer, EdgeActorClass::Human)
+            .with_birth_position(crate::federation::record_scope::BirthPosition {
+                world,
+                facet: None,
+            })
+            .tasks_create(&crate::task_verb::TaskCreateSpec::new(
+                rmpv::Value::from("lantern work"),
+                None,
+                None,
+                Some(2),
+            ))
+            .expect("the writer creates a TASK")
+            .task_ref
+            .expect("the create mints a TASK");
+        // The TASK with the authority facts it was minted with.
+        let mut rows = vec![task];
+        rows.extend(
+            vault
+                .edges_in(&task)?
+                .into_iter()
+                .filter(|edge| edge.kind == crate::edge::EdgeKind::ScopedTo)
+                .map(|edge| edge.target),
+        );
+        assert!(rows.len() > 1, "a minted TASK carries its Owner fact");
+        Ok(rows)
+    };
+    let base = mint(None)?;
+    let born = mint(Some(fiction))?;
+    vault
+        .batch()
+        .text(&base[0], &[("body", "lantern harbor")])
+        .text(&born[0], &[("body", "lantern dragon")])
+        .commit()?;
+    // The agent's grant holds base only, so the room reads base reality.
+    let agent = id(0x71);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"agent",
+    )?;
+    grant(&vault, id(0x73), agent, WorldAuthoritySet::new(true, [])?)?;
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex()]);
+    let (_, record) = project_room(&vault, owner, &[agent])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    crate::test_util::bind_test_agent(&vault, agent);
+
+    let turn = vault
+        .memory(owner, EdgeActorClass::Human)
+        .for_room_turn(room)
+        .expect("open room turn");
+    for (rows, served) in [(&base, true), (&born, false)] {
+        for row in rows {
+            assert_eq!(
+                turn.get_entity(&row.to_hex())
+                    .expect("entity read")
+                    .value
+                    .is_some(),
+                served,
+                "{}",
+                row.to_hex()
+            );
+        }
+    }
+    let refs: Vec<String> = base.iter().chain(&born).map(EntityId::to_hex).collect();
+    let mut hydrated: Vec<String> = turn
+        .hydrate(&refs)
+        .expect("hydrate")
+        .value
+        .into_iter()
+        .map(|view| view.id_hex)
+        .collect();
+    hydrated.sort();
+    let mut expected: Vec<String> = base.iter().map(EntityId::to_hex).collect();
+    expected.sort();
+    assert_eq!(hydrated, expected, "hydration serves the base TASK alone");
+
+    let found = |scope: crate::pipeline::WorldScope| -> Result<Vec<EntityId>> {
+        Ok(vault
+            .query()
+            .search_text("lantern", 10)
+            .filter_types(&[crate::registry::ENTITY_TYPE_TASK])
+            .world(scope)
+            .run()?
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect())
+    };
+    assert_eq!(found(crate::pipeline::WorldScope::Base)?, vec![base[0]]);
+    assert_eq!(
+        found(crate::pipeline::WorldScope::World(fiction))?,
+        vec![born[0]]
+    );
+    Ok(())
+}
+
 /// Greptile on #1312: a member who joins after a turn's read lane copied
 /// the roster still binds the rows that lane serves. Each row's own snapshot
 /// reads the room again, so the join narrows the read it lands under.
