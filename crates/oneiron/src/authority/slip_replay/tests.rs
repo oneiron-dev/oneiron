@@ -70,6 +70,10 @@ fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     // A later proof moves the window past the first one and evicts its row.
     clock.set(start + 61);
     admit(&vault, start + 61, "22222222222222222222222222222222").unwrap();
+    assert!(
+        admit(&vault, start, "44444444444444444444444444444444").is_err(),
+        "the window has moved past the first proof's time"
+    );
     drop(vault);
     clock.set(start);
     let vault = open();
