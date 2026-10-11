@@ -662,16 +662,17 @@ impl Memory<'_> {
             lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
         };
 
-        // A door that stops waiting at the deadline (`on_cut`) answers then
-        // with the last pack this recall published and drops what the recall
-        // returns after it. So past the deadline the recall stops, with the
-        // pack such a door answers with before retrieval finished, instead of
-        // reading and hydrating items no one will read.
+        // A door that stops waiting at the deadline answers then with the
+        // last pack this recall published and drops what the recall returns
+        // after it. So past the deadline the recall stops and returns the
+        // pack that door published before retrieval, instead of reading and
+        // hydrating items no one will read.
         let door_answered = || {
-            execution.on_cut.is_some()
-                && execution
+            execution.door_fallback.filter(|_| {
+                execution
                     .deadline
                     .is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
+            })
         };
 
         let seeds = if effective != Effort::Light
@@ -770,8 +771,8 @@ impl Memory<'_> {
                 receipt.restrict_with(&scoped.receipt);
                 let mut items = Vec::new();
                 for hit in scoped.value.into_iter().take(limit) {
-                    if door_answered() {
-                        return Ok(cut_pack(&receipt));
+                    if let Some(fallback) = door_answered() {
+                        return Ok(fallback.clone());
                     }
                     let Some(revision) = retrieval.revisions.get(&hit.id) else {
                         continue;
@@ -863,8 +864,8 @@ impl Memory<'_> {
                 }
                 let (scoped, status) = builder.run_scoped_with_run_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
-                if door_answered() {
-                    return Ok(cut_pack(&receipt));
+                if let Some(fallback) = door_answered() {
+                    return Ok(fallback.clone());
                 }
                 let mut pack = scoped.value;
                 lane.attach_reactions_quoting(&mut pack, &status.cited_messages)?;
@@ -889,8 +890,8 @@ impl Memory<'_> {
                 });
                 let mut items = Vec::new();
                 for entity in pack.results.iter().take(limit) {
-                    if door_answered() {
-                        return Ok(cut_pack(&receipt));
+                    if let Some(fallback) = door_answered() {
+                        return Ok(fallback.clone());
                     }
                     let mode = entity.source_revision_ref.map_or(
                         crate::vault::ReadMode::Indexed,
@@ -959,8 +960,7 @@ impl Memory<'_> {
 /// The pack a recall answers with when its door stops waiting at the
 /// deadline before retrieval finished: nothing was ready, so no items, marked
 /// partial, under the reader's own read receipt. The census did not run, so
-/// it says it stopped early. A recall whose door answered that way returns
-/// it too, from where it stops.
+/// it says it stopped early.
 fn cut_pack(receipt: &ScopedReadReceipt) -> MemoryPack {
     let quality = RetrievalQuality::Passthrough;
     MemoryPack {

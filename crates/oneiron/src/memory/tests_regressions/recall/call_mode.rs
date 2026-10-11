@@ -371,8 +371,6 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
 #[test]
 fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
     use crate::memory::{MemoryPack, RecallEffort};
-    use crate::retrieval_depth::SlowRetrievalStage;
-    use crate::store::RetrievalSignal;
     use crate::task_verb::sdk::{RecallDoor, RecallRequest, recall_at_door};
     use std::sync::Mutex;
 
@@ -380,41 +378,41 @@ fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
     let actor = put_person(&vault, 0x8d);
     let facade = facade_for(&vault, actor);
     witness_said(&facade, 0x8e, "the lighthouse keeper rang twice", 2);
-    // The text stage finds the turn; the temporal stage after it stalls
-    // past the deadline.
-    vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
-        signal: RetrievalSignal::Temporal,
-        duration: std::time::Duration::from_millis(300),
-        yields: false,
-    }));
     let published: Mutex<Vec<MemoryPack>> = Mutex::default();
     let publish = |pack| published.lock().expect("published packs").push(pack);
-    let pack = recall_at_door(
-        &facade,
-        RecallRequest {
-            query: "lighthouse keeper".to_owned(),
-            effort: Some(RecallEffort::Call),
-            scope: None,
-            limit: Some(10),
-            format: None,
-            as_of: None,
-            deadline_ms: Some(100),
-        },
-        |_| None,
-        &RecallDoor {
-            arrived: std::time::Instant::now(),
-            on_cut: Some(&publish),
-        },
-    )
-    .expect("call-mode recall");
-    vault.arm_slow_retrieval_stage_for_test(None);
-    assert!(pack.items.is_empty(), "{pack:?}");
-    assert!(pack.retrieval_meta.partial);
-    assert!(pack.scope_honesty.census_capped);
+    let recall = |deadline_ms| {
+        recall_at_door(
+            &facade,
+            RecallRequest {
+                query: "lighthouse keeper".to_owned(),
+                effort: Some(RecallEffort::Call),
+                scope: None,
+                limit: Some(10),
+                format: None,
+                as_of: None,
+                deadline_ms: Some(deadline_ms),
+            },
+            |_| None,
+            &RecallDoor {
+                arrived: std::time::Instant::now(),
+                on_cut: Some(&publish),
+            },
+        )
+        .expect("call-mode recall")
+    };
+    // In time, the text stage finds the turn.
+    assert!(pack_gives(&recall(30_000), "lighthouse keeper"));
+    published.lock().expect("published packs").clear();
+    // Past the deadline once the text stage has found it.
+    *vault.test_hooks().after_retrieval_text.lock().expect("text hook") =
+        Some(Box::new(|| std::thread::sleep(std::time::Duration::from_millis(150))));
+    let pack = recall(100);
     let published = std::mem::take(&mut *published.lock().expect("published packs"));
     let [before] = published.as_slice() else {
         panic!("only the pack before retrieval: {published:?}");
     };
-    assert!(before.items.is_empty());
-    assert_eq!(before.narrowing.applied, pack.narrowing.applied);
+    assert_eq!(before, &pack);
+    assert!(pack.items.is_empty(), "{pack:?}");
+    assert!(pack.retrieval_meta.partial);
+    assert!(pack.scope_honesty.census_capped);
 }
