@@ -4,6 +4,7 @@ use crate::checkout::lease::{CheckoutId, CheckoutLeaseAct, CheckoutLeaseState};
 use crate::checkout::resolve_checkout_environment;
 use crate::config::VaultConfig;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::error::{SideTableRowProblem, StoreError};
 
 use tempfile::TempDir;
 
@@ -334,44 +335,59 @@ fn env_blueprint_row_spans_commits_but_not_repositories() {
 }
 
 #[test]
-fn env_blueprint_decode_rejects_empty_version_and_corrupt_rows() {
+fn env_blueprint_get_refuses_corrupt_unknown_version_and_mismatched_rows() {
+    let (_dir, vault) = vault_fixture();
+    let store = VaultEnvBlueprintStore::new(&vault);
     let repo = github_repo(COMMIT_A);
-    assert!(matches!(
-        decode_env_blueprint(&[]),
-        Err(EnvBlueprintError::EmptyRow)
-    ));
-
-    let unknown = forged_row_with_versions(&repo, EnvBlueprintStages::default(), 2, 2);
-    assert!(matches!(
-        decode_env_blueprint(&unknown),
-        Err(EnvBlueprintError::UnsupportedSchemaVersion { found: 2 })
-    ));
-
-    let mismatched = forged_row_with_versions(&repo, EnvBlueprintStages::default(), 1, 3);
-    match decode_env_blueprint(&mismatched) {
-        Err(EnvBlueprintError::SchemaVersionMismatch { header, body }) => {
-            assert_eq!((header, body), (1, 3));
-        }
-        other => panic!("expected a schema version mismatch, got {other:?}"),
+    for raw in [Vec::new(), vec![1, 0xc1]] {
+        write_raw_row(&vault, &repo, &raw);
+        assert!(matches!(
+            store.get(&repo),
+            Err(EnvBlueprintError::Store(Error::Store(
+                StoreError::SideTableRow {
+                    problem: SideTableRowProblem::Undecodable,
+                    ..
+                }
+            )))
+        ));
+        assert_eq!(read_raw_row(&vault, &repo), Some(raw));
     }
-
+    let unknown = forged_row_with_versions(&repo, EnvBlueprintStages::default(), 2, 2);
+    write_raw_row(&vault, &repo, &unknown);
     assert!(matches!(
-        decode_env_blueprint(&[ENV_BLUEPRINT_SCHEMA_VERSION, 0xC1]),
-        Err(EnvBlueprintError::Encode(_))
+        store.get(&repo),
+        Err(EnvBlueprintError::Store(Error::Store(
+            StoreError::SideTableRow {
+                problem: SideTableRowProblem::UnknownVersion {
+                    found: 2,
+                    expected: 1
+                },
+                ..
+            }
+        )))
     ));
-
-    let row = EnvBlueprintRowV1 {
-        schema_version: ENV_BLUEPRINT_SCHEMA_VERSION,
+    assert_eq!(read_raw_row(&vault, &repo), Some(unknown));
+    let mismatched = forged_row_with_versions(&repo, EnvBlueprintStages::default(), 1, 3);
+    write_raw_row(&vault, &repo, &mismatched);
+    assert!(matches!(
+        store.get(&repo),
+        Err(EnvBlueprintError::SchemaVersionMismatch { header: 1, body: 3 })
+    ));
+    assert_eq!(read_raw_row(&vault, &repo), Some(mismatched));
+    let invalid_repo = EnvBlueprintRowV1 {
+        schema_version: 1,
         repo_ref: "not a repo ref".to_owned(),
         light_checkout_materialization: MaterializationSpec::Blobless,
         stages: EnvBlueprintStages::default(),
     };
-    let mut raw = vec![ENV_BLUEPRINT_SCHEMA_VERSION];
-    raw.extend_from_slice(&rmp_serde::to_vec_named(&row).unwrap());
+    let mut raw = vec![1];
+    raw.extend_from_slice(&rmp_serde::to_vec_named(&invalid_repo).unwrap());
+    write_raw_row(&vault, &repo, &raw);
     assert!(matches!(
-        decode_env_blueprint(&raw),
+        store.get(&repo),
         Err(EnvBlueprintError::Encode(_))
     ));
+    assert_eq!(read_raw_row(&vault, &repo), Some(raw));
 }
 
 #[test]

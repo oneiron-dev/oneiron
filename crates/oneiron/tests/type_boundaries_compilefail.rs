@@ -36,4 +36,9 @@ fn type_boundaries_compilefail() {
     cases.compile_fail(
         "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
     );
+
+    // ONE-1891: replay's raw write door stays crate-private even when `sync`
+    // compiles it in, so an external crate cannot write a replicated row.
+    #[cfg(feature = "sync")]
+    cases.compile_fail("tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs");
 }

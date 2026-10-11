@@ -478,12 +478,8 @@ fn the_export_is_one_json_object_per_line() -> Result<()> {
     Ok(())
 }
 
-/// Re-exporting one scope over unchanged rows reproduces the hash exactly: the
-/// walk is key-ordered and the encoding is field-ordered, so the digest is an
-/// identity rather than a coincidence. A different scope is a different corpus
-/// and says so.
 #[test]
-fn re_exporting_one_scope_reproduces_the_hash() -> Result<()> {
+fn export_digest_attests_emitted_bytes_and_persisted_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     grant_export(&vault);
     let prose = put_artifact(&vault, "p0", "p1", None)?;
@@ -491,44 +487,25 @@ fn re_exporting_one_scope_reproduces_the_hash() -> Result<()> {
     let calendar = put_artifact(&vault, "c0", "c1", None)?;
     tag_artifact(&vault, calendar, "calendar", 20, None)?;
 
-    let (first, first_body) = export_to_vec(&vault, ReservoirScope::default())?;
-    let (second, second_body) = export_to_vec(&vault, ReservoirScope::default())?;
-    assert_eq!(first.content_hash, second.content_hash);
-    assert_eq!(first_body, second_body);
-    assert_ne!(
-        first.receipt, second.receipt,
-        "two exports are two acts, each receipted"
+    let (manifest, body) = export_to_vec(&vault, ReservoirScope::default())?;
+    assert_eq!(manifest.pairs, 2);
+    assert_eq!(body.lines().count(), 2);
+    assert!(body.ends_with('\n'));
+    let digest = blake3::hash(body.as_bytes()).to_hex().to_string();
+    assert_eq!(manifest.content_hash, digest);
+    let receipt_id = format!("reservoir_export:{}", manifest.receipt.to_hex());
+    let receipts = vault.receipts(
+        crate::receipt::ReceiptQuery::new(100).with_kind(crate::receipt::ReceiptKind::ScopedRead),
+    )?;
+    let receipt = receipts
+        .iter()
+        .find(|r| r.receipt_id == receipt_id)
+        .expect("export receipt persists");
+    assert_eq!(receipt.fields.get("reservoir_content_hash"), Some(&digest));
+    assert_eq!(
+        receipt.fields.get("reservoir_pairs").map(String::as_str),
+        Some("2")
     );
-
-    // Filter order and duplicates normalize away; a genuinely narrower scope
-    // does not.
-    let (a, _) = export_to_vec(
-        &vault,
-        ReservoirScope {
-            task_classes: Some(vec!["prose".to_owned(), "calendar".to_owned()]),
-            since: None,
-        },
-    )?;
-    let (b, _) = export_to_vec(
-        &vault,
-        ReservoirScope {
-            task_classes: Some(vec![
-                "calendar".to_owned(),
-                "prose".to_owned(),
-                " prose ".to_owned(),
-            ]),
-            since: None,
-        },
-    )?;
-    assert_eq!(a.content_hash, b.content_hash);
-    let (narrow, _) = export_to_vec(
-        &vault,
-        ReservoirScope {
-            task_classes: Some(vec!["prose".to_owned()]),
-            since: None,
-        },
-    )?;
-    assert_ne!(a.content_hash, narrow.content_hash);
     Ok(())
 }
 

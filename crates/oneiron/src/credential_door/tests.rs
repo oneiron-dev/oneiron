@@ -458,17 +458,28 @@ fn a_door_operation_takes_its_instant_from_the_vault_clock_seam() {
 }
 
 #[test]
-fn two_dials_resolve_most_restrictive() {
-    let (_tmp, vault, door) = door_fixture();
-    put_policy_manifest(
-        &vault,
-        0x22,
-        vec![ttl_row(1800), effector_row(vec![EFFECTOR.into()])],
-    );
-    put_policy_manifest(&vault, 0x23, vec![ttl_row(600), effector_row(vec![])]);
-
-    let policy = door.door_policy().expect("dial");
-    assert!(!policy.admits_effector(EFFECTOR));
+fn restrictive_manifest_refuses_push_regardless_of_manifest_order() {
+    for restrictive_first in [false, true] {
+        let (_tmp, vault, door) = door_fixture();
+        let credential = push_credential(witnessed(&door));
+        door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
+            .unwrap();
+        for (seed, restrictive) in [(0x22, restrictive_first), (0x23, !restrictive_first)] {
+            let rows = if restrictive {
+                vec![ttl_row(600), effector_row(vec![])]
+            } else {
+                vec![ttl_row(1800), effector_row(vec![EFFECTOR.into()])]
+            };
+            put_policy_manifest(&vault, seed, rows);
+        }
+        let error = door
+            .authenticate_receive_pack(Some(&credential), &repo(), loopback())
+            .expect_err("one restrictive declaration must deny a push");
+        assert!(
+            matches!(error, CredentialDoorError::LeaseScopeRefused { effector, .. }
+            if effector == EFFECTOR)
+        );
+    }
 }
 
 #[test]

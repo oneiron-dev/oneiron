@@ -522,27 +522,57 @@ async fn lfs_unauthorized_stream_is_not_polled() {
 }
 
 #[tokio::test]
-async fn lfs_interrupted_body_does_not_publish_a_valid_prefix() {
+async fn authenticated_interrupted_upload_consumes_prefix_without_publishing_object() {
     let (_dir, server) = test_server(secret_config());
+    let token = writer_token();
     let prefix = axum::body::Bytes::from_static(b"valid prefix with a matching oid");
     let oid = LfsOid::digest(&prefix);
-    let stream = futures_util::stream::iter(vec![
-        Ok(prefix),
-        Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "disconnected",
-        )),
-    ]);
-    let response = lfs_routes()
-        .with_state(Arc::clone(&server))
-        .oneshot(request(
+    let (sent, mut observed) = tokio::sync::oneshot::channel();
+    let mut prefix = Some(prefix.clone());
+    let mut sent = Some(sent);
+    let stream = futures_util::stream::poll_fn(move |_| {
+        if let Some(bytes) = prefix.take() {
+            sent.take().unwrap().send(bytes.clone()).unwrap();
+            std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(bytes)))
+        } else {
+            std::task::Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "disconnected",
+            ))))
+        }
+    });
+    let (status, _, _) = route(
+        &server,
+        request(
             "PUT",
             &object_uri(&oid.to_hex()),
-            Some(&writer_token()),
+            Some(&token),
             Body::from_stream(stream),
-        ))
-        .await
-        .unwrap();
-    assert!(!response.status().is_success());
+        ),
+    )
+    .await;
+    assert_eq!(
+        observed.try_recv().unwrap().as_ref(),
+        b"valid prefix with a matching oid"
+    );
+    assert!(!status.is_success());
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+    assert_ne!(status, StatusCode::FORBIDDEN);
     assert!(server.vault.lfs_object(oid).unwrap().is_none());
+    let (status, _, _) = route(
+        &server,
+        request(
+            "GET",
+            &object_uri(&oid.to_hex()),
+            Some(&reader_token()),
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        upload(&server, &token, b"valid prefix with a matching oid").await,
+        StatusCode::OK
+    );
+    assert!(server.vault.lfs_object(oid).unwrap().is_some());
 }

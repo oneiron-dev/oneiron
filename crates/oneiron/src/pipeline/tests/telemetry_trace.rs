@@ -1265,34 +1265,25 @@ fn retrieval_telemetry_skips_active_write_transaction() -> Result<()> {
 }
 
 #[test]
-fn retrieval_telemetry_does_not_mutate_short_id_counters() -> Result<()> {
+fn retrieval_capture_leaves_public_short_ids_contiguous_for_entity_writes() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let id = entity_id(0x35);
-    put_text(&vault, id, "counter telemetry")?;
-
-    let counter_key = crate::store::short_id_counter_key(1);
-    let before = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &counter_key)?
-            .map(|value| value.to_vec())
-    };
-
-    let results = vault.query().search_text("counter", 10).run()?;
-    assert!(!results.is_empty());
-    assert_eq!(vault.retrieval_runs(1)?.len(), 1);
-
-    let after = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &counter_key)?
-            .map(|value| value.to_vec())
-    };
-    assert_eq!(before, after);
+    let first = entity_id(0x35);
+    let second = entity_id(0x36);
+    put_text(&vault, first, "capture continuity")?;
+    let before = crate::retrieval_depth::short_ref_or_hex(&vault, &first)?;
+    assert_eq!(before.split_once(':').unwrap().0, "tn1");
+    for _ in 0..3 {
+        let results = vault.query().search_text("continuity", 10).run()?;
+        assert!(results.iter().any(|hit| hit.id == first));
+    }
+    assert_eq!(vault.retrieval_runs(10)?.len(), 3);
+    assert_eq!(
+        crate::retrieval_depth::short_ref_or_hex(&vault, &first)?,
+        before
+    );
+    put_text(&vault, second, "second entity")?;
+    let after = crate::retrieval_depth::short_ref_or_hex(&vault, &second)?;
+    assert_eq!(after.split_once(':').unwrap().0, "tn2");
     Ok(())
 }
 

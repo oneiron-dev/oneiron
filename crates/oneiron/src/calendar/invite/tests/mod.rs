@@ -494,9 +494,14 @@ fn calendar_invite_confirmed_booking_grant_satisfies_no_cold_invite() {
 }
 
 #[test]
-fn calendar_invite_cancel_requires_existing_recipient_binding() {
+fn cancel_with_prior_consent_but_no_recipient_binding_preserves_passport() {
     let (_dir, vault, actor_ref, event_ref, blob_ref) = admitted_fixture();
     commit(&vault, actor_ref, &request(0, &blob_ref));
+    prior_thread(&vault, 0x61, "stranger@example.test");
+    assert_eq!(
+        resolve_consent_basis(&vault, "stranger@example.test").unwrap(),
+        Some(CalendarInviteConsentBasis::PriorThread)
+    );
     let cancel_blob = blob(
         &vault,
         0x57,
@@ -510,20 +515,21 @@ fn calendar_invite_cancel_requires_existing_recipient_binding() {
         ics_blob_ref: cancel_blob,
         recipient: "stranger@example.test".to_owned(),
     };
-    let refusal = admit_calendar_invite(&vault, actor_ref, &cancel, NOW)
-        .expect_err("cancel to an unbound recipient is a cold ping");
-    assert!(matches!(refusal, CalendarError::InviteRefused { .. }));
-
-    attendee(&vault, 0x59, event_ref, "stranger@example.test");
-    // The binding alone is not enough for a stranger: consent still rules.
-    prior_thread(&vault, 0x61, "stranger@example.test");
-    let admission = admit_calendar_invite(&vault, actor_ref, &cancel, NOW)
-        .expect("a bound recipient may be cancelled");
-    assert_eq!(admission.event_ref(), event_ref);
+    let before = crate::calendar::passport::live_passports_for_event(&vault, &event_ref).unwrap();
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].1.last_sequence, 0);
+    let raw_before = vault.get_raw(&before[0].0).unwrap();
     assert!(matches!(
-        admission.state_change(),
-        CalendarInviteStateChange::BumpSequence { from: 0 },
+        admit_calendar_invite(&vault, actor_ref, &cancel, NOW),
+        Err(CalendarError::InviteRefused { .. })
     ));
+    assert_eq!(
+        crate::calendar::passport::live_passports_for_event(&vault, &event_ref).unwrap(),
+        before
+    );
+    assert_eq!(vault.get_raw(&before[0].0).unwrap(), raw_before);
+    attendee(&vault, 0x59, event_ref, "stranger@example.test");
+    assert!(admit_calendar_invite(&vault, actor_ref, &cancel, NOW).is_ok());
 }
 
 #[test]

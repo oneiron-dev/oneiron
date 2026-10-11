@@ -214,124 +214,72 @@ fn teacher_policy_holder_cannot_loosen_parent_and_old_receipts_cannot_silently_r
 }
 
 #[test]
-fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
-    let (dir, vault) = policy_vault();
-    let fixture = fixture();
-    let path = dir.path().join("models.json");
-    std::fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();
-    let loaded = ModelManifest::load(&path).unwrap();
-    assert_eq!(loaded, fixture);
-    assert!(vault.set_model_manifest(&loaded).is_err());
+fn widened_resident_route_is_refused_at_inference_admission() {
+    let (_dir, vault) = policy_vault();
+    let manifest = fixture();
     let approval = TeacherProbeApproval::for_scored_checkpoint(
-        &loaded,
+        &manifest,
         &vault.teacher_probe_policy(None).unwrap(),
         1_000_000,
     )
     .unwrap();
     vault
-        .set_model_manifest_with_teacher_approval(&loaded, &approval)
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
         .unwrap();
-    vault
-        .set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)
-        .unwrap();
-    assert!(
-        vault
-            .set_model_route(ModelSlot::Llm, ModelLocality::ThirdParty)
-            .is_err()
+    assert!(matches!(
+        vault.set_model_route(ModelSlot::Llm, ModelLocality::ThirdParty),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert_eq!(
+        vault.model_route(ModelSlot::Llm).unwrap(),
+        Some(ModelLocality::OwnServer)
     );
-    for role in MODEL_ROLES {
-        let mut request = LlmRequest {
-            model: ModelId::new("host/unused@1").unwrap(),
-            envelope: CallEnvelope {
-                seat_effort: None,
-                scope: Default::default(),
-                purpose: CallPurpose::Extraction,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence::for_purpose(
-                    &CallPurpose::Extraction,
-                    ModelTierRef("global".into()),
-                ),
-                response_format: ResponseFormat::Text,
-                locality: ModelLocality::ThirdParty,
-            },
-            messages: vec![],
-            tools: vec![],
-            params: BTreeMap::new(),
-            provider_options: BTreeMap::new(),
-        };
-        if role == ModelRole::ExtractionTeacher {
-            // Narrowing a served slot may succeed, but must never send a
-            // transcript through the teacher's wider, probed checkpoint.
-            let host = super::super::HostInferenceContext {
-                binding: super::super::HostInferenceBinding::Advertised {
-                    model: loaded.binding(role).unwrap().model.clone(),
-                    locality: ModelLocality::OnDevice,
-                },
-                extraction_egress: None,
-            };
-            assert!(matches!(
-                vault.authorize_model_role(role, request, &host),
-                Err(Error::InvalidConfig(_))
-            ));
-            continue;
-        }
-        let local_model =
-            loaded.binding(role).unwrap().route_models[&ModelLocality::OnDevice].clone();
-        vault
-            .put_model_registry_row(&super::super::registry::ModelRegistryRow {
-                version: 1,
-                wire: super::super::registry::ModelWireFormat::Local,
-                catalog: super::super::LlmCatalogEntry {
-                    model: local_model.clone(),
-                    display_name: "local fixture".into(),
-                    locality: ModelLocality::OnDevice,
-                    context_window_tokens: 4096,
-                    max_output_tokens: Some(100),
-                    cost: Some(super::super::LlmCatalogCost {
-                        input_per_million: "0".into(),
-                        output_per_million: "0".into(),
-                        cache_read_per_million: None,
-                        cache_write_per_million: None,
-                    }),
-                    capabilities: vec![],
-                    metadata: BTreeMap::new(),
-                },
-                scores: BTreeMap::new(),
-                fetched_at: BTreeMap::new(),
-            })
-            .unwrap();
-        let host = super::super::HostInferenceContext {
-            binding: super::super::HostInferenceBinding::Advertised {
-                model: local_model,
-                locality: ModelLocality::OnDevice,
-            },
-            extraction_egress: None,
-        };
-        request = vault
-            .authorize_model_role(role, request, &host)
-            .unwrap()
-            .into_request();
-        assert_eq!(
-            &request.model,
-            &loaded.binding(role).unwrap().route_models[&ModelLocality::OnDevice]
-        );
-        let catalog = crate::llm::LlmCatalogEntry {
-            model: request.model.clone(),
-            display_name: "local fixture".into(),
-            locality: ModelLocality::OnDevice,
-            context_window_tokens: 4096,
-            max_output_tokens: Some(100),
-            cost: None,
-            capabilities: vec![],
-            metadata: BTreeMap::new(),
-        };
-        catalog.admit(&request, false).unwrap();
-        assert_eq!(request.envelope.locality, catalog.locality);
-        assert_eq!(request.envelope.tier.resolved().as_str(), "configured");
-    }
-    let mut unknown = serde_json::to_value(fixture).unwrap();
-    unknown["roles"]["bogus"] = unknown["roles"]["checker"].clone();
-    assert!(ModelManifest::from_json(&serde_json::to_vec(&unknown).unwrap()).is_err());
+
+    // Corrupt resident storage as an untrusted writer could; bypass only the setter.
+    vault
+        .with_write_txn(|txn| {
+            RESIDENT_ROUTES.put(
+                &vault.store,
+                txn,
+                &(),
+                &BTreeMap::from([(ModelSlot::Llm, ModelLocality::ThirdParty)]),
+            )
+        })
+        .unwrap();
+    let request = LlmRequest {
+        model: ModelId::new("host/unused@1").unwrap(),
+        envelope: CallEnvelope {
+            seat_effort: None,
+            scope: Default::default(),
+            purpose: CallPurpose::AutoCheck,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AutoCheck,
+                ModelTierRef("global".into()),
+            ),
+            response_format: ResponseFormat::Text,
+            locality: ModelLocality::ThirdParty,
+        },
+        messages: vec![],
+        tools: vec![],
+        params: BTreeMap::new(),
+        provider_options: BTreeMap::new(),
+    };
+    let host = crate::llm::HostInferenceContext {
+        binding: crate::llm::HostInferenceBinding::Advertised {
+            model: manifest.binding(ModelRole::Checker).unwrap().model.clone(),
+            locality: ModelLocality::ThirdParty,
+        },
+        extraction_egress: None,
+    };
+    assert!(matches!(
+        vault.model_route(ModelSlot::Llm),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(matches!(
+        vault.authorize_model_role(ModelRole::Checker, request, &host),
+        Err(Error::InvalidConfig(_))
+    ));
 }
 
 #[test]

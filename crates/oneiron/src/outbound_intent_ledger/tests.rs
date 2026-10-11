@@ -975,52 +975,22 @@ fn every_body_field_is_digest_bound() {
 }
 
 #[test]
-fn listing_storage_errors_stay_top_level_by_construction() {
-    // Tolerance is for row damage, never for an unavailable substrate. The
-    // guard is structural because the byte-identical iteration line also lives
-    // in the recovery walks, so a whole-file `contains` would prove nothing —
-    // and no LMDB fault-injection harness exists or is wanted.
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src/outbound_intent_ledger/dispatch.rs");
-    let src = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
-    let iteration = "let (key, value) = row?;";
-    assert!(
-        src.matches(iteration).count() >= 2,
-        "the recovery walks share this line, which is why the scan slices"
+fn intent_listing_refuses_unavailable_reader_instead_of_returning_an_audit() {
+    let (_dir, vault) = open_vault();
+    let pending = persist_pending(&vault, attempt(0x55), 1, b"frozen", 100, false);
+    assert_eq!(
+        intent_ledger_records(&vault).unwrap().records,
+        vec![pending.clone()]
     );
-    let start = src
-        .find("\npub fn intent_ledger_records(")
-        .expect("the listing must be findable by its signature")
-        + 1;
-    let end = start
-        + src[start..]
-            .find("\n}\n")
-            .expect("the listing must terminate")
-        + "\n}\n".len();
-    let body = &src[start..end];
-    assert!(
-        body.contains("read_txn().map_err(Error::from)?"),
-        "opening the read transaction stays a top-level error"
-    );
-    assert!(
-        body.contains("ledger_rows(vault, &rtxn)?"),
-        "creating the prefix iterator stays a top-level error"
-    );
-    let iteration_at = body
-        .find(iteration)
-        .expect("advancing a failed iterator stays a top-level error");
-    let tolerance_at = body
-        .find("match decode_record_in_txn(vault, &rtxn, &key, &value)")
-        .expect("per-row tolerance must include attempt binding validation");
-    assert!(
-        body.contains("Err(error) => return Err(error)"),
-        "index read failures stay top-level errors"
-    );
-    assert!(
-        iteration_at < tolerance_at,
-        "the storage error propagates BEFORE any per-row tolerance"
-    );
+    let held_reader = vault.store.env.read_txn().unwrap();
+    assert!(matches!(
+        intent_ledger_records(&vault),
+        Err(IntentLedgerError::Engine(crate::Error::Storage(_)))
+    ));
+    drop(held_reader);
+    let listing = intent_ledger_records(&vault).unwrap();
+    assert_eq!(listing.records, vec![pending]);
+    assert!(listing.corrupt.is_empty());
 }
 
 #[test]

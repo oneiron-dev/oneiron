@@ -74,47 +74,86 @@ fn terminal_with_versions(
 }
 
 #[test]
-fn partial_per_skill_facts_cannot_mark_a_receipt_captured() -> Result<()> {
+fn incomplete_receipt_facts_leave_no_evidence_and_corrected_capture_is_durable_and_idempotent()
+-> Result<()> {
     struct Source {
-        actor: EntityId,
-        skills: Vec<EntityId>,
+        facts: Vec<ReceiptAttributionFacts>,
     }
     impl ReceiptAttributionSource for Source {
         fn facts(&self, _: &ReceiptRecord) -> Result<Option<Vec<ReceiptAttributionFacts>>> {
-            Ok(Some(
-                self.skills
-                    .iter()
-                    .map(|skill| ReceiptAttributionFacts {
-                        actor: self.actor,
-                        skill: Some(*skill),
-                        followed_state: FollowedState::Followed,
-                        skill_covered_step: true,
-                    })
-                    .collect(),
-            ))
+            Ok(Some(self.facts.clone()))
         }
     }
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let actor = put_actor(&vault, EntityId::now())?;
-    let first = put_skill(&vault, EntityId::now(), FIXTURE_SKILL_ID)?;
-    let second = put_skill(&vault, EntityId::now(), "attribution.fixture.other")?;
-    terminal_with_skills(
+    let (dir, vault) = open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, entity(0x71))?;
+    let first = put_skill(&vault, entity(0x72), FIXTURE_SKILL_ID)?;
+    let second = put_skill(&vault, entity(0x73), "attribution.fixture.other")?;
+    let receipt = terminal_with_skills(
         &vault,
         actor,
         true,
         &[FIXTURE_SKILL_ID, "attribution.fixture.other"],
     )?;
-    let mut source = Source {
+    let fact = |actor, skill| ReceiptAttributionFacts {
         actor,
-        skills: vec![first],
+        skill: Some(skill),
+        followed_state: FollowedState::Followed,
+        skill_covered_step: true,
     };
-    let incomplete = run_task_attribution_sweep(&vault, 8, &source)?;
-    assert_eq!(incomplete.captured_evidence, 0);
-    assert_eq!(incomplete.failures.len(), 1);
-    source.skills.push(second);
-    let complete = run_task_attribution_sweep(&vault, 8, &source)?;
-    assert_eq!(complete.captured_evidence, 2);
-    assert_eq!(complete.judgments, 2);
+    let mut source = Source {
+        facts: vec![fact(actor, first)],
+    };
+    run_task_attribution_sweep(&vault, 8, &source)?;
+    assert!(crate::skill_attribution::codec::evidence_after(&vault, 0)?.is_empty());
+    assert!(attribution_judgments(&vault)?.is_empty());
+    // Full manifest, but the final fact names an actor that does not exist.
+    source.facts.push(fact(entity(0x74), second));
+    run_task_attribution_sweep(&vault, 8, &source)?;
+    assert!(crate::skill_attribution::codec::evidence_after(&vault, 0)?.is_empty());
+    assert!(attribution_judgments(&vault)?.is_empty());
+    source.facts[1] = fact(actor, second);
+    run_task_attribution_sweep(&vault, 8, &source)?;
+    let committed = crate::skill_attribution::codec::evidence_after(&vault, 0)?;
+    assert_eq!(committed.len(), 2);
+    assert_eq!(
+        committed
+            .iter()
+            .map(|(_, row)| row.skill)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([Some(first), Some(second)])
+    );
+    for (_, row) in &committed {
+        assert_eq!(row.receipt_ref, receipt);
+        assert_eq!(row.actor, actor);
+        assert_eq!(row.outcome, AttemptOutcome::Failed);
+        assert_eq!(row.followed_state, Some(FollowedState::Followed));
+        assert_eq!(row.skill_covered_step, Some(true));
+    }
+    let judgments = attribution_judgments(&vault)?;
+    assert_eq!(judgments.len(), 2);
+    assert_eq!(
+        judgments
+            .iter()
+            .map(|row| row.subject)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([first, second])
+    );
+    for row in &judgments {
+        assert_eq!(row.verdict, AttributionVerdict::SkillDefect);
+        assert_eq!(row.evidence_receipts, vec![receipt.clone()]);
+    }
+    drop(vault);
+    let reopened = Vault::open(dir.path(), embedding_test_config())?;
+    assert_eq!(
+        crate::skill_attribution::codec::evidence_after(&reopened, 0)?,
+        committed
+    );
+    run_task_attribution_sweep(&reopened, 8, &source)?;
+    assert_eq!(
+        crate::skill_attribution::codec::evidence_after(&reopened, 0)?,
+        committed
+    );
+    assert_eq!(attribution_judgments(&reopened)?, judgments);
     Ok(())
 }
 

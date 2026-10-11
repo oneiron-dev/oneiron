@@ -14,7 +14,7 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, ErrorKind};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
-use crate::session_lifecycle::SessionMintOutcome;
+use crate::session_lifecycle::{SessionClosePredicate, SessionMintOutcome};
 use crate::temporal::TimeRange;
 use crate::test_util::{entity, open_test_vault_with};
 
@@ -478,31 +478,39 @@ fn a_turn_witnessed_outside_any_session_records_no_membership() {
 }
 
 #[test]
-fn appending_to_a_turn_never_rewrites_its_membership() {
+fn appended_turn_admits_only_its_original_session_provenance() {
     let (_dir, vault) = open_vault();
     let actor = put_actor(&vault, 0x58);
-    let session = mint_session(&vault, 400);
+    let session_a = mint_session(&vault, 400);
     let turn = witness_turn(&vault, actor, 0x59, 0x5A, 500, 0);
-    assert_eq!(membership_of(&vault, &turn), Some(session));
-
-    // Append a new message at a distinct position in the same TURN.
-    // Membership is first-write-wins, so the turn keeps one sitting.
-    let appended = witness_turn(&vault, actor, 0x59, 0x5A, 900, 1);
-    assert_eq!(appended, turn);
+    let wake = vault.plan_session_end_wake().unwrap();
+    assert!(
+        vault
+            .end_session_with_wake(&session_a, SessionClosePredicate::Explicit, 600, &wake,)
+            .unwrap()
+            .is_some()
+    );
+    let session_b = mint_session(&vault, 700);
+    assert_ne!(session_a, session_b);
+    assert_eq!(witness_turn(&vault, actor, 0x59, 0x5A, 900, 1), turn);
     assert_eq!(
         vault
             .edges_in(&turn)
-            .expect("turn messages")
+            .unwrap()
             .into_iter()
             .filter(|edge| edge.kind == EdgeKind::PartOf)
             .count(),
-        2,
-        "the append adds a distinct message to the existing turn"
+        2
     );
+    admit_compaction_packet(&vault, digest_packet(session_a, vec![turn]), None).unwrap();
+    let error = admit_compaction_packet(&vault, digest_packet(session_b, vec![turn]), None)
+        .expect_err("append must not rehome the witnessed turn");
     assert_eq!(
-        membership_of(&vault, &turn),
-        Some(session),
-        "a turn never carries two sittings"
+        rejection(error),
+        CompactionPacketError::TurnFromOtherSession {
+            turn,
+            recorded: session_a,
+        }
     );
 }
 

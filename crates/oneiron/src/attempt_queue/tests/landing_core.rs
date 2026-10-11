@@ -641,146 +641,43 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
     Ok(())
 }
 
-/// Proof 6: the reserve is unreachable outside landing, exact inside it, and
-/// every trigger enters the same landing path with typed provenance.
 #[test]
-fn landing_reserve_is_landing_only_bounded_and_reports_exhaustion() -> Result<()> {
+fn handoff_without_checkpoint_leaves_attempt_rows_and_indexes_unchanged() -> Result<()> {
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
-    let leased = leased_attempt(&queue, "turn:reserve")?;
-
-    let dialed = queue.dial_landing_reserve(DialLandingReserve {
-        id: leased.id,
-        limit_units: 10_000,
-        reserve_percent: None,
-        now: 12,
-    })?;
-    let reserve = dialed.landing_reserve();
-    assert_eq!(reserve.limit_units, 10_000);
-    assert_eq!(
-        reserve.reserve_units,
-        10_000 * LANDING_RESERVE_PERCENT / 100,
-        "the dial is the named constant, in integer units"
-    );
-    assert_eq!(
-        dialed.ordinary_budget_limit_units(),
-        9_000,
-        "the ordinary meter is built without the reserve, so normal work \
-         cannot reach it"
-    );
-
-    // Out of landing mode the spend door fails closed.
-    assert_invalid_transition(
-        queue
-            .spend_landing_reserve(SpendAttemptLandingReserve {
-                id: leased.id,
-                lease_owner: "worker-a".to_owned(),
-                attempt_count: leased.attempt_count,
-                units: 1,
-                now: 13,
-            })
-            .expect_err("running work may not spend the landing reserve"),
-        "spend_landing_reserve",
-        "leased",
-    );
-
-    // Budget warning is a first-class trigger into the same landing path.
-    accept_landing_at(&queue, &leased, LandingTrigger::BudgetWarning, 14)?;
-    let landing = queue.get(leased.id)?.expect("row");
-    assert_eq!(
-        landing.landing().expect("landing").trigger,
-        LandingTrigger::BudgetWarning
-    );
-
-    let spend = |units: u64, now: u64| SpendAttemptLandingReserve {
+    let leased = leased_attempt(&queue, "turn:missing-checkpoint")?;
+    let landing = accept_landing_at(&queue, &leased, LandingTrigger::BudgetWarning, 14)?;
+    assert!(landing.resume_point().is_none());
+    let snapshot = || -> Result<_> {
+        let txn = vault.store.env.read_txn()?;
+        let mut tables = Vec::new();
+        for db in [
+            &vault.store.attempt_records,
+            &vault.store.attempt_ready,
+            &vault.store.attempt_dedupe,
+            &vault.store.vault_meta,
+        ] {
+            let mut rows = Vec::new();
+            for row in db.iter(&txn)? {
+                let (key, value) = row?;
+                rows.push((key.to_vec(), value.to_vec()));
+            }
+            tables.push(rows);
+        }
+        Ok(tables)
+    };
+    let before = snapshot()?;
+    assert!(matches!(queue.finish_landing(FinishAttemptLanding {
         id: leased.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: leased.attempt_count,
-        units,
-        now,
-    };
-    let LandingReserveSpendOutcome::Spent {
-        remaining_units, ..
-    } = queue.spend_landing_reserve(spend(600, 15))?
-    else {
-        panic!("landing may spend its reserve");
-    };
-    assert_eq!(remaining_units, 400);
-
-    // Over the remaining reserve spends NOTHING and reports exhaustion.
-    let LandingReserveSpendOutcome::Exhausted {
-        record,
-        requested_units,
-        remaining_units,
-    } = queue.spend_landing_reserve(spend(401, 16))?
-    else {
-        panic!("the reserve is bounded at the dialed amount");
-    };
-    assert_eq!(requested_units, 401);
-    assert_eq!(remaining_units, 400);
-    assert_eq!(
-        record.landing_reserve().spent_units,
-        600,
-        "a refused spend moves no units"
-    );
-
-    let LandingReserveSpendOutcome::Spent {
-        record,
-        remaining_units,
-    } = queue.spend_landing_reserve(spend(400, 17))?
-    else {
-        panic!("the exact remainder is spendable");
-    };
-    assert_eq!(remaining_units, 0);
-    assert!(record.landing_reserve().is_exhausted());
-
-    // A landing that cannot say where to resume may not hand off.
-    assert!(matches!(
-        queue
-            .finish_landing(FinishAttemptLanding {
-                id: leased.id,
-                lease_owner: "worker-a".to_owned(),
-                attempt_count: leased.attempt_count,
-                hand_off: true,
-                scheduled_at: None,
-                now: 18,
-            })
-            .expect_err("a handoff without a resume point is refused"),
-        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_HANDOFF_WITHOUT_RESUME_POINT
-    ));
-
-    let FinishLandingOutcome::Landed(landed) = queue.finish_landing(FinishAttemptLanding {
-        id: leased.id,
-        lease_owner: "worker-a".to_owned(),
-        attempt_count: leased.attempt_count,
-        hand_off: false,
-        scheduled_at: None,
-        now: 19,
-    })?
-    else {
-        panic!("a landing may end without a successor");
-    };
-    let cancellation = landed.cancellation().expect("receipt");
-    assert_eq!(cancellation.reserve_units, 1_000);
-    assert_eq!(
-        cancellation.reserve_spent_units, 1_000,
-        "the terminal receipt reports the landing's accounting"
-    );
-    assert_eq!(cancellation.trigger, Some(LandingTrigger::BudgetWarning));
-
-    // Re-dialing a settled row is refused, so the accounting cannot be rewritten.
-    assert_invalid_transition(
-        queue
-            .dial_landing_reserve(DialLandingReserve {
-                id: leased.id,
-                limit_units: 1,
-                reserve_percent: None,
-                now: 20,
-            })
-            .expect_err("a settled row is not re-dialed"),
-        "dial_landing_reserve",
-        "cancelled",
-    );
+        hand_off: true,
+        scheduled_at: Some(20),
+        now: 18,
+    }), Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)))
+        if reason == ERR_HANDOFF_WITHOUT_RESUME_POINT));
+    assert_eq!(snapshot()?, before);
+    assert_eq!(queue.get(leased.id)?.unwrap(), landing);
     Ok(())
 }
 

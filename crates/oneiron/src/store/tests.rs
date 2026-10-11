@@ -1931,34 +1931,53 @@ fn claim_discovery_falls_back_to_scan_while_backfill_incomplete() -> Result<()> 
 }
 
 #[test]
-fn backfill_indexes_preexisting_rows_and_sets_flag_atomically() -> Result<()> {
+fn failed_backfill_leaves_no_index_rows_or_completion_flag() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let left = [0x26; 16];
     let right = [0x27; 16];
     mixed_claim_ledger(&vault, &left, &right)?;
     strip_claim_index_and_flag(&vault)?;
-
-    let first = vault.store.backfill_gate_decision_claim_index()?;
-    assert!(!first.already_complete);
-    assert_eq!(first.rows_indexed, 4);
-    assert_eq!(claim_index_row_count(&vault)?, 4);
-    assert_eq!(claim_index_decision_ids(&vault, &left)?.len(), 3);
+    let bad_key = gate_decision_key(synthetic_gate_decision_id(0xFF, 99));
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &bad_key, b"not a gate decision")?;
+    wtxn.commit()?;
+    assert!(vault.store.backfill_gate_decision_claim_index().is_err());
+    assert_eq!(claim_index_row_count(&vault)?, 0);
     {
         let rtxn = vault.store.env.read_txn()?;
-        assert_eq!(
+        assert!(
             vault
                 .store
                 .vault_meta
-                .get(&rtxn, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY)?
-                .as_deref(),
-            Some(GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE.as_slice()),
+                .get(&rtxn, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,)?
+                .is_none()
         );
     }
-
-    let second = vault.store.backfill_gate_decision_claim_index()?;
-    assert!(second.already_complete);
-    assert_eq!(second.rows_indexed, 0);
-    assert_eq!(claim_index_row_count(&vault)?, 4);
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.delete(&mut wtxn, &bad_key)?;
+    wtxn.commit()?;
+    vault.store.backfill_gate_decision_claim_index()?;
+    assert_eq!(
+        claim_index_decision_ids(&vault, &left)?,
+        vec![
+            synthetic_gate_decision_id(0x81, 1),
+            synthetic_gate_decision_id(0x82, 2),
+            synthetic_gate_decision_id(0x83, 3),
+        ]
+    );
+    assert_eq!(
+        claim_index_decision_ids(&vault, &right)?,
+        vec![synthetic_gate_decision_id(0x84, 4),]
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .gate_decision_claim_index_backfill_complete_in_txn(&rtxn)?
+    );
     Ok(())
 }
 

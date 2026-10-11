@@ -326,19 +326,33 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
 }
 
 #[test]
-fn dreamer_payload_round_trips_with_pinned_keys() -> Result<()> {
+fn dreamer_payload_wire_fixture_pins_schema_and_rejects_ambiguous_fields() -> Result<()> {
+    const FROZEN: &[u8] =
+        b"\x84\xaeschema_version\x01\xa8job_type\xa6expand\xa5input\xa4seed\xaaparent_job\xc0";
     let payload = DreamerAttemptPayload {
         attempt_type: "expand".to_owned(),
         input: Value::from("seed"),
         parent_attempt: None,
     };
-    let encoded = encode_dreamer_attempt_payload(&payload)?;
-    let decoded = decode_dreamer_attempt_payload(&encoded)?;
-    assert_eq!(decoded, payload);
-    assert_eq!(
-        DREAMER_ATTEMPT_PAYLOAD_KEYS,
-        ["schema_version", "job_type", "input", "parent_job"]
-    );
+    assert_eq!(encode_dreamer_attempt_payload(&payload)?.as_slice(), FROZEN);
+    let decoded = decode_dreamer_attempt_payload(FROZEN)?;
+    assert_eq!(decoded.attempt_type, "expand");
+    assert_eq!(decoded.input.as_str(), Some("seed"));
+    assert_eq!(decoded.parent_attempt, None);
+    let mut duplicate = FROZEN.to_vec();
+    duplicate[0] = 0x85;
+    duplicate.extend_from_slice(b"\xaeschema_version\x01");
+    let mut unknown = FROZEN.to_vec();
+    unknown[0] = 0x85;
+    unknown.extend_from_slice(b"\xa7unknown\xc0");
+    let mut bad_version = FROZEN.to_vec();
+    bad_version[16] = 2;
+    for bytes in [duplicate, unknown, bad_version] {
+        assert!(matches!(
+            decode_dreamer_attempt_payload(&bytes),
+            Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_)))
+        ));
+    }
     Ok(())
 }
 
@@ -621,69 +635,86 @@ fn dreamer_macro_consolidation_without_home_does_not_claim() -> Result<()> {
 }
 
 #[test]
-fn dreamer_admission_claims_attempt_reserves_budget_and_writes_started_milestone_atomically()
--> Result<()> {
-    let (_dir, vault) = open_vault();
-    let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_attempt(&runner, "expand", 10)?;
+fn milestone_write_refusal_rolls_back_lease_budget_and_claim_across_reopen() -> Result<()> {
+    let (dir, vault) = open_vault();
     let claim_id = EntityId::now();
-    let milestone = milestone_fixture(&vault, claim_id, 20)?;
-    let milestone_subject = milestone.subject;
-
-    let admitted = runner.admit_next(AdmitDreamerAttempt {
+    let queued = {
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue_attempt(&runner, "expand", 10)?;
+        let mut milestone = milestone_fixture(&vault, claim_id, 20)?;
+        milestone.subject = EntityId::now(); // no entity exists at this subject
+        let error = runner
+            .admit_next(AdmitDreamerAttempt {
+                lease_owner: "dreamer-worker".to_owned(),
+                now: 20,
+                budget_id: "wake".to_owned(),
+                budget_total_units: 10,
+                reserve_units: 4,
+                started_milestone: Some(milestone),
+            })
+            .expect_err("milestone must refuse a missing subject");
+        assert!(matches!(error, Error::EntityNotFound));
+        assert_eq!(
+            runner.status(queued.attempt.id)?.unwrap().attempt,
+            queued.attempt
+        );
+        assert!(runner.budget("wake")?.is_none());
+        assert!(
+            runner
+                .budget_reservation("wake", queued.attempt.id)?
+                .is_none()
+        );
+        assert!(vault.get_claim(&claim_id)?.is_none());
+        queued
+    };
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    let runner = DreamerRunnerStore::new(&reopened);
+    let unchanged = runner.status(queued.attempt.id)?.unwrap();
+    assert_eq!(unchanged.attempt, queued.attempt);
+    assert_eq!(unchanged.attempt.state, AttemptState::Queued);
+    assert_eq!(unchanged.attempt.attempt_count, 0);
+    assert_eq!(unchanged.attempt.lease_owner, None);
+    assert!(runner.budget("wake")?.is_none());
+    assert!(
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none()
+    );
+    assert!(reopened.get_claim(&claim_id)?.is_none());
+    // Back to open_vault's policy-free fixture for the successful retry: the
+    // production reopen above seeded the default policy again.
+    let manifest = crate::gate::default_policy_manifest_id()?;
+    reopened.with_write_txn(|wtxn| {
+        crate::batch::deindex_entity_for_test(&reopened.store, wtxn, &manifest)?;
+        Ok(())
+    })?;
+    let milestone = milestone_fixture(&reopened, claim_id, 21)?;
+    let outcome = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "dreamer-worker".to_owned(),
-        now: 20,
+        now: 21,
         budget_id: "wake".to_owned(),
         budget_total_units: 10,
         reserve_units: 4,
         started_milestone: Some(milestone),
     })?;
-
-    let DreamerAdmissionOutcome::Admitted(admitted) = admitted else {
-        panic!("expected admitted Dreamer attempt");
+    let DreamerAdmissionOutcome::Admitted(admitted) = outcome else {
+        panic!("rolled-back attempt must still be admissible")
     };
     assert_eq!(admitted.status.attempt.id, queued.attempt.id);
     assert_eq!(admitted.status.attempt.state, AttemptState::Leased);
+    assert_eq!(runner.budget("wake")?.unwrap().remaining_units, 6);
     assert_eq!(
-        admitted.status.attempt.lease_owner.as_deref(),
-        Some("dreamer-worker")
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .unwrap()
+            .reserved_units,
+        4
     );
-    assert_eq!(admitted.status.attempt.attempt_count, 1);
-    assert_eq!(admitted.budget.remaining_units, 6);
-    assert_eq!(admitted.budget.reserved_units, 4);
-    assert_eq!(admitted.reservation.budget_id, "wake");
-    assert_eq!(admitted.reservation.attempt_id, queued.attempt.id);
-    assert_eq!(admitted.reservation.reserved_units, 4);
-
-    let stored_budget = runner.budget("wake")?.expect("budget row");
-    assert_eq!(stored_budget, admitted.budget);
-    assert_eq!(runner.remaining_budget("wake")?, Some(6));
     assert_eq!(
-        runner.budget_reservation("wake", queued.attempt.id)?,
-        Some(admitted.reservation)
+        reopened.get_claim(&claim_id)?.unwrap().predicate,
+        DREAMER_MILESTONE_PREDICATE
     );
-    let stored_claim = vault
-        .get_claim(&claim_id)?
-        .expect("started milestone claim");
-    assert_eq!(stored_claim.predicate, DREAMER_MILESTONE_PREDICATE);
-    assert_eq!(
-        stored_claim.subject,
-        ClaimSubject::Entity(milestone_subject)
-    );
-    assert_eq!(stored_claim.approval, ClaimApprovalStatus::Approved);
-
-    let Value::Map(entries) = stored_claim.value else {
-        panic!("milestone value must be a map");
-    };
-    assert!(entries.iter().any(|(key, value)| {
-        key.as_str() == Some(KEY_MILESTONE)
-            && value.as_str() == Some(DreamerMilestoneKind::Started.as_str())
-    }));
-    assert!(entries.iter().any(|(key, value)| {
-        key.as_str() == Some(KEY_ATTEMPT_ID)
-            && matches!(value, Value::Binary(bytes) if bytes.as_slice() == queued.attempt.id.as_bytes())
-    }));
-
     Ok(())
 }
 

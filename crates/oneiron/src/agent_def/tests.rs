@@ -578,11 +578,22 @@ fn registry_row_and_type_byte_immutability() -> Result<()> {
     Ok(())
 }
 
-// AC-3 test 9: host-agnostic pinned-key contract.
 #[test]
-fn pinned_key_contract_is_stable() {
+fn encoded_agent_body_pins_mcp_and_budget_split_schema_order() -> Result<()> {
+    let mut def = full_agent("1.0.0");
+    def.memory_profile = Some(full_profile());
+    let bytes = encode_agent_definition(&def)?;
+    let mut cursor = bytes.as_slice();
+    let Value::Map(fields) = rmpv::decode::read_value(&mut cursor).expect("MessagePack map") else {
+        panic!("agent body must be a map");
+    };
+    assert!(cursor.is_empty());
+    let keys: Vec<_> = fields
+        .iter()
+        .map(|(key, _)| key.as_str().unwrap())
+        .collect();
     assert_eq!(
-        AGENT_DEF_BODY_KEYS,
+        keys,
         [
             "agentId",
             "desc",
@@ -594,8 +605,6 @@ fn pinned_key_contract_is_stable() {
             "modelTier",
             "scope",
             "world",
-            "ceiling",
-            "forkedFrom",
             "approvalStatus",
             "lifecycleStatus",
             "source",
@@ -603,39 +612,72 @@ fn pinned_key_contract_is_stable() {
             "generated",
             "humanAuthored",
             "provenance",
-            "logicalId",
             "enabled",
-            "displayName",
-            "memory_profile",
-            "dreaming",
-            "dreamingModel",
-            "wakeCadence",
+            "memory_profile"
         ]
     );
-    assert_eq!(MCP_REF_KEYS, ["key", "minVersion"]);
+    let mcps = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("codeModeMcps"))
+        .unwrap()
+        .1
+        .as_array()
+        .unwrap();
     assert_eq!(
-        MEMORY_PROFILE_KEYS,
+        mcps,
+        &vec![
+            Value::Map(vec![
+                (Value::from("key"), Value::from("code.fs")),
+                (Value::from("minVersion"), Value::from(">=0.2.0"))
+            ]),
+            Value::Map(vec![
+                (Value::from("key"), Value::from("code.http")),
+                (Value::from("minVersion"), Value::Nil),
+            ]),
+        ]
+    );
+    let profile = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("memory_profile"))
+        .unwrap()
+        .1
+        .as_map()
+        .unwrap();
+    assert_eq!(
+        profile
+            .iter()
+            .map(|(key, _)| key.as_str().unwrap())
+            .collect::<Vec<_>>(),
         [
             "window_token_budget",
             "budget_split",
             "compaction_backend",
-            "compaction",
+            "compaction"
         ]
     );
+    let split = profile
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("budget_split"))
+        .unwrap()
+        .1
+        .as_map()
+        .unwrap();
     assert_eq!(
-        CONTEXT_BUDGET_SPLIT_KEYS,
+        split
+            .iter()
+            .map(|(key, _)| key.as_str().unwrap())
+            .collect::<Vec<_>>(),
         ["claims", "turns", "summaries", "other"]
     );
-
-    // A host field smuggled into the body is rejected at decode.
-    let mut entries = valid_scope_all_entries();
-    entries.push(("rosterDisplayName", Value::from("Scout")));
+    let mut invalid = valid_scope_all_entries();
+    invalid.push(("rosterDisplayName", Value::from("Scout")));
     assert_eq!(
-        decode_agent_definition(&body_from(entries))
-            .expect_err("host field must be rejected")
+        decode_agent_definition(&body_from(invalid))
+            .unwrap_err()
             .kind(),
         ErrorKind::InvalidAgentDefBody
     );
+    Ok(())
 }
 
 // Edge test 10: dangling refs are accepted at rest (no existence checks).

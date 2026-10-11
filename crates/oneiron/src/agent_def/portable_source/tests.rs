@@ -290,27 +290,40 @@ fn agent_historical_source_erases_without_widening_from_a_forged_key() -> Result
 }
 
 #[test]
-fn retained_birth_hash_without_captured_bytes_is_an_explicit_archive_omission() -> Result<()> {
-    let (_dir, vault, child, asset, _) = captured_root()?;
-    let complete = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+fn hash_only_agent_archive_requires_missing_source_omission() -> Result<()> {
+    let (_source_dir, source, child, asset, _) = captured_root()?;
+    source.batch().delete(&asset).commit()?;
+    let archive = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let mut document = source.read_whole_vault_json(archive.bytes())?;
+    let reason = crate::batch::export::BundleOmissionReason::AgentBirthSourceUnavailable;
     assert!(
-        !complete
-            .manifest()
+        document
+            .manifest
             .bundle_omissions
             .iter()
-            .any(|omission| omission.entity_id == child.to_hex())
+            .any(|row| row.entity_id == child.to_hex() && row.reason == reason)
     );
-    vault.batch().delete(&asset).commit()?;
-    let incomplete = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
     assert!(
-        incomplete
-            .manifest()
-            .bundle_omissions
+        document
+            .agent_packs
             .iter()
-            .any(|omission| omission.entity_id == child.to_hex()
-                && omission.reason
-                    == crate::batch::export::BundleOmissionReason::AgentBirthSourceUnavailable)
+            .any(|pack| pack.entity_id == child.to_hex() && pack.fork_hash.is_some())
     );
+    let (_accepted_dir, accepted) = open();
+    accepted.import_whole_vault_json(archive.bytes())?;
+    assert_eq!(
+        accepted.get_entity_type(&child)?,
+        Some(ENTITY_TYPE_AGENT_DEF)
+    );
+    assert!(accepted.get_entity_type(&asset)?.is_none());
+    document
+        .manifest
+        .bundle_omissions
+        .retain(|row| !(row.entity_id == child.to_hex() && row.reason == reason));
+    let malformed = serde_json::to_vec(&document).expect("archive JSON");
+    let (_refused_dir, refused) = open();
+    assert!(refused.import_whole_vault_json(&malformed).is_err());
+    assert!(refused.get_entity_type(&child)?.is_none());
     Ok(())
 }
 

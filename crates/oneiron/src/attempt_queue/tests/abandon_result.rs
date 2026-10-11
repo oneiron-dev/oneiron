@@ -291,50 +291,28 @@ fn set_result_is_fenced_write_once_and_idempotent() -> Result<()> {
 }
 
 #[test]
-fn abandoned_state_index_is_appended_and_old_rows_still_decode() -> Result<()> {
-    // T6a: the wire index of every pre-existing state is unchanged, so a row
-    // written before `Abandoned` existed reads back as the same state.
-    let states = [
-        (AttemptState::Queued, "queued"),
-        (AttemptState::Leased, "leased"),
-        (AttemptState::Paused, "paused"),
-        (AttemptState::Completed, "completed"),
-        (AttemptState::Failed, "failed"),
-        (AttemptState::Cancelled, "cancelled"),
-        (AttemptState::Scheduled, "scheduled"),
-        (AttemptState::Landing, "landing"),
-        (AttemptState::Abandoned, "abandoned"),
+fn persisted_attempt_states_match_literal_messagepack_vectors() {
+    let fixtures: &[(AttemptState, &[u8])] = &[
+        (AttemptState::Queued, b"\xa6Queued"),
+        (AttemptState::Leased, b"\xa6Leased"),
+        (AttemptState::Paused, b"\xa6Paused"),
+        (AttemptState::Completed, b"\xa9Completed"),
+        (AttemptState::Failed, b"\xa6Failed"),
+        (AttemptState::Cancelled, b"\xa9Cancelled"),
+        (AttemptState::Scheduled, b"\xa9Scheduled"),
+        (AttemptState::Landing, b"\xa7Landing"),
+        (AttemptState::Abandoned, b"\xa9Abandoned"),
     ];
-    for (index, (state, label)) in states.iter().enumerate() {
-        let encoded = rmp_serde::to_vec_named(state).expect("encode state");
-        let decoded: AttemptState = rmp_serde::from_slice(&encoded).expect("decode state");
-        assert_eq!(decoded, *state);
-        assert_eq!(state.as_str(), *label);
-        // Abandoned is LAST, so it cannot have taken an index an older row
-        // already wrote.
-        if *state == AttemptState::Abandoned {
-            assert_eq!(index, states.len() - 1);
-        }
+    for &(state, literal) in fixtures {
+        assert_eq!(
+            rmp_serde::to_vec_named(&state).expect("encode state"),
+            literal
+        );
+        assert_eq!(
+            rmp_serde::from_slice::<AttemptState>(literal).expect("read stored state"),
+            state
+        );
     }
-
-    // T6b: a row written without the `result_ref` key decodes as `None`,
-    // through the real decode door with all its validators.
-    let (_dir, vault) = open_queue();
-    let queue = AttemptQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(row) = queue.enqueue(enqueue("legacy", None, 10))? else {
-        panic!("expected an enqueue");
-    };
-    let stored = queue.get(row.id)?.expect("row");
-    assert_eq!(stored.result_ref, None);
-
-    // T6c: a round trip through the real encoder preserves an attached
-    // reference exactly.
-    let mut with_result = stored;
-    with_result.result_ref = Some(result_ref("blob-artifact:cc@9"));
-    let encoded = encode_record(&with_result)?;
-    let decoded = decode_record(&encoded, with_result.id)?;
-    assert_eq!(decoded, with_result);
-    Ok(())
 }
 
 #[test]

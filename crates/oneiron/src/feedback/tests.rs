@@ -8,16 +8,6 @@ use crate::outbound::OutboundDispatchOutcome;
 use crate::receipt::{ReceiptKind, ReceiptRecord};
 use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
-/// The feedback module source, read at compile time so the network-freedom and
-/// secret-hygiene guards are structural rather than aspirational.
-const FEEDBACK_SOURCE: &str = concat!(
-    include_str!("mod.rs"),
-    include_str!("bundle.rs"),
-    include_str!("consent.rs"),
-    include_str!("dispatch.rs"),
-    include_str!("error.rs"),
-);
-
 /// Text that must never leave the vault: it stands in for a configuration
 /// value the whitelist projection deliberately does not carry.
 const OMITTED_CANARY: &str = "canary-omitted-configuration-value";
@@ -286,31 +276,6 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
             .any(|window| window == needle)
 }
 
-fn assert_source_free_of(tokens: &[&str]) {
-    for token in tokens {
-        assert!(
-            !FEEDBACK_SOURCE.contains(token),
-            "the feedback module must not mention {token}"
-        );
-    }
-}
-
-/// Tokens whose absence proves the module cannot reach the environment, the
-/// filesystem, a socket, a subprocess, or a credential store.
-fn ambient_acquisition_tokens() -> Vec<&'static str> {
-    vec![
-        "crate::connector_key",
-        "secret_manifest",
-        "dict_search_paths",
-        "std::env::var",
-        "std::fs",
-        "std::net",
-        "std::process",
-        "reqwest",
-        "ureq",
-    ]
-}
-
 // -------------------------------------------------------------- vault fixtures
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
@@ -536,28 +501,86 @@ fn feedback_config_snapshot_is_constrained_and_whitelisted() {
 // ------------------------------------------------------------- 5. no dispatch
 
 #[test]
-fn prepare_and_redact_never_dispatch() {
-    // Preview, card, and disclosure take no transport and no vault: there is
-    // no parameter through which they could reach one.
-    let preview = preview_of(full_bundle());
-    let scope = send_scope();
-    let card =
-        feedback_approval_card(&preview, "owner", CALLER_PROMPT, &scope).expect("approval card");
-    assert!(!card.preview.is_empty());
-    assert!(!preview.display_json().expect("render preview").is_empty());
-
-    // Export takes a writer the caller owns, and nothing else.
-    let mut sink = Vec::new();
-    let approval = approved_for(&preview, &FeedbackApprovalScope::Export);
-    export_feedback_bundle(&preview, &approval, &mut sink).expect("export");
-    assert_eq!(sink, preview.bytes());
-
-    // A transport exists in this test and is handed to nothing, so it stays at
-    // zero calls across the whole preview/consent/export path.
-    let transport = RecordingTransport::default();
-    assert!(transport.payloads.is_empty());
-
-    assert_source_free_of(&ambient_acquisition_tokens());
+fn isolated_preview_export_does_not_disclose_ambient_canaries() {
+    const CHILD: &str = "ONEIRON_FEEDBACK_ISOLATED_CHILD";
+    const CANARY: &str = "ambient-feedback-canary-not-bundle-input";
+    if std::env::var_os(CHILD).is_some() {
+        let bundle = minimal_bundle()
+            .with_config(FeedbackConfigSnapshot::from_config(&canary_config()).unwrap())
+            .with_user_note(format!("contact {PII_CANARY}"));
+        let preview = prepare_feedback_preview(bundle, &CanaryRedactor).unwrap();
+        let card = feedback_approval_card(
+            &preview,
+            "owner",
+            CALLER_PROMPT,
+            &FeedbackApprovalScope::Export,
+        )
+        .unwrap();
+        let mut bytes = Vec::new();
+        export_feedback_bundle(
+            &preview,
+            &approved_for(&preview, &FeedbackApprovalScope::Export),
+            &mut bytes,
+        )
+        .unwrap();
+        assert!(preview.display_json().unwrap().contains(REDACTED_MARKER));
+        for secret in [CANARY, PII_CANARY, OMITTED_CANARY] {
+            assert!(!preview.display_json().unwrap().contains(secret));
+            assert!(!card.preview.contains(secret));
+            assert!(!bytes.windows(secret.len()).any(|w| w == secret.as_bytes()));
+        }
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir(home.path().join(".aws")).unwrap();
+    for name in [".env", ".netrc", ".aws/credentials"] {
+        std::fs::write(home.path().join(name), CANARY).unwrap();
+    }
+    let trap = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    trap.set_nonblocking(true).unwrap();
+    let proxy = format!("http://{}", trap.local_addr().unwrap());
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "feedback::tests::isolated_preview_export_does_not_disclose_ambient_canaries",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env_clear()
+        .env(CHILD, "1")
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("OPENAI_API_KEY", CANARY)
+        .env("ANTHROPIC_API_KEY", CANARY)
+        .env("AWS_SECRET_ACCESS_KEY", CANARY)
+        .env("HTTP_PROXY", &proxy)
+        .env("HTTPS_PROXY", &proxy)
+        .env("ALL_PROXY", &proxy)
+        .env("http_proxy", &proxy)
+        .env("https_proxy", &proxy)
+        .env("all_proxy", &proxy)
+        .current_dir(home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "child failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    assert!(
+        !output
+            .stdout
+            .windows(CANARY.len())
+            .any(|w| w == CANARY.as_bytes())
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(CANARY.len())
+            .any(|w| w == CANARY.as_bytes())
+    );
+    assert!(matches!(trap.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
 }
 
 // ------------------------------------------------------------- 6. redaction

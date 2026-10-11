@@ -7,6 +7,29 @@ use crate::support;
 
 use oneiron_seal::{FetchError, FetchMethod, FetchPurpose, FetchRequest, SealFetcher};
 
+/// Accepts one loopback connection, or panics after ten seconds: a client
+/// that never connects then fails the peer thread's join instead of hanging it.
+fn accept_within(listener: &std::net::TcpListener) -> std::net::TcpStream {
+    listener.set_nonblocking(true).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false).unwrap();
+                return stream;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no client connected within 10 s"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => panic!("accept: {e}"),
+        }
+    }
+}
+
 mod guarded {
     use oneiron_seal::{FetchPolicy, SsrfGuardedHttpFetcher};
 
@@ -106,33 +129,58 @@ mod guarded_live {
     }
 
     #[tokio::test]
-    async fn redirect_hop_reruns_policy_and_succeeds_when_admitted() {
+    async fn redirect_policy_blocks_forbidden_origin_before_connection() {
+        let forbidden = TcpListener::bind("127.0.0.1:0").unwrap();
+        forbidden.set_nonblocking(true).unwrap();
+        let target = format!("http://{}/forbidden", forbidden.local_addr().unwrap());
+        let source = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = source.local_addr().unwrap().port();
+        let sender = std::thread::spawn(move || {
+            let mut socket = accept_within(&source);
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let mut chunk = [0u8; 1024];
+                let n = socket.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            socket.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).unwrap();
+        });
+        let fetcher = SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024));
+        let result = fetcher
+            .fetch(FetchRequest {
+                purpose: FetchPurpose::Ocsp,
+                url: url::Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap(),
+                method: FetchMethod::Get,
+                request_body: vec![],
+                content_type: None,
+            })
+            .await;
+        sender.join().unwrap();
+        assert!(matches!(result, Err(FetchError::Denied)));
+        assert!(matches!(forbidden.accept(), Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock));
+
+        // An admitted redirect and a cache hit remain live positive controls.
         let (port, hops) = serve(64);
-        let f = SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024));
-        let out = f
-            .fetch(FetchRequest {
-                purpose: FetchPurpose::Ocsp,
-                url: url::Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap(),
-                method: FetchMethod::Get,
-                request_body: Vec::new(),
-                content_type: None,
-            })
-            .await
-            .unwrap();
-        assert_eq!(out.body, vec![b'x'; 64]);
-        assert_eq!(hops.load(std::sync::atomic::Ordering::SeqCst), 2);
-        // Second fetch hits the cache: no third hop.
-        let _ = f
-            .fetch(FetchRequest {
-                purpose: FetchPurpose::Ocsp,
-                url: url::Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap(),
-                method: FetchMethod::Get,
-                request_body: Vec::new(),
-                content_type: None,
-            })
-            .await
-            .unwrap();
-        assert_eq!(hops.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let fetcher = SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024));
+        for _ in 0..2 {
+            let response = fetcher
+                .fetch(FetchRequest {
+                    purpose: FetchPurpose::Ocsp,
+                    url: url::Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap(),
+                    method: FetchMethod::Get,
+                    request_body: vec![],
+                    content_type: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(response.body, vec![b'x'; 64]);
+            assert_eq!(hops.load(std::sync::atomic::Ordering::SeqCst), 2);
+        }
     }
 }
 
@@ -236,32 +284,95 @@ mod engine_entry {
     }
 
     #[tokio::test]
-    async fn configured_deny_cidr_bites_through_the_engine_entry() {
-        // Origin listed but loopback NOT admitted: the configured address
-        // policy must deny the TSA fetch through the engine entry, so B-T
-        // degrades to B-B with TimestampUnavailable.
-        let signer = p256_identity(false);
+    async fn denied_tsa_egress_sends_nothing_but_admitted_policy_reaches_same_tsa() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
         let tsa = p256_identity(true);
-        let anchors = vec![signer.cert_der.clone(), tsa.cert_der.clone()];
-        let engine = engine_for(9, Vec::new(), anchors, signer);
-        let out = engine
+        let tsa_cert = tsa.cert_der.clone();
+        let signer = p256_identity(false);
+        let denied = engine_for(
+            port,
+            vec![],
+            vec![signer.cert_der.clone(), tsa_cert.clone()],
+            signer,
+        );
+        let result = denied
             .seal_pdf(
                 &input_pdf(),
                 &SealRequest {
-                    operation_id: "policy-deny".to_string(),
+                    operation_id: "live-policy-deny".into(),
                     target_profile: PadesProfile::BaselineT,
                 },
             )
             .await
             .unwrap();
-        assert_eq!(out.achieved_profile, PadesProfile::BaselineB);
-        assert!(out.warnings.iter().any(|w| matches!(
+        assert_eq!(result.achieved_profile, PadesProfile::BaselineB);
+        assert!(result.warnings.iter().any(|w| matches!(
             w,
             SealWarning::ProfileDegraded {
                 reason: ProfileDegradeReason::TimestampUnavailable,
                 ..
             }
         )));
+        assert!(matches!(listener.accept(), Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock));
+        let sender = std::thread::spawn(move || {
+            let mut sock = super::accept_within(&listener);
+            sock.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 8192];
+            let (body_start, content_len) = loop {
+                let n = sock.read(&mut chunk).unwrap();
+                if n == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..pos]).to_lowercase();
+                    let cl = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    break (pos + 4, cl);
+                }
+            };
+            while buf.len() < body_start + content_len {
+                let n = sock.read(&mut chunk).unwrap();
+                if n == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            let reply = tsa_response(&tsa, &buf[body_start..body_start + content_len]).unwrap();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/timestamp-reply\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                reply.len()
+            );
+            sock.write_all(resp.as_bytes()).unwrap();
+            sock.write_all(&reply).unwrap();
+        });
+        let signer = p256_identity(false);
+        let admitted = engine_for(
+            port,
+            vec!["127.0.0.0/8".parse().unwrap()],
+            vec![signer.cert_der.clone(), tsa_cert],
+            signer,
+        );
+        let result = admitted
+            .seal_pdf(
+                &input_pdf(),
+                &SealRequest {
+                    operation_id: "same-live-policy-admit".into(),
+                    target_profile: PadesProfile::BaselineT,
+                },
+            )
+            .await
+            .unwrap();
+        sender.join().unwrap();
+        assert_eq!(result.achieved_profile, PadesProfile::BaselineT);
     }
 
     #[tokio::test]

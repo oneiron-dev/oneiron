@@ -1053,14 +1053,17 @@ fn forward_decode_rejects_v1_records_with_tf() {
 }
 
 #[test]
-fn field_lengths_roundtrip() -> Result<()> {
-    let mut m = HashMap::new();
-    m.insert(0, 5);
-    m.insert(2, 1);
-    m.insert(3, 8);
-    let bytes = encode_field_lengths(&m);
-    let back = decode_field_lengths(&bytes)?;
-    assert_eq!(back, m);
+fn field_lengths_pin_sorted_big_endian_ids_and_little_endian_lengths() -> Result<()> {
+    let mut lengths = HashMap::new();
+    lengths.insert(0x1234, 0x01020304);
+    lengths.insert(0x0002, 0x11223344);
+    lengths.insert(0x0100, 0x00010203);
+    let literal: &[u8] = &[
+        0x00, 0x02, 0x44, 0x33, 0x22, 0x11, 0x01, 0x00, 0x03, 0x02, 0x01, 0x00, 0x12, 0x34, 0x04,
+        0x03, 0x02, 0x01,
+    ];
+    assert_eq!(encode_field_lengths(&lengths), literal);
+    assert_eq!(decode_field_lengths(literal)?, lengths);
     Ok(())
 }
 

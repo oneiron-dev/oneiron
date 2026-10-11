@@ -744,15 +744,10 @@ fn discard_on_nonexistent_artifact_is_refused() -> Result<()> {
     Ok(())
 }
 
-/// FIX-5: the grant read a settle authorizes against is taken INSIDE the
-/// settle's own write transaction, so a revocation committed between a
-/// caller's check and the settle commit cannot be ridden past — the LMDB
-/// write lock serializes the two and the post-revoke txn reads Revoked.
 #[test]
-fn settle_standing_grant_revocation_is_atomic_with_the_settle_txn() -> Result<()> {
+fn post_revoke_settle_writes_no_version_ledger_or_receipt() -> Result<()> {
     use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
     use crate::store::GateDecisionId;
-
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 20);
     let owner = vault.authenticate_owner(
@@ -767,41 +762,44 @@ fn settle_standing_grant_revocation_is_atomic_with_the_settle_txn() -> Result<()
         ActionEnvelope::new(["brief:racy".to_owned()])?.with_target("brief:racy")?,
     )?;
     vault.create_standing_grant(&owner, bound.clone())?;
-    let grant_ref = bound.digest().to_hex();
-
-    // T1's interleaving shape: a reader opened BEFORE the revoke commits sees
-    // the live row, and a reader opened AFTER the revoke commits sees the
-    // revocation — the settle's in-txn authorize uses exactly this read, so a
-    // settle whose txn opens after the revoke reads Revoked and fails.
-    let t1_open = vault.store.env.read_txn()?;
-    let pre = vault.active_standing_consent_grants_in_txn(&t1_open)?;
-    assert!(pre.iter().any(|grant| grant.bound() == &bound));
-    drop(t1_open);
-
-    vault.revoke_consent_grant(&owner, &grant_ref)?;
-
-    // The reader a post-revoke settle opens.
-    let t1_late = vault.store.env.read_txn()?;
-    let post = vault.active_standing_consent_grants_in_txn(&t1_late)?;
-    assert!(
-        !post.iter().any(|grant| grant.bound() == &bound),
-        "a settle opening after a revoke must observe the revocation"
-    );
-    drop(t1_late);
-
-    // And the end-to-end behavior: settle with the revoked grant errors.
     let artifact = put_workbook(&vault, actor, 21);
-    let proposal = proposal("run:revoked", b"v9 bytes", Vec::new());
-    let consent = SettleConsent::StandingGrant {
-        brief_ref: "brief:racy".to_owned(),
-    };
+    let prop = proposal("run:revoked", b"revoked output", Vec::new());
+    let before = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::ArtifactSettle))?;
+    // The caller saw a live grant; the owner revokes it before the settle runs.
+    assert!(vault.settle_standing_grant_authorizes(actor, "brief:racy")?);
+    vault.revoke_consent_grant(&owner, &bound.digest().to_hex())?;
     let err = vault
-        .settle_select_edit_proposal(&artifact, &proposal, &consent, actor, test_time(22), 22)
-        .expect_err("revoked standing grant authorizes no settle");
+        .settle_select_edit_proposal(
+            &artifact,
+            &prop,
+            &SettleConsent::StandingGrant {
+                brief_ref: "brief:racy".to_owned(),
+            },
+            actor,
+            test_time(22),
+            22,
+        )
+        .expect_err("a revoked grant cannot authorize the settle");
     assert!(matches!(
         err,
         Error::Artifact(ArtifactError::SettleNotAuthorized(_))
     ));
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+    assert!(vault.read_blob_artifact_version(&artifact, 2)?.is_none());
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "run:revoked")?
+            .is_none()
+    );
+    assert!(
+        vault
+            .settle_receipt_door(&artifact, "run:revoked")?
+            .is_none()
+    );
+    assert_eq!(
+        vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::ArtifactSettle))?,
+        before
+    );
     Ok(())
 }
 

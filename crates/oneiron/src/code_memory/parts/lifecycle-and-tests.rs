@@ -240,26 +240,61 @@ mod tests {
         assert!(!key.windows(path.len()).any(|window| window == path));
     }
 
-    /// A transfer receipt key is deterministic in the declared transfer, so a
-    /// byte-identical replay upserts one row; any changed field moves it.
     #[test]
-    fn transfer_keys_are_deterministic_and_collision_free() {
-        let transfer = AnchorTransfer {
-            kind: AnchorTransferKind::Rename,
-            from_symbol_id: id(0x61),
-            to_symbol_id: id(0x62),
+    fn copy_and_rename_with_matching_identity_survive_reopen_as_distinct_receipts() {
+        let (dir, vault) = test_vault();
+        let from = seed_symbol(&vault, 0x61);
+        let to = seed_symbol(&vault, 0x62);
+        vault
+            .attach_code_memory(AttachCodeMemory {
+                anchor: CodeMemoryAnchor {
+                    symbol_id: from,
+                    locator: locator(),
+                },
+                slot: slot_name(),
+                value: value(0x65, 0x63, 0x66, 1_780_000_100),
+            })
+            .unwrap();
+        let mut transfer = AnchorTransfer {
+            kind: AnchorTransferKind::Copy,
+            from_symbol_id: from,
+            to_symbol_id: to,
             from_locator: locator(),
             to_locator: locator(),
             actor_id: id(0x63),
             observed_at: 1_780_000_100,
             provenance_claim_id: id(0x64),
         };
-        let replay = transfer.clone();
-        assert_eq!(transfer_key(&transfer), transfer_key(&replay));
-
-        let mut copied = transfer;
-        copied.kind = AnchorTransferKind::Copy;
-        assert_ne!(transfer_key(&replay), transfer_key(&copied));
+        assert_eq!(
+            vault
+                .transfer_code_memory_anchor(&transfer)
+                .unwrap()
+                .moved_attachments,
+            1
+        );
+        transfer.kind = AnchorTransferKind::Rename;
+        assert_eq!(
+            vault
+                .transfer_code_memory_anchor(&transfer)
+                .unwrap()
+                .moved_attachments,
+            1
+        );
+        drop(vault);
+        let reopened = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        for endpoint in [from, to] {
+            let records = reopened.code_memory_transfers(endpoint).unwrap();
+            assert_eq!(records.len(), 2);
+            for kind in [AnchorTransferKind::Copy, AnchorTransferKind::Rename] {
+                let record = records.iter().find(|record| record.kind == kind).unwrap();
+                assert_eq!(record.from_symbol_id, from);
+                assert_eq!(record.to_symbol_id, to);
+                assert_eq!(record.observed_at, 1_780_000_100);
+                assert_eq!(record.actor_id, id(0x63));
+                assert_eq!(record.provenance_claim_id, id(0x64));
+                assert_eq!(record.moved_attachments, 1);
+            }
+        }
     }
 
     /// PURE merge algebra over the canonical encoded output: associative,

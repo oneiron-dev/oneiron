@@ -112,21 +112,3 @@ fn days_from_civil(year: u64, month: u64, day: u64) -> u64 {
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn foreign_stamps_do_not_parse() {
-        for stamp in [
-            "",
-            "20261008T123456Z",
-            "20261332T123456.789Z",
-            "20260230T123456.789Z",
-            "2026100xT123456.789Z",
-        ] {
-            assert_eq!(parse_file_stamp(stamp), None, "{stamp}");
-        }
-    }
-}

@@ -244,6 +244,30 @@ impl Drop for StaticHttp {
         }
     }
 }
+/// Accepts one connection, or panics after ten seconds: a client that never
+/// connects then fails the worker's join instead of hanging it.
+fn accept_within(listener: &TcpListener) -> TcpStream {
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking listener");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false).expect("blocking stream");
+                return stream;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no client connected within 10 s"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("accept: {error}"),
+        }
+    }
+}
 fn routes(tree: &[HubFile]) -> BTreeMap<String, (u16, Vec<u8>)> {
     let package = super::folder::package_from_files(tree.to_vec()).expect("package");
     let entries = tree
@@ -304,13 +328,47 @@ fn static_http_discovery_fetch_hash_drift_and_url_authority() -> Result<()> {
     Ok(())
 }
 #[test]
-fn static_http_refuses_redirect_and_unknown_index_fields() -> Result<()> {
-    let redirect = StaticHttp::new(BTreeMap::from([(
-        "/index.json".to_owned(),
-        (302, Vec::new()),
-    )]));
-    let adapter = HttpEndpointSkillHubAdapter::new(EntityId::now(), &redirect.index_url())?;
-    assert!(adapter.discover().is_err());
+fn http_discovery_refuses_cross_origin_location_without_contacting_target() -> Result<()> {
+    let target = TcpListener::bind("127.0.0.1:0").expect("target listener");
+    target.set_nonblocking(true).expect("nonblocking target");
+    let target_address = target.local_addr().expect("target address");
+    let origin = TcpListener::bind("127.0.0.1:0").expect("origin listener");
+    let origin_address = origin.local_addr().expect("origin address");
+    assert_ne!(origin_address, target_address);
+    let worker = std::thread::spawn(move || {
+        let mut stream = accept_within(&origin);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("request timeout");
+        let mut reader = BufReader::new(stream.try_clone().expect("reader"));
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("request line");
+        assert_eq!(line.split_whitespace().nth(1), Some("/index.json"));
+        loop {
+            line.clear();
+            reader.read_line(&mut line).expect("header");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        write!(stream,
+            "HTTP/1.1 302 Found\r\nLocation: http://{target_address}/redirected-index.json\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ).expect("real redirect response");
+    });
+    let adapter = HttpEndpointSkillHubAdapter::new(
+        EntityId::now(),
+        &format!("http://{origin_address}/index.json"),
+    )?;
+    let result = adapter.discover();
+    worker.join().expect("origin fixture");
+    assert_eq!(
+        result.expect_err("redirect must be refused").kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    match target.accept() {
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock),
+        Ok(_) => panic!("redirect target was contacted"),
+    }
     let unknown = StaticHttp::new(BTreeMap::from([(
         "/index.json".to_owned(),
         (
@@ -325,6 +383,7 @@ fn static_http_refuses_redirect_and_unknown_index_fields() -> Result<()> {
     );
     Ok(())
 }
+
 #[test]
 fn stored_package_roundtrip_is_bounded_and_cannot_forge_file_identity() -> Result<()> {
     let package = super::folder::package_from_files(files("fixture.skill", "1", "round trip"))?;

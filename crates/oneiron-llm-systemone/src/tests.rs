@@ -72,7 +72,7 @@ fn wire(answer: Value) -> Value {
     json!({"model":"jev-1.13.0","answers":{"decision":answer},"usage":{"input_tokens":3,"output_tokens":1}})
 }
 #[tokio::test]
-async fn rechecks_negative_and_rejects_wrong_revision() {
+async fn negative_recheck_preserves_pin_and_complete_wrong_revision_is_refused() {
     let (endpoint, handle) = server(vec![
         wire(json!({"type":"noul","noul":0.12})),
         wire(json!({"type":"noul","noul":0.08})),
@@ -99,20 +99,34 @@ async fn rechecks_negative_and_rejects_wrong_revision() {
     assert_eq!(result.receipt.providers.len(), 2);
     assert_eq!(result.receipt.providers[0].version, "1.13.0");
     assert_eq!(handle.join().unwrap().len(), 2);
-    let (endpoint, handle) = server(vec![
-        json!({"model":"jev-1.14.0","answers":{"decision":{"type":"noul","noul":0.9}}}),
-    ]);
-    let seat =
-        SystemOneSeat::new(endpoint, "stub-key".into(), "jev".into(), "1.13.0".into()).unwrap();
-    assert!(
-        seat.ask(
-            request(AnswerContract::Noul, vec![]),
-            &BudgetLease::for_test("seat")
-        )
-        .await
-        .is_err()
-    );
-    handle.join().unwrap();
+
+    for (model, admitted) in [("jev-1.13.0", true), ("jev-1.14.0", false)] {
+        let mut response = wire(json!({"type":"noul", "noul":0.9}));
+        response["model"] = json!(model);
+        let (endpoint, handle) = server(vec![response]);
+        let seat =
+            SystemOneSeat::new(endpoint, "stub-key".into(), "jev".into(), "1.13.0".into()).unwrap();
+        let result = seat
+            .ask(
+                request(AnswerContract::Noul, vec![]),
+                &BudgetLease::for_test("seat"),
+            )
+            .await;
+        let requests = handle.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["model"], "jev-1.13.0");
+        if admitted {
+            let answer = result.unwrap();
+            assert_eq!(answer.answer, DecisionAnswer::Noul(true));
+            assert_eq!(answer.usage.input.total, 3);
+            assert_eq!(answer.usage.output.total, 1);
+        } else {
+            assert!(matches!(
+                result,
+                Err(oneiron::LlmError::Fatal(FatalLlmError::InvalidRequest))
+            ));
+        }
+    }
 }
 
 #[tokio::test]

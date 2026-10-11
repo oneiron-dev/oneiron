@@ -235,43 +235,54 @@ fn human_surface(outcome: &FailureLadderOutcome) -> &SurfacedFailure {
 // ── bounded retry ───────────────────────────────────────────────────────────
 
 #[test]
-fn first_transient_retry_mints_distinct_scheduled_child() -> Result<()> {
+fn retry_commit_failure_leaves_source_child_and_runner_tree_unchanged() -> Result<()> {
     let (_dir, vault) = open_vault();
     let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
     let leased = leased_dispatch(&vault, agent_ref, 10)?;
-
-    let outcome = FailureLadder::new(&vault).handle_attempt_failure(
-        failure_input(&leased, transient(), 20),
-        auto_policy(agent_ref),
-    )?;
+    let queue = AttemptQueue::new(&vault);
+    let before = crate::test_util::row_dump::dump_rows(&vault);
+    let source_tree = DreamerRunnerStore::new(&vault).run_tree(leased.id)?;
+    vault.store.group_commit.hooks.fail_next_commit();
+    assert!(
+        FailureLadder::new(&vault)
+            .handle_attempt_failure(
+                failure_input(&leased, transient(), 20),
+                auto_policy(agent_ref),
+            )
+            .is_err()
+    );
+    assert_eq!(queue.get(leased.id)?, Some(leased.clone()));
+    assert_eq!(
+        DreamerRunnerStore::new(&vault).run_tree(leased.id)?,
+        source_tree
+    );
+    assert_eq!(crate::test_util::row_dump::dump_rows(&vault), before);
 
     let FailureLadderOutcome::Retried {
-        source_attempt_id,
-        scheduled_attempt,
-        consecutive_transients,
-    } = outcome
+        scheduled_attempt, ..
+    } = FailureLadder::new(&vault).handle_attempt_failure(
+        failure_input(&leased, transient(), 20),
+        auto_policy(agent_ref),
+    )?
     else {
-        panic!("expected a retry");
+        panic!("retry should recover after injected commit failure");
     };
-    assert_eq!(source_attempt_id, leased.id);
+    assert_eq!(queue.list()?.len(), 2);
+    assert_eq!(queue.get(leased.id)?.unwrap().state, AttemptState::Failed);
+    assert_eq!(
+        queue.get(scheduled_attempt.id)?.unwrap().state,
+        AttemptState::Scheduled
+    );
     assert_ne!(scheduled_attempt.id, leased.id);
     assert_eq!(scheduled_attempt.retry_of, Some(leased.id));
-    assert_eq!(scheduled_attempt.state, AttemptState::Scheduled);
-    assert_eq!(scheduled_attempt.attempt_count, 0);
     assert_eq!(scheduled_attempt.scheduled_at, Some(RETRY_AT));
     assert_eq!(
         DreamerRunnerStore::new(&vault)
             .run_tree(scheduled_attempt.id)?
             .unwrap()
             .attempt_id,
-        scheduled_attempt.id,
-        "a retry must carry its private runner tree in the same transaction"
+        scheduled_attempt.id
     );
-    assert_eq!(consecutive_transients.get(), 1);
-
-    let queue = AttemptQueue::new(&vault);
-    let source = queue.get(leased.id)?.expect("source row");
-    assert_eq!(source.state, AttemptState::Failed);
     Ok(())
 }
 

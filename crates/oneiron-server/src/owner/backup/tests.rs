@@ -321,3 +321,41 @@ fn a_backup_named_before_sequences_lists_first_and_is_pruned_first() {
     let third = take(&vault, &plan).unwrap();
     assert_eq!(third.pruned, vec![legacy]);
 }
+
+#[test]
+fn pruning_preserves_contents_of_same_label_malformed_stamp_files() {
+    let root = tempfile::tempdir().unwrap();
+    let plan = plan(root.path(), 1);
+    let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
+    std::fs::create_dir_all(&plan.dir).unwrap();
+    let mut malformed = Vec::new();
+    for stamp in [
+        "",
+        "20261008T123456Z",
+        "20261332T123456.789Z",
+        "20260230T123456.789Z",
+        "2026100xT123456.789Z",
+    ] {
+        let path = plan.dir.join(format!(
+            "{}-0000000000-{stamp}-abcdef12.oneiron-backup",
+            plan.label
+        ));
+        let contents = format!("owner-sentinel:{stamp}").into_bytes();
+        std::fs::write(&path, &contents).unwrap();
+        malformed.push((path, contents));
+    }
+    let first = take(&vault, &plan).unwrap();
+    assert!(first.pruned.is_empty());
+    for (path, contents) in &malformed {
+        assert_eq!(std::fs::read(path).unwrap(), *contents);
+    }
+    let second = take(&vault, &plan).unwrap();
+    assert_eq!(second.pruned, vec![first.backup.file]);
+    assert!(!first.backup.path.exists());
+    let listed = list(&plan).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].file, second.backup.file);
+    for (path, contents) in &malformed {
+        assert_eq!(std::fs::read(path).unwrap(), *contents);
+    }
+}

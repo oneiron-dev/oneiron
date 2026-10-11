@@ -3,19 +3,6 @@ use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_hub::{HubFile, HubPin, SkillCapabilitySurface};
 use crate::test_util::{embedding_test_config, open_test_vault_with};
 use crate::{ClaimApprovalStatus, ClaimSource};
-struct FixtureQuery;
-impl OsvQuery for FixtureQuery {
-    fn query(&self, coordinates: &[DependencyCoordinate]) -> Result<Vec<Vec<String>>> {
-        // This interface has no slot for instructions, vault rows or tokens.
-        assert_eq!(coordinates[0].name, "lodash");
-        assert_eq!(coordinates[0].ecosystem, "npm");
-        Ok(vec![if coordinates[0].version == "4.17.20" {
-            vec!["GHSA-35jh-r3h4-6jhm".into()]
-        } else {
-            Vec::new()
-        }])
-    }
-}
 fn package(version: &str) -> HubPackage {
     let record = SkillRecord::new(
         "fixture.osv",
@@ -44,51 +31,92 @@ fn package(version: &str) -> HubPackage {
     )
 }
 #[test]
-fn vulnerable_install_lands_and_existing_write_gate_reads_advisory_clean_emits_none() -> Result<()>
-{
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    for (version, vulnerable) in [("4.17.20", true), ("4.17.21", false)] {
-        let package = package(version);
-        let inventory = dependency_inventory(&package)?;
-        let reference = HubRef::new(EntityId::now(), "skills/osv-fixture", HubPin::None)?;
-        let outcome = vault.install_skill_with_advisories(
-            &reference,
-            &package,
-            &inventory,
-            &FixtureQuery,
-            TimeRange { start: 10, end: 10 },
-            10,
-        )?;
-        assert_eq!(outcome.status, DependencyScanStatus::Complete);
-        assert_eq!(!outcome.advisory_ids.is_empty(), vulnerable);
-        let stored = vault.get_skill_record(&outcome.entity)?.unwrap();
-        assert_eq!(stored.lifecycle_status, SkillLifecycle::Candidate);
-        let gate = crate::skill_scan::scan_gate_for_activation(&vault, package.content_hash()?)?;
-        assert_eq!(
-            matches!(
-                gate,
-                crate::skill_scan::ActivationPosture::ProposedRequired { .. }
-            ),
-            vulnerable
-        );
-        let rows = vault.skill_scan_verdicts_for_content_hash(package.content_hash()?)?;
-        assert_eq!(
-            rows.iter().any(
-                |body| super::super::support::map_text(&body.value, "provider")
-                    == Some(OSV_SCAN_PROVIDER)
-            ),
-            vulnerable
-        );
+fn install_refuses_credential_coordinates_before_advisory_egress_and_sends_only_dependencies()
+-> Result<()> {
+    use std::cell::RefCell;
+    struct RecordingQuery {
+        calls: RefCell<Vec<Vec<DependencyCoordinate>>>,
     }
-    assert!(decode_results(br#"{"results":[{"error":"timeout"}]}"#, 1).is_err());
-    assert!(
+    impl OsvQuery for RecordingQuery {
+        fn query(&self, coordinates: &[DependencyCoordinate]) -> Result<Vec<Vec<String>>> {
+            assert_eq!(
+                coordinates,
+                &[DependencyCoordinate {
+                    ecosystem: "npm".to_owned(),
+                    name: "lodash".to_owned(),
+                    version: "4.17.21".to_owned(),
+                }]
+            );
+            self.calls.borrow_mut().push(coordinates.to_vec());
+            Ok(vec![Vec::new()])
+        }
+    }
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let mut package = package("4.17.21");
+    package.files.push(HubFile::new(
+        "SKILL.md",
+        b"# advisory-egress-private-skill-text
+
+Keep this instruction local.
+"
+        .to_vec(),
+    ));
+    let inventory = dependency_inventory(&package)?;
+    assert_eq!(
+        inventory,
+        vec![DependencyCoordinate {
+            ecosystem: "npm".to_owned(),
+            name: "lodash".to_owned(),
+            version: "4.17.21".to_owned(),
+        }]
+    );
+    let reference = HubRef::new(EntityId::now(), "skills/osv-fixture", HubPin::None)?;
+    let query = RecordingQuery {
+        calls: RefCell::new(Vec::new()),
+    };
+    let before = vault.entities_by_type(crate::registry::ENTITY_TYPE_SKILL)?;
+    let hash = package.content_hash()?;
+    assert!(vault.skill_scan_verdicts_for_content_hash(hash)?.is_empty());
+    for coordinate in [
         DependencyCoordinate {
             ecosystem: "npm".into(),
-            name: "https://user:secret@example.com".into(),
-            version: "1.0".into()
-        }
-        .validate()
-        .is_err()
-    );
+            name: "https://fixture-user:fixture-secret@example.test/lodash".into(),
+            version: "4.17.21".into(),
+        },
+        DependencyCoordinate {
+            ecosystem: "npm".into(),
+            name: "lodash".into(),
+            version: "https://fixture-user:fixture-secret@example.test/archive".into(),
+        },
+    ] {
+        let error = vault
+            .install_skill_with_advisories(
+                &reference,
+                &package,
+                &[coordinate],
+                &query,
+                TimeRange { start: 10, end: 10 },
+                10,
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidConfig);
+        assert!(query.calls.borrow().is_empty());
+        assert_eq!(
+            vault.entities_by_type(crate::registry::ENTITY_TYPE_SKILL)?,
+            before
+        );
+        assert!(vault.skill_scan_verdicts_for_content_hash(hash)?.is_empty());
+    }
+    let installed = vault.install_skill_with_advisories(
+        &reference,
+        &package,
+        &inventory,
+        &query,
+        TimeRange { start: 10, end: 10 },
+        10,
+    )?;
+    assert_eq!(installed.status, DependencyScanStatus::Complete);
+    assert!(vault.get_skill_record(&installed.entity)?.is_some());
+    assert_eq!(*query.calls.borrow(), vec![inventory]);
     Ok(())
 }

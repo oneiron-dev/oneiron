@@ -24,10 +24,7 @@ use rmpv::Value;
 
 use super::*;
 use crate::artifact_hosting::ArtifactPointerChannel;
-use crate::batch::export::{
-    ExportManifest, ExportSecretsNulledManifest, export_bundle_carries_tainted_exhaust,
-    secrets_nulled_for_export_bundle, whole_vault_export_manifest_artifact_for_bundle,
-};
+use crate::batch::export::ExportManifest;
 use crate::blob_artifact::{
     BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody,
     decode_blob_artifact_body, encode_blob_artifact_body,
@@ -982,76 +979,70 @@ fn blob_pointer_publish_checks_stale_taint_and_stamps_override() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_bundle_carrying_tainted_exhaust_forces_the_structural_placeholder_only() {
+fn mixed_bundle_export_nulls_tainted_exhaust_preserves_clean_payload_and_reports_nulling()
+-> Result<()> {
     let (_tmp, vault) = temp_vault();
     register(&vault, SECRET, VALUE_V1);
-
     let tainted = artifact_id(0x61);
     put_artifact(
         &vault,
         &tainted,
-        &BlobArtifactBody::new("build.log", "text/plain")
+        &BlobArtifactBody::new("private-build-exhaust", "text/plain")
             .with_secret_taint_refs(vec![taint(SECRET, 0)]),
     );
     let clean = artifact_id(0x62);
-    put_artifact(
-        &vault,
+    let clear_bytes = br#"{"message":"public bundle payload","sequence":7}"#;
+    vault.put_entity(
         &clean,
-        &BlobArtifactBody::new("readme.txt", "text/plain"),
-    );
-
-    assert!(!export_bundle_carries_tainted_exhaust(&vault, &[clean]).expect("clean bundle"));
-    assert!(
-        export_bundle_carries_tainted_exhaust(&vault, &[clean, tainted]).expect("mixed bundle")
-    );
-
-    let base = ExportSecretsNulledManifest::from_redacted(false);
-    let clean_bundle =
-        secrets_nulled_for_export_bundle(&vault, base, &[clean]).expect("clean bundle manifest");
-    assert!(!clean_bundle.structural_placeholders());
-    assert!(!clean_bundle.payloads());
-
-    let tainted_bundle = secrets_nulled_for_export_bundle(&vault, base, &[clean, tainted])
-        .expect("tainted bundle manifest");
-    assert!(
-        tainted_bundle.structural_placeholders(),
-        "tainted exhaust serializes nulled with the structural placeholder"
-    );
-    assert!(
-        !tainted_bundle.payloads(),
-        "the new ctor does NOT force payload nulling: one tainted artifact must not redact a whole export"
-    );
-    assert!(
-        ExportManifest::from_secrets_nulled(tainted_bundle).structurally_secret_nulled(),
-        "the manifest reflects the placeholders"
-    );
-
-    // A caller who ASKED for a redacted export still gets one.
-    let redacted = secrets_nulled_for_export_bundle(
-        &vault,
-        ExportSecretsNulledManifest::from_redacted(true),
-        &[clean],
-    )
-    .expect("redacted bundle");
-    assert!(redacted.payloads() && redacted.structural_placeholders());
-
-    // State-INDEPENDENT: rotating does not change the bundle's shape.
-    vault
-        .rotate_secret(SECRET, VALUE_V2, AT_ROTATED)
-        .expect("rotate");
+        crate::registry::ENTITY_TYPE_EVENT,
+        TimeRange { start: 1, end: 1 },
+        1,
+        clear_bytes,
+    )?;
+    let clean_bytes = vault.export_entity_bundle_json(&[clean])?;
+    let clean_export: serde_json::Value = serde_json::from_slice(&clean_bytes).unwrap();
+    let clean_manifest: ExportManifest =
+        serde_json::from_value(clean_export["manifest"].clone()).unwrap();
+    assert!(!clean_manifest.redacted());
+    assert!(!clean_manifest.structurally_secret_nulled());
     assert_eq!(
-        vault.artifact_taint_state(&tainted).expect("state"),
-        ArtifactTaintState::TaintedStale
+        clean_export["entities"][0]["body"],
+        serde_json::json!({"message":"public bundle payload", "sequence":7})
     );
-    assert!(
-        secrets_nulled_for_export_bundle(&vault, base, &[tainted])
-            .expect("still nulled")
-            .structural_placeholders(),
-        "stale taint nulls exactly as live taint does — an export leaves the vault either way"
-    );
-
-    whole_vault_export_manifest_artifact_for_bundle(&vault, base, &[clean, tainted])
-        .expect("the bundle manifest assembles");
+    for rotated in [false, true] {
+        if rotated {
+            vault.rotate_secret(SECRET, VALUE_V2, AT_ROTATED)?;
+        }
+        let bytes = vault.export_entity_bundle_json(&[clean, tainted])?;
+        let emitted: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let entities = emitted["entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 2);
+        let clean_id = clean.to_hex();
+        let tainted_id = tainted.to_hex();
+        let clean_row = entities
+            .iter()
+            .find(|row| row["id"].as_str() == Some(clean_id.as_str()))
+            .unwrap();
+        let tainted_row = entities
+            .iter()
+            .find(|row| row["id"].as_str() == Some(tainted_id.as_str()))
+            .unwrap();
+        assert_eq!(clean_row, &clean_export["entities"][0]);
+        assert_eq!(tainted_row.get("body"), Some(&serde_json::Value::Null));
+        let manifest: ExportManifest = serde_json::from_value(emitted["manifest"].clone()).unwrap();
+        assert!(manifest.redacted());
+        assert!(manifest.structurally_secret_nulled());
+        assert!(
+            !bytes
+                .windows(b"private-build-exhaust".len())
+                .any(|w| w == b"private-build-exhaust")
+        );
+        assert_eq!(
+            vault.get_raw(&clean)?.unwrap()[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            *clear_bytes
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

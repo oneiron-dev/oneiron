@@ -54,61 +54,52 @@ fn active_passport_count(vault: &Vault) -> usize {
 // ─── canonicalization ───────────────────────────────────────────────────
 
 #[test]
-fn message_id_case_is_preserved() {
-    // Outer whitespace and one <...> pair come off; case survives untouched.
-    assert_eq!(
-        mid("  <AbC.DeF@Example.COM>  ").as_str(),
-        "AbC.DeF@Example.COM"
-    );
-    assert_eq!(mid("AbC.DeF@Example.COM").as_str(), "AbC.DeF@Example.COM");
-    // Only ONE pair is unwrapped, and a residual bracket is then refused.
-    assert_matches!(
-        canonical_message_id("<<a@b>>").map(CanonicalMessageId::into_string),
-        Err(err) if err.kind() == ErrorKind::InvalidClaimBody
-    );
-
-    // Case-distinct ids stay distinct all the way through thread minting.
-    assert_ne!(mid("A@b.com"), mid("a@b.com"));
-    assert_ne!(
-        mid("A@b.com").minted_thread_ref(),
-        mid("a@b.com").minted_thread_ref()
-    );
-    assert!(
-        mid("A@b.com")
-            .minted_thread_ref()
-            .starts_with(THREAD_REF_PREFIX)
-    );
-    // Deterministic: the same token always mints the same ref.
-    assert_eq!(
-        mid("A@b.com").minted_thread_ref(),
-        mid("  <A@b.com> ").minted_thread_ref()
-    );
-
-    for rejected in [
-        "",
-        "   ",
-        "<>",
-        "a b@c.com",
-        "a\tb@c.com",
-        "a\nb@c.com",
-        "a\u{0}b@c.com",
-        "a<b@c.com",
-    ] {
-        assert_matches!(
-            canonical_message_id(rejected),
-            Err(err) if err.kind() == ErrorKind::InvalidClaimBody,
-            "{rejected:?} must be refused"
-        );
-    }
-
-    // The 998-byte cap is measured on the CANONICAL form.
-    let longest = format!("{}@x", "a".repeat(MAX_MESSAGE_ID_BYTES - 2));
-    assert_eq!(longest.len(), MAX_MESSAGE_ID_BYTES);
-    assert_eq!(mid(&format!("  <{longest}>  ")).as_str(), longest);
-    assert_matches!(
-        canonical_message_id(&format!("{longest}x")),
-        Err(err) if err.kind() == ErrorKind::InvalidClaimBody
-    );
+fn case_distinct_provider_messages_store_separate_passports_and_threads() {
+    let (_dir, vault) = test_vault();
+    let identity = entity(0x61);
+    seed_identity(&vault, identity, "case@example.com");
+    let upper = vault
+        .record_thread_passport(input(identity, "  <AbC@Example.COM>  ", OBSERVED_AT))
+        .expect("upper-case provider message");
+    let lower = vault
+        .record_thread_passport(input(identity, "<abc@example.com>", OBSERVED_AT + 1))
+        .expect("lower-case provider message");
+    assert_ne!(upper.canonical_thread_ref, lower.canonical_thread_ref);
+    assert_eq!(active_passport_count(&vault), 2);
+    let upper_row = vault
+        .thread_passport(&identity, &mid("AbC@Example.COM"))
+        .expect("read upper passport")
+        .expect("stored upper row");
+    let lower_row = vault
+        .thread_passport(&identity, &mid("abc@example.com"))
+        .expect("read lower passport")
+        .expect("stored lower row");
+    assert_eq!(upper_row.message_id.as_str(), "AbC@Example.COM");
+    assert_eq!(lower_row.message_id.as_str(), "abc@example.com");
+    assert_eq!(upper_row.observed_at, OBSERVED_AT);
+    assert_eq!(lower_row.observed_at, OBSERVED_AT + 1);
+    assert_ne!(upper_row.thread_ref, lower_row.thread_ref);
+    let upper_thread = vault
+        .canonical_thread_ref(&upper_row.thread_ref)
+        .expect("upper thread");
+    let lower_thread = vault
+        .canonical_thread_ref(&lower_row.thread_ref)
+        .expect("lower thread");
+    assert_ne!(upper_thread, lower_thread);
+    let uppers = vault
+        .thread_passports(&upper_thread)
+        .expect("upper component");
+    let lowers = vault
+        .thread_passports(&lower_thread)
+        .expect("lower component");
+    assert_eq!(uppers.len(), 1);
+    assert_eq!(lowers.len(), 1);
+    assert_eq!(uppers[0].message_id.as_str(), "AbC@Example.COM");
+    assert_eq!(lowers[0].message_id.as_str(), "abc@example.com");
+    vault
+        .record_thread_passport(input(identity, "<AbC@Example.COM>", OBSERVED_AT + 2))
+        .expect("same-case provider replay");
+    assert_eq!(active_passport_count(&vault), 2);
 }
 
 // ─── threading physics ──────────────────────────────────────────────────

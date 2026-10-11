@@ -386,43 +386,48 @@ mod tests {
     }
 
     #[test]
-    fn initial_state_and_ambiguous_actor_evidence_are_rejected() {
+    fn validly_signed_births_refuse_invalid_initial_state_and_duplicate_evidence() {
         let original = signed_birth();
-        for changed in [
-            (
-                ClaimApprovalStatus::Rejected,
-                ClaimLifecycleStatus::Active,
-                false,
-            ),
-            (
-                ClaimApprovalStatus::Proposed,
-                ClaimLifecycleStatus::Retracted,
-                false,
-            ),
-            (
-                ClaimApprovalStatus::Proposed,
-                ClaimLifecycleStatus::Active,
-                true,
-            ),
-        ] {
+        original.verify().unwrap();
+        let signer = SigningKey::from_bytes(&[0x33; 32]);
+        for case in 0..4 {
             let mut birth = original.clone();
             let mut body = decode_claim_body(&birth.initial_body, true).unwrap();
-            body.approval = changed.0;
-            body.lifecycle = changed.1;
-            body.stale = changed.2;
+            match case {
+                0 => body.approval = ClaimApprovalStatus::Rejected,
+                1 => body.lifecycle = ClaimLifecycleStatus::Retracted,
+                2 => body.stale = true,
+                3 => {
+                    let Some(Value::Map(evidence)) = &mut body.evidence else {
+                        panic!("fixture evidence must be a map")
+                    };
+                    evidence.push(evidence[0].clone());
+                }
+                _ => unreachable!(),
+            }
+            let transcript =
+                crate::authority::machine_claim_transcript(&birth.vault_id, &birth.target, &body)
+                    .unwrap();
+            let signature = signer.sign(&transcript);
+            signer
+                .verifying_key()
+                .verify(&transcript, &signature)
+                .unwrap();
+            let Some(Value::Map(evidence)) = &mut body.evidence else {
+                panic!("fixture evidence must be a map")
+            };
+            let proof = evidence
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("machine_signature"))
+                .unwrap();
+            proof.1 = Value::Array(vec![
+                Value::Binary(birth.machine_public_key.to_vec()),
+                Value::Binary(signature.to_bytes().to_vec()),
+            ]);
+            birth.machine_signature = signature.to_bytes();
             birth.initial_body = encode_claim_body(&body).unwrap();
             birth.digest = birth.compute_digest().unwrap();
-            assert!(birth.verify().is_err());
+            assert!(matches!(birth.verify(), Err(Error::InvalidClaimBody(_))));
         }
-        let mut birth = original;
-        let mut body = decode_claim_body(&birth.initial_body, true).unwrap();
-        let Some(Value::Map(evidence)) = &mut body.evidence else {
-            unreachable!()
-        };
-        let duplicate_actor = evidence[0].clone();
-        evidence.push(duplicate_actor);
-        birth.initial_body = encode_claim_body(&body).unwrap();
-        birth.digest = birth.compute_digest().unwrap();
-        assert!(birth.verify().is_err());
     }
 }
