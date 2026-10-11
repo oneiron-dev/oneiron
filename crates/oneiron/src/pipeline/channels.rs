@@ -18,7 +18,8 @@ use super::support::{
 use super::types::{
     ADAPTIVE_ROUNDS, ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, ClaimStatusGateCache, EntityMetadata,
     EntityMetadataCache, MAX_TEMPORAL_SEEK_BUFFER, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
-    RECENCY_DECAY_TAU_SECS, ScoredEntity, TEMPORAL_FLOOR, TemporalSearchConfig,
+    RECENCY_DECAY_TAU_SECS, ScoredEntity, TEMPORAL_FLOOR, TEMPORAL_WIDENING_FLOOR,
+    TEMPORAL_WIDENING_MULTIPLE, TemporalSearchConfig,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -612,7 +613,12 @@ pub(super) fn scoped_vector_channel_limit(
     Ok(requested.max(crate::hnsw::hnsw_entity_count(store, rtxn)?))
 }
 
-pub(super) fn scoped_entity_channel_limit(
+/// The temporal channel's limit under a strict scope: widened to the entity
+/// count, as the other channels are, but at most [`temporal_widening_bound`].
+/// Unbounded, every scoped recall reads, scores and sorts every row of the
+/// vault (ARCH-0004 #temporal-bound); bounded, its rankings may differ from
+/// that scan only past the bound.
+pub(super) fn scoped_temporal_channel_limit(
     store: &Store,
     rtxn: &RoTxn<'_>,
     requested: usize,
@@ -623,7 +629,17 @@ pub(super) fn scoped_entity_channel_limit(
     }
     let entity_count = usize::try_from(store.port_entity_count(rtxn)?)
         .map_err(|_| Error::IndexOverflow("entity count"))?;
-    Ok(requested.max(entity_count))
+    Ok(requested
+        .max(entity_count)
+        .min(temporal_widening_bound(requested)))
+}
+
+/// How far a scoped temporal channel asking for `requested` rows widens at
+/// most: a fixed multiple of the request, with a floor.
+pub(super) fn temporal_widening_bound(requested: usize) -> usize {
+    requested
+        .saturating_mul(TEMPORAL_WIDENING_MULTIPLE)
+        .max(TEMPORAL_WIDENING_FLOOR)
 }
 
 pub(super) fn truncate_widened_channel_results_to_scope(

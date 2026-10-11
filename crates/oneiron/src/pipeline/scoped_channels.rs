@@ -5,7 +5,7 @@ use crate::error::{Error, Result};
 
 use super::builder::PipelineBuilder;
 use super::channels::{
-    execute_temporal, scoped_entity_channel_limit, scoped_vector_channel_limit,
+    execute_temporal, scoped_temporal_channel_limit, scoped_vector_channel_limit,
     truncate_widened_channel_results_to_scope,
 };
 use super::filters::import_claim_gate_decisions_for_scores;
@@ -77,7 +77,7 @@ impl PipelineBuilder<'_> {
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<Vec<ScoredEntity>> {
         let mut scoped_config = config.clone();
-        scoped_config.limit = scoped_entity_channel_limit(
+        scoped_config.limit = scoped_temporal_channel_limit(
             &self.vault.store,
             rtxn,
             config.limit,
