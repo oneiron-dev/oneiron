@@ -5,7 +5,7 @@ use crate::conversation_dag::retained_path::{
     PreviewTopology, RetainedRow, RetainedTurn, SelectedPathSnapshot, retained_row,
 };
 use crate::edge::EdgeKind;
-use crate::error::Result;
+use crate::error::{Error, RecordError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
@@ -20,12 +20,16 @@ impl Vault {
         conversation: &EntityId,
     ) -> Result<Option<String>> {
         let txn = self.store.env.read_txn()?;
-        let turns = match self.preview_turns_in(&txn, conversation)? {
-            PreviewTurns::Path(turns) => turns,
-            PreviewTurns::Learned(mut turns) => {
+        let turns: Vec<EntityId> = match SelectedPathSnapshot::read(self, &txn, conversation)? {
+            PreviewTopology::Selected(path) => {
+                path.turns.into_iter().rev().map(|turn| turn.id).collect()
+            }
+            PreviewTopology::ChildOfOnly => {
+                let mut turns = self.childof_turns_in(&txn, conversation)?;
                 turns.sort_by(|left, right| right.cmp(left));
                 turns.into_iter().map(|(_, id)| id).collect()
             }
+            PreviewTopology::ProvenEmpty => Vec::new(),
         };
         for turn in turns {
             let turn = RetainedTurn {
@@ -39,23 +43,13 @@ impl Vault {
         Ok(None)
     }
 
-    /// The turns a preview looks at: the selected path, or with no selected
-    /// DAG state the live ChildOf turns. Only ids and learned times: a caller
-    /// reads each turn's body when it gets to it.
-    pub(crate) fn preview_turns_in(
+    /// The live TURNs that are ChildOf `conversation`, in index order, each
+    /// with its learned time: the turns a preview may look at.
+    pub(crate) fn childof_turns_in(
         &self,
         txn: &RoTxn<'_>,
         conversation: &EntityId,
-    ) -> Result<PreviewTurns> {
-        match SelectedPathSnapshot::read(self, txn, conversation)? {
-            PreviewTopology::Selected(path) => {
-                return Ok(PreviewTurns::Path(
-                    path.turns.into_iter().rev().map(|turn| turn.id).collect(),
-                ));
-            }
-            PreviewTopology::ChildOfOnly => {}
-            PreviewTopology::ProvenEmpty => return Ok(PreviewTurns::Path(Vec::new())),
-        }
+    ) -> Result<Vec<(u64, EntityId)>> {
         let mut turns = Vec::new();
         for edge in self.store.port_edges(
             txn,
@@ -79,7 +73,51 @@ impl Vault {
                 turns.push((learned_at, id));
             }
         }
-        Ok(PreviewTurns::Learned(turns))
+        Ok(turns)
+    }
+
+    /// The order a reader's preview takes the turns it may read, each given
+    /// as its learned time and id: the selected path from its HEAD back, or
+    /// with no selected DAG state the latest learned first. The ChildOf-only
+    /// proof looks at those turns alone, so a turn the reader may not read
+    /// never decides it. `None` when the topology is unresolved: the preview
+    /// shows nothing rather than a turn off the selected path.
+    pub(crate) fn readable_preview_order(
+        &self,
+        conversation: &EntityId,
+        mut readable: Vec<(u64, EntityId)>,
+    ) -> Result<Option<Vec<EntityId>>> {
+        readable.sort_by_key(|(_, id)| *id);
+        let path: Option<Vec<EntityId>> = {
+            let admits =
+                |id: &EntityId| readable.binary_search_by_key(id, |(_, turn)| *turn).is_ok();
+            let txn = self.store.env.read_txn()?;
+            match SelectedPathSnapshot::read_admitting(self, &txn, conversation, &admits) {
+                Ok(PreviewTopology::Selected(path)) => Some(
+                    path.turns
+                        .into_iter()
+                        .rev()
+                        .map(|turn| turn.id)
+                        .filter(admits)
+                        .collect(),
+                ),
+                Ok(PreviewTopology::ChildOfOnly) => None,
+                Ok(PreviewTopology::ProvenEmpty) => Some(Vec::new()),
+                Err(Error::Record(RecordError::InvalidConversationDag(reason))) => {
+                    tracing::debug!(
+                        conversation = %conversation.to_hex(),
+                        reason,
+                        "a conversation preview's topology is unresolved"
+                    );
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        Ok(Some(path.unwrap_or_else(|| {
+            readable.sort_by(|left, right| right.cmp(left));
+            readable.into_iter().map(|(_, id)| id).collect()
+        })))
     }
 
     /// The MESSAGE rows that are part of `turn`.
@@ -135,15 +173,6 @@ impl Vault {
         let body = resolved.as_slice();
         Ok(turn_text(body))
     }
-}
-
-/// The turns a preview looks at, and the order it prefers them in.
-pub(crate) enum PreviewTurns {
-    /// The selected path from its HEAD back, the order preferred.
-    Path(Vec<EntityId>),
-    /// The live ChildOf turns in index order, each with its learned time; the
-    /// latest learned is preferred.
-    Learned(Vec<(u64, EntityId)>),
 }
 
 /// The latest visible message of one turn, kept as its messages are offered

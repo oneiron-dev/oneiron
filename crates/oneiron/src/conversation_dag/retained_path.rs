@@ -123,10 +123,13 @@ fn session_evidence(
     }
 }
 
+/// Proves `conversation` holds no DAG state, looking only at the turns
+/// `admits` names.
 fn prove_childof_only(
     vault: &Vault,
     txn: &RoTxn<'_>,
     conversation: &EntityId,
+    admits: &dyn Fn(&EntityId) -> bool,
 ) -> Result<PreviewTopology> {
     let store = &vault.store;
     let marker = MIGRATED.get(store, txn, conversation)?;
@@ -144,7 +147,7 @@ fn prove_childof_only(
         let Some(raw) = store.port_entity_record(txn, &id)? else {
             return Err(Error::CorruptedIndex("conversation ChildOf row"));
         };
-        if raw.entity_type != ENTITY_TYPE_TURN {
+        if raw.entity_type != ENTITY_TYPE_TURN || !admits(&id) {
             continue;
         }
         if !graph::edge_ids(store, txn, &id, EdgeKind::Parent, false, 2)?.is_empty()
@@ -195,6 +198,18 @@ impl SelectedPathSnapshot {
         txn: &RoTxn<'_>,
         conversation: &EntityId,
     ) -> Result<PreviewTopology> {
+        Self::read_admitting(vault, txn, conversation, &|_: &EntityId| true)
+    }
+
+    /// As `read`, but with no selected HEAD the ChildOf-only proof looks only
+    /// at the turns `admits` names: a reader's preview is never decided by a
+    /// turn it may not read.
+    pub(crate) fn read_admitting(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        conversation: &EntityId,
+        admits: &dyn Fn(&EntityId) -> bool,
+    ) -> Result<PreviewTopology> {
         let store = &vault.store;
         let head = graph::read_id(store, txn, HEAD, conversation)?;
         if !matches!(
@@ -204,7 +219,7 @@ impl SelectedPathSnapshot {
             return Err(graph::invalid("selected conversation is not live"));
         }
         let Some(head) = head else {
-            return prove_childof_only(vault, txn, conversation);
+            return prove_childof_only(vault, txn, conversation, admits);
         };
         let mut seen = HashSet::new();
         let mut reversed = Vec::new();

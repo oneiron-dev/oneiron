@@ -4,7 +4,10 @@
 //! every turn and message a row's preview quotes, comes through the actor's
 //! read lane, the one recall and the transcript read on. A conversation, turn
 //! or message the actor may not read never shows, nor an erased or archived
-//! one, and the receipt counts each existing row a read withheld.
+//! one, and the receipt counts each existing row a read withheld. What it
+//! withholds never depends on where a hidden row falls: every listed
+//! conversation is read whatever the page, and every turn a preview looks at
+//! before any is ordered.
 
 use super::read_lane::fold_receipt;
 use super::*;
@@ -12,29 +15,22 @@ use super::*;
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
-use crate::conversation::{
-    ConversationBody, ConversationKind, LatestMessage, PreviewTurns, snippet, turn_text,
-};
+use crate::conversation::{ConversationBody, ConversationKind, LatestMessage, snippet, turn_text};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::{EntityStoreRead, TombstoneStore};
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 
-/// Conversations read through the lane at a time when the list counts them.
-const COUNT_CHUNK: usize = 256;
-
-/// Conversations read through the lane at a time while a page fills, however
-/// few slots it has left, so rows the reader may not read cost one read per
-/// chunk, never one each.
-const PAGE_CHUNK: usize = 64;
+/// Conversations read through the lane at a time.
+const LIST_CHUNK: usize = 256;
 
 /// Turns a preview reads through the lane at a time. It reads every turn it
 /// looks at before it orders any.
 const PREVIEW_TURNS_PER_READ: usize = 64;
 
-/// Messages of one turn a preview reads through the lane at a time; only the
-/// latest one's text is kept between reads.
-const PREVIEW_MESSAGES_PER_READ: usize = 256;
+/// Rows of one turn, the turn and then its messages, a preview reads through
+/// the lane at a time; only the latest message's text is kept between reads.
+const PREVIEW_ROWS_PER_READ: usize = 256;
 
 /// Which conversations a list names.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -84,12 +80,24 @@ pub struct ConversationListPage {
     pub total: Option<u64>,
 }
 
+/// One walk of the whole list.
+struct ListWalk {
+    /// The page: the first `limit` rows after the cursor the reader may read.
+    rows: Vec<ReadRow>,
+    /// The page's last row, set only when a row the reader may read follows.
+    next: Option<EntityId>,
+    /// How many listed conversations the reader may read in all.
+    total: u64,
+    /// The receipt of every conversation read.
+    receipt: Option<ScopedReadReceipt>,
+}
+
 impl Memory<'_> {
     /// Lists up to `limit` conversations after `after` that the bound actor
     /// may read, each with its preview, and with `count` how many it may read
-    /// in all. The receipt counts each existing conversation, turn and message
-    /// the reads withheld; with `count` it covers every listed conversation,
-    /// not only this page's.
+    /// in all. The receipt counts each existing conversation the list
+    /// withheld, every listed one and not only this page's, and each turn and
+    /// message the page's previews withheld.
     ///
     /// # Errors
     ///
@@ -102,15 +110,12 @@ impl Memory<'_> {
         count: bool,
     ) -> MemoryResult<ScopedReadResult<ConversationListPage>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let (rows, next, page_receipt) = self.listed_page(&lane, filter, after, limit)?;
-        // The count reads every conversation the page reads, so its receipt
-        // takes the page's place rather than counting those rows twice.
-        let (total, mut receipt) = if count {
-            let (total, receipt) = self.listed_total(&lane, filter)?;
-            (Some(total), receipt)
-        } else {
-            (None, page_receipt)
-        };
+        let ListWalk {
+            rows,
+            next,
+            total,
+            mut receipt,
+        } = self.listed(&lane, filter, after, limit)?;
         let mut page = Vec::with_capacity(rows.len());
         for row in rows {
             let last_message_snippet = self.preview(&lane, &row.id, &mut receipt)?;
@@ -127,65 +132,55 @@ impl Memory<'_> {
             value: ConversationListPage {
                 rows: page,
                 next,
-                total,
+                total: count.then_some(total),
             },
             receipt,
         })
     }
 
-    /// The page's conversation rows, the cursor after them, and the receipt
-    /// of their reads. The walk reads one row past the page: the next cursor
-    /// is set only when a row the reader may read follows.
-    fn listed_page(
+    /// Reads every listed conversation through the lane, from the first.
+    /// The whole list is read whatever the page and the count ask, so what
+    /// the receipt withholds says nothing about where a hidden conversation
+    /// falls beside the page or the cursor.
+    fn listed(
         &self,
         lane: &ScopedRead<'_>,
         filter: ConversationListFilter<'_>,
         after: Option<&EntityId>,
         limit: usize,
-    ) -> MemoryResult<(Vec<ReadRow>, Option<EntityId>, Option<ScopedReadReceipt>)> {
+    ) -> MemoryResult<ListWalk> {
         let mut rows: Vec<ReadRow> = Vec::new();
+        let mut next = None;
+        let mut total = 0_u64;
         let mut receipt = None;
-        if limit == 0 {
-            return Ok((rows, None, receipt));
-        }
-        let mut cursor = after.copied();
+        let mut cursor = None;
         loop {
-            let (ids, more) = self.listed_ids(cursor.as_ref(), PAGE_CHUNK)?;
+            let (ids, more) = self.listed_ids(cursor.as_ref(), LIST_CHUNK)?;
             for row in self
                 .read_conversations(lane, filter, &ids, &mut receipt)?
                 .into_iter()
                 .flatten()
             {
-                if rows.len() == limit {
-                    let next = rows.last().map(|row| row.id);
-                    return Ok((rows, next, receipt));
+                total = total.saturating_add(1);
+                if after.is_some_and(|after| row.id <= *after) {
+                    continue;
                 }
-                rows.push(row);
+                if rows.len() < limit {
+                    rows.push(row);
+                } else if next.is_none() {
+                    next = rows.last().map(|row| row.id);
+                }
             }
             match ids.last() {
                 Some(last) if more => cursor = Some(*last),
-                _ => return Ok((rows, None, receipt)),
-            }
-        }
-    }
-
-    /// How many listed conversations the reader may read, and the receipt of
-    /// the reads that counted them.
-    fn listed_total(
-        &self,
-        lane: &ScopedRead<'_>,
-        filter: ConversationListFilter<'_>,
-    ) -> MemoryResult<(u64, Option<ScopedReadReceipt>)> {
-        let mut total = 0_u64;
-        let mut receipt = None;
-        let mut cursor = None;
-        loop {
-            let (ids, more) = self.listed_ids(cursor.as_ref(), COUNT_CHUNK)?;
-            let read = self.read_conversations(lane, filter, &ids, &mut receipt)?;
-            total = total.saturating_add(read.iter().flatten().count() as u64);
-            match ids.last() {
-                Some(last) if more => cursor = Some(*last),
-                _ => return Ok((total, receipt)),
+                _ => {
+                    return Ok(ListWalk {
+                        rows,
+                        next,
+                        total,
+                        receipt,
+                    });
+                }
             }
         }
     }
@@ -249,60 +244,69 @@ impl Memory<'_> {
     /// `conversation`'s preview as the reader may read it. Every turn the
     /// preview looks at is read through the lane before any is ordered, so
     /// what the receipt withholds says nothing about where a turn the reader
-    /// may not read falls. Then the readable ones are taken in the order the
-    /// preview prefers, each one's messages read in bounded reads, until one
-    /// has text. A turn the reader may not read shows none of its messages.
+    /// may not read falls, and the topology that orders them is proved over
+    /// the readable ones alone. Then each readable turn, in the order the
+    /// preview prefers, is read again with its messages in bounded reads,
+    /// until one has text. A turn the reader may not read shows none of its
+    /// messages, and a message is read once however many turns name it.
     fn preview(
         &self,
         lane: &ScopedRead<'_>,
         conversation: &EntityId,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Option<String>> {
-        let (turns, latest_learned_first) = {
+        let turns = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-            match self.vault.preview_turns_in(&txn, conversation)? {
-                PreviewTurns::Path(turns) => (turns, false),
-                // A turn the reader may not read is never ordered: only the
-                // learned time of a turn the lane admits is looked at.
-                PreviewTurns::Learned(turns) => {
-                    (turns.into_iter().map(|(_, id)| id).collect(), true)
-                }
-            }
+            self.vault.childof_turns_in(&txn, conversation)?
         };
-        // Each readable turn: its learned time, id and own text's snippet.
-        let mut readable: Vec<(u64, EntityId, Option<String>)> = Vec::new();
+        let mut readable = Vec::new();
         for chunk in turns.chunks(PREVIEW_TURNS_PER_READ) {
-            let reads: Vec<_> = chunk.iter().copied().map(PointRead::id).collect();
+            let reads: Vec<_> = chunk.iter().map(|(_, id)| PointRead::id(*id)).collect();
             let read = lane.read(&reads, None)?;
             fold_receipt(receipt, read.receipt);
-            for row in read.value.into_iter().flatten() {
-                if let Some(body) = row.body.as_deref() {
-                    let own = turn_text(body).map(|text| snippet(&text));
-                    readable.push((row.learned_at, row.id, own));
-                }
-            }
+            readable.extend(
+                read.value
+                    .into_iter()
+                    .flatten()
+                    .filter(|row| row.body.is_some())
+                    .map(|row| (row.learned_at, row.id)),
+            );
         }
-        if latest_learned_first {
-            readable.sort_by_key(|(learned_at, id, _)| std::cmp::Reverse((*learned_at, *id)));
-        }
-        for (_, turn, own) in readable {
+        drop(turns);
+        let Some(order) = self.vault.readable_preview_order(conversation, readable)? else {
+            return Ok(None);
+        };
+        let mut seen = std::collections::HashSet::new();
+        for turn in order {
             let messages = {
                 let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
                 self.vault.turn_message_ids_in(&txn, &turn)?
             };
-            let mut latest = LatestMessage::default();
-            for ids in messages.chunks(PREVIEW_MESSAGES_PER_READ) {
-                let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+            let mut rows = std::iter::once(turn)
+                .chain(messages.into_iter().filter(|id| seen.insert(*id)))
+                .peekable();
+            let (mut own, mut latest) = (None, LatestMessage::default());
+            while rows.peek().is_some() {
+                let reads: Vec<_> = rows
+                    .by_ref()
+                    .take(PREVIEW_ROWS_PER_READ)
+                    .map(PointRead::id)
+                    .collect();
                 let read = lane.read(&reads, None)?;
                 fold_receipt(receipt, read.receipt);
                 for row in read.value.into_iter().flatten() {
-                    if let Some(body) = row.body.as_deref() {
+                    let Some(body) = row.body.as_deref() else {
+                        continue;
+                    };
+                    if row.id == turn {
+                        own = turn_text(body);
+                    } else {
                         latest.offer(row.id, body);
                     }
                 }
             }
-            if let Some(text) = latest.text().map(|text| snippet(&text)).or(own) {
-                return Ok(Some(text));
+            if let Some(text) = latest.text().or(own) {
+                return Ok(Some(snippet(&text)));
             }
         }
         Ok(None)

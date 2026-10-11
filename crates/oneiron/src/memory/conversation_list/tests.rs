@@ -243,7 +243,7 @@ fn scoped_vault() -> ScopedVault {
             ),
             (
                 other,
-                entity(0xD7),
+                entity(0xDA),
                 AT + 30,
                 said(user, "the spare key is under the mat", space),
             ),
@@ -306,9 +306,9 @@ fn a_reader_lists_only_what_it_may_read() {
         [(kept, Some("booked for friday at eight".to_owned()))]
     );
     assert_eq!(read.total, Some(1));
-    // Every other conversation, and the message outside the reader's grant
-    // that the preview read passed over.
-    assert_eq!(read.withheld, all.rows.len() - 1 + 1);
+    // Every other conversation. The preview stops at the latest turn with a
+    // message it may read, so it never reads the one outside its grant.
+    assert_eq!(read.withheld, all.rows.len() - 1);
 
     // A filter sees only rows the reader may read: the receipt withholds
     // every conversation it may not read, whatever kind the filter names.
@@ -367,6 +367,16 @@ fn a_reader_lists_only_what_it_may_read() {
         read.rows,
         [(kept, Some("a table for two by the window".to_owned()))]
     );
+    // Now the preview passes over the message outside the reader's grant: it
+    // withholds that beside every other conversation, and whatever the
+    // owner's own read of the erased message counts.
+    assert_eq!(read.withheld, all.withheld + all.rows.len() - 1 + 1);
+}
+
+/// How many conversations the owner lists beside `shown`, each one the
+/// reader may not read.
+fn others(vault: &Vault, owner: EntityId, shown: usize) -> usize {
+    list(vault, owner, 50).rows.len() - shown
 }
 
 /// Two vaults the reader reads alike: one conversation with one turn it may
@@ -376,7 +386,7 @@ fn a_reader_lists_only_what_it_may_read() {
 /// a hidden turn falls.
 #[test]
 fn where_a_hidden_turn_falls_never_shows() {
-    let (room, shown) = (entity(0xE0), entity(0xE1));
+    let (room, shown) = (entity(0xE0), entity(0xE2));
     let space = Some(entity(SPACE));
     let listed = [AT - 10, AT + 40].map(|last| {
         let mut witnessed = vec![(
@@ -386,10 +396,10 @@ fn where_a_hidden_turn_falls_never_shows() {
             said(WitnessAuthor::User, "the turn it may read", space),
         )];
         for (hidden, at) in [
-            (0xE2, AT + 30),
-            (0xE3, AT + 20),
-            (0xE4, AT + 10),
-            (0xE5, last),
+            (0xE3, AT + 30),
+            (0xE4, AT + 20),
+            (0xE5, AT + 10),
+            (0xE6, last),
         ] {
             witnessed.push((
                 room,
@@ -401,9 +411,138 @@ fn where_a_hidden_turn_falls_never_shows() {
         let ReaderVault {
             _dir,
             vault,
+            owner,
             reader,
-            ..
         } = reader_vault(&witnessed, &[room, shown]);
+        let listed = list(&vault, reader, 50);
+        let others = others(&vault, owner, 1);
+        (
+            listed.rows,
+            listed.next,
+            listed.total,
+            listed.withheld,
+            others,
+        )
+    });
+    assert_eq!(
+        listed[0].0,
+        [(room, Some("the turn it may read".to_owned()))]
+    );
+    assert_eq!(
+        listed[0].3,
+        listed[0].4 + 4,
+        "each hidden turn, wherever it falls"
+    );
+    assert_eq!(listed[0], listed[1]);
+}
+
+/// Two vaults the reader reads alike: two conversations it may read, and two
+/// it may not that sit before the first in one vault and after the second in
+/// the other. Every page, from the start or after a cursor, with or without
+/// a count, withholds the same: what a list withholds never says where a
+/// hidden conversation falls beside the page.
+#[test]
+fn where_a_hidden_conversation_falls_never_shows() {
+    let (first, second) = (entity(0xB1), entity(0xB2));
+    let space = Some(entity(SPACE));
+    let pages = [[0xA7, 0xA8], [0xC1, 0xC2]].map(|hidden| {
+        let mut witnessed = vec![
+            (
+                first,
+                entity(0xB3),
+                AT,
+                said(WitnessAuthor::User, "the first it may read", space),
+            ),
+            (
+                second,
+                entity(0xB4),
+                AT + 10,
+                said(WitnessAuthor::User, "the second it may read", space),
+            ),
+        ];
+        for (room, at) in hidden.into_iter().zip([AT + 20, AT + 30]) {
+            witnessed.push((
+                entity(room),
+                entity(room + 0x10),
+                at,
+                said(WitnessAuthor::User, "one it may not read", space),
+            ));
+        }
+        let ReaderVault {
+            _dir,
+            vault,
+            owner,
+            reader,
+        } = reader_vault(&witnessed, &[first, entity(0xB3), second, entity(0xB4)]);
+        let memory = vault.memory(reader, EdgeActorClass::Human);
+        let page = |after: Option<&EntityId>, count| {
+            let read = memory
+                .conversation_list(ConversationListFilter::default(), after, 1, count)
+                .expect("list a page");
+            let rows: Vec<_> = read.value.rows.into_iter().map(|row| row.row.id).collect();
+            (
+                rows,
+                read.value.next,
+                read.value.total,
+                read.receipt.suppressed_count,
+            )
+        };
+        let pages = [
+            page(None, false),
+            page(Some(&first), false),
+            page(None, true),
+            page(Some(&first), true),
+        ];
+        (pages, others(&vault, owner, 2))
+    });
+    let (read, others) = &pages[0];
+    assert_eq!(read[0], (vec![first], Some(first), None, *others));
+    assert_eq!(read[1], (vec![second], None, None, *others));
+    assert_eq!(read[3], (vec![second], None, Some(2), *others));
+    assert_eq!(pages[0], pages[1]);
+}
+
+/// Two vaults the reader reads alike: one conversation with a turn it may
+/// read and a later one it may not. In one, the hidden turn carries DAG
+/// state its room never selected, as a received record does before its
+/// parent lands. The reader's list is the same in both: a turn it may not
+/// read never decides its preview, nor fails its list. The owner, who reads
+/// that turn, gets no preview for the room rather than a failed list.
+#[test]
+fn a_hidden_turns_topology_never_decides_a_preview() {
+    let (room, shown, hidden) = (entity(0xF0), entity(0xF1), entity(0xF2));
+    let space = Some(entity(SPACE));
+    let listed = [false, true].map(|unselected| {
+        let ReaderVault {
+            _dir,
+            vault,
+            owner,
+            reader,
+        } = reader_vault(
+            &[
+                (
+                    room,
+                    shown,
+                    AT,
+                    said(WitnessAuthor::User, "the turn it may read", space),
+                ),
+                (
+                    room,
+                    hidden,
+                    AT + 10,
+                    said(WitnessAuthor::User, "a turn it may not read", space),
+                ),
+            ],
+            &[room, shown],
+        );
+        if unselected {
+            crate::conversation_dag::fixtures::mark_canonical(&vault, &hidden, &shown);
+            assert!(
+                vault.conversation_last_message_snippet(&room).is_err(),
+                "the owner's own preview refuses an unselected DAG"
+            );
+            assert!(list(&vault, owner, 50).rows.contains(&(room, None)));
+        }
         let listed = list(&vault, reader, 50);
         (listed.rows, listed.next, listed.total, listed.withheld)
     });
@@ -411,6 +550,66 @@ fn where_a_hidden_turn_falls_never_shows() {
         listed[0].0,
         [(room, Some("the turn it may read".to_owned()))]
     );
-    assert_eq!(listed[0].3, 4, "each hidden turn, wherever it falls");
+    assert_eq!(listed[0], listed[1]);
+}
+
+/// Two vaults the reader reads alike: one conversation whose two turns it may
+/// read, neither with text it may read. A message outside its grant is part
+/// of the earlier turn, and in one vault part of the later one as well. The
+/// list withholds that message once in both: what it withholds never says
+/// which turns a hidden message belongs to.
+#[test]
+fn a_hidden_message_in_two_turns_is_withheld_once() {
+    let (room, earlier, later) = (entity(0xF4), entity(0xF5), entity(0xF6));
+    let space = Some(entity(SPACE));
+    let listed = [false, true].map(|twice| {
+        let ReaderVault {
+            _dir,
+            vault,
+            owner,
+            reader,
+        } = reader_vault(
+            &[
+                (
+                    room,
+                    earlier,
+                    AT,
+                    said(WitnessAuthor::User, "outside the grant", None),
+                ),
+                (
+                    room,
+                    later,
+                    AT + 10,
+                    WitnessMessage {
+                        is_visible: false,
+                        ..said(WitnessAuthor::Companion, "never shown", space)
+                    },
+                ),
+            ],
+            &[room, earlier, later],
+        );
+        if twice {
+            let hidden = {
+                let txn = vault.store.env.read_txn().expect("read txn");
+                vault.turn_message_ids_in(&txn, &earlier).expect("messages")[0]
+            };
+            vault
+                .batch()
+                .edge(&hidden, crate::EdgeKind::PartOf, &later, 1.0)
+                .commit()
+                .expect("a second membership");
+        }
+        let listed = list(&vault, reader, 50);
+        let others = others(&vault, owner, 1);
+        (
+            listed.rows,
+            listed.next,
+            listed.total,
+            listed.withheld,
+            others,
+        )
+    });
+    assert_eq!(listed[0].0, [(room, None)]);
+    assert_eq!(listed[0].3, listed[0].4 + 1, "the hidden message, once");
     assert_eq!(listed[0], listed[1]);
 }
