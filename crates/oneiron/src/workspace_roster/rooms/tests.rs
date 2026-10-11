@@ -191,6 +191,14 @@ fn room_history_needs_the_readers_own_grant() -> Result<()> {
     let mut spec = ProjectRecord::new(project, Some(root), root, leader)?;
     spec.roster.push(agent.to_hex());
     vault.put_project(project, &spec, 1)?;
+    // The leader is the vault's owner and the agent's contact clears
+    // everything, so only grants decide what the room reads. Binding roots
+    // the vault, so it follows the project's implicit birth.
+    crate::test_util::clear_test_contact(&vault, agent);
+    vault
+        .ensure_host_root_slip(&crate::test_util::test_host_issuer())
+        .expect("host root");
+    crate::test_util::bind_test_owner(&vault, leader);
     let room = EntityId::from_hex(&spec.home_room)?;
     let every_kind = [
         ENTITY_TYPE_CONVERSATION,
@@ -659,6 +667,17 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         }]
     );
     assert_eq!(folded.quiet.rows[0].result_header, Some(result));
+    // Read directly, the trunk and its header are the owner's own read. A
+    // room turn holds them to P7 under its members' clearances as well, and
+    // neither member here is anyone the vault knows: public only.
+    assert!(
+        human
+            .for_room_turn(room)
+            .unwrap()
+            .memory()
+            .rooms_trunk(room, trunk)
+            .is_err()
+    );
     // A TASK-only grant must not reveal the referenced TURN or its header.
     permit_room_reads_with_types(
         &vault,
