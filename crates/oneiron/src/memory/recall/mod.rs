@@ -869,7 +869,7 @@ impl Memory<'_> {
                     return Ok(fallback.clone());
                 }
                 let mut pack = scoped.value;
-                lane.attach_reactions_quoting(&mut pack, &status.cited_messages)?;
+                lane.attach_reactions_quoting(&mut pack, &status.cited_messages, None)?;
 
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {
@@ -1001,7 +1001,7 @@ impl Memory<'_> {
                 .expect("one default per actor"),
         };
         let room = match self.room_turn_now()? {
-            Some(turn) => crate::context_board::scope_worlds(&turn.scope)?,
+            Some(turn) => crate::context_board::scope_worlds(&turn.terms.get().worlds)?,
             None => None,
         };
         Ok(match room {
