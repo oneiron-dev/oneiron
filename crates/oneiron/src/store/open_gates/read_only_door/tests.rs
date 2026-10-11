@@ -8,7 +8,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, Stdio};
 
 use heed::{EnvFlags, EnvOpenOptions};
 
@@ -73,9 +73,16 @@ fn reader_table_holder_child() {
     }
 }
 
+/// A child holding its open, and its output still to read: the parent reads
+/// it to the end, so the child's test harness never writes to a closed pipe.
+struct Holder {
+    child: Child,
+    stdout: BufReader<ChildStdout>,
+}
+
 /// Runs the child in `mode` over `root` and returns it, with the reader slots
 /// it reported, while it holds its open.
-fn open_in_child(root: &Path, mode: &str) -> (Child, u32) {
+fn open_in_child(root: &Path, mode: &str) -> (Holder, u32) {
     let mut child = Command::new(std::env::current_exe().expect("test binary"))
         .args([
             "--exact",
@@ -88,12 +95,14 @@ fn open_in_child(root: &Path, mode: &str) -> (Child, u32) {
         .stdout(Stdio::piped())
         .spawn()
         .expect("run child");
-    let stdout = child.stdout.take().expect("child stdout");
-    for line in BufReader::new(stdout).lines() {
-        let line = line.expect("child line");
-        if let Some(slots) = line.strip_prefix("SLOTS ") {
-            return (child, slots.trim().parse().expect("slot count"));
+    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout"));
+    let mut line = String::new();
+    while stdout.read_line(&mut line).expect("child line") > 0 {
+        if let Some(slots) = line.trim().strip_prefix("SLOTS ") {
+            let slots = slots.parse().expect("slot count");
+            return (Holder { child, stdout }, slots);
         }
+        line.clear();
     }
     panic!(
         "the {mode} child ended before it opened: {:?}",
@@ -102,9 +111,15 @@ fn open_in_child(root: &Path, mode: &str) -> (Child, u32) {
 }
 
 /// Lets the child close its open and checks it ended cleanly.
-fn release(mut child: Child) {
-    drop(child.stdin.take());
-    assert!(child.wait().expect("child exit").success());
+fn release(mut holder: Holder) {
+    drop(holder.child.stdin.take());
+    let mut rest = String::new();
+    holder
+        .stdout
+        .read_to_string(&mut rest)
+        .expect("child output");
+    let status = holder.child.wait().expect("child exit");
+    assert!(status.success(), "child {status}:\n{rest}");
 }
 
 /// A vault created with the old table, by a process that has ended.
