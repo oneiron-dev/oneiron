@@ -456,7 +456,7 @@ pub(in crate::branch_store_oracle) fn apply_through_a_route_captured_before_a_fl
         &session.session,
         session.actor.unwrap_or_else(EntityId::now),
     )
-        .expect("capture the run's route at run entry");
+    .expect("capture the run's route at run entry");
     session
         .session
         .flip_on_record()
@@ -484,7 +484,7 @@ pub(in crate::branch_store_oracle) fn search_through_a_route_captured_before_a_f
         &session.session,
         session.actor.unwrap_or_else(EntityId::now),
     )
-        .expect("capture the run's route at run entry");
+    .expect("capture the run's route at run entry");
     session
         .session
         .flip_on_record()

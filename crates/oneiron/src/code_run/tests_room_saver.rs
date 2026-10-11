@@ -168,8 +168,10 @@ fn a_run_write_waiting_for_the_writer_lands_nothing_once_the_room_goes_off_recor
 }
 
 fn spoken(order: u64) -> SelfCall {
-    SelfCall::Speak(SelfSpeechCall::new("the lighthouse key is under the blue stone"))
-        .with_bridge_stamp(order, 60_000 + order)
+    SelfCall::Speak(SelfSpeechCall::new(
+        "the lighthouse key is under the blue stone",
+    ))
+    .with_bridge_stamp(order, 60_000 + order)
 }
 
 fn not_in_room(refused: Option<&Error>, agent: EntityId) -> bool {
@@ -193,7 +195,8 @@ fn a_run_whose_agent_left_the_room_speaks_writes_and_reads_nothing_more() {
     let (room, session) = room_on_record(&vault);
     let run = bind_run(&session, &room);
     let storage = ExecutorStorage::for_session(&session, room.agent).expect("bind the storage");
-    run.dispatch(spoken(0)).expect("the agent speaks in the room");
+    run.dispatch(spoken(0))
+        .expect("the agent speaks in the room");
     let messages = || {
         vault
             .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)
@@ -245,9 +248,7 @@ fn a_run_whose_agent_left_the_room_speaks_writes_and_reads_nothing_more() {
         )))
         .err();
     assert!(not_in_room(refused.as_ref(), room.agent), "{refused:?}");
-    let refused = storage
-        .get_code_run_replay_record(&EntityId::now())
-        .err();
+    let refused = storage.get_code_run_replay_record(&EntityId::now()).err();
     assert!(not_in_room(refused.as_ref(), room.agent), "{refused:?}");
 
     let rebound = HostSelfDispatcher::for_off_record_session(
