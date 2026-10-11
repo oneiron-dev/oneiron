@@ -79,7 +79,9 @@ impl HistoryLedgerSnapshot {
     /// The directory holds no LMDB environment, or no side-table database.
     pub fn open(vault_dir: &Path) -> Result<Self> {
         let mut options = EnvOpenOptions::new();
-        options.max_dbs(1);
+        // The full reader table: a dry run that opens a vault first builds
+        // the table a server opened beside it gets.
+        options.max_dbs(1).max_readers(crate::config::READER_SLOTS);
         // SAFETY: `READ_ONLY` asks LMDB for a read-only environment; heed
         // documents no further requirement on the flag itself.
         unsafe {

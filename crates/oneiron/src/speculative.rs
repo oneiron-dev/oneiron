@@ -347,7 +347,9 @@ struct RunningPass(Arc<crate::Vault>);
 
 impl RunningPass {
     fn admit(vault: &Arc<crate::Vault>) -> Option<Self> {
-        let cap = usize::try_from((vault.config.max_readers / READER_SLOT_SHARE).max(1))
+        // The table LMDB gave, which another process may have kept smaller
+        // than the config asked for.
+        let cap = usize::try_from((vault.reader_slots() / READER_SLOT_SHARE).max(1))
             .unwrap_or(usize::MAX);
         vault
             .speculative_passes

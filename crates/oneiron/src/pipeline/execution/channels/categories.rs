@@ -15,11 +15,16 @@ impl PipelineBuilder<'_> {
     ) -> Result<RetrievalTxnOutput> {
         let mut memory = None;
         let mut capabilities = Vec::new();
-        for lane in [
-            CapabilityLane::Memory,
-            CapabilityLane::Skill,
-            CapabilityLane::Agent,
-        ] {
+        let lanes: &[CapabilityLane] = if self.capability_lanes {
+            &[
+                CapabilityLane::Memory,
+                CapabilityLane::Skill,
+                CapabilityLane::Agent,
+            ]
+        } else {
+            &[CapabilityLane::Memory]
+        };
+        for &lane in lanes {
             let original = self.candidate_filter;
             let predicate =
                 |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &crate::EntityId| {

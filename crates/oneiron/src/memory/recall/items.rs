@@ -27,13 +27,18 @@ impl Memory<'_> {
             // pins them, both read in this snapshot. A pin at a text revision
             // reads the words it was served with.
             let turn = if entity_type == ENTITY_TYPE_TURN {
+                // Every message is judged under this snapshot's one policy.
+                let policy = lane.policy_manifest_in(txn)?;
+                let readable = |message: &EntityId| {
+                    lane.is_entity_readable_with_policy_in(txn, &policy, message)
+                };
                 // Every message the turn reads its text from, a hidden or
                 // empty one too, which may show text after its next change.
                 let mut members = Vec::new();
                 for (message, _) in
                     crate::tagging::turn_members_in_txn(self.vault, txn, id)?.unwrap_or_default()
                 {
-                    if lane.is_entity_readable_in(txn, &message)? {
+                    if readable(&message)? {
                         members.push(message);
                     }
                 }
@@ -42,8 +47,7 @@ impl Memory<'_> {
                 )? {
                     Some(text) => {
                         let revision = text.revision;
-                        let messages =
-                            text.readable(|message| lane.is_entity_readable_in(txn, message))?;
+                        let messages = text.readable(readable)?;
                         Some((messages, Some(revision), members))
                     }
                     None => Some((Vec::new(), None, members)),

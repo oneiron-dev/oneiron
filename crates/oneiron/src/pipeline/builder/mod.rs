@@ -70,6 +70,9 @@ pub struct PipelineBuilder<'a> {
     pub(super) corpus_scope: CorpusScope,
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
+    /// A context pack discovers skills and agents beside its memory results.
+    /// Off for a caller that reads only the memory results.
+    pub(super) capability_lanes: bool,
     pub(super) result_limit: usize,
     pub(super) temporal_adaptive_default: bool,
     pub(super) temporal_now: Option<u64>,
@@ -131,6 +134,7 @@ impl<'a> PipelineBuilder<'a> {
             corpus_scope: CorpusScope::All,
             made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
+            capability_lanes: true,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
             temporal_now: None,

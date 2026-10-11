@@ -792,6 +792,7 @@ impl Memory<'_> {
                 let mut builder = self
                     .vault
                     .context_pack()
+                    .memory_results_only()
                     .search_text(query, limit)
                     .fold_messages_into_turns(turn_fold);
                 if let Some(as_of) = execution.as_of {
