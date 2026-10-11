@@ -107,10 +107,9 @@ pub(crate) fn bind_slip_request(
     key: &SigningKey,
     mut request: Request<Body>,
 ) -> Request<Body> {
-    // Freshness is judged on the authority plane's monotonic anchor, which a
-    // recording-clock step does not move; signing on the stepped recording
-    // clock would lock the holder out of a server whose wall clock jumped.
-    let timestamp = server.vault().capability_slip_now().unwrap();
+    // Freshness is judged on the vault's recording clock, the wall time a
+    // holder signs on; a test that steps that clock signs on the stepped one.
+    let timestamp = server.vault().now_recorded_at();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature = hex(&key
