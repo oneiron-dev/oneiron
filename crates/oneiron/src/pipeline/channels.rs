@@ -5,6 +5,7 @@ use heed::RoTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::retrieval_depth::RetrievalDeadline;
 
 use crate::ports::{EntityTime, TimeAxis, TimelineQuery};
 use crate::store::Store;
@@ -38,24 +39,31 @@ pub(super) struct TemporalScoringContext {
     pub(super) learned_anchor_mid: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct TemporalCandidateCollectionContext {
+#[derive(Clone, Copy)]
+pub(super) struct TemporalCandidateCollectionContext<'a> {
     pub(super) radius: u64,
     pub(super) per_scan_cap: usize,
+    pub(super) deadline: Option<&'a RetrievalDeadline>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct TemporalIndexCollectionContext {
+#[derive(Clone, Copy)]
+pub(super) struct TemporalIndexCollectionContext<'a> {
     pub(super) window_start: u64,
     pub(super) window_end: u64,
     pub(super) anchor_mid: u64,
     pub(super) cap: usize,
+    pub(super) deadline: Option<&'a RetrievalDeadline>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct TemporalIndexRow {
     timestamp: u64,
     id: EntityId,
+}
+
+/// `deadline`'s in-stage checkpoint; with no deadline, nothing.
+fn checkpoint(deadline: Option<&RetrievalDeadline>) -> Result<()> {
+    deadline.map_or(Ok(()), RetrievalDeadline::checkpoint)
 }
 
 pub(super) fn execute_phonetic(
@@ -66,12 +74,16 @@ pub(super) fn execute_phonetic(
     crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search(store, rtxn, codes)
 }
 
+/// The temporal channel. Under a deadline it checks in at every row whose
+/// metadata it reads, so a stage past its share stops there instead of
+/// finishing a scan that can cover the whole vault.
 pub(super) fn execute_temporal(
     store: &Store,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
     now: u64,
     metadata_cache: &mut EntityMetadataCache,
+    deadline: Option<&RetrievalDeadline>,
 ) -> Result<Vec<ScoredEntity>> {
     if config.limit == 0 {
         return Ok(Vec::new());
@@ -107,6 +119,7 @@ pub(super) fn execute_temporal(
             let collection = TemporalCandidateCollectionContext {
                 radius,
                 per_scan_cap,
+                deadline,
             };
             let scoring = TemporalScoringContext {
                 sigma,
@@ -146,6 +159,7 @@ pub(super) fn execute_temporal(
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
     for id in candidates {
+        checkpoint(deadline)?;
         let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
             continue;
         };
@@ -173,11 +187,12 @@ pub(super) fn collect_temporal_candidates(
     store: &Store,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
-    collection: TemporalCandidateCollectionContext,
+    collection: TemporalCandidateCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     scoring: &TemporalScoringContext,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
+    let deadline = collection.deadline;
     let radius = collection.radius;
     let per_scan_cap = collection.per_scan_cap;
     let occurred_window_start = config.anchor_start.saturating_sub(radius);
@@ -195,12 +210,14 @@ pub(super) fn collect_temporal_candidates(
         window_end: occurred_window_end,
         anchor_mid: occurred_mid,
         cap: per_scan_cap,
+        deadline,
     };
     let learned_collection = TemporalIndexCollectionContext {
         window_start: learned_window_start,
         window_end: learned_window_end,
         anchor_mid: learned_mid,
         cap: per_scan_cap,
+        deadline,
     };
 
     match config.anchor_mode {
@@ -243,6 +260,7 @@ pub(super) fn collect_temporal_candidates(
             store.port_entity_long_spanning(rtxn, occurred_window_start, occurred_window_end)?
         {
             let (id, _) = entry?;
+            checkpoint(deadline)?;
             let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
                 continue;
             };
@@ -349,7 +367,7 @@ fn sort_temporal_candidate_scores(scores: &mut [TemporalCandidateScore]) {
 fn collect_occurred_candidates(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    collection: TemporalIndexCollectionContext,
+    collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     query_range: Option<(u64, u64)>,
     out: &mut HashSet<EntityId>,
@@ -378,7 +396,7 @@ fn collect_query_occurred_candidates(
     store: &Store,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
-    collection: TemporalIndexCollectionContext,
+    collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     query_range: (u64, u64),
     out: &mut HashSet<EntityId>,
@@ -388,6 +406,7 @@ fn collect_query_occurred_candidates(
         window_end,
         anchor_mid,
         cap,
+        deadline,
     } = collection;
     if cap == 0 || window_start > window_end {
         return Ok(());
@@ -415,6 +434,7 @@ fn collect_query_occurred_candidates(
     let trim_threshold = cap.saturating_mul(2).max(1);
     for entry in forward.chain(backward) {
         let time = entry?;
+        checkpoint(deadline)?;
         let Some(meta) = metadata_cache.get(store, rtxn, &time.id)? else {
             continue;
         };
@@ -446,7 +466,7 @@ pub(super) fn collect_index_candidates(
     store: &Store,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
-    collection: TemporalIndexCollectionContext,
+    collection: TemporalIndexCollectionContext<'_>,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
     let TemporalIndexCollectionContext {
@@ -454,6 +474,7 @@ pub(super) fn collect_index_candidates(
         window_end,
         anchor_mid,
         cap,
+        ..
     } = collection;
     if cap == 0 || window_start > window_end {
         return Ok(());

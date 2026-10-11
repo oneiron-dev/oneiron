@@ -148,6 +148,7 @@ fn a_widened_temporal_scan_keeps_the_requests_sigma() -> Result<()> {
             &config(widened),
             now,
             &mut EntityMetadataCache::default(),
+            None,
         )
     };
     let requested = run(None)?;
@@ -182,5 +183,53 @@ fn temporal_type_scope_does_not_spend_limit_on_excluded_hit() -> Result<()> {
         hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
         [eligible]
     );
+    Ok(())
+}
+
+/// Under a deadline the temporal channel checks in at each row whose metadata
+/// it reads, so a stage past its share stops there instead of finishing a
+/// scan that can cover the whole vault.
+#[test]
+fn temporal_channel_stops_at_a_spent_stage() -> Result<()> {
+    use crate::retrieval_depth::RetrievalDeadline;
+    use crate::store::RetrievalSignal;
+
+    let (_dir, vault) = open_test_vault();
+    let anchor = crate::unix_seconds_now();
+    put_entity(&vault, entity_id(0xC1), 1, anchor, anchor, anchor)?;
+    let config = super::super::types::TemporalSearchConfig {
+        anchor_start: anchor,
+        anchor_end: anchor,
+        learned_start: None,
+        learned_end: None,
+        sigma_secs: 86_400,
+        anchor_mode: TemporalAnchorMode::Occurred,
+        adaptive: false,
+        limit: 10,
+        widened: None,
+        query_occurred_range: None,
+        effort_anchor: false,
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let run = |deadline: Option<&RetrievalDeadline>| {
+        super::super::channels::execute_temporal(
+            &vault.store,
+            &rtxn,
+            &config,
+            anchor,
+            &mut super::super::types::EntityMetadataCache::default(),
+            deadline,
+        )
+    };
+    assert_eq!(run(None)?.len(), 1);
+    let deadline = RetrievalDeadline::after(std::time::Duration::from_secs(60));
+    assert!(deadline.open_stage(RetrievalSignal::Temporal, 1));
+    // The stage's share is spent.
+    deadline.cancel();
+    assert!(matches!(
+        run(Some(&deadline)),
+        Err(crate::Error::RetrievalStageCut)
+    ));
+    assert!(deadline.was_cut_short());
     Ok(())
 }

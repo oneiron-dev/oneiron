@@ -89,8 +89,14 @@ impl PipelineBuilder<'_> {
         )?);
         // Widen the collector's scan caps and score truncation, not the
         // request the adaptive rounds fill.
-        let mut scores =
-            execute_temporal(&self.vault.store, rtxn, &scoped_config, now, metadata_cache)?;
+        let mut scores = execute_temporal(
+            &self.vault.store,
+            rtxn,
+            &scoped_config,
+            now,
+            metadata_cache,
+            filters.deadline,
+        )?;
         self.truncate_corpus_channel(
             &mut scores,
             rtxn,
