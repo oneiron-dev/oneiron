@@ -1116,7 +1116,7 @@ fn a_room_retrieval_publishes_no_run_once_its_saver_left() -> Result<()> {
 
     let (_tmp, vault) = temp_vault();
     seed_recallable_base_turn(&vault, "saverleftneedle");
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
     let room = EntityId::now();
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;

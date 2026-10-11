@@ -130,21 +130,24 @@ pub(crate) fn flush_deferred_ppr_cache_writes_admitted(
             Err(err) => Rows::Discard(Err(err)),
         };
         for write in writes {
-            let mut each = match store.env.nested_write_txn(txn) {
-                Ok(each) => each,
-                Err(err) => return keep(txn, Rows::Refuse(err.into())),
-            };
-            match publish_deferred_ppr_cache_write(store, &mut each, write) {
-                Ok(true) => {
-                    if let Err(err) = each.commit() {
-                        return keep(txn, Rows::Refuse(err.into()));
+            // Each nested transaction ends inside this statement, so `admit`
+            // reads the parent with no child still open.
+            let each = match store.env.nested_write_txn(txn) {
+                Ok(mut each) => match publish_deferred_ppr_cache_write(store, &mut each, write) {
+                    Ok(true) => each.commit().map_err(Error::from),
+                    Ok(false) => {
+                        each.abort();
+                        Ok(())
                     }
-                }
-                Ok(false) => each.abort(),
-                Err(err) => {
-                    each.abort();
-                    return keep(txn, Rows::Refuse(err));
-                }
+                    Err(err) => {
+                        each.abort();
+                        Err(err)
+                    }
+                },
+                Err(err) => Err(err.into()),
+            };
+            if let Err(err) = each {
+                return keep(txn, Rows::Refuse(err));
             }
         }
         keep(txn, Rows::Commit(()))

@@ -32,8 +32,7 @@ pub(crate) fn is_vault_agent_in(
     if !contacts.is_empty() {
         return Ok(false);
     }
-    if fold.vault_id.is_some() && crate::authority::actor_binding_is_active(fold, member, "agent")
-    {
+    if fold.vault_id.is_some() && crate::authority::actor_binding_is_active(fold, member, "agent") {
         return Ok(true);
     }
     Ok(matches!(

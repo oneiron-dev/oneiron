@@ -381,7 +381,13 @@ impl OffRecordSession<'_> {
                 self.promote_plans(&mut state, plans, |wtxn| check(wtxn))?
             };
             let at = self.vault.store.clock.now_recorded_at();
-            post_notice(self.vault, &mut state, OffRecordNoticeAct::SavedTalk, by, at);
+            post_notice(
+                self.vault,
+                &mut state,
+                OffRecordNoticeAct::SavedTalk,
+                by,
+                at,
+            );
             self.entry.publish_state(&state);
             saved
         };

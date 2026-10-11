@@ -527,7 +527,11 @@ async fn a_room_with_only_the_owner_and_their_own_agent_posts_no_notice() {
         let (status, reply) = act(&server, path, who, room, "den").await;
         assert_eq!(status, StatusCode::OK, "{path}: {reply}");
     }
-    assert!(notices(&server, owner.clone(), room, "den").await.is_empty());
+    assert!(
+        notices(&server, owner.clone(), room, "den")
+            .await
+            .is_empty()
+    );
 
     let visitor = agent(&server, "visitor");
     let contact = EntityId::now();

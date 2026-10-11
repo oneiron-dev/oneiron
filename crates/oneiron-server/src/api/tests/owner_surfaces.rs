@@ -616,7 +616,11 @@ async fn the_owners_off_record_routes_keep_no_wire_receipt() {
     let to = oneiron_vault_contract::now_ts();
     let mut verbs = Vec::new();
     for start in (from / window * window..=to).step_by(usize::try_from(window).unwrap()) {
-        if let Some(receipt) = server.wire_telemetry.receipt(start, start + window).unwrap() {
+        if let Some(receipt) = server
+            .wire_telemetry
+            .receipt(start, start + window)
+            .unwrap()
+        {
             verbs.extend(receipt.by_verb.into_keys());
         }
     }
