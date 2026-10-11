@@ -9,8 +9,7 @@ use std::sync::Arc;
 
 use oneiron::embed::EmbedderLocality;
 use oneiron::llm::run_admission::{
-    CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, RunDenied,
-    RunReceiptSink,
+    CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, RunDenied, RunReceiptSink,
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, ModelLocality};
 

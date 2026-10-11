@@ -1741,7 +1741,9 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
         // The one remote batch was a paid call, settled at its reservation.
         let sent = remote.requests().len();
         let answered = remote_batches(&receipts);
-        assert!(matches!(answered.as_slice(), [(reserved, settled)] if reserved == settled && *reserved > 0));
+        assert!(
+            matches!(answered.as_slice(), [(reserved, settled)] if reserved == settled && *reserved > 0)
+        );
         remote.set_behaviour(MockBehaviour::ServerError);
         assert_eq!(
             put_claim(&vault, 0x94, "row put while remote is down"),
@@ -1891,7 +1893,9 @@ fn a_remote_batch_its_line_refuses_is_never_sent_and_embeds_on_device() {
 /// nothing. Two 20 KiB texts on the Oneiron wire go out as two requests.
 #[test]
 fn each_request_a_paid_remote_sends_is_its_own_paid_call() {
-    use oneiron::embed::{Embedder as _, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload};
+    use oneiron::embed::{
+        Embedder as _, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload,
+    };
     use oneiron::llm::run_admission::MemoryReceipts;
     let remote = MockEndpoint::start(MockBehaviour::ListingDown);
     let config = endpoint_config("http://127.0.0.1:1");
