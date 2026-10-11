@@ -52,7 +52,11 @@ Start the server again: `oneiron serve --config <config>`.
 listens by default; pass `--url` (or set `ONEIRON_URL`) only if your server
 listens elsewhere. `--surface tool-first` is the endpoint that lists one tool
 per exported verb (`/mcp/tool-first`); `--surface primary` is the code-mode
-endpoint (`/mcp`). You choose it here; the agent cannot change it.
+endpoint (`/mcp`: `setup_oneiron` and `execute_code`). Without `--surface`,
+`oneiron mcp` asks the server at its first request and takes `/mcp` when the
+server has a bound code host (`[models.code_mode]`) and the credential may run
+code (a full-access agent; a read-only or propose-only one may not),
+`/mcp/tool-first` otherwise. You choose it here; the agent cannot change it.
 
 **Claude Code** (`-s user` makes it available in every project):
 
@@ -95,8 +99,9 @@ The next call that agent makes is refused with JSON-RPC error `-32001`
 ## What the agent sees
 
 - `initialize` answers with the agent's own actor. `tools/list` is the server's
-  tool list, with the `actor` block left out of every input schema:
-  `oneiron mcp` adds that block to each call from the `initialize` answer.
+  tool list as the server sent it. No tool requires an `actor` block: a call
+  runs as the credential's actor, and a call whose `actor` names anyone else
+  is refused (`mcp_actor_mismatch`).
 - A request the server refuses before MCP because of the credential (HTTP 401
   or 403: a revoked or expired slip, a bad holder proof) comes back as
   JSON-RPC error `-32001` (`mcp_auth_required`), with the server's error body
