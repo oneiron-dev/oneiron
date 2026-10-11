@@ -10,11 +10,24 @@ use crate::task_verb::sdk::{AgentVerb, TaskCreateRequest};
 
 /// A host's verb door reduced to the one verb this run calls: `tasks.create`
 /// on the host's memory surface, under the origin the dispatcher hands it.
-/// Its answer is the task receipt, with `extra` fields beside it.
+/// Its answer is the task receipt, with `extra` fields beside it. Once
+/// `closed`, it refuses every call as the MCP door refuses a revoked slip's.
 struct TaskCreateDoor {
     vault: Arc<Vault>,
     actor: WriteActor,
     extra: serde_json::Map<String, serde_json::Value>,
+    closed: std::sync::atomic::AtomicBool,
+}
+
+impl TaskCreateDoor {
+    fn admits(&self) -> std::result::Result<(), AgentVerbRefusal> {
+        if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(AgentVerbRefusal {
+                code: "mcp_auth_required".to_owned(),
+            });
+        }
+        Ok(())
+    }
 }
 
 impl AgentVerbDoor for TaskCreateDoor {
@@ -23,6 +36,7 @@ impl AgentVerbDoor for TaskCreateDoor {
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
     ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+        self.admits()?;
         let refused = || AgentVerbRefusal {
             code: "engine_error".to_owned(),
         };
@@ -44,7 +58,7 @@ impl AgentVerbDoor for TaskCreateDoor {
         &self,
         _: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
-        Ok(None)
+        self.admits().map(|()| None)
     }
 }
 
@@ -95,6 +109,7 @@ fn create_task() -> SelfCall {
 struct VerbWriteRun<'a> {
     vault: &'a Vault,
     gated_write: GatedActorWrite<'a>,
+    door: Arc<TaskCreateDoor>,
     config: EngineExecutorConfig,
 }
 
@@ -117,16 +132,19 @@ impl<'a> VerbWriteRun<'a> {
             )
             .expect("seed actor");
         let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+        let door = Arc::new(TaskCreateDoor {
+            vault: Arc::clone(vault),
+            actor,
+            extra,
+            closed: std::sync::atomic::AtomicBool::new(false),
+        });
         let gated_write = GatedActorWrite::new(vault, actor, "verb-write-resume")
             .expect("gated actor write")
-            .with_agent_verb_door(Arc::new(TaskCreateDoor {
-                vault: Arc::clone(vault),
-                actor,
-                extra,
-            }));
+            .with_agent_verb_door(door.clone());
         Self {
             vault,
             gated_write,
+            door,
             config: executor_config(entity(0xE7), EngineExecutorLimits::default()),
         }
     }
@@ -391,6 +409,57 @@ fn resumed_write_whose_answer_holds_a_float_still_closes_its_step() {
     assert_eq!(
         outcome.expect("the resumed run").status,
         EngineExecutorStatus::Complete
+    );
+}
+
+/// Review repro (Astra, #1405): a step resumed after its write committed
+/// answers that write from its kept receipt, and the door never ruled on that
+/// read: a run whose slip was revoked before the repeated call still got the
+/// kept answer. The door now rules on the kept answer as on any recorded
+/// output. Closed, the guest gets the door's refusal, the vault keeps its one
+/// write and the step does not close; open again, the step gets the first
+/// receipt back.
+#[test]
+fn a_closed_door_refuses_a_resumed_write_its_kept_answer() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    let first = run.stop_after(vec![create_task()]);
+
+    run.door
+        .closed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut refused = resumed_step(vec![create_task()]);
+    let outcome = run.resume(&run.config, &mut refused);
+    assert!(
+        matches!(
+            outcome,
+            Err(EngineExecutorError::Engine(Error::InvariantViolation(_)))
+        ),
+        "a step whose write was refused does not close: {outcome:?}"
+    );
+    assert_eq!(
+        refused.answers.pop().expect("the refused answer"),
+        SelfDispatchOutcome::Denied(crate::code_run::SelfDeniedResult {
+            effect: SelfEffect::AgentVerb,
+            outcome: "mcp_auth_required".to_owned(),
+            reason_codes: Vec::new(),
+        })
+    );
+
+    run.door
+        .closed
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut admitted = resumed_step(vec![create_task()]);
+    let outcome = run.resume(&run.config, &mut admitted);
+    assert_eq!(
+        outcome.expect("the admitted resume").status,
+        EngineExecutorStatus::Complete
+    );
+    assert_eq!(
+        admitted.answers.pop().expect("the resumed answer"),
+        first,
+        "the admitted resume answers with the first receipt"
     );
 }
 

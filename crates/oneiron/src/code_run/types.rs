@@ -485,7 +485,8 @@ pub enum RunCall {
     /// `self.memory.search` or `put_claim`, or an import. The run's trailing
     /// implicit speech is a `self.speak` too.
     Bridge(SelfEffect),
-    /// A read of the run's own recorded output, by its context reference.
+    /// A read of the run's own recorded output: by its context reference, or
+    /// a resumed write's kept answer, read back from its receipt.
     RecordedOutput,
 }
 

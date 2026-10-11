@@ -7,8 +7,8 @@ use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::derived_executor_id;
 use crate::code_run::types::{
-    AGENT_VERB_DOOR_UNBOUND, AgentVerbRefusal, SelfAgentVerbCall, SelfCall, SelfDeniedResult,
-    SelfDispatchOutcome, SelfEffect,
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfCall,
+    SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
@@ -51,6 +51,11 @@ impl HostSelfDispatcher<'_> {
         let ordinal = site.earlier.iter().filter(is_write).count() as u64;
         let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
         if let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? {
+            // The kept answer is a result the run recorded: the door rules on
+            // reading it back, as on the run's other recorded outputs.
+            if let Err(refusal) = self.admit_run_call(RunCall::RecordedOutput)? {
+                return Ok(answered(Err(refusal)));
+            }
             let Some(row) = receipt.bridge_calls.first() else {
                 return Err(Error::ConcurrentWrite(
                     "agent verb write is in flight or needs reconciliation",

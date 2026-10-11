@@ -310,6 +310,8 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         // A bound door rules on every call the run serves itself, not only on
         // the verb calls it runs, so its ceiling and credential hold at each.
+        // A verb call meets it in `dispatch_agent_verb`: at the door's own
+        // call, or before a kept receipt answers it.
         let read_as = if matches!(call, SelfCall::Context(_) | SelfCall::AgentVerb(_)) {
             None
         } else {
