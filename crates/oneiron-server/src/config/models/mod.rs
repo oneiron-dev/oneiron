@@ -54,6 +54,8 @@ pub(crate) struct ModelsFile {
     workflows: WorkflowFile,
     #[serde(default)]
     code_mode: CodeModeFile,
+    #[serde(default)]
+    recall: RecallFile,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -72,6 +74,12 @@ struct DreamerFile {
 struct ChatFile {
     history_turns: Option<usize>,
     turn_budget_units: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecallFile {
+    rerank_budget_units: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -114,6 +122,7 @@ pub struct ModelsConfig {
     pub chat: ChatSettings,
     pub workflows: WorkflowSettings,
     pub code_mode: CodeModeSettings,
+    pub recall: RecallModelSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,6 +145,15 @@ pub struct ChatSettings {
     /// Earlier turns of the conversation sent with each chat turn.
     pub history_turns: usize,
     pub turn_budget_units: u64,
+}
+
+/// `[models.recall]`: what recall at high, xhigh and max may spend on the
+/// `reranker` role's calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecallModelSettings {
+    /// Each recall's own line: the rerank calls one recall makes, a second
+    /// one for a block that changed included.
+    pub rerank_budget_units: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,6 +196,8 @@ const DEFAULT_STEP_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_RETRY_BACKOFF_SECS: u64 = 30;
 const DEFAULT_RAW_BUDGET_UNITS: u64 = 10_000_000;
 const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = 10_000_000;
+/// Two scorings of a 50-candidate block at about 300 tokens a candidate.
+const DEFAULT_RERANK_BUDGET_UNITS: u64 = 32_000;
 const DEFAULT_HISTORY_TURNS: usize = 24;
 
 impl ModelsFile {
@@ -258,12 +278,19 @@ impl ModelsFile {
                 .unwrap_or(DEFAULT_CODE_MODE_BUDGET_UNITS),
             check: self.code_mode.check.resolve(base)?,
         };
+        let recall = RecallModelSettings {
+            rerank_budget_units: self
+                .recall
+                .rerank_budget_units
+                .unwrap_or(DEFAULT_RERANK_BUDGET_UNITS),
+        };
         if [
             dreamer.pass_budget_units,
             chat.turn_budget_units,
             workflows.step_budget_units,
             raw_budget_units,
             code_mode.budget_units,
+            recall.rerank_budget_units,
         ]
         .contains(&0)
         {
@@ -287,6 +314,7 @@ impl ModelsFile {
             chat,
             workflows,
             code_mode,
+            recall,
         })
     }
 }
@@ -367,6 +395,12 @@ fn validate_ladders(
                     } else {
                         "tagger"
                     }
+                );
+            }
+            if *role == ModelRole::Reranker && !provider.kind.reranks() {
+                anyhow::bail!(
+                    "models.roles.{key}: {} is not on an OpenAI-compatible provider; the reranker is called over /v1/rerank",
+                    rung.model
                 );
             }
             if !seen.insert(&rung.model) {

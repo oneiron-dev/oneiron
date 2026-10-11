@@ -45,9 +45,9 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED,
+    MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::{EdgeActorClass, EntityId};
@@ -387,6 +387,11 @@ impl From<MemoryError> for FacadeApiError {
             MEMORY_CODE_INVALID_STATE
             | MEMORY_CODE_OFF_RECORD_SESSION_DOOR
             | MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER => StatusCode::CONFLICT,
+            // A paid call its line cannot cover, as a chat turn's is.
+            MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
+            // The model the request needs did not answer: not the caller's
+            // fault, and not this server's to stand in for.
+            MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

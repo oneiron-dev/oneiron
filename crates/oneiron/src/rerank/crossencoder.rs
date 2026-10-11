@@ -247,6 +247,37 @@ pub struct PreparedCrossEncoder {
     fingerprint: [u8; 32],
     scores: Vec<f32>,
 }
+impl PreparedCrossEncoder {
+    /// Scores a host's own scorer (`model`) gave for exactly `candidates`
+    /// and `query`, outside the engine. Like a prepared batch, it applies
+    /// only to that snapshot.
+    pub fn from_scores(
+        model: &str,
+        query: &str,
+        candidates: &[RerankCandidate<'_>],
+        scores: Vec<f32>,
+    ) -> Result<Self> {
+        if model.trim().is_empty()
+            || scores.len() != candidates.len()
+            || scores.iter().any(|score| !score.is_finite())
+        {
+            return Err(invalid("host rerank scores do not fit the candidates"));
+        }
+        let fingerprint = fingerprint(query, candidates)?;
+        let mut identity = Sha256::new();
+        identity.update(model);
+        identity.update([0]);
+        identity.update(fingerprint);
+        for score in &scores {
+            identity.update(score.to_bits().to_le_bytes());
+        }
+        Ok(Self {
+            identity: format!("{model}:prepared:{:x}", identity.finalize()),
+            fingerprint,
+            scores,
+        })
+    }
+}
 impl Reranker for PreparedCrossEncoder {
     fn id(&self) -> &str {
         &self.identity

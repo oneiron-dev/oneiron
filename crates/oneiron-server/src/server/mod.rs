@@ -7,6 +7,7 @@ mod lifecycle;
 mod message_stream;
 mod oversight;
 mod recall;
+mod recall_rerank;
 mod tagging;
 mod windows;
 

@@ -60,6 +60,8 @@ pub struct AiHandle {
     hints: Option<Arc<HintPusher>>,
     chat: ChatSettings,
     raw_budget_units: Option<u64>,
+    /// Each paid recall's line for its rerank calls (`[models.recall]`).
+    rerank_budget_units: u64,
     turns: TurnTracker,
     /// The running Dreamer has a summary instruction to write bodies with.
     summaries: bool,
@@ -95,6 +97,7 @@ impl AiHandle {
                 |models| models.chat,
             ),
             raw_budget_units: models.map(|models| models.raw_budget_units),
+            rerank_budget_units: models.map_or(0, |models| models.recall.rerank_budget_units),
             turns: TurnTracker::new(),
             summaries: false,
         }
@@ -134,6 +137,13 @@ impl AiHandle {
     #[must_use]
     pub fn chat_settings(&self) -> ChatSettings {
         self.chat
+    }
+
+    /// The line each recall at high, xhigh or max spends its rerank calls
+    /// on.
+    #[must_use]
+    pub fn rerank_budget_units(&self) -> u64 {
+        self.rerank_budget_units
     }
 
     /// Admits a call of `role` against the vault's live model policy: its

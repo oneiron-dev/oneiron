@@ -39,6 +39,7 @@ mod openai;
 mod output_cap;
 mod raw;
 mod receipts;
+mod rerank;
 mod role_route;
 mod router;
 mod run_backend;
@@ -53,6 +54,7 @@ pub use ladder::OfferLadder;
 pub use offer::ServedOffer;
 pub(crate) use raw::{InjectedRuns, RawInference};
 pub(crate) use receipts::ServerReceipts;
+pub(crate) use rerank::{rerank_request, rerank_scores};
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
@@ -162,16 +164,40 @@ impl ModelRuntime {
                 }
             }
         }
+        // The reranker's rungs speak `/v1/rerank`, not chat: each provider
+        // that serves one gets a rerank client beside its chat backend.
+        let mut rerankers = BTreeMap::new();
+        for (name, provider) in &config.providers {
+            let models = reranker_models(config, name);
+            if models.is_empty() || !provider.kind.reranks() {
+                continue;
+            }
+            match build_reranker(provider, &models) {
+                Ok(backend) => {
+                    rerankers.insert(name.clone(), backend);
+                }
+                Err(error) => {
+                    tracing::warn!(provider = %name, %error, "reranker provider unavailable");
+                }
+            }
+        }
         let mut router = ModelRouter::default();
-        for (name, backend) in &built {
-            let provider = &config.providers[name];
-            for model in referenced_models(config, name) {
-                if let Some(rung) = rung(name, provider, backend, &model, 0, None) {
-                    router.insert(
-                        rung.model.clone(),
-                        provider.locality,
-                        Arc::new(OfferLadder::bare(rung)),
-                    );
+        for (rerank, backends) in [(false, &built), (true, &rerankers)] {
+            for (name, backend) in backends {
+                let provider = &config.providers[name];
+                let models = if rerank {
+                    reranker_models(config, name)
+                } else {
+                    referenced_models(config, name)
+                };
+                for model in models {
+                    if let Some(rung) = rung(name, provider, backend, &model, 0, None, rerank) {
+                        router.insert(
+                            rung.model.clone(),
+                            provider.locality,
+                            Arc::new(OfferLadder::bare(rung)),
+                        );
+                    }
                 }
             }
         }
@@ -182,7 +208,9 @@ impl ModelRuntime {
             for (position, rung) in ladder.iter().enumerate() {
                 let provider = &config.providers[&rung.model.provider];
                 let mut entry = RungStatus::new(&rung.model, provider);
-                let served = built
+                let rerank = *role == ModelRole::Reranker;
+                let backends = if rerank { &rerankers } else { &built };
+                let served = backends
                     .get(&rung.model.provider)
                     .filter(|_| provider.kind.generates())
                     .and_then(|backend| {
@@ -193,6 +221,7 @@ impl ModelRuntime {
                             &rung.model,
                             position,
                             rung.prompt.clone(),
+                            rerank,
                         )
                     });
                 match served {
@@ -315,6 +344,19 @@ fn build_provider(
     Ok(Some(backend))
 }
 
+/// The rerank client for `provider`'s reranker `models`.
+fn build_reranker(
+    provider: &ProviderConfig,
+    models: &[ModelRef],
+) -> anyhow::Result<Arc<dyn SingleRouteBackend>> {
+    let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
+    let wire_models = models
+        .iter()
+        .map(|model| Ok((engine_model_id(model, provider)?, model.model.clone())))
+        .collect::<anyhow::Result<_>>()?;
+    Ok(Arc::new(rerank::RerankBackend::new(http, wire_models)))
+}
+
 /// `model` on `provider` as a rung at `position`: the offer a run admits its
 /// calls under, over the provider's backend. `None` when the model has no
 /// engine id or the provider's URL no route.
@@ -325,9 +367,10 @@ fn rung(
     model: &ModelRef,
     position: usize,
     prompt: Option<String>,
+    rerank: bool,
 ) -> Option<LadderRung> {
     let id = engine_model_id(model, provider).ok()?;
-    let binding = match provider_offer(provider, id.clone()) {
+    let binding = match provider_offer(provider, id.clone(), rerank) {
         Ok(binding) => binding,
         Err(error) => {
             tracing::warn!(provider = %name, %error, "model has no offer route");
@@ -347,12 +390,26 @@ fn rung(
     })
 }
 
-/// Every model some ladder names on `provider`, once each.
+/// Every model some chat-speaking ladder names on `provider`, once each.
 fn referenced_models(config: &ModelsConfig, provider: &str) -> Vec<ModelRef> {
+    role_models(config, provider, |role| role != ModelRole::Reranker)
+}
+
+/// Every model the reranker's ladder names on `provider`, once each.
+fn reranker_models(config: &ModelsConfig, provider: &str) -> Vec<ModelRef> {
+    role_models(config, provider, |role| role == ModelRole::Reranker)
+}
+
+fn role_models(
+    config: &ModelsConfig,
+    provider: &str,
+    roles: impl Fn(ModelRole) -> bool,
+) -> Vec<ModelRef> {
     let mut models: Vec<ModelRef> = config
         .roles
-        .values()
-        .flatten()
+        .iter()
+        .filter(|(role, _)| roles(**role))
+        .flat_map(|(_, ladder)| ladder)
         .filter(|rung| rung.model.provider == provider)
         .map(|rung| rung.model.clone())
         .collect();
