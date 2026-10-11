@@ -7,7 +7,8 @@
 //! engine, so a third-party organ can link it, or implement the same frames
 //! in any language from the design page.
 //!
-//! - [`wire`] types: the messages, typed bodies, locators, errors.
+//! - [`wire`] types: the messages, typed bodies, locators, errors, and the
+//!   1.1 asks.
 //! - `frame`: framing and descriptor passing (Unix).
 //! - `region`: sealed read-only regions (Unix).
 //! - `runtime`: the organ side, [`serve`] and the [`Organ`] trait (Unix).
@@ -31,8 +32,8 @@ pub use frame::{FrameError, recv_frame, recv_frame_until, send_frame, send_frame
 pub use region::{MappedRegion, SharedRegion};
 #[cfg(unix)]
 pub use runtime::{
-    Answer, CallContext, InputBytes, Organ, OutputBytes, VERB_ECHO, VERB_TOUCH, serve,
-    serve_stream, touch_fold,
+    Answer, AskBytes, AskReply, Asker, CallContext, InputBytes, Organ, OutputBytes, VERB_ECHO,
+    VERB_TOUCH, serve, serve_stream, touch_fold,
 };
 pub use serde_bytes::ByteBuf;
 #[cfg(unix)]

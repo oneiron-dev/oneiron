@@ -3,6 +3,9 @@
 //! Every message is MessagePack with named fields. A receiver ignores a field
 //! it does not know and refuses a message type it does not know. A new
 //! message type or field is a minor bump; a changed meaning is a major bump.
+//!
+//! 1.1 adds asks: inside a call the organ may `ask` the engine, and the
+//! engine sends an `answer`. Neither is ever sent on a 1.0 session.
 
 use std::fmt;
 
@@ -11,7 +14,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_bytes::ByteBuf;
 
 /// The protocol version this crate speaks.
-pub const PROTOCOL: ProtocolVersion = ProtocolVersion { major: 1, minor: 0 };
+pub const PROTOCOL: ProtocolVersion = ProtocolVersion { major: 1, minor: 1 };
+
+/// The first minor whose sessions carry asks.
+pub const ASKS_MINOR: u16 = 1;
+
+/// The most bytes one ask's value may take, encoded.
+pub const ASK_VALUE_MAX: usize = 64 * 1024;
 
 /// An input or output at or under this size rides inside the frame. A larger
 /// one crosses as a read-only region handle.
@@ -28,6 +37,24 @@ pub const DEFAULT_FRAME_LIMIT: u32 = 64 * 1024 * 1024;
 pub struct ProtocolVersion {
     pub major: u16,
     pub minor: u16,
+}
+
+impl ProtocolVersion {
+    /// What a session speaks when this side meets `other`: one major, the
+    /// lower minor. `None` when the majors differ.
+    #[must_use]
+    pub fn session(self, other: Self) -> Option<Self> {
+        (self.major == other.major).then(|| Self {
+            major: self.major,
+            minor: self.minor.min(other.minor),
+        })
+    }
+
+    /// Whether a session at this version carries asks.
+    #[must_use]
+    pub fn asks(self) -> bool {
+        self.minor >= ASKS_MINOR
+    }
 }
 
 /// A 32-byte blake3 digest, encoded as MessagePack bin.
@@ -112,8 +139,13 @@ pub struct Limits {
 pub enum ToOrgan {
     Hello(Hello),
     Call(Call),
-    Cancel { id: u64, reason: CancelReason },
+    Cancel {
+        id: u64,
+        reason: CancelReason,
+    },
     Shutdown,
+    /// 1.1: the answer to one of the organ's asks.
+    Answer(AskAnswer),
 }
 
 /// Organ to engine.
@@ -122,6 +154,8 @@ pub enum ToOrgan {
 pub enum FromOrgan {
     HelloAck(HelloAck),
     Reply(Reply),
+    /// 1.1: inside a call, the organ asks the engine for something.
+    Ask(Ask),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,4 +347,126 @@ pub enum ErrorCode {
     DeadlineExceeded,
     StaleBase,
     Internal,
+}
+
+/// 1.1: one ask, inside the call it names. At most one per call is in
+/// flight: the organ waits for its answer, or the call's cancel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ask {
+    /// The id of the call this ask belongs to.
+    pub call: u64,
+    /// This call's asks in order: 1, 2, 3.
+    pub id: u32,
+    pub verb: String,
+    /// At most [`ASK_VALUE_MAX`] bytes, encoded.
+    pub value: rmpv::Value,
+}
+
+/// 1.1: the engine's answer to one ask. It names both the call and the
+/// ask, so a late answer never reads as the answer to a later ask.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AskAnswer {
+    pub call: u64,
+    pub id: u32,
+    pub outcome: AskOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskOutcome {
+    Answered {
+        value: rmpv::Value,
+        /// Bytes beside the value: inline, or a region the engine sealed,
+        /// valid for the call only.
+        data: Option<AskData>,
+    },
+    Refused(AskRefusal),
+}
+
+/// Bytes an answer carries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskData {
+    pub len: u64,
+    pub content_hash: Hash32,
+    pub data: Payload,
+}
+
+/// Why an ask got no answer. These codes are the ask's own: they never
+/// appear as an organ error code, so a 1.0 engine never meets one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("{code:?}: {detail}")]
+pub struct AskRefusal {
+    pub code: AskCode,
+    pub detail: String,
+    pub retryable: bool,
+}
+
+impl AskRefusal {
+    #[must_use]
+    pub fn new(code: AskCode, detail: impl Into<String>) -> Self {
+        Self {
+            code,
+            detail: detail.into(),
+            retryable: false,
+        }
+    }
+
+    /// A refusal that may go another way if asked again.
+    #[must_use]
+    pub fn retryable(mut self) -> Self {
+        self.retryable = true;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskCode {
+    /// The grant does not name this verb or target, or the caller supplied
+    /// no handler for it.
+    NotGranted,
+    /// This call's asks, or its answer bytes, are spent.
+    Budget,
+    /// The ask's value is over [`ASK_VALUE_MAX`], or the answer would pass
+    /// the answer bytes left.
+    TooLarge,
+    /// The handler refused the value.
+    BadRequest,
+    /// The handler could not answer.
+    Failed,
+    /// Local to the organ: the session speaks 1.0, so nothing was sent.
+    Unsupported,
+    /// Local to the organ: the call was cancelled while the ask waited.
+    Cancelled,
+}
+
+/// The granted fetch: any organ may be granted it. The engine checks the
+/// target against the grant's allowlist and fetches it itself.
+pub const ASK_NET_FETCH: &str = "net.fetch";
+
+/// The value of a `net.fetch` ask.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchAsk {
+    /// A label for the receipt, at most 32 bytes.
+    pub purpose: String,
+    pub method: FetchMethod,
+    pub url: String,
+    pub content_type: Option<String>,
+    pub body: Option<ByteBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FetchMethod {
+    Get,
+    Post,
+}
+
+/// The value of a `net.fetch` answer; the body rides as the answer's data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchAnswer {
+    pub status: u16,
+    pub content_type: Option<String>,
+    /// Where the body came from, after any redirects.
+    pub final_url: String,
 }

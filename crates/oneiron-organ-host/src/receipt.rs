@@ -1,7 +1,9 @@
 //! The engine's receipt for one organ call: facts the host computed, plus
 //! the organ's bounded notes.
 
-use oneiron_organ_protocol::{Hash32, Locator, Loss, Notes, OrganIdentity, ProtocolVersion};
+use oneiron_organ_protocol::{
+    AskCode, Hash32, Locator, Loss, Notes, OrganIdentity, ProtocolVersion,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::spec::CallClass;
@@ -15,6 +17,7 @@ const MAX_CODE_BYTES: usize = 64;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallReceipt {
     pub organ: OrganIdentity,
+    /// The version the session speaks: the lower minor of both sides.
     pub protocol: ProtocolVersion,
     pub verb: String,
     pub schema: u32,
@@ -33,15 +36,63 @@ pub struct CallReceipt {
     pub queue_us: u64,
     /// From sending the call to its verified reply.
     pub run_us: u64,
+    /// Every ask the organ made, in order (protocol 1.1). A record written
+    /// before 1.1 reads as none.
+    #[serde(default)]
+    pub asks: Vec<AskReceipt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReceiptInput {
-    /// The artifact id, hex.
+    /// The artifact id, hex; empty for bytes the caller lent.
     pub artifact: String,
     pub version: u64,
     pub content_hash: Hash32,
     pub len: u64,
+    /// Bytes the caller held, not a vault version.
+    #[serde(default)]
+    pub lent: bool,
+}
+
+/// One ask, as the host saw it. Digests are blake3 over MessagePack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskReceipt {
+    pub id: u32,
+    pub verb: String,
+    pub value_digest: Hash32,
+    /// The refusal, if the ask got one.
+    pub refused: Option<AskCode>,
+    pub answer_digest: Option<Hash32>,
+    /// The answer's bytes, hashed by the host as it sent them.
+    pub data_hash: Option<Hash32>,
+    pub data_len: u64,
+    pub fetch: Option<FetchTarget>,
+    pub handler_us: u64,
+    /// Set when the organ got no answer because its call ended first.
+    #[serde(default)]
+    pub unanswered: Option<Unanswered>,
+}
+
+/// Why an ask got no answer: its call ended (cancelled, revoked, replied,
+/// past its caps or its organ gone) before one was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Unanswered {
+    /// Nothing was decided for it: no handler ran, no refusal was made.
+    NotRun,
+    /// Its answer or refusal was decided but not sent; a handler that
+    /// panicked leaves this too.
+    NotSent,
+}
+
+/// Where a `net.fetch` went. The full URL is kept only as a digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchTarget {
+    /// `scheme://host:port` of the first hop.
+    pub origin: String,
+    pub url_digest: Hash32,
+    /// The final HTTP status; 0 when nothing was fetched.
+    pub status: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -9,17 +9,20 @@ use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron_organ_protocol::{
-    ByteBuf, Call, CancelReason, Hash32, Input, MAX_FDS_PER_FRAME, MappedRegion, Outcome, Output,
-    Payload, Proposal, SharedRegion, TypedBody,
+    ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, MAX_FDS_PER_FRAME, MappedRegion,
+    Outcome, Output, Payload, Proposal, SharedRegion, TypedBody,
 };
 
+use crate::asks::{AskHandlers, CallAsks, in_handler};
 use crate::budget::{Budget, Kept, Permit};
 use crate::error::{HostError, Unavailable};
-use crate::process::{CallFailure, OrganProcess};
-use crate::receipt::{CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest};
+use crate::process::{CallFailure, OrganProcess, Wait};
+use crate::receipt::{
+    AskReceipt, CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest,
+};
 use crate::regions::RegionCache;
 use crate::slot::{OrganStatus, Slot};
-use crate::spec::{HostConfig, OrganCall, OrganInput, OrganSpec};
+use crate::spec::{HostConfig, LentInput, OrganCall, OrganInput, OrganSpec};
 
 const MAX_DETAIL_BYTES: usize = 512;
 const MAX_NAME_BYTES: usize = 256;
@@ -73,7 +76,8 @@ enum Held {
 
 #[derive(Debug)]
 struct Resolved {
-    input: OrganInput,
+    /// `None` for bytes the caller lent.
+    input: Option<OrganInput>,
     media_type: String,
     hash: Hash32,
     len: u64,
@@ -248,11 +252,37 @@ impl OrganHost {
     ///
     /// The caller has already authorized its actor to read every input, as
     /// for any engine read; the host checks the organ's grant (verb, media
-    /// type) and hands the organ those inputs and nothing else.
+    /// type) and hands the organ those inputs and nothing else. Every ask
+    /// the organ makes is refused.
     ///
     /// # Errors
     /// See [`HostError`]: grants, budget, the organ's state, its reply.
     pub fn call(&self, vault: &Vault, call: OrganCall) -> Result<OrganOutcome, HostError> {
+        self.call_with(vault, call, Vec::new(), &AskHandlers::none())
+    }
+
+    /// [`Self::call`], with bytes the caller lends after the vault inputs,
+    /// and the handlers that answer the organ's asks (protocol 1.1). An ask
+    /// is answered only when the install grant names its verb and `asks`
+    /// holds a handler for it; handlers run on this thread, inside the
+    /// call's deadline, and may not call an organ themselves. Every ask's
+    /// receipt line is also kept in `asks` ([`AskHandlers::asked`]), so a
+    /// call that fails still leaves a record of what its handlers did.
+    ///
+    /// # Errors
+    /// As [`Self::call`], plus [`HostError::Reentrant`] from inside a
+    /// handler and [`HostError::AskBudget`] for an organ that keeps asking
+    /// past its caps.
+    pub fn call_with(
+        &self,
+        vault: &Vault,
+        call: OrganCall,
+        lent: Vec<LentInput>,
+        asks: &AskHandlers<'_>,
+    ) -> Result<OrganOutcome, HostError> {
+        if in_handler() {
+            return Err(HostError::Reentrant);
+        }
         let begun = Instant::now();
         // The wire says a deadline in u32 milliseconds (about 49 days); a
         // longer one, up to `Duration::MAX`, waits that long and never
@@ -272,17 +302,20 @@ impl OrganHost {
         if !slot.spec.verbs.iter().any(|verb| verb == &call.verb) {
             return Err(unknown());
         }
-        if call.inputs.len() > MAX_FDS_PER_FRAME {
+        if call.inputs.len() + lent.len() > MAX_FDS_PER_FRAME {
             return Err(HostError::TooManyInputs);
         }
         let mut permit = self
             .budget
             .admit(call.class, 1, slot.spec.call_memory_bytes, deadline)?;
-        let inputs = call
+        let mut inputs = call
             .inputs
             .iter()
             .map(|input| self.resolve(vault, &slot.spec, *input))
             .collect::<Result<Vec<_>, _>>()?;
+        for input in lent {
+            inputs.push(self.lend(&slot.spec, input)?);
+        }
         let process = slot.process(&self.config, Some(deadline))?;
         let offered = process
             .hello
@@ -294,7 +327,19 @@ impl OrganHost {
         }
         let queued = begun.elapsed();
         let sent_at = Instant::now();
-        let (reply, fds) = self.exchange(&slot, &process, &call, &inputs, deadline)?;
+        let inline_max = self.config.inline_max_bytes.min(INLINE_MAX_BYTES);
+        let mut asked = CallAsks::new(
+            &slot.spec,
+            asks,
+            &call.verb,
+            &call.grant,
+            deadline,
+            inline_max,
+        );
+        let (reply, fds) = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline)?;
+        let lent = asked.lent_bytes();
+        // The lines also reach `asks` when `asked` drops, on every path.
+        let asks = asked.receipts.clone();
         // A grant withdrawn while the organ worked voids its answer too.
         if self.grant_revoked(&call.grant) {
             return Err(HostError::Revoked);
@@ -312,7 +357,12 @@ impl OrganHost {
             queued,
             sent_at,
             deadline,
-            max_output_bytes: slot.spec.max_output_bytes.min(slot.spec.call_memory_bytes),
+            // Answers and outputs draw on the one booking.
+            max_output_bytes: slot
+                .spec
+                .max_output_bytes
+                .min(slot.spec.call_memory_bytes.saturating_sub(lent)),
+            asks,
         };
         finish(&call, &process, &inputs, reply, &mut permit)
     }
@@ -323,6 +373,7 @@ impl OrganHost {
         process: &Arc<OrganProcess>,
         call: &OrganCall,
         inputs: &[Resolved],
+        asked: &mut CallAsks<'_>,
         deadline: Instant,
     ) -> Result<(Outcome, Vec<OwnedFd>), HostError> {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -338,7 +389,13 @@ impl OrganHost {
         };
         let revoked = || self.grant_revoked(&call.grant);
         let grace = self.config.cancel_grace;
-        match process.call(wire, &fds, &call.grant, &revoked, deadline, grace) {
+        let wait = Wait {
+            revoked: &revoked,
+            asks: asked,
+            deadline,
+            grace,
+        };
+        match process.call(wire, &fds, &call.grant, wait) {
             Ok((reply, fds)) => Ok((reply.outcome, fds)),
             Err(CallFailure::Deadline { stopped }) => {
                 // An organ that took the cancel lives on, still tracked;
@@ -354,7 +411,7 @@ impl OrganHost {
             }
             Err(CallFailure::Revoked) => Err(HostError::Revoked),
             Err(CallFailure::Busy) => Err(HostError::BudgetTimeout),
-            Err(CallFailure::Refused(err)) => Err(err),
+            Err(CallFailure::Refused(err) | CallFailure::Ended(err)) => Err(err),
             Err(CallFailure::Crashed) => {
                 slot.crashed(process);
                 Err(if revoked() {
@@ -406,7 +463,7 @@ impl OrganHost {
                     Held::Region(self.regions.insert(record.content_hash, region))
                 };
                 Ok(Resolved {
-                    input,
+                    input: Some(input),
                     media_type,
                     hash: Hash32(record.content_hash),
                     len,
@@ -418,6 +475,42 @@ impl OrganHost {
                 artifact: input.artifact.to_hex(),
                 version: input.version,
             })
+        })
+    }
+
+    /// Lends bytes the caller holds: hashed here, inline when small, else a
+    /// sealed region kept by content hash like a vault input's.
+    fn lend(&self, spec: &OrganSpec, input: LentInput) -> Result<Resolved, HostError> {
+        let LentInput { media_type, bytes } = input;
+        if !spec
+            .media_types
+            .iter()
+            .any(|granted| granted == &media_type)
+        {
+            return Err(HostError::MediaTypeNotGranted(media_type));
+        }
+        let hash = Hash32::of(&bytes);
+        let len = bytes.len() as u64;
+        let held = if bytes.len() <= self.config.inline_max_bytes {
+            Held::Inline(bytes)
+        } else if let Some(region) = self
+            .regions
+            .get(&hash.0)
+            .filter(|region| region.len() == len)
+        {
+            Held::Region(region)
+        } else {
+            Held::Region(
+                self.regions
+                    .insert(hash.0, SharedRegion::from_bytes(&bytes)?),
+            )
+        };
+        Ok(Resolved {
+            input: None,
+            media_type,
+            hash,
+            len,
+            held,
         })
     }
 }
@@ -454,6 +547,7 @@ struct Replied {
     sent_at: Instant,
     deadline: Instant,
     max_output_bytes: u64,
+    asks: Vec<AskReceipt>,
 }
 
 /// Checks a proposal, hashes its outputs and writes the receipt.
@@ -471,6 +565,7 @@ fn finish(
         sent_at,
         deadline,
         max_output_bytes,
+        asks,
     } = reply;
     if let (Some(base), Some(next)) = (&call.body, &proposal.body)
         && base.kind != next.kind
@@ -483,17 +578,21 @@ fn finish(
     let outputs = take_outputs(proposal.outputs, fds, max_output_bytes, deadline, permit)?;
     let receipt = CallReceipt {
         organ: process.hello.organ.clone(),
-        protocol: process.hello.protocol,
+        protocol: process.session,
         verb: call.verb.clone(),
         schema: call.schema,
         args_digest: digest(&call.args),
         inputs: inputs
             .iter()
             .map(|resolved| ReceiptInput {
-                artifact: resolved.input.artifact.to_hex(),
-                version: resolved.input.version,
+                artifact: resolved
+                    .input
+                    .map(|input| input.artifact.to_hex())
+                    .unwrap_or_default(),
+                version: resolved.input.map_or(0, |input| input.version),
                 content_hash: resolved.hash,
                 len: resolved.len,
+                lent: resolved.input.is_none(),
             })
             .collect(),
         base_body: call.body.as_ref().map(digest),
@@ -512,6 +611,7 @@ fn finish(
         grant: call.grant.clone(),
         queue_us: u64::try_from(queued.as_micros()).unwrap_or(u64::MAX),
         run_us: u64::try_from(sent_at.elapsed().as_micros()).unwrap_or(u64::MAX),
+        asks,
     };
     Ok(OrganOutcome {
         body: proposal.body,
