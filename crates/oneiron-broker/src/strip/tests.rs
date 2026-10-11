@@ -44,15 +44,21 @@ fn echoes(key: &str) -> Vec<Vec<u8>> {
     echoes
 }
 
-/// Whether `text` still gives the key away: in any echoed form, or decodable
-/// from any base64 run in it at any offset.
+/// Whether `text` still gives the key away: in any echoed form, read through
+/// JSON escapes then percent-decoding, or decodable from any base64 run in it
+/// at any offset.
 fn leaks(text: &[u8], key: &str) -> bool {
     let contains = |haystack: &[u8]| {
         haystack
             .windows(key.len())
             .any(|window| window == key.as_bytes())
     };
-    if contains(text) || contains(&percent_decoded(text)) || contains(&json_unescaped(text)) {
+    let unescaped = json_unescaped(text);
+    if contains(text)
+        || contains(&percent_decoded(text))
+        || contains(&unescaped)
+        || contains(&percent_decoded(&unescaped))
+    {
         return true;
     }
     // Every base64 run, read at each start offset and each end, in both
@@ -248,4 +254,10 @@ fn only_the_key_goes_from_an_escaped_run_that_percent_decodes_to_it() {
     assert!(!leaks(&stripped, KEY), "{}", String::from_utf8_lossy(&stripped));
     let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
     assert_eq!(parsed["error"], "prefix [redacted] suffix");
+    // The key's own quote joins the string's quotes to the run; they stay.
+    let body = format!("{{\"content\":\"\\u0025{}\"}}", &every_byte[1..]);
+    assert!(leaks(body.as_bytes(), KEY));
+    let stripped = strip(KEY.as_bytes(), body.as_bytes());
+    let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
+    assert_eq!(parsed["content"], "[redacted]");
 }

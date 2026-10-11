@@ -105,6 +105,12 @@ A declared run's paid keys must sit at T0, so its teacher calls go out this way.
 A `key_secret` provider answers whole replies only for now: a streamed call to it
 is refused before it starts.
 
+The broker holds `<socket>.lock` while it serves, so a second broker on the same
+path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
+the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
+for the user that runs it, and `newuidmap`. A Linux host that is meant to prove the
+broker runs it; there, a missing prerequisite fails the run instead of skipping it.
+
 `max_output_tokens` is a ceiling on every call to that provider: it is sent
 when a call names no limit, and a larger limit is cut down to it. An
 OpenAI-compatible endpoint reads it from `max_tokens` unless

@@ -21,6 +21,10 @@ const MAX_CONCURRENT: usize = 64;
 /// How long a peer has to deliver its frame, and to take the reply.
 const FRAME_DEADLINE: Duration = Duration::from_secs(10);
 
+/// How long a connect to a socket already at the path may take before the
+/// listener behind it counts as live.
+const LIVENESS_PROBE: Duration = Duration::from_secs(1);
+
 /// A broker serving one daemon.
 #[derive(Debug, Clone)]
 pub struct ServeConfig {
@@ -58,12 +62,14 @@ pub async fn serve(config: ServeConfig) -> io::Result<()> {
     }
     match std::fs::symlink_metadata(&config.socket) {
         Ok(meta) if meta.file_type().is_socket() => {
-            match std::os::unix::net::UnixStream::connect(&config.socket) {
-                Ok(_) => return Err(io::ErrorKind::AddrInUse.into()),
-                Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {
+            // Without blocking: a listener whose queue is full is live too.
+            let probe = tokio::time::timeout(LIVENESS_PROBE, UnixStream::connect(&config.socket));
+            match probe.await {
+                Ok(Err(error)) if error.kind() == io::ErrorKind::ConnectionRefused => {
                     std::fs::remove_file(&config.socket)?;
                 }
-                Err(error) => return Err(error),
+                Ok(Err(error)) if error.kind() != io::ErrorKind::WouldBlock => return Err(error),
+                Ok(_) | Err(_) => return Err(io::ErrorKind::AddrInUse.into()),
             }
         }
         Ok(_) => return Err(io::ErrorKind::AlreadyExists.into()),

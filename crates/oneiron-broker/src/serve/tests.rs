@@ -435,3 +435,38 @@ async fn a_second_broker_never_takes_a_live_socket() {
     );
     assert!(socket.exists(), "the path was left to the lock holder");
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_live_socket_with_a_full_queue_is_refused_at_once() {
+    // A listener that accepts nothing, with its queue filled: a second broker
+    // neither blocks on it nor takes its path.
+    let dir = tempfile::tempdir().expect("dir");
+    let socket = dir.path().join("broker.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("listener");
+    let mut held = Vec::new();
+    while let Ok(Ok(stream)) =
+        tokio::time::timeout(Duration::from_millis(200), UnixStream::connect(&socket)).await
+    {
+        held.push(stream);
+        assert!(held.len() < 100_000, "the queue never filled");
+    }
+    let second = tokio::time::timeout(
+        Duration::from_secs(10),
+        serve(ServeConfig {
+            socket: socket.clone(),
+            client_uid: 0,
+            policy: SendPolicy {
+                timeout: Duration::from_secs(20),
+                extra_roots: Vec::new(),
+            },
+        }),
+    )
+    .await
+    .expect("refused, not blocked");
+    assert_eq!(
+        second.err().map(|error| error.kind()),
+        Some(std::io::ErrorKind::AddrInUse)
+    );
+    assert!(socket.exists(), "the live listener kept its path");
+}
