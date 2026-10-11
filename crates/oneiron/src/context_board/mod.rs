@@ -56,11 +56,6 @@ pub use stream::{
     RouteObservation, StreamConnectionId, StreamConnectionState, SubscriptionError,
     SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
-pub use stream::{
-    BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind,
-    WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations,
-    WakeReportDisposition,
-};
 #[cfg(test)]
 mod surfaces_tests;
 mod tasks;

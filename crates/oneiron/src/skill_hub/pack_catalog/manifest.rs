@@ -1,10 +1,11 @@
 //! Closed PACK.md manifest parser. Requested powers stay data until local admission.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::migrations::PackMigration;
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
 use crate::saved_query::PackMigrationMap;
+use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,39 +66,27 @@ impl PackManifest {
 
 impl PackManifest {
     pub(super) fn parse(text: &str) -> Result<Self> {
-        let front = super::super::folder::source_frontmatter(text)?
-            .ok_or_else(|| invalid("PACK.md requires frontmatter"))?;
-        let mut fields = std::collections::BTreeMap::new();
-        for line in front.lines() {
-            if line.trim().is_empty() || line.starts_with('#') {
-                continue;
+        let fields = frontmatter_fields(text)?;
+        // The source scans read the raw file, where a JSON escape can hide a
+        // credential; every decoded string gets both detectors again. A run
+        // is joined text, not a record: both doors' text rules, no structured
+        // reading.
+        for (_, decoded) in decoded_fields(&fields) {
+            for value in &decoded.strings {
+                crate::batch::secret_scan::scan_metadata_field(value)?;
+                if crate::batch::secret_scan::scan_file_content("PACK.md", value.as_bytes())
+                    .is_some()
+                {
+                    return Err(invalid("pack source contains credential material"));
+                }
             }
-            if line.starts_with(char::is_whitespace) {
-                return Err(invalid("nested PACK.md YAML requires normalization"));
-            }
-            let (key, value) = line
-                .split_once(':')
-                .ok_or_else(|| invalid("invalid manifest field"))?;
-            if !matches!(
-                key,
-                "name"
-                    | "description"
-                    | "version"
-                    | "license"
-                    | "contact"
-                    | "kind"
-                    | "adapter"
-                    | "predicates"
-                    | "kinds"
-                    | "grants"
-                    | "wakes"
-                    | "facets"
-                    | "migrations"
-            ) {
-                return Err(invalid("unknown PACK.md field"));
-            }
-            if fields.insert(key, value.trim()).is_some() {
-                return Err(invalid("duplicate PACK.md field"));
+            if decoded
+                .run
+                .as_deref()
+                .and_then(crate::batch::secret_scan::scan_joined_text)
+                .is_some()
+            {
+                return Err(invalid("pack source contains credential material"));
             }
         }
         let required = |key, allow_controls| {
@@ -232,6 +221,128 @@ impl PackManifest {
         })
     }
 }
+/// The frontmatter's fields by key, each named once, with its raw value.
+fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
+    let front = super::super::folder::source_frontmatter(text)?
+        .ok_or_else(|| invalid("PACK.md requires frontmatter"))?;
+    let mut fields = BTreeMap::new();
+    for line in front.lines() {
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with(char::is_whitespace) {
+            return Err(invalid("nested PACK.md YAML requires normalization"));
+        }
+        let (key, value) = line
+            .split_once(':')
+            .ok_or_else(|| invalid("invalid manifest field"))?;
+        if !matches!(
+            key,
+            "name"
+                | "description"
+                | "version"
+                | "license"
+                | "contact"
+                | "kind"
+                | "adapter"
+                | "predicates"
+                | "kinds"
+                | "grants"
+                | "wakes"
+                | "facets"
+                | "migrations"
+        ) {
+            return Err(invalid("unknown PACK.md field"));
+        }
+        if fields.insert(key, value.trim()).is_some() {
+            return Err(invalid("duplicate PACK.md field"));
+        }
+    }
+    Ok(fields)
+}
+/// One frontmatter value as decoded, for the scans that must see past JSON
+/// escapes.
+pub(super) struct Decoded {
+    /// Each string a JSON string, list or map holds, map keys and repeated
+    /// keys included; any other value as written.
+    pub(super) strings: Vec<String>,
+    /// Several strings in order, one per line, as the raw file shows an
+    /// unescaped list: a recovery phrase can be spread over a list's entries.
+    /// Joined text, not a record.
+    pub(super) run: Option<String>,
+}
+/// Every frontmatter field's text as decoded, by key.
+pub(super) fn decoded_frontmatter(text: &str) -> Result<Vec<(&str, Decoded)>> {
+    Ok(decoded_fields(&frontmatter_fields(text)?))
+}
+fn decoded_fields<'a>(fields: &BTreeMap<&'a str, &str>) -> Vec<(&'a str, Decoded)> {
+    fields
+        .iter()
+        .map(|(&key, value)| {
+            let strings = match serde_json::from_str::<Strings>(value) {
+                Ok(Strings(strings)) if value.starts_with(['"', '[', '{']) => strings,
+                _ => vec![(*value).to_owned()],
+            };
+            let run = (strings.len() > 1).then(|| strings.join("\n"));
+            (key, Decoded { strings, run })
+        })
+        .collect()
+}
+/// Every string a JSON value holds, decoded as serde_json decodes it.
+struct Strings(Vec<String>);
+
+impl<'de> Deserialize<'de> for Strings {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct Walk;
+        impl<'de> Visitor<'de> for Walk {
+            type Value = Vec<String>;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON value")
+            }
+            fn visit_bool<E>(self, _: bool) -> std::result::Result<Vec<String>, E> {
+                Ok(Vec::new())
+            }
+            fn visit_i64<E>(self, _: i64) -> std::result::Result<Vec<String>, E> {
+                Ok(Vec::new())
+            }
+            fn visit_u64<E>(self, _: u64) -> std::result::Result<Vec<String>, E> {
+                Ok(Vec::new())
+            }
+            fn visit_f64<E>(self, _: f64) -> std::result::Result<Vec<String>, E> {
+                Ok(Vec::new())
+            }
+            fn visit_unit<E>(self) -> std::result::Result<Vec<String>, E> {
+                Ok(Vec::new())
+            }
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Vec<String>, E> {
+                Ok(vec![value.to_owned()])
+            }
+            fn visit_seq<A: SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<Vec<String>, A::Error> {
+                let mut strings = Vec::new();
+                while let Some(Strings(item)) = seq.next_element()? {
+                    strings.extend(item);
+                }
+                Ok(strings)
+            }
+            fn visit_map<A: MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<Vec<String>, A::Error> {
+                let mut strings = Vec::new();
+                while let Some(Strings(key)) = map.next_key()? {
+                    strings.extend(key);
+                    let Strings(value) = map.next_value()?;
+                    strings.extend(value);
+                }
+                Ok(strings)
+            }
+        }
+        deserializer.deserialize_any(Walk).map(Strings)
+    }
+}
 fn scalar(value: &str, allow_controls: bool) -> Result<String> {
     let text: String = if value.starts_with('"') {
         serde_json::from_str(value).map_err(|_| invalid("invalid quoted scalar"))?
@@ -257,12 +368,6 @@ fn contact(value: &str) -> Result<String> {
     let text = scalar(value, false)?;
     if text.trim().is_empty() || text.len() > CONTACT_MAX_BYTES {
         return Err(invalid("PACK.md contact is blank or exceeds its bound"));
-    }
-    // The source scans read the raw file, where a JSON escape can hide a
-    // credential; the decoded text gets both detectors again.
-    crate::batch::secret_scan::scan_metadata_field(&text)?;
-    if crate::batch::secret_scan::scan_file_content("PACK.md", text.as_bytes()).is_some() {
-        return Err(invalid("pack source contains credential material"));
     }
     Ok(text)
 }
