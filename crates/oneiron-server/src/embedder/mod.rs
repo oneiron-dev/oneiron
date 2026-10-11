@@ -10,6 +10,7 @@
 //! on returned vectors. Two providers that differed in any of those would open
 //! two embedding spaces inside one vault.
 
+mod admitted;
 mod endpoint;
 mod remote;
 pub(crate) use local::prepare as prepare_local;
@@ -320,9 +321,12 @@ impl EmbedderSlot {
 
     /// The section's remote rung, if it configures one, held to the vault's
     /// model and to the space the vault admits from the provider
-    /// ([`Self::ensure_ready`]).
-    pub(crate) fn remote_rung(&self) -> oneiron::Result<Option<oneiron::embed::RemoteRung>> {
-        build_remote_rung(&self.config, Arc::clone(&self.rung_hold))
+    /// ([`Self::ensure_ready`]). Its batches' run rows go to `receipts`.
+    pub(crate) fn remote_rung(
+        &self,
+        receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+    ) -> oneiron::Result<Option<oneiron::embed::RemoteRung>> {
+        build_remote_rung(&self.config, Arc::clone(&self.rung_hold), receipts)
     }
 
     /// Embeds a query, or says why it cannot.
