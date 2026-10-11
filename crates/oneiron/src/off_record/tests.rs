@@ -1105,6 +1105,213 @@ fn a_rooms_failed_run_registration_sinks_the_retrieval() -> Result<()> {
     Ok(())
 }
 
+/// ARCH-0052 D5 (drift E4): in a room on record, a retrieval's opt-in run
+/// row lands in base only while the owner who put the room on record still
+/// holds, as every other landing does. Once they left the room, the row is
+/// refused in the transaction that would write it, nothing the room asked
+/// about reaches the base ledger, and the saving stops.
+#[test]
+fn a_room_retrieval_publishes_no_run_once_its_saver_left() -> Result<()> {
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let (_tmp, vault) = temp_vault();
+    seed_recallable_base_turn(&vault, "saverleftneedle");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let room = EntityId::now();
+    vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
+    vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    let session = vault.off_record_session_vault().enter_in_room(
+        "lamp",
+        OffRecordBackendClass::Local,
+        room,
+        owner,
+    )?;
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    session.flip_on_record_as(&proof)?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+    vault.leave_member(room, owner, by, 50)?;
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let error = vault
+        .query()
+        .search_text("saverleftneedle", 10)
+        .in_session(&door)
+        .run_with_telemetry()
+        .expect_err("a room whose saver left publishes no run");
+    assert!(
+        matches!(
+            error,
+            Error::OffRecord(OffRecordError::OffRecordSavingStopped { .. })
+        ),
+        "{error:?}"
+    );
+    assert_eq!(vault.retrieval_runs(64)?.len(), base_runs_before);
+    drop(door);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    Ok(())
+}
+
+/// ARCH-0052 D5 (drift E4): a retrieval in a room on record queues embed
+/// jobs for the base rows it surfaced only while its saver holds, as every
+/// other landing does. Capture is off (the default), so no run row checks
+/// the saver first: the enqueue's own transaction refuses.
+#[cfg(feature = "sync")]
+#[test]
+fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    // A claim owes its vector from the write that put it.
+    let claim = EntityId::now();
+    let body = ClaimBody::new(
+        "test.status",
+        ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("subject id")),
+        rmpv::Value::from("v"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("claim body");
+    vault
+        .batch()
+        .put(
+            &claim,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::claim::encode_claim_body(&body)?,
+        )
+        .text(&claim, &[("body", "saverleftembedneedle")])
+        .commit()?;
+    let take_job = || {
+        vault.with_write_txn(|wtxn| {
+            crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, &claim)
+        })
+    };
+    // Outside any room, the search that surfaces it queues its job.
+    let surfaced = vault
+        .query()
+        .search_text("saverleftembedneedle", 10)
+        .run_with_pending_vectors()?;
+    assert_eq!(surfaced.pending_vector_ids, vec![claim]);
+    assert!(take_job()?);
+
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let room = EntityId::now();
+    vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
+    vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    let session = vault.off_record_session_vault().enter_in_room(
+        "lamp",
+        OffRecordBackendClass::Local,
+        room,
+        owner,
+    )?;
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    session.flip_on_record_as(&proof)?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+    vault.leave_member(room, owner, by, 50)?;
+
+    let error = vault
+        .query()
+        .search_text("saverleftembedneedle", 10)
+        .in_session(&door)
+        .run_with_pending_vectors()
+        .expect_err("a room whose saver left queues no embed job");
+    assert!(
+        matches!(
+            error,
+            Error::OffRecord(OffRecordError::OffRecordSavingStopped { .. })
+        ),
+        "{error:?}"
+    );
+    assert!(
+        !take_job()?,
+        "the room queued an embed job after its saver left"
+    );
+    drop(door);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    Ok(())
+}
+
+/// ARCH-0052 D5 (drift E4; Codex burn engine-prs-02): with capture on, a
+/// run bound in a room on record searches the room, and the search matches a
+/// message nobody saved. Once the saver has left, the run row that would
+/// name it is refused in the transaction that would write it, so neither the
+/// search nor the close leaves a trace of it in base, and the saving stops.
+#[test]
+fn a_bound_runs_search_leaves_no_base_trace_once_the_saver_left() -> Result<()> {
+    use crate::code_run::{HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemorySearchCall};
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let (_tmp, vault) = temp_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let room = EntityId::now();
+    vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
+    vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    let session = vault.off_record_session_vault().enter_in_room(
+        "lamp",
+        OffRecordBackendClass::Local,
+        room,
+        owner,
+    )?;
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness_into_session_as_member(
+            &session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: None,
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: "unsavedlanternneedle".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: 10,
+            },
+            None,
+            None,
+        )
+        .unwrap_or_else(|error| panic!("the room hears the message: {error:?}"));
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    session.flip_on_record_as(&proof)?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-run")?;
+    vault.leave_member(room, owner, by, 50)?;
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let error = dispatcher
+        .dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+            "unsavedlanternneedle",
+            5,
+        )))
+        .expect_err("a room whose saver left publishes no run");
+    assert!(
+        matches!(
+            error,
+            Error::OffRecord(OffRecordError::OffRecordSavingStopped { .. })
+        ),
+        "{error:?}"
+    );
+    drop(dispatcher);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    session.close()?;
+    assert_eq!(vault.retrieval_runs(64)?.len(), base_runs_before);
+    Ok(())
+}
+
 /// A facade and a session are independent borrows, so nothing in the types
 /// stops safe code from pairing a facade on vault A with a room on vault B.
 /// That pairing would read A while staging A's run row and `result_ids` into
@@ -1431,6 +1638,7 @@ fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
             .kind(),
         ErrorKind::OffRecordTalkOnly
     );
+    drop(telemetry);
     let outcome = session.close()?;
     assert_eq!(outcome.turns_deleted, 0);
     assert_eq!(outcome.context_receipts_deleted, 0);
@@ -1486,6 +1694,7 @@ fn anonymous_telemetry_never_falls_back_to_base_even_for_existing_run_ids() -> R
                 .all(|run| run.run_id != candidate.run_id)
         );
     }
+    drop(telemetry);
     let outcome = session.close()?;
     assert_eq!(outcome.context_receipts_deleted, 0);
     Ok(())

@@ -201,6 +201,17 @@ pub(crate) fn bind_payload(server: &SyncServer, recipe: &str) -> serde_json::Val
 /// pinned against `HostSlipIssuer::binding_key` so a core KDF move fails
 /// loudly here instead of minting a signature the fold would reject.
 pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::EntityId) {
+    bind_actor(vault, secret, actor, "human");
+}
+
+/// Binds `actor` with `actor_class` under the host key derived from
+/// `secret`, as [`bind_owner`] binds a human owner.
+pub(crate) fn bind_actor(
+    vault: &oneiron::Vault,
+    secret: &str,
+    actor: oneiron::EntityId,
+    actor_class: &str,
+) {
     use ed25519_dalek::Signer;
     use oneiron::TimeRange;
     use oneiron::authority::{
@@ -251,7 +262,7 @@ pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::E
         op: AuthorityOp::BindActor {
             authority_key: host_key.clone(),
             actor_ref: actor,
-            actor_class: "human".to_owned(),
+            actor_class: actor_class.to_owned(),
             epoch: 1,
         },
         signer: AuthoritySignature {
@@ -275,9 +286,13 @@ pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::E
             },
             now,
         )
-        .expect("owner binding lands");
+        .expect("actor binding lands");
     assert!(
-        actor_binding_is_active(&vault.authority_fold().expect("refold"), &actor, "human"),
-        "fixture owner binding must fold active"
+        actor_binding_is_active(
+            &vault.authority_fold().expect("refold"),
+            &actor,
+            actor_class
+        ),
+        "fixture actor binding must fold active"
     );
 }

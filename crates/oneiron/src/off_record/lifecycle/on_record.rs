@@ -6,7 +6,7 @@
 //! someone who has left. Once they no longer hold, saving stops: the stretch
 //! goes back off record and the room hears `saving_stopped`.
 
-use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -14,7 +14,7 @@ use crate::error::{Error, OffRecordError, Result};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
 use super::registry::session_entry_state;
-use super::room::{is_member_in_txn, post_notice};
+use super::room::{Hearing, is_member_in_txn, post_notice};
 use super::session::OffRecordSession;
 use super::types::{OffRecordMode, OffRecordNoticeAct};
 
@@ -44,11 +44,12 @@ impl OnRecordSaver {
 /// in its write transaction, and one that finds the saver no longer holds
 /// is refused. Once the check drops, after that transaction, the saving
 /// stops: stopping takes the session state lock, which is never taken under
-/// the writer.
+/// the writer. The lapse is atomic so a retrieval's door, which holds one,
+/// can be shared with the async handler that runs it.
 pub(crate) struct SaverCheck<'s, 'vault> {
     session: &'s OffRecordSession<'vault>,
     saver: OnRecordSaver,
-    lapsed: Cell<bool>,
+    lapsed: AtomicBool,
 }
 
 impl SaverCheck<'_, '_> {
@@ -57,7 +58,7 @@ impl SaverCheck<'_, '_> {
         if self.saver.holds_in_txn(self.session.vault, txn)? {
             return Ok(());
         }
-        self.lapsed.set(true);
+        self.lapsed.store(true, Ordering::Relaxed);
         Err(self.session.saving_stopped(&self.saver))
     }
 }
@@ -66,11 +67,30 @@ impl Drop for SaverCheck<'_, '_> {
     fn drop(&mut self) {
         // The refusal stands whatever the stop meets; the next landing tries
         // again.
-        if self.lapsed.get()
+        if self.lapsed.load(Ordering::Relaxed)
             && let Err(error) = self.session.stop_saving(&self.saver)
         {
             tracing::warn!(error = %error, "a room on record lost its saver; the stop is deferred");
         }
+    }
+}
+
+/// A base write's first step in its transaction: the route it was taken on
+/// still stands and, in a room on record, its saver still holds.
+pub(super) struct Landing<'r, 's, 'vault> {
+    pub(super) route: &'r SessionWriteRoute,
+    saver: Option<SaverCheck<'s, 'vault>>,
+}
+
+impl Landing<'_, '_, '_> {
+    pub(super) fn in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if let Some(saver) = &self.saver {
+            saver.in_txn(txn)?;
+        }
+        // The route is checked again here, not only before the writer: a
+        // room that went off record, or whose saving stopped, while this
+        // write waited for the writer keeps nothing of it.
+        self.route.revalidate()
     }
 }
 
@@ -116,12 +136,12 @@ impl<'vault> OffRecordSession<'vault> {
                 room,
                 owner: owner.clone(),
             });
-            let at = self.vault.store.clock.now_recorded_at();
+            let hearing = Hearing::now(self.vault, state.record.room);
             post_notice(
                 &mut state,
                 OffRecordNoticeAct::SavingFromHere,
                 owner.actor(),
-                at,
+                hearing,
             );
             self.entry.publish_state(&state);
         }
@@ -162,11 +182,23 @@ impl<'vault> OffRecordSession<'vault> {
         Ok(Some(self.check_saver(saver)))
     }
 
+    /// The [`Landing`] a base write on `route`, a route taken earlier, runs
+    /// first in its transaction.
+    pub(super) fn landing<'r>(
+        &self,
+        route: &'r SessionWriteRoute,
+    ) -> Result<Landing<'r, '_, 'vault>> {
+        Ok(Landing {
+            route,
+            saver: self.saver_check_for(route)?,
+        })
+    }
+
     fn check_saver(&self, saver: OnRecordSaver) -> SaverCheck<'_, 'vault> {
         SaverCheck {
             session: self,
             saver,
-            lapsed: Cell::new(false),
+            lapsed: AtomicBool::new(false),
         }
     }
 
@@ -200,12 +232,12 @@ impl<'vault> OffRecordSession<'vault> {
             &self.session_ref,
             OffRecordMode::OffRecord,
         )?;
-        let at = self.vault.store.clock.now_recorded_at();
+        let hearing = Hearing::now(self.vault, state.record.room);
         post_notice(
             &mut state,
             OffRecordNoticeAct::SavingStopped,
             saver.owner.actor(),
-            at,
+            hearing,
         );
         self.entry.publish_state(&state);
         Ok(())
