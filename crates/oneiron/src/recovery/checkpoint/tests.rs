@@ -692,24 +692,41 @@ fn a_side_restore_source_never_reopens_a_vault_this_process_holds() {
     assert!(SideRestoreSource::read(&root.path().join("renamed")).is_ok());
 }
 
-/// How many `fcntl` record locks this process holds on `lock_file`, from
-/// `/proc/locks`; zero where there is none to read.
+/// How many `fcntl` record locks this process holds on `lock_file`, from the
+/// `lock:` lines of `/proc/self/fdinfo` for each descriptor it has on the
+/// file; zero where there is none to read.
+///
+/// The kernel writes those lines in one pass over the file's own lock list.
+/// `/proc/locks` is no count to compare: it is read a page at a time, by
+/// position in lists every process on the host adds to and removes from, so
+/// while other tests lock their vaults a line of this process comes back
+/// twice or not at all.
 fn lmdb_locks_held(lock_file: &Path) -> usize {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::MetadataExt;
-        let inode = std::fs::metadata(lock_file).unwrap().ino().to_string();
-        let pid = std::process::id().to_string();
-        std::fs::read_to_string("/proc/locks")
+        // Reads metadata alone, through the descriptor's own link too: no
+        // descriptor of the file is opened here, so none is closed.
+        let file = |path: &Path| {
+            std::fs::metadata(path)
+                .ok()
+                .map(|metadata| (metadata.dev(), metadata.ino()))
+        };
+        let lock_file = file(lock_file).expect("the lock file is there");
+        std::fs::read_dir("/proc/self/fd")
             .unwrap()
-            .lines()
-            .map(|line| line.split_whitespace().collect::<Vec<_>>())
-            .filter(|fields| fields.get(1) == Some(&"POSIX"))
-            .filter(|fields| fields.get(4) == Some(&pid.as_str()))
-            .filter(|fields| {
-                fields.get(5).and_then(|id| id.rsplit(':').next()) == Some(inode.as_str())
+            .filter_map(|descriptor| descriptor.ok())
+            .filter(|descriptor| file(&descriptor.path()) == Some(lock_file))
+            .map(|descriptor| {
+                // A descriptor closed since the listing took its locks with it.
+                std::fs::read_to_string(Path::new("/proc/self/fdinfo").join(descriptor.file_name()))
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("lock:"))
+                    .filter(|lock| lock.split_whitespace().nth(1) == Some("POSIX"))
+                    .count()
             })
-            .count()
+            .sum()
     }
     #[cfg(not(target_os = "linux"))]
     {
