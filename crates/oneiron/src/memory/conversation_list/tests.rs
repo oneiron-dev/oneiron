@@ -1133,8 +1133,9 @@ fn a_room_turned_direct_during_a_list_keeps_its_bound() {
 /// A message keeps its own place in a room's history whatever turn quotes
 /// it: a later turn that also links a message from before the reader joined
 /// never previews it for the late joiner, though the owner's preview quotes
-/// it (Astra #1388b P1). One that also sits in another room is not quoted
-/// either, and the list still reads (Sol R4-F1).
+/// it (Astra #1388b P1). One that also sits in another room, or whose
+/// links pass the audience walk's bound, is not quoted either, and the list
+/// still reads (Sol R4-F1, R5-F1).
 #[test]
 fn a_pre_join_message_a_later_turn_links_stays_hidden() {
     use crate::conversation::{ConversationBody, HistoryChoice};
@@ -1218,6 +1219,18 @@ fn a_pre_join_message_a_later_turn_links_stays_hidden() {
         .edge(&foreign, crate::EdgeKind::PartOf, &new, 1.0)
         .commit()
         .expect("the later turn links another room's message");
+    assert_eq!(preview_of(&memory, room), None);
+    // Past the audience walk's edge bound the message has no one room
+    // either (Sol R5-F1).
+    let mut links = vault.batch();
+    for n in 0..crate::limits::MAX_ANCESTOR_DEPTH as u128 {
+        let elsewhere =
+            EntityId::from_bytes(((0x82_u128 << 120) | n).to_be_bytes()).expect("a turn id");
+        links = links.edge(&foreign, crate::EdgeKind::PartOf, &elsewhere, 1.0);
+    }
+    links
+        .commit()
+        .expect("the message is linked past the walk's bound");
     assert_eq!(preview_of(&memory, room), None);
 }
 
