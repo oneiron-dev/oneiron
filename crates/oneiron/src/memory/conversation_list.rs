@@ -460,8 +460,9 @@ impl Memory<'_> {
     /// the audience check judges it by its own time (Astra #1388b P1). A
     /// message the check cannot place in one room is not quoted, and the
     /// list goes on: one another room's turn links too, or whose ancestry
-    /// passes the walk's bounds (Sol R4-F1, R5-F1). Only the store failing,
-    /// or a corrupt index, fails the list.
+    /// passes the walk's bounds (Sol R4-F1, R5-F1). Only a broken store, a
+    /// corrupt index or side-table row, or a broken invariant fails the list
+    /// (Sol R6-F1).
     fn quoted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -483,7 +484,9 @@ impl Memory<'_> {
                             error @ (Error::Storage(_)
                             | Error::Io(_)
                             | Error::MapFull
-                            | Error::CorruptedIndex(_)),
+                            | Error::Store(_)
+                            | Error::CorruptedIndex(_)
+                            | Error::InvariantViolation(_)),
                         ) => return Err(error.into()),
                         Err(_) => false,
                     }
