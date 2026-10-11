@@ -447,6 +447,75 @@ async fn a_block_that_changes_while_it_is_scored_takes_none_of_the_stale_scores(
     );
 }
 
+/// An EVENT whose words are `text`, as recall reads a row that is not a
+/// claim.
+fn put_event(vault: &oneiron::Vault, id: &oneiron::EntityId, text: &str) {
+    let body = rmp_serde::to_vec_named(&json!({ "content": text })).unwrap();
+    vault
+        .batch()
+        .put(
+            id,
+            oneiron::registry::ENTITY_TYPE_EVENT,
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+            &body,
+        )
+        .text(id, &[("body", text)])
+        .commit()
+        .unwrap();
+}
+
+/// Review repro (Sol round 1, F1): the scores are for the words the
+/// reranker read. A row whose words change while it is scored without its
+/// retrieval score changing (the same words, reordered) takes none of the
+/// first call's scores: the block is scored again on the words it holds now.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_row_whose_words_change_while_it_is_scored_takes_none_of_the_stale_scores() {
+    const FIRST: &str = "lantern repair stand";
+    const REORDERED: &str = "stand repair lantern";
+    let event = oneiron::EntityId::now();
+    let vault = Arc::new(Mutex::new(None::<Arc<oneiron::Vault>>));
+    let hook = {
+        let vault = Arc::clone(&vault);
+        Arc::new(move |call: usize| {
+            if call == 1
+                && let Some(vault) = vault.lock().unwrap().clone()
+            {
+                put_event(&vault, &event, REORDERED);
+            }
+        }) as OnCall
+    };
+    // The first call prefers the event's first words; later calls prefer
+    // the known passage.
+    let score: Score = Arc::new(|call, document| match call {
+        1 if document.contains(FIRST) => 100.0,
+        1 => 0.0,
+        _ if document.contains("brass") => 100.0,
+        _ => 0.0,
+    });
+    let fake = FakeReranker::start(score, hook, 50).await;
+    let models = reranker_models(&fake.base_url, 32_000);
+    let (_dir, server, _host, _) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-words").await;
+    put_event(server.vault(), &event, FIRST);
+    *vault.lock().unwrap() = Some(Arc::clone(server.vault()));
+
+    let pack = recall(&server, "rerank-words", actor, "high")
+        .await
+        .unwrap();
+    assert!(
+        fake.seen()[0]["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|document| document.as_str().unwrap().contains(FIRST)),
+        "the first call read the event's first words"
+    );
+    assert_eq!(fake.calls(), 2, "{pack}");
+    assert_eq!(rank_of_known(&pack), 0, "{pack}");
+    assert_eq!(pack["retrieval_meta"]["rerank"]["calls"], 2, "{pack}");
+}
+
 const PPLX_REPO: &str = "perplexity-ai/pplx-embed-v1-0.6b";
 const PPLX_REVISION: &str = "2c4d510dd4a732063c31a0f70193e35067b51fd8";
 /// Shares no word with [`PARAPHRASED`]: only the dense signal finds it.

@@ -95,8 +95,11 @@ impl SyncServer {
             BudgetExhaustionPolicy::Suspend,
             WriteActor::new(actor, class),
         )?;
+        // Taken for the rerank purpose, as each rung's permit is, so a policy
+        // row that funds that purpose funds this check too.
+        let purpose = rerank_request("", &[], ModelLocality::OwnServer);
         let lease = meter
-            .admit()
+            .admit_for_request(&purpose)
             .and_then(|admission| meter.abort(&admission.lease).map(|_| admission.lease))
             .map_err(spent)?;
         Ok(DoorRerank::Served(ServedRerank {

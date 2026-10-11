@@ -5,19 +5,21 @@
 //! The engine runs no model under a vault transaction, so a paid recall runs
 //! twice. The first pass stops at the rerank stage and keeps the exact block
 //! it would rerank: the admitted top-N candidates with their scores, ranks and
-//! claim bodies, and each candidate's text as the reader's own scoped read
-//! serves it. The host scores that block outside every transaction, under its
-//! own admission and lease. The second pass runs with those scores as a
-//! prepared reranker, which applies them only to the same block: a block that
-//! changed in between takes none of them, and the door scores the new block
-//! once more before it refuses.
+//! claim bodies. Each candidate's text is then read through the reader's own
+//! scoped read, a claim's too, so nothing the reader may no longer read
+//! leaves. The host scores those texts outside every transaction, under its
+//! own admission and lease. The second pass runs with the scores as a
+//! prepared reranker, which applies them only to the same block, and the
+//! texts are read again after it: a block or a text that changed in between
+//! takes none of the scores, and the door scores the new block once more
+//! before it refuses.
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Effort, MemoryPack, RecallScope, companion_value_to_json, truncate_text, value_text_of};
+use super::{Effort, MemoryPack, RecallScope, truncate_text};
 use crate::claim::{ClaimBody, ClaimReadStatus};
 use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
@@ -368,6 +370,16 @@ impl Memory<'_> {
                 },
             );
             match second {
+                // The scores were for these texts: a candidate the reader's
+                // read now serves other words for took scores it was not given.
+                Ok(_)
+                    if prepared.applied.load(Ordering::Relaxed)
+                        && self.rerank_documents(scope, &block)? != texts =>
+                {
+                    if let Some(fallback) = answered(deadline.as_ref()) {
+                        return Ok(fallback.clone());
+                    }
+                }
                 Ok(mut pack) => {
                     pack.retrieval_meta.rerank = Some(report(&pack));
                     return Ok(pack);
@@ -387,10 +399,10 @@ impl Memory<'_> {
         ))
     }
 
-    /// Each block candidate's text as this reader's recall shows it: a
-    /// claim's from the body the recall admitted, any other row's from the
-    /// reader's own scoped read of it. A row that read no longer finds is
-    /// sent empty, and scores last.
+    /// Each block candidate's text as this reader's recall shows it, read
+    /// now through the reader's own scoped read: a claim as its predicate and
+    /// redacted value, any other row as its words. A row that read no longer
+    /// admits is sent empty, and scores last; nothing it holds leaves.
     fn rerank_documents(
         &self,
         scope: &RecallScope,
@@ -403,25 +415,22 @@ impl Memory<'_> {
         let mut receipt = lane.read_receipt(None, 0)?;
         let mut texts = Vec::with_capacity(block.len());
         for candidate in block {
-            let text = match &candidate.claim {
-                Some(body) => format!(
-                    "{}: {}",
-                    body.predicate,
-                    value_text_of(&companion_value_to_json(&body.value))
-                ),
-                None => match self.memory_item_for(
-                    &lane,
-                    &candidate.id,
-                    None,
-                    crate::vault::ReadMode::Indexed,
-                    &[],
-                    &mut receipt,
-                ) {
-                    Ok(item) => item.map(|item| item.value_text).unwrap_or_default(),
-                    Err(error) if error.code == MEMORY_CODE_NOT_FOUND => String::new(),
-                    Err(error) => return Err(error),
-                },
+            let item = match self.memory_item_for(
+                &lane,
+                &candidate.id,
+                None,
+                crate::vault::ReadMode::Indexed,
+                &[],
+                &mut receipt,
+            ) {
+                Ok(item) => item,
+                Err(error) if error.code == MEMORY_CODE_NOT_FOUND => None,
+                Err(error) => return Err(error),
             };
+            let text = item.map_or_else(String::new, |item| match item.predicate {
+                Some(predicate) => format!("{predicate}: {}", item.value_text),
+                None => item.value_text,
+            });
             texts.push(truncate_text(&text, RERANK_DOCUMENT_CHARS));
         }
         Ok(texts)

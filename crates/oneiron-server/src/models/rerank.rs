@@ -91,18 +91,14 @@ fn parts(request: &LlmRequest) -> Option<(&str, Vec<&str>)> {
     else {
         return None;
     };
-    let text = |part: &'_ ContentPart| match part {
-        ContentPart::Text { text } => Some(text.as_str()),
-        _ => None,
-    };
     let [query] = query.content.as_slice() else {
         return None;
     };
-    let query = text(query)?;
+    let query = part_text(query)?;
     let documents = documents
         .content
         .iter()
-        .map(text)
+        .map(part_text)
         .collect::<Option<Vec<_>>>()?;
     let refused = query.trim().is_empty()
         || documents.is_empty()
@@ -111,6 +107,13 @@ fn parts(request: &LlmRequest) -> Option<(&str, Vec<&str>)> {
         || !request.params.is_empty()
         || !request.provider_options.is_empty();
     (!refused).then_some((query, documents))
+}
+
+fn part_text(part: &ContentPart) -> Option<&str> {
+    match part {
+        ContentPart::Text { text } => Some(text),
+        _ => None,
+    }
 }
 
 /// One provider's rerank client. It serves the reranker rungs on that

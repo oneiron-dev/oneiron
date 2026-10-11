@@ -191,7 +191,11 @@ impl ModelRuntime {
                     referenced_models(config, name)
                 };
                 for model in models {
-                    if let Some(rung) = rung(name, provider, backend, &model, 0, None, rerank) {
+                    if let Some(rung) = rung(name, provider, backend, &model, 0, None, rerank)
+                        // A model that also serves a chat role keeps its raw
+                        // chat route; the reranker reaches it through its seat.
+                        && !(rerank && router.served(&rung.model).is_some())
+                    {
                         router.insert(
                             rung.model.clone(),
                             provider.locality,
