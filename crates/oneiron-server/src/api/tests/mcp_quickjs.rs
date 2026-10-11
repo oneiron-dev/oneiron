@@ -47,6 +47,12 @@ impl SeatJudge for Judge {
         })
     }
 }
+// One request per call: the provider's run gate wraps it.
+impl oneiron::llm::SingleRouteBackend for Backend {
+    fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+        Ok(())
+    }
+}
 impl LlmBackend for Backend {
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         self.requests.lock().unwrap().push(request);
@@ -105,6 +111,7 @@ pub(super) struct CodeMode {
     backend: Arc<Backend>,
     judge: Arc<Judge>,
     seat_model: ModelId,
+    receipts: Arc<oneiron::llm::run_admission::MemoryReceipts>,
     _dir: tempfile::TempDir,
 }
 
@@ -203,10 +210,15 @@ pub(super) fn code_mode_server_with(
         scripts: Mutex::new(scripts.into()),
         requests: Mutex::new(Vec::new()),
     });
+    let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
     let provider = crate::mcp::McpQuickJsProvider::new(
         Arc::new(factory()),
         backend.clone(),
-        BudgetLease::for_test("quickjs-wire"),
+        oneiron::BudgetGuard::new(
+            "quickjs-wire",
+            1_000_000,
+            oneiron::BudgetExhaustionPolicy::Suspend,
+        ),
         EngineExecutorConfig {
             run_id: seeded_test_entity_id(0x0024_6504),
             task: "template".into(),
@@ -244,7 +256,9 @@ pub(super) fn code_mode_server_with(
             },
         )
         .unwrap()
-        .with_mcp_quickjs_provider(provider),
+        .with_mcp_quickjs_provider(provider)
+        // Chosen after the provider is attached: its calls still write here.
+        .with_run_receipts(receipts.clone()),
     );
     CodeMode {
         server,
@@ -253,6 +267,7 @@ pub(super) fn code_mode_server_with(
         backend,
         judge,
         seat_model,
+        receipts,
         _dir: dir,
     }
 }
@@ -276,6 +291,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         backend,
         judge,
         seat_model,
+        receipts,
         _dir,
         ..
     } = code_mode_server(scripts);
@@ -356,6 +372,20 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
             assert_eq!(request.envelope.seat_effort, Some(ReasoningEffort::High));
         }
     }
+    // The host's own model goes through a run's gate too: each of the two
+    // provider calls was admitted, dispatched and settled on its own permit.
+    let events: Vec<&str> = receipts
+        .rows()
+        .iter()
+        .map(|row| match row.event {
+            oneiron::llm::run_admission::RunEvent::Admitted(_) => "admitted",
+            oneiron::llm::run_admission::RunEvent::Dispatched { .. } => "dispatched",
+            oneiron::llm::run_admission::RunEvent::Settled { .. } => "settled",
+            _ => "other",
+        })
+        .collect();
+    let call = ["admitted", "dispatched", "settled"];
+    assert_eq!(events, [call, call].concat());
     for result in &results {
         assert_eq!(result["bridge_calls"], 1);
     }
@@ -637,6 +667,17 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Proposed);
 }
 
+/// What `initialize` on `path` says of `label` running code there.
+async fn code_admitted(mode: &CodeMode, path: &str, label: &str) -> Value {
+    let request = json!({ "jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {} });
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_request(path, label, request),
+    )
+    .await;
+    body["result"]["executeCodeAdmitted"].clone()
+}
+
 /// Done means (ARCH-0028 propose-only, #1360): the verb-table rows a run
 /// answers itself (`self.memory.put_claim`, `supersede_claim`, `put_edge`)
 /// write from no propose-only slip. `execute_code` needs write, so a slip
@@ -752,6 +793,53 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         "a refused run reaches no model"
     );
     assert!(mode.vault.get_claim(&claim).unwrap().is_none());
+    // So `/mcp` tells it, and a read-only slip, that they may not run code,
+    // and the stdio bridge keeps them on the tool-first verbs (drift E4, Astra).
+    assert_eq!(code_admitted(&mode, "/mcp", label).await, json!(false));
+    let reader = seeded_test_entity_id(0x0024_65a6);
+    mode.vault
+        .put_entity(
+            &reader,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"read-only actor",
+        )
+        .unwrap();
+    pair_mcp_credential(
+        &mode.server,
+        "quickjs-read-only",
+        reader,
+        oneiron::EdgeActorClass::Human,
+        &crate::mcp::McpConnectorScope::vault_wide(),
+    );
+    let mut reads = oneiron::federation::Scope::top();
+    reads.verbs = oneiron::federation::ScopeAxis::Some(["core:read".to_owned()].into());
+    let token = attenuate_mcp_credential(
+        &mode.server,
+        "quickjs-read-only",
+        oneiron::authority::SlipCaveat {
+            scope: Some(reads),
+            ..Default::default()
+        },
+    );
+    mode.server
+        .mcp_registry
+        .lock()
+        .await
+        .register(
+            &token,
+            crate::mcp::McpConnectorActorRecord::new(
+                reader,
+                oneiron::EdgeActorClass::Human,
+                crate::mcp::McpConnectorScope::vault_wide(),
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        code_admitted(&mode, "/mcp", "quickjs-read-only").await,
+        json!(false)
+    );
 
     let writer = seeded_test_entity_id(0x0024_65a5);
     register_mcp_actor(
@@ -761,6 +849,14 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    assert_eq!(
+        code_admitted(&mode, "/mcp", "quickjs-writer").await,
+        json!(true)
+    );
+    assert_eq!(
+        code_admitted(&mode, MCP_TOOL_FIRST_PATH, "quickjs-writer").await,
+        json!(false)
+    );
     let args = mcp_merge_args(
         mcp_endpoint_envelope(writer, "write_memory"),
         json!({"run_ref": "quickjs-full-access", "task": "state a favorite drink"}),

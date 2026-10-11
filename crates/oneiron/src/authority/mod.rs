@@ -37,7 +37,9 @@ mod first_seen_clock;
 mod fold_engine;
 mod fold_state;
 mod history_transfer;
+mod host_re_root;
 mod ingest_observation;
+mod machine_enroll;
 mod machine_write;
 mod mesh_machine;
 mod observation_policy;
@@ -98,6 +100,7 @@ pub use checkpoint::*;
 pub use fold_engine::*;
 pub use fold_state::*;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
+pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
@@ -117,12 +120,13 @@ pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
 pub(crate) use first_seen_clock::*;
+pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
+use readonly_fold::authority_view_readonly_for_store_in_txn;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
-use readonly_fold::{AuthorityView, authority_view_readonly_for_store_in_txn};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.

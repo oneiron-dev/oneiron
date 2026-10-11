@@ -21,7 +21,7 @@ use oneiron_organ_protocol::{
 
 use crate::error::HostError;
 use crate::fetch;
-use crate::receipt::{AskReceipt, FetchTarget, Unanswered, bound_text, digest};
+use crate::receipt::{AskReceipt, FetchTarget, SignedReceipt, Unanswered, bound_text, digest};
 use crate::spec::{FetchGrant, OrganSpec};
 
 const MAX_DETAIL_BYTES: usize = 512;
@@ -51,6 +51,19 @@ pub struct AskRequest<'a> {
     pub max_bytes: u64,
     /// The install grant's fetch allowlist.
     pub fetch: &'a FetchGrant,
+    /// What a key signed for this ask, for the receipt.
+    pub(crate) signing: &'a Mutex<Option<SignedReceipt>>,
+}
+
+impl AskRequest<'_> {
+    /// Puts a signature on the ask's receipt line, in the host's own words.
+    /// Record it before the key signs, then again with the signature's
+    /// hash: the line keeps the last one however the ask ends, refused,
+    /// unsent or panicked, so a key that signed and then failed still
+    /// leaves its prehash on record.
+    pub fn record_signing(&self, signed: SignedReceipt) {
+        *self.signing.lock().unwrap_or_else(PoisonError::into_inner) = Some(signed);
+    }
 }
 
 /// A handler's answer.
@@ -173,7 +186,11 @@ pub(crate) struct CallAsks<'a> {
     bytes_left: u64,
     /// Answer bytes lent so far, values and data.
     lent: u64,
+    /// What the last ask's answer lent, given back if it is not sent.
+    lent_last: u64,
     refused_past_cap: bool,
+    /// What the running handler's key signed, until its line settles.
+    signing: Mutex<Option<SignedReceipt>>,
     pub(crate) receipts: Vec<AskReceipt>,
 }
 
@@ -197,7 +214,9 @@ impl<'a> CallAsks<'a> {
             per_verb: HashMap::new(),
             bytes_left: spec.max_ask_bytes.min(spec.call_memory_bytes),
             lent: 0,
+            lent_last: 0,
             refused_past_cap: false,
+            signing: Mutex::new(None),
             receipts: Vec::new(),
         }
     }
@@ -214,6 +233,7 @@ impl<'a> CallAsks<'a> {
     /// none the handler is not run and the ask is refused, retryable.
     pub(crate) fn take(&mut self, ask: Ask, watched: bool) -> AskStep {
         let started = Instant::now();
+        self.lent_last = 0;
         let mut line = line(&ask);
         // One budget refusal, of either kind; any ask after it ends the call.
         if self.refused_past_cap {
@@ -279,6 +299,7 @@ impl<'a> CallAsks<'a> {
             deadline: self.deadline,
             max_bytes: self.bytes_left,
             fetch: &self.spec.fetch,
+            signing: &self.signing,
         };
         // On record while the handler runs, so a handler that panics leaves
         // its line; the settled line replaces it once the handler returns.
@@ -291,6 +312,12 @@ impl<'a> CallAsks<'a> {
         };
         self.receipts.pop();
         line.handler_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        // A signature is on record whether or not it is delivered.
+        line.signed = self
+            .signing
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         match answered {
             Ok(answered) => self.answer(&ask, line, answered),
             Err(refusal) => self.refuse(&ask, line, refusal),
@@ -299,16 +326,21 @@ impl<'a> CallAsks<'a> {
 
     /// An ask the host took but did not run: its call was ending.
     pub(crate) fn skipped(&mut self, ask: &Ask) {
+        self.lent_last = 0;
         let mut line = line(ask);
         line.unanswered = Some(Unanswered::NotRun);
         self.receipts.push(line);
     }
 
-    /// The last ask's handler ran, but its answer was not sent.
+    /// The last ask's handler ran, but its answer was not sent: the organ
+    /// was lent none of its bytes.
     pub(crate) fn unsent(&mut self) {
         if let Some(line) = self.receipts.last_mut() {
             line.unanswered.get_or_insert(Unanswered::NotSent);
         }
+        self.lent -= self.lent_last;
+        self.bytes_left += self.lent_last;
+        self.lent_last = 0;
     }
 
     fn answer(&mut self, ask: &Ask, mut line: AskReceipt, answered: Answered) -> AskStep {
@@ -363,6 +395,7 @@ impl<'a> CallAsks<'a> {
         };
         self.bytes_left -= charged;
         self.lent += charged;
+        self.lent_last = charged;
         line.answer_digest = Some(digest(&value));
         self.receipts.push(line);
         let answer = AskAnswer {
@@ -387,8 +420,17 @@ impl<'a> CallAsks<'a> {
 }
 
 impl Drop for CallAsks<'_> {
-    /// Hands the call's lines to its handlers, however the call ended.
+    /// Hands the call's lines to its handlers, however the call ended. A
+    /// handler that panicked keeps what its key signed on its line.
     fn drop(&mut self) {
+        let signing = self
+            .signing
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let (Some(signed), Some(line)) = (signing, self.receipts.last_mut()) {
+            line.signed = Some(signed);
+        }
         self.handlers
             .asked
             .lock()
@@ -410,5 +452,6 @@ fn line(ask: &Ask) -> AskReceipt {
         fetch: None,
         handler_us: 0,
         unanswered: None,
+        signed: None,
     }
 }
