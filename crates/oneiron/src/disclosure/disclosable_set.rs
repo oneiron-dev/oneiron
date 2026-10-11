@@ -99,13 +99,33 @@ pub(crate) fn discloses_raw(
         scope,
         path: BTreeSet::new(),
         judged: BTreeSet::new(),
+        pending: 0,
     }
     .discloses(id, raw)
 }
 
-/// How many records one P7 decision may follow: room for a summary's whole
-/// covers list and its messages, each bounded by `MAX_ANCESTOR_DEPTH`.
+/// How many records one P7 decision may follow, and how many it may hold
+/// waiting: room for a summary's whole covers list and its messages, each
+/// bounded by `MAX_ANCESTOR_DEPTH`.
 const MAX_WORD_CLOSURE: usize = 4 * MAX_ANCESTOR_DEPTH;
+
+/// One record a revision's words may have come from, and how its row reads.
+#[derive(Clone, Copy)]
+enum WordSource {
+    /// A word source: one that no longer resolves discloses nothing.
+    Word(EntityId),
+    /// A record `PartOf` a TURN: only a live, nonempty MESSAGE carries
+    /// words.
+    Part(EntityId),
+}
+
+impl WordSource {
+    fn id(self) -> EntityId {
+        match self {
+            Self::Word(id) | Self::Part(id) => id,
+        }
+    }
+}
 
 /// One P7 decision's walk over the records whose words a revision carries.
 struct WordClosure<'a> {
@@ -118,41 +138,57 @@ struct WordClosure<'a> {
     /// Every record entered so far; each passed or is on the path, or the
     /// walk has stopped.
     judged: BTreeSet<EntityId>,
+    /// Sources gathered and not yet visited.
+    pending: usize,
 }
 
 impl WordClosure<'_> {
-    /// Walks the closure depth first on a heap stack, never the call stack:
-    /// a closure as deep as its budget must deny, not overflow.
+    /// Walks the closure depth first on a heap stack, never the call stack,
+    /// reading one source row at a time: a closure as deep or as wide as
+    /// its budget must deny, not overflow.
     fn discloses(&mut self, id: EntityId, raw: &[u8]) -> Result<bool> {
         let Some(sources) = self.enter(id, raw)? else {
             return Ok(false);
         };
         let mut stack = vec![(id, sources.into_iter())];
         while let Some((node, sources)) = stack.last_mut() {
-            let Some((source, raw)) = sources.next() else {
+            let Some(source) = sources.next() else {
                 let node = *node;
                 self.path.remove(&node);
                 stack.pop();
                 continue;
             };
-            if self.path.contains(&source) {
-                return Ok(false);
-            }
-            if self.judged.contains(&source) {
+            self.pending -= 1;
+            let id = source.id();
+            if self.judged.contains(&id) && !self.path.contains(&id) {
                 continue;
             }
-            let Some(next) = self.enter(source, &raw)? else {
+            let raw = match (source, self.vault.store.port_entity_record(self.txn, &id)?) {
+                (WordSource::Word(_), None) => return Ok(false),
+                (WordSource::Part(_), None) => continue,
+                (WordSource::Part(_), Some(row))
+                    if row.entity_type != ENTITY_TYPE_MESSAGE || row.body.is_empty() =>
+                {
+                    continue;
+                }
+                (_, Some(row)) => row.encode(),
+            };
+            if self.path.contains(&id) {
+                return Ok(false);
+            }
+            let Some(next) = self.enter(id, &raw)? else {
                 return Ok(false);
             };
-            stack.push((source, next.into_iter()));
+            stack.push((id, next.into_iter()));
         }
         Ok(true)
     }
 
-    /// Judges `id`'s own stamp and gathers each record its words came from,
-    /// with its row, putting `id` on the path. `None` when `id` is not
-    /// disclosed: its stamp, a source that no longer resolves, or the budget.
-    fn enter(&mut self, id: EntityId, raw: &[u8]) -> Result<Option<Vec<(EntityId, Vec<u8>)>>> {
+    /// Judges `id`'s own stamp and gathers each record its words may have
+    /// come from, putting `id` on the path. `None` when `id` is not
+    /// disclosed: its stamp, a summary that no longer resolves, or the
+    /// budget.
+    fn enter(&mut self, id: EntityId, raw: &[u8]) -> Result<Option<Vec<WordSource>>> {
         self.judged.insert(id);
         if self.judged.len() > MAX_WORD_CLOSURE {
             return Ok(None);
@@ -163,19 +199,12 @@ impl WordClosure<'_> {
         {
             return Ok(None);
         }
-        let mut sources = Vec::new();
-        match crate::scope_summary::word_sources_in(self.vault, self.txn, &id, raw)? {
-            WordSources::Own => {}
-            WordSources::From(ids) => {
-                for source in ids {
-                    let Some(row) = store.port_entity_record(self.txn, &source)? else {
-                        return Ok(None);
-                    };
-                    sources.push((source, row.encode()));
-                }
-            }
-            WordSources::Unresolved => return Ok(None),
-        }
+        let mut sources =
+            match crate::scope_summary::word_sources_in(self.vault, self.txn, &id, raw)? {
+                WordSources::Own => Vec::new(),
+                WordSources::From(ids) => ids.into_iter().map(WordSource::Word).collect(),
+                WordSources::Unresolved => return Ok(None),
+            };
         if EntityMetadataHeader::parse(raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
         {
@@ -186,15 +215,16 @@ impl WordClosure<'_> {
                 Some(EdgeKind::PartOf),
                 None,
             )? {
-                let message = part?.target;
-                let Some(row) = store.port_entity_record(self.txn, &message)? else {
-                    continue;
-                };
-                if row.entity_type == ENTITY_TYPE_MESSAGE && !row.body.is_empty() {
-                    sources.push((message, row.encode()));
+                if self.pending + sources.len() >= MAX_WORD_CLOSURE {
+                    return Ok(None);
                 }
+                sources.push(WordSource::Part(part?.target));
             }
         }
+        if self.pending + sources.len() > MAX_WORD_CLOSURE {
+            return Ok(None);
+        }
+        self.pending += sources.len();
         self.path.insert(id);
         Ok(Some(sources))
     }

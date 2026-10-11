@@ -130,9 +130,6 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
             b"agent",
         )?;
     }
-    // The agent is the vault's own: it adds no clearance term.
-    crate::test_util::bind_test_agent(&vault, agent);
-    crate::test_util::bind_test_owner(&vault, owner);
     let fiction = id(0x42);
     // The agent's grant holds base only, so the room reads base reality. The
     // stranger, not yet a member, holds the fiction world alone.
@@ -147,6 +144,10 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
     let room = EntityId::from_hex(&record.home_room)?;
     let elsewhere = EntityId::from_hex(&project_room(&vault, owner, &[])?.1.home_room)?;
+    // Binding roots the vault, so it follows the projects' implicit births.
+    // The agent is the vault's own: it adds no clearance term.
+    crate::test_util::bind_test_agent(&vault, agent);
+    crate::test_util::bind_test_owner(&vault, owner);
     let host = vault.memory(owner, EdgeActorClass::Human);
     let hex_of = |input: ClaimInput| {
         let receipt = host.claim_upsert(&input).expect("note");
@@ -288,9 +289,6 @@ fn a_member_who_joins_mid_read_binds_the_rows_it_serves() -> Result<()> {
             b"agent",
         )?;
     }
-    // The agent is the vault's own: it adds no clearance term.
-    crate::test_util::bind_test_agent(&vault, agent);
-    crate::test_util::bind_test_owner(&vault, owner);
     // The room reads base reality. The stranger holds the fiction world
     // alone, so once it joins the room reads no world at all.
     let fiction = id(0x62);
@@ -303,6 +301,10 @@ fn a_member_who_joins_mid_read_binds_the_rows_it_serves() -> Result<()> {
     )?;
     crate::test_util::authorize_readers(&vault, &[&agent.to_hex(), &stranger.to_hex()]);
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    // Binding roots the vault, so it follows the projects' implicit births.
+    // The agent is the vault's own: it adds no clearance term.
+    crate::test_util::bind_test_agent(&vault, agent);
+    crate::test_util::bind_test_owner(&vault, owner);
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let receipt = host
@@ -352,11 +354,12 @@ fn a_member_who_leaves_mid_read_still_binds_the_rows_it_serves() -> Result<()> {
         1,
         b"agent",
     )?;
+    let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    // Binding roots the vault, so it follows the projects' implicit births.
     // The agent is the vault's own, so it adds no clearance term, and it
     // holds no read grant, so its own read withholds the note.
     crate::test_util::bind_test_agent(&vault, agent);
     crate::test_util::bind_test_owner(&vault, owner);
-    let (project, mut record) = project_room(&vault, owner, &[agent])?;
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let receipt = host
@@ -417,12 +420,13 @@ fn a_room_lane_rebuilds_its_ceiling_only_for_a_new_member() -> Result<()> {
             b"agent",
         )?;
     }
+    let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    // Binding roots the vault, so it follows the projects' implicit births.
     // Both are the vault's own agents: neither adds a clearance term, so
     // only the ceiling's rebuild is under test.
     crate::test_util::bind_test_agent(&vault, agent);
     crate::test_util::bind_test_agent(&vault, joiner);
     crate::test_util::bind_test_owner(&vault, owner);
-    let (project, mut record) = project_room(&vault, owner, &[agent])?;
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let mut notes = Vec::new();
@@ -814,6 +818,12 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
         .memory(owner, EdgeActorClass::Human)
         .rooms_speak(&spoken(room, turn, 2))
         .expect("speak");
+    // A summary's merge header is a generated claim the owner may land.
+    crate::conversation_dag::test_support::put_dag_test_policy(
+        &vault,
+        crate::WriteActor::new(owner, EdgeActorClass::Human),
+        true,
+    )?;
     let scope = crate::conversation_dag::ScopeSelector {
         conversation: room,
         session: None,
@@ -911,6 +921,12 @@ fn p7_walks_a_summary_of_summaries_to_its_first_words() -> Result<()> {
         .memory(owner, EdgeActorClass::Human)
         .rooms_speak(&spoken(room, turn, 2))
         .expect("speak");
+    // A summary's merge header is a generated claim the owner may land.
+    crate::conversation_dag::test_support::put_dag_test_policy(
+        &vault,
+        crate::WriteActor::new(owner, EdgeActorClass::Human),
+        true,
+    )?;
     let scope = crate::conversation_dag::ScopeSelector {
         conversation: room,
         session: None,
