@@ -867,12 +867,24 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
         )
     };
     // A summary put again over other records leaves the copy's words with
-    // the records they came from.
-    let later = EntityId::now();
-    vault
-        .memory(owner, EdgeActorClass::Human)
-        .rooms_speak(&spoken(room, later, 3))
-        .expect("speak");
+    // the records they came from. The landing moved the room onto its DAG.
+    let later = vault
+        .append_dag_record(&crate::conversation_dag::AppendRecord {
+            conversation: room,
+            parent: Some(copy),
+            reply_to: None,
+            address: crate::conversation_dag::AddressMode::Broadcast,
+            recipients: vec![],
+            advance: true,
+            kind: ENTITY_TYPE_TURN,
+            occurred: TimeRange { start: 3, end: 3 },
+            learned_at: 3,
+            body: crate::conversation_dag::fixtures::body("later"),
+            text: vec![],
+            session: None,
+            actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
+        })?
+        .id;
     recover(vec![later], 4)?;
     let sources = {
         let txn = vault.store.env.read_txn()?;
