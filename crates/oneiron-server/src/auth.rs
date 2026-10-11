@@ -70,7 +70,8 @@ pub(crate) trait RevokedTokenJtis {
     }
     /// The 401 for a request [`Self::verify_slip`] refused only because the
     /// vault's proof clock sits ahead of this host's clock, or `None` for any
-    /// other refusal.
+    /// other refusal. It names what authentication would take on this host's
+    /// clock now; a route's own authorization is not judged here.
     fn proof_clock_refusal(
         &self,
         _slip: &oneiron::authority::CapabilitySlip,

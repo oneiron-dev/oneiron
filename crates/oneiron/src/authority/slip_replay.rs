@@ -175,12 +175,18 @@ impl Vault {
 
     /// `Some` when the window refuses this request only because the proof
     /// clock sits ahead of the host's wall clock: the lockout
-    /// [`Self::recover_proof_clock`] lifts. The request must verify in full
-    /// on the wall clock, as [`Self::verify_logged_capability_slip_request`]
-    /// checks it, and carry a slip the transport doors take (not a one-shot
-    /// one), so a forged, stale or refused one learns nothing of the clock.
-    /// Returns the slip as verified on the wall clock, for a transport's own
-    /// checks of what it takes.
+    /// [`Self::recover_proof_clock`] lifts. On the wall clock, the admission
+    /// door would take the request now: it verifies in full, as
+    /// [`Self::verify_logged_capability_slip_request`] checks it, against
+    /// `not_before` as it stands, carries a slip the transport doors take
+    /// (not a one-shot one), and its nonce is unused. So a forged, stale,
+    /// replayed or refused request learns nothing of the clock.
+    ///
+    /// It speaks for authentication, and for the holder's next proof: no
+    /// proof signed before a recovery gets in after it, so this one never
+    /// does, and a route's own authorization still answers once a request
+    /// gets in. Returns the slip as verified on the wall clock, for a
+    /// transport's own checks of what it takes.
     pub fn proof_clock_ahead(
         &self,
         slip: &super::CapabilitySlip,
