@@ -659,7 +659,11 @@ fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
         Arc::clone(&vault),
         embedder as Arc<dyn oneiron::embed::Embedder>,
     )
-    .with_remote_rung(slot.remote_rung().expect("rung").expect("configured"))
+    .with_remote_rung(
+        slot.remote_rung(receipts())
+            .expect("rung")
+            .expect("configured"),
+    )
     .expect("rung");
     while reconciler.reconcile_once().expect("filled").leased > 0 {}
     let first = put_claim(&vault, 0xE5, "a claim the rung embeds");
@@ -745,7 +749,11 @@ fn a_remote_rung_off_the_measured_profile_is_refused_under_measured_floors() {
         Arc::clone(&vault),
         embedder as Arc<dyn oneiron::embed::Embedder>,
     )
-    .with_remote_rung(slot.remote_rung().expect("rung").expect("configured"))
+    .with_remote_rung(
+        slot.remote_rung(receipts())
+            .expect("rung")
+            .expect("configured"),
+    )
     .expect("rung");
     while reconciler.reconcile_once().expect("filled").leased > 0 {}
 
@@ -1737,6 +1745,33 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
     );
 }
 
+/// A run receipt sink for a rung whose rows a test does not read.
+fn receipts() -> Arc<dyn oneiron::llm::run_admission::RunReceiptSink> {
+    Arc::new(oneiron::llm::run_admission::MemoryReceipts::default())
+}
+
+/// Each remote batch's run rows in order, as its reserved and its settled
+/// units. Every row is the rung's connector's, and every batch settled.
+fn remote_batches(receipts: &oneiron::llm::run_admission::MemoryReceipts) -> Vec<(u64, u64)> {
+    use oneiron::llm::run_admission::RunEvent;
+    let mut reserved = std::collections::BTreeMap::new();
+    let mut batches = Vec::new();
+    for row in receipts.rows() {
+        match row.event {
+            RunEvent::Admitted(facts) => {
+                assert_eq!(facts.subject, format!("embedder:{MODEL_KEY}"));
+                reserved.insert(facts.lease, facts.reserved_units);
+            }
+            RunEvent::Settled { lease, units, .. } => {
+                batches.push((reserved.remove(&lease).expect("admitted first"), units));
+            }
+            other => panic!("not a batch's admission or settlement: {other:?}"),
+        }
+    }
+    assert!(reserved.is_empty(), "a batch never settled: {reserved:?}");
+    batches
+}
+
 #[test]
 fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
     use crate::config::{
@@ -1775,7 +1810,8 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
             }),
         });
         let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
-        let rung = build_remote_rung(&config, Default::default())
+        let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
+        let rung = build_remote_rung(&config, Default::default(), receipts.clone())
             .unwrap()
             .unwrap();
         assert_eq!(rung.lease_duration_ms, 120_000);
@@ -1806,6 +1842,12 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
             vault.embedding_locality(&unknown).unwrap(),
             Some(EmbedderLocality::OnDevice)
         );
+        // The one remote batch was a paid call, settled at its reservation.
+        let sent = remote.requests().len();
+        let answered = remote_batches(&receipts);
+        assert!(
+            matches!(answered.as_slice(), [(reserved, settled)] if reserved == settled && *reserved > 0)
+        );
         remote.set_behaviour(MockBehaviour::ServerError);
         assert_eq!(
             put_claim(&vault, 0x94, "row put while remote is down"),
@@ -1813,12 +1855,209 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
         );
         let report = reconciler.reconcile_once().unwrap();
         assert_eq!((report.remote_failed_fallback_local, report.filled), (1, 1));
+        // The failed batch went out, so it keeps its reservation as spend.
+        assert!(remote.requests().len() > sent);
+        let batches = remote_batches(&receipts);
+        assert!(matches!(batches.as_slice(), [_, (reserved, settled)] if reserved == settled));
         assert_eq!(
             vault.embedding_locality(&late).unwrap(),
             Some(EmbedderLocality::OnDevice)
         );
         assert_eq!(reconciler.reconcile_once().unwrap().filled, 0);
     }
+}
+
+/// A remote rung's config for `base`, letting `allow` leave.
+fn remote_section(
+    base: &str,
+    allow: oneiron::EntityId,
+) -> crate::config::remote_embedder::RemoteEmbedderConfig {
+    crate::config::remote_embedder::RemoteEmbedderConfig {
+        endpoint: base.to_owned(),
+        model_key: MODEL_KEY.into(),
+        locality: crate::config::EmbedderLocality::ThirdParty,
+        artifact: None,
+        api_key_env: None,
+        lease_ms: 120_000,
+        timeout_ms: 1000,
+        egress: Some(crate::config::remote_embedder::EgressPolicy {
+            allow: vec![allow.to_hex()],
+            deny: Vec::new(),
+            allow_all: false,
+        }),
+    }
+}
+
+/// Astra F1 on #1382: the served remote rung sent each batch with no run
+/// permit and no run rows. On the serve path, each remote batch is now a
+/// paid call admitted and settled on the server's run receipts.
+#[test]
+fn the_served_remote_rung_admits_and_settles_each_batch() {
+    let local = MockEndpoint::start(MockBehaviour::Ok);
+    let remote = MockEndpoint::start(MockBehaviour::Ok);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let id = put_claim(&vault, 0x96, "a row the owner lets leave");
+    let mut config = EmbedderConfig {
+        idle_interval_ms: 20,
+        ..endpoint_config(&local.base)
+    };
+    config.remote = Some(remote_section(&remote.base, id));
+    let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
+    let slot = EmbedderSlot::from_config(&config).unwrap().unwrap();
+    let server = Arc::new(
+        crate::server::SyncServer::new(Arc::clone(&vault), Default::default())
+            .unwrap()
+            .with_embedder(Some(slot))
+            .with_run_receipts(receipts.clone()),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let worker = server.spawn_embedding_worker().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while vault.embedding_locality(&id).unwrap().is_none() {
+            assert!(std::time::Instant::now() < deadline, "never embedded");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        worker.abort();
+        let _ = worker.await;
+    });
+    runtime.shutdown_background();
+    assert_eq!(
+        vault.embedding_locality(&id).unwrap(),
+        Some(oneiron::embed::EmbedderLocality::ThirdParty)
+    );
+    assert_eq!(remote.requests().len(), 1);
+    assert!(matches!(
+        remote_batches(&receipts).as_slice(),
+        [(reserved, settled)] if reserved == settled && *reserved > 0
+    ));
+}
+
+/// A request the run's line cannot cover is refused before it is sent: the
+/// rung fails, the reconciler embeds the row on device, and the refusal has
+/// its row, with nothing reserved.
+#[test]
+fn a_remote_batch_its_line_refuses_is_never_sent_and_embeds_on_device() {
+    use oneiron::embed::{
+        EgressDecision, EgressPredicate, EmbedderLocality, PendingEmbeddingInput,
+        PendingEmbeddingReconciler, RemoteRung,
+    };
+    use oneiron::llm::run_admission::{MemoryReceipts, RunDenied, RunEvent};
+    struct Leaves;
+    impl EgressPredicate for Leaves {
+        fn decide(&self, _: &PendingEmbeddingInput) -> EgressDecision {
+            EgressDecision::Allow
+        }
+    }
+    let local = MockEndpoint::start(MockBehaviour::Ok);
+    let remote = MockEndpoint::start(MockBehaviour::Ok);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let id = put_claim(&vault, 0x95, "a row its line cannot pay for");
+    let config = endpoint_config(&local.base);
+    let section = remote_section(&remote.base, id);
+    let receipts = Arc::new(MemoryReceipts::default());
+    let rung = endpoint::HttpEmbedder::from_config(&section.endpoint_config(&config)).unwrap();
+    rung.pay_through(Arc::new(
+        super::admitted::AdmittedRequests::on_line(
+            &section,
+            EmbedderLocality::ThirdParty,
+            receipts.clone(),
+            1,
+        )
+        .unwrap(),
+    ));
+    let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
+    let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), primary)
+        .with_remote_rung(RemoteRung::new(rung, Arc::new(Leaves)))
+        .unwrap();
+    let report = reconciler.reconcile_once().unwrap();
+    assert!(report.remote_failed_fallback_local >= 1);
+    assert!(remote.requests().is_empty(), "a refused batch went out");
+    assert_eq!(
+        vault.embedding_locality(&id).unwrap(),
+        Some(EmbedderLocality::OnDevice)
+    );
+    let rows = receipts.rows();
+    assert!(
+        matches!(
+            rows.as_slice(),
+            [row] if matches!(row.event, RunEvent::Denied { reason: RunDenied::Budget { .. }, .. })
+        ),
+        "{rows:?}"
+    );
+}
+
+/// Sol R1 on A2 (F2, F3): each request a paid remote sends is its own paid
+/// call, and an embed whose listing fails sends no request and is charged
+/// nothing. Two 20 KiB texts on the Oneiron wire go out as two requests.
+#[test]
+fn each_request_a_paid_remote_sends_is_its_own_paid_call() {
+    use oneiron::embed::{
+        Embedder as _, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload,
+    };
+    use oneiron::llm::run_admission::MemoryReceipts;
+    let remote = MockEndpoint::start(MockBehaviour::ListingDown);
+    let config = endpoint_config("http://127.0.0.1:1");
+    let section = remote_section(&remote.base, oneiron::EntityId::now());
+    let receipts = Arc::new(MemoryReceipts::default());
+    let http = endpoint::HttpEmbedder::from_config(&section.endpoint_config(&config)).unwrap();
+    http.hold_as_rung(Arc::new(Mutex::new(super::remote::RungHold {
+        transform: Some(MOCK_TRANSFORM.to_owned()),
+        measured: false,
+    })));
+    http.pay_through(Arc::new(
+        super::admitted::AdmittedRequests::unmetered(
+            &section,
+            EmbedderLocality::ThirdParty,
+            receipts.clone(),
+        )
+        .unwrap(),
+    ));
+    let inputs: Vec<PendingEmbeddingInput> = (0..2)
+        .map(|_| PendingEmbeddingInput {
+            entity_id: oneiron::EntityId::now(),
+            payload: PendingEmbeddingPayload::TurnText("long turn ".repeat(2 * 1024)),
+            pending_embedding_token: Vec::new(),
+        })
+        .collect();
+    assert!(http.embed(&inputs).is_err(), "the listing is down");
+    assert!(remote.requests().is_empty());
+    assert!(receipts.rows().is_empty(), "{:?}", receipts.rows());
+    remote.set_behaviour(MockBehaviour::OneironWire);
+    assert_eq!(http.embed(&inputs).unwrap().len(), 2);
+    assert_eq!(remote.requests().len(), 2);
+    let paid = remote_batches(&receipts);
+    assert!(
+        matches!(paid.as_slice(), [(a, b), (c, d)] if a == b && c == d && *a > 20 * 1024),
+        "{paid:?}"
+    );
+}
+
+/// Sol R1 on A2 (F1): the startup probe of a remote rung embeds a text at
+/// the remote, so it is a paid call too, with its rows.
+#[test]
+fn the_startup_probe_of_a_remote_rung_is_a_paid_call() {
+    use oneiron::llm::run_admission::MemoryReceipts;
+    let local = MockEndpoint::start(MockBehaviour::Ok);
+    let remote = MockEndpoint::start(MockBehaviour::Ok);
+    let mut config = endpoint_config(&local.base);
+    config.remote = Some(remote_section(&remote.base, oneiron::EntityId::now()));
+    let receipts = Arc::new(MemoryReceipts::default());
+    assert!(
+        build_slot(Some(&config), receipts.clone())
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(remote.requests().len(), 1, "one probe post at the remote");
+    assert!(matches!(
+        remote_batches(&receipts).as_slice(),
+        [(reserved, settled)] if reserved == settled
+    ));
 }
 
 #[test]
@@ -1870,7 +2109,7 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
         Arc::clone(&vault),
         slot.ensure_ready(|_| Ok(())).unwrap() as Arc<dyn oneiron::embed::Embedder>,
     )
-    .with_remote_rung(slot.remote_rung().unwrap().unwrap())
+    .with_remote_rung(slot.remote_rung(receipts()).unwrap().unwrap())
     .unwrap();
     let report = reconciler.reconcile_once().unwrap();
     assert_eq!(

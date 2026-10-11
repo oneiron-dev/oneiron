@@ -125,6 +125,13 @@ fn host_secret(server: &SyncServer) -> &[u8] {
 /// Fixture: a logged, host-signed human binding plus a holder-bound top slip.
 /// A bare host secret has no authenticated PERSON identity to exclude.
 pub(super) fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
+    bind_room_actor(server, owner, "human");
+}
+
+/// Fixture: binds `actor` at `class` under the host key `bind_room_owner`
+/// uses; `agent` makes it one of the vault's own agents. The host key holds
+/// one live binding, so `actor` is the vault's only bound actor.
+pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, class: &str) {
     use oneiron::authority::{
         AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
         HostSlipIssuer, actor_binding_is_active, authority_entry_hash, authority_transcript,
@@ -163,8 +170,8 @@ pub(super) fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
         parent_hashes: heads.into_iter().collect(),
         op: AuthorityOp::BindActor {
             authority_key: host_key.clone(),
-            actor_ref: owner,
-            actor_class: "human".into(),
+            actor_ref: actor,
+            actor_class: class.into(),
             epoch: 1,
         },
         signer: AuthoritySignature {
@@ -192,8 +199,8 @@ pub(super) fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
         .unwrap();
     assert!(actor_binding_is_active(
         &server.vault.authority_fold().unwrap(),
-        &owner,
-        "human"
+        &actor,
+        class
     ));
 }
 

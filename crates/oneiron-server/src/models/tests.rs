@@ -3,6 +3,10 @@
 use std::collections::BTreeMap;
 
 use futures_util::StreamExt;
+use oneiron::llm::run_admission::{
+    BudgetLine, DeclaredTeachers, LeaseUnit, MemoryReceipts, RunDeclaration, RunDenied, RunEvent,
+    RunReceipt,
+};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
     LlmMessage, LlmMessageRole, LlmRequest, LlmStreamEvent, ModelLocality, ModelTierRef,
@@ -12,6 +16,28 @@ use serde_json::json;
 
 use super::*;
 use crate::fake_llm::{FakeLlm, Reply};
+
+/// A run that declares nothing, on a line wide enough for any call here.
+fn test_run() -> RunAdmission {
+    undeclared_run(
+        "models-test",
+        BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend),
+        Arc::new(MemoryReceipts::default()),
+    )
+}
+
+/// Each row's event name, in order.
+fn events(rows: &[RunReceipt]) -> Vec<&'static str> {
+    rows.iter()
+        .map(|row| match row.event {
+            RunEvent::Admitted(_) => "admitted",
+            RunEvent::Denied { .. } => "denied",
+            RunEvent::Dispatched { .. } => "dispatched",
+            RunEvent::Settled { .. } => "settled",
+            RunEvent::Revised { .. } => "revised",
+        })
+        .collect()
+}
 
 fn config(toml_text: &str) -> ModelsConfig {
     let file: crate::config::models::ModelsFile = toml::from_str(toml_text).unwrap();
@@ -55,20 +81,18 @@ fn text_of(message: &LlmMessage) -> String {
 }
 
 async fn generate(seat: &Seat, text: &str) -> oneiron::LlmResponse {
-    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
-    let lease = guard.admit().unwrap().lease;
-    seat.backend
-        .generate(request(&seat.model, text), &lease)
+    let run = test_run();
+    seat.ladder
+        .generate(&run, request(&seat.model, text), None)
         .await
         .unwrap()
 }
 
 async fn stream(seat: &Seat, text: &str) -> (Vec<String>, oneiron::LlmUsage, String) {
-    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
-    let lease = guard.admit().unwrap().lease;
+    let run = test_run();
     let mut events = seat
-        .backend
-        .stream(request(&seat.model, text), &lease)
+        .ladder
+        .stream(&run, request(&seat.model, text), None)
         .unwrap();
     let mut deltas = Vec::new();
     while let Some(event) = events.next().await {
@@ -145,8 +169,7 @@ async fn a_call_that_picks_its_own_model_or_route_never_reaches_the_provider() {
         fake.base_url
     ))));
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
-    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
-    let lease = guard.admit().unwrap().lease;
+    let run = test_run();
     let mut fallback_list = request(&seat.model, "hi");
     fallback_list
         .provider_options
@@ -157,24 +180,22 @@ async fn a_call_that_picks_its_own_model_or_route_never_reaches_the_provider() {
         .insert("provider".into(), json!({ "order": ["other"] }));
     for swapped in [fallback_list, routed] {
         assert!(
-            seat.backend
-                .generate(swapped.clone(), &lease)
+            seat.ladder
+                .generate(&run, swapped.clone(), None)
                 .await
                 .is_err()
         );
-        let mut events = seat
-            .backend
-            .stream(swapped, &lease)
-            .expect("the ladder opens its stream lazily");
-        assert!(matches!(events.next().await, Some(Err(_))));
+        // The run refuses the selector at admission, before a stream exists.
+        assert!(seat.ladder.stream(&run, swapped, None).is_err());
     }
     assert!(fake.seen().is_empty());
 }
 
-/// Astra R6 and R7 for chat turns and workflow steps, #1338's code-mode rule:
-/// an answer after a failed rung pays for that rung too, and a reply that
-/// reports no usage pays the reservation, never nothing. The key the ladder
-/// stamps is the key the charge reads.
+/// Astra R6 and R7 for chat turns and workflow steps, #1338's code-mode rule,
+/// now through the run's gate: an answer after a failed rung pays for that
+/// rung too, and a reply that reports no usage pays the reservation, never
+/// nothing. Each rung that went out is admitted, dispatched and settled on
+/// its own permit, and the receipts say so.
 #[tokio::test]
 async fn an_answer_pays_for_the_rungs_that_failed_before_it_and_never_nothing() {
     let failing = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
@@ -199,20 +220,38 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let floor = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
     let guard = BudgetGuard::new("models-test", 100 * floor, BudgetExhaustionPolicy::Suspend);
+    let receipts = Arc::new(MemoryReceipts::default());
     let mut charges = Vec::new();
     for _ in 0..2 {
-        let lease = guard.admit().unwrap().lease;
+        let run = undeclared_run("models-test", guard.clone(), receipts.clone());
         let before = guard.read().used_units;
         let response = seat
-            .backend
-            .generate(request(&seat.model, "hi"), &lease)
+            .ladder
+            .generate(&run, request(&seat.model, "hi"), None)
             .await
             .expect("the second rung answers");
-        settle_answered(&guard, &lease, &response.usage, floor).unwrap();
+        // The receipt still counts the rung that failed before the answer.
+        assert_eq!(response.usage.raw_provider["failed_rungs"], json!(1));
         charges.push(guard.read().used_units - before);
     }
     // 11 + 7 tokens and one failed rung; then no usage and one failed rung.
     assert_eq!(charges, [18 + floor, 2 * floor]);
+    let rows = receipts.rows();
+    let call = ["admitted", "dispatched", "settled"];
+    assert_eq!(events(&rows), [call, call, call, call].concat());
+    let settled: Vec<u64> = rows
+        .iter()
+        .filter_map(|row| match row.event {
+            RunEvent::Settled { units, .. } => Some(units),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(settled, [floor, 18, floor, floor]);
+    assert_eq!(
+        guard.read().reserved_units,
+        0,
+        "every permit settled, none leaked"
+    );
 }
 
 #[tokio::test]
@@ -278,11 +317,10 @@ async fn the_configured_output_ceiling_reaches_every_openai_compatible_call() {
         generate(seat, "step").await;
         stream(seat, "turn").await;
         // A caller asking for more is held to the ceiling.
-        let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
-        let lease = guard.admit().unwrap().lease;
+        let run = test_run();
         let mut wide = request(&seat.model, "wide");
         wide.params.insert("max_tokens".into(), json!(4_096));
-        seat.backend.generate(wide, &lease).await.unwrap();
+        seat.ladder.generate(&run, wide, None).await.unwrap();
         // Sol R2 #1304: a limit spelled as a float or a string was left on
         // the wire beside the ceiling, and a lenient endpoint read it.
         let mut loose = request(&seat.model, "loose");
@@ -290,7 +328,7 @@ async fn the_configured_output_ceiling_reaches_every_openai_compatible_call() {
             .params
             .insert("max_completion_tokens".into(), json!(4_096.0));
         loose.params.insert("max_tokens".into(), json!("4096"));
-        seat.backend.generate(loose, &lease).await.unwrap();
+        seat.ladder.generate(&run, loose, None).await.unwrap();
         let seen = fake.seen();
         assert_eq!(seen.len(), before + 4);
         for call in &seen[before..] {
@@ -400,11 +438,10 @@ async fn a_streamed_event_past_the_bound_is_refused_not_buffered() {
         fake.base_url
     ))));
     let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
-    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
-    let lease = guard.admit().unwrap().lease;
+    let run = test_run();
     let mut events = seat
-        .backend
-        .stream(request(&seat.model, "hi"), &lease)
+        .ladder
+        .stream(&run, request(&seat.model, "hi"), None)
         .unwrap();
     let mut refused = false;
     while let Some(event) = events.next().await {
@@ -460,11 +497,11 @@ rungs = [
 }
 
 /// Review repro (Astra R10, #1338): a call that fails is charged for the
-/// provider calls its backend made. Without a manifest the seat's ladder
-/// tries every rung; with one pinning a rung's model, the call goes to that
-/// model alone. A route's `attempts` is what the provider saw.
+/// provider calls it made, one reservation each. Without a manifest the
+/// seat's ladder tries every rung; with one pinning a rung's model, the call
+/// goes to that model alone.
 #[tokio::test]
-async fn a_routes_attempts_are_the_provider_calls_a_failed_request_makes() {
+async fn a_failed_call_pays_for_each_provider_call_it_made() {
     let fake = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
     let runtime = ModelRuntime::build(Some(&config(&format!(
         r#"
@@ -495,16 +532,25 @@ rungs = [
         let route = runtime
             .route_role(&vault, ModelRole::GenerativeReasoner, seat)
             .unwrap();
-        let before = fake.seen().len();
-        let lease = guard.admit().unwrap().lease;
+        let before = (fake.seen().len(), guard.read().used_units);
+        let run = undeclared_run(
+            "models-test",
+            guard.clone(),
+            Arc::new(MemoryReceipts::default()),
+        );
         route
-            .backend
-            .generate(request(&route.model, "hi"), &lease)
+            .ladder
+            .generate(&run, request(&route.model, "hi"), None)
             .await
             .expect_err("every provider call fails");
-        made.push((route.attempts, fake.seen().len() - before));
+        made.push((
+            route.ladder.rungs(),
+            fake.seen().len() - before.0,
+            guard.read().used_units - before.1,
+        ));
     }
-    assert_eq!(made, [(3, 3), (1, 1)]);
+    let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
+    assert_eq!(made, [(3, 3, 3 * reserve), (1, 1, reserve)]);
 }
 
 /// Once a rung has spoken, its stream is the answer, cut or whole: one that
@@ -524,11 +570,10 @@ async fn a_rung_that_has_spoken_keeps_the_call_when_its_stream_breaks() {
             first.base_url, second.base_url
         ))));
         let seat = runtime.seat(ModelRole::Checker).expect("seat");
-        let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
-        let lease = guard.admit().unwrap().lease;
+        let run = test_run();
         let mut events = seat
-            .backend
-            .stream(request(&seat.model, "hi"), &lease)
+            .ladder
+            .stream(&run, request(&seat.model, "hi"), None)
             .unwrap();
         let mut deltas = Vec::new();
         let mut cut = false;
@@ -639,11 +684,10 @@ rungs = [
     let route = runtime
         .route_role(&vault, ModelRole::GenerativeReasoner, seat)
         .unwrap();
-    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
-    let lease = guard.admit().unwrap().lease;
+    let run = test_run();
     let response = route
-        .backend
-        .generate(request(&route.model, "hi"), &lease)
+        .ladder
+        .generate(&run, request(&route.model, "hi"), None)
         .await
         .unwrap();
     assert_eq!(response.usage.raw_provider["rung"], json!(2));
@@ -652,8 +696,8 @@ rungs = [
         json!("second")
     );
     let mut events = route
-        .backend
-        .stream(request(&route.model, "hi"), &lease)
+        .ladder
+        .stream(&run, request(&route.model, "hi"), None)
         .unwrap();
     let mut rung = None;
     while let Some(event) = events.next().await {
@@ -726,18 +770,185 @@ async fn the_router_serves_seats_and_configured_models_by_id() {
         router.locality(&ModelId::new("p/other@live").unwrap()),
         None
     );
-    let guard = BudgetGuard::new("router", 100_000, BudgetExhaustionPolicy::Suspend);
-    let lease = guard.admit().unwrap().lease;
+    let run = test_run();
     for model in [&direct, &seat.model] {
-        let response = router.generate(request(model, "hi"), &lease).await.unwrap();
+        let (_, ladder) = router.served(model).expect("served");
+        let response = ladder
+            .generate(&run, request(model, "hi"), None)
+            .await
+            .unwrap();
         assert_eq!(text_of(&response.message), "routed");
     }
+    assert!(router.served(&ModelId::new("x/y@z").unwrap()).is_none());
+}
+
+/// The host-side constructor for a declared run: it calls only its declared
+/// teachers, and a `key_env` key, held at T1 in this process, serves it only
+/// for an offer the owner allowed, its receipt saying the run's rules do not
+/// hold there. A refused call is never sent.
+#[tokio::test]
+async fn a_declared_run_calls_only_its_teachers_and_a_t1_key_only_when_allowed() {
+    let keyed = FakeLlm::start(vec![], Some(Reply::text("keyed"))).await;
+    let own = FakeLlm::start(vec![], Some(Reply::text("own"))).await;
+    let receipts = Arc::new(MemoryReceipts::default());
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        "default = \"keyed:teacher\"\n[providers.keyed]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}]\n",
+        keyed.base_url, own.base_url
+    ))))
+    .with_receipts(receipts.clone());
+    let keyed_id = ModelId::new("keyed/teacher@live").unwrap();
+    let own_id = ModelId::new("own/small@live").unwrap();
+    let declared = |teachers: &[&ModelId]| {
+        RunDeclaration::declared(BudgetLine {
+            limit_units: 100_000,
+            reserve_units: 1_000,
+            unit: LeaseUnit::tokens(),
+        })
+        .with_teachers(
+            DeclaredTeachers::new(
+                teachers.iter().map(|model| (*model).clone()),
+                [],
+                "student",
+                "distillation",
+            )
+            .unwrap(),
+        )
+    };
+    let denied = |rows: Vec<RunReceipt>| -> Vec<RunDenied> {
+        rows.into_iter()
+            .filter_map(|row| match row.event {
+                RunEvent::Denied { reason, .. } => Some(reason),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // An undeclared teacher, and a declared one at T1 the owner never allowed.
+    let run = runtime.declared_run("distill-1", declared(&[&own_id]), None);
     assert!(
-        router
-            .generate(request(&ModelId::new("x/y@z").unwrap(), "hi"), &lease)
+        run.generate(keyed_id.as_str(), request(&keyed_id, "hi"))
             .await
             .is_err()
     );
+    let run = runtime.declared_run("distill-2", declared(&[&keyed_id]), None);
+    assert!(
+        run.generate(keyed_id.as_str(), request(&keyed_id, "hi"))
+            .await
+            .is_err()
+    );
+    assert!(keyed.seen().is_empty(), "a refused call went out");
+    assert!(matches!(
+        denied(receipts.rows()).as_slice(),
+        [RunDenied::UndeclaredTeacher { .. }, RunDenied::KeyAtT1]
+    ));
+
+    // A declared teacher no offer here serves, and a selector the run cannot
+    // resolve: each is refused before admission, and each has its row. A
+    // caller may pass any text as the selector, so the unresolved one's row
+    // keeps none of it, only its length (Astra on #1382).
+    let missing = ModelId::new("missing/teacher@v1").unwrap();
+    let unresolved = "Bearer sk-test-sentinel-0000";
+    let run = runtime.declared_run("distill-1b", declared(&[&missing]), None);
+    for selector in [missing.as_str(), unresolved] {
+        assert!(
+            run.generate(selector, request(&missing, "hi"))
+                .await
+                .is_err()
+        );
+    }
+    assert!(matches!(
+        &denied(receipts.rows())[2..],
+        [RunDenied::NoOffer { model }, RunDenied::UnknownSelector { len }]
+            if *model == missing && *len == unresolved.len()
+    ));
+    for row in receipts.rows() {
+        let row = serde_json::to_string(&row).unwrap();
+        assert!(!row.contains("sk-test-sentinel"), "{row}");
+    }
+    assert_eq!(run.admission().read().reserved_units, 0);
+
+    // A keyless declared teacher holds the run's rules.
+    let run = runtime.declared_run("distill-3", declared(&[&own_id]), None);
+    let answer = run
+        .generate(own_id.as_str(), request(&own_id, "hi"))
+        .await
+        .unwrap();
+    assert_eq!(text_of(&answer.message), "own");
+    // The owner allows the T1 offer: it is served, and its receipt says the
+    // run's rules do not hold for it.
+    let allowed = declared(&[&keyed_id]).with_custody_override(keyed_id.as_str());
+    let run = runtime.declared_run("distill-4", allowed, None);
+    let answer = run
+        .generate(keyed_id.as_str(), request(&keyed_id, "hi"))
+        .await
+        .unwrap();
+    assert_eq!(text_of(&answer.message), "keyed");
+    assert_eq!((own.seen().len(), keyed.seen().len()), (1, 1));
+    let enforced: Vec<(String, bool)> = receipts
+        .rows()
+        .into_iter()
+        .filter_map(|row| match row.event {
+            RunEvent::Admitted(facts) => Some((facts.subject, facts.rules_enforced)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        enforced,
+        [
+            (own_id.as_str().to_owned(), true),
+            (keyed_id.as_str().to_owned(), false)
+        ]
+    );
+}
+
+/// The `SingleSend` claim on both HTTP transports: one provider call is one
+/// request. A failed or throttled reply is not sent again, and a redirect is
+/// not followed, so a credential never reaches a second origin.
+#[tokio::test]
+async fn each_http_transport_sends_a_call_once_and_follows_no_redirect() {
+    for (kind, path) in [
+        ("openai-compat", "/v1/chat/completions"),
+        ("anthropic-compat", "/v1/messages"),
+    ] {
+        let elsewhere = FakeLlm::start(vec![], Some(Reply::text("moved"))).await;
+        let redirect = Reply::Redirect {
+            status: 307,
+            location: format!("{}{path}", elsewhere.base_url),
+        };
+        let script = vec![
+            Reply::Status(500),
+            Reply::Status(500),
+            Reply::Status(429),
+            Reply::Status(429),
+            redirect.clone(),
+            redirect,
+        ];
+        let fake = FakeLlm::start(script, Some(Reply::text("unreached"))).await;
+        let runtime = ModelRuntime::build(Some(&config(&format!(
+            "default = \"p:m\"\n[providers.p]\nkind = \"{kind}\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
+            fake.base_url
+        ))));
+        let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
+        for sent in 1..=6 {
+            let run = test_run();
+            let call = request(&seat.model, "hi");
+            if sent % 2 == 1 {
+                assert!(seat.ladder.generate(&run, call, None).await.is_err());
+            } else {
+                let mut events = seat.ladder.stream(&run, call, None).unwrap();
+                let mut failed = false;
+                while let Some(event) = events.next().await {
+                    failed |= event.is_err();
+                }
+                assert!(failed, "{kind}: call {sent} ends in an error");
+            }
+            assert_eq!(fake.seen().len(), sent, "{kind}: call {sent} sent once");
+        }
+        assert!(
+            elsewhere.seen().is_empty(),
+            "{kind}: the redirect is not followed"
+        );
+    }
 }
 
 #[test]

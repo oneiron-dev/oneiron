@@ -5,7 +5,7 @@ use crate::{
     error::{Error, Result},
     store::ManifestDbs,
 };
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 const REVERSE: &[u8] = b"ports:dependency_reverse:v1:";
 pub(super) fn reverse_prefix(id: &EntityId) -> Vec<u8> {
     [REVERSE, id.as_bytes()].concat()
@@ -57,29 +57,7 @@ pub(super) fn complete(
         }
     }
     // Replace only this dependent's reverse-indexed rows. Never scan all sources.
-    let prefix = reverse_prefix(dependent);
-    let mut old = Vec::new();
-    for row in store.vault_meta().prefix_iter(txn, &prefix)? {
-        if old.len() >= 100_000 {
-            return Err(Error::IndexOverflow("regeneration old sources"));
-        }
-        let (key, _) = row?;
-        if key.len() != prefix.len() + 24 {
-            return Err(Error::CorruptedIndex("reverse dependency key"));
-        }
-        let document = EntityId::from_bytes(
-            key[prefix.len()..prefix.len() + 16]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("reverse dependency id"))?,
-        )?;
-        let frontier = u64::from_be_bytes(
-            key[prefix.len() + 16..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("reverse dependency frontier"))?,
-        );
-        old.push((key.to_vec(), SourceSpan { document, frontier }));
-    }
-    for (key, source) in old {
+    for (key, source) in reverse_rows(store, txn, dependent)? {
         store.vault_meta().delete(txn, &key)?;
         let forward = [
             super::integrity::source_prefix(source).as_slice(),
@@ -96,6 +74,48 @@ pub(super) fn complete(
         .delete(txn, &super::integrity::stale_key(dependent))?;
     Ok(true)
 }
+/// The sources `dependent` is registered as derived from.
+pub(crate) fn dependency_sources_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dependent: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(reverse_rows(store, txn, dependent)?
+        .into_iter()
+        .map(|(_, source)| source.document)
+        .collect())
+}
+
+fn reverse_rows(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dependent: &EntityId,
+) -> Result<Vec<(Vec<u8>, SourceSpan)>> {
+    let prefix = reverse_prefix(dependent);
+    let mut rows = Vec::new();
+    for row in store.vault_meta().prefix_iter(txn, &prefix)? {
+        if rows.len() >= 100_000 {
+            return Err(Error::IndexOverflow("reverse dependency rows"));
+        }
+        let (key, _) = row?;
+        if key.len() != prefix.len() + 24 {
+            return Err(Error::CorruptedIndex("reverse dependency key"));
+        }
+        let document = EntityId::from_bytes(
+            key[prefix.len()..prefix.len() + 16]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("reverse dependency id"))?,
+        )?;
+        let frontier = u64::from_be_bytes(
+            key[prefix.len() + 16..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("reverse dependency frontier"))?,
+        );
+        rows.push((key.to_vec(), SourceSpan { document, frontier }));
+    }
+    Ok(rows)
+}
+
 impl<T: ManifestDbs> super::DependencyIndex for T {
     fn port_dependency_put(
         &self,
