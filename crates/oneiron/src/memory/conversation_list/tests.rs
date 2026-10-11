@@ -611,12 +611,21 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
                 .expect("a second membership");
         }
         let listed = list(&vault, reader, 50);
-        let every = list(&vault, owner, 50).rows.len();
-        (listed.rows, listed.receipt, every)
+        // Each vault seeds its own root project, so only the room's row is
+        // compared between them.
+        assert_eq!(
+            listed.rows.len(),
+            list(&vault, owner, 50).rows.len(),
+            "the reader reads every conversation"
+        );
+        let row = listed.rows.into_iter().find(|(id, _)| *id == room);
+        (row, listed.receipt)
     });
-    let (rows, receipt, every) = &listed[0];
-    assert_eq!(rows.len(), *every, "the reader reads every conversation");
-    assert!(rows.contains(&(room, Some("the latest it may read".to_owned()))));
+    let (row, receipt) = &listed[0];
+    assert_eq!(
+        *row,
+        Some((room, Some("the latest it may read".to_owned())))
+    );
     assert_eq!(receipt.suppressed_count, 0);
     assert!(
         !receipt
@@ -683,7 +692,7 @@ fn a_deleted_session_keeps_the_owners_preview() {
             &turn,
             ENTITY_TYPE_TURN,
             at,
-            1,
+            AT + 10,
             &msgpack(serde_json::json!({
                 "txt": "still-live conversation text",
                 "dag_session_ref": session.to_hex(),
