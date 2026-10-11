@@ -177,6 +177,29 @@ fn parse_route(value: &str) -> Result<oneiron::ModelLocality, String> {
 #[derive(Subcommand)]
 pub enum HostCommand {
     Init(HostInitArgs),
+    /// Move a stopped self-host vault's root to a new host secret, in-chain:
+    /// the vault id stays, and every credential the old secret minted stops
+    /// working. Run it after a host secret leaks, or to change it.
+    ReRoot(Box<HostReRootArgs>),
+}
+
+/// The current secret comes from `--secret-file`, the config or
+/// `ONEIRON_AUTH_SECRET`; the new one from `--new-secret-file` or
+/// `ONEIRON_NEW_AUTH_SECRET`. Neither is read from argv or printed.
+#[derive(Args, Clone, Debug)]
+pub struct HostReRootArgs {
+    /// Read the current host secret from this file, readable by its owner
+    /// only, instead of the config or `ONEIRON_AUTH_SECRET`.
+    #[arg(long, value_name = "FILE")]
+    pub secret_file: Option<PathBuf>,
+
+    /// Read the new host secret from this file, readable by its owner only,
+    /// instead of `ONEIRON_NEW_AUTH_SECRET`.
+    #[arg(long, value_name = "FILE")]
+    pub new_secret_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -419,7 +442,7 @@ pub enum ApiCommand {
 
 /// `oneiron mcp`: a stdio MCP server in front of a running server's MCP
 /// endpoint. The endpoint is the operator's choice, made here in the agent's
-/// MCP config; nothing the agent sends can change it.
+/// MCP config, or else the server's; nothing the agent sends can change it.
 #[derive(Args, Clone, Debug)]
 pub struct McpArgs {
     /// The running server's origin. The default is where `oneiron serve`
@@ -427,9 +450,12 @@ pub struct McpArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
-    /// Which MCP endpoint to forward to.
-    #[arg(long, value_enum, default_value_t = McpSurface::ToolFirst)]
-    pub surface: McpSurface,
+    /// Which MCP endpoint to forward to. Without it, the bridge asks the
+    /// server at the first request: `primary` when this credential may run
+    /// code there (a bound code host, and a credential `execute_code`
+    /// admits), `tool-first` otherwise.
+    #[arg(long, value_enum)]
+    pub surface: Option<McpSurface>,
 
     /// File holding the paired credential, as `token agent --out` writes it.
     /// Only its owner may be able to read it. Without this flag the slip and
@@ -666,6 +692,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
+        Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
     }

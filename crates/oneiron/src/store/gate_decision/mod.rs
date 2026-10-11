@@ -59,6 +59,8 @@ pub(in crate::store) use self::ledger::{
     encode_gate_decision,
 };
 #[cfg(test)]
+pub(in crate::store) use self::lookup::arm_before_gate_claim_reread;
+#[cfg(test)]
 pub(in crate::store) use self::orcb::arm_after_key_marker_check;
 #[cfg(test)]
 pub(in crate::store) use self::types::GATE_DECISION_LEDGER_VERSION_REDACTED;

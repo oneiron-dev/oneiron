@@ -39,6 +39,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     let import_queue = super::history_import::queue::ImportQueue::from_config(&config);
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
+    managed::warn_if_reader_table_short(&vault);
 
     let server_config = config.sync_server_config();
     match server_config.auth_secret.as_deref() {

@@ -105,7 +105,7 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "remove fields the named verb does not accept",
         ],
         "mcp_actor_mismatch" => &[
-            "send the actor metadata bound to this credential",
+            "omit actor: the call runs as the credential's own actor",
             "call setup_oneiron to read the effective scope back",
         ],
         "mcp_auth_required"

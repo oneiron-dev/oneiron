@@ -539,27 +539,34 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     capture_user_turn(&vault, "call me Oleksii");
     host.handle().session_hint(SessionHint::ExplicitEnd);
     let runner = oneiron::DreamerRunnerStore::new(&vault);
-    let trapped = || -> Option<AttemptRecord> {
+    let on_trap = |row: &AttemptRecord| {
+        runner
+            .parked_attempt(row.id)
+            .unwrap()
+            .filter(|park| park.park_owner.starts_with("dreamer.trap:"))
+            .map(|park| park.park_owner)
+    };
+    let trapped = || -> Vec<(AttemptRecord, String)> {
         AttemptQueue::new(&vault)
             .list()
             .unwrap()
             .into_iter()
-            .find(|row| {
-                runner
-                    .parked_attempt(row.id)
-                    .unwrap()
-                    .is_some_and(|park| park.park_owner.starts_with("dreamer.trap:"))
-            })
+            .filter_map(|row| on_trap(&row).map(|park| (row, park)))
+            .collect()
     };
     assert!(
-        eventually(Duration::from_secs(30), || trapped().is_some()).await,
+        eventually(Duration::from_secs(30), || !trapped().is_empty()).await,
         "no pass trapped; status {:?}",
         host.handle().status().dreamer
     );
     host.shutdown().await;
     assert!(fake.seen().is_empty());
+    let parked = trapped();
 
-    // A restart with room to spend is not the trap's resume signal.
+    // A restart with room to spend is not the trap's resume signal. Other
+    // passes may spend then: one still queued at the shutdown, or one the
+    // restarted Dreamer schedules for the same turns. A pass parked on its
+    // trap stays as it was: leased, on the same trap, never claimed again.
     fake.push(extraction_reply(subject, "Oleksii"));
     let roomy = models(
         &fake.base_url,
@@ -567,10 +574,13 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     );
     let host = AiHost::start(vault.clone(), Some(&roomy), true).await;
     tokio::time::sleep(Duration::from_secs(3)).await;
-    assert!(fake.seen().is_empty(), "the trapped pass ran unsignalled");
-    let parked = trapped().expect("still parked on its trap");
-    assert_eq!(parked.state, AttemptState::Leased);
-    assert!(name_claims(&vault, &subject).is_empty());
+    let rows = AttemptQueue::new(&vault).list().unwrap();
+    for (before, park) in &parked {
+        let after = rows.iter().find(|row| row.id == before.id);
+        assert_eq!(after, Some(before), "the trapped pass ran unsignalled");
+        assert_eq!(on_trap(before).as_ref(), Some(park));
+        assert_eq!(before.state, AttemptState::Leased);
+    }
     host.shutdown().await;
 }
 
