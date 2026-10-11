@@ -183,6 +183,11 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn seat_facet(&self) -> Option<&str> {
         None
     }
+    /// Shadow mode's type check of each generated program; absent when the
+    /// host's `[models.code_mode.check]` mode is `off`.
+    fn code_check(&self) -> Option<&oneiron_code_check::ShadowCheck> {
+        None
+    }
 }
 
 /// The PRODUCTION adapter: the injected provider, entered through the engine's
@@ -350,6 +355,9 @@ fn run_engine_native_code_mode(
         routed_config.model_locality = seat.locality();
         routed_config.seat_effort = Some(seat.effort());
         executor = executor.with_model_seat(seat);
+    }
+    if let Some(shadow) = provider.code_check() {
+        executor = executor.with_code_check(shadow);
     }
     reactor
         .block_on(executor.run(&routed_config))

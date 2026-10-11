@@ -19,6 +19,7 @@ use crate::{
 use super::*;
 
 mod agent_verb_regressions;
+mod code_check;
 mod memory_rows;
 mod output_decay;
 mod speech_identity_regressions;

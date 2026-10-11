@@ -9,6 +9,7 @@ use oneiron::engine_executor::{
 };
 use oneiron::llm::seat::SeatJudge;
 use oneiron::{BudgetLease, EntityId, LlmBackend, Vault};
+use oneiron_code_check::ShadowCheck;
 use std::sync::Arc;
 
 /// The first-party component this repository builds and reviews, and the
@@ -47,6 +48,7 @@ pub struct McpQuickJsProvider {
     /// Each run's clock is frozen at its first start, and a resumed run keeps
     /// it; otherwise every run shares the configured frozen clock.
     clock_from_first_start: bool,
+    code_check: Option<Arc<ShadowCheck>>,
 }
 
 impl McpQuickJsProvider {
@@ -64,6 +66,7 @@ impl McpQuickJsProvider {
             config,
             seat_router: None,
             clock_from_first_start: false,
+            code_check: None,
         })
     }
 
@@ -73,6 +76,14 @@ impl McpQuickJsProvider {
     #[must_use]
     pub fn with_clock_from_first_start(mut self) -> Self {
         self.clock_from_first_start = true;
+        self
+    }
+
+    /// Shadow mode: type-check every generated program before it runs and
+    /// record the diagnostics beside its step. Nothing is blocked.
+    #[must_use]
+    pub fn with_code_check(mut self, shadow: Arc<ShadowCheck>) -> Self {
+        self.code_check = Some(shadow);
         self
     }
 
@@ -97,6 +108,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn seat_facet(&self) -> Option<&str> {
         self.seat_router.as_ref().map(|(_, facet)| facet.as_str())
+    }
+    fn code_check(&self) -> Option<&ShadowCheck> {
+        self.code_check.as_deref()
     }
     fn backend(&self) -> &dyn LlmBackend {
         self.backend.as_ref()

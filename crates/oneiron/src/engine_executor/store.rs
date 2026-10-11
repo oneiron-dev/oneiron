@@ -168,6 +168,11 @@ pub(super) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
 }
 
+/// A shadow check's report for the step's program.
+pub(super) fn code_check_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.code-check.json")
+}
+
 pub(super) fn implicit_speak_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.implicit-speak.txt")
 }

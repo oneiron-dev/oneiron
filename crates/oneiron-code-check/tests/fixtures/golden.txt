@@ -1,0 +1,11 @@
+== 01-correct
+== 02-wrong-verb
+program.js(1,28): error TS2551: Property 'speka' does not exist on type 'typeof self'. Did you mean 'speak'?
+== 03-wrong-argument
+program.js(1,35): error TS2322: Type 'number' is not assignable to type 'string'.
+== 04-missing-await
+program.js(2,28): error TS2339: Property 'isVisible' does not exist on type 'Promise<SpeechOutput>'.
+== 05-undefined-path
+program.js(3,13): error TS18048: 'visible' is possibly 'undefined'.
+== 06-floating-promise
+== 07-any-null-path

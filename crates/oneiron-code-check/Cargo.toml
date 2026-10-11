@@ -1,0 +1,26 @@
+[package]
+name = "oneiron-code-check"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "An optional type check of code-mode programs before they run"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+tempfile = "3"
+thiserror = { workspace = true }
+tracing = "0.1"
+# The engine's pinned Wasmtime (crates/oneiron), which runs the tsc-rs module.
+wasmtime = { version = "=48.0.3", default-features = false, features = ["cranelift", "runtime", "std"] }
+
+# The Microsoft backend's process group is killed whole on a timeout.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

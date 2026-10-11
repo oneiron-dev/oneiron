@@ -103,3 +103,17 @@ exactly-once resume, first-answer replay, shared outcome labels and room listing
 It needs no package installation or mock native module. This is distinct from
 the projection fixtures above. The standalone N-API Rust test binary still needs
 macOS; on Linux its Node symbols are supplied only by a real Node host (ONE-1997).
+
+## Code-mode declarations
+
+`crates/oneiron/src/task_verb/code-mode.d.ts` is the verb table as code mode
+declares it: one `self.memory.<name>` signature per row, which the engine
+renders from each row's compiled input schema (`code_mode_declarations`). The
+executor prompt and shadow mode's type check read that rendering. This script
+cannot see the schemas, so `--check` only requires the file to declare exactly
+the table's rows; the engine test `code_mode_declarations_file_is_the_verb_table`
+requires it byte for byte. Regenerate it after a table edit with:
+
+```
+ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron --lib code_mode_declarations_file_is_the_verb_table
+```
