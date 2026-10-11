@@ -24,11 +24,11 @@
 
 use std::ffi::OsString;
 use std::hash::{BuildHasher, Hasher};
+use std::io::{BufRead as _, Read as _};
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::io::{BufRead as _, Read as _};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
