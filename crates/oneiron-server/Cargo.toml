@@ -167,6 +167,8 @@ production-ws-codec = { package = "tokio-tungstenite", version = "0.29" }
 # atomicity test (ONE-1140); no production effect. `test-support` compiles in
 # the fixture that mints a foreign principal's Grant through the owner verb.
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "test-hooks", "test-support"] }
+# The paid-leg fixture's local TLS fake provider.
+oneiron-broker = { version = "0.1.0", path = "../oneiron-broker", features = ["test-support"] }
 
 [lints]
 workspace = true
