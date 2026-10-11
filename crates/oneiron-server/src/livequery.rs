@@ -74,6 +74,17 @@ fn rpc_error(request_id: u64, error: AppError) -> Result<Vec<Vec<u8>>, ProtocolE
 
 /// Both identity claims come from the credential, exactly as on the HTTP facade.
 fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory<'a>, AppError> {
+    let (actor, class) = bound_reader(auth)?;
+    let memory = vault.memory(actor, class);
+    // Reads run under the credential this principal presented (ONE-1187-D6).
+    Ok(match auth.verified_slip() {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
+    })
+}
+
+/// The principal a bound credential reads as, and its actor class.
+fn bound_reader(auth: &CoreAuth) -> Result<(oneiron::EntityId, oneiron::EdgeActorClass), AppError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let principal = auth.principal_ref().ok_or_else(|| {
@@ -91,12 +102,7 @@ fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory
             ["Re-mint the slip with a 32-character lowercase hex principal ref."],
         )
     })?;
-    let memory = vault.memory(actor, bound_actor_class(auth)?);
-    // Reads run under the credential this principal presented (ONE-1187-D6).
-    Ok(match auth.verified_slip() {
-        Some(proof) => memory.with_read_proof(proof),
-        None => memory,
-    })
+    Ok((actor, bound_actor_class(auth)?))
 }
 
 fn bound_actor_class(auth: &CoreAuth) -> Result<oneiron::EdgeActorClass, AppError> {
@@ -137,7 +143,7 @@ pub(crate) fn bound_rpc(
         auth.require_unrestricted_record_scope()?;
         let read = Read::parse(&request.method, request.params)?;
         let memory = bound_memory(server.vault(), auth)?;
-        read.run(server, &memory)
+        read.run(server, auth, &memory)
     })();
     match result {
         Ok(value) => rpc_result(request.request_id, value).or_else(|_| {

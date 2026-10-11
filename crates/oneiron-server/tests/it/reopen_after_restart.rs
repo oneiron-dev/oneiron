@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, holder_proof};
-use oneiron::memory::{Effort, RecallScope, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::{RecallEffort, RecallScope, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron_remote::{OneironClient, unix_seconds_now};
 use serde_json::Value;
 
@@ -18,7 +18,7 @@ const TEXT: &str = "The spare key to the Quillamere boathouse hangs behind the t
 
 /// A running `oneiron serve`. Dropping it kills the process, so a failed
 /// assertion never leaves a server holding the vault.
-struct Server(Child);
+pub(super) struct Server(Child);
 
 impl Drop for Server {
     fn drop(&mut self) {
@@ -27,7 +27,7 @@ impl Drop for Server {
     }
 }
 
-fn oneiron(args: &[&str], config: &Path) -> Command {
+pub(super) fn oneiron(args: &[&str], config: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
     command
         .args(args)
@@ -39,7 +39,7 @@ fn oneiron(args: &[&str], config: &Path) -> Command {
     command
 }
 
-fn stdout(mut command: Command) -> String {
+pub(super) fn stdout(mut command: Command) -> String {
     let output = command.output().expect("run oneiron");
     assert!(
         output.status.success(),
@@ -51,7 +51,7 @@ fn stdout(mut command: Command) -> String {
 
 /// Starts `oneiron serve` and waits until the facade router answers: an
 /// unauthenticated call must reach the auth extractor and be refused.
-fn serve(config: &Path, port: u16, log: &Path) -> Server {
+pub(super) fn serve(config: &Path, port: u16, log: &Path) -> Server {
     let port = port.to_string();
     let mut command = oneiron(&["serve", "--host", "127.0.0.1", "--port", &port], config);
     command
@@ -86,7 +86,7 @@ fn serve(config: &Path, port: u16, log: &Path) -> Server {
     }
 }
 
-fn sigterm(mut server: Server) {
+pub(super) fn sigterm(mut server: Server) {
     let pid = libc::pid_t::try_from(server.0.id()).expect("pid fits pid_t");
     // SAFETY: `kill` takes plain integers and touches no memory; `pid` is a
     // child this test spawned and has not yet reaped.
@@ -104,9 +104,10 @@ fn recalled_ref(client: &OneironClient) -> String {
     let pack = client
         .recall(
             "Quillamere boathouse",
-            Effort::Medium,
+            RecallEffort::Medium,
             &RecallScope::default(),
             10,
+            None,
             None,
             None,
         )

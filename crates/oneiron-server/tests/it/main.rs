@@ -24,4 +24,7 @@ mod remote_pairing;
 // SIGTERM through `libc::kill` is Unix-only.
 #[cfg(unix)]
 mod reopen_after_restart;
+// Restarts the shipped server through `reopen_after_restart`'s helpers.
+#[cfg(unix)]
+mod slip_clock;
 mod ws_sync;

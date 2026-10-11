@@ -59,6 +59,10 @@ fn fixture() -> (
     config.embedding_model = Some("test/model@v1".to_owned());
     config.max_readers = 16;
     config.retrieval_telemetry_capture = true;
+    // Live calls run under the vault's call-mode deadline. These tests are
+    // not about it, so a loaded runner gets the longest one.
+    config.call_mode_deadline =
+        std::time::Duration::from_millis(oneiron::memory::caps::MAX_RECALL_DEADLINE_MS);
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     let mut runtime = RuntimeConfig::default();
     runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();

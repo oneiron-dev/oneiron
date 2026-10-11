@@ -334,7 +334,11 @@ impl Vault {
     ) -> Result<VerifiedSlip> {
         let txn = self.store.env.read_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let challenge = super::slip_replay::request_challenge(
+            timestamp,
+            nonce,
+            super::slip_replay::request_now_in_txn(self, &txn)?,
+        )?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         slip.verify(host_public_key, &fold, now, &challenge, signature)
     }
@@ -349,9 +353,10 @@ impl Vault {
         nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let mut txn = self.store.env.write_txn()?;
+        let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let challenge = super::slip_replay::request_challenge(timestamp, nonce, request_now)?;
         let key = &fold
             .slips
             .mints
@@ -368,7 +373,7 @@ impl Vault {
             &verified.claims().binding_key,
             nonce,
             timestamp,
-            now,
+            request_now,
         )?;
         txn.commit()?;
         Ok(verified)
@@ -384,7 +389,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let challenge = super::slip_replay::request_challenge(
+            timestamp,
+            nonce,
+            super::slip_replay::request_now_in_txn(self, &txn)?,
+        )?;
         let key = &fold
             .slips
             .mints
@@ -532,11 +541,12 @@ impl Vault {
         request_nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let mut txn = self.store.env.write_txn()?;
+        let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(&txn)?.secs();
         let challenge =
-            super::slip_replay::request_challenge(request_timestamp, request_nonce, now)?;
+            super::slip_replay::request_challenge(request_timestamp, request_nonce, request_now)?;
         let verified = slip.verify(&issuer.public_key(), &fold, now, &challenge, signature)?;
         super::slip_replay::record_nonce(
             self,
@@ -544,7 +554,7 @@ impl Vault {
             &verified.claims().binding_key,
             request_nonce,
             request_timestamp,
-            now,
+            request_now,
         )?;
         if verified.claims().single_use {
             self.append_slip_op_in_txn(
