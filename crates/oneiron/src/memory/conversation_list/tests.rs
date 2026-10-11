@@ -58,7 +58,7 @@ struct Listed {
     next: Option<EntityId>,
     total: Option<u64>,
     withheld: usize,
-    axes: Vec<String>,
+    receipt: ScopedReadReceipt,
 }
 
 fn list(vault: &Vault, reader: EntityId, limit: usize) -> Listed {
@@ -76,7 +76,7 @@ fn list(vault: &Vault, reader: EntityId, limit: usize) -> Listed {
         next: read.value.next,
         total: read.value.total,
         withheld: read.receipt.suppressed_count,
-        axes: read.receipt.narrowed_axes,
+        receipt: read.receipt,
     }
 }
 
@@ -98,6 +98,17 @@ struct ReaderVault {
 }
 
 fn reader_vault(witnessed: &[Witnessed], readable: &[EntityId]) -> ReaderVault {
+    reader_vault_with(witnessed, readable, false)
+}
+
+/// As [`reader_vault`]; with `every_room` the reader's read ceiling also
+/// takes in every conversation the owner lists, the seeded root project's
+/// home room too, so no conversation is withheld.
+fn reader_vault_with(
+    witnessed: &[Witnessed],
+    readable: &[EntityId],
+    every_room: bool,
+) -> ReaderVault {
     use ed25519_dalek::{Signer, SigningKey};
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -166,6 +177,9 @@ fn reader_vault(witnessed: &[Witnessed], readable: &[EntityId]) -> ReaderVault {
         rows.extend(vault.turn_message_ids_in(&txn, id).expect("messages"));
     }
     drop(txn);
+    if every_room {
+        rows.extend(list(&vault, owner, 50).rows.into_iter().map(|(id, _)| id));
+    }
     for row in rows {
         match vault
             .record_scope(&row)
@@ -551,11 +565,12 @@ fn a_hidden_turns_topology_never_decides_a_preview() {
     assert_eq!(listed[0], listed[1]);
 }
 
-/// Two vaults the reader reads alike: one conversation whose two turns it may
-/// read, the later one with a message it may read. A message outside its
-/// grant is part of the earlier turn, and in one vault part of the later one
-/// as well. The list and its whole receipt are the same in both: nothing,
-/// not even a narrowed axis, says which turns a hidden message belongs to.
+/// Two vaults the reader reads alike: it may read every conversation, and
+/// one conversation's two turns, the later one with a message it may read. A
+/// message outside its grant is part of the earlier turn, and in one vault
+/// part of the later one as well. The list and its whole receipt are the same
+/// in both, and the receipt withholds nothing: nothing, not even a narrowed
+/// axis, says which turns a hidden message belongs to.
 #[test]
 fn a_hidden_message_in_two_turns_changes_nothing() {
     let (room, earlier, later) = (entity(0xF4), entity(0xF5), entity(0xF6));
@@ -566,7 +581,7 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
             vault,
             owner,
             reader,
-        } = reader_vault(
+        } = reader_vault_with(
             &[
                 (
                     room,
@@ -582,6 +597,7 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
                 ),
             ],
             &[room, earlier, later],
+            true,
         );
         if twice {
             let hidden = {
@@ -595,13 +611,129 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
                 .expect("a second membership");
         }
         let listed = list(&vault, reader, 50);
-        let others = others(&vault, owner, 1);
-        (listed.rows, listed.withheld, others, listed.axes)
+        let every = list(&vault, owner, 50).rows.len();
+        (listed.rows, listed.receipt, every)
     });
-    assert_eq!(
-        listed[0].0,
-        [(room, Some("the latest it may read".to_owned()))]
+    let (rows, receipt, every) = &listed[0];
+    assert_eq!(rows.len(), *every, "the reader reads every conversation");
+    assert!(rows.contains(&(room, Some("the latest it may read".to_owned()))));
+    assert_eq!(receipt.suppressed_count, 0);
+    assert!(
+        !receipt
+            .narrowed_axes
+            .iter()
+            .any(|axis| axis == "row_authority")
     );
-    assert_eq!(listed[0].1, listed[0].2, "only the other conversations");
     assert_eq!(listed[0], listed[1]);
+}
+
+/// `room`'s preview in one list read by `memory`.
+fn preview_of(memory: &Memory<'_>, room: EntityId) -> Option<String> {
+    memory
+        .conversation_list(ConversationListFilter::default(), None, 50, false)
+        .expect("list conversations")
+        .value
+        .rows
+        .into_iter()
+        .find(|row| row.row.id == room)
+        .expect("the room is listed")
+        .last_message_snippet
+}
+
+/// A room with no selected HEAD whose latest turn sits in an ordinary
+/// session the owner deleted. The turn still previews the room for the
+/// owner, as the owner's own preview always has, whether it reads as itself
+/// or with its own full credential (Sol R4 F16, R5 F21). The owner's
+/// narrower credential reads the turn but may not judge a session it may
+/// not read, so it leaves the turn out.
+#[test]
+fn a_deleted_session_keeps_the_owners_preview() {
+    use crate::authority::HostSlipIssuer;
+    use crate::federation::ScopeAxis;
+    use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (room, older, turn, session) = (entity(0xA1), entity(0xA2), entity(0xA3), entity(0xA4));
+    witness(
+        &vault,
+        owner,
+        room,
+        older,
+        AT,
+        said(WitnessAuthor::User, "the older turn", None),
+    );
+    let msgpack = |body: serde_json::Value| rmp_serde::to_vec_named(&body).expect("msgpack");
+    let at = TimeRange { start: 1, end: 1 };
+    vault
+        .batch()
+        .put(
+            &session,
+            ENTITY_TYPE_SESSION,
+            at,
+            1,
+            &msgpack(serde_json::json!({})),
+        )
+        .commit()
+        .expect("an ordinary session");
+    vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            at,
+            1,
+            &msgpack(serde_json::json!({
+                "txt": "still-live conversation text",
+                "dag_session_ref": session.to_hex(),
+            })),
+        )
+        .edge(&turn, crate::EdgeKind::ChildOf, &room, 1.0)
+        .commit()
+        .expect("a live turn in the session");
+    assert!(vault.delete_entity(&session).expect("delete the session"));
+    let still_live = Some("still-live conversation text".to_owned());
+    assert_eq!(
+        preview_of(&vault.memory(owner, EdgeActorClass::Human), room),
+        still_live
+    );
+
+    let issuer = HostSlipIssuer::from_secret(b"conversation list owner").expect("issuer");
+    let root = vault.ensure_host_root_slip(&issuer).expect("host root");
+    let credential = |tag: &[u8], verbs: Option<&str>| {
+        let mut claims = root.claims.clone();
+        claims.slip_id = *blake3::hash(tag).as_bytes();
+        claims.parent_id = None;
+        claims.holder_ref = owner.to_hex();
+        claims.actor_class = Some("human".into());
+        if let Some(verb) = verbs {
+            claims.scope.verbs = ScopeAxis::Some(std::collections::BTreeSet::from([verb.into()]));
+        }
+        let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+        let proof = issuer.binding_proof(&slip, tag).expect("binding proof");
+        vault
+            .verify_capability_slip(&issuer.public_key(), &slip, tag, &proof)
+            .expect("verify")
+    };
+    let full = credential(b"conversation-list-owner-full", None);
+    assert!(full.is_full_vault_owner_grade());
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    assert_eq!(preview_of(&memory.with_read_proof(&full), room), still_live);
+
+    let narrow = credential(b"conversation-list-owner-read", Some("read"));
+    assert!(!narrow.is_full_vault_owner_grade());
+    let memory = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_read_proof(&narrow);
+    let read = memory
+        .read_lane(ClaimReadStatus::Recorded)
+        .expect("lane")
+        .read(&[PointRead::id(turn)], None)
+        .expect("read the turn");
+    assert!(
+        read.value[0].as_ref().is_some_and(|row| row.body.is_some()),
+        "the narrower credential reads the turn"
+    );
+    assert_ne!(preview_of(&memory, room), still_live);
 }

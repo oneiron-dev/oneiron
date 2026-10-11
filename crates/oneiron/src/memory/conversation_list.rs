@@ -347,7 +347,7 @@ impl Memory<'_> {
     ) -> MemoryResult<Vec<(u64, EntityId)>> {
         // The vault owner may inspect every session, a retained shell too, as
         // its own preview does: the proof judges each one.
-        if lane.actor_key().vault_owner_ref().is_some() {
+        if self.inspects_every_session(lane)? {
             return Ok(turns);
         }
         let sessions = {
@@ -375,6 +375,28 @@ impl Memory<'_> {
             })
             .map(|(turn, _)| turn)
             .collect())
+    }
+
+    /// Whether the reader is the vault owner reading all of its vault: as
+    /// itself, or with its own live, full owner-grade credential. A narrower
+    /// credential, the owner's too, reads only what it grants.
+    fn inspects_every_session(&self, lane: &ScopedRead<'_>) -> MemoryResult<bool> {
+        if lane.actor_key().vault_owner_ref().is_some() {
+            return Ok(true);
+        }
+        let Some(proof) = &self.read_proof else {
+            return Ok(false);
+        };
+        if !proof.is_full_vault_owner_grade()
+            || proof.claims().holder_ref != self.actor.to_hex()
+            || proof.claims().actor_class.as_deref()
+                != Some(crate::EdgeActorClass::Human.gate_actor_class())
+        {
+            return Ok(false);
+        }
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        Ok(self.vault.capability_slip_is_live_in_txn(&txn, proof)?
+            && self.is_vault_owner_in_txn(&txn)?)
     }
 }
 
