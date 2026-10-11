@@ -802,6 +802,127 @@ fn api_keeps_a_host_curlrc_from_capturing_the_transfer() {
     );
 }
 
+/// An ambient `http_proxy` routes curl's request, bearer and holder proof
+/// included, to that proxy even for a loopback server, and `-q` does not stop
+/// it (Astra F1 on #1360). This row proves it with the REAL binary, a
+/// recording proxy and a stand-in server, both on loopback: plain curl sends
+/// the request to the proxy; through this module only the server receives it.
+/// A host with no curl stands down, as above.
+#[test]
+#[cfg(unix)]
+fn api_keeps_an_ambient_proxy_from_receiving_the_credential() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Answers one connection on `listener` with `body`; yields the request
+    /// head it was sent.
+    fn answer_one(listener: TcpListener, body: &'static str) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut head = Vec::new();
+            let mut buf = [0; 4096];
+            while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                match socket.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => head.extend_from_slice(&buf[..n]),
+                }
+            }
+            let _ = write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            String::from_utf8_lossy(&head).into_owned()
+        })
+    }
+    fn loopback() -> (TcpListener, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        (listener, url)
+    }
+
+    let probe = std::process::Command::new("curl").arg("--version").output();
+    if !probe.is_ok_and(|probe| probe.status.success()) {
+        return;
+    }
+    let (origin, origin_url) = loopback();
+    let target = format!("{origin_url}/api/core/discover");
+    let origin = answer_one(origin, "origin");
+
+    // The fixture is real: plain curl, the proxy in its environment, sends
+    // the loopback request to the proxy.
+    let (control, control_url) = loopback();
+    let control = answer_one(control, "proxied");
+    let plain = std::process::Command::new("curl")
+        .env("http_proxy", &control_url)
+        .env_remove("no_proxy")
+        .env_remove("NO_PROXY")
+        .args(["-q", "--silent", "--show-error", "--url", &target])
+        .output()
+        .unwrap();
+    assert_eq!(
+        plain.stdout,
+        b"proxied",
+        "fixture check: an ambient proxy must divert plain curl: {}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    let diverted = control.join().unwrap();
+    assert!(
+        diverted.starts_with(&format!("GET {target} ")),
+        "{diverted}"
+    );
+
+    // The same environment, every proxy variable set, in force for this
+    // module's own invocation.
+    let (proxy, proxy_url) = loopback();
+    let proxy_addr = proxy.local_addr().unwrap();
+    let proxy = answer_one(proxy, "proxied");
+    let dir = tempfile::tempdir().unwrap();
+    let program = write_fake_curl(
+        dir.path(),
+        &format!(
+            "#!/bin/sh\nunset no_proxy NO_PROXY\n\
+             export http_proxy=\"{proxy_url}\" https_proxy=\"{proxy_url}\" \
+             all_proxy=\"{proxy_url}\" ALL_PROXY=\"{proxy_url}\"\nexec curl \"$@\"\n"
+        ),
+    );
+    let request = api::CurlRequest {
+        method: "GET".to_owned(),
+        url: target,
+        body: None,
+        content_type: None,
+    };
+    let output = api::run_curl_output(
+        program.as_os_str(),
+        &request,
+        Some(PLACEHOLDER_SECRET),
+        std::process::Stdio::piped(),
+        std::process::Stdio::piped(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        output.stdout,
+        b"origin",
+        "the request must reach the selected server, not the proxy: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let served = origin.join().unwrap();
+    assert!(
+        served.contains(&format!("Authorization: Bearer {PLACEHOLDER_SECRET}")),
+        "{served}"
+    );
+    // Nothing reached the proxy: the first connection it answers is this one.
+    std::net::TcpStream::connect(proxy_addr)
+        .unwrap()
+        .write_all(b"WAKE\r\n\r\n")
+        .unwrap();
+    assert_eq!(proxy.join().unwrap(), "WAKE\r\n\r\n");
+}
+
 /// Staging a body that fails PART-WAY through must leave nothing on disk. The
 /// file exists from the moment it is opened, so the guard that removes it has
 /// to own the path BEFORE the first write: otherwise a write error returns

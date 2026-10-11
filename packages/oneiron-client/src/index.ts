@@ -21,7 +21,7 @@
  */
 
 export interface HttpBaseClientOptions {
-  /** Origin of an existing Oneiron server, e.g. `http://127.0.0.1:3000`. */
+  /** Origin of an existing Oneiron server, e.g. `http://127.0.0.1:9090`. */
   readonly baseUrl: string | URL;
   /** Bearer credential. It becomes one default header and is stored nowhere else. */
   readonly secret?: string;
