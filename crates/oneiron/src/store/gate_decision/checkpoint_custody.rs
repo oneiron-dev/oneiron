@@ -358,13 +358,20 @@ impl Store {
     /// replacement's mark is lifted; a failure there is only logged, both
     /// marks already saying the same, and the replacement keeps its mark,
     /// live only at that path.
+    ///
+    /// `fence` reads this vault under the writer, before the mark: a refusal
+    /// there changes nothing, and no write lands between it and the seal.
     pub(crate) fn swap_out(
         &self,
         replacement: &Store,
+        fence: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         swap: impl FnOnce() -> std::io::Result<()>,
     ) -> Result<()> {
         if cfg!(not(unix)) {
             // No exterior custody exists here, so none is shared.
+            let txn = self.env.write_txn()?;
+            fence(&txn)?;
+            drop(txn);
             return Ok(swap()?);
         }
         let mark = live_only_at(self.env.path())?;
@@ -375,6 +382,7 @@ impl Store {
         }
         let replacement_dir = directory_identity(replacement.env.path())?;
         let mut wtxn = self.env.write_txn()?;
+        fence(&wtxn)?;
         ARCHIVED.put(self, &mut wtxn, &(), &mark)?;
         self.env.seal();
         wtxn.commit()?;

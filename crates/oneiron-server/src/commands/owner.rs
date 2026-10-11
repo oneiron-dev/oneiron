@@ -1,6 +1,6 @@
 //! The owner's own commands on a stopped vault: doctor, backup, restore,
-//! window recovery, export, the secret scan switch, registering and rotating
-//! a secret, import consent and agent-run consent.
+//! window and clock recovery, export, the secret scan switch, registering and
+//! rotating a secret, import consent and agent-run consent.
 //!
 //! Holding the vault's writer lease is the owner proof here, the same local
 //! door the embedded export uses; a running `serve` answers the same actions
@@ -13,14 +13,15 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverWindowArgs, RestoreArgs, RunsCommand,
-    SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs, SecretScanSwitch,
-    SecretsCommand, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverClockArgs, RecoverWindowArgs,
+    RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
+    SecretScanSwitch, SecretsCommand, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
 };
 use crate::owner::backup::{self, BackupPlan};
+use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
 
 fn emit(value: &impl Serialize) -> anyhow::Result<()> {
@@ -243,6 +244,63 @@ pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
         quarantined: report.quarantine_path,
         rebuilt: report.obligations,
     })
+}
+
+#[derive(Serialize)]
+struct RecoveredClock {
+    /// Where the clock holder proofs are judged on stood.
+    old_floor: String,
+    /// Where it stands now: this host's clock.
+    new_floor: String,
+    /// How far ahead it was, in seconds.
+    gap_secs: u64,
+    /// No proof signed before this is admitted again.
+    not_before: String,
+}
+
+/// Lets agents back in after the host clock ran ahead and was set back:
+/// while the vault's proof clock sits ahead, every fresh holder proof gets
+/// 401. Holding the writer lease keeps a running `serve` out; the engine
+/// refuses when the clock is not ahead, or when lowering it would reopen a
+/// proof it no longer remembers.
+pub fn recover_clock(args: RecoverClockArgs) -> anyhow::Result<()> {
+    use oneiron::authority::ProofClockRecovery;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(&config, "then run this again")?;
+    let owner = local_owner(&vault)?;
+    match vault.recover_proof_clock(&owner)? {
+        ProofClockRecovery::Recovered {
+            old_floor,
+            new_floor,
+            not_before,
+        } => emit(&RecoveredClock {
+            old_floor: rfc3339_secs(old_floor),
+            new_floor: rfc3339_secs(new_floor),
+            gap_secs: old_floor - new_floor,
+            not_before: rfc3339_secs(not_before),
+        }),
+        ProofClockRecovery::NotAhead { floor, wall } => anyhow::bail!(
+            "nothing to recover: the vault's proof clock ({}) is not ahead of this host's \
+             clock ({})",
+            rfc3339_secs(floor),
+            rfc3339_secs(wall)
+        ),
+        ProofClockRecovery::Forgotten {
+            floor,
+            forgotten_before,
+            wall,
+        } => anyhow::bail!(
+            "not recovered: agents connected while the host clock was ahead, and the vault \
+             no longer remembers every proof it admitted then (up to {}): the clock stayed \
+             ahead for over a day, or an older version kept each proof for a minute only. \
+             It must keep refusing every proof signed before then, so lowering its clock \
+             would not let agents in. Agents get in again once this host's clock ({}) \
+             reaches {}",
+            rfc3339_secs(forgotten_before),
+            rfc3339_secs(wall),
+            rfc3339_secs(floor)
+        ),
+    }
 }
 
 #[derive(Serialize)]

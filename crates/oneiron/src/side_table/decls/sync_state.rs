@@ -42,8 +42,14 @@ side_tables! {
     /// One outstanding single-use pairing/enrollment link, keyed by a keyed-hash of its typed code.
     /// Key: hex64.
     AUTHORITY_PAIRING_PENDING: SyncState b"authority:pairing:" LegacyJson;
-    /// Admitted request nonce inside the replay window (empty marker), evicted once its signed
-    /// timestamp ages out. Key: u64hex16 ":" hex64.
+    /// The floor of the clock holder proofs are judged on (u64be seconds): the reading the last
+    /// admission committed, or the wall time an owner clock recovery set. Key: ().
+    AUTHORITY_SLIP_PROOF_CLOCK: SyncState b"authority:slip-proof-clock:v1" Raw;
+    /// The earliest signed time a holder proof may carry (u64be seconds): past every evicted
+    /// replay nonce, and at least the wall time of the last owner clock recovery. Key: ().
+    AUTHORITY_SLIP_PROOF_NOT_BEFORE: SyncState b"authority:slip-proof-not-before:v1" Raw;
+    /// Admitted request nonce (empty marker), evicted once the proof clock is a day past its
+    /// signed timestamp. Key: u64hex16 ":" hex64.
     AUTHORITY_SLIP_REPLAY_NONCE: SyncState b"authority:slip-replay:v2:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
