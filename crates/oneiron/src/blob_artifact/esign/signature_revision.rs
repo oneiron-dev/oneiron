@@ -5,9 +5,9 @@
 //! the trailer, and patches the ByteRange. The seal organ builds only the CMS
 //! that fills the hole, so it never chooses a PDF object of the revision the
 //! key signs. One revision is written for each contents capacity. The layout
-//! is the native seal writer's, so its verifier reads it as its own, but for
-//! numbers: the objects it re-emits keep each number as the prepare step's
-//! lopdf wrote it, never rounded, so no fact of the page changes.
+//! is the native seal writer's, so its verifier reads it as its own. The
+//! objects it re-emits keep every value and type: a real is written as the
+//! shortest decimal that reads back as the same real, never rounded.
 
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 use sha2::{Digest, Sha256};
@@ -376,9 +376,7 @@ fn write_object(object: &Object, out: &mut Vec<u8>) -> Result<()> {
         Object::Null => out.extend_from_slice(b"null"),
         Object::Boolean(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
         Object::Integer(value) => out.extend_from_slice(value.to_string().as_bytes()),
-        // The shortest decimal that reads back as the same value, as lopdf
-        // writes it: six places would turn 0.0000004 into 0.
-        Object::Real(value) => out.extend_from_slice(value.to_string().as_bytes()),
+        Object::Real(value) => write_real(*value, out),
         Object::Name(name) => write_name(name, out),
         Object::String(bytes, _) => write_hex_string(bytes, out),
         Object::Array(items) => {
@@ -405,6 +403,18 @@ fn write_object(object: &Object, out: &mut Vec<u8>) -> Result<()> {
         Object::Stream(_) => return Err(PdfPreparationError::UnsupportedPdf),
     }
     Ok(())
+}
+
+/// A real as the same real: the shortest decimal that reads back as the
+/// same value, with a decimal point so it reads back as a real, not an
+/// integer. Six places would turn 0.0000004 into 0, and `0` would turn 0.0
+/// into an integer.
+fn write_real(value: f32, out: &mut Vec<u8>) {
+    let text = value.to_string();
+    out.extend_from_slice(text.as_bytes());
+    if !text.contains('.') {
+        out.extend_from_slice(b".0");
+    }
 }
 
 fn write_name(name: &[u8], out: &mut Vec<u8>) {

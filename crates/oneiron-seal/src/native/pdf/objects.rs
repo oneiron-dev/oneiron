@@ -19,10 +19,7 @@ fn write_object(obj: &Object, out: &mut Vec<u8>) -> Result<(), SealError> {
         Object::Null => out.extend_from_slice(b"null"),
         Object::Boolean(b) => out.extend_from_slice(if *b { b"true" } else { b"false" }),
         Object::Integer(i) => out.extend_from_slice(i.to_string().as_bytes()),
-        // The shortest decimal that reads back as the same value, as lopdf
-        // writes it: six places would turn 0.0000004 into 0, and the
-        // verifier, comparing catalogs, would refuse the revision.
-        Object::Real(r) => out.extend_from_slice(r.to_string().as_bytes()),
+        Object::Real(r) => write_real(*r, out),
         Object::Name(n) => write_name(n, out),
         Object::String(s, _) => write_hex_string(s, out),
         Object::Array(a) => {
@@ -51,6 +48,18 @@ fn write_object(obj: &Object, out: &mut Vec<u8>) -> Result<(), SealError> {
         Object::Stream(_) => return Err(fatal_pdf(FatalCode::PdfInvariantFailed)),
     }
     Ok(())
+}
+
+/// A real as the same real: the shortest decimal that reads back as the
+/// same value, with a decimal point so it reads back as a real, not an
+/// integer. The verifier compares catalogs by value and type: six places
+/// would turn 0.0000004 into 0, and `0` would turn 0.0 into an integer.
+fn write_real(value: f32, out: &mut Vec<u8>) {
+    let text = value.to_string();
+    out.extend_from_slice(text.as_bytes());
+    if !text.contains('.') {
+        out.extend_from_slice(b".0");
+    }
 }
 
 fn write_name(name: &[u8], out: &mut Vec<u8>) {

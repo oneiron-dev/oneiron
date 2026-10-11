@@ -456,6 +456,59 @@ fn revisions_keep_the_numbers_of_the_catalog_they_re_emit() {
     }
 }
 
+/// A classic-xref PDF from its object bodies, numbered from 1; object 1 is
+/// the catalog. lopdf writes 1.0 as `1`, so a real with no fraction needs
+/// hand-written bytes.
+fn classic(objects: &[&str]) -> Vec<u8> {
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (number, body) in (1..).zip(objects) {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{number} 0 obj\n{body}\nendobj\n").as_bytes());
+    }
+    let size = objects.len() + 1;
+    let xref = out.len();
+    out.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+    for offset in offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    out
+}
+
+/// Sol R13 on #1379: with an indirect AcroForm the signature leaves the
+/// catalog alone, so the DSS revision is the first to re-emit it. `0` would
+/// read its 0.0 back as an integer, and the verifier, comparing catalogs by
+/// value and type, would refuse the organ's own B-LT seal.
+#[test]
+fn a_dss_revision_keeps_a_catalog_real_a_real() {
+    let pdf = classic(&[
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R /Threshold 0.0 >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+        "<< /Fields [] >>",
+    ]);
+    let signed = sign_revision(&prepared(&pdf), 1024);
+    let state =
+        reparse_revision(&signed.bytes, &SealResourceLimits::default()).expect("reparse signed");
+    let dss_obj = state.max_obj + 1;
+    let kind = RevisionKind::Dss {
+        material_objects: vec![(dss_obj, b"<< /Type /DSS >>".to_vec())],
+        dss_obj,
+    };
+    let dss = append_revision(&signed.bytes, &state, &kind, 0).expect("dss revision");
+    let doc = Document::load_mem(&dss.bytes).expect("reload");
+    let catalog = doc.catalog().expect("catalog");
+    assert!(catalog.has(b"DSS"), "the DSS revision's own catalog");
+    let threshold = catalog.get(b"Threshold");
+    assert!(
+        matches!(threshold, Ok(Object::Real(zero)) if zero.to_bits() == 0.0_f32.to_bits()),
+        "{threshold:?}"
+    );
+}
+
 #[test]
 fn direct_acroform_dict_fields_survive_signing() {
     let mut doc = Document::with_version("1.4");
