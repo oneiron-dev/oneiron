@@ -311,9 +311,7 @@ async fn only_the_named_peers_talk() {
     )
     .await;
     for refused in [&elsewhere, &other_process] {
-        let mut stream = UnixStream::connect(&refused.socket)
-            .await
-            .expect("connect");
+        let mut stream = UnixStream::connect(&refused.socket).await.expect("connect");
         let _ = write_call(
             &mut stream,
             &chat(fake.origin(), BODY),
@@ -334,7 +332,10 @@ async fn only_the_named_peers_talk() {
         .call(&chat(fake.origin(), BODY), BODY, key())
         .await
         .expect("call");
-    assert!(matches!(reply.outcome, Outcome::Answered { status: 200, .. }));
+    assert!(matches!(
+        reply.outcome,
+        Outcome::Answered { status: 200, .. }
+    ));
     assert_eq!(fake.seen().len(), 1);
 }
 

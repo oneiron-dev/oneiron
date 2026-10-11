@@ -980,14 +980,14 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
     // A separate-user broker: any uid but this process's own.
     let uid = std::fs::metadata(dir.path()).unwrap().uid().wrapping_add(1);
     let socket = dir.path().join("broker.sock");
-    let config = config(&format!(
-        "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{{ model = \"paid:teacher\" }}]\n[broker]\nsocket = \"{}\"\nuid = {uid}\n",
-        socket.display()
-    ));
     // A same-user child that exits before it listens.
     let child = config(
         "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{ model = \"paid:teacher\" }]\n[broker]\nprogram = \"/bin/false\"\n",
     );
+    let config = config(&format!(
+        "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{{ model = \"paid:teacher\" }}]\n[broker]\nsocket = \"{}\"\nuid = {uid}\n",
+        socket.display()
+    ));
     let mut listener = None;
     let cases = [
         ("no path", true),

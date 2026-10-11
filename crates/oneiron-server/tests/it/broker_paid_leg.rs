@@ -1020,7 +1020,8 @@ async fn same_user_the_child_is_closed_to_the_daemon_that_started_it() {
         .stdin(Stdio::null())
         .spawn()
         .expect("an open child");
-    let control = std::fs::File::open(format!("/proc/{}/mem", open.id())).is_ok() && seize(open.id());
+    let control =
+        std::fs::File::open(format!("/proc/{}/mem", open.id())).is_ok() && seize(open.id());
     let _ = open.kill();
     let _ = open.wait();
     if !control {

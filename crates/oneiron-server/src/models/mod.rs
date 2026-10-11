@@ -160,7 +160,8 @@ impl ModelRuntime {
             .providers
             .values()
             .any(|provider| provider.key_secret.is_some() && provider.kind.generates());
-        let site = brokered.then(|| broker::BrokerSite::new(config).map_err(|error| error.to_string()));
+        let site =
+            brokered.then(|| broker::BrokerSite::new(config).map_err(|error| error.to_string()));
         for (name, provider) in &config.providers {
             match build_provider(name, provider, config, site.as_ref(), keys.as_ref()) {
                 Ok(Some(backend)) => {

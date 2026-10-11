@@ -23,8 +23,7 @@ use oneiron::{
     RetryableLlmError, UnsupportedCapability, Vault,
 };
 use oneiron_broker::{
-    BrokerClient, BrokerError, CallHeader, ChildBroker, Failure, Isolation, Outcome, Refusal,
-    Shape,
+    BrokerClient, BrokerError, CallHeader, ChildBroker, Failure, Isolation, Outcome, Refusal, Shape,
 };
 use oneiron_llm_anthropic::{
     AnthropicMessagesConfig, build_anthropic_messages_request, classify_anthropic_status,

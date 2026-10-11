@@ -154,7 +154,10 @@ fn a_vault_held_key_goes_out_only_through_the_broker_over_https() {
     // (`#broker-same-user-open`).
     for (broker, program) in [
         ("", None),
-        ("[broker]\nprogram = \"/opt/oneiron/oneiron-broker\"\n", Some("/opt/oneiron/oneiron-broker")),
+        (
+            "[broker]\nprogram = \"/opt/oneiron/oneiron-broker\"\n",
+            Some("/opt/oneiron/oneiron-broker"),
+        ),
     ] {
         assert_eq!(
             held(https, broker).unwrap().broker,
@@ -166,7 +169,10 @@ fn a_vault_held_key_goes_out_only_through_the_broker_over_https() {
     }
     for (provider, broker) in [
         // A separate user needs both its socket and its uid.
-        (https, "[broker]\nsocket = \"/run/oneiron-broker/broker.sock\"\n"),
+        (
+            https,
+            "[broker]\nsocket = \"/run/oneiron-broker/broker.sock\"\n",
+        ),
         (https, "[broker]\nuid = 991\n"),
         // A child's flags are not a separate-user broker's.
         (
