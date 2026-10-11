@@ -133,9 +133,9 @@ async fn witness(
 
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
-    Ok(Json(facade_invoke(
-        &server, &headers, actor, class, "witness", value,
-    )?))
+    let output = facade_invoke(&server, &headers, actor, class, "witness", value)?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(Json(output))
 }
 async fn claim_upsert(
     auth: CoreAuth,

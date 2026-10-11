@@ -47,6 +47,11 @@ pub struct McpConnectorActorRegistry {
     /// orders mints within this registry and is never published, never a clock,
     /// and never part of a cursor token.
     page_continuation_seq: u64,
+    /// Each vault-wide connection's reader as its latest call resolved it:
+    /// the credential the board publisher admits an own-task event under.
+    /// A connection with none hears no such event. Dropped with the
+    /// connection.
+    stream_readers: BTreeMap<StreamConnectionId, McpResolvedActor>,
 }
 
 impl fmt::Debug for McpConnectorActorRegistry {
@@ -68,6 +73,7 @@ impl McpConnectorActorRegistry {
             board_epochs: BTreeMap::new(),
             page_continuations: BTreeMap::new(),
             page_continuation_seq: 0,
+            stream_readers: BTreeMap::new(),
         }
     }
 
@@ -417,6 +423,7 @@ impl McpConnectorActorRegistry {
         self.streams.detach(&fingerprint.stream_connection());
         self.board_epochs.remove(&fingerprint.stream_connection());
         self.drop_page_continuations(&fingerprint.stream_connection());
+        self.stream_readers.remove(&fingerprint.stream_connection());
         Ok(McpConnectorActorRevokeStatus::Revoked)
     }
 
@@ -469,6 +476,7 @@ impl McpConnectorActorRegistry {
             self.streams.detach(&fingerprint.stream_connection());
             self.board_epochs.remove(&fingerprint.stream_connection());
             self.drop_page_continuations(&fingerprint.stream_connection());
+            self.stream_readers.remove(&fingerprint.stream_connection());
         }
         removed
     }
@@ -492,6 +500,7 @@ impl McpConnectorActorRegistry {
             self.streams.detach(&fingerprint.stream_connection());
             self.board_epochs.remove(&fingerprint.stream_connection());
             self.drop_page_continuations(&fingerprint.stream_connection());
+            self.stream_readers.remove(&fingerprint.stream_connection());
         }
         stale.len()
     }
@@ -540,6 +549,30 @@ impl McpConnectorActorRegistry {
     /// The engine STREAM registry, for verbs the engine itself dispatches.
     pub fn streams_mut(&mut self) -> &mut BoardStreamRegistry {
         &mut self.streams
+    }
+
+    /// Records the reader a vault-wide connection's call resolved, replacing
+    /// the one before: the latest credential is the one events are read
+    /// under.
+    pub fn bind_stream_reader(&mut self, reader: &McpResolvedActor) {
+        if self
+            .streams
+            .connection_state(&reader.stream_connection)
+            .is_some()
+        {
+            self.stream_readers
+                .insert(reader.stream_connection.clone(), reader.clone());
+        }
+    }
+
+    /// The bound readers of every connection held by one of `actors`.
+    #[must_use]
+    pub fn stream_readers_for(&self, actors: &[&str]) -> Vec<McpResolvedActor> {
+        self.stream_readers
+            .values()
+            .filter(|reader| actors.contains(&reader.actor_ref.to_hex().as_str()))
+            .cloned()
+            .collect()
     }
 
     #[must_use]

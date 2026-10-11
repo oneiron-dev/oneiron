@@ -382,6 +382,7 @@ fn derive_id(
         facts.world,
         facts.facet,
         facts.rel,
+        facts.project,
         facts.topic.as_deref(),
     )?;
     Ok(())
@@ -659,6 +660,10 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         10,
         &super::super::support::encode_value(&source)?,
     )?;
+    // A project-bound branch writes only from its own project's sources.
+    vault.with_write_txn_grouped(|txn| {
+        crate::federation::record_scope::stamp_leader_project(&vault.store, txn, turns[0], project)
+    })?;
     let partition = ConsolidationPartitionKey {
         conversation_ref: conversation,
         world_ref: Some(world),
@@ -887,8 +892,8 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     assert_eq!(backend.seen.lock().unwrap()[0], scope);
     let facts = super::super::conflict::candidate_facts(&sink.accepted[0].candidate)?;
     assert_eq!(
-        (facts.world, facts.facet, facts.rel),
-        (Some(world), Some(facet), Some(relationship))
+        (facts.world, facts.facet, facts.rel, facts.project),
+        (Some(world), Some(facet), Some(relationship), project)
     );
     // The durable codec refuses ambiguity rather than silently dropping scope.
     let mut duplicate = attempt.status.payload.input.clone();
@@ -937,7 +942,9 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
     )?;
     let mut scope = initial.scope().clone();
     scope.relationship = Some(relationship);
-    scope.project = Some(EntityId::now());
+    // A project bound admits only its own project's sources: the turn and
+    // the reference claims sit in the default project.
+    scope.project = Some(crate::claim::default_project_id());
     let mut allowed = None;
     for (rel, pinned) in [
         (Some(relationship), true),
@@ -1383,5 +1390,116 @@ fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
     let receipt = sink.receipt.expect("the sealed write carries its reads");
     assert_eq!(receipt.suppressed_count, 0);
     assert!(!receipt.narrowed_axes.contains(&"row_authority".to_owned()));
+    Ok(())
+}
+
+/// A TURN stamped with a project on its record position, as both TURN
+/// write doors settle a project leader-chat turn.
+fn seed_project_turn(
+    vault: &Vault,
+    conversation: &EntityId,
+    text: &str,
+    learned_at: u64,
+    project: EntityId,
+) -> Result<EntityId> {
+    let id = seed_turn(vault, conversation, "user", text, learned_at);
+    vault.with_write_txn_grouped(|txn| {
+        crate::federation::record_scope::stamp_leader_project(&vault.store, txn, id, project)
+    })?;
+    Ok(id)
+}
+
+/// ONE-1592 P3 (canon: a consolidated claim inherits its sources' exposure
+/// and never mixes scopes). A leader chat holds two projects' turns in one
+/// partition. The same subject and predicate from each project never meet
+/// in one bucket, judge call or merged result; each claim lands in its own
+/// source's project; a claim citing both projects is not written.
+#[test]
+fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (project_a, project_b) = (EntityId::now(), EntityId::now());
+    let conversation = seed_session(&vault, 0x5a, 1);
+    let turn_a = seed_project_turn(&vault, &conversation, "call me Oleksii", 10, project_a)?;
+    let turn_b = seed_project_turn(&vault, &conversation, "call me Alex", 11, project_b)?;
+    let attempt = admit_seeded_attempt(&vault, &store)?;
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let cite =
+        |turn: EntityId| serde_json::json!({"source_id": turn.to_hex(), "byte_range": [0, 1]});
+    let candidate = |predicate: &str, value: &str, refs: Vec<serde_json::Value>| {
+        serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
+            "value": value, "confidence": 0.8, "evidence_refs": refs})
+    };
+    let extraction = text_response(
+        serde_json::json!({"candidates": [
+            candidate("profile.name", "Oleksii", vec![cite(turn_a)]),
+            candidate("profile.name", "Alex", vec![cite(turn_b)]),
+            candidate("profile.city", "Kyiv", vec![cite(turn_a)]),
+            candidate("profile.city", "Kyiv", vec![cite(turn_b)]),
+            candidate("profile.nickname", "Al", vec![cite(turn_a), cite(turn_b)]),
+        ]})
+        .to_string(),
+    );
+    let backend = ScriptedBackend::new(vec![
+        Ok(extraction),
+        Ok(text_response(
+            "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
+        )),
+    ]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
+    };
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").unwrap(),
+        sink: &mut sink,
+        inference: test_inference_host(),
+        scope: None,
+    };
+    assert!(matches!(
+        block_on_ready(executor.execute(&attempt, &mut ctx))?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    drop(executor);
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        1,
+        "no merge judge across projects"
+    );
+    let landed = sink
+        .accepted
+        .iter()
+        .map(|accepted| {
+            let facts = super::super::conflict::candidate_facts(&accepted.candidate)?;
+            let value = facts.value.as_str().unwrap_or_default().to_owned();
+            Ok((value, facts.project, accepted.evidence_turn_refs.clone()))
+        })
+        .collect::<Result<BTreeSet<_>>>()?;
+    assert_eq!(
+        landed,
+        BTreeSet::from([
+            ("Alex".to_owned(), project_b, vec![turn_b]),
+            ("Kyiv".to_owned(), project_a, vec![turn_a]),
+            ("Kyiv".to_owned(), project_b, vec![turn_b]),
+            ("Oleksii".to_owned(), project_a, vec![turn_a]),
+        ])
+    );
     Ok(())
 }

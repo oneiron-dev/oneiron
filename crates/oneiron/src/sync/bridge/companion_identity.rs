@@ -387,10 +387,17 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // This savepoint has no postcommit owner. Carry an admitted claim
     // hydration to the edge batch's OUTER transaction; only its commit may
     // re-arm the digest timer. Rollback drops that owner's marker.
-    if EntityMetadataHeader::parse(&blob)
-        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
-    {
-        crate::batch::queue_proactivity_change(vault, wtxn);
+    match EntityMetadataHeader::parse(&blob).map(|header| header.entity_type) {
+        Some(crate::registry::ENTITY_TYPE_CLAIM) => {
+            crate::batch::queue_proactivity_change(vault, wtxn);
+        }
+        // A hydrated TASK reaches board subscribers after the same commit.
+        Some(crate::registry::ENTITY_TYPE_TASK) => {
+            if let Some(id) = step.written() {
+                crate::batch::queue_task_updates(vault, wtxn, [id]);
+            }
+        }
+        _ => {}
     }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
     // already-present `Ready` above, carrying the written bytes so the

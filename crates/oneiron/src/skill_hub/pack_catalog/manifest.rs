@@ -1,8 +1,10 @@
 //! Closed PACK.md manifest parser. Requested powers stay data until local admission.
 use std::collections::BTreeSet;
 
+use super::migrations::PackMigration;
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
+use crate::saved_query::PackMigrationMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +28,9 @@ pub struct PackManifest {
     pub description: String,
     pub version: String,
     pub license: Option<String>,
+    /// An address for removal or defect requests (hub folder contract,
+    /// 2026-09-22). Display text only; it grants nothing.
+    pub contact: Option<String>,
     pub kind: PackKind,
     pub adapter: Option<PackAdapter>,
     /// Named, typed facet paths for the inert agent-pack container.
@@ -36,6 +41,26 @@ pub struct PackManifest {
     pub kinds: BTreeSet<String>,
     pub requested_grants: BTreeSet<String>,
     pub wake_subscriptions: BTreeSet<String>,
+    /// Predicate migration maps this source ships for moves from earlier
+    /// sources of the pack (ARCH-0059 §4, rung 1).
+    pub migrations: Vec<PackMigration>,
+}
+
+impl PackManifest {
+    /// The map this source ships for a move from the installed source
+    /// `content_hash` of `version`: the entry naming that exact source, else
+    /// the one naming its version alone.
+    #[must_use]
+    pub fn migration_from(&self, version: &str, content_hash: &str) -> Option<PackMigrationMap> {
+        let from_version = self.migrations.iter().filter(|entry| entry.from == version);
+        from_version
+            .clone()
+            .find(|entry| entry.source.as_deref() == Some(content_hash))
+            .or_else(|| from_version.clone().find(|entry| entry.source.is_none()))
+            .map(|entry| PackMigrationMap {
+                rewrites: entry.rewrites.clone(),
+            })
+    }
 }
 
 impl PackManifest {
@@ -59,6 +84,7 @@ impl PackManifest {
                     | "description"
                     | "version"
                     | "license"
+                    | "contact"
                     | "kind"
                     | "adapter"
                     | "predicates"
@@ -66,6 +92,7 @@ impl PackManifest {
                     | "grants"
                     | "wakes"
                     | "facets"
+                    | "migrations"
             ) {
                 return Err(invalid("unknown PACK.md field"));
             }
@@ -148,7 +175,7 @@ impl PackManifest {
                 .ok_or_else(|| invalid("agent pack requires a facet map"))?
                 .validate_paths()?;
             if adapter.is_some()
-                || ["predicates", "kinds", "grants", "wakes"]
+                || ["predicates", "kinds", "grants", "wakes", "migrations"]
                     .iter()
                     .any(|key| fields.contains_key(key))
             {
@@ -180,6 +207,11 @@ impl PackManifest {
         if predicates.iter().any(|name| kinds.contains(name)) {
             return Err(invalid("predicate and structural names must be disjoint"));
         }
+        let migrations = fields
+            .get("migrations")
+            .map(|line| super::migrations::parse(line, &name, &version, &predicates))
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             name,
             description,
@@ -188,6 +220,7 @@ impl PackManifest {
                 .get("license")
                 .map(|v| scalar(v, false))
                 .transpose()?,
+            contact: fields.get("contact").map(|v| contact(v)).transpose()?,
             kind,
             adapter,
             agent_facets,
@@ -195,6 +228,7 @@ impl PackManifest {
             kinds,
             requested_grants: list("grants")?,
             wake_subscriptions: list("wakes")?,
+            migrations,
         })
     }
 }
@@ -218,6 +252,20 @@ fn scalar(value: &str, allow_controls: bool) -> Result<String> {
     }
     Ok(text)
 }
+const CONTACT_MAX_BYTES: usize = 512;
+fn contact(value: &str) -> Result<String> {
+    let text = scalar(value, false)?;
+    if text.trim().is_empty() || text.len() > CONTACT_MAX_BYTES {
+        return Err(invalid("PACK.md contact is blank or exceeds its bound"));
+    }
+    // The source scans read the raw file, where a JSON escape can hide a
+    // credential; the decoded text gets both detectors again.
+    crate::batch::secret_scan::scan_metadata_field(&text)?;
+    if crate::batch::secret_scan::scan_file_content("PACK.md", text.as_bytes()).is_some() {
+        return Err(invalid("pack source contains credential material"));
+    }
+    Ok(text)
+}
 fn validate_agent_text(value: &str, max_bytes: usize) -> Result<()> {
     if value.trim().is_empty() || value.len() > max_bytes {
         return Err(invalid(
@@ -226,7 +274,7 @@ fn validate_agent_text(value: &str, max_bytes: usize) -> Result<()> {
     }
     Ok(())
 }
-fn validate_name(name: &str) -> Result<()> {
+pub(super) fn validate_name(name: &str) -> Result<()> {
     if name.len() > 256
         || !name.contains('.')
         || name.split('.').any(|part| {

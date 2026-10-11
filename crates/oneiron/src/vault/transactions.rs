@@ -2,6 +2,7 @@
 
 use super::Vault;
 use super::entities::MAX_LEARNED_RANGE_RESULTS;
+use crate::TimeRange;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -83,6 +84,16 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(header.learned_at)
+    }
+
+    /// Returns the occurred interval from an entity's header.
+    pub fn get_occurred(&self, id: &EntityId) -> Result<TimeRange> {
+        let rtxn = self.store.env.read_txn()?;
+        let row = self
+            .store
+            .port_entity_record(&rtxn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok(row.occurred)
     }
 
     /// Returns the greatest `learned_at` timestamp present in the temporal index.
@@ -361,7 +372,7 @@ impl Vault {
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
-        let (result, approved_vad_ids, proactivity_changed, retirement_staged) =
+        let (result, approved_vad_ids, proactivity_changed, task_ids, retirement_staged) =
             self.store.group_write_as(callback, None, |wtxn| {
                 let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
                     Ok(staged) => staged,
@@ -388,6 +399,7 @@ impl Vault {
                         result,
                         approved,
                         postcommit.proactivity_changed,
+                        postcommit.task_ids,
                         staged != retirements_before,
                     )),
                     Err(err) => Rows::Discard(Err(E::from(err))),
@@ -397,6 +409,7 @@ impl Vault {
         if proactivity_changed {
             self.store.notify_proactivity_changes();
         }
+        self.store.notify_task_updates(task_ids);
         if retirement_staged {
             self.finish_gate_decision_retirements_after_commit();
         }
