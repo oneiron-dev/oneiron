@@ -83,11 +83,13 @@ impl PipelineBuilder<'_> {
         // a `pe:` marker or an embed job row — there is no overlay `pe:`
         // keyspace, so redirecting is not an option and skipping is the rule.
         // Absence of an overlay is not permission to persist: anonymous
-        // routes discard all writes. Only an explicit Base route enqueues.
+        // routes discard all writes. Only an explicit Base route enqueues,
+        // and in a room on record only while its saver holds.
         #[cfg(feature = "sync")]
-        let enqueue = self
-            .session
-            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base);
+        let session = self.session;
+        #[cfg(feature = "sync")]
+        let enqueue =
+            session.is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base);
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
         #[cfg(feature = "sync")]
@@ -96,6 +98,7 @@ impl PipelineBuilder<'_> {
                 vault,
                 &pending_vector_ids,
                 crate::embed::EMBED_PRIORITY_SURFACED_HOT,
+                &|txn| session.map_or(Ok(()), |door| door.admit_base_write(txn)),
             )?;
         }
         Ok(RetrievalWithPendingVectors {

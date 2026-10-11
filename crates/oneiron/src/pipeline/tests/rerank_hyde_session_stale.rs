@@ -108,6 +108,7 @@ fn a_session_pipeline_run_stages_its_telemetry_row_in_the_room() -> Result<()> {
         "a session run adds ZERO base telemetry rows"
     );
 
+    drop(door);
     session.close()?;
     Ok(())
 }

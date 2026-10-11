@@ -6,7 +6,7 @@ use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::promote::{FloorWrites, PromoteOutcome};
 
 use super::registry::session_entry_state;
-use super::room::post_notice;
+use super::room::{Hearing, post_notice};
 use super::session::OffRecordSession;
 
 impl OffRecordSession<'_> {
@@ -89,7 +89,8 @@ impl OffRecordSession<'_> {
             {
                 // In a room the receipt answers only someone who could save
                 // the turn now: their proof holds, they own this vault, and
-                // their membership shows every moment of it.
+                // their membership shows every moment of it. The room hears
+                // this save as it heard the first; nothing more is kept.
                 if let (Some(room), Some(owner)) = (room, owner) {
                     let times = state.kept_times(*turn);
                     let txn = self.vault.store.env.read_txn()?;
@@ -102,6 +103,15 @@ impl OffRecordSession<'_> {
                         owner.actor(),
                         &times,
                     )?;
+                    let hearing = Hearing::in_txn(self.vault, &txn, Some(room));
+                    drop(txn);
+                    post_notice(
+                        &mut state,
+                        super::types::OffRecordNoticeAct::SavedTurn,
+                        owner.actor(),
+                        hearing,
+                    );
+                    self.entry.publish_state(&state);
                 }
                 return Ok(receipt.outcome);
             }
@@ -119,32 +129,34 @@ impl OffRecordSession<'_> {
             };
             let times = super::room::turn_times(&snapshot, *turn);
             drop(snapshot);
-            let mut outcomes = self.promote_plans(&mut state, vec![plan], |wtxn| {
-                if let Some(owner) = owner {
-                    if room.is_some() {
-                        owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
-                    } else {
-                        owner.revalidate_in_txn(self.vault, wtxn)?;
-                    }
-                    if let Some(room) = room {
-                        super::room::require_sight_in_txn(
-                            self.vault,
-                            wtxn,
-                            &self.session_ref,
-                            room,
-                            owner.actor(),
-                            &times,
-                        )?;
-                    }
+            // Who hears the save is read in the transaction that keeps it.
+            let (mut outcomes, hearing) = self.promote_plans(&mut state, vec![plan], |wtxn| {
+                let Some(owner) = owner else {
+                    return Ok(None);
+                };
+                if room.is_some() {
+                    owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
+                } else {
+                    owner.revalidate_in_txn(self.vault, wtxn)?;
                 }
-                Ok(())
+                if let Some(room) = room {
+                    super::room::require_sight_in_txn(
+                        self.vault,
+                        wtxn,
+                        &self.session_ref,
+                        room,
+                        owner.actor(),
+                        &times,
+                    )?;
+                }
+                Ok(Some(Hearing::in_txn(self.vault, wtxn, room)))
             })?;
-            if let Some(owner) = owner {
+            if let (Some(owner), Some(hearing)) = (owner, hearing) {
                 post_notice(
                     &mut state,
                     super::types::OffRecordNoticeAct::SavedTurn,
                     owner.actor(),
-                    self.vault.store.clock.now_recorded_at(),
+                    hearing,
                 );
                 self.entry.publish_state(&state);
             }
@@ -183,21 +195,22 @@ impl OffRecordSession<'_> {
 
     /// Replays `plans` into base in ONE write transaction, after `check`
     /// passes inside it, then publishes them as promoted and retires them
-    /// from the room. The caller holds the state lock across selection and
-    /// this commit (state -> base writer, the one lock order).
+    /// from the room, and returns what `check` read there with the outcomes.
+    /// The caller holds the state lock across selection and this commit
+    /// (state -> base writer, the one lock order).
     ///
     /// Nothing observable happens until the commit returns. Only then does
     /// the record publish the turns as promoted and the overlay retire the
     /// committed closures. A crash between the two is safe: the durable
     /// receipts answer a retry, and a crashed process evaporates the overlay.
-    pub(super) fn promote_plans(
+    pub(super) fn promote_plans<T>(
         &self,
         state: &mut super::registry::OffRecordSessionEntryState,
         plans: Vec<crate::session_overlay::PromotePlan>,
-        check: impl FnOnce(&heed::RwTxn<'_>) -> Result<()>,
-    ) -> Result<Vec<(EntityId, PromoteOutcome)>> {
-        let outcomes = self.vault.with_write_txn_grouped(|wtxn| {
-            check(wtxn)?;
+        check: impl FnOnce(&heed::RwTxn<'_>) -> Result<T>,
+    ) -> Result<(Vec<(EntityId, PromoteOutcome)>, T)> {
+        let (outcomes, checked) = self.vault.with_write_txn_grouped(|wtxn| {
+            let checked = check(wtxn)?;
             let floor = FloorWrites::new(&self.vault.store);
             let promoted_at = self.vault.store.clock.now_recorded_at();
             plans
@@ -208,6 +221,7 @@ impl OffRecordSession<'_> {
                         .map(|outcome| (plan.turn(), outcome))
                 })
                 .collect::<Result<Vec<_>>>()
+                .map(|outcomes| (outcomes, checked))
         })?;
         // Committed. Publish the RAM state, then drop the promoted rows and
         // journal entries from the room — in that order, and never before.
@@ -246,7 +260,7 @@ impl OffRecordSession<'_> {
                 );
             }
         }
-        Ok(outcomes)
+        Ok((outcomes, checked))
     }
 
     /// Refreshes the live sync windows for turns whose promotion committed.

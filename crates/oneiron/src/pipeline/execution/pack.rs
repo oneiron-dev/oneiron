@@ -562,17 +562,18 @@ impl PipelineBuilder<'_> {
     }
 
     /// ARCH-0052 D3: a room's PPR cache rows never reach base. An overlay
-    /// route drops them; a base route is revalidated as the cache write's
-    /// last statement, so a room that flipped off record mid-walk drops them
-    /// too. As with the base witness, the instant between that check and the
-    /// commit stays open until a flip drains base writers.
+    /// route drops them; a base route lands as every other base write does,
+    /// checked as the cache write's last statement, so a room that flipped
+    /// off record mid-walk, or whose saver left, drops them too. As with the
+    /// base witness, the instant between that check and the commit stays
+    /// open until a flip drains base writers.
     fn flush_ppr_cache_writes(&self, writes: &[crate::ppr::DeferredPprCacheWrite]) -> Result<()> {
         let store = &self.vault.store;
         match self.session {
             None => crate::ppr::flush_deferred_ppr_cache_writes(store, writes),
             Some(session) if session.writes_to_base() => {
-                crate::ppr::flush_deferred_ppr_cache_writes_admitted(store, writes, || {
-                    session.admit_base_write()
+                crate::ppr::flush_deferred_ppr_cache_writes_admitted(store, writes, |txn| {
+                    session.admit_base_write(txn)
                 })
             }
             Some(_) => Ok(()),

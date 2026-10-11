@@ -109,45 +109,48 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
     store: &Store,
     writes: &[DeferredPprCacheWrite],
 ) -> Result<()> {
-    flush_deferred_ppr_cache_writes_admitted(store, writes, || Ok(()))
+    flush_deferred_ppr_cache_writes_admitted(store, writes, |_| Ok(()))
 }
 
-/// [`flush_deferred_ppr_cache_writes`] with `admit` run as the write's last
-/// statement before any of its rows is kept: its error drops every row of
-/// this flush and is returned, so a writer whose authority lapsed mid-walk
-/// publishes nothing.
+/// [`flush_deferred_ppr_cache_writes`] with `admit` run in the write's
+/// transaction as its last statement before any of its rows is kept: its
+/// error drops every row of this flush and is returned, so a writer whose
+/// authority lapsed mid-walk publishes nothing.
 pub(crate) fn flush_deferred_ppr_cache_writes_admitted(
     store: &Store,
     writes: &[DeferredPprCacheWrite],
-    admit: impl Fn() -> Result<()>,
+    admit: impl Fn(&RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
     if writes.is_empty() {
         return Ok(());
     }
     store.group_write(None, |txn| {
-        let keep = |rows: Rows<(), Error>| match admit() {
+        let keep = |txn: &RoTxn<'_>, rows: Rows<(), Error>| match admit(txn) {
             Ok(()) => rows,
             Err(err) => Rows::Discard(Err(err)),
         };
         for write in writes {
-            let mut each = match store.env.nested_write_txn(txn) {
-                Ok(each) => each,
-                Err(err) => return keep(Rows::Refuse(err.into())),
-            };
-            match publish_deferred_ppr_cache_write(store, &mut each, write) {
-                Ok(true) => {
-                    if let Err(err) = each.commit() {
-                        return keep(Rows::Refuse(err.into()));
+            // Each nested transaction ends inside this statement, so `admit`
+            // reads the parent with no child still open.
+            let each = match store.env.nested_write_txn(txn) {
+                Ok(mut each) => match publish_deferred_ppr_cache_write(store, &mut each, write) {
+                    Ok(true) => each.commit().map_err(Error::from),
+                    Ok(false) => {
+                        each.abort();
+                        Ok(())
                     }
-                }
-                Ok(false) => each.abort(),
-                Err(err) => {
-                    each.abort();
-                    return keep(Rows::Refuse(err));
-                }
+                    Err(err) => {
+                        each.abort();
+                        Err(err)
+                    }
+                },
+                Err(err) => Err(err.into()),
+            };
+            if let Err(err) = each {
+                return keep(txn, Rows::Refuse(err));
             }
         }
-        keep(Rows::Commit(()))
+        keep(txn, Rows::Commit(()))
     })
 }
 

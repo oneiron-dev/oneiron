@@ -409,7 +409,9 @@ impl OffRecordSession<'_> {
     /// assembly whose room flipped mid-run stage its provisional into the
     /// overlay and then finalize into BASE, publishing the room's
     /// `result_ids` durably under a route it no longer held. One captured
-    /// route, every write.
+    /// route, every write. In a room on record the route lands under its
+    /// saver, and each base write checks the saver again in its own
+    /// transaction, as every other landing does.
     pub(crate) fn retrieval_telemetry<'session>(
         &'session self,
         route: &'session SessionWriteRoute,
@@ -417,7 +419,7 @@ impl OffRecordSession<'_> {
         route.revalidate()?;
         Ok(SessionRetrievalTelemetry {
             vault: self.vault,
-            route,
+            landing: self.landing(route)?,
         })
     }
 

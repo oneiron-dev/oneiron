@@ -585,6 +585,55 @@ async fn off_record_room_keeps_turns_out_until_promoted_and_close_drops_the_rest
 
 /// OF-355: the owner reads the vault as a file tree. Paths resolve lazily,
 /// file reads return the stored bytes, and grep searches them.
+/// ARCH-0052 §2: "No durable session trace". The owner's off-record routes,
+/// like the participant routes, keep no wire receipt: the per-route and
+/// per-caller counts every other route leaves in the vault never name them.
+#[tokio::test]
+async fn the_owners_off_record_routes_keep_no_wire_receipt() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let window = crate::wire_telemetry::WireThresholds::default().window_secs;
+    let from = oneiron_vault_contract::now_ts();
+    let enter = json!({ "session_ref": "quiet", "mode": "off_record", "backend": "local" });
+    let name = json!({ "session_ref": "quiet" });
+    for (method, path, body) in [
+        ("POST", "/v1/owner/off-record", Some(&enter)),
+        (
+            "POST",
+            "/v1/owner/off-record/witness",
+            Some(&room_turn("quiet", "keep this between us")),
+        ),
+        ("GET", "/v1/owner/off-record?session_ref=quiet", None),
+        ("POST", "/v1/owner/off-record/close", Some(&name)),
+        // The owner's other routes still count.
+        ("GET", "/v1/owner/secret-scan", None),
+    ] {
+        let (status, reply) = call(&server, method, path, owner.clone(), body).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {reply}");
+    }
+
+    server.wire_telemetry.flush().unwrap();
+    let to = oneiron_vault_contract::now_ts();
+    let mut verbs = Vec::new();
+    for start in (from / window * window..=to).step_by(usize::try_from(window).unwrap()) {
+        if let Some(receipt) = server
+            .wire_telemetry
+            .receipt(start, start + window)
+            .unwrap()
+        {
+            verbs.extend(receipt.by_verb.into_keys());
+        }
+    }
+    assert!(
+        verbs.iter().any(|verb| verb == "GET /v1/owner/secret-scan"),
+        "{verbs:?}"
+    );
+    assert!(
+        verbs.iter().all(|verb| !verb.contains("off-record")),
+        "{verbs:?}"
+    );
+}
+
 #[tokio::test]
 async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
     let (_dir, server) = auth_test_server();

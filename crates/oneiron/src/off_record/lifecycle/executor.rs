@@ -5,7 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
-use super::on_record::SaverCheck;
+use super::on_record::Landing;
 use super::session::OffRecordSession;
 use super::types::ExecutorUtterance;
 use crate::error::OffRecordError;
@@ -230,13 +230,7 @@ impl OffRecordSession<'_> {
     ) -> Result<(&Vault, Landing<'r, '_, '_>)> {
         route.revalidate()?;
         match route.target() {
-            RouteTarget::Base => Ok((
-                self.vault,
-                Landing {
-                    route,
-                    saver: self.saver_check_for(route)?,
-                },
-            )),
+            RouteTarget::Base => Ok((self.vault, self.landing(route)?)),
             RouteTarget::Overlay | RouteTarget::Discard => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.session_ref.clone(),
@@ -369,24 +363,5 @@ impl OffRecordSession<'_> {
             gate_body,
             |txn| landing.in_txn(txn),
         )
-    }
-}
-
-/// A base write's first step in its transaction: the run's route still
-/// stands and, in a room on record, its saver still holds.
-struct Landing<'r, 's, 'vault> {
-    route: &'r SessionWriteRoute,
-    saver: Option<SaverCheck<'s, 'vault>>,
-}
-
-impl Landing<'_, '_, '_> {
-    fn in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
-        if let Some(saver) = &self.saver {
-            saver.in_txn(txn)?;
-        }
-        // The route is checked again here, not only before the writer: a
-        // room that went off record, or whose saving stopped, while this
-        // write waited for the writer keeps nothing of it.
-        self.route.revalidate()
     }
 }

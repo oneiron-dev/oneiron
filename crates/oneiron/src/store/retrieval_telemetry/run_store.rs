@@ -209,20 +209,25 @@ impl Store {
     }
 
     pub(crate) fn record_retrieval_run(&self, record: &RetrievalRunRecord) -> Result<()> {
-        self.record_retrieval_run_with_visibility(record, true)
+        self.record_retrieval_run_admitted(record, true, &|_| Ok(()))
     }
 
     pub(crate) fn record_context_pack_provisional_retrieval_run(
         &self,
         record: &RetrievalRunRecord,
     ) -> Result<()> {
-        self.record_retrieval_run_with_visibility(record, false)
+        self.record_retrieval_run_admitted(record, false, &|_| Ok(()))
     }
 
-    fn record_retrieval_run_with_visibility(
+    /// Records `record`, published or provisional, with `admit` run first in
+    /// the write's own transaction. A refusal there writes nothing and leaves
+    /// the write fuse alone: the caller's authority lapsed, the store did not
+    /// fail.
+    pub(crate) fn record_retrieval_run_admitted(
         &self,
         record: &RetrievalRunRecord,
         published: bool,
+        admit: &dyn Fn(&RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         if !self.retrieval_telemetry_writes_enabled() {
             return Err(Error::InvariantViolation(
@@ -247,7 +252,12 @@ impl Store {
         }
 
         // Joins the vault's group commit; a failure here drops only this row.
+        let mut refused = false;
         let result = self.write_in_group(|wtxn| {
+            if let Err(refusal) = admit(wtxn) {
+                refused = true;
+                return Err(refusal);
+            }
             if published {
                 super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
             }
@@ -262,7 +272,7 @@ impl Store {
             }
             Ok(())
         });
-        if result.is_err() {
+        if result.is_err() && !refused {
             self.retrieval_writes_disabled
                 .store(true, std::sync::atomic::Ordering::Release);
         }
@@ -286,6 +296,16 @@ impl Store {
         &self,
         finalize: RetrievalRunFinalize<'_>,
     ) -> Result<()> {
+        self.finalize_context_pack_retrieval_run_admitted(finalize, &|_| Ok(()))
+    }
+
+    /// [`Self::finalize_context_pack_retrieval_run`] with `admit` run first
+    /// in the write's own transaction; a refusal there publishes nothing.
+    pub(crate) fn finalize_context_pack_retrieval_run_admitted(
+        &self,
+        finalize: RetrievalRunFinalize<'_>,
+        admit: &dyn Fn(&RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         if active_write_txn_depth() > 0 {
             return Err(Error::ConcurrentWrite(
                 "context-pack retrieval telemetry skipped inside active write transaction",
@@ -293,6 +313,7 @@ impl Store {
         }
 
         self.write_in_group(|wtxn| {
+            admit(wtxn)?;
             let run_id = finalize.run_id;
             if RETRIEVAL_RUN_PROVISIONAL.contains(self, wtxn, &run_id)? {
                 super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
@@ -477,7 +498,7 @@ fn read_retrieval_runs_in_txn(
 /// into `target`'s `vault_meta` (ONE-1728 K11).
 ///
 /// The base path is byte-identical because it IS this body: `Store`'s
-/// `record_retrieval_run_with_visibility` opens the txn and calls here. A
+/// `record_retrieval_run_admitted` opens the txn and calls here. A
 /// session target passes its `SessionStoreView`, so an OffRecord run's row
 /// stages into the overlay keyspace and evaporates at close — the base
 /// telemetry ledger gains nothing (ARCH-0052 §7 / K10).
