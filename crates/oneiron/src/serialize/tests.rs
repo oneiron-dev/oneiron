@@ -372,3 +372,62 @@ fn whole_vault_provenance_references_are_preserved_only_in_the_typed_value() {
     let imported = crate::claim::decode_claim_body(&exported.to_bytes().unwrap(), false).unwrap();
     assert!(crate::provenance::decode_edge_provenance_body(&imported.value).is_err());
 }
+
+fn messagepack(value: &rmpv::Value) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value).unwrap();
+    bytes
+}
+
+#[test]
+fn whole_vault_typed_export_nulls_every_name_the_release_doors_read_as_a_credential() {
+    let credential = "t7Rk2pLq9WzX";
+    for name in ["DB_PASSWORD", "SERVICE_API_KEY", "github_token"] {
+        let body = messagepack(&rmpv::Value::Map(vec![
+            (rmpv::Value::from(name), rmpv::Value::from(credential)),
+            (rmpv::Value::from("host"), rmpv::Value::from("db.internal")),
+        ]));
+        let exported = super::ExportBody::from_bytes(&body, crate::registry::ENTITY_TYPE_ASSET);
+        let json = serde_json::to_string(&exported).unwrap();
+        assert!(!json.contains(credential), "{name}: {json}");
+        assert!(json.contains("db.internal"), "{name}: {json}");
+    }
+}
+
+#[test]
+fn whole_vault_typed_export_nulls_a_phrase_split_over_array_items() {
+    let words = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    let body = messagepack(&rmpv::Value::Map(vec![(
+        rmpv::Value::from("words"),
+        rmpv::Value::Array(words.split(' ').map(rmpv::Value::from).collect()),
+    )]));
+    let exported = super::ExportBody::from_bytes(&body, crate::registry::ENTITY_TYPE_ASSET);
+    let json = serde_json::to_string(&exported).unwrap();
+    assert!(!json.contains("sausage"), "{json}");
+}
+
+#[test]
+fn a_credential_carried_in_an_id_slot_is_nulled_before_any_row_is_derived() {
+    // A 16-byte MessagePack map, `{"token": <eight characters>}`, that also
+    // passes as an id.
+    let carried = messagepack(&rmpv::Value::Map(vec![(
+        rmpv::Value::from("token"),
+        rmpv::Value::from("Zq8wX4mK"),
+    )]));
+    assert_eq!(carried.len(), 16);
+    let body = messagepack(&rmpv::Value::Map(vec![(
+        rmpv::Value::from("val"),
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("actor_entity_ref"),
+            rmpv::Value::Binary(carried),
+        )]),
+    )]));
+    // Portable knowledge rewrites each `entity_reference` node to hex, past
+    // every later byte reading; the row it starts from holds none.
+    let exported = super::ExportBody::from_bytes(&body, crate::registry::ENTITY_TYPE_CLAIM);
+    let json = serde_json::to_string(&exported).unwrap();
+    assert!(!json.contains("entity_reference"), "{json}");
+    exported
+        .validate(crate::registry::ENTITY_TYPE_CLAIM)
+        .unwrap();
+}

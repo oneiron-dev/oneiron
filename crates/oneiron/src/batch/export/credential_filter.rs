@@ -22,8 +22,11 @@ pub fn redact_messagepack_credentials(value: &mut rmpv::Value) -> bool {
 
 /// Filter a legacy raw transport without changing safe payload bytes or types.
 pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
-    if let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) {
-        if !redact_credentials(&mut value) {
+    // The original bytes go back only when no member of them is redacted: a
+    // JSON map keeps only the last of two equal keys, so JSON is judged as a
+    // tree that keeps every member, its keys included.
+    if let Ok(mut value) = serde_json::from_slice::<rmpv::Value>(&bytes) {
+        if !redact_messagepack_credentials(&mut value) {
             return Ok(bytes);
         }
         return serde_json::to_vec(&value)
@@ -186,6 +189,42 @@ mod tests {
             ])
         );
         assert_eq!(redacted_memory_payload(raw.clone())?, raw);
+        Ok(())
+    }
+
+    #[test]
+    fn raw_json_serving_reads_every_member_before_returning_the_original_bytes() -> Result<()> {
+        let credential = "Xq7-not-for-memory-42";
+        let repeated = format!(r#"{{"password":"{credential}","password":"[redacted]"}}"#);
+        let served = redacted_memory_payload(repeated.into_bytes())?;
+        assert!(!String::from_utf8_lossy(&served).contains(credential));
+        // A token-shaped key, assembled at run time.
+        let key = format!("gh{}_{}", 'p', "0123456789abcdefghijklmnopqrstuvwxyz");
+        let keyed = format!(r#"{{"{key}":"note","safe":"kept"}}"#);
+        let served = redacted_memory_payload(keyed.into_bytes())?;
+        assert!(!String::from_utf8_lossy(&served).contains(&key));
+        assert!(redacted_memory_body(&served)["safe"] == "kept");
+        // A body with nothing to redact keeps its exact bytes.
+        let safe = br#"{"a": 1,  "b": [true, null]}"#.to_vec();
+        assert_eq!(redacted_memory_payload(safe.clone())?, safe);
+        Ok(())
+    }
+
+    #[test]
+    fn raw_serving_redacts_a_framed_receipt_whose_payload_holds_a_credential() -> Result<()> {
+        let mut carrier = b"oneiron.refinement-receipt.v1\0".to_vec();
+        carrier.extend_from_slice(&[7; 32]);
+        carrier.extend_from_slice(
+            br#"{"kind":"skill","receipt":{"question":"password=Xq7-not-for-memory-42"}}"#,
+        );
+        assert_eq!(
+            redacted_memory_payload(carrier.clone())?,
+            b"[redacted]".to_vec()
+        );
+        assert_eq!(
+            redacted_memory_body(&carrier),
+            Value::String("[redacted]".into())
+        );
         Ok(())
     }
 

@@ -149,10 +149,17 @@ impl Vault {
             JOURNAL.put(&self.store, txn, &owner, &journal_heartbeat(oid))?;
             Ok(())
         })?;
+        // Each chunk passes the batch door alone; the seam reads what a chunk
+        // edge splits, under the same switch.
+        let seam = {
+            let txn = self.store.env.read_txn()?;
+            crate::batch::secret_scan::secret_scan_mode_in_txn(&self.store, &txn)?
+                == crate::batch::secret_scan::SecretScanMode::On
+        };
         let outcome = (|| {
             let mut seen = BTreeSet::new();
             let mut sha = Sha256::new();
-            let mut scanner = super::scanner::CredentialStream::default();
+            let mut scanner = super::scanner::CredentialStream::with_write_seam(seam);
             for chunk in &manifest.chunks {
                 let bytes = supply(chunk)?;
                 if bytes.len() != chunk.size as usize

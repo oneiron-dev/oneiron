@@ -8,8 +8,8 @@ use rmpv::Value as Mp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::credential_nulling::{credential_key, null_credentials};
-use crate::batch::secret_scan::scan_file_content;
+use super::credential_nulling::{credential_key, null_credentials, reference_carries_credential};
+use crate::batch::secret_scan::{release_joined_strings, scan_file_content};
 use crate::error::{Error, Result};
 
 /// A MessagePack value with explicit numeric widths and binary-reference types.
@@ -101,6 +101,7 @@ impl ExportBody {
             {
                 export_note_references(&note, &mut exported);
             }
+            null_credential_references(&mut exported);
             return Self::MessagePack(exported);
         }
         match std::str::from_utf8(bytes) {
@@ -151,6 +152,24 @@ impl ExportBody {
             ));
         }
         Ok(())
+    }
+}
+
+/// An id slot is kept as its bytes, so every one is read for credentials here,
+/// before any writer derives rows from the tree: the whole-vault document, an
+/// agent's portable knowledge (which spells ids as hex, past any later byte
+/// reading) and a bundle all start from the same nulled row.
+fn null_credential_references(value: &mut ExportValue) {
+    match value {
+        ExportValue::EntityReference(bytes) if reference_carries_credential(bytes, 0) => {
+            *value = ExportValue::Nil;
+        }
+        ExportValue::Array(values) => values.iter_mut().for_each(null_credential_references),
+        ExportValue::Map(entries) => entries.iter_mut().for_each(|(key, value)| {
+            null_credential_references(key);
+            null_credential_references(value);
+        }),
+        _ => {}
     }
 }
 
@@ -359,6 +378,11 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize) -> ExportV
                 .as_deref()
                 .is_some_and(byte_container_is_opaque_or_tainted)
             {
+                return ExportValue::Nil;
+            }
+            // A phrase one word per item, a key one line per item.
+            let strings: Vec<&str> = values.iter().filter_map(Mp::as_str).collect();
+            if release_joined_strings(&strings) {
                 return ExportValue::Nil;
             }
             ExportValue::Array(
