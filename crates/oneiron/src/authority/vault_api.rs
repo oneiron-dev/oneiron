@@ -83,8 +83,19 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
+        // A key a handoff retired signs nothing new here (engine-crates-03).
+        let local = if entries.is_empty() {
+            None
+        } else {
+            Some(self.authority_fold_readonly_in_txn(wtxn)?)
+        };
         for (entry, occurred, learned_at) in entries {
-            if matches!(entry.op, AuthorityOp::RetiredCeiling { .. }) {
+            if matches!(entry.op, AuthorityOp::RetiredCeiling { .. })
+                || local.as_ref().is_some_and(|fold| {
+                    authority_entry_hash(entry)
+                        .is_ok_and(|hash| fold.signed_by_retired_key(&hash, entry))
+                })
+            {
                 return Err(invalid_authority());
             }
             let data = encode_authority_log_entry_body(entry)?;

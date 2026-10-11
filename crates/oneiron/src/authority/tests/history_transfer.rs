@@ -553,6 +553,11 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
     let before = vault.export_signed_authority_history().unwrap();
 
     assert!(vault.apply_signed_re_root(&forked).is_err());
+    assert!(
+        vault
+            .put_authority_log_entry(&forked, TimeRange { start: 2, end: 2 }, 2)
+            .is_err()
+    );
     let body = encode_authority_log_entry_body(&forked).unwrap();
     assert!(
         vault
@@ -579,4 +584,184 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
     let fold = vault.authority_fold().unwrap();
     assert!(!fold.roster[&authority_key_from_ed(&next)].revoked);
     assert!(!fold.roster.contains_key(&authority_key_from_ed(&fork)));
+}
+
+fn re_root_to_host(
+    id: AuthorityVaultId,
+    parent: &AuthorityLogEntry,
+    signer: &ed25519_dalek::SigningKey,
+    seq: u64,
+    host: &HostSlipIssuer,
+) -> AuthorityLogEntry {
+    sign_ed(
+        unsigned_entry(
+            Some(id),
+            seq,
+            vec![authority_entry_hash(parent).unwrap()],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host.public_key(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(signer),
+            3,
+        ),
+        signer,
+    )
+}
+
+/// A replica that imports `history` plus `extra` from scratch.
+fn replica_with(history: Vec<Vec<u8>>, extra: &AuthorityLogEntry) -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().unwrap();
+    let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let mut history = history;
+    history.push(encode_authority_log_entry_body(extra).unwrap());
+    replica.import_signed_authority_history(&history).unwrap();
+    (dir, replica)
+}
+
+/// The old root withdraws no slip the new root minted (Sol review 1). Its
+/// revoke on a branch beside the handoff is refused at the append door, and a
+/// replica that imports it anyway proves no withdrawal from it.
+#[test]
+fn a_retired_root_withdraws_no_slip_the_new_root_minted() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let old = ed_key(167);
+    let host = HostSlipIssuer::from_secret(b"successor root that mints").unwrap();
+    let genesis = genesis_entry(167, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    store(&vault, &genesis);
+    vault
+        .apply_signed_re_root(&re_root_to_host(id, &genesis, &old, 1, &host))
+        .unwrap();
+    let slip = vault.ensure_host_root_slip(&host).unwrap().claims.slip_id;
+    let withdraw = sign_ed(
+        unsigned_entry(
+            Some(id),
+            2,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::SlipRevoke { slip_id: slip },
+            authority_key_from_ed(&old),
+            4,
+        ),
+        &old,
+    );
+    assert!(
+        vault
+            .put_authority_log_entry(&withdraw, TimeRange { start: 4, end: 4 }, 4)
+            .is_err()
+    );
+
+    let (_replica_dir, replica) =
+        replica_with(vault.export_signed_authority_history().unwrap(), &withdraw);
+    let fold = replica.authority_fold().unwrap();
+    assert!(
+        fold.issues.contains(&AuthorityFoldIssue::RetiredSigner(
+            authority_entry_hash(&withdraw).unwrap()
+        ))
+    );
+    assert!(!fold.slips.revoked.contains(&slip));
+    assert!(fold.slip_is_live(&slip));
+}
+
+/// A key a rotation superseded before the handoff forks no ReRoot (Sol
+/// review 1). The handoff retires every key its parents' roster held, the
+/// revoked one too, so the fork stands nowhere and the rotation's successor
+/// keeps its handoff.
+#[test]
+fn a_key_rotated_out_before_the_handoff_forks_no_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let old = ed_key(168);
+    let next = ed_key(169);
+    let fork = ed_key(171);
+    let host = HostSlipIssuer::from_secret(b"successor after a rotation").unwrap();
+    let genesis = genesis_entry(168, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let rotation = rotate_entry(id, &genesis, &old, authority_key_from_ed(&old), 169, 1);
+    store(&vault, &genesis);
+    store(&vault, &rotation);
+    mature_observed_widen(&vault, &rotation);
+    let handoff = re_root_to_host(id, &rotation, &next, 0, &host);
+    vault.apply_signed_re_root(&handoff).unwrap();
+    let forked = re_root_entry(id, &genesis, &old, 2, &fork);
+    assert!(vault.apply_signed_re_root(&forked).is_err());
+
+    let (_replica_dir, replica) =
+        replica_with(vault.export_signed_authority_history().unwrap(), &forked);
+    mature_observed_widen(&replica, &rotation);
+    let fold = replica.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&handoff).unwrap())
+    );
+    assert!(
+        !fold
+            .valid_entries
+            .contains(&authority_entry_hash(&forked).unwrap())
+    );
+    assert!(!fold.roster[&host.public_key()].revoked);
+    assert!(
+        fold.roster
+            .get(&authority_key_from_ed(&fork))
+            .is_none_or(|device| device.revoked)
+    );
+}
+
+/// The successor root may merge an entry the old root signed beside its
+/// handoff (Sol review 1). Its own handoff then stands, and its successor is
+/// the live root; the merge never leaves the vault without one.
+#[test]
+fn a_successor_handoff_that_merges_a_missed_entry_keeps_a_live_root() {
+    let old = ed_key(172);
+    let next = ed_key(173);
+    let third = ed_key(174);
+    let genesis = genesis_entry(172, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let missed = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::SlipRevoke { slip_id: [72; 32] },
+            authority_key_from_ed(&old),
+            2,
+        ),
+        &old,
+    );
+    let first = re_root_entry(id, &genesis, &old, 2, &next);
+    let mut second = re_root_entry(id, &first, &next, 1, &third);
+    second
+        .parent_hashes
+        .push(authority_entry_hash(&missed).unwrap());
+    second.parent_hashes.sort();
+    let second = sign_ed(second, &next);
+    let fold = fold_authority_log(&[genesis, missed, first, second.clone()]);
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&second).unwrap())
+    );
+    assert!(!fold.roster[&authority_key_from_ed(&third)].revoked);
+    assert!(fold.roster[&authority_key_from_ed(&next)].revoked);
+}
+
+/// A handoff in one vault erases no root conflict (Sol review 1): a second
+/// genesis signed by the retired key still reads as a conflicting root.
+#[test]
+fn a_handoff_hides_no_second_genesis() {
+    let old = ed_key(175);
+    let next = ed_key(176);
+    let genesis = genesis_entry(175, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let other = genesis_entry(175, DEFAULT_PENDING_WIDEN_DELAY_SECS, 2);
+    assert_ne!(
+        genesis_vault_id(&genesis).unwrap(),
+        genesis_vault_id(&other).unwrap()
+    );
+    let id = genesis_vault_id(&genesis).unwrap();
+    let handoff = re_root_entry(id, &genesis, &old, 1, &next);
+    let fold = fold_authority_log(&[genesis, other, handoff]);
+    assert!(fold.vault_root_is_conflicted());
 }

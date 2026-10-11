@@ -79,7 +79,7 @@ pub(super) fn derive_revoke_facts(
         else {
             continue;
         };
-        if let Some(state) = verify_signed_branch(*hash, entries, ancestors, context) {
+        if let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, true) {
             facts.by_hash.insert(
                 *hash,
                 VerifiedRestriction {
@@ -102,16 +102,19 @@ impl RevokeFacts {
     /// after it, a `SlipRevoke` or `SlipConsume` among them, and a revoked or
     /// spent slip would live again. An entry in `survivors` already applied
     /// its restriction through the ordinary fold; each dropped one is proved
-    /// on its own signed branch, as an actor revocation is.
+    /// on its own signed branch, as an actor revocation is. One that stands on
+    /// a key a handoff retired proves nothing: the old root withdraws no slip
+    /// the new root minted.
     pub(super) fn add_dropped_slip_restrictions(
         &mut self,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
         context: FoldContext<'_>,
         survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
+        retirements: &super::retired_signers::Retirements,
     ) {
         for (hash, entry) in entries {
-            if survivors.contains_key(hash) {
+            if survivors.contains_key(hash) || retirements.excludes(hash, entries, ancestors) {
                 continue;
             }
             let restriction = match &entry.op {
@@ -119,7 +122,8 @@ impl RevokeFacts {
                 AuthorityOp::SlipConsume { .. } => Restriction::SlipBurn(BTreeSet::new()),
                 _ => continue,
             };
-            let Some(state) = verify_signed_branch(*hash, entries, ancestors, context) else {
+            let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, false)
+            else {
                 continue;
             };
             let kind = match restriction {
@@ -139,11 +143,17 @@ impl RevokeFacts {
 }
 
 /// The target's own folded state, proved over its signed ancestry alone.
+/// `refuse_equal_sequences` refuses a branch holding two entries of one signer
+/// at one sequence, as an actor revocation's proof always has. A slip
+/// restriction's proof follows the fold instead, which admits concurrent
+/// siblings at one sequence and refuses only a sequence that does not rise
+/// along the ancestry.
 fn verify_signed_branch(
     target: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
+    refuse_equal_sequences: bool,
 ) -> Option<FoldState> {
     let mut pending = ancestors.get(&target)?.clone();
     pending.insert(target);
@@ -154,9 +164,10 @@ fn verify_signed_branch(
         // authority roster. External siblings may win the global projection,
         // but cannot erase a verified restrictive fact on this branch.
         if ancestors.get(hash)?.contains(hash)
-            || signer_seqs
-                .insert((entry.signer_key().clone(), entry.seq), *hash)
-                .is_some_and(|other| other != *hash)
+            || (refuse_equal_sequences
+                && signer_seqs
+                    .insert((entry.signer_key().clone(), entry.seq), *hash)
+                    .is_some_and(|other| other != *hash))
         {
             return None;
         }

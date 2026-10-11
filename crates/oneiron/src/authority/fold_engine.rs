@@ -573,12 +573,13 @@ fn fold_authority_log_once(
     // Only entries already proven against their live roster can contend.
     reject_replayed_federation_confirms(&mut states, &by_hash, &entry_ancestors, &mut issues);
     // A handoff's predecessor stays retired on every branch, not only its own.
-    let retired_keys = super::retired_signers::reject_retired_signer_forks(
+    let retirements = super::retired_signers::reject_retired_signer_forks(
         &mut states,
         &by_hash,
         &entry_ancestors,
         &mut issues,
     );
+    let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
     for state in states.values() {
         vault_ids.insert(state.vault_id);
@@ -614,7 +615,13 @@ fn fold_authority_log_once(
         };
     }
 
-    revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
+    revoke_facts.add_dropped_slip_restrictions(
+        &by_hash,
+        &entry_ancestors,
+        context,
+        &states,
+        &retirements,
+    );
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = BTreeSet::new();
     for (hash, state) in &states {
