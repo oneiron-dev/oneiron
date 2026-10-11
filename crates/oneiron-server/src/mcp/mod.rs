@@ -41,7 +41,7 @@ pub(crate) use self::booking_inputs::{
 };
 pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
-pub(crate) use self::codec::mcp_raw_call_arguments_span;
+pub(crate) use self::endpoint_args::validate_mcp_endpoint_tool_args_as;
 pub use self::endpoint_args::{
     MCP_CODE_TASK_MAX_CHARS, McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest,
     McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
