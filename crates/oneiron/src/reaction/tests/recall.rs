@@ -191,8 +191,8 @@ fn a_reaction_never_outranks_an_ordinary_memory_of_equal_relevance() {
 /// A pack read under a disclosure clamp carries only the reaction data the
 /// clamp admits (Astra #1394 P2). Under a guest's bottom clearance no signal
 /// names the withheld message. A clearance that admits messages and turns
-/// but no claims leaves an admitted message without reaction lines. A
-/// clearance that admits all of it gives both back.
+/// but no claims leaves an admitted message without reaction lines. The
+/// owner alone gets both back through the same clamped doors.
 #[test]
 fn reactions_ride_the_packs_disclosure_clamp() {
     use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyFirstTouch};
@@ -272,7 +272,7 @@ fn reactions_ride_the_packs_disclosure_clamp() {
     );
     assert_eq!(readable(Some(&words)), 0);
     assert_eq!(lines(Some(&words)), None);
-    let all = clamp(Some(Scope::top()), 300);
-    assert_eq!(readable(Some(&all)), signals.len());
-    assert_eq!(lines(Some(&all)), expected);
+    let alone = DisclosureContext::resolve(&room.vault, InterlocutorSet::owner_alone()).unwrap();
+    assert_eq!(readable(Some(&alone)), signals.len());
+    assert_eq!(lines(Some(&alone)), expected);
 }

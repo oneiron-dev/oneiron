@@ -1008,7 +1008,6 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
     .expect("contact record");
     vault.create_counterparty_contact(&contact, &introduced)?;
     vault.put_edge(&contact, crate::edge::EdgeKind::About, &guest, 1.0)?;
-    crate::test_util::authorize_readers(&vault, &[&guest.to_hex()]);
     let (_, record) = project_room(&vault, owner, &[guest])?;
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
@@ -1030,7 +1029,10 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
         crate::ClaimLifecycleStatus::Active,
     )?;
     body.source = Some(ClaimSource::Observed);
+    // A reader's grant makes later direct claim writes pend, so the
+    // summary lands first.
     vault.put_claim(&summary, &body, TimeRange { start: 3, end: 3 }, 3)?;
+    crate::test_util::authorize_readers(&vault, &[&guest.to_hex()]);
     let note = host
         .claim_upsert(&note(room, "lantern ledger", None))
         .expect("note");
@@ -1093,7 +1095,7 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
         "the owner alone reads the summary"
     );
     let bound = host.for_room_turn(room).expect("open room turn");
-    assert_eq!(listed(&bound, "note.topic"), [note.clone()]);
+    assert_eq!(listed(&bound, "note.topic"), [note]);
     assert!(listed(&bound, "conversation.summary").is_empty());
     assert!(
         bound

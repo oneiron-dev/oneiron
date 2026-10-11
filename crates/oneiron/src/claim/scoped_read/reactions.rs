@@ -23,8 +23,10 @@ impl ScopedRead<'_> {
         record: &EntityId,
     ) -> Result<Vec<String>> {
         crate::reaction::grouped_lines_in(self.vault, rtxn, *record, |row| {
-            Ok(self.is_entity_readable_with_policy_in(rtxn, policy, &row.id)?
-                && self.disclosed_in(rtxn, disclosure, &row.id)?)
+            Ok(
+                self.is_entity_readable_with_policy_in(rtxn, policy, &row.id)?
+                    && self.disclosed_in(rtxn, disclosure, &row.id)?,
+            )
         })
     }
 
@@ -50,13 +52,7 @@ impl ScopedRead<'_> {
         } else {
             None
         };
-        disclosure.admits(
-            &self.vault.store,
-            rtxn,
-            id,
-            row.entity_type,
-            claim.as_ref(),
-        )
+        disclosure.admits(&self.vault.store, rtxn, id, row.entity_type, claim.as_ref())
     }
 
     /// Attaches each hydrated MESSAGE or TURN result's grouped reaction lines
