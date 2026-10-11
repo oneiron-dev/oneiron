@@ -167,7 +167,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/sequence_observation.rs` | src | s | 4 crate-vis | — | Durable signer sequence maxima and content-addressed first-observation receipts |
 | `src/authority/slip.rs` | src | m | 4 struct · 13 fn · 5 crate-vis | CapabilitySlip, SignedCaveat, SlipCaveat, VerifiedSlip | Host-signed capability slips with holder-signed offline narrowing and proof |
 | `src/authority/slip_pairing.rs` | src | m | 3 struct · 6 fn | PairingDescriptor, PairingLink, PairingPrincipal | Single-use pairing links bind a throwaway key and mint one log-backed slip |
-| `src/authority/slip_replay.rs` | src | s | 2 fn · 2 crate-vis | — | Bounded, timestamp-bound replay windows for authenticated slip requests |
+| `src/authority/slip_replay.rs` | src | s | 2 fn · 4 crate-vis | — | Bounded, timestamp-bound replay windows for authenticated slip requests |
 | `src/authority/slip_replay/tests.rs` | test | s | — | — | Replay-window boundaries, persistence, and eviction by timestamp |
 | `src/authority/slip_state.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | FoldedSlip, SlipAuthorityState | Log-derived capability mint ancestry and monotone subtree tombstones |
 | `src/authority/slip_tests.rs` | test | XL | — | — | Caller-observable slip, pairing and residue regressions |
@@ -2243,7 +2243,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/tests/step22_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/step23_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/support.rs` | test | s | 6 crate-vis | — | — |
-| `src/ports/time.rs` | src | s | 1 struct · 2 trait · 6 fn · 11 crate-vis | Clock, IdGen, StoreClock | Per-store clock and id source |
+| `src/ports/time.rs` | src | s | 1 struct · 2 trait · 6 fn · 12 crate-vis | Clock, IdGen, StoreClock | Per-store clock and id source |
 | `src/ports/time/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
 | `src/posterior.rs` | src | s | 1 re-export · 1 crate-vis | — | Shared Beta posterior bandit seam |
 | `src/ppr/cache_store.rs` | src | m | 27 crate-vis | — | PPR cache constants, TTL policy, cache IO, and binary codec |

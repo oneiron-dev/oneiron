@@ -450,7 +450,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/notes_import.rs` | test | m | — | — | `oneiron import notes <folder>` through the shipped binary: a folder of linked markdown notes is one batch… |
 | `tests/it/owner_backup.rs` | test | s | — | — | The owner's backup loop through the shipped `oneiron` binary: back up, change the vault, rehearse (live… |
 | `tests/it/remote_pairing.rs` | test | m | — | — | A paired `oneiron_remote::OneironClient` against the real router |
-| `tests/it/reopen_after_restart.rs` | test | s | — | — | Text saved through `oneiron serve` survives a restart (prune e2e row 4): witness one invented line, stop the… |
+| `tests/it/reopen_after_restart.rs` | test | s | 5 crate-vis | — | Text saved through `oneiron serve` survives a restart (prune e2e row 4): witness one invented line, stop the… |
+| `tests/it/slip_clock.rs` | test | s | — | — | An agent's holder proof is judged on wall time, not on time the vault was seen running (perf pass, 2026-10-11) |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
 | `tests/managed_mode.rs` | test | XL | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |
