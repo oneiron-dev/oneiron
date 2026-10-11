@@ -175,22 +175,25 @@ pub enum SandboxImportClass {
     CredentialHandle,
     Determinism,
     DurableWait,
+    /// The blocked-report receipt. The memory writes it once stood beside
+    /// (claim, supersede, edge) are verb-table rows the run answers itself.
     WriteTrap,
     /// Agent-definition authoring is an audited, lease-bound configuration
-    /// write, not one of the four memory write traps.
+    /// write, not a memory write.
     AgentAuthoring,
     /// The `self.speak` family (ONE-1686): an explicit host effect that emits
     /// one durable MESSAGE bubble through the run's bound witness route.
     ///
-    /// Deliberately NOT `WriteTrap`. Write traps are gated memory verbs
-    /// (claim, supersede, edge) or the blocked-report receipt; OF-060 P3 pins
-    /// that set closed. Speech writes a transcript row instead of memory and
-    /// is gated on the witness path, so the two ceilings stay distinct.
+    /// Deliberately NOT `WriteTrap`. Write traps are gated memory verbs or
+    /// the blocked-report receipt; OF-060 P3 pins that set closed. Speech
+    /// writes a transcript row instead of memory and is gated on the witness
+    /// path, so the two ceilings stay distinct.
     Speech,
     /// The SDK verb table (ARCH-0028): the served names and one call of any
-    /// row. A row may write, so the class is a write; the host's bound verb
-    /// door gates each call as every other door gates it. Deliberately NOT
-    /// `WriteTrap`, whose closed set OF-060 P3 pins.
+    /// row. A row may write, so the class is a write. A host row's call is
+    /// gated by the host's bound verb door, as every other door gates it; a
+    /// run row (`RunVerb`) is the run's own typed memory call and gate. OF-060
+    /// P3 pins the run rows' write effects with the write traps.
     VerbTable,
 }
 
@@ -230,15 +233,6 @@ impl SandboxLinkedImport {
     #[must_use]
     pub fn write_trap_effect(self) -> Option<SelfEffect> {
         match (self.class, self.name) {
-            (SandboxImportClass::WriteTrap, "self.memory.put_claim") => {
-                Some(SelfEffect::MemoryPutClaim)
-            }
-            (SandboxImportClass::WriteTrap, "self.memory.supersede_claim") => {
-                Some(SelfEffect::MemorySupersedeClaim)
-            }
-            (SandboxImportClass::WriteTrap, "self.memory.put_edge") => {
-                Some(SelfEffect::MemoryPutEdge)
-            }
             (SandboxImportClass::WriteTrap, "self.report_blocked") => {
                 Some(SelfEffect::ReportBlocked)
             }
@@ -266,18 +260,6 @@ const VAULT_AGENTS_PUT_IMPORT: SandboxLinkedImport =
 
 const SELF_JSON_VALIDATE_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.json.validate", SandboxImportClass::ReadOnly);
-
-const SELF_MEMORY_SEARCH_IMPORT: SandboxLinkedImport =
-    SandboxLinkedImport::new("self.memory.search", SandboxImportClass::ReadOnly);
-
-const SELF_MEMORY_PUT_CLAIM_IMPORT: SandboxLinkedImport =
-    SandboxLinkedImport::new("self.memory.put_claim", SandboxImportClass::WriteTrap);
-
-const SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT: SandboxLinkedImport =
-    SandboxLinkedImport::new("self.memory.supersede_claim", SandboxImportClass::WriteTrap);
-
-const SELF_MEMORY_PUT_EDGE_IMPORT: SandboxLinkedImport =
-    SandboxLinkedImport::new("self.memory.put_edge", SandboxImportClass::WriteTrap);
 
 const SELF_VERBS_NAMES_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.verbs.names", SandboxImportClass::VerbTable);
@@ -314,10 +296,6 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     RANDOM_BYTES_IMPORT,
     VAULT_AGENTS_PUT_IMPORT,
     SELF_JSON_VALIDATE_IMPORT,
-    SELF_MEMORY_SEARCH_IMPORT,
-    SELF_MEMORY_PUT_CLAIM_IMPORT,
-    SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
-    SELF_MEMORY_PUT_EDGE_IMPORT,
     SELF_VERBS_NAMES_IMPORT,
     SELF_VERBS_CALL_IMPORT,
     SELF_REPORT_BLOCKED_IMPORT,

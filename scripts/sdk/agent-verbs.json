@@ -70,6 +70,7 @@
       "output": "crate::task_verb::TaskCancelReceipt",
       "call": "memory.cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
       "scope": "Write",
+      "proposes": true,
       "mcp_scope": "addressed",
       "mcp_fields": {
         "task_ref": "task_ref"
@@ -142,6 +143,7 @@
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
       "scope": "Write",
+      "proposes": true,
       "mcp_fields": {
         "spec": "spec",
         "label": "label"
@@ -179,6 +181,7 @@
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.witness(&input)?",
       "scope": "Write",
+      "lands_turn": true,
       "admission": {
         "validate": "crate::memory::caps::check_witness_turn(&input)?;"
       },
@@ -209,6 +212,7 @@
       "output": "crate::memory::CommitReceipt",
       "call": "memory.claim_upsert(&input)?",
       "scope": "Write",
+      "proposes": true,
       "admission": {
         "validate": "crate::memory::caps::check_claim_input(&input)?;"
       },
@@ -911,6 +915,34 @@
         "output": "OutboundIntentReceipt"
       },
       "context": "definition"
+    },
+    {
+      "name": "search",
+      "input": "crate::code_run::MemorySearchInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "MemorySearch"
+    },
+    {
+      "name": "put_claim",
+      "input": "crate::code_run::MemoryClaimInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "MemoryPutClaim"
+    },
+    {
+      "name": "supersede_claim",
+      "input": "crate::code_run::MemorySupersedeInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "MemorySupersedeClaim"
+    },
+    {
+      "name": "put_edge",
+      "input": "crate::code_run::MemoryEdgeInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "MemoryPutEdge"
     }
   ]
 }

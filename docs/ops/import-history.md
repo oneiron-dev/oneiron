@@ -76,6 +76,14 @@ original, never as a duplicate. Copies of earlier messages land once: Claude
 Code copies a resumed session's lines into the new session's log, and Codex
 copies a parent thread's items into a forked or spawned thread's rollout.
 
+A Claude Code or Codex conversation keeps the folder its session ran in (the
+`import_cwd` field) and occurs when the session started (`occurred` in
+`GET /v1/core/conversations?view=full`). A vault imported before the import
+kept them gets both from the next import of the same logs: run
+`oneiron import claude-code` or `oneiron import codex` on them again. That
+import writes the folder and start time on each conversation that lacks them,
+changes nothing else and adds no row; the import after it writes nothing.
+
 ## Size limits
 
 An export's `conversations.json` is read up to 2 GiB unzipped, and one
@@ -99,14 +107,41 @@ stdout is one JSON document of counts: per conversation (its source id, kind,
 `new`, `skipped`, `changed`, `refused`, `not_kept`), totals, `files` (`read`;
 `passed`: other `.jsonl` files under the path, such as a workflow journal;
 `too_large`: session logs left out), and `warnings`, one per log left out
-(`"warning": "log_too_large"`, its `path`, `bytes` and the `limit`). It never
-holds message text or titles. `--dry-run` prints the same counts and
+(`"warning": "log_too_large"`, its `path`, `bytes` and the `limit`), and
+`review`, where the claims drawn from this import wait (below; `null` for a
+dry run and for an import that landed nothing). It never holds message text
+or titles. `--dry-run` prints the same counts and
 predicts the secret scan's refusals; a refusal from a policy gate shows only
 in a real import.
 
 ## Claims
 
-Imported turns carry an import stamp. The Dreamer classifies what it extracts
-from them as imported evidence, and imported material never approves itself
-(ARCH-0027, ARCH-0040). Reviewing those claims in bulk is the next step and
-is not wired by this command.
+Imported turns carry an import stamp. Each import queues the Dreamer over what
+it landed, since no session ends for an import, and `serve` with a model runs
+it. Every claim the Dreamer draws from imported words is `imported` and waits
+for you, Proposed: imported material never approves itself, whatever the
+policy's source-trust rows grant (ARCH-0027, ARCH-0040). The prompts a
+delegating agent gave its subagents are not your words and are not read for
+claims; what the subagents answered is. Neither are words whose speaker the
+log does not say, such as a Codex thread's copy of history whose own thread
+the copy left out: they land with `said_by: unknown`, and once you import the
+rollout that says they were yours, they land again as yours and are read.
+
+Each import is one review, named in the report's `review` (`run_id`
+`import:<source>:<time>`, its `run_ref`, and the Dreamer attempts it queued).
+Approve or decline it whole, with one receipt, as any run
+([Approve or decline an agent run in one act](owner-actions.md#approve-or-decline-an-agent-run-in-one-act)):
+
+```bash
+oneiron runs pending
+oneiron runs show import:claude-code:1791234567
+oneiron runs approve import:claude-code:1791234567 --bundle <bundle id from show>
+```
+
+The review fills as the Dreamer runs; `show` lists what waits so far and its
+bundle id binds exactly that. A claim citing words a later import added to the
+same turn waits in the later import's review; a claim you declined is not
+proposed again from the same words. A large import drains over several Dreamer
+passes, each reading about one round of turns. Each import takes a second of
+its own on the vault's clock: if that clock is ahead of the machine's (the
+system clock moved back), the import is refused until the machine catches up.

@@ -21,20 +21,17 @@ impl AgentVerbDoor for TaskCreateDoor {
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
     ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
-        let refused = |message: String| AgentVerbRefusal {
+        let refused = || AgentVerbRefusal {
             code: "engine_error".to_owned(),
-            message,
         };
-        let input: TaskCreateRequest = serde_json::from_value(call.input.clone())
-            .map_err(|error| refused(error.to_string()))?;
+        let input: TaskCreateRequest =
+            serde_json::from_value(call.input.clone()).map_err(|_| refused())?;
         let memory = self
             .vault
             .memory(self.actor.entity_ref(), self.actor.actor_class())
             .with_host_origin(origin.clone());
-        let receipt = crate::task_verb::sdk::tasks_create(&memory, input)
-            .map_err(|error| refused(error.code))?;
-        let mut answer =
-            serde_json::to_value(receipt).map_err(|error| refused(error.to_string()))?;
+        let receipt = crate::task_verb::sdk::tasks_create(&memory, input).map_err(|_| refused())?;
+        let mut answer = serde_json::to_value(receipt).map_err(|_| refused())?;
         if let Some(fields) = answer.as_object_mut() {
             fields.extend(self.extra.clone());
         }

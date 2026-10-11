@@ -8,8 +8,8 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand,
-    SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
+    ImportNotesArgs, ImportSourceArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs,
+    RunsCommand, SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -55,6 +55,10 @@ pub enum Command {
     /// Restore a backup over a stopped vault, or `--rehearse` it in a
     /// scratch copy without touching the vault.
     Restore(Box<RestoreArgs>),
+    /// Rebuild one sync window of a stopped vault from a canonical snapshot
+    /// of its CRDT state, repairing its rows. The snapshot stays in memory
+    /// and never touches disk; only the window's manifest is kept.
+    RecoverWindow(Box<RecoverWindowArgs>),
     /// Export the whole vault in one of five formats.
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
@@ -87,6 +91,51 @@ pub enum Command {
     /// Owner acts for the vault's Dreamer.
     #[command(subcommand)]
     Dreamer(DreamerCommand),
+    /// Run this host's local embedder for other vaults.
+    #[command(subcommand)]
+    Embedder(EmbedderCommand),
+}
+
+#[derive(Subcommand)]
+pub enum EmbedderCommand {
+    /// Serve the local embedding model over an OpenAI-compatible
+    /// `/v1/embeddings` for vaults on the `endpoint` provider to share: one
+    /// model in memory for all of them, on a GPU where the build has one.
+    /// Point a vault at it with `init --embedder endpoint --embedder-endpoint
+    /// http://127.0.0.1:7399/v1` and the model id this prints; its vectors are
+    /// the ones a local vault makes.
+    Serve(Box<EmbedderServeArgs>),
+}
+
+#[derive(Args, Clone)]
+pub struct EmbedderServeArgs {
+    /// Config file whose `[embedder]` section names the model, as `serve
+    /// --config` reads it. With neither this, `ONEIRON_CONFIG`, the XDG
+    /// config nor `--embedder-*` flags, the default local model.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    /// `--embedder-*` flags, as `serve` takes them: repository, revision,
+    /// device, quantisation, input cap.
+    #[command(flatten)]
+    pub embedder: crate::config::EmbedderArgs,
+    /// Vault width the `[embedder]` section is checked against, as `serve`
+    /// checks it.
+    #[arg(long)]
+    pub dimensions: Option<usize>,
+    /// Address to listen on. Anything but loopback needs `--api-key-env`.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: std::net::IpAddr,
+    #[arg(long, default_value_t = 7399)]
+    pub port: u16,
+    /// Environment variable NAME holding the key every request must send as
+    /// a bearer token. Never the key itself.
+    #[arg(long)]
+    pub api_key_env: Option<String>,
+    /// Another name a request's `model` may give, beside the model id.
+    #[arg(long = "model-alias")]
+    pub model_aliases: Vec<String>,
+    #[arg(long, default_value = "info")]
+    pub log_level: String,
 }
 
 #[derive(Subcommand)]
@@ -177,8 +226,9 @@ pub enum TokenCommand {
 /// configured path. No issuer secret is sent over HTTP or printed.
 #[derive(Args, Clone, Debug)]
 pub struct TokenBootstrapArgs {
-    /// Origin clients will contact after `serve` starts.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// Origin clients will contact after `serve` starts. The default is
+    /// where `oneiron serve` listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
     /// Optional shrink-only lifetime for the first owner slip (seconds).
@@ -193,8 +243,9 @@ pub struct TokenBootstrapArgs {
 /// the verbs here; whoever redeems the link chooses only the connection key.
 #[derive(Args, Clone, Debug)]
 pub struct TokenPairArgs {
-    /// The running server's origin. The link carries it.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// The running server's origin. The link carries it. The default is
+    /// where `oneiron serve` listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
     /// Environment variable holding a logged owner-grade capability slip.
@@ -311,8 +362,9 @@ pub struct TokenRevokeArgs {
 /// envelope, and the same body bytes the server sent.
 #[derive(Args, Clone, Debug)]
 pub struct ApiArgs {
-    /// Existing Oneiron server root.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// Existing Oneiron server root. The default is where `oneiron serve`
+    /// listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub base_url: String,
 
     /// Environment variable holding a bearer slip. The credential is never
@@ -613,11 +665,15 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Whoami(args) => commands::whoami(*args),
         Command::Backup(args) => commands::backup(*args),
         Command::Restore(args) => commands::restore(*args),
+        Command::RecoverWindow(args) => commands::recover_window(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
-        Command::Reembed(args) => commands::reembed(*args),
+        // Blocking: an endpoint's transform is read over blocking HTTP.
+        Command::Reembed(args) => {
+            tokio::task::spawn_blocking(move || commands::reembed(*args)).await?
+        }
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
@@ -629,5 +685,6 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
+        Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
     }
 }

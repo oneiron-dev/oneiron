@@ -22,6 +22,13 @@ pub fn promote_scoped_consolidation(
     }
     let mut outcome = PromotionOutcome::default();
     for (head, candidate, evidence) in write.attachments {
+        // Imported material reaches the vault only through the owner's import
+        // review (ARCH-0027), and an attachment is no claim that review could
+        // hold: a head imported words restate keeps its own evidence.
+        if evidence.meet() == ClaimSource::Imported {
+            outcome.held.push(head);
+            continue;
+        }
         match attach_evidence(
             vault,
             run,
@@ -38,6 +45,17 @@ pub fn promote_scoped_consolidation(
     for (mut candidate, evidence) in write.candidates.into_iter().zip(write.candidate_evidence) {
         candidate.evidence_meet = evidence.meet();
         let id = candidate.claim_id;
+        // The owner declined this claim from these same imported words; a
+        // message landing later in their TURN re-reads them and the Dreamer
+        // finds it again. It is not proposed again.
+        if let Some(declined) = crate::dreamer_consolidation::reviewed::declined_from_same_words(
+            vault,
+            &candidate,
+            &evidence.cited_messages(),
+        )? {
+            outcome.held.push(declined);
+            continue;
+        }
         match promote_one(
             vault,
             run,
@@ -70,7 +88,7 @@ fn attach_evidence(
     let envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
-        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain))?,
+        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain, None))?,
         ClaimApprovalStatus::Auto,
         SourceLineage::of(ClaimSource::Generated).with(source),
     );
@@ -85,12 +103,15 @@ fn attach_evidence(
             .ok_or(Error::EntityNotFound)?;
         // Gate the evidence assertion, not an overwrite of the approved head.
         // Copy the head's complete scope so sensitivity/persona policy cannot be
-        // lowered by a minimally scoped extraction. Keep the normal Dreamer
-        // validity, source/lineage, isolation, checker and receipt machinery.
+        // lowered by a minimally scoped extraction, and its own facet and
+        // project stamps so the decision and its receipt sit where the head
+        // does. Keep the normal Dreamer validity, source/lineage, isolation,
+        // checker and receipt machinery.
         let gate_candidate = candidate
             .candidate
             .clone()
             .with_scope(scope_with_taint(original.scope.clone(), source))
+            .with_scope_stamps(original.scope_facet, original.scope_project)
             .with_evidence(evidence.envelope(Vec::new()));
         let gate_body =
             gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
@@ -154,6 +175,15 @@ fn attach_ref(
         .ok_or(Error::EntityNotFound)?;
     let source_raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &source)?
         .ok_or(Error::EntityNotFound)?;
+    let edge = EdgeRef {
+        source,
+        kind: EdgeKind::Supports,
+        target: head,
+    };
+    // The provenance row lands in the one project its source and head share;
+    // a support across projects is refused before its edge is written, and a
+    // replay binds the stored row to that same project.
+    let project = crate::provenance::support_project(vault, txn, &edge, &source_raw, &head_raw)?;
     let head_hash = blake3::hash(&head_raw);
     let source_hash = blake3::hash(&source_raw);
     let mut hash = blake3::Hasher::new();
@@ -195,11 +225,6 @@ fn attach_ref(
     id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
     let id =
         EntityId::from_bytes(id).map_err(|_| Error::InvalidClaimBody("reserved attachment id"))?;
-    let edge = EdgeRef {
-        source,
-        kind: EdgeKind::Supports,
-        target: head,
-    };
     let mut record = EdgeProvenanceClaimBody::new(
         run.agent_actor.entity_ref(),
         1.0,
@@ -235,6 +260,7 @@ fn attach_ref(
                 error => error,
             })?;
         if existing.scope.as_ref() != Some(&expected_scope)
+            || existing.scope_project != project
             || existing.approval != ClaimApprovalStatus::Auto
             || !edge_consistent
             || forward.as_ref().is_none_or(|edge| {

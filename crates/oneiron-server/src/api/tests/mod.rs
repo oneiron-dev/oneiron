@@ -13,14 +13,18 @@ use tower::ServiceExt;
 mod mcp_source_gate;
 
 mod auth_idempotency;
+mod off_record_rooms;
 mod org_admin;
+mod owner_healer;
 mod owner_routes;
 mod owner_surfaces;
 mod slips;
 use crate::test_credentials as slip_credentials;
 mod billing_usage;
 mod board_host_events;
+mod board_stream_publisher;
 mod companion;
+mod context_board_history;
 mod context_board_standing;
 mod context_pack_disclosure;
 mod context_pack_v4;

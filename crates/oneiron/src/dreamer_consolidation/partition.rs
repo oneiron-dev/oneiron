@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use rmpv::Value;
 
 use super::support::{
-    CURSOR_SCHEMA_VERSION, DREAMER_BUCKET_HASH_DOMAIN, DREAMER_PARTITION_ROUND_HASH_DOMAIN,
+    CURSOR_SCHEMA_VERSION, DREAMER_PARTITION_HASH_DOMAIN, DREAMER_PARTITION_ROUND_HASH_DOMAIN,
     DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, KEY_CONVERSATION, KEY_FACET, KEY_LAST_LEARNED_AT,
     KEY_LAST_LEDGER_REVISION_HINT, KEY_SCHEMA_VERSION, KEY_TURNS, KEY_WATERMARK, KEY_WORLD,
     PARTITION_PAYLOAD_SCHEMA_VERSION, decode_value, encode_value, expect_key, expect_map,
@@ -62,7 +62,7 @@ impl ConsolidationPartitionKey {
     #[must_use]
     pub fn partition_hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(DREAMER_BUCKET_HASH_DOMAIN);
+        hasher.update(DREAMER_PARTITION_HASH_DOMAIN);
         hasher.update(b"partition");
         hasher.update(self.conversation_ref.as_bytes());
         hash_optional_entity(&mut hasher, self.world_ref.as_ref());
@@ -278,6 +278,16 @@ pub(crate) fn partition_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
     keyed_partition_round_hash(turns, &BTreeMap::new())
 }
 
+/// [`partition_round_hash`] keyed by each TURN's own re-dirty carrier, so a
+/// TURN changed again in the same second hashes as new work.
+pub(crate) fn carried_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
+    let carried = turns
+        .iter()
+        .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
+        .collect();
+    keyed_partition_round_hash(turns, &carried)
+}
+
 /// [`partition_round_hash`] over each TURN's selection key: a TURN in
 /// `carried` stood at its re-dirty carrier, whose id replaces the TURN id in
 /// the preimage. Every other TURN hashes byte-identically, and a TURN changed
@@ -398,6 +408,56 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     }
     write_prefilter_receipts_in_txn(vault, wtxn, scope, &turns, &screen, now)?;
     Ok(outcomes)
+}
+
+/// Plans what a session end plans (Meso rounds over every turn dirty since
+/// the round watermark) for turns no sitting will end, such as the ones an
+/// import lands. Each round's plan, enqueue and watermark advance commit
+/// together, as the session close's do; rounds repeat until no dirty turn is
+/// left. A turn without a conversation stops planning at its second, exactly
+/// as it cuts a session's round. Returns how many attempts were enqueued.
+pub fn plan_dirty_turn_rounds(vault: &Vault, now: u64) -> Result<usize> {
+    let scope = DreamerConsolidationScope::Meso;
+    let mut enqueued = 0;
+    let mut previous = Vec::new();
+    loop {
+        let planned = vault.with_write_txn(|wtxn| {
+            let watermark = super::watermark::read_watermark_in_txn(vault, wtxn, scope)?;
+            let ids = super::watermark::collect_dirty_turn_ids_in_txn(
+                vault,
+                wtxn,
+                scope,
+                watermark.last_learned_at,
+                u64::MAX,
+            )?;
+            if ids.is_empty() || ids == previous {
+                return Ok(None);
+            }
+            let turns = read_partition_turns_in_txn(vault, wtxn, scope, &ids)?;
+            let round: Vec<_> = match turns
+                .iter()
+                .find(|turn| turn.conversation.is_none())
+                .map(|turn| turn.learned_at)
+            {
+                Some(cut) => turns.iter().filter(|turn| turn.learned_at < cut).collect(),
+                None => turns.iter().collect(),
+            };
+            let Some(advance_to) = round.iter().map(|turn| turn.learned_at).max() else {
+                return Ok(None);
+            };
+            let round_ids: Vec<_> = round.iter().map(|turn| turn.turn_id).collect();
+            let outcomes = enqueue_partition_attempts_in_txn(
+                vault, wtxn, scope, &round_ids, &watermark, None, now,
+            )?;
+            super::watermark::advance_watermark_in_txn(vault, wtxn, scope, advance_to)?;
+            Ok(Some((ids, outcomes.len())))
+        })?;
+        let Some((ids, count)) = planned else {
+            return Ok(enqueued);
+        };
+        enqueued += count;
+        previous = ids;
+    }
 }
 
 /// Reconstructs complete planning input before any lossy commit. An unreadable

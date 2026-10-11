@@ -17,6 +17,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::{LlmEventBus, TerminalSink};
 use oneiron::memory::{
     MessageStreamHandle, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason,
@@ -359,6 +360,7 @@ fn start_turn(
             at,
         ))
         .map_err(|error| engine(&error))?;
+    server.ai.turn_landed(&vault, WakeTurnSubject::Vault);
     let handle = vault
         .memory(agent, EdgeActorClass::Agent)
         .begin_message_stream(
@@ -421,6 +423,7 @@ fn start_turn(
     let subscription = bus.subscribe();
     let (finished, outcome) = tokio::sync::oneshot::channel();
     let ai = server.ai.clone();
+    let landed = (Arc::clone(&vault), agent);
     let turn = server.ai.enter_turn();
     let producer = Producer {
         bus,
@@ -439,6 +442,14 @@ fn start_turn(
     tokio::spawn(async move {
         let result = produce(producer).await;
         ai.session_hint(SessionHint::Activity);
+        // The answer is the agent's turn, so its own cadence dial counts it.
+        ai.turn_landed(
+            &landed.0,
+            WakeTurnSubject::Agent {
+                id: landed.1,
+                signals: AgentWakeSignals::default(),
+            },
+        );
         let line = match result {
             Ok(()) => match saved.lock().ok().and_then(|mut slot| slot.take()) {
                 Some(receipt) => ChatLine::Saved { receipt },
@@ -605,19 +616,20 @@ struct Producer {
     turn: TurnGuard,
 }
 
-/// Charges what a terminal reports, or the reservation when it reports
-/// nothing.
+/// Charges a terminal what it reports, or the turn's reservation when it
+/// reports nothing, plus the reservation for each rung that failed before it
+/// (`settle_answered`, the rule code mode and workflow steps use).
 fn settle(
     guard: &BudgetGuard,
     lease: &BudgetLease,
     usage: &oneiron::LlmUsage,
 ) -> Result<(), String> {
-    if usage.input.total == 0 && usage.output.total == 0 {
-        guard.settle_reserved(lease).map(|_| ())
-    } else {
-        guard.settle_per_call(lease, usage).map(|_| ())
-    }
-    .map_err(|denied| format!("chat settlement: {denied:?}"))
+    let floor = guard
+        .reserved_for(lease)
+        .unwrap_or(oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS);
+    crate::models::settle_answered(guard, lease, usage, floor)
+        .map(|_| ())
+        .map_err(|denied| format!("chat settlement: {denied:?}"))
 }
 
 /// Drives the model stream into the presence plane and the bus. Settles the

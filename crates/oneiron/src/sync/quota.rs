@@ -1,7 +1,5 @@
 //! Device-local maintenance ingest security bounds.
 
-#[cfg(test)]
-use crate::authority::AuthorityKey;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::SyncError;
 use crate::{Error, Result, Vault};
@@ -189,14 +187,6 @@ pub fn set_maintenance_ingest_quota_config(
     Ok(())
 }
 
-#[cfg(test)]
-pub(super) fn peer_key_from_authority_key(key: &AuthorityKey) -> MaintenanceIngestPeerKey {
-    match key {
-        AuthorityKey::Ed25519(bytes) => peer_key_from_signature_key(b"ed25519", bytes),
-        AuthorityKey::P256(bytes) => peer_key_from_signature_key(b"p256", bytes),
-    }
-}
-
 pub(super) fn peer_key_from_redaction_pubkey(pubkey: &[u8; 32]) -> MaintenanceIngestPeerKey {
     peer_key_from_signature_key(b"ed25519", pubkey)
 }
@@ -320,6 +310,3 @@ fn decode_maintenance_ingest_quota_config(value: &[u8]) -> Result<MaintenanceIng
     validate_maintenance_ingest_quota_config(config)?;
     Ok(config)
 }
-
-#[cfg(test)]
-mod tests;

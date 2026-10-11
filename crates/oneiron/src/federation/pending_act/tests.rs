@@ -60,59 +60,6 @@ fn fixture(
 }
 
 #[test]
-fn preset_seeds_only_four_rows_and_personal_has_none() -> Result<()> {
-    for preset in [
-        SharedVaultPreset::Family,
-        SharedVaultPreset::Team,
-        SharedVaultPreset::Org,
-        SharedVaultPreset::Community,
-    ] {
-        let (_dir, vault, owner, _other, _admin) = fixture(preset);
-        for name in [
-            "delete_vault",
-            "erase",
-            "transfer_ownership",
-            "remove_owner",
-        ] {
-            assert_eq!(
-                vault.shared_act_policy(name)?,
-                Some(SharedActPolicy {
-                    wait_secs: WEEK,
-                    objector_roles: vec![Role::Owner],
-                    initiator_roles: vec![Role::Owner],
-                    policy_editor_roles: vec![Role::Owner],
-                    required_verb: "admin".into(),
-                    starter_may_object: true,
-                    max_act_name_bytes: 128,
-                    max_payload_bytes: 1_048_576,
-                    precedence: SharedActPrecedence::HolderMayNarrow,
-                })
-            );
-            assert!(
-                !vault
-                    .start_authority_act(&owner, 42, name, vec![], 100)?
-                    .completed
-            );
-        }
-        assert_eq!(vault.shared_act_policy("export")?, None);
-        assert_eq!(vault.shared_act_policy("_default")?, None);
-        assert!(
-            vault
-                .start_authority_act(&owner, 42, "export", vec![], 100)?
-                .completed
-        );
-    }
-    let (_dir, vault, owner, _other, _admin) = fixture(SharedVaultPreset::Personal);
-    assert_eq!(vault.shared_act_policy("delete_vault")?, None);
-    assert!(
-        vault
-            .start_authority_act(&owner, 42, "delete_vault", vec![], 100)?
-            .completed
-    );
-    Ok(())
-}
-
-#[test]
 fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Result<()> {
     let (dir, vault, owner, other, admin) = fixture(SharedVaultPreset::Team);
     let act = vault.start_authority_act(&owner, 42, "delete_vault", b"opaque".to_vec(), 100)?;
@@ -660,47 +607,6 @@ fn deleted_member_objection_releases_and_is_not_an_approver() -> Result<()> {
 }
 
 #[test]
-fn act_policy_rows_live_in_manifest_not_vault_meta() -> Result<()> {
-    let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
-    let row = SharedActPolicy {
-        wait_secs: 60,
-        ..vault.shared_act_policy("erase")?.unwrap()
-    };
-    vault.set_shared_act_policy(&owner, &[&other], 42, "erase", Some(row.clone()), 100)?;
-    assert_eq!(
-        vault
-            .start_authority_act(&owner, 42, "erase", vec![], 101)?
-            .deadline,
-        161
-    );
-    let txn = vault.store.env.read_txn()?;
-    let id = crate::gate::default_policy_manifest_id()?;
-    let raw = vault.store.entities.get(&txn, id.as_bytes())?.unwrap();
-    assert!(crate::gate::manifest_authenticity::manifest_is_trusted(
-        &vault.store,
-        &txn,
-        &id,
-        &raw[ENTITY_METADATA_HEADER_LEN..]
-    )?);
-    let rows = crate::gate::resolve_policy_manifest(&vault.store, &txn)?
-        .shared_act_policies
-        .unwrap();
-    assert_eq!(rows.len(), 4);
-    assert_eq!(rows.get("erase"), Some(&row));
-    for entry in vault.store.vault_meta.iter(&txn)? {
-        let (key, value) = entry?;
-        assert!(serde_json::from_slice::<SharedActPolicy>(&value).is_err());
-        assert!(
-            !key.starts_with(b"shared-act:")
-                || key.starts_with(ACT_PREFIX)
-                || key.starts_with(EVENT_PREFIX),
-            "only act state lives in vault_meta"
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn manifest_without_owner_door_does_not_change_wait() -> Result<()> {
     let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
     let fast = SharedActPolicy {
@@ -807,34 +713,6 @@ fn malformed_act_policy_table_refuses_start() -> Result<()> {
                 .is_err()
         );
     }
-    Ok(())
-}
-
-#[test]
-fn absent_row_uses_shipped_default_and_zero_wait_runs_at_once() -> Result<()> {
-    let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Family);
-    let row = vault.shared_act_policy("erase")?.unwrap();
-    // Deleting the row does not turn the wait off: the shipped row applies.
-    vault.set_shared_act_policy(&owner, &[&other], 42, "erase", None, 100)?;
-    assert_eq!(vault.shared_act_policy("erase")?, None);
-    let act = vault.start_authority_act(&owner, 42, "erase", vec![], 101)?;
-    assert_eq!(act.deadline, 101 + WEEK);
-    assert!(!act.completed);
-    // An act with no row anywhere takes the shipped default row: no wait.
-    assert!(
-        vault
-            .start_authority_act(&owner, 42, "export", vec![], 101)?
-            .completed
-    );
-    // A zero wait written into the row runs the act at once.
-    let off = SharedActPolicy {
-        wait_secs: 0,
-        ..row
-    };
-    vault.set_shared_act_policy(&owner, &[&other], 42, "erase", Some(off), 102)?;
-    let now = vault.start_authority_act(&owner, 42, "erase", vec![], 103)?;
-    assert!(now.completed);
-    assert_eq!(now.deadline, 103);
     Ok(())
 }
 

@@ -174,6 +174,8 @@ impl Store {
             #[cfg(feature = "sync")]
             attempt_updates: tokio::sync::broadcast::channel(256).0,
             #[cfg(feature = "sync")]
+            task_updates: tokio::sync::broadcast::channel(1024).0,
+            #[cfg(feature = "sync")]
             staged_import_admission_lock: Mutex::new(()),
             #[cfg(feature = "sync")]
             staged_import_confirm_lock: Mutex::new(()),

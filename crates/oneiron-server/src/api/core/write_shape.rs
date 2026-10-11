@@ -232,6 +232,16 @@ pub(crate) fn stage_core_entity_put<'a>(
 ) -> Result<oneiron::BatchBuilder<'a>, ApiError> {
     let body = core_body_for_write(entity_type, body);
     let data = encode_core_body(&body)?;
+    // ARCH-0006a: only the Dreamer writes a scope summary's body. A caller
+    // declares the scope; it never puts the body through a generic write.
+    if entity_type == oneiron::registry::ENTITY_TYPE_SUMMARY
+        && oneiron::scope_summary::decode_scope_summary_body(&data).is_ok()
+    {
+        return Err(ApiError::bad_request(
+            "a scope summary's body is written by the Dreamer; declare the scope at POST /v1/core/conversations/{conversation_id}/summaries",
+            Some("entity_type"),
+        ));
+    }
     let mut batch = batch.put(
         id,
         entity_type,

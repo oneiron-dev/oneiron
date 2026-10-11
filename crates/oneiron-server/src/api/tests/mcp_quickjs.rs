@@ -500,8 +500,31 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
     .await;
     assert!(body.get("error").is_none(), "{body}");
     let text = body["result"]["structuredContent"].to_string();
-    assert!(text.contains("mcp_verb_not_bound"), "{text}");
     assert!(!text.contains("north gate"), "{text}");
+    // The guest's refusal is the door's stable code alone; no prose rides
+    // along as a reason.
+    assert_eq!(
+        verb_call_outcomes(&body),
+        [verb_refusal("mcp_verb_not_bound")],
+        "{text}"
+    );
+}
+
+/// The outcome of each verb call a code-mode run made, from its step log.
+fn verb_call_outcomes(body: &Value) -> Vec<Value> {
+    body["result"]["structuredContent"]["steps"]
+        .as_array()
+        .expect("step log")
+        .iter()
+        .filter(|step| step["effect"] == "self.verbs.call")
+        .map(|step| step["outcome"].clone())
+        .collect()
+}
+
+/// A verb call the door refused, as the step log records it: the door's
+/// stable code and no reason text.
+fn verb_refusal(code: &str) -> Value {
+    json!({"kind": "denied", "effect": "self.verbs.call", "outcome": code, "reason_codes": []})
 }
 
 /// Code mode applies the per-verb argument rules a `tools/call` of the verb
@@ -590,6 +613,146 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Proposed);
 }
 
+/// Done means (ARCH-0028 propose-only, #1360): the verb-table rows a run
+/// answers itself (`self.memory.put_claim`, `supersede_claim`, `put_edge`)
+/// write from no propose-only slip. `execute_code` needs write, so a slip
+/// holding read and propose under a `proposed` ceiling starts no run on either
+/// endpoint: no model call, nothing stored. A full-access slip runs the same
+/// program and its claim lands.
+#[tokio::test]
+async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
+    let subject = seeded_test_entity_id(0x0024_65a1);
+    let claim = seeded_test_entity_id(0x0024_65a2);
+    let script = format!(
+        "const receipt = await self.memory.put_claim({{id: '{}', predicate: \
+         'profile.favorite_drink', subject: '{}', value: 'sencha'}}); finish(receipt.id);",
+        claim.to_hex(),
+        subject.to_hex()
+    );
+    let mode = code_mode_server(vec![script]);
+    mode.vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"quickjs subject",
+        )
+        .unwrap();
+
+    // Propose-only as `token agent` mints it: the slip reads and proposes and
+    // holds no write, and the actor's live ceiling is `proposed`.
+    let proposer = seeded_test_entity_id(0x0024_65a3);
+    let label = "quickjs-propose-only";
+    mode.vault
+        .put_entity(
+            &proposer,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"propose-only actor",
+        )
+        .unwrap();
+    let vault_wide = crate::mcp::McpConnectorScope::vault_wide();
+    pair_mcp_credential(
+        &mode.server,
+        label,
+        proposer,
+        oneiron::EdgeActorClass::Human,
+        &vault_wide,
+    );
+    let mut verbs = oneiron::federation::Scope::top();
+    verbs.verbs = oneiron::federation::ScopeAxis::Some(
+        ["core:read".to_owned(), "core:propose".to_owned()].into(),
+    );
+    let token = attenuate_mcp_credential(
+        &mode.server,
+        label,
+        oneiron::authority::SlipCaveat {
+            scope: Some(verbs),
+            ..Default::default()
+        },
+    );
+    mode.server
+        .mcp_registry
+        .lock()
+        .await
+        .register(
+            &token,
+            crate::mcp::McpConnectorActorRecord::new(
+                proposer,
+                oneiron::EdgeActorClass::Human,
+                vault_wide,
+            ),
+        )
+        .unwrap();
+    let owner = mode.vault.ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &mode.vault,
+        oneiron::write_envelope::WriteActor::new(owner, oneiron::edge::EdgeActorClass::Human),
+        seeded_test_entity_id(0x0024_65a4),
+        &json!({
+            "schema_version": "1.2", "pack_id": "propose-only-runs", "pack_version": "v1",
+            "min_engine_version": "0.0.0",
+            "defaults": { "criticality": "normal", "sensitivity": "normal" },
+            "rules": [],
+            "actor_ceilings": [{ "actor_class": "human", "actor_ref": proposer.to_hex(),
+                "ceiling": "proposed" }],
+        }),
+    )
+    .unwrap();
+    assert!(
+        mode.vault
+            .gate_actor_ceiling_is_proposed("human", &proposer.to_hex())
+            .unwrap(),
+        "fixture check: the proposer's live ceiling is `proposed`"
+    );
+
+    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
+        let args = mcp_merge_args(
+            mcp_endpoint_envelope(proposer, "write_memory"),
+            json!({"run_ref": "quickjs-propose-only", "task": "state a favorite drink"}),
+        );
+        let body = mcp_refusal(
+            &mode.server,
+            mcp_endpoint_call_request(path, label, "proposer", "execute_code", args),
+        )
+        .await;
+        assert_eq!(
+            body["error"]["data"]["error_code"], "mcp_auth_required",
+            "{path}: {body}"
+        );
+    }
+    assert!(
+        mode.backend.requests.lock().unwrap().is_empty(),
+        "a refused run reaches no model"
+    );
+    assert!(mode.vault.get_claim(&claim).unwrap().is_none());
+
+    let writer = seeded_test_entity_id(0x0024_65a5);
+    register_mcp_actor(
+        &mode.server,
+        "quickjs-writer",
+        writer,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(writer, "write_memory"),
+        json!({"run_ref": "quickjs-full-access", "task": "state a favorite drink"}),
+    );
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request("/mcp", "quickjs-writer", "writer", "execute_code", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let stored = mode.vault.get_claim(&claim).unwrap().unwrap_or_else(|| {
+        panic!("the full-access run stores its claim: {body}");
+    });
+    assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Proposed);
+}
+
 /// Review repro (Astra P2): both doors enforce the closed schema the tool list
 /// advertises. A misspelled recall narrowing (`facet_ref` for `facet`) is
 /// refused instead of running unfiltered, on the tool list and in code mode;
@@ -665,8 +828,9 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
     .await;
     assert!(body.get("error").is_none(), "{body}");
     let steps = body["result"]["structuredContent"]["steps"].to_string();
-    assert!(
-        steps.contains("tool_args_invalid") && steps.contains("scope.facet_ref"),
+    assert_eq!(
+        verb_call_outcomes(&body),
+        [verb_refusal("tool_args_invalid")],
         "{steps}"
     );
     assert!(!steps.contains("north gate"), "{steps}");
@@ -701,8 +865,9 @@ async fn quickjs_code_mode_cannot_witness_a_users_words() {
     .await;
     assert!(body.get("error").is_none(), "{body}");
     let steps = body["result"]["structuredContent"]["steps"].to_string();
-    assert!(
-        steps.contains("generated code cannot author a user or system message"),
+    assert_eq!(
+        verb_call_outcomes(&body),
+        [verb_refusal("facade_error")],
         "{steps}"
     );
     for message in mode

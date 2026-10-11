@@ -265,6 +265,18 @@ impl OverlaySnapshot {
     /// refused: promotion replays a subgraph, and a closure with no turn body
     /// is not one.
     pub(crate) fn plan_promotion(&self, turn: EntityId) -> Result<PromotePlan> {
+        self.plan_promotion_where(turn, |_| true)
+    }
+
+    /// [`Self::plan_promotion`] replaying only the closure entries `keep`
+    /// admits. A copy of a room's talk (ARCH-0052 D5) keeps what the room
+    /// showed: the rows it leaves out never reach base, and they still retire
+    /// from the journal with the turn, so no later save picks them up.
+    pub(crate) fn plan_promotion_where(
+        &self,
+        turn: EntityId,
+        keep: impl Fn(&JournalEntry) -> bool,
+    ) -> Result<PromotePlan> {
         let conversation = self
             .journal_entries()
             .iter()
@@ -286,7 +298,7 @@ impl OverlaySnapshot {
         for entry in self
             .journal_entries()
             .iter()
-            .filter(|entry| journal_entry_in_closure(entry, turn, conversation))
+            .filter(|entry| journal_entry_in_closure(entry, turn, conversation) && keep(entry))
         {
             if let BatchOp::Put { id, .. } = &entry.op {
                 replayed.push(*id);

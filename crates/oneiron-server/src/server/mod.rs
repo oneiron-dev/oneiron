@@ -1,15 +1,19 @@
 //! Sync server state and maintenance jobs, split by concern.
+mod board_publisher;
 mod core;
 mod embedding;
 mod leases;
 mod lifecycle;
 mod message_stream;
+mod oversight;
 mod recall;
 mod tagging;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::SyncServer;
+pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
+pub use self::oversight::OversightStartError;
 pub(crate) use self::recall::blocking;
 
 #[cfg(test)]

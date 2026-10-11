@@ -17,8 +17,13 @@ pub(super) struct StepChargeTally {
 
 impl StepChargeTally {
     pub(super) fn checkpoint(&self) -> DreamerAttemptExecution {
+        self.park(DREAMER_HARD_CUT_PARK_REASON)
+    }
+
+    /// Parks with `reason` and settles what the attempt already spent.
+    pub(super) fn park(&self, reason: &str) -> DreamerAttemptExecution {
         DreamerAttemptExecution::ParkWithSpend {
-            reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+            reason: reason.to_owned(),
             completed_units: self.units,
             step_hashes: self.step_hashes.clone(),
         }

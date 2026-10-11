@@ -356,11 +356,15 @@ pub struct VaultConfig {
     pub embedding_transform: Option<String>,
     /// Where vector evidence starts in this vault's embedding space
     /// ([`VectorEvidenceFloors`]), as the host's embedder states it. Opening
-    /// a vault refuses floors outside [`VectorEvidenceFloors::validate`].
+    /// a vault refuses floors outside [`VectorEvidenceFloors::validate`]. A
+    /// host that learns its provider's floors only once it is admitted sets
+    /// them on the open vault ([`crate::Vault::set_vector_evidence`]).
     pub vector_evidence: VectorEvidenceFloors,
     /// Arms the tagging marker (ARCH-0036, serving the tagger): a base witness
     /// commits one marker per touched turn inside its own transaction, keyed
-    /// by the turn and this tagger checkpoint. `None` commits none.
+    /// by the turn and this tagger checkpoint, and the answer each marker
+    /// settles on is saved as the turn's tags in its mode. `None` commits
+    /// none.
     pub tagging: Option<crate::tagging::TaggingMarkerConfig>,
     /// LMDB map size in bytes.
     pub map_size: usize,

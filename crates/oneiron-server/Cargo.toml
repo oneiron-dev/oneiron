@@ -50,7 +50,9 @@ tokio-tungstenite = "0.26"
 futures-util = "0.3"
 zstd = "0.13"
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `raw_value`: secret rotation borrows the value from its own wiped body
+# instead of letting the parser copy it.
+serde_json = { workspace = true, features = ["raw_value"] }
 toml = "0.9"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }
@@ -85,6 +87,9 @@ candle-nn = "=0.11.0"
 # engine is in this tree whichever we ask for, and it is the engine the
 # reference runtime tokenized with — the parity row would find any difference.
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+# The local embedder's tiled Q8_0 kernel spreads its tiles over rayon's pool.
+# Already in the tree through candle, which runs its own CPU work on rayon.
+rayon = "1.12"
 # Model-artifact download rides the `reqwest` blocking client already in this
 # file. `hf-hub` 1.0 was the blueprint's choice, but its sync handle drives an
 # owned tokio runtime through `block_on`, which the embedding worker cannot call

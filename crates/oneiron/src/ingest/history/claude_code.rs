@@ -14,11 +14,9 @@ use serde_json::Value;
 
 use super::text::{join_texts, json_record, str_field, time_field};
 use super::{
-    HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips, HistoryThreadKind,
+    DELEGATING_AGENT, HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips,
+    HistoryThreadKind,
 };
-
-/// The user side of a subagent's log is the agent that delegated the task.
-const DELEGATING_AGENT: &str = "delegating_agent";
 
 /// User-side text the host wrote rather than the person: command wrappers and
 /// their output, shell escapes, notifications, interruption markers.
@@ -145,6 +143,11 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
         } else {
             (&mut main, said_by)
         };
+        // Every line names the folder Claude Code ran in; the first is where
+        // the session started.
+        if thread.conversation.cwd.is_none() {
+            thread.conversation.cwd = str_field(&value, "cwd").map(str::to_owned);
+        }
         let fallback_id = format!("{id}#L{line}");
         match str_field(&value, "type") {
             Some("user") => user_line(thread, &value, &fallback_id, said_by),
