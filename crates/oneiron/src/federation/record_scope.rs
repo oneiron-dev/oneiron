@@ -268,6 +268,20 @@ pub(crate) fn settle_epoch_birth(
     )?;
     Ok(())
 }
+/// The worlds an epoch SUMMARY's stamp names: base, or the world its run
+/// settled it in. Empty for a row without a valid SUMMARY stamp.
+#[cfg(feature = "sync")]
+pub(crate) fn summary_worlds_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let scope = stored_scope(store, txn, id, crate::registry::ENTITY_TYPE_SUMMARY)?;
+    Ok(match scope.map(|scope| scope.worlds) {
+        Some(ScopeAxis::Some(worlds)) => worlds.into_iter().map(|ScopeId(world)| world).collect(),
+        _ => BTreeSet::new(),
+    })
+}
 /// Restamp a locally authenticated leader-chat TURN/MESSAGE at the ordinary
 /// record-position scope door, after the typed write's full batch succeeds.
 /// Opaque replicated rows cannot call this door and remain unstamped.

@@ -522,6 +522,20 @@ pub(super) fn band_filter(
     (position.bands != ScopeAxis::All).then_some(&position.bands)
 }
 
+/// A SUMMARY born in a world other than base (an epoch a placed run wrote)
+/// shares the base window but travels only where the selector selects its
+/// world: shared-base residence is not base-world disclosure. Every other
+/// row keeps its own world rule.
+pub(super) fn settled_world_selected(
+    raw: &[u8],
+    record: &crate::federation::Scope,
+    position: &crate::federation::Scope,
+) -> bool {
+    raw.first().copied() != Some(crate::registry::ENTITY_TYPE_SUMMARY)
+        || record.worlds == crate::federation::base_world_axis()
+        || record.worlds.is_narrowing_of(&position.worlds)
+}
+
 pub(super) fn entity_selector_decision(
     vault: &Vault,
     entity: (&EntityId, &[u8]),

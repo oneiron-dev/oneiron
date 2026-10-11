@@ -487,12 +487,14 @@ fn an_epoch_goes_with_the_host_words_it_holds() {
         let [message] = messages.as_slice() else {
             panic!("{erased}: one speech MESSAGE, got {messages:?}");
         };
-        let target = if erased == "the first epoch" {
-            first
+        if erased == "the first epoch" {
+            assert!(run.vault.delete_entity(&first).expect("erase the epoch"));
         } else {
-            *message
-        };
-        assert!(run.vault.delete_entity(&target).expect("erase"), "{erased}");
+            // A MESSAGE leaves through its room's door, as its author.
+            run.vault
+                .delete_own_room_record(*message, crate::DeleteReason::UserDelete)
+                .expect("erase the MESSAGE");
+        }
         let epochs = run
             .vault
             .code_run_compaction_epochs(run.run_id)

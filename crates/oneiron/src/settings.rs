@@ -618,8 +618,8 @@ pub(crate) fn device_only_worlds_in(
 }
 
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD
-/// row itself, a CLAIM whose `worldId` is flagged, or a NOTE with a stored
-/// `InWorld` edge to a flagged world.
+/// row itself, a CLAIM whose `worldId` is flagged, a NOTE with a stored
+/// `InWorld` edge to a flagged world, or an epoch SUMMARY born in one.
 #[cfg(feature = "sync")]
 pub(crate) fn device_only_withholds(
     store: &crate::store::Store,
@@ -658,6 +658,11 @@ pub(crate) fn device_only_withholds(
             }
             Ok(false)
         }
+        crate::registry::ENTITY_TYPE_SUMMARY => Ok(
+            crate::federation::record_scope::summary_worlds_in(store, txn, *id)?
+                .iter()
+                .any(|world| flagged.contains(world)),
+        ),
         _ => Ok(false),
     }
 }

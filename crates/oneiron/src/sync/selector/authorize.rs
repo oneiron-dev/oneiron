@@ -330,7 +330,10 @@ fn epoch_carried(
     rtxn: &heed::RoTxn<'_>,
     (id, blob): (&EntityId, &[u8]),
     selector: &SyncSelector,
-    admission: Option<&super::document_admission::DocumentGrant>,
+    egress: Option<(
+        &super::document_admission::DocumentGrant,
+        &BTreeSet<EntityId>,
+    )>,
 ) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Ok(false);
@@ -341,25 +344,22 @@ fn epoch_carried(
         id,
         header.entity_type,
         &blob[ENTITY_METADATA_HEADER_LEN..],
-        |source, row| {
-            let Some(admission) = admission else {
+        |source, _| {
+            let Some((admission, device_only)) = egress else {
                 return Ok(false);
             };
             // A source this door would withhold as undecodable, or whose
             // selection outgrows its budget, carries nothing.
-            let withheld = |result: Result<bool>| match result {
-                Ok(carried) => Ok(carried),
-                Err(Error::InvalidClaimBody(_) | Error::IndexOverflow(_)) => Ok(false),
-                Err(error) => Err(error),
-            };
-            Ok(withheld(crate::authority::row_causal_admitted(
+            match super::document_admission::egress_selected_in_txn(
                 vault,
                 rtxn,
-                source,
-                &row.encode(),
-            ))? && withheld(super::document_admission::selected_in_txn(
-                vault, rtxn, *source, selector, admission,
-            ))?)
+                *source,
+                selector,
+                (admission, device_only),
+            ) {
+                Err(Error::InvalidClaimBody(_) | Error::IndexOverflow(_)) => Ok(false),
+                carried => carried,
+            }
         },
     )
 }
@@ -450,6 +450,7 @@ pub(super) fn filter_window_doc(
     // The stored selection the epoch fence reads sources through, built at
     // the first epoch summary; a grant it cannot authorize carries none.
     let mut epoch_admission = None;
+    let device_only = crate::settings::device_only_worlds_in(&vault.store, &rtxn)?;
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -501,6 +502,7 @@ pub(super) fn filter_window_doc(
         if !grant
             .authority_scope
             .admits("read", &scope, &crate::federation::Scope::top())
+            || !super::scope::settled_world_selected(blob, &scope, scope_position)
         {
             return;
         }
@@ -528,7 +530,10 @@ pub(super) fn filter_window_doc(
                 )
                 .ok()
             });
-            match epoch_carried(vault, &rtxn, (&id, blob), selector, admission.as_ref()) {
+            let egress = admission
+                .as_ref()
+                .map(|admission| (admission, &device_only));
+            match epoch_carried(vault, &rtxn, (&id, blob), selector, egress) {
                 Ok(true) => {}
                 Ok(false) => return,
                 Err(error) => {

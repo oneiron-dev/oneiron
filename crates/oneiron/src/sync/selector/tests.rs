@@ -4894,3 +4894,115 @@ fn an_epoch_summary_leaves_only_with_every_record_it_was_written_from() -> crate
     assert!(read.contains(&plain) && !read.contains(&private));
     Ok(())
 }
+
+/// Sol round 5 on #1384: an epoch summary stays where its world or a source
+/// stays. A summary a run settled in world W is not base-world disclosure,
+/// and a world flagged device-only keeps both the summary born in it and
+/// every summary written from its rows on this device.
+#[test]
+fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochPlacement, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5f);
+    let person = entity_id(0x68);
+    let (claim, kept, placed) = (entity_id(0x69), entity_id(0x6a), entity_id(0x6b));
+    let base_key = WindowKey::new("2026-03");
+    let at = base_key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.device_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the device-only world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    let epoch = |epoch: u64, text: &str| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: entity_id(0x6c).to_hex(),
+            epoch,
+            turn_start: epoch * 3,
+            turn_end: epoch * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: text.into(),
+            actor: entity_id(0x6d).to_hex(),
+        })
+    };
+    vault
+        .batch()
+        .put(
+            &kept,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(1, "the run learned the device-only world fact")?,
+        )
+        .edge(&kept, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &placed,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(2, "the run met the person in its world")?,
+        )
+        .edge(&placed, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    let placement = EpochPlacement {
+        world: Some(world.entity_id()),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, placed))?;
+    let packed = || -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", &base_key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, &base_key)?;
+        Ok(doc)
+    };
+    let sent = |doc: &LoroDoc, world_axis| -> crate::Result<Vec<EntityId>> {
+        let selector = SyncSelector::new(grant_id, member, world_axis, vec![], vec![]);
+        let filtered =
+            filtered_window_doc(&vault, doc, &base_key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &filtered.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let before = packed()?;
+    let base = sent(&before, SyncSelectorWorld::Base)?;
+    assert!(base.contains(&person));
+    assert!(
+        !base.contains(&placed),
+        "a summary born in W is not base-world disclosure"
+    );
+    let all = sent(&before, SyncSelectorWorld::All)?;
+    assert!(all.contains(&placed) && all.contains(&kept));
+
+    vault.set_world_device_only(world.entity_id(), true)?;
+    let all = sent(&before, SyncSelectorWorld::All)?;
+    assert!(
+        !all.contains(&kept),
+        "a device-only source keeps its summary home"
+    );
+    assert!(all.contains(&person) && !all.contains(&claim));
+    let after = sent(&packed()?, SyncSelectorWorld::All)?;
+    assert!(
+        !after.contains(&placed),
+        "a summary born in a device-only world is never packed"
+    );
+    assert!(after.contains(&person) && !after.contains(&kept));
+    Ok(())
+}

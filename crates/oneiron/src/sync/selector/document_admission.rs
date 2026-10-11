@@ -13,6 +13,7 @@ use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::decode_federation_grant_body;
 use crate::federation::{FederationGrant, FederationGrantRole, FederationGrantScope, Position};
 use crate::{EntityId, Vault};
+use std::collections::BTreeSet;
 
 pub(super) struct DocumentGrant {
     pub(super) grant: FederationGrant,
@@ -152,27 +153,43 @@ pub(super) fn admit_selected_in_txn(
     selector: &SyncSelector,
     admission: &DocumentGrant,
 ) -> Result<()> {
-    if selected_in_txn(vault, txn, id, selector, admission)? {
+    if selected_in_txn(vault, txn, id, selector, admission, None)? {
         Ok(())
     } else {
         Err(denied())
     }
 }
 
+/// Whether sync egress under `admission` would carry `id`: it sits in the
+/// closed subgraph, and neither it nor the seed that selects it is a row
+/// the export withholds before selection. `device_only` is the export's
+/// own read of the flagged worlds.
+pub(super) fn egress_selected_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    selector: &SyncSelector,
+    (admission, device_only): (&DocumentGrant, &BTreeSet<EntityId>),
+) -> Result<bool> {
+    selected_in_txn(vault, txn, id, selector, admission, Some(device_only))
+}
+
 /// Whether `id` sits in the closed subgraph `admission` resolved, read from
 /// stored rows in this writer.
-pub(super) fn selected_in_txn(
+fn selected_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     selector: &SyncSelector,
     admission: &DocumentGrant,
+    egress: Option<&BTreeSet<EntityId>>,
 ) -> Result<bool> {
     let selection = StoredSelection {
         vault,
         txn,
         selector,
         admission,
+        egress,
     };
     let mut budget = crate::vault::MAX_EDGE_QUERY_RESULTS;
     let Some((visible, seed)) = selection.candidate(id, &mut budget)? else {
@@ -222,6 +239,10 @@ struct StoredSelection<'a, 'env> {
     txn: &'a heed::RoTxn<'env>,
     selector: &'a SyncSelector,
     admission: &'a DocumentGrant,
+    /// Sync egress, with the worlds flagged device-only: a row also passes
+    /// the exporter's own withholdings, so a row the export withholds never
+    /// justifies another's selection.
+    egress: Option<&'a BTreeSet<EntityId>>,
 }
 
 impl StoredSelection<'_, '_> {
@@ -247,6 +268,19 @@ impl StoredSelection<'_, '_> {
         else {
             return Ok(None);
         };
+        let withheld = match self.egress {
+            Some(device_only) => !self.egress_carries(id, &raw, device_only)?,
+            None => false,
+        };
+        if withheld
+            || !super::scope::settled_world_selected(
+                &raw,
+                &record,
+                self.admission.position.as_scope(),
+            )
+        {
+            return Ok(None);
+        }
         // Role verbs gate peer writes on top of the stored authority scope.
         if self.admission.verb == "write"
             && !crate::federation::grant_allows_content_write(&self.admission.grant, &record)
@@ -323,6 +357,44 @@ impl StoredSelection<'_, '_> {
             }
         }
         Ok(Some((decision.facet_visible, seed)))
+    }
+}
+
+impl StoredSelection<'_, '_> {
+    /// The exporter's and the window packer's withholdings: an erased or
+    /// withdrawn row, a claim no sync door ships, custody that may not sync,
+    /// a row of a device-only world, an LFS chunk, a row its causal history
+    /// does not admit.
+    fn egress_carries(
+        &self,
+        id: EntityId,
+        raw: &[u8],
+        device_only: &BTreeSet<EntityId>,
+    ) -> Result<bool> {
+        let state = crate::ports::TombstoneStoreRead::port_deletion_state(
+            &self.vault.store,
+            self.txn,
+            &id,
+        )?;
+        if state.deleted
+            || state.stale
+            || !crate::sync::local_claims::claim_sync_allowed(raw)
+            || (raw.first().copied() == Some(crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+                && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..]))
+            || crate::settings::device_only_withholds(
+                &self.vault.store,
+                self.txn,
+                device_only,
+                &id,
+            )?
+            || crate::origin::lfs::is_lfs_chunk_asset_in_txn(&self.vault.store, self.txn, &id)?
+        {
+            return Ok(false);
+        }
+        match crate::authority::row_causal_admitted(self.vault, self.txn, &id, raw) {
+            Err(Error::InvalidClaimBody(_)) => Ok(false),
+            admitted => admitted,
+        }
     }
 }
 
