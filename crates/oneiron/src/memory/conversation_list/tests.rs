@@ -10,7 +10,6 @@ use crate::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
 use crate::edge::EdgeActorClass;
-use crate::federation::ScopeAxis;
 use crate::federation::scope_codec::read_preset;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::ENTITY_TYPE_PERSON;
@@ -61,11 +60,16 @@ struct Listed {
     receipt: ScopedReadReceipt,
 }
 
-fn list(vault: &Vault, reader: EntityId, limit: usize) -> Listed {
-    let read = vault
-        .memory(reader, EdgeActorClass::Human)
-        .conversation_list(ConversationListFilter::default(), None, limit, true)
-        .expect("list conversations");
+fn list(vault: &Vault, owner: EntityId, limit: usize) -> Listed {
+    listed(
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .conversation_list(ConversationListFilter::default(), None, limit, true)
+            .expect("list conversations"),
+    )
+}
+
+fn listed(read: ScopedReadResult<ConversationListPage>) -> Listed {
     Listed {
         rows: read
             .value
@@ -87,28 +91,62 @@ type Witnessed = (EntityId, EntityId, u64, WitnessMessage);
 /// The space the reader holds a Messages grant on.
 const SPACE: u8 = 0x68;
 
+/// The scoped reader, and the credential it reads with when it has one.
+#[derive(Clone)]
+struct Reader {
+    id: EntityId,
+    credential: Option<crate::authority::VerifiedSlip>,
+}
+
+impl Reader {
+    fn memory<'v>(&self, vault: &'v Vault) -> Memory<'v> {
+        let memory = vault.memory(self.id, EdgeActorClass::Human);
+        match &self.credential {
+            Some(credential) => memory.with_read_proof(credential),
+            None => memory,
+        }
+    }
+}
+
+fn reader_list(vault: &Vault, reader: &Reader, limit: usize) -> Listed {
+    listed(
+        reader
+            .memory(vault)
+            .conversation_list(ConversationListFilter::default(), None, limit, true)
+            .expect("list conversations"),
+    )
+}
+
 /// A rooted vault whose owner witnessed `witnessed`, and a reader who holds
-/// a Messages grant on the space. Its read ceiling takes in the `readable`
-/// conversations and turns, and each readable turn's messages.
+/// a Messages grant on the space. It reads with a credential that names the
+/// `readable` conversations and turns, and each one's messages its grant
+/// admits: it may read nothing else.
 struct ReaderVault {
     _dir: tempfile::TempDir,
     vault: Vault,
     owner: EntityId,
-    reader: EntityId,
+    reader: Reader,
 }
 
 fn reader_vault(witnessed: &[Witnessed], readable: &[EntityId]) -> ReaderVault {
-    reader_vault_with(witnessed, readable, false)
+    let (rooted, issuer) = rooted_reader(witnessed);
+    let credential = credential(&rooted.vault, &issuer, rooted.reader.id, readable);
+    ReaderVault {
+        reader: Reader {
+            credential: Some(credential),
+            ..rooted.reader
+        },
+        ..rooted
+    }
 }
 
-/// As [`reader_vault`]; with `every_room` the reader's read ceiling also
-/// takes in every conversation the owner lists, the seeded root project's
-/// home room too, so no conversation is withheld.
-fn reader_vault_with(
-    witnessed: &[Witnessed],
-    readable: &[EntityId],
-    every_room: bool,
-) -> ReaderVault {
+/// As [`reader_vault`], with no credential: the reader reads every
+/// conversation and turn, and its grant alone decides which messages.
+fn grant_reader_vault(witnessed: &[Witnessed]) -> ReaderVault {
+    rooted_reader(witnessed).0
+}
+
+fn rooted_reader(witnessed: &[Witnessed]) -> (ReaderVault, crate::authority::HostSlipIssuer) {
     use ed25519_dalek::{Signer, SigningKey};
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -168,51 +206,79 @@ fn reader_vault_with(
             },
         )
         .expect("the reader's message grant");
-    let mut ceiling = read_preset();
-    let mut facets = std::collections::BTreeSet::new();
-    let txn = vault.store.env.read_txn().expect("read txn");
-    let mut rows = Vec::new();
-    for id in readable {
-        rows.push(*id);
-        rows.extend(vault.turn_message_ids_in(&txn, id).expect("messages"));
-    }
-    drop(txn);
-    if every_room {
-        rows.extend(list(&vault, owner, 50).rows.into_iter().map(|(id, _)| id));
-    }
-    for row in rows {
-        match vault
-            .record_scope(&row)
-            .expect("record scope")
-            .expect("stamped")
-            .facets
-        {
-            ScopeAxis::Some(own) => facets.extend(own),
-            axis => panic!("a row's own facet, not {axis:?}"),
-        }
-    }
-    ceiling.facets = ScopeAxis::Some(facets);
     crate::conversation_dag::test_support::put_test_policy_manifest(
         &vault,
         WriteActor::new(owner, EdgeActorClass::Human),
         entity(0x6c),
         &serde_json::json!({
-            "schema_version": "1.2", "pack_id": "conversation-list-ceiling",
+            "schema_version": "1.2", "pack_id": "conversation-list-reader",
             "pack_version": "1", "min_engine_version": "0.0.0",
             "defaults": {}, "rules": [], "actor_ceilings": [],
             "scoped_grants": [{
                 "actor_ref": reader.to_hex(), "actor_class": "human",
-                "effector": "core:read", "scope": ceiling, "receipt_required": false,
+                "effector": "core:read", "scope": read_preset(), "receipt_required": false,
             }],
         }),
     )
-    .expect("the reader's read ceiling");
-    ReaderVault {
+    .expect("the reader's read grant");
+    let rooted = ReaderVault {
         _dir: dir,
         vault,
         owner,
-        reader,
-    }
+        reader: Reader {
+            id: reader,
+            credential: None,
+        },
+    };
+    (rooted, issuer)
+}
+
+/// The reader's credential: it names the `readable` conversations and
+/// turns, and the messages of those turns the reader's grant admits. A
+/// record a credential does not name is withheld from every read made with
+/// it; a record facet never is a boundary (`Scope::admits`).
+fn credential(
+    vault: &Vault,
+    issuer: &crate::authority::HostSlipIssuer,
+    reader: EntityId,
+    readable: &[EntityId],
+) -> crate::authority::VerifiedSlip {
+    let messages: Vec<PointRead<'_>> = {
+        let txn = vault.store.env.read_txn().expect("read txn");
+        readable
+            .iter()
+            .flat_map(|id| vault.turn_message_ids_in(&txn, id).expect("messages"))
+            .map(PointRead::id)
+            .collect()
+    };
+    let memory = vault.memory(reader, EdgeActorClass::Human);
+    let granted = memory
+        .read_lane(ClaimReadStatus::Recorded)
+        .expect("the reader's lane")
+        .read(&messages, None)
+        .expect("read the messages")
+        .value;
+    let mut claims = vault
+        .ensure_host_root_slip(issuer)
+        .expect("host root")
+        .claims;
+    claims.slip_id = *blake3::hash(b"conversation-list-reader").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = reader.to_hex();
+    claims.actor_class = Some("human".into());
+    claims.scope = read_preset();
+    claims.records = readable
+        .iter()
+        .copied()
+        .chain(granted.into_iter().flatten().map(|row| row.id))
+        .map(|id| id.to_hex())
+        .collect();
+    let slip = vault.mint_capability_slip(issuer, claims).expect("mint");
+    let tag = b"conversation-list-reader";
+    let proof = issuer.binding_proof(&slip, tag).expect("binding proof");
+    vault
+        .verify_capability_slip(&issuer.public_key(), &slip, tag, &proof)
+        .expect("verify")
 }
 
 /// Two conversations. The first has a turn whose message is in the space, a
@@ -223,7 +289,7 @@ struct ScopedVault {
     _dir: tempfile::TempDir,
     vault: Vault,
     owner: EntityId,
-    reader: EntityId,
+    reader: Reader,
     kept: EntityId,
     other: EntityId,
     last_turn: EntityId,
@@ -318,7 +384,7 @@ fn a_reader_lists_only_what_it_may_read() {
     assert_eq!(all.total, Some(all.rows.len() as u64));
     assert_eq!(all.withheld, 0);
 
-    let read = list(&vault, reader, 50);
+    let read = reader_list(&vault, &reader, 50);
     assert_eq!(
         read.rows,
         [(kept, Some("booked for friday at eight".to_owned()))]
@@ -330,23 +396,28 @@ fn a_reader_lists_only_what_it_may_read() {
     // A filter sees only rows the reader may read: the receipt withholds
     // every conversation it may not read, whatever kind the filter names.
     let unlike = ConversationKind::Mirror;
-    let filtered = |reader| {
+    let filtered = |memory: Memory<'_>| {
         let filter = ConversationListFilter {
             kind: Some(unlike),
             external_id: None,
         };
-        vault
-            .memory(reader, EdgeActorClass::Human)
+        memory
             .conversation_list(filter, None, 50, true)
             .expect("list conversations")
     };
-    assert!(filtered(owner).value.rows.is_empty(), "no mirror here");
+    assert!(
+        filtered(vault.memory(owner, EdgeActorClass::Human))
+            .value
+            .rows
+            .is_empty(),
+        "no mirror here"
+    );
     assert_eq!(
-        filtered(reader).receipt.suppressed_count,
+        filtered(reader.memory(&vault)).receipt.suppressed_count,
         all.rows.len() - 1
     );
 
-    let first = list(&vault, reader, 1);
+    let first = reader_list(&vault, &reader, 1);
     assert_eq!(first.rows.len(), 1);
     assert_eq!(
         first.next, None,
@@ -379,7 +450,7 @@ fn a_reader_lists_only_what_it_may_read() {
             .conversation_last_message_snippet(&kept)
             .expect("snippet")
     );
-    let read = list(&vault, reader, 50);
+    let read = reader_list(&vault, &reader, 50);
     assert_eq!(
         read.rows,
         [(kept, Some("a table for two by the window".to_owned()))]
@@ -430,7 +501,7 @@ fn where_a_hidden_turn_falls_never_shows() {
             owner,
             reader,
         } = reader_vault(&witnessed, &[room, shown]);
-        let listed = list(&vault, reader, 50);
+        let listed = reader_list(&vault, &reader, 50);
         let others = others(&vault, owner, 1);
         (
             listed.rows,
@@ -486,7 +557,7 @@ fn where_a_hidden_conversation_falls_never_shows() {
             owner,
             reader,
         } = reader_vault(&witnessed, &[first, entity(0xB3), second, entity(0xB4)]);
-        let memory = vault.memory(reader, EdgeActorClass::Human);
+        let memory = reader.memory(&vault);
         let page = |after: Option<&EntityId>, count| {
             let read = memory
                 .conversation_list(ConversationListFilter::default(), after, 1, count)
@@ -555,7 +626,7 @@ fn a_hidden_turns_topology_never_decides_a_preview() {
             );
             assert!(list(&vault, owner, 50).rows.contains(&(room, None)));
         }
-        let listed = list(&vault, reader, 50);
+        let listed = reader_list(&vault, &reader, 50);
         (listed.rows, listed.next, listed.total, listed.withheld)
     });
     assert_eq!(
@@ -565,10 +636,11 @@ fn a_hidden_turns_topology_never_decides_a_preview() {
     assert_eq!(listed[0], listed[1]);
 }
 
-/// Two vaults the reader reads alike: it may read every conversation, and
-/// one conversation's two turns, the later one with a message it may read. A
-/// message outside its grant is part of the earlier turn, and in one vault
-/// part of the later one as well. The list and its whole receipt are the same
+/// Two vaults the reader reads alike: with no credential it may read every
+/// conversation and turn, and its grant decides the messages (ARCH-0006a).
+/// One conversation's later turn has a message it may read. A message
+/// outside its grant is part of the earlier turn, and in one vault part of
+/// the later one as well. The list and its whole receipt are the same
 /// in both, and the receipt withholds nothing: nothing, not even a narrowed
 /// axis, says which turns a hidden message belongs to.
 #[test]
@@ -581,24 +653,20 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
             vault,
             owner,
             reader,
-        } = reader_vault_with(
-            &[
-                (
-                    room,
-                    earlier,
-                    AT,
-                    said(WitnessAuthor::User, "outside the grant", None),
-                ),
-                (
-                    room,
-                    later,
-                    AT + 10,
-                    said(WitnessAuthor::Companion, "the latest it may read", space),
-                ),
-            ],
-            &[room, earlier, later],
-            true,
-        );
+        } = grant_reader_vault(&[
+            (
+                room,
+                earlier,
+                AT,
+                said(WitnessAuthor::User, "outside the grant", None),
+            ),
+            (
+                room,
+                later,
+                AT + 10,
+                said(WitnessAuthor::Companion, "the latest it may read", space),
+            ),
+        ]);
         if twice {
             let hidden = {
                 let txn = vault.store.env.read_txn().expect("read txn");
@@ -610,7 +678,7 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
                 .commit()
                 .expect("a second membership");
         }
-        let listed = list(&vault, reader, 50);
+        let listed = reader_list(&vault, &reader, 50);
         // Each vault seeds its own root project, so only the room's row is
         // compared between them.
         assert_eq!(
@@ -664,7 +732,7 @@ fn a_deleted_session_keeps_the_owners_preview() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
-    let (room, older, turn, session) = (entity(0xA1), entity(0xA2), entity(0xA3), entity(0xA4));
+    let (room, older, turn, session) = (entity(0x91), entity(0x92), entity(0x93), entity(0x94));
     witness(
         &vault,
         owner,
