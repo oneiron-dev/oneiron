@@ -187,6 +187,55 @@ fn a_scoped_temporal_window_grows_past_rows_its_scope_drops() -> Result<()> {
     Ok(())
 }
 
+/// Rows a grown window adds can outscore an in-scope row under the
+/// request's sigma, though the wider sigma of an unscoped call for the
+/// widened rows keeps it. That call's sigma picks the rows the scope sees;
+/// the request's sigma only scores and orders them.
+#[test]
+fn a_grown_temporal_window_keeps_the_rows_its_own_sigma_picks() -> Result<()> {
+    use super::super::channels::temporal_widening_bound;
+
+    let (_dir, vault) = open_test_vault();
+    // A month back, clear of the rows the vault seeds at its open.
+    let anchor = crate::unix_seconds_now() - 30 * 86_400;
+    let row = |n: usize| {
+        let mut bytes = [0x6d; 16];
+        bytes[12..].copy_from_slice(&u32::try_from(n).expect("n").to_be_bytes());
+        EntityId::from_bytes(bytes).expect("row id")
+    };
+    let at = |days_back: u64| {
+        let occurred = anchor - days_back * 86_400;
+        TimeRange {
+            start: occurred,
+            end: occurred,
+        }
+    };
+    // Two rows short of the bound sit at the anchor, outside the scope, so
+    // the first window cannot fill the widened rows and grows.
+    let near = temporal_widening_bound(1) - 2;
+    let mut batch = vault.batch();
+    for n in 1..=near {
+        batch = batch.put(&row(n), 2, at(0), anchor, b"payload");
+    }
+    // The in-scope row six days back, and two rows outside the scope, learned
+    // an hour later, that only the grown window reaches.
+    let inside = row(near + 1);
+    batch = batch.put(&inside, 1, at(6), anchor, b"payload");
+    for (n, days_back) in [(near + 2, 10), (near + 3, 11)] {
+        batch = batch.put(&row(n), 2, at(days_back), anchor + 3_600, b"payload");
+    }
+    batch.commit()?;
+
+    let hits = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+        .filter_types(&[1])
+        .limit(1)
+        .run()?;
+    assert_eq!(hits.iter().map(|hit| hit.id).collect::<Vec<_>>(), [inside]);
+    Ok(())
+}
+
 #[test]
 fn temporal_type_scope_does_not_spend_limit_on_excluded_hit() -> Result<()> {
     let (_dir, vault) = open_test_vault();

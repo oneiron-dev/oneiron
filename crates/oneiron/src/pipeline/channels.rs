@@ -104,9 +104,9 @@ pub(super) fn execute_temporal(
 
     let range_width = effective_range_width(config.anchor_start, config.anchor_end);
     // A scoped call scans and returns its widened rows. Its window grows
-    // until it can fill them, as an unscoped call's for that many rows would,
-    // but its rows are scored with the sigma the request settles on: the one
-    // in force once the window could fill the request.
+    // until it can fill them, and it keeps the rows an unscoped call for that
+    // many rows would, but scores and orders them with the sigma the request
+    // settles on: the one in force once the window could fill the request.
     let rows = config.widened.unwrap_or(config.limit);
     let per_scan_cap = rows.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
 
@@ -154,12 +154,16 @@ pub(super) fn execute_temporal(
         sigma = sigma.saturating_mul(2).max(1);
     }
 
-    let scoring = TemporalScoringContext {
-        sigma: settled_sigma.unwrap_or(sigma),
+    let window = TemporalScoringContext {
+        sigma,
         now,
         anchor_mid,
         learned_anchor,
         learned_anchor_mid,
+    };
+    let request = TemporalScoringContext {
+        sigma: settled_sigma.unwrap_or(sigma),
+        ..window
     };
 
     let mut scored = Vec::<TemporalCandidateScore>::new();
@@ -174,11 +178,22 @@ pub(super) fn execute_temporal(
         }) {
             continue;
         }
-        scored.push(score_temporal_candidate(id, meta, config, &scoring));
+        scored.push(score_temporal_candidate(id, meta, config, &window));
     }
 
     sort_temporal_candidate_scores(&mut scored);
     scored.truncate(rows);
+    if request.sigma != window.sigma {
+        // The window grew past the round where sigma settled. Its own sigma
+        // picked the rows; the request's scores and orders them.
+        for entry in &mut scored {
+            let Some(meta) = metadata_cache.get(store, rtxn, &entry.id)? else {
+                continue;
+            };
+            *entry = score_temporal_candidate(entry.id, meta, config, &request);
+        }
+        sort_temporal_candidate_scores(&mut scored);
+    }
 
     Ok(scored
         .into_iter()
