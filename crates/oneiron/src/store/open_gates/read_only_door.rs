@@ -13,8 +13,9 @@ use super::manifest_storage_gates::{OwnedEnv, RegisteredPath, vault_root_open_gu
 use super::open_version_keys::MODEL_ID_KEY;
 use super::vault_root_bind::vault_root_preflight_error;
 
-/// Rows of one existing vault's `vault_meta`, and the canonical root they
-/// were read from.
+/// Rows of one existing vault's metadata database (its `vault_meta`, or the
+/// `hnsw_meta` that holds its model pin), and the canonical root they were
+/// read from.
 pub(in crate::store) struct VaultMetaRows {
     pub(in crate::store) root: PathBuf,
     pub(in crate::store) rows: Vec<(Vec<u8>, Vec<u8>)>,
@@ -38,22 +39,22 @@ pub(in crate::store) fn read_existing_vault_meta(
     path: &Path,
     prefixes: &[&[u8]],
 ) -> Result<VaultMetaRows> {
-    let (root, rows) = read_existing_rows(
+    read_existing_rows(
         path,
         ("vault_meta", "vault holds no side-table database"),
         prefixes,
-    )?;
-    Ok(VaultMetaRows { root, rows })
+    )
 }
 
 /// The embedding model the vault at `path` is pinned to, read through the
 /// same read-only environment; `None` when it holds none.
 pub(crate) fn read_existing_embedding_model(path: &Path) -> Result<Option<String>> {
-    let (_, rows) = read_existing_rows(
+    let rows = read_existing_rows(
         path,
         ("hnsw_meta", "vault holds no vector metadata database"),
         &[MODEL_ID_KEY],
-    )?;
+    )?
+    .rows;
     rows.into_iter()
         .find(|(key, _)| key.as_slice() == MODEL_ID_KEY)
         .map(|(_, value)| {
@@ -69,7 +70,7 @@ fn read_existing_rows(
     path: &Path,
     database: (&str, &'static str),
     prefixes: &[&[u8]],
-) -> Result<(PathBuf, Vec<(Vec<u8>, Vec<u8>)>)> {
+) -> Result<VaultMetaRows> {
     let root = match path.canonicalize() {
         Ok(root) => root,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -95,7 +96,7 @@ fn read_existing_rows(
     // The environment closes before its path registration is released.
     drop(env);
     drop(registered);
-    Ok((root, rows?))
+    Ok(VaultMetaRows { root, rows: rows? })
 }
 
 fn not_an_existing_root(root: &Path, after_environment_open: bool) -> Error {
