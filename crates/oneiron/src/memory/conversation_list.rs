@@ -4,7 +4,11 @@
 //! every turn and message a row's preview quotes, comes through the actor's
 //! read lane, the one recall and the transcript read on. A conversation, turn
 //! or message the actor may not read never shows, nor an erased or archived
-//! one. The receipt counts each listed conversation the reader may not read,
+//! one. A group, channel or mirror is relationship data (ARCH-0006a): a
+//! reader other than the owner sees it only as a member, and then only the
+//! turns its membership showed it, or on a grant that opens its
+//! relationship. A room the reader is not in reads as absent, with no count.
+//! The receipt counts each listed conversation the reader may not read,
 //! and every listed one is read whatever the page asks, so the count never
 //! says where a hidden conversation falls. A preview's reads narrow the
 //! receipt but add no count: a count of a conversation's hidden turns or
@@ -17,12 +21,13 @@ use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
 use crate::conversation::{
-    ConversationBody, ConversationKind, LatestMessage, PreviewCandidates, snippet, turn_text,
+    ConversationBody, ConversationKind, LatestMessage, MembershipWindow, PreviewCandidates,
+    snippet, turn_text,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::{EntityStoreRead, TombstoneStore};
-use crate::registry::ENTITY_TYPE_CONVERSATION;
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 
 /// Conversations read through the lane at a time.
 const LIST_CHUNK: usize = 256;
@@ -83,10 +88,30 @@ pub struct ConversationListPage {
     pub total: Option<u64>,
 }
 
+/// Which of a listed conversation's turns the reader may see, beyond what
+/// the lane admits.
+enum Sight {
+    /// Every turn the lane admits.
+    Whole,
+    /// Only turns said inside one of the reader's membership windows: a late
+    /// joiner sees only what its membership showed it.
+    Windows(Vec<MembershipWindow>),
+}
+
+impl Sight {
+    fn shows(&self, at: u64) -> bool {
+        match self {
+            Self::Whole => true,
+            Self::Windows(windows) => windows.iter().any(|window| window.contains(at)),
+        }
+    }
+}
+
 /// One walk of the whole list.
 struct ListWalk {
-    /// The page: the first `limit` rows after the cursor the reader may read.
-    rows: Vec<ReadRow>,
+    /// The page: the first `limit` rows after the cursor the reader may read,
+    /// each with the turns it may see.
+    rows: Vec<(ReadRow, Sight)>,
     /// The page's last row, set only when a row the reader may read follows.
     next: Option<EntityId>,
     /// How many listed conversations the reader may read in all.
@@ -119,8 +144,8 @@ impl Memory<'_> {
             mut receipt,
         } = self.listed(&lane, filter, after, limit)?;
         let mut page = Vec::with_capacity(rows.len());
-        for row in rows {
-            let last_message_snippet = self.preview(&lane, &row.id, &mut receipt)?;
+        for (row, sight) in rows {
+            let last_message_snippet = self.preview(&lane, &row.id, &sight, &mut receipt)?;
             page.push(ConversationListRow {
                 row,
                 last_message_snippet,
@@ -151,7 +176,7 @@ impl Memory<'_> {
         after: Option<&EntityId>,
         limit: usize,
     ) -> MemoryResult<ListWalk> {
-        let mut rows: Vec<ReadRow> = Vec::new();
+        let mut rows: Vec<(ReadRow, Sight)> = Vec::new();
         let mut next = None;
         let mut total = 0_u64;
         let mut receipt = None;
@@ -164,13 +189,13 @@ impl Memory<'_> {
                 .flatten()
             {
                 total = total.saturating_add(1);
-                if after.is_some_and(|after| row.id <= *after) {
+                if after.is_some_and(|after| row.0.id <= *after) {
                     continue;
                 }
                 if rows.len() < limit {
                     rows.push(row);
                 } else if next.is_none() {
-                    next = rows.last().map(|row| row.id);
+                    next = rows.last().map(|(row, _)| row.id);
                 }
             }
             match ids.last() {
@@ -215,32 +240,110 @@ impl Memory<'_> {
     }
 
     /// Reads `ids` through the lane: each slot is the conversation's row with
-    /// its body, or `None` for a row the reader may not read or the filter
-    /// does not name. The filter reads only admitted bodies, so what the
-    /// receipt withholds says nothing about a hidden row's fields.
+    /// its body and the turns the reader may see, or `None` for a row the
+    /// reader may not read, a room it is not in, or a row the filter does not
+    /// name. The filter reads only admitted bodies, so what the receipt
+    /// withholds says nothing about a hidden row's fields.
     fn read_conversations(
         &self,
         lane: &ScopedRead<'_>,
         filter: ConversationListFilter<'_>,
         ids: &[EntityId],
         receipt: &mut Option<ScopedReadReceipt>,
-    ) -> MemoryResult<Vec<Option<ReadRow>>> {
+    ) -> MemoryResult<Vec<Option<(ReadRow, Sight)>>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
         let read = lane.read(&reads, None)?;
         fold_receipt(receipt, read.receipt);
-        Ok(read
-            .value
-            .into_iter()
-            .map(|row| {
-                row.filter(|row| {
-                    row.entity_type == ENTITY_TYPE_CONVERSATION
-                        && row.body.as_deref().is_some_and(|body| filter.names(body))
-                })
+        let rows = read.value.into_iter().map(|row| {
+            row.filter(|row| {
+                row.entity_type == ENTITY_TYPE_CONVERSATION
+                    && row.body.as_deref().is_some_and(|body| filter.names(body))
             })
-            .collect())
+        });
+        if lane.actor_key().vault_owner_ref().is_some() {
+            return Ok(rows.map(|row| row.map(|row| (row, Sight::Whole))).collect());
+        }
+        // Grant time is persisted before the snapshot, never inside it.
+        self.vault.store.authorization_now()?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let mut grants = None;
+        let mut sighted = Vec::with_capacity(ids.len());
+        for row in rows {
+            sighted.push(match row {
+                Some(row) => self
+                    .sight_in(&txn, &row, &mut grants)?
+                    .map(|sight| (row, sight)),
+                None => None,
+            });
+        }
+        Ok(sighted)
+    }
+
+    /// What of the admitted conversation `row` a reader other than the owner
+    /// may see, or `None` when it may not see the conversation at all. A
+    /// group, channel or mirror is relationship data (ARCH-0006a rule 2): a
+    /// member sees the turns its membership windows show, a member the
+    /// ledger keeps no windows for (a derived room's) every turn, and anyone
+    /// else the whole conversation only on a grant that opens its
+    /// relationship. A body that does not decode is withheld.
+    fn sight_in<'v>(
+        &'v self,
+        txn: &heed::RoTxn<'_>,
+        row: &ReadRow,
+        grants: &mut Option<crate::access_grant::AccessContext<'v>>,
+    ) -> MemoryResult<Option<Sight>> {
+        let Some(body) = row
+            .body
+            .as_deref()
+            .and_then(|body| ConversationBody::from_bytes(body).ok())
+        else {
+            return Ok(None);
+        };
+        if !matches!(
+            body.kind,
+            ConversationKind::Group | ConversationKind::Channel | ConversationKind::Mirror
+        ) {
+            return Ok(Some(Sight::Whole));
+        }
+        let members = self
+            .vault
+            .room_audience_members_in_txn(txn, row.id)
+            .unwrap_or_default();
+        if members.contains(&self.actor) {
+            let windows = self.vault.windows_in_txn(txn, row.id, self.actor)?;
+            return Ok(Some(if windows.is_empty() {
+                Sight::Whole
+            } else {
+                Sight::Windows(windows)
+            }));
+        }
+        let Some(relationship) = body.relationship else {
+            return Ok(None);
+        };
+        let Some(record) = crate::federation::record_scope::disclosure_scope_for_stored_row(
+            &self.vault.store,
+            txn,
+            row.id,
+            ENTITY_TYPE_CONVERSATION,
+            row.body.as_deref().unwrap_or_default(),
+        )?
+        else {
+            return Ok(None);
+        };
+        let grants = match grants {
+            Some(grants) => grants,
+            None => grants.insert(crate::access_grant::AccessContext::load(
+                self.vault,
+                txn,
+                Some(self.actor),
+            )?),
+        };
+        Ok(grants
+            .allows_at_snapshot(ENTITY_TYPE_MESSAGE, Some(relationship), false, &record)
+            .then_some(Sight::Whole))
     }
 
     /// `conversation`'s preview as the reader may read it. The turns it may
@@ -249,12 +352,14 @@ impl Memory<'_> {
     /// With no selected HEAD the readable ones are ordered by their own
     /// learned time and proved by themselves, and a turn whose session the
     /// reader may not read is left out, so nothing hidden decides the
-    /// preview. Then each readable turn, in order, is read again with its
+    /// preview. Only turns in the reader's `sight` count, before any is
+    /// ordered. Then each readable turn, in order, is read again with its
     /// messages in bounded reads, until one has text.
     fn preview(
         &self,
         lane: &ScopedRead<'_>,
         conversation: &EntityId,
+        sight: &Sight,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Option<String>> {
         let candidates = {
@@ -264,12 +369,12 @@ impl Memory<'_> {
         let order: Vec<EntityId> = match candidates {
             PreviewCandidates::Unresolved => return Ok(None),
             PreviewCandidates::Path(turns) => self
-                .admitted(lane, &turns, receipt)?
+                .admitted(lane, &turns, sight, receipt)?
                 .into_iter()
                 .map(|(_, id)| id)
                 .collect(),
             PreviewCandidates::ChildOf(turns) => {
-                let readable = self.admitted(lane, &turns, receipt)?;
+                let readable = self.admitted(lane, &turns, sight, receipt)?;
                 drop(turns);
                 let readable = self.in_readable_sessions(lane, readable, receipt)?;
                 match self.vault.readable_childof_order(conversation, readable)? {
@@ -311,12 +416,13 @@ impl Memory<'_> {
         Ok(None)
     }
 
-    /// The rows of `ids` the lane admits, in order, each as its learned time
-    /// and id, read a chunk at a time.
+    /// The rows of `ids` the lane admits and `sight` shows, in order, each as
+    /// its learned time and id, read a chunk at a time.
     fn admitted(
         &self,
         lane: &ScopedRead<'_>,
         ids: &[EntityId],
+        sight: &Sight,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Vec<(u64, EntityId)>> {
         let mut admitted = Vec::new();
@@ -328,7 +434,7 @@ impl Memory<'_> {
                 read.value
                     .into_iter()
                     .flatten()
-                    .filter(|row| row.body.is_some())
+                    .filter(|row| row.body.is_some() && sight.shows(row.occurred.start))
                     .map(|row| (row.learned_at, row.id)),
             );
         }
@@ -345,9 +451,10 @@ impl Memory<'_> {
         turns: Vec<(u64, EntityId)>,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Vec<(u64, EntityId)>> {
-        // The vault owner may inspect every session, a retained shell too, as
-        // its own preview does: the proof judges each one.
-        if self.inspects_every_session(lane)? {
+        // The vault owner, as itself or with its own full credential, may
+        // inspect every session, a retained shell too, as its own preview
+        // does: the proof judges each one.
+        if lane.actor_key().vault_owner_ref().is_some() {
             return Ok(turns);
         }
         let sessions = {
@@ -363,7 +470,7 @@ impl Memory<'_> {
         asked.sort_unstable();
         asked.dedup();
         let readable: Vec<EntityId> = self
-            .admitted(lane, &asked, receipt)?
+            .admitted(lane, &asked, &Sight::Whole, receipt)?
             .into_iter()
             .map(|(_, id)| id)
             .collect();
@@ -375,28 +482,6 @@ impl Memory<'_> {
             })
             .map(|(turn, _)| turn)
             .collect())
-    }
-
-    /// Whether the reader is the vault owner reading all of its vault: as
-    /// itself, or with its own live, full owner-grade credential. A narrower
-    /// credential, the owner's too, reads only what it grants.
-    fn inspects_every_session(&self, lane: &ScopedRead<'_>) -> MemoryResult<bool> {
-        if lane.actor_key().vault_owner_ref().is_some() {
-            return Ok(true);
-        }
-        let Some(proof) = &self.read_proof else {
-            return Ok(false);
-        };
-        if !proof.is_full_vault_owner_grade()
-            || proof.claims().holder_ref != self.actor.to_hex()
-            || proof.claims().actor_class.as_deref()
-                != Some(crate::EdgeActorClass::Human.gate_actor_class())
-        {
-            return Ok(false);
-        }
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        Ok(self.vault.capability_slip_is_live_in_txn(&txn, proof)?
-            && self.is_vault_owner_in_txn(&txn)?)
     }
 }
 

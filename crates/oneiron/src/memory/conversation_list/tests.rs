@@ -147,6 +147,18 @@ fn grant_reader_vault(witnessed: &[Witnessed]) -> ReaderVault {
 }
 
 fn rooted_reader(witnessed: &[Witnessed]) -> (ReaderVault, crate::authority::HostSlipIssuer) {
+    rooted_reader_with(|vault, owner, _| {
+        for (room, turn, at, message) in witnessed {
+            witness(vault, owner, *room, *turn, *at, message.clone());
+        }
+    })
+}
+
+/// As [`rooted_reader`], where `setup` writes the owner's conversations
+/// before the vault is rooted, given the vault, the owner and the reader.
+fn rooted_reader_with(
+    setup: impl FnOnce(&Vault, EntityId, EntityId),
+) -> (ReaderVault, crate::authority::HostSlipIssuer) {
     use ed25519_dalek::{Signer, SigningKey};
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -162,9 +174,7 @@ fn rooted_reader(witnessed: &[Witnessed]) -> (ReaderVault, crate::authority::Hos
             b"scoped reader",
         )
         .expect("put the reader");
-    for (room, turn, at, message) in witnessed {
-        witness(&vault, owner, *room, *turn, *at, message.clone());
-    }
+    setup(&vault, owner, reader);
 
     // In a vault with no authority root every human PERSON reads as its
     // owner, so the vault is rooted first.
@@ -234,30 +244,36 @@ fn rooted_reader(witnessed: &[Witnessed]) -> (ReaderVault, crate::authority::Hos
 }
 
 /// The reader's credential: it names the `readable` conversations and
-/// turns, and the messages of those turns the reader's grant admits. A
-/// record a credential does not name is withheld from every read made with
-/// it; a record facet never is a boundary (`Scope::admits`).
+/// turns and every message of those turns, so the reader's relationship
+/// grants alone decide which of those messages it reads. A record a
+/// credential does not name is withheld from every read made with it; a
+/// record facet never is a boundary (`Scope::admits`).
 fn credential(
     vault: &Vault,
     issuer: &crate::authority::HostSlipIssuer,
     reader: EntityId,
     readable: &[EntityId],
 ) -> crate::authority::VerifiedSlip {
-    let messages: Vec<PointRead<'_>> = {
+    let messages: Vec<EntityId> = {
         let txn = vault.store.env.read_txn().expect("read txn");
         readable
             .iter()
             .flat_map(|id| vault.turn_message_ids_in(&txn, id).expect("messages"))
-            .map(PointRead::id)
             .collect()
     };
-    let memory = vault.memory(reader, EdgeActorClass::Human);
-    let granted = memory
-        .read_lane(ClaimReadStatus::Recorded)
-        .expect("the reader's lane")
-        .read(&messages, None)
-        .expect("read the messages")
-        .value;
+    let records = readable.iter().copied().chain(messages).collect();
+    reader_slip(vault, issuer, reader, read_preset(), records)
+}
+
+/// A live credential for `reader` over `scope`, naming `records` (none: no
+/// record bound).
+fn reader_slip(
+    vault: &Vault,
+    issuer: &crate::authority::HostSlipIssuer,
+    reader: EntityId,
+    scope: crate::federation::Scope,
+    records: Vec<EntityId>,
+) -> crate::authority::VerifiedSlip {
     let mut claims = vault
         .ensure_host_root_slip(issuer)
         .expect("host root")
@@ -266,13 +282,8 @@ fn credential(
     claims.parent_id = None;
     claims.holder_ref = reader.to_hex();
     claims.actor_class = Some("human".into());
-    claims.scope = read_preset();
-    claims.records = readable
-        .iter()
-        .copied()
-        .chain(granted.into_iter().flatten().map(|row| row.id))
-        .map(|id| id.to_hex())
-        .collect();
+    claims.scope = scope;
+    claims.records = records.into_iter().map(|id| id.to_hex()).collect();
     let slip = vault.mint_capability_slip(issuer, claims).expect("mint");
     let tag = b"conversation-list-reader";
     let proof = issuer.binding_proof(&slip, tag).expect("binding proof");
@@ -813,4 +824,255 @@ fn a_deleted_session_keeps_the_owners_preview() {
         "the narrower credential reads the turn"
     );
     assert_ne!(preview_of(&memory, room), still_live);
+}
+
+/// A group is relationship data (ARCH-0006a rule 2; Astra #1388 P1). A
+/// reader who may read every conversation, as itself or with a credential
+/// naming no record, never sees a group it is not in: no row, no title or
+/// roster, no words, and no count. A member who joined late with no history
+/// sees the group but nothing said before it joined. A member whose join
+/// shares the history previews it.
+#[test]
+fn a_group_shows_only_to_its_members_and_only_what_they_were_shown() {
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let (outside, late, shared) = (entity(0xB1), entity(0xB2), entity(0xB3));
+    let words = "said only in the room";
+    let (rooted, issuer) = rooted_reader_with(|vault, owner, reader| {
+        let member = entity(0xB4);
+        vault
+            .put_entity(
+                &member,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a member",
+            )
+            .expect("put the member");
+        let actor = WriteActor::new(owner, EdgeActorClass::Human);
+        for (room, turn) in [(outside, 0xC1), (late, 0xC2), (shared, 0xC3)] {
+            let body = ConversationBody {
+                kind: ConversationKind::Group,
+                member_ids: vec![member],
+                title: Some("the planning room".to_owned()),
+                ..ConversationBody::default()
+            };
+            vault
+                .create_conversation(room, &body, actor, AT - 100)
+                .expect("create the group");
+            witness(
+                vault,
+                owner,
+                room,
+                entity(turn),
+                AT,
+                said(WitnessAuthor::User, words, Some(entity(SPACE))),
+            );
+        }
+        for (room, history) in [(late, HistoryChoice::None), (shared, HistoryChoice::Share)] {
+            vault
+                .join_member(room, reader, actor, AT + 5, history)
+                .expect("the reader joins");
+        }
+    });
+    let all = list(&rooted.vault, rooted.owner, 50);
+    assert!(
+        all.rows
+            .iter()
+            .any(|row| *row == (outside, Some(words.to_owned()))),
+        "the owner sees every group"
+    );
+    let unbounded = Reader {
+        credential: Some(reader_slip(
+            &rooted.vault,
+            &issuer,
+            rooted.reader.id,
+            read_preset(),
+            Vec::new(),
+        )),
+        ..rooted.reader.clone()
+    };
+    for reader in [&rooted.reader, &unbounded] {
+        let read = reader_list(&rooted.vault, reader, 50);
+        assert!(!read.rows.iter().any(|(id, _)| *id == outside));
+        assert!(read.rows.contains(&(late, None)), "{:?}", read.rows);
+        assert!(read.rows.contains(&(shared, Some(words.to_owned()))));
+        assert_eq!(read.rows.len(), all.rows.len() - 1);
+        assert_eq!(read.total, Some(read.rows.len() as u64));
+        assert_eq!(read.withheld, 0, "a group it is not in adds no count");
+    }
+}
+
+/// A credential that cannot read base reality learns nothing about it: no
+/// row, no count and no row-authority hint, however many conversations base
+/// holds (DEC-0005: no name, no count; Astra #1388 P2).
+#[test]
+fn a_world_the_credential_cannot_read_adds_no_count() {
+    use crate::federation::{ScopeAxis, ScopeId};
+
+    let listed_with = |rooms: &[u8]| {
+        let witnessed: Vec<Witnessed> = rooms
+            .iter()
+            .map(|room| {
+                (
+                    entity(*room),
+                    entity(room + 0x10),
+                    AT,
+                    said(WitnessAuthor::User, "base words", Some(entity(SPACE))),
+                )
+            })
+            .collect();
+        let (rooted, issuer) = rooted_reader(&witnessed);
+        let mut scope = read_preset();
+        scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(entity(0x7A))]));
+        let reader = Reader {
+            credential: Some(reader_slip(
+                &rooted.vault,
+                &issuer,
+                rooted.reader.id,
+                scope,
+                Vec::new(),
+            )),
+            ..rooted.reader
+        };
+        let read = reader_list(&rooted.vault, &reader, 50);
+        let hinted = read
+            .receipt
+            .narrowed_axes
+            .iter()
+            .any(|axis| axis == "row_authority");
+        (read.rows, read.total, read.withheld, hinted)
+    };
+    let one = listed_with(&[0xE1]);
+    assert_eq!(one, (Vec::new(), Some(0), 0, false));
+    assert_eq!(listed_with(&[0xE1, 0xE2]), one);
+}
+
+/// The owner's own full credential reads as the owner: a manifest that
+/// narrows the owner's `core:read` to messages never drops a conversation
+/// from its list (ARCH-0057; Astra #1388 P2). The owner's narrower
+/// credential stays bounded by the manifest.
+#[test]
+fn the_owners_full_credential_lists_what_the_owner_lists() {
+    use crate::authority::HostSlipIssuer;
+    use crate::federation::ScopeAxis;
+    use crate::registry::ENTITY_TYPE_MESSAGE;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let room = entity(0xB8);
+    witness(
+        &vault,
+        owner,
+        room,
+        entity(0xB9),
+        AT,
+        said(WitnessAuthor::User, "the owner's words", None),
+    );
+    let issuer = HostSlipIssuer::from_secret(b"conversation list owner manifest").expect("issuer");
+    let root = vault.ensure_host_root_slip(&issuer).expect("host root");
+    crate::conversation_dag::test_support::put_test_policy_manifest(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        entity(0x6d),
+        &serde_json::json!({
+            "schema_version": "1.2", "pack_id": "conversation-list-owner",
+            "pack_version": "1", "min_engine_version": "0.0.0",
+            "defaults": {}, "rules": [], "actor_ceilings": [],
+            "scoped_grants": [{
+                "actor_ref": owner.to_hex(), "actor_class": "human",
+                "effector": "core:read", "scope": {"entity_types": [ENTITY_TYPE_MESSAGE]},
+                "receipt_required": false,
+            }],
+        }),
+    )
+    .expect("the owner's narrowed read grant");
+    let credential = |tag: &[u8], verbs: Option<&str>| {
+        let mut claims = root.claims.clone();
+        claims.slip_id = *blake3::hash(tag).as_bytes();
+        claims.parent_id = None;
+        claims.holder_ref = owner.to_hex();
+        claims.actor_class = Some("human".into());
+        if let Some(verb) = verbs {
+            claims.scope.verbs = ScopeAxis::Some(std::collections::BTreeSet::from([verb.into()]));
+        }
+        let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+        let proof = issuer.binding_proof(&slip, tag).expect("binding proof");
+        vault
+            .verify_capability_slip(&issuer.public_key(), &slip, tag, &proof)
+            .expect("verify")
+    };
+    let owner_list = |proof: Option<&crate::authority::VerifiedSlip>| {
+        let memory = vault.memory(owner, EdgeActorClass::Human);
+        let memory = match proof {
+            Some(proof) => memory.with_read_proof(proof),
+            None => memory,
+        };
+        listed(
+            memory
+                .conversation_list(ConversationListFilter::default(), None, 50, true)
+                .expect("list conversations"),
+        )
+    };
+    let plain = owner_list(None);
+    assert!(
+        plain
+            .rows
+            .contains(&(room, Some("the owner's words".to_owned())))
+    );
+    let full = credential(b"conversation-list-owner-manifest-full", None);
+    assert!(full.is_full_vault_owner_grade());
+    let with_full = owner_list(Some(&full));
+    assert_eq!(
+        (with_full.rows, with_full.total),
+        (plain.rows, plain.total)
+    );
+    let narrow = credential(b"conversation-list-owner-manifest-read", Some("read"));
+    assert!(owner_list(Some(&narrow)).rows.is_empty());
+}
+
+/// A credential reads relationship words only on its holder's live grant,
+/// as the holder's own lane does (ARCH-0006a rule 2; Astra #1388 P1, on
+/// main before this). A message in a space the reader holds no grant for
+/// never previews. Revoking the grant while the credential stays live takes
+/// the preview away.
+#[test]
+fn a_credential_reads_relationship_words_only_on_a_live_grant() {
+    let (granted, ungranted) = (entity(0xBA), entity(0xBB));
+    let (granted_turn, ungranted_turn) = (entity(0xBC), entity(0xBD));
+    let ReaderVault {
+        _dir,
+        vault,
+        reader,
+        ..
+    } = reader_vault(
+        &[
+            (
+                granted,
+                granted_turn,
+                AT,
+                said(WitnessAuthor::User, "words in the space", Some(entity(SPACE))),
+            ),
+            (
+                ungranted,
+                ungranted_turn,
+                AT + 10,
+                said(WitnessAuthor::User, "words elsewhere", Some(entity(0x69))),
+            ),
+        ],
+        &[granted, granted_turn, ungranted, ungranted_turn],
+    );
+    let read = reader_list(&vault, &reader, 50);
+    assert!(
+        read.rows
+            .contains(&(granted, Some("words in the space".to_owned())))
+    );
+    assert!(read.rows.contains(&(ungranted, None)), "{:?}", read.rows);
+
+    vault
+        .revoke_access_grant(&entity(0x6b), crate::unix_seconds_now())
+        .expect("revoke the grant");
+    let read = reader_list(&vault, &reader, 50);
+    assert!(read.rows.contains(&(granted, None)), "{:?}", read.rows);
 }
