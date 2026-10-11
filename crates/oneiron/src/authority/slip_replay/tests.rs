@@ -366,3 +366,53 @@ fn a_vault_without_the_mark_recovers_unless_a_proof_admitted_in_the_jump_evicted
         }
     );
 }
+
+/// A restore made for the vault's place, published after the vault admitted
+/// a proof and recovered its proof clock, would know neither: that proof
+/// would get in again. The swap refuses it and nothing moves.
+#[test]
+fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
+    let start = 1_900_000_000;
+    let holder = Holder::paired(start);
+    holder.admit(start + 50, 1).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let image = root.path().join("image");
+    holder
+        .vault
+        .snapshot_checkpoint(&image, start + 50)
+        .unwrap();
+    let config = crate::VaultConfig {
+        store_clock: holder.clock.bundle(),
+        ..crate::VaultConfig::default()
+    };
+    let (replacement, _) = Vault::restore_checkpoint_replacing(
+        &image,
+        &root.path().join("staged"),
+        config,
+        &holder.vault,
+        start + 50,
+    )
+    .unwrap();
+    holder.clock.set(start + 40);
+    holder.admit(start + 20, 2).unwrap();
+    assert!(matches!(
+        holder.recover(),
+        Ok(ProofClockRecovery::Recovered { .. })
+    ));
+
+    let swapped = std::cell::Cell::new(false);
+    let refused = holder.vault.swap_in_replacement(&replacement, || {
+        swapped.set(true);
+        Ok(())
+    });
+    assert!(
+        matches!(refused, Err(Error::InvalidConfig(_))),
+        "{refused:?}"
+    );
+    assert!(!swapped.get(), "the swap never ran");
+    assert!(
+        holder.admit(start + 20, 2).is_err(),
+        "the proof admitted after the restore was made"
+    );
+    holder.admit(start + 41, 3).unwrap();
+}

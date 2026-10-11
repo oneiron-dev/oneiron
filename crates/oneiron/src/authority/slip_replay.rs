@@ -213,6 +213,47 @@ impl Vault {
     }
 }
 
+/// Refuses to publish `replacement`, a restore made for `vault`'s place,
+/// when `vault`'s holder-proof freshness moved after the replacement carried
+/// it: a nonce row, the proof clock's floor or `not_before`. The replacement
+/// would not know a proof `vault` admitted since, nor an owner clock
+/// recovery's mark, so a proof refused here would get in there. Read in
+/// `txn`, under `vault`'s writer, before the swap.
+pub(crate) fn refuse_moved_proof_freshness(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    replacement: &Vault,
+) -> Result<()> {
+    let their_txn = replacement.store.env.read_txn()?;
+    let mut same = PROOF_CLOCK_FLOOR.get(&vault.store, txn, &())?
+        == PROOF_CLOCK_FLOOR.get(&replacement.store, &their_txn, &())?
+        && PROOF_NOT_BEFORE.get(&vault.store, txn, &())?
+            == PROOF_NOT_BEFORE.get(&replacement.store, &their_txn, &())?;
+    let mut ours_rows = REPLAY_NONCE.iter_from(&vault.store, txn, &[])?;
+    let mut their_rows = REPLAY_NONCE.iter_from(&replacement.store, &their_txn, &[])?;
+    while same {
+        match (
+            ours_rows.next().transpose()?,
+            their_rows.next().transpose()?,
+        ) {
+            (None, None) => break,
+            (Some((ours, ())), Some((theirs, ()))) => {
+                same = ours.timestamp == theirs.timestamp && ours.digest_hex == theirs.digest_hex;
+            }
+            _ => same = false,
+        }
+    }
+    if same {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(
+            "this vault admitted agent requests or recovered its proof clock after the restore \
+             was prepared; prepare it again"
+                .into(),
+        ))
+    }
+}
+
 /// Key of one admitted replay-nonce marker: the signed timestamp as 16 lowercase hex digits,
 /// then `:`, then the keyed digest of (binding key + nonce) as 64 lowercase hex digits — the
 /// pre-migration `{timestamp:016x}:{digest_hex}` spelling, minus the shared prefix the table
