@@ -45,12 +45,13 @@ pub(super) struct TemporalCandidateCollectionContext<'a> {
     pub(super) deadline: Option<&'a RetrievalDeadline>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct TemporalIndexCollectionContext {
+#[derive(Clone, Copy)]
+pub(super) struct TemporalIndexCollectionContext<'a> {
     pub(super) window_start: u64,
     pub(super) window_end: u64,
     pub(super) anchor_mid: u64,
     pub(super) cap: usize,
+    pub(super) deadline: Option<&'a RetrievalDeadline>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -205,12 +206,14 @@ pub(super) fn collect_temporal_candidates(
         window_end: occurred_window_end,
         anchor_mid: occurred_mid,
         cap: per_scan_cap,
+        deadline,
     };
     let learned_collection = TemporalIndexCollectionContext {
         window_start: learned_window_start,
         window_end: learned_window_end,
         anchor_mid: learned_mid,
         cap: per_scan_cap,
+        deadline,
     };
 
     match config.anchor_mode {
@@ -221,7 +224,6 @@ pub(super) fn collect_temporal_candidates(
                 occurred_collection,
                 metadata_cache,
                 config.query_occurred_range,
-                deadline,
                 out,
             )?;
         }
@@ -235,7 +237,6 @@ pub(super) fn collect_temporal_candidates(
                 occurred_collection,
                 metadata_cache,
                 config.query_occurred_range,
-                deadline,
                 out,
             )?;
             collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?;
@@ -362,10 +363,9 @@ fn sort_temporal_candidate_scores(scores: &mut [TemporalCandidateScore]) {
 fn collect_occurred_candidates(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    collection: TemporalIndexCollectionContext,
+    collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     query_range: Option<(u64, u64)>,
-    deadline: Option<&RetrievalDeadline>,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
     for axis in [TimeAxis::OccurredStart, TimeAxis::OccurredEnd] {
@@ -379,7 +379,6 @@ fn collect_occurred_candidates(
                 collection,
                 metadata_cache,
                 range,
-                deadline,
                 out,
             )?;
         } else {
@@ -393,10 +392,9 @@ fn collect_query_occurred_candidates(
     store: &Store,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
-    collection: TemporalIndexCollectionContext,
+    collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     query_range: (u64, u64),
-    deadline: Option<&RetrievalDeadline>,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
     let TemporalIndexCollectionContext {
@@ -404,6 +402,7 @@ fn collect_query_occurred_candidates(
         window_end,
         anchor_mid,
         cap,
+        deadline,
     } = collection;
     if cap == 0 || window_start > window_end {
         return Ok(());
@@ -463,7 +462,7 @@ pub(super) fn collect_index_candidates(
     store: &Store,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
-    collection: TemporalIndexCollectionContext,
+    collection: TemporalIndexCollectionContext<'_>,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
     let TemporalIndexCollectionContext {
@@ -471,6 +470,7 @@ pub(super) fn collect_index_candidates(
         window_end,
         anchor_mid,
         cap,
+        ..
     } = collection;
     if cap == 0 || window_start > window_end {
         return Ok(());
