@@ -1,6 +1,7 @@
 //! Own-task STREAM lines as one connection's credential may read them now:
 //! the board publisher admits each event under this predicate, and the result
-//! drain reads every queued `tasks:` line again before it rides.
+//! drain reads every queued `tasks:` line again before it rides. A host wake
+//! adapter reads each drained wake's TASK again under the same predicate.
 
 use super::board_setup::mcp_scope_admits_row;
 use super::mcp_scoped_read;
@@ -27,9 +28,23 @@ pub(super) fn mcp_live_task_lines(
     (!rows.is_empty()).then_some(frame)
 }
 
+/// The frame less everything but its own-task `tasks:` lines: all a narrowed
+/// connection's carrier may deliver, since only TASK rows are projected
+/// through its world and facet ceiling. `None` when nothing is left.
+pub(super) fn mcp_own_task_lines(
+    mut frame: oneiron::context_board::BoardStreamFrame,
+) -> Option<oneiron::context_board::BoardStreamFrame> {
+    let oneiron::context_board::FrameKind::Delta(rows) = &mut frame.kind else {
+        return None;
+    };
+    rows.retain(|row| row.key.starts_with("tasks:"));
+    (!rows.is_empty()).then_some(frame)
+}
+
 /// Whether `actor` may be told about `task` now: the TASK still stands on
 /// the board, and the credential reads it under the same predicate the board
-/// door filters TASK rows with. Any failure to decide is a no.
+/// door filters TASK rows with, its world and facet ceiling included. Any
+/// failure to decide is a no.
 pub(crate) fn mcp_stream_reads_task(
     vault: &oneiron::Vault,
     actor: &McpResolvedActor,

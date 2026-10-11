@@ -6,13 +6,14 @@
 //! of the recipients' connections may read that TASK now, and hands both to
 //! [`BoardStreamRegistry::publish_task_state`]. The event, its recipient and its
 //! line all come from the committed TASK, never from a caller's claim. The
-//! engine only publishes: the queued wakes wait for a host-side adapter
-//! (ARCH-0067 "where the wake ladder lives"), and done deltas ride the next tool
-//! result as CARRIER frames.
+//! engine only publishes: the queued wakes wait for a host-side adapter, which
+//! takes them with [`BoardStreamRegistry::drain_wakes`] (ARCH-0067 "where the
+//! wake ladder lives"), and done deltas ride the next tool result as CARRIER
+//! frames.
 
 use std::collections::VecDeque;
 
-use super::events::{BoardEvent, RouteObservation, SubscriptionScope};
+use super::events::{BoardEvent, RouteObservation};
 use super::frames::{DeltaRow, StreamConnectionId};
 use super::provenance::VerifiedOwnTaskEvent;
 use super::registry::{BoardStreamRegistry, StreamConnectionState};
@@ -33,6 +34,11 @@ pub struct CommittedTaskBoardState {
     consultee_ref: Option<String>,
     status: TaskBoardStatus,
     line: String,
+    /// The committed TASK state this was read from (ARCH-0067
+    /// `#wake-envelope-id`).
+    revision: String,
+    /// The failed attempt heads its status folds from, sorted.
+    failed_attempts: Vec<String>,
 }
 
 impl CommittedTaskBoardState {
@@ -40,9 +46,10 @@ impl CommittedTaskBoardState {
     /// task-verb TASK, cancelled, an acknowledged failure, or with no proven
     /// owner.
     pub fn read(vault: &Vault, task: EntityId) -> Result<Option<Self>> {
-        let Some((presence, consultee)) = crate::task_verb::board_task_for_id(vault, task)? else {
+        let Some(board) = crate::task_verb::board_task_for_id(vault, task)? else {
             return Ok(None);
         };
+        let presence = board.presence;
         // An acknowledged failure is off the board; nothing may revive it.
         if presence.is_acked_failure() {
             return Ok(None);
@@ -53,9 +60,11 @@ impl CommittedTaskBoardState {
         Ok(Some(Self {
             task_ref: task.to_hex(),
             owner_ref: authority.owner_ref.to_hex(),
-            consultee_ref: consultee.map(|actor| actor.to_hex()),
+            consultee_ref: board.addressee.map(|actor| actor.to_hex()),
             status: presence.status,
             line: crate::context_board::tasks::intent_row(&presence).line,
+            revision: revision(board.body_revision, &presence),
+            failed_attempts: failed_attempts(&presence),
         }))
     }
 
@@ -66,12 +75,48 @@ impl CommittedTaskBoardState {
     }
 }
 
+/// The TASK revision an event names: a digest of the committed state the
+/// board reads, its durable body revision and status, and each attempt head
+/// the status folds from. The body revision alone stays put when a retried
+/// attempt fails, since that writes attempt rows only; the heads tell those
+/// two failures apart. Re-reading an unchanged TASK gives the same revision.
+fn revision(body_revision: u64, presence: &crate::context_board::TaskIntentPresence) -> String {
+    let mut heads = presence
+        .realizing_jobs
+        .iter()
+        .map(|job| (job.id.as_str(), job.status.as_str()))
+        .collect::<Vec<_>>();
+    heads.sort_unstable();
+    let mut digest = blake3::Hasher::new();
+    digest.update(&body_revision.to_be_bytes());
+    digest.update(presence.status.as_str().as_bytes());
+    for (id, status) in heads {
+        digest.update(&[0]);
+        digest.update(id.as_bytes());
+        digest.update(&[0]);
+        digest.update(status.as_bytes());
+    }
+    digest.finalize().to_hex()[..16].to_owned()
+}
+
+fn failed_attempts(presence: &crate::context_board::TaskIntentPresence) -> Vec<String> {
+    let mut failed = presence
+        .realizing_jobs
+        .iter()
+        .filter(|job| job.status == TaskBoardStatus::Failed)
+        .map(|job| job.id.clone())
+        .collect::<Vec<_>>();
+    failed.sort_unstable();
+    failed
+}
+
 /// What this registry last routed for one TASK.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Routed {
     status: TaskBoardStatus,
     line: String,
     consultee_ref: Option<String>,
+    failed_attempts: Vec<String>,
 }
 
 /// The last state this registry routed per TASK.
@@ -100,16 +145,17 @@ impl BoardStreamRegistry {
     /// Routes what changed since this registry last routed the TASK.
     ///
     /// A TASK that reaches `done`, or whose done row changes, sends its owner
-    /// a CARRIER delta; one that reaches `failed` sends its owner a WAKE. A
-    /// queued consult wakes the actor it addresses the first time it
-    /// addresses them. Anything else routes nothing.
+    /// a CARRIER delta. A TASK that reaches `failed` sends its owner a WAKE,
+    /// and so does each further attempt head that fails: a retry that fails
+    /// again wakes its owner even when no state between the two failures was
+    /// announced, under a new envelope id. A queued consult wakes
+    /// the actor it addresses the first time it addresses them. Anything else
+    /// routes nothing.
     ///
-    /// Only connections whose ceiling spans the vault hear these events: the
-    /// row is not projected through a world or facet ceiling, so a narrowed
-    /// connection hears none, as the carrier drain already delivers it none.
-    /// Of those, only the ones `reads` admits: a subscription is to a
-    /// category of events, never a grant to read the TASK behind one, so the
-    /// host answers with each connection's own live read of the TASK.
+    /// Only the connections `reads` admits hear an event: a subscription is
+    /// to a category of events, never a grant to read the TASK behind one, so
+    /// the host answers with each connection's own live read of the TASK,
+    /// projected through that connection's world and facet ceiling.
     pub fn publish_task_state(
         &mut self,
         state: CommittedTaskBoardState,
@@ -121,20 +167,23 @@ impl BoardStreamRegistry {
                 status: state.status,
                 line: state.line.clone(),
                 consultee_ref: state.consultee_ref.clone(),
+                failed_attempts: state.failed_attempts.clone(),
             },
         );
         let changed_status = previous.as_ref().map(|p| p.status) != Some(state.status);
+        // A failed attempt head this registry has not routed yet.
+        let failed_again = previous.as_ref().is_some_and(|p| {
+            state
+                .failed_attempts
+                .iter()
+                .any(|attempt| !p.failed_attempts.contains(attempt))
+        });
         let event = |actor_ref: &str, what: &str| VerifiedOwnTaskEvent {
             task_ref: state.task_ref.clone(),
             actor_ref: actor_ref.to_owned(),
-            event_ref: format!("{}:{what}", state.task_ref),
+            event_ref: format!("{}:{what}:{}", state.task_ref, state.revision),
         };
-        let vault_wide = |c: &StreamConnectionId, st: &StreamConnectionState| {
-            SubscriptionScope::ALL
-                .iter()
-                .all(|scope| st.allowed.contains(scope))
-                && reads(c)
-        };
+        let admitted = |c: &StreamConnectionId, _: &StreamConnectionState| reads(c);
         match state.status {
             TaskBoardStatus::Done
                 if changed_status || previous.as_ref().is_some_and(|p| p.line != state.line) =>
@@ -147,15 +196,15 @@ impl BoardStreamRegistry {
                             line: state.line.clone(),
                         },
                     },
-                    vault_wide,
+                    admitted,
                 )
             }
-            TaskBoardStatus::Failed if changed_status => self.route_event_where(
+            TaskBoardStatus::Failed if changed_status || failed_again => self.route_event_where(
                 BoardEvent::OwnTaskFailed {
                     event: event(&state.owner_ref, "failed"),
                     line: state.line.clone(),
                 },
-                vault_wide,
+                admitted,
             ),
             TaskBoardStatus::Queued
                 if previous.as_ref().map(|p| &p.consultee_ref) != Some(&state.consultee_ref) =>
@@ -166,7 +215,7 @@ impl BoardStreamRegistry {
                             event: event(consultee, "arrived"),
                             line: state.line.clone(),
                         },
-                        vault_wide,
+                        admitted,
                     ),
                     None => RouteObservation::default(),
                 }

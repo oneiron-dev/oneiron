@@ -1,4 +1,4 @@
-//! Board streaming frames and harness wake dispatch.
+//! Board streaming frames, routing and the pending-wake queue.
 
 mod events;
 mod frames;
@@ -6,7 +6,6 @@ mod provenance;
 mod publish;
 mod registry;
 mod wake;
-mod wake_dispatch;
 
 #[cfg(test)]
 mod routing_tests;
@@ -24,11 +23,7 @@ pub use self::frames::{
 };
 pub use self::publish::CommittedTaskBoardState;
 pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
-pub use self::wake::{
-    BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind,
-    WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations,
-    WakeEnvelope, WakeReportDisposition,
-};
+pub use self::wake::WakeEnvelope;
 
 use super::one_line_token;
 

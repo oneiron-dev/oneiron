@@ -551,9 +551,8 @@ impl McpConnectorActorRegistry {
         &mut self.streams
     }
 
-    /// Records the reader a vault-wide connection's call resolved, replacing
-    /// the one before: the latest credential is the one events are read
-    /// under.
+    /// Records the reader a connection's call resolved, replacing the one
+    /// before: the latest credential is the one events are read under.
     pub fn bind_stream_reader(&mut self, reader: &McpResolvedActor) {
         if self
             .streams

@@ -214,24 +214,31 @@ pub(super) fn mcp_credential_reads(
 /// only rows that actually carry the `FacetOf` edge to that facet.
 ///
 /// ONE-1704 B5: the world axis is now symmetric with that facet axis, and it
-/// applies to EVERY addressed row rather than to CLAIMs alone. Only a CLAIM
-/// carries a `world` key, so a task/entity row that carries none cannot be
-/// PROVEN in this credential's world and is refused; a CLAIM is covered exactly
-/// when its own `world` key is this credential's world. No world projection is
-/// invented for non-claim rows here — a projection is engine scope, and until
-/// one exists the fail-closed answer is the only true one. Prerelease law: the
-/// admission is narrowed outright, with no compatibility carve-out for the rows
-/// the old CLAIM-only check let through.
+/// applies to EVERY addressed row rather than to CLAIMs alone. A CLAIM is
+/// covered exactly when its own `world` key is this credential's world. A TASK
+/// carries neither a `world` key nor a `FacetOf` edge, so it is projected
+/// through the engine's record-scope stamp instead (`mcp_task_in_scope`):
+/// the board's TASK rows, a call addressing a TASK and the STREAM events about
+/// one all take that one projection (ARCH-0067 §5). Any other row that carries
+/// no `world` key cannot be PROVEN in this credential's world and is refused.
+/// Prerelease law: the admission is narrowed outright, with no compatibility
+/// carve-out for the rows the old CLAIM-only check let through.
 pub(super) fn mcp_scope_covers_entity(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     scope: &crate::mcp::McpConnectorScope,
     id: &oneiron::EntityId,
 ) -> Result<bool, McpGatewayError> {
+    if !scope.is_narrow() {
+        return Ok(true);
+    }
+    let entity_type = scoped_read
+        .vault()
+        .get_entity_type(id)
+        .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
+    if entity_type == Some(oneiron::registry::ENTITY_TYPE_TASK) {
+        return mcp_task_in_scope(scoped_read.vault(), scope, id);
+    }
     if let Some(world_ref) = scope.world_ref {
-        let entity_type = scoped_read
-            .vault()
-            .get_entity_type(id)
-            .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
         if entity_type != Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
             return Ok(false);
         }
@@ -262,6 +269,33 @@ pub(super) fn mcp_scope_covers_entity(
         }
     }
     Ok(true)
+}
+
+/// A TASK is inside a narrowed ceiling when the world and facet the engine
+/// stamped it with at birth are inside it. A locally written TASK is born in
+/// base reality under its own substrate facet, so a credential narrowed to
+/// base reality reads its TASKs and one narrowed to any other world or to a
+/// facet reads none. A TASK with no stamp (an opaque replicated row) is
+/// outside every narrowed ceiling.
+fn mcp_task_in_scope(
+    vault: &oneiron::Vault,
+    scope: &crate::mcp::McpConnectorScope,
+    id: &oneiron::EntityId,
+) -> Result<bool, McpGatewayError> {
+    use oneiron::federation::{ScopeAxis, ScopeId};
+    let Some(position) = vault
+        .record_scope(id)
+        .map_err(|error| mcp_engine_error("mcp scope record read failed", error))?
+    else {
+        return Ok(false);
+    };
+    let inside = |stamped: &ScopeAxis<ScopeId>, ceiling: Option<oneiron::EntityId>| {
+        ceiling.is_none_or(|ceiling| {
+            !stamped.is_bottom()
+                && stamped.is_narrowing_of(&ScopeAxis::Some([ScopeId(ceiling)].into()))
+        })
+    };
+    Ok(inside(&position.worlds, scope.world_ref) && inside(&position.facets, scope.facet_ref))
 }
 
 /// Resolves one `tools/call` name against THIS endpoint's registration.
