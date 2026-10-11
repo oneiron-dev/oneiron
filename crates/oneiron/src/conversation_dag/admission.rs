@@ -135,16 +135,22 @@ pub(crate) fn guard_record_put(
     {
         guard_erased_author_body(store, txn, room, body)?;
     }
-    let prior = store.port_entity_record(txn, id)?;
+    // Only a prior TURN is read whole. Any other prior row, a custody record
+    // among them, is checked for presence by its type byte, so its body is
+    // never copied here.
+    let prior_kind = crate::batch::stored_entity_type(store, txn, id)?;
+    let prior = if prior_kind == Some(ENTITY_TYPE_TURN) {
+        store.port_entity_record(txn, id)?
+    } else {
+        None
+    };
     // A witnessed TURN can predate DAG adoption, so the DAG body pin does not
     // yet protect it. Its PERSON byline is nonetheless an immutable admission
     // fact: a raw local or replicated re-put may re-dirty the row, but cannot
     // assign its earlier words to a new author (or remove that author).
     if kind == ENTITY_TYPE_TURN
         && room_turn_owner(store, txn, id)?.is_some()
-        && let Some(previous) = prior
-            .as_ref()
-            .filter(|row| row.entity_type == ENTITY_TYPE_TURN)
+        && let Some(previous) = prior.as_ref()
         && !previous.body.is_empty()
         && turn_person(&previous.body)? != turn_person(body)?
     {
@@ -152,16 +158,12 @@ pub(crate) fn guard_record_put(
     }
     let stored_pin = BODY_PINS.get(store, txn, id)?;
     let inferred_pin = if stored_pin.is_none() {
-        if let Some(row) = prior
-            .as_ref()
-            .filter(|row| row.entity_type == ENTITY_TYPE_TURN)
-        {
+        if let Some(row) = prior.as_ref() {
             let owners = super::graph::edge_ids(store, txn, id, EdgeKind::ChildOf, false, 2)?;
             let mut owned = false;
             for owner in owners {
-                owned |= store
-                    .port_entity_record(txn, &owner)?
-                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_CONVERSATION)
+                owned |= crate::batch::stored_entity_type(store, txn, &owner)?
+                    == Some(ENTITY_TYPE_CONVERSATION)
                     && MIGRATED.get(store, txn, &owner)?.is_some();
             }
             (owned || record_kind(&row.body)?.is_some())
@@ -179,7 +181,7 @@ pub(crate) fn guard_record_put(
         }
         return Ok(());
     };
-    if !replicated || prior.is_none() || pin != body_pin(kind, occurred, learned_at, body) {
+    if !replicated || prior_kind.is_none() || pin != body_pin(kind, occurred, learned_at, body) {
         return Err(invalid("DAG records are append-only"));
     }
     Ok(())
