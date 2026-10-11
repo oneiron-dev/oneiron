@@ -1362,6 +1362,105 @@ fn a_saver_who_left_and_joined_again_does_not_revive_the_saving() -> Result<()> 
     Ok(())
 }
 
+/// Astra #1392, P1: a run bound in a room on record still forwarded
+/// `self.memory.<verb>` through its host's verb door, which runs on the
+/// canonical vault and checks neither the run's route nor the room's saver.
+/// Once the saver had left, a forwarded recall still published its run in
+/// base, past every landing the session checks. A session-bound run now
+/// forwards no verb, read or write; the door is never called.
+#[test]
+fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::code_run::{
+        AGENT_VERB_SESSION_BOUND, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher,
+        SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher,
+        SelfEffect,
+    };
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    /// A host's verb door reduced to recall, run on the canonical memory
+    /// surface under the origin the dispatcher hands it.
+    struct RecallDoor {
+        vault: Arc<Vault>,
+        actor: EntityId,
+        calls: AtomicUsize,
+    }
+
+    impl AgentVerbDoor for RecallDoor {
+        fn call(
+            &self,
+            call: &SelfAgentVerbCall,
+            origin: &crate::memory::HostWriteOrigin,
+        ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let refused = |_| AgentVerbRefusal {
+                code: "engine_error".to_owned(),
+            };
+            self.vault
+                .memory(self.actor, EdgeActorClass::Human)
+                .with_host_origin(origin.clone())
+                .recall(
+                    call.input["query"].as_str().unwrap_or_default(),
+                    crate::memory::Effort::Medium,
+                    &crate::memory::RecallScope::default(),
+                    10,
+                    None,
+                    None,
+                )
+                .map_err(refused)?;
+            Ok(serde_json::json!({"recalled": true}))
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let vault = Arc::new(vault);
+    let reader = seed_recallable_base_turn(&vault, "forwardedlanternneedle");
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let room = EntityId::now();
+    vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
+    vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    let session = vault.off_record_session_vault().enter_in_room(
+        "lamp-door",
+        OffRecordBackendClass::Local,
+        room,
+        owner,
+    )?;
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    session.flip_on_record_as(&proof)?;
+    let door = Arc::new(RecallDoor {
+        vault: Arc::clone(&vault),
+        actor: reader,
+        calls: AtomicUsize::new(0),
+    });
+    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-door-run")?
+        .with_agent_verb_door(door.clone());
+    vault.leave_member(room, owner, by, 50)?;
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let answer = dispatcher.dispatch(SelfCall::AgentVerb(SelfAgentVerbCall {
+        verb: crate::task_verb::sdk::AgentVerb::Recall,
+        input: serde_json::json!({"query": "forwardedlanternneedle"}),
+    }))?;
+    assert_eq!(
+        answer,
+        SelfDispatchOutcome::Denied(SelfDeniedResult {
+            effect: SelfEffect::AgentVerb,
+            outcome: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
+        })
+    );
+    assert_eq!(door.calls.load(Ordering::SeqCst), 0, "the door never runs");
+    assert_eq!(vault.retrieval_runs(64)?.len(), base_runs_before);
+    drop(dispatcher);
+    session.close()?;
+    assert_eq!(vault.retrieval_runs(64)?.len(), base_runs_before);
+    Ok(())
+}
+
 /// A facade and a session are independent borrows, so nothing in the types
 /// stops safe code from pairing a facade on vault A with a room on vault B.
 /// That pairing would read A while staging A's run row and `result_ids` into
