@@ -414,8 +414,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::booking::public_booking_router())
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
-        // the wire receipts: nothing of the stretch may outlive it.
+        // the wire receipts: nothing of the stretch may outlive it. The
+        // owner's own off-record routes sit out here for the same reason.
         .nest("/v1/core/off-record", self::off_record_rooms::routes())
+        .nest("/v1/owner", self::owner_routes::off_record_routes())
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,

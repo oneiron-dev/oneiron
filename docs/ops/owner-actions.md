@@ -288,7 +288,9 @@ save. An anonymous session keeps nothing at all and cannot be saved or put on re
   `"off_record"` goes back.
 - `POST /v1/owner/off-record/close` ends it.
 
-The session lives in the server process: a restart ends it, and only saved turns remain.
+The session lives in the server process: a restart ends it, and only saved turns remain. These
+routes keep no wire receipt (the per-route and per-caller call counts other routes keep), so
+nothing records that a session ran.
 
 ### Everyone in a room (ARCH-0052 D5, the notice model)
 
@@ -317,10 +319,12 @@ you are on that room's roster; a name you pick for `POST /v1/owner/off-record` m
 with `room:`.
 
 Every save, export and suggestion posts a notice to the room (`saved_talk`, `saved_turn`,
-`saving_from_here`, `exported`, `save_suggested`), with who and when, never the content. Your
-own `promote` and `mode` above post one too when the stretch runs in a room. A stretch you start
-with `POST /v1/owner/off-record` has no room, so it posts none. Someone outside the room gets the
-same 404 as for a stretch that does not exist.
+`saving_from_here`, `exported`, `save_suggested`), with who and when, never the content. A save
+that finds nothing new to keep posts one too. Your own `promote` and `mode` above post one too
+when the stretch runs in a room. A 1:1 with your own companion posts none: a stretch you start
+with `POST /v1/owner/off-record` has no room, and a room that holds only you and this vault's own
+agents has nobody else to tell. Someone outside the room gets the same 404 as for a stretch that
+does not exist.
 
 A save keeps what the room showed you, as an export does: the visible messages of the turns your
 membership shows you. An agent's hidden messages (its own reasoning) and turn summaries stay out.
