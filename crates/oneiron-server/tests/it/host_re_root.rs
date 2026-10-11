@@ -304,9 +304,7 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
         "{doctor:#}"
     );
     assert!(
-        doctor["config_errors"]
-            .as_array()
-            .is_none_or(Vec::is_empty),
+        doctor["config_errors"].as_array().is_none_or(Vec::is_empty),
         "{doctor:#}"
     );
     let agent = json(oneiron(
