@@ -658,11 +658,9 @@ fn a_retired_root_withdraws_no_slip_the_new_root_minted() {
     let (_replica_dir, replica) =
         replica_with(vault.export_signed_authority_history().unwrap(), &withdraw);
     let fold = replica.authority_fold().unwrap();
-    assert!(
-        fold.issues.contains(&AuthorityFoldIssue::RetiredSigner(
-            authority_entry_hash(&withdraw).unwrap()
-        ))
-    );
+    assert!(fold.issues.contains(&AuthorityFoldIssue::RetiredSigner(
+        authority_entry_hash(&withdraw).unwrap()
+    )));
     assert!(!fold.slips.revoked.contains(&slip));
     assert!(fold.slip_is_live(&slip));
 }
@@ -832,9 +830,7 @@ fn a_retired_root_confirmation_displaces_no_confirmation_of_the_new_root() {
     let fold = replica.authority_fold().unwrap();
     assert!(fold.valid_entries.contains(&theirs_hash));
     assert!(fold.slip_is_live(&slip));
-    assert!(
-        fold.issues.contains(&AuthorityFoldIssue::RetiredSigner(
-            authority_entry_hash(&forged).unwrap()
-        ))
-    );
+    assert!(fold.issues.contains(&AuthorityFoldIssue::RetiredSigner(
+        authority_entry_hash(&forged).unwrap()
+    )));
 }
