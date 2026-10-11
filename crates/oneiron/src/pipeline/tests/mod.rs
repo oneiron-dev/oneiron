@@ -104,20 +104,6 @@ fn active_claim_body(world: Option<EntityId>) -> Vec<u8> {
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 
-fn active_claim_body_with_salience(salience: f32) -> Vec<u8> {
-    let mut body = ClaimBody::new(
-        "test.blend_salience",
-        crate::claim::ClaimSubject::Entity(entity_id(0x7D)),
-        rmpv::Value::from("v"),
-        0.9,
-        crate::claim::ClaimApprovalStatus::Auto,
-        crate::claim::ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    body.salience = Some(salience);
-    crate::claim::encode_claim_body(&body).expect("encode claim body")
-}
-
 pub(super) fn put_claim_text(
     vault: &Vault,
     id: EntityId,
@@ -132,25 +118,6 @@ pub(super) fn put_claim_text(
             TimeRange { start: 1, end: 1 },
             1,
             &active_claim_body(world),
-        )
-        .text(&id, &[("body", text)])
-        .commit()
-}
-
-fn put_claim_text_with_salience(
-    vault: &Vault,
-    id: EntityId,
-    text: &str,
-    salience: f32,
-) -> Result<()> {
-    vault
-        .batch()
-        .put(
-            &id,
-            ENTITY_TYPE_CLAIM,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &active_claim_body_with_salience(salience),
         )
         .text(&id, &[("body", text)])
         .commit()

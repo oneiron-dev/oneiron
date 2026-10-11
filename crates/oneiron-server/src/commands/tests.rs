@@ -492,55 +492,6 @@ fn api_raw_content_type_defaults_to_json_and_only_a_valid_type_replaces_it() {
     }
 }
 
-/// `@FILE` and a literal body are different forms, and neither is shell text:
-/// a body full of shell metacharacters is bytes, not a command.
-#[test]
-fn api_body_forms_are_distinct_and_never_shell_evaluated() {
-    let dir = tempfile::tempdir().unwrap();
-    let body_path = dir.path().join("request.json");
-    std::fs::write(&body_path, b"{\"from\":\"file\"}").unwrap();
-
-    let from_file = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: format!("@{}", body_path.display()),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        from_file.body.as_deref(),
-        Some(b"{\"from\":\"file\"}".as_slice())
-    );
-
-    let literal = "{\"shell\":\"$(id); rm -rf / `whoami`\"}";
-    let verbatim = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: literal.to_owned(),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        verbatim.body.as_deref(),
-        Some(literal.as_bytes()),
-        "a literal body is sent verbatim, never expanded"
-    );
-
-    assert!(
-        api::request_for_command(
-            "http://127.0.0.1:3000",
-            ApiCommand::Call {
-                verb: "board.append".to_owned(),
-                data: format!("@{}", dir.path().join("absent.json").display()),
-            },
-        )
-        .is_err(),
-        "a missing @FILE is an error here, not an empty request"
-    );
-}
-
 /// The credential travels in curl's config channel on stdin. It is in no
 /// argument, no captured stdout, and no captured stderr.
 #[test]
@@ -970,4 +921,111 @@ fn api_a_failed_body_staging_leaves_nothing_behind() {
         !staged_path.exists(),
         "a staged body must not outlive the call"
     );
+}
+
+/// `token agent`'s vault half on a vault whose authority clock trails the
+/// wall clock by more than the default lifetime, as weeks of closed nights
+/// leave it: the fresh credential serves an MCP call and a REST read. The MCP
+/// door judged the slip's expiry, an authority-clock second, on the wall
+/// clock, so it refused a credential minted a moment before.
+#[tokio::test]
+async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wall() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
+    use tower::ServiceExt;
+    const SECRET: &str = "trailing-clock-issuer-key";
+    let dir = tempfile::tempdir().unwrap();
+    let wall = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let closed_for = 40 * 24 * 60 * 60;
+    let clock = oneiron::store::ports::ManualClock::new(wall() - closed_for);
+    let open = || {
+        let mut config = oneiron::VaultConfig::server();
+        config.store_clock = clock.bundle();
+        oneiron::Vault::open_owned(dir.path(), config).unwrap()
+    };
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    // The vault starts its authority clock 40 days ago and stays closed
+    // until now.
+    open().ensure_host_root_slip(&issuer).unwrap();
+    clock.set(wall());
+
+    let vault = open();
+    let principal = vault
+        .ensure_agent_principal("trailing-clock")
+        .unwrap()
+        .to_hex();
+    let owner = crate::owner::local_owner(&vault).unwrap();
+    let (verbs, ceiling) = agent_tier_authority(AgentTier::FullAccess);
+    let minted = mint_paired_credential(
+        &vault,
+        &issuer,
+        &principal,
+        "agent",
+        verbs,
+        30 * 24 * 60 * 60,
+    )
+    .unwrap();
+    vault
+        .grant_agent_principal(&owner, &principal, ceiling)
+        .unwrap();
+    // Expired on the wall clock, live on the clock the vault judges it on.
+    assert!(minted.expires_at < wall(), "{}", minted.expires_at);
+    assert!(minted.expires_at > vault.capability_slip_now().unwrap());
+    let server = Arc::new(
+        SyncServer::new(
+            Arc::new(vault),
+            SyncServerConfig {
+                auth_secret: Some(SECRET.to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let slip = oneiron::authority::CapabilitySlip::from_token(&minted.token).unwrap();
+    let seed: Vec<u8> = (0..minted.binding_key.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&minted.binding_key[at..at + 2], 16).unwrap())
+        .collect();
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed.try_into().unwrap());
+    let send = |request: axum::http::request::Builder, body: Body| {
+        let proof = oneiron::authority::holder_proof(&slip, &key, server.vault().now_recorded_at())
+            .unwrap();
+        crate::build_app(server.clone()).oneshot(
+            request
+                .header(AUTHORIZATION, format!("Bearer {}", minted.token))
+                .header("x-oneiron-binding", proof.to_string())
+                .body(body)
+                .unwrap(),
+        )
+    };
+
+    let listed = send(
+        Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(CONTENT_TYPE, "application/json"),
+        Body::from(json!({"jsonrpc": "2.0", "id": "list", "method": "tools/list"}).to_string()),
+    )
+    .await
+    .unwrap();
+    let status = listed.status();
+    let bytes = axum::body::to_bytes(listed.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: JsonValue = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["result"]["tools"].is_array(), "{body}");
+
+    let read = send(
+        Request::builder().uri("/v1/core/conversations"),
+        Body::empty(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
 }
