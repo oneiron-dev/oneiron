@@ -38,6 +38,7 @@ mod tier_floor;
 mod causal_claim;
 mod checkpoint;
 mod history_transfer;
+mod host_re_root;
 mod machine_write;
 mod recovery_ceremony;
 mod retired_ceiling;
