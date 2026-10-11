@@ -49032,7 +49032,7 @@
      "path": "src/api/mcp_gateway/actor_dispatch.rs",
      "purpose": "Tool execution dispatch across actors",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -49042,7 +49042,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -51358,7 +51358,7 @@
      "path": "src/mcp/codec.rs",
      "purpose": "MCP argument codecs: parsed-value and raw-JSON integer normalization",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1
      }
@@ -51379,7 +51379,7 @@
      "purpose": "Endpoint tool argument envelopes: setup, execute-code, paging, and verbs",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 7
      }

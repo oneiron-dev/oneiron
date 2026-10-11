@@ -115,8 +115,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/lease.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/llm.rs` | src | s | 1 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/tests.rs` | test | m | — | — | — |
-| `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 9 crate-vis | — | Tool execution dispatch across actors |
-| `src/api/mcp_gateway/admission.rs` | src | m | 6 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 10 crate-vis | — | Tool execution dispatch across actors |
+| `src/api/mcp_gateway/admission.rs` | src | m | 7 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 4 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 17 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | s | 2 crate-vis | — | Code mode's `self.memory.<verb>`: the SDK verb table through the tool door |
@@ -340,8 +340,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/actors.rs` | src | s | 5 struct · 3 enum · 16 fn · 6 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
 | `src/mcp/args.rs` | src | s | 3 struct · 1 enum | McpActorClass, McpActorMetadata, McpConsentMetadata, McpToolScope | MCP actor and consent metadata: the envelope every endpoint tool call carries |
 | `src/mcp/booking_inputs.rs` | src | s | 4 crate-vis | — | JSON schemas for the booking agent API's operation inputs (BK-08), merged into the OpenAPI components |
-| `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
-| `src/mcp/endpoint_args.rs` | src | m | 7 struct · 3 fn · 1 const · 2 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
+| `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
+| `src/mcp/endpoint_args.rs` | src | m | 7 struct · 3 fn · 1 const · 3 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
 | `src/mcp/endpoint_schema.rs` | src | m | 5 const · 6 crate-vis | — | JSON schemas for endpoint tools: setup, execute-code, paging, and verbs |
 | `src/mcp/exec_host.rs` | src | m | 2 struct · 1 enum · 2 trait · 6 fn | McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpEngineNativeCodeHost | MCP code-execution host seam and the engine-native host binding |
 | `src/mcp/mod.rs` | src | s | 2 mod · 12 re-export · 6 crate-vis | — | MCP connector actor registry |
