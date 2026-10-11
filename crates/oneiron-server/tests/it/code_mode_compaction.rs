@@ -199,8 +199,8 @@ fn wait_healthy(origin: &str, server: &mut Running, log: &Path) -> Value {
 }
 
 /// The served run, end to end: returns the health answer, every
-/// `execute_code` result and the server's log. Blocking; the fake model runs
-/// on the test's runtime.
+/// `execute_code` result and the server's log lines (its stdout). Blocking;
+/// the fake model runs on the test's runtime.
 fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>, String) {
     let vault = dir.join("vault");
     let config = dir.join("oneiron.toml");
@@ -243,11 +243,12 @@ fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>, String) {
     let port = free_port().to_string();
     let origin = format!("http://127.0.0.1:{port}");
     let log = dir.join("serve.log");
+    let lines = dir.join("serve.out");
     let mut server = Running(
         oneiron(&["serve", "--host", "127.0.0.1", "--port", &port], &config)
             .env("RUST_LOG", "warn,oneiron::run_receipt=info")
             .env("NO_COLOR", "1")
-            .stdout(Stdio::null())
+            .stdout(std::fs::File::create(&lines).unwrap())
             .stderr(std::fs::File::create(&log).unwrap())
             .spawn()
             .unwrap(),
@@ -305,7 +306,7 @@ fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>, String) {
     }
     drop(bridge);
     drop(server);
-    (health, results, std::fs::read_to_string(&log).unwrap())
+    (health, results, std::fs::read_to_string(&lines).unwrap())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

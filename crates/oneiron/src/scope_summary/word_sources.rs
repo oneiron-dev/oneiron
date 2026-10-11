@@ -33,12 +33,19 @@ pub(crate) fn word_sources_in(
     let sources = match header.entity_type {
         // An epoch summary's words are those of every record it was written
         // from, its `DerivedFrom` targets (agent-runtime-v1 §d7); a nested
-        // epoch among them carries its own.
-        ENTITY_TYPE_SUMMARY if crate::compaction::decode_epoch_summary_body(body).is_ok() => vault
-            .store
-            .port_edges(txn, id, EdgeDirection::Out, Some(EdgeKind::DerivedFrom), None)
-            .and_then(|edges| edges.map(|edge| edge.map(|edge| edge.target)).collect())
-            .map(Some),
+        // epoch among them carries its own. A run that had read and said
+        // nothing yet wrote one from its own steps alone.
+        ENTITY_TYPE_SUMMARY if crate::compaction::decode_epoch_summary_body(body).is_ok() => {
+            let sources = vault
+                .store
+                .port_edges(txn, id, EdgeDirection::Out, Some(EdgeKind::DerivedFrom), None)?
+                .map(|edge| edge.map(|edge| edge.target))
+                .collect::<Result<Vec<_>>>()?;
+            if sources.is_empty() {
+                return Ok(WordSources::Own);
+            }
+            Ok(Some(sources))
+        }
         ENTITY_TYPE_SUMMARY => super::body_covers_in_txn(vault, txn, id, header.entity_type, body),
         // A reply carries its summary under the `summary` key, in any
         // string encoding; the decoder below decides. Its words are the

@@ -5161,3 +5161,95 @@ fn an_epoch_summary_stays_home_when_no_window_exports_its_source() -> crate::Res
     );
     Ok(())
 }
+
+/// Sol round 8 on #1384: a machine CLAIM leaves only with its whole signed
+/// history in its own window. A claim learned in January and retracted in
+/// February has history rows in both months, so neither window exports it,
+/// and the February summary written from it stays home too.
+#[test]
+fn an_epoch_summary_stays_home_when_its_source_history_spans_windows() -> crate::Result<()> {
+    use crate::write_envelope::{
+        ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (machine, claim, summary) = (entity_id(0xc1), entity_id(0xc2), entity_id(0xc3));
+    let person = entity_id(0xc4);
+    let (january, february) = (WindowKey::new("2026-01"), WindowKey::new("2026-02"));
+    let jan = january.start_timestamp().unwrap() + 60;
+    let feb = february.start_timestamp().unwrap() + 60;
+    let at = |second| TimeRange {
+        start: second,
+        end: second,
+    };
+    vault.put_entity(
+        &machine,
+        crate::registry::ENTITY_TYPE_MACHINE,
+        at(jan),
+        jan,
+        b"machine",
+    )?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"selector machine root").unwrap();
+    vault.ensure_host_root_slip(&issuer)?;
+    let signing = SigningKey::from_bytes(&[0xc1; 32]);
+    vault.enroll_machine_identity(
+        &issuer,
+        machine,
+        signing.verifying_key().to_bytes(),
+        [8; 32],
+        |transcript| Ok(signing.sign(transcript).to_bytes()),
+    )?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("machine")).unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        "selector.machine",
+        ClaimSubject::Entity(machine),
+        Value::from("the machine's private fact"),
+        1.0,
+    );
+    let transcript = vault.machine_claim_transcript(&claim, &candidate, &envelope)?;
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    vault
+        .batch()
+        .claim_candidate(&claim, candidate, &signed, at(jan), jan)
+        .commit()?;
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            at(feb),
+            feb,
+            &epoch_summary_bytes(1, "the run read the machine's private fact")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &claim, 1.0)
+        .commit()?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, at(feb), feb, b"person")?;
+    // The retraction's signed transition and handoff are February's rows.
+    vault.retract_claim(&claim, feb)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let mut sent = Vec::new();
+    for key in [&january, &february] {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        sent.extend(import_ids(
+            &filtered_window_doc(&vault, &doc, key, test_selector_scope(), &selector)?
+                .export(ExportMode::all_updates())
+                .unwrap(),
+        ));
+    }
+    assert!(sent.contains(&person), "the selector exports");
+    assert!(!sent.contains(&claim), "no window carries the claim's history whole");
+    assert!(
+        !sent.contains(&summary),
+        "the summary stays home with a source whose history no window carries"
+    );
+    Ok(())
+}

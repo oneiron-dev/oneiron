@@ -161,9 +161,10 @@ pub(super) fn admit_selected_in_txn(
 }
 
 /// Whether sync egress under `admission` would carry `id`: it sits in the
-/// closed subgraph, and neither it nor the seed that selects it is a row
-/// the export withholds before selection. `device_only` is the export's
-/// own read of the flagged worlds.
+/// closed subgraph of the window that packs it, neither it nor the seed that
+/// selects it is a row the export withholds before selection, and that
+/// window carries its authenticated history whole. `device_only` is the
+/// export's own read of the flagged worlds.
 pub(super) fn egress_selected_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -192,68 +193,13 @@ fn selected_in_txn(
         egress,
     };
     let mut budget = crate::vault::MAX_EDGE_QUERY_RESULTS;
-    let Some((visible, seed)) = selection.candidate(id, &mut budget)? else {
+    if !selection.selected(id, &mut budget)? {
         return Ok(false);
-    };
-    if facet_filter(admission.position.as_scope()).is_none() || visible || seed {
-        return Ok(true);
     }
-    // The export's facet closure is ONE hop from a selected seed, never a
-    // transitive walk. Re-read both endpoint rows and every live facet stamp
-    // from this writer; a stale window cannot preserve a removed seed.
-    // Egress closes over the one window that packs `id`, as the exporter
-    // does: a seed selects it only when that window packs the seed too,
-    // across an edge the window packs. A row no window places selects
-    // nothing, and a seed in another window never stands in for one here.
-    let window = match egress {
-        Some(_) => match vault.get_raw_in(txn, &id)?.as_deref().and_then(carrier_window) {
-            Some(window) => Some(window),
-            None => return Ok(false),
-        },
-        None => None,
-    };
-    for row in crate::ports::EdgeStoreRead::port_edges(
-        &vault.store,
-        txn,
-        &id,
-        crate::ports::EdgeDirection::Both,
-        None,
-        None,
-    )? {
-        spend(&mut budget)?;
-        let edge = row?;
-        if let Some(window) = &window
-            && (edge.kind == EdgeKind::Blocks
-                || vault
-                    .get_raw_in(txn, &edge.target)?
-                    .as_deref()
-                    .and_then(carrier_window)
-                    .as_ref()
-                    != Some(window))
-        {
-            continue;
-        }
-        if edge.kind == EdgeKind::SameAs
-            && !super::scope::document_coreference_context_in_txn(
-                vault,
-                txn,
-                &admission.fold,
-                selector,
-                id,
-                edge.target,
-            )?
-            .allows(id, edge.target)
-        {
-            continue;
-        }
-        if selection
-            .candidate(edge.target, &mut budget)?
-            .is_some_and(|(_, seed)| seed)
-        {
-            return Ok(true);
-        }
+    match egress {
+        Some(_) => selection.history_carried(id, &mut budget),
+        None => Ok(true),
     }
-    Ok(false)
 }
 
 /// The window sync packs a stored row into: its learned-at month, in the
@@ -280,6 +226,120 @@ struct StoredSelection<'a, 'env> {
 }
 
 impl StoredSelection<'_, '_> {
+    /// Whether the selection takes `id`: a candidate that is visible or a
+    /// seed itself, or one hop from a seed.
+    fn selected(&self, id: EntityId, budget: &mut usize) -> Result<bool> {
+        let Some((visible, seed)) = self.candidate(id, budget)? else {
+            return Ok(false);
+        };
+        if facet_filter(self.admission.position.as_scope()).is_none() || visible || seed {
+            return Ok(true);
+        }
+        // The export's facet closure is ONE hop from a selected seed, never a
+        // transitive walk. Re-read both endpoint rows and every live facet
+        // stamp from this writer; a stale window cannot preserve a removed
+        // seed. Egress closes over the one window that packs `id`, as the
+        // exporter does: a seed selects it only when that window packs the
+        // seed too, across an edge the window packs. A row no window places
+        // selects nothing, and a seed in another window never stands in for
+        // one here.
+        let window = match self.egress {
+            Some(_) => match self
+                .vault
+                .get_raw_in(self.txn, &id)?
+                .as_deref()
+                .and_then(carrier_window)
+            {
+                Some(window) => Some(window),
+                None => return Ok(false),
+            },
+            None => None,
+        };
+        for row in crate::ports::EdgeStoreRead::port_edges(
+            &self.vault.store,
+            self.txn,
+            &id,
+            crate::ports::EdgeDirection::Both,
+            None,
+            None,
+        )? {
+            spend(budget)?;
+            let edge = row?;
+            if let Some(window) = &window
+                && (edge.kind == EdgeKind::Blocks
+                    || self
+                        .vault
+                        .get_raw_in(self.txn, &edge.target)?
+                        .as_deref()
+                        .and_then(carrier_window)
+                        .as_ref()
+                        != Some(window))
+            {
+                continue;
+            }
+            if edge.kind == EdgeKind::SameAs
+                && !super::scope::document_coreference_context_in_txn(
+                    self.vault,
+                    self.txn,
+                    &self.admission.fold,
+                    self.selector,
+                    id,
+                    edge.target,
+                )?
+                .allows(id, edge.target)
+            {
+                continue;
+            }
+            if self
+                .candidate(edge.target, budget)?
+                .is_some_and(|(_, seed)| seed)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The exporter withdraws a selected machine CLAIM unless its window
+    /// carries the claim's authenticated history whole, so egress carries
+    /// such a source only when every history row packs into the source's own
+    /// window and is selected there too. History that does not resolve, or
+    /// a row no window places, carries nothing.
+    fn history_carried(&self, id: EntityId, budget: &mut usize) -> Result<bool> {
+        let Some(raw) = self.vault.get_raw_in(self.txn, &id)? else {
+            return Ok(false);
+        };
+        if raw.first().copied() != Some(crate::registry::ENTITY_TYPE_CLAIM) {
+            return Ok(true);
+        }
+        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            return Ok(false);
+        };
+        if !crate::authority::machine_claim_needs_history(&self.vault.store, self.txn, &body)? {
+            return Ok(true);
+        }
+        let Some(controls) = super::authorize::machine_history_controls(self.vault, self.txn, id)?
+        else {
+            return Ok(false);
+        };
+        let Some(window) = carrier_window(&raw) else {
+            return Ok(false);
+        };
+        for control in controls {
+            spend(budget)?;
+            let resident = self
+                .vault
+                .get_raw_in(self.txn, &control)?
+                .as_deref()
+                .and_then(carrier_window);
+            if resident.as_ref() != Some(&window) || !self.selected(control, budget)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     fn candidate(&self, id: EntityId, budget: &mut usize) -> Result<Option<(bool, bool)>> {
         let Some(raw) = self.vault.get_raw_in(self.txn, &id)? else {
             return Ok(None);

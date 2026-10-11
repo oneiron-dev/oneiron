@@ -537,7 +537,7 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
             actor: test_id(0x34).to_hex(),
         })
     };
-    let (summary, nested) = (test_id(0x35), test_id(0x36));
+    let (summary, nested, lone) = (test_id(0x35), test_id(0x36), test_id(0x37));
     let at = |second| TimeRange {
         start: second,
         end: second,
@@ -560,6 +560,13 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
             &epoch(2, "steps 6-8")?,
         )
         .edge(&nested, crate::edge::EdgeKind::DerivedFrom, &summary, 1.0)
+        .put(
+            &lone,
+            ENTITY_TYPE_SUMMARY,
+            at(4),
+            4,
+            &epoch(3, "a run that read nothing yet")?,
+        )
         .commit()?;
     let ctx = DisclosureContext::resolve(
         &vault,
@@ -572,8 +579,9 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
     };
     assert!(admits(&summary)? && admits(&nested)?);
 
-    // A room's P7 rule reads the same words: a clearance that takes both
-    // summaries' own stamps, but not their source's, discloses neither.
+    // A room's P7 rule reads the same words: a clearance that takes the
+    // summaries' own stamps, but not their source's, discloses neither of
+    // the two written from it.
     let discloses = |scope: &crate::federation::Scope, id: EntityId| -> Result<bool> {
         let rtxn = vault.store.env.read_txn()?;
         let raw = vault.get_raw_in(&rtxn, &id)?.expect("a stored summary");
@@ -583,7 +591,7 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
     assert!(discloses(&top, summary)? && discloses(&top, nested)?);
     let mut summaries_only = top.clone();
     summaries_only.facets = crate::federation::ScopeAxis::Some(
-        [summary, nested]
+        [summary, nested, lone]
             .into_iter()
             .map(|id| crate::claim::substrate_facet_id(id).map(crate::federation::ScopeId))
             .collect::<Result<_>>()?,
@@ -591,6 +599,10 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
     assert!(
         !discloses(&summaries_only, summary)? && !discloses(&summaries_only, nested)?,
         "a room clearance short of the source discloses neither summary"
+    );
+    assert!(
+        discloses(&summaries_only, lone)?,
+        "an epoch written from no record carries its own words"
     );
 
     vault.set_disclosure_tier_a(&source, 100)?;
