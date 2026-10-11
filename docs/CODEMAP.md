@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2450 | 777 | 34 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 20 | 1 | 0 |
-| [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 99 | 18 | 0 |
+| [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 108 | 18 | 0 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 54 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 14 | 7 | 0 |
@@ -264,20 +264,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 ## oneiron-bench
 
-| module | layout | files | largest src bucket | purpose |
-|---|---|---|---|---|
-| `beam` | dir | 39 | m | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
-| `eval` | file+dir | 3 | m | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
-| `fleet` | dir | 8 | m | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
-| `interface_bench` | dir | 9 | m | Campaign #5 interface bench task generation and smoke harness |
-| `oneironer_shadow` | file | 1 | m | Checkpoint-backed NER shadow proof beside an indexed fixture turn |
-| `perf` | dir | 34 | m | `perf` subcommand — ONE-1579 performance bench harness |
-| `retrieval_trace_export` | file | 1 | m | — |
-| `retrieval_turn_corpus` | file | 1 | m | Offline replay of finalized, turn-indexed retrieval runs |
-| `swarm` | file | 1 | m | Seeded single-vault, in-process agent-swarm baseline |
-| `teacher_probe` | file | 1 | s | Offline extraction-teacher admission over the fixed CoNLL BIO probe |
-| `teacher_probe_tests` | file | 1 | — | — |
-| `vector` | dir | 5 | m | `vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120) |
+| module | layout | files | largest src bucket | impl Vault | purpose |
+|---|---|---|---|---|---|
+| `beam` | dir | 39 | m | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
+| `eval` | file+dir | 3 | m | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
+| `fleet` | dir | 8 | m | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
+| `interface_bench` | dir | 9 | m | — | Campaign #5 interface bench task generation and smoke harness |
+| `load` | dir | 9 | m | yes | `load` subcommand — the engine's load bench on the shipped server binary |
+| `oneironer_shadow` | file | 1 | m | — | Checkpoint-backed NER shadow proof beside an indexed fixture turn |
+| `perf` | dir | 34 | m | — | `perf` subcommand — ONE-1579 performance bench harness |
+| `retrieval_trace_export` | file | 1 | m | — | — |
+| `retrieval_turn_corpus` | file | 1 | m | — | Offline replay of finalized, turn-indexed retrieval runs |
+| `swarm` | file | 1 | m | — | Seeded single-vault, in-process agent-swarm baseline |
+| `teacher_probe` | file | 1 | s | — | Offline extraction-teacher admission over the fixed CoNLL BIO probe |
+| `teacher_probe_tests` | file | 1 | — | — | — |
+| `vector` | dir | 5 | m | — | `vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120) |
 
 ## oneiron-code-check
 

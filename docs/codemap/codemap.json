@@ -41359,6 +41359,96 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/client.rs",
+     "purpose": "One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/corpus.rs",
+     "purpose": "The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/embedder.rs",
+     "purpose": "A stand-in embedder on loopback: the plain OpenAI `/v1/embeddings` wire, answering bag-of-words vectors",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/mod.rs",
+     "purpose": "`load` subcommand — the engine's load bench on the shipped server binary",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/phases.rs",
+     "purpose": "The measured cells: ingest by one and by many callers, recall at each grade and agent count, the mixed and…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/report.rs",
+     "purpose": "The result file, and `load compare`, which reads two of them",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/server.rs",
+     "purpose": "The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped…",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/startup.rs",
+     "purpose": "`load startup`: the server's memory while the shipped local embedding model loads, which is where its…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/stats.rs",
+     "purpose": "Latency summaries: nearest-rank percentiles over completed requests, with failures counted beside them and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -41846,6 +41936,13 @@
      "layout": "dir",
      "purpose": "Campaign #5 interface bench task generation and smoke harness"
     },
+    "load": {
+     "files": 9,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "`load` subcommand — the engine's load bench on the shipped server binary"
+    },
     "oneironer_shadow": {
      "files": 1,
      "impl_vault": false,
@@ -41905,7 +42002,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 99,
+   "source_files": 108,
    "test_files": 18
   },
   "oneiron-code-check": {
