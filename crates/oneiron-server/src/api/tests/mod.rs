@@ -46,6 +46,7 @@ mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_gate;
 mod run_tree;
+mod search_deadline;
 mod support_contract;
 mod support_mcp;
 mod support_mcp_credentials;
