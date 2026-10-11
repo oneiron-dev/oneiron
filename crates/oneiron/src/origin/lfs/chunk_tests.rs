@@ -385,6 +385,8 @@ fn a_stored_chunk_is_read_again_when_another_object_reuses_it() {
 #[test]
 fn the_switch_is_read_where_each_write_of_an_object_lands() {
     use crate::batch::secret_scan::SecretScanMode::{Off, On};
+    // The parts, the whole-read bound, the refusal.
+    type Case = ([&'static [u8]; 2], Option<u64>, &'static str);
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let stored: &[u8] = b"password=t7Rk2pLq9WzX\n";
     set_secret_scan(&vault, Off);
@@ -392,7 +394,7 @@ fn the_switch_is_read_where_each_write_of_an_object_lands() {
     // The owner switches the scan on while the first chunk is on its way: a
     // stored chunk reused, an object read whole at publish, and one past the
     // bound whose edges went unread.
-    let cases: [([&[u8]; 2], Option<u64>, &str); 4] = [
+    let cases: [Case; 4] = [
         (
             [stored, b"host = db.internal\n"],
             None,
@@ -404,7 +406,7 @@ fn the_switch_is_read_where_each_write_of_an_object_lands() {
             "gate.secret_scan.sensitive_env",
         ),
         (
-            [b"password=", b"t7Rk2pLq9WzX\n"],
+            [b"host = db.internal\npassword=", b"t7Rk2pLq9WzX\n"],
             None,
             "gate.secret_scan.sensitive_env",
         ),

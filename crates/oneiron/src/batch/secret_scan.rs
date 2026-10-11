@@ -178,9 +178,10 @@ fn read_members(data: &[u8]) -> Result<Option<rmpv::Value>> {
 /// that depth is text: only the decoder's own depth stop counts.
 pub(crate) fn nested_past_decoder(data: &[u8]) -> Option<&'static str> {
     let first = data.iter().find(|byte| !byte.is_ascii_whitespace());
-    // serde_json names this stop in its message only.
+    // The same depth-bound decode [`decode_members`] runs (a skip-only parse
+    // has no depth stop); serde_json names that stop in its message only.
     let json = matches!(first, Some(b'{' | b'['))
-        && serde_json::from_slice::<serde::de::IgnoredAny>(data)
+        && serde_json::from_slice::<rmpv::Value>(data)
             .is_err_and(|error| error.to_string().starts_with("recursion limit exceeded"));
     if json {
         return Some(REASON_JSON_TOO_DEEP);
