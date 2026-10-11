@@ -54,6 +54,25 @@ struct SnapshotInputs<'a> {
     overrides: HydeAttemptOverrides<'a>,
 }
 
+/// The channel stages one snapshot runs, counted down as each opens, so a
+/// deadline gives every stage an equal share of the stage time left.
+struct StagePlan(usize);
+
+impl StagePlan {
+    fn new(planned: [bool; 6]) -> Self {
+        Self(planned.into_iter().filter(|planned| *planned).count())
+    }
+    /// The stages left, this one included; counts this one down.
+    fn next(&mut self) -> usize {
+        let left = self.0;
+        self.0 = self.0.saturating_sub(1);
+        left
+    }
+    fn next_if(&mut self, planned: bool) -> usize {
+        if planned { self.next() } else { self.0 }
+    }
+}
+
 /// One snapshot's actor-bound NOTE admission and the gates that share it.
 struct ScopedChannelAdmission {
     private_note_ids: Option<std::sync::Arc<crate::claim::ScopedDiaryCandidates>>,
@@ -185,22 +204,32 @@ impl PipelineBuilder<'_> {
                 || self.has_strict_text_scope_filter()
                 || occurred_range.is_some()
                 || claim_gate_text_widening_active;
+            let mut stages = StagePlan::new([
+                self.vector_search.is_some(),
+                hyde_expansion.is_some(),
+                self.text_search.is_some(),
+                self.phonetic_search.is_some(),
+                self.temporal_search.is_some(),
+                self.ppr_search.is_some(),
+            ]);
 
             if let Some((query_vector, limit)) = &self.vector_search
-                && !self.deadline_reached()
+                && let Some(vector_results) =
+                    self.run_stage(RetrievalSignal::Vector, stages.next(), || {
+                        self.scoped_vector_results(
+                            rtxn,
+                            query_vector,
+                            if overrides.widen_channel_limits {
+                                retry_channel_limit(*limit)
+                            } else {
+                                *limit
+                            },
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )
+                    })?
             {
-                let vector_results = self.scoped_vector_results(
-                    rtxn,
-                    query_vector,
-                    if overrides.widen_channel_limits {
-                        retry_channel_limit(*limit)
-                    } else {
-                        *limit
-                    },
-                    filter_config,
-                    &mut metadata_cache,
-                    &mut claim_gate,
-                )?;
                 diagnostics.succeeded.push(RetrievalSignal::Vector);
                 vector_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Vector,
@@ -213,26 +242,28 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some(expansion) = hyde_expansion.as_ref()
-                && !self.deadline_reached()
+                && let Some(hyde_results) =
+                    self.run_stage(RetrievalSignal::Hyde, stages.next(), || {
+                        let limit = self
+                            .hyde
+                            .as_ref()
+                            .expect("hyde expansion has config")
+                            .2
+                            .channel_limit;
+                        self.scoped_vector_results(
+                            rtxn,
+                            &expansion.embedding,
+                            if overrides.widen_channel_limits {
+                                retry_channel_limit(limit)
+                            } else {
+                                limit
+                            },
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )
+                    })?
             {
-                let limit = self
-                    .hyde
-                    .as_ref()
-                    .expect("hyde expansion has config")
-                    .2
-                    .channel_limit;
-                let hyde_results = self.scoped_vector_results(
-                    rtxn,
-                    &expansion.embedding,
-                    if overrides.widen_channel_limits {
-                        retry_channel_limit(limit)
-                    } else {
-                        limit
-                    },
-                    filter_config,
-                    &mut metadata_cache,
-                    &mut claim_gate,
-                )?;
                 acc.admit_channel(
                     RetrievalSignal::Hyde,
                     hyde_results,
@@ -245,6 +276,7 @@ impl PipelineBuilder<'_> {
 
             let text_channel_index = self.run_text_channel(
                 rtxn,
+                stages.next_if(self.text_search.is_some()),
                 TextChannelInputs {
                     bm25_config,
                     hyde_expansion,
@@ -277,9 +309,11 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some(codes) = &self.phonetic_search
-                && !self.deadline_reached()
+                && let Some(phonetic_results) =
+                    self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
+                        execute_phonetic(&self.vault.store, rtxn, codes)
+                    })?
             {
-                let phonetic_results = execute_phonetic(&self.vault.store, rtxn, codes)?;
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
                 acc.admit_channel(
                     RetrievalSignal::Phonetic,
@@ -292,20 +326,22 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some(config) = &self.temporal_search
-                && !self.deadline_reached()
+                && let Some(temporal_results) =
+                    self.run_stage(RetrievalSignal::Temporal, stages.next(), || {
+                        let mut config = config.clone();
+                        if overrides.widen_channel_limits {
+                            config.limit = retry_channel_limit(config.limit);
+                        }
+                        self.scoped_temporal_results(
+                            rtxn,
+                            &config,
+                            temporal_now,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )
+                    })?
             {
-                let mut config = config.clone();
-                if overrides.widen_channel_limits {
-                    config.limit = retry_channel_limit(config.limit);
-                }
-                let temporal_results = self.scoped_temporal_results(
-                    rtxn,
-                    &config,
-                    temporal_now,
-                    filter_config,
-                    &mut metadata_cache,
-                    &mut claim_gate,
-                )?;
                 diagnostics.succeeded.push(RetrievalSignal::Temporal);
                 acc.admit_channel(
                     RetrievalSignal::Temporal,
@@ -318,20 +354,21 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some((seeds, depth)) = &self.ppr_search
-                && !self.deadline_reached()
+                && let Some(ppr) = self.run_stage(RetrievalSignal::Ppr, stages.next(), || {
+                    // ARCH-0039 Layer 2: seed specificity applies ONLY to
+                    // search_ppr — seeds are weighted 1/ln(1 + passage_count)
+                    // instead of uniform 1/n.
+                    crate::ppr::ppr_query_in_txn_with_diagnostics(
+                        &self.vault.store,
+                        rtxn,
+                        seeds,
+                        *depth,
+                        PPR_DAMPING,
+                        self.vault.config.ppr_vad_alpha,
+                        crate::ppr::SeedWeighting::Specificity,
+                    )
+                })?
             {
-                // ARCH-0039 Layer 2: seed specificity applies ONLY to
-                // search_ppr — seeds are weighted 1/ln(1 + passage_count)
-                // instead of uniform 1/n.
-                let ppr = crate::ppr::ppr_query_in_txn_with_diagnostics(
-                    &self.vault.store,
-                    rtxn,
-                    seeds,
-                    *depth,
-                    PPR_DAMPING,
-                    self.vault.config.ppr_vad_alpha,
-                    crate::ppr::SeedWeighting::Specificity,
-                )?;
                 diagnostics.succeeded.push(RetrievalSignal::Ppr);
                 record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
                 let ppr_results = ppr.scores;
