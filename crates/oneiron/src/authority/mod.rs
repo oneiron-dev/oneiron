@@ -110,7 +110,8 @@ pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPrincipal, format_pairing_link,
     pairing_binding_transcript, parse_pairing_link,
 };
-pub use slip_replay::{holder_proof, holder_proof_challenge};
+pub(crate) use slip_replay::refuse_moved_proof_freshness;
+pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::HostSlipIssuer;
 

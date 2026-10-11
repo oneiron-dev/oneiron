@@ -450,8 +450,12 @@ fn consuming_child_spends_single_use_ancestor_and_siblings() {
     let sibling = vault.mint_capability_slip(&issuer, child).unwrap();
     let nonce = b"77777777777777777777777777777777";
     let timestamp = first.claims.issued_at;
-    let challenge =
-        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
+    let challenge = super::super::slip_replay::request_challenge(
+        timestamp,
+        nonce,
+        super::super::slip_replay::ProofClock::at(timestamp),
+    )
+    .unwrap();
     let proof = issuer.binding_proof(&first, &challenge).unwrap();
     vault
         .authenticate_capability_slip(&issuer, &first, timestamp, &proof, nonce)
@@ -794,8 +798,12 @@ fn request_timestamp_and_nonce_are_signed_and_replay_is_refused() {
     let (_dir, vault, issuer, root) = fixture();
     let nonce = b"33333333333333333333333333333333";
     let timestamp = root.claims.issued_at;
-    let challenge =
-        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
+    let challenge = super::super::slip_replay::request_challenge(
+        timestamp,
+        nonce,
+        super::super::slip_replay::ProofClock::at(timestamp),
+    )
+    .unwrap();
     let proof = issuer.binding_proof(&root, &challenge).unwrap();
     assert!(
         vault
@@ -1386,7 +1394,7 @@ fn concurrent_single_use_authentication_survives_reopen_and_mint_replay() {
             let challenge = crate::authority::slip_replay::request_challenge(
                 timestamp,
                 nonce.as_bytes(),
-                timestamp,
+                crate::authority::slip_replay::ProofClock::at(timestamp),
             )
             .unwrap();
             let signature = issuer.binding_proof(&slip, &challenge).unwrap();
@@ -1660,8 +1668,12 @@ fn paired_connection_verifies_publicly_and_spends_nonce_without_a_host_secret() 
         .unwrap();
     let timestamp = slip.claims.issued_at;
     let nonce = b"abcdef0123456789abcdef0123456789";
-    let challenge =
-        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
+    let challenge = super::super::slip_replay::request_challenge(
+        timestamp,
+        nonce,
+        super::super::slip_replay::ProofClock::at(timestamp),
+    )
+    .unwrap();
     let signature = holder
         .sign(&slip.binding_transcript(&challenge).unwrap())
         .to_bytes();
