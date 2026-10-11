@@ -87,6 +87,10 @@ pub(crate) struct ResponseMeta {
     )]
     #[schema(value_type = Option<f32>, example = -0.15)]
     pub confidence_adjustment: Option<ConfidenceAdjustment>,
+    /// True when the request's deadline cut retrieval short: the items are
+    /// the best that were ready when it came due.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
 }
 
 impl ResponseMeta {
@@ -97,6 +101,7 @@ impl ResponseMeta {
             quality: None,
             degradation: None,
             confidence_adjustment: None,
+            partial: false,
         }
     }
 
