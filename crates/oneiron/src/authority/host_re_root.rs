@@ -17,6 +17,14 @@ use crate::store::Store;
 use crate::{EntityId, Vault};
 use rand_core::{OsRng, RngCore};
 
+/// The hash of the ReRoot that carried one MACHINE history, written by the
+/// move itself. Key: id16 (target claim).
+const CARRY_PREFIX: &[u8] = b"claim:machine-history-carry:v1:";
+
+fn carry_key(target: EntityId) -> Vec<u8> {
+    [CARRY_PREFIX, target.as_bytes()].concat()
+}
+
 /// What a host re-root changed, for the owner's report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -101,12 +109,13 @@ impl Vault {
             })
             .collect();
 
-        self.re_root_authority_in_txn(
+        let re_root = self.re_root_authority_in_txn(
             &mut txn,
             next.root_device(),
             current.public_key(),
             |transcript| Ok(current.sign_slip(transcript)),
         )?;
+        let re_root_hash = authority_entry_hash(&re_root)?;
         // The new root's first entry: its sequence is what enrollment extends.
         self.ensure_host_root_slip_in_txn(&mut txn, next)?;
         for machine in &writers {
@@ -116,6 +125,9 @@ impl Vault {
             let mut challenge = [0; 32];
             OsRng.fill_bytes(&mut challenge);
             self.carry_machine_history_in_txn(&mut txn, *target, next, challenge)?;
+            self.store
+                .vault_meta
+                .put(&mut txn, &carry_key(*target), &re_root_hash)?;
         }
         txn.commit()?;
         Ok(HostReRoot {
@@ -154,7 +166,9 @@ impl Vault {
 /// Whether a MACHINE birth whose signing key a ReRoot retired still reads:
 /// the key stayed bound to `actor` as a writer and was never revoked as an
 /// actor, and a live root carried the birth's history at the very ReRoot
-/// that made it root. A writer's actor revoke stays terminal across a move.
+/// that made it root. A writer's actor revoke stays terminal across a move,
+/// and so does a history the move left: only the move records a carry, so a
+/// later lifecycle write cannot stand in for one.
 pub(super) fn origin_carried_past_re_root(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -181,9 +195,13 @@ fn carried_by_live_root(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<bool> {
+    let Some(carried_at) = store.vault_meta.get(txn, &carry_key(target))? else {
+        return Ok(false);
+    };
     let tip = trusted_machine_handoff(store, txn, target)?;
     for packet in verified_handoff_chain(store, txn, &tip, fold)? {
         if packet.previous_handoff_hash.is_some()
+            && packet.authority_head.as_slice() == carried_at
             && fold.valid_entries.contains(&packet.authority_head)
             && fold
                 .roster
