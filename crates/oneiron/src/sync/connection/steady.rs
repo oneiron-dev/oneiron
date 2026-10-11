@@ -8,6 +8,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
+use crate::sync::window::UpdateVerdict;
 
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
@@ -59,7 +60,12 @@ impl SyncConnection {
                         Some(Ok(Message::Binary(data))) => {
                             match client.handle_server_message(&data) {
                                 Ok(responses) => {
-                                    for resp in responses {
+                                    // Judged per frame: a device-only flag may turn while an
+                                    // earlier frame waits on the socket.
+                                    for resp in responses
+                                        .into_iter()
+                                        .filter(|frame| !client.document_frame_withheld(frame))
+                                    {
                                         let send_result =
                                             write.send(Message::Binary(resp.into())).await;
                                         if let Err(e) = send_result {
@@ -169,21 +175,20 @@ impl SyncConnection {
                 frame = client.document_updates.recv() => {
                     match frame {
                         Ok(frame) => {
-                            let (id, note) = match transport::decode_document(&frame[1..]) {
+                            let id = match transport::decode_document(&frame[1..]) {
                                 Ok(doc) => {
-                                    let note = client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE);
-                                    if note {
+                                    if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
                                         if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST) { continue; }
                                         if !client.note_session_bound { continue; }
                                     }
-                                    (doc.entity, note)
+                                    doc.entity
                                 },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
+                            let withheld = client.document_frame_withheld(&frame);
                             let subscribed = (|| -> crate::error::Result<bool> {
                                 let rtxn = client.vault.store.env.read_txn()?;
-                                Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))?
-                                    && (note || !crate::sync::documents::text_withheld(&client.vault, &rtxn, id)?))
+                                Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))? && !withheld)
                             })();
                             match subscribed {
                                 Ok(true) => {
@@ -233,11 +238,24 @@ impl SyncConnection {
                     let opened = client.config.residence_mode == crate::sync::SyncResidenceMode::Opened;
                     let mut queued_count = 0;
                     for (i, local_update) in pending.iter().enumerate() {
-                        // A world flagged device-only since this commit keeps
-                        // it; the window's next export reads the flag again.
-                        if client.update_withheld(&local_update.window_key, &local_update.update_bytes).unwrap_or(true) {
-                            queued_count += usize::from(opened);
-                            continue;
+                        match client.update_verdict(&local_update.window_key, &local_update.update_bytes) {
+                            UpdateVerdict::Portable => {}
+                            // A world flagged device-only since this commit keeps
+                            // it; the window's next export reads the flag again.
+                            UpdateVerdict::Withheld => {
+                                queued_count += usize::from(opened);
+                                continue;
+                            }
+                            // Bytes that cannot be read in full wait, unsent, in
+                            // the queue for the next replay to judge again.
+                            UpdateVerdict::Uninspectable => {
+                                if let Err(e) = self.queue.push(&local_update.window_key, &local_update.update_bytes) {
+                                    failed_at = Some((i, format!("Durable residence queue failed: {e}")));
+                                    break;
+                                }
+                                queued_count += usize::from(opened);
+                                continue;
+                            }
                         }
                         let seq = if opened {
                             match self.queue.push(&local_update.window_key, &local_update.update_bytes) {

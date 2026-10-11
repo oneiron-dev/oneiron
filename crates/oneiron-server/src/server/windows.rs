@@ -140,6 +140,19 @@ pub(super) fn attach_local_read_tee(
     tee
 }
 
+/// Whether raw `update` bytes of a window stay on this server: its world is
+/// flagged device-only, the window now carries such a world's claim, the
+/// bytes' own operations insert one, or the bytes cannot be read in full.
+/// Read against the flag as it stands now.
+pub(crate) fn withheld_from_peers(
+    manager: &Arc<WindowManager>,
+    window_key: &str,
+    update: &[u8],
+) -> bool {
+    oneiron::sync::window::raw_update_verdict(manager, window_key, update)
+        != oneiron::sync::window::UpdateVerdict::Portable
+}
+
 /// Bridges the engine's Observer-A local-update path into `broadcast_tx`.
 ///
 /// Until now only *relayed* writes produced a change notice: a client's update
@@ -161,26 +174,6 @@ pub(super) fn attach_local_read_tee(
 /// The attach therefore happens only once the relay task can actually run, so
 /// Observer A keeps its durable `SyncQueue` fallback and no unread sender can
 /// accumulate updates.
-/// Whether raw `update` bytes of a window stay on this server: its world was
-/// flagged device-only since the commit, the window now carries such a world's
-/// claim, or the update's own operations insert one. Read against the flag as
-/// it stands now; an unreadable window stays.
-pub(crate) fn withheld_from_peers(
-    manager: &Arc<WindowManager>,
-    window_key: &str,
-    update: &[u8],
-) -> bool {
-    let Some(key) = WindowKey::try_new(window_key) else {
-        return false;
-    };
-    manager
-        .open_window(&key)
-        .and_then(|window| {
-            oneiron::sync::window::update_withheld(manager.vault(), &key, &window.doc, update)
-        })
-        .unwrap_or(true)
-}
-
 pub(super) fn spawn_local_change_producer(
     reassert_manager: &Arc<WindowManager>,
     broadcast_tx: &broadcast::Sender<BroadcastPayload>,

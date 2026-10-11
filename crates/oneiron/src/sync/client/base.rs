@@ -18,7 +18,7 @@ use crate::sync::schema::read_window_list;
 use crate::sync::transport;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window::LoadedWindow;
+use crate::sync::window::{LoadedWindow, UpdateVerdict};
 use crate::sync::window_rows::{
     LAST_SYNC, ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE,
 };
@@ -200,36 +200,38 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(format!("open window {key}: {e}")))
     }
 
-    /// Whether raw local bytes for window `key` stay on this device now: its
-    /// world is flagged device-only, or the window carries such a world's
-    /// claim or an edge naming one. A window that cannot be opened is judged
-    /// by its key alone.
-    pub(crate) fn window_withheld(&self, key: &str) -> crate::Result<bool> {
-        let Some(window_key) = WindowKey::try_new(key) else {
-            return Ok(false);
-        };
-        match self.manager.open_window(&window_key) {
-            Ok(window) => {
-                crate::sync::window::window_withheld(&self.vault, &window_key, &window.doc)
-            }
-            Err(_) => crate::sync::window::window_is_device_only(&self.vault, &window_key),
-        }
+    /// The verdict on raw local `update` bytes for window `key`, read right
+    /// before they go out or a queue row holding them clears unsent.
+    pub(crate) fn update_verdict(&self, key: &str, update: &[u8]) -> UpdateVerdict {
+        crate::sync::window::raw_update_verdict(&self.manager, key, update)
     }
 
-    /// Whether raw local `update` bytes for window `key` stay on this device
-    /// now: the window is withheld, or the update's own operations insert a
-    /// device-only world's claim or an edge naming one. A window that cannot
-    /// be opened is judged by its key alone.
-    pub(crate) fn update_withheld(&self, key: &str, update: &[u8]) -> crate::Result<bool> {
-        let Some(window_key) = WindowKey::try_new(key) else {
-            return Ok(false);
-        };
-        match self.manager.open_window(&window_key) {
-            Ok(window) => {
-                crate::sync::window::update_withheld(&self.vault, &window_key, &window.doc, update)
-            }
-            Err(_) => crate::sync::window::window_is_device_only(&self.vault, &window_key),
+    /// Whether an outgoing document data frame carries text a device-only
+    /// world now keeps here. NOTE frames answer to their own authority; a
+    /// frame that cannot be judged stays.
+    pub(crate) fn document_frame_withheld(&self, frame: &[u8]) -> bool {
+        if frame.first() != Some(&transport::TAG_DOCUMENT) {
+            return false;
         }
+        let Ok(document) = transport::decode_document(&frame[1..]) else {
+            return false;
+        };
+        if !matches!(
+            document.kind,
+            transport::document_sub_tags::UPDATE | transport::document_sub_tags::STATE
+        ) {
+            return false;
+        }
+        (|| -> Result<bool> {
+            let rtxn = self.vault.store.env.read_txn()?;
+            if self.vault.get_entity_type_in_txn(&rtxn, &document.entity)?
+                == Some(crate::registry::ENTITY_TYPE_NOTE)
+            {
+                return Ok(false);
+            }
+            crate::sync::documents::text_withheld(&self.vault, &rtxn, document.entity)
+        })()
+        .unwrap_or(true)
     }
 
     /// Returns the live window for `key` if loaded — registry lookup only,

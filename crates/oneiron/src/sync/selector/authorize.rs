@@ -23,7 +23,7 @@ use crate::sync::loro_support::{
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    apply_pending_window_updates, load_window_from_state, reverse_rematerialize,
+    apply_pending_window_updates, load_window_from_state, reverse_rematerialize_with,
 };
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
@@ -307,7 +307,7 @@ fn authorized_base_edge_endpoints(
                 }
                 Err(error) => return Err(error),
             };
-            reverse_rematerialize(vault, &base, &base_key)?;
+            reverse_rematerialize_with(vault, &base, &base_key, withhold_device_only)?;
             let selected = filter_window_doc(
                 vault,
                 &base,

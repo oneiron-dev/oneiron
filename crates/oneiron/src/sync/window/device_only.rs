@@ -14,17 +14,20 @@
 //! window that carries such a claim or edge out of residence (a base edge
 //! admitted before its endpoint was known, or a raw local write) is withheld
 //! whole too. Loro history keeps a carrier a later write removed, so a delta
-//! or raw update whose operations insert one is withheld as well, and an export
-//! falls back to the window's history-free snapshot.
+//! or raw update whose operations insert one is withheld as well. An export
+//! to a receiver that holds nothing of the window falls back to its
+//! history-free snapshot; one that holds part of it gets nothing.
 
 use std::collections::{BTreeSet, HashSet};
+use std::sync::Arc;
 
 use heed::RoTxn;
 use loro::json::{JsonOpContent, JsonSchema, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroMap, LoroValue, VersionVector};
 
 use super::super::bridge::parse_edge_key;
-use super::super::loro_support::{export_updates_from, map_for_each_value_bytes};
+use super::super::loro_support::{export_updates_from, json_covers_blob, map_for_each_value_bytes};
+use super::super::manager::WindowManager;
 use super::super::types::WindowKey;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -44,43 +47,110 @@ pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> 
 /// Whether a full-window send of `doc` ships nothing now: the window belongs
 /// to a flagged world, or it carries a CLAIM of a flagged world or an edge
 /// naming one.
-pub fn window_withheld(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
-    carries_device_only(vault, &flagged_worlds(vault)?, key, doc)
-}
-
-/// Whether raw update bytes of window `key` stay on this device now: the
-/// window is withheld, or the update's own operations, read from `doc`,
-/// insert a CLAIM of a flagged world or an edge naming one, even one a later
-/// write removed. An update whose operations `doc` does not hold stays too.
-pub fn update_withheld(
+pub(in crate::sync) fn window_withheld(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
-    update: &[u8],
 ) -> Result<bool> {
-    let flagged = flagged_worlds(vault)?;
-    if carries_device_only(vault, &flagged, key, doc)? {
-        return Ok(true);
-    }
-    if flagged.is_empty() {
-        return Ok(false);
-    }
+    carries_device_only(vault, &flagged_worlds(vault)?, key, doc)
+}
+
+/// What a raw send of window bytes may do, against the flag as it stands now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateVerdict {
+    /// No world is flagged, or the bytes carry no device-only row.
+    Portable,
+    /// A device-only world keeps the bytes here: its window, a carrier the
+    /// window holds now, or one the bytes' own operations insert.
+    Withheld,
+    /// The bytes could not be read in full. They are never sent, and a queue
+    /// row holding them is never cleared unsent.
+    Uninspectable,
+}
+
+/// The verdict on raw `update` bytes of window `window_key`, made at the
+/// door that sends them. The bytes are read themselves: whole when they
+/// stand alone (a snapshot, a selector's synthetic update), otherwise as the
+/// operation range the live window must hold in full.
+pub fn raw_update_verdict(
+    manager: &Arc<WindowManager>,
+    window_key: &str,
+    update: &[u8],
+) -> UpdateVerdict {
+    let verdict = (|| -> Result<UpdateVerdict> {
+        let vault = manager.vault();
+        let flagged = flagged_worlds(vault)?;
+        if flagged.is_empty() {
+            return Ok(UpdateVerdict::Portable);
+        }
+        let Some(key) = WindowKey::try_new(window_key) else {
+            return Ok(UpdateVerdict::Uninspectable);
+        };
+        if key.world().is_some_and(|world| flagged.contains(&world)) {
+            return Ok(UpdateVerdict::Withheld);
+        }
+        let window = manager.open_window(&key)?;
+        if carries_device_only(vault, &flagged, &key, &window.doc)? {
+            return Ok(UpdateVerdict::Withheld);
+        }
+        bytes_verdict(vault, &flagged, &key, &window.doc, update)
+    })();
+    verdict.unwrap_or_else(|error| {
+        tracing::warn!(window_key, %error, "raw window update not inspectable");
+        UpdateVerdict::Uninspectable
+    })
+}
+
+fn bytes_verdict(
+    vault: &Vault,
+    flagged: &BTreeSet<EntityId>,
+    key: &WindowKey,
+    live: &LoroDoc,
+    update: &[u8],
+) -> Result<UpdateVerdict> {
     let Ok(meta) = LoroDoc::decode_import_blob_meta(update, true) else {
-        return Ok(true);
+        return Ok(UpdateVerdict::Uninspectable);
     };
-    let held = doc.oplog_vv();
-    if meta
-        .partial_end_vv
-        .iter()
-        .any(|(peer, end)| held.get(peer).is_none_or(|counter| counter < end))
+    let alone = LoroDoc::new();
+    let withheld = if alone
+        .import(update)
+        .is_ok_and(|status| status.pending.is_none())
     {
-        return Ok(true);
-    }
-    history_inserts_device_only(
-        vault,
-        &flagged,
-        &doc.export_json_updates(&meta.partial_start_vv, &meta.partial_end_vv),
-    )
+        // Its state, then every operation it holds (a shallow snapshot's
+        // state carries what its history no longer does).
+        let history = alone.export_json_updates(&VersionVector::default(), &alone.oplog_vv());
+        carries_device_only(vault, flagged, key, &alone)?
+            || history_inserts_device_only(vault, flagged, &history)?
+    } else {
+        if meta.mode.is_snapshot() {
+            return Ok(UpdateVerdict::Uninspectable);
+        }
+        let history = live.export_json_updates(&meta.partial_start_vv, &meta.partial_end_vv);
+        if !json_covers_blob(&history, &meta) {
+            return Ok(UpdateVerdict::Uninspectable);
+        }
+        history_inserts_device_only(vault, flagged, &history)?
+    };
+    Ok(if withheld {
+        UpdateVerdict::Withheld
+    } else {
+        UpdateVerdict::Portable
+    })
+}
+
+/// Whether an export of `doc` to a receiver at `remote` ships nothing now:
+/// the window is withheld, or the delta past `remote` inserts a device-only
+/// carrier and the receiver already holds part of the window. Loro installs
+/// a history-free checkpoint only into an empty doc; a nonempty one would
+/// keep the checkpoint's later operations pending.
+pub fn export_withheld(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    remote: &VersionVector,
+) -> Result<bool> {
+    Ok(window_withheld(vault, key, doc)?
+        || (!remote.is_empty() && delta_carries_device_only(vault, doc, remote)?))
 }
 
 /// Whether the delta of `doc` past `from` inserts a CLAIM of a flagged world
@@ -167,7 +237,8 @@ fn history_inserts_device_only(
     stored_claim_among(vault, flagged, ids)
 }
 
-/// Whether any of `ids` is stored as a CLAIM of a flagged world.
+/// Whether any of `ids` is stored as a CLAIM of a flagged world, erased or
+/// purged ones included.
 fn stored_claim_among(
     vault: &Vault,
     flagged: &BTreeSet<EntityId>,
@@ -175,9 +246,7 @@ fn stored_claim_among(
 ) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
     for id in ids {
-        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, &id)?
-            .is_some_and(|raw| claim_in(&raw, flagged))
-        {
+        if crate::settings::device_only_claim(&vault.store, &rtxn, flagged, &id)? {
             return Ok(true);
         }
     }

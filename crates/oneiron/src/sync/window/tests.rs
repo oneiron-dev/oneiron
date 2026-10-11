@@ -4238,7 +4238,8 @@ fn base_window_carrying_an_edge_to_a_device_only_claim_is_withheld_whole() -> Re
 
 /// A flagged world's claim written into a base window and removed again still
 /// sits in the window's Loro history: the base export ships only what the
-/// window holds now, never that insertion.
+/// window holds now, never that insertion, to an empty receiver or to one
+/// that already held the window.
 #[test]
 fn base_window_history_never_ships_a_removed_device_only_claim() -> Result<()> {
     let (_dir, vault) = test_vault();
@@ -4246,6 +4247,7 @@ fn base_window_history_never_ships_a_removed_device_only_claim() -> Result<()> {
     let month = WindowKey::new("2026-03");
     let base = create_window_doc("base", &month);
     reverse_rematerialize(&vault, &base, &month)?;
+    let holder = exported_to_empty_receiver(&vault, &month, &base)?;
     let key = fx.private_claim.to_hex();
     let entities = base.get_map("entities");
     map_insert_bytes(&entities, &key, &vault.get_raw(&fx.private_claim)?.unwrap())?;
@@ -4260,19 +4262,24 @@ fn base_window_history_never_ships_a_removed_device_only_claim() -> Result<()> {
             .get(&fx.person.to_hex())
             .is_some()
     );
-    let history =
-        received.export_json_updates(&loro::VersionVector::default(), &received.oplog_vv());
-    assert!(
-        !history
-            .changes
-            .iter()
-            .flat_map(|change| &change.ops)
-            .any(|op| matches!(
-                &op.content,
-                loro::json::JsonOpContent::Map(loro::json::MapOp::Insert { key: inserted, .. })
-                    if &**inserted == key.as_str()
-            ))
-    );
+    import_doc(
+        &holder,
+        &export_window_updates_since(&vault, &month, &base, &holder.oplog_vv().encode())?,
+    )?;
+    for doc in [&received, &holder] {
+        let history = doc.export_json_updates(&loro::VersionVector::default(), &doc.oplog_vv());
+        assert!(
+            !history
+                .changes
+                .iter()
+                .flat_map(|change| &change.ops)
+                .any(|op| matches!(
+                    &op.content,
+                    loro::json::JsonOpContent::Map(loro::json::MapOp::Insert { key: inserted, .. })
+                        if &**inserted == key.as_str()
+                ))
+        );
+    }
     Ok(())
 }
 

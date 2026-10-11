@@ -383,7 +383,9 @@ pub(super) fn scrub_redacted_attribution_carriers(
 /// The peer VV is still decoded first so malformed-VV requests never become a
 /// full-export fallback. A window of a world flagged device-only, or one
 /// carrying such a world's claim or an edge naming one, ships nothing,
-/// against the flag as it stands now.
+/// against the flag as it stands now. So does a delta that inserts one, to a
+/// receiver that already holds part of the window; an empty receiver gets
+/// the history-free snapshot.
 pub fn export_window_updates_since(
     vault: &Vault,
     key: &WindowKey,
@@ -396,7 +398,7 @@ pub fn export_window_updates_since(
             source,
         })
     })?;
-    if super::device_only::window_withheld(vault, key, doc)? {
+    if super::device_only::export_withheld(vault, key, doc, &remote)? {
         return super::device_only::withheld_window_update();
     }
     crate::sync::note::refresh(vault, doc, key)?;
@@ -408,7 +410,8 @@ pub fn export_window_updates_since(
     if scrubbed
         || history_free_window_required(vault, key)?
         || doc.is_shallow()
-        || super::device_only::delta_carries_device_only(vault, doc, &remote)?
+        || (remote.is_empty()
+            && super::device_only::delta_carries_device_only(vault, doc, &remote)?)
     {
         export_history_free_window_snapshot(doc)
     } else {
@@ -433,7 +436,7 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
             source,
         })
     })?;
-    if super::device_only::window_withheld(vault, key, doc)? {
+    if super::device_only::export_withheld(vault, key, doc, &remote)? {
         return super::device_only::withheld_window_update();
     }
     crate::sync::note::refresh(vault, doc, key)?;
@@ -443,7 +446,8 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
     let scrubbed = secret_scrubbed || claims_scrubbed || withdrawn_scrubbed;
     if scrubbed
         || history_free_window_required(vault, key)?
-        || super::device_only::delta_carries_device_only(vault, doc, &remote)?
+        || (remote.is_empty()
+            && super::device_only::delta_carries_device_only(vault, doc, &remote)?)
     {
         export_history_free_window_snapshot(doc)
     } else {

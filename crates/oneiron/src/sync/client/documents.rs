@@ -76,19 +76,14 @@ impl SyncClient {
                     )
                     .into_result()?,
                 ];
-                let withheld = self
-                    .vault
-                    .store
-                    .env
-                    .read_txn()
-                    .map_err(crate::Error::from)
-                    .and_then(|txn| {
-                        crate::sync::documents::text_withheld(&self.vault, &txn, frame.entity)
-                    })
-                    .map_err(storage)?;
-                if !withheld {
-                    out.extend(doc.pending_frames().map_err(storage)?);
-                }
+                // Text a device-only world keeps here stays journaled; each
+                // reply loop asks again right before its send.
+                out.extend(
+                    doc.pending_frames()
+                        .map_err(storage)?
+                        .into_iter()
+                        .filter(|frame| !self.document_frame_withheld(frame)),
+                );
                 Ok(out)
             }
             _ => Err(TransportError::InvalidPayload(

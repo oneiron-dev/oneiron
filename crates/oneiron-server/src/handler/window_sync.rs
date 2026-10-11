@@ -180,12 +180,12 @@ pub(super) async fn handle_window_sync(
             // diff back — this is what makes the exchange bidirectional. A
             // window withheld as device-only names only what both sides hold,
             // so a client that sent all it has still sees convergence.
+            let remote = VersionVector::decode(payload)
+                .map_err(|_| ProtocolError::InvalidPayload("invalid version vector"))?;
             let mut vv = doc.oplog_vv();
-            if oneiron::sync::window::window_withheld(server.vault.as_ref(), &key, &doc)
+            if oneiron::sync::window::export_withheld(server.vault.as_ref(), &key, &doc, &remote)
                 .map_err(map_delta_export_err)?
             {
-                let remote = VersionVector::decode(payload)
-                    .map_err(|_| ProtocolError::InvalidPayload("invalid version vector"))?;
                 vv = vv.intersection(&remote);
             }
             let vv_response = protocol::encode_window_sync(
@@ -273,9 +273,7 @@ pub(super) async fn handle_window_sync(
 
             // A world flagged device-only on this server stays here, even as
             // another device's relayed update.
-            if !oneiron::sync::window::update_withheld(server.vault.as_ref(), &key, &doc, update)
-                .map_err(map_delta_export_err)?
-            {
+            if !crate::server::withheld_from_peers(&server.reassert_manager, window_key, update) {
                 let broadcast_msg =
                     protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
                         .into_result()

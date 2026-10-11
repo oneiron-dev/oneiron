@@ -230,19 +230,7 @@ pub fn admit_promoted_window_update(
     }
     let operations =
         candidate.export_json_updates(&metadata.partial_start_vv, &metadata.partial_end_vv);
-    let expected = metadata
-        .partial_end_vv
-        .iter()
-        .try_fold(0_usize, |sum, (peer, end)| {
-            let start = metadata.partial_start_vv.get(peer).copied().unwrap_or(0);
-            sum.checked_add(usize::try_from(end.checked_sub(start)?).ok()?)
-        });
-    let inspected = operations
-        .changes
-        .iter()
-        .flat_map(|change| &change.ops)
-        .try_fold(0_usize, |sum, op| sum.checked_add(op.content.op_len()));
-    if expected.is_none() || expected != inspected {
+    if !super::loro_support::json_covers_blob(&operations, &metadata) {
         return Err(malformed());
     }
     let entities = ContainerID::new_root("entities", ContainerType::Map);

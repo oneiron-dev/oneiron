@@ -159,7 +159,12 @@ impl SyncConnection {
                 Some(Ok(Message::Binary(data))) => {
                     match client.handle_server_message(&data) {
                         Ok(responses) => {
-                            for resp in responses {
+                            // Judged per frame: a device-only flag may turn while an
+                            // earlier frame waits on the socket.
+                            for resp in responses
+                                .into_iter()
+                                .filter(|frame| !client.document_frame_withheld(frame))
+                            {
                                 write
                                     .send(Message::Binary(resp.into()))
                                     .await

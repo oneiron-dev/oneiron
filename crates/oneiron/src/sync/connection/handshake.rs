@@ -1,6 +1,6 @@
 //! Handshake: run loop, connect_and_sync, overflow check, resync markers.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
@@ -11,8 +11,10 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
+use crate::sync::queue::QueuedUpdate;
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
+use crate::sync::window::UpdateVerdict;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
 use super::session::{FullResyncMarker, WsSink, WsSource, residence_update_frame};
@@ -239,7 +241,12 @@ impl SyncConnection {
                     let responses = client
                         .handle_server_message(&data)
                         .map_err(|e| format!("Handle server message failed: {e}"))?;
-                    for resp in responses {
+                    // Judged per frame: a device-only flag may turn while an
+                    // earlier frame waits on the socket.
+                    for resp in responses
+                        .into_iter()
+                        .filter(|frame| !client.document_frame_withheld(frame))
+                    {
                         write
                             .send(Message::Binary(resp.into()))
                             .await
@@ -267,7 +274,12 @@ impl SyncConnection {
                                 let responses = client
                                     .handle_server_message(&data)
                                     .map_err(|e| format!("Handle server message failed: {e}"))?;
-                                for resp in responses {
+                                // Judged per frame: a device-only flag may turn while an
+                                // earlier frame waits on the socket.
+                                for resp in responses
+                                    .into_iter()
+                                    .filter(|frame| !client.document_frame_withheld(frame))
+                                {
                                     write
                                         .send(Message::Binary(resp.into()))
                                         .await
@@ -330,15 +342,7 @@ impl SyncConnection {
         }
 
         // Phase 3: Drain offline queue
-        let mut queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
-        // Bytes queued while a world was portable stay here once it is
-        // flagged device-only; its window's next export reads the flag.
-        let mut held = BTreeMap::new();
-        queued.retain(|update| {
-            !*held
-                .entry(update.window_key.clone())
-                .or_insert_with(|| client.window_withheld(&update.window_key).unwrap_or(true))
-        });
+        let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
         let full_resync_markers = self.full_resync_markers()?;
         let force_resync: BTreeSet<String> = full_resync_markers
             .iter()
@@ -374,13 +378,15 @@ impl SyncConnection {
                         update.window_key, update.seq
                     )));
                 }
-                // The flag may turn between the filter above and this send,
-                // and the bytes may insert a carrier the live window lost.
-                if client
-                    .update_withheld(&update.window_key, &update.encoded)
-                    .unwrap_or(true)
-                {
-                    continue;
+                // Bytes queued while a world was portable stay here once it
+                // is flagged device-only; the window's next export reads the
+                // flag again. Bytes that cannot be read in full keep their
+                // row and every later one queued: nothing past them is sent,
+                // so no clear reaches them.
+                match client.update_verdict(&update.window_key, &update.encoded) {
+                    UpdateVerdict::Portable => {}
+                    UpdateVerdict::Withheld => continue,
+                    UpdateVerdict::Uninspectable => break,
                 }
                 // Re-encode as WindowSync wire message
                 let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
@@ -405,7 +411,7 @@ impl SyncConnection {
             // ARCH-0023b Fig. 2 convergence dance. Any error here leaves the
             // queue intact (fail-closed) and surfaces as a connection failure.
             if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
-                self.wait_residence_acks(&mut write, &mut read, client)
+                self.wait_residence_acks(&mut write, &mut read, client, &sent)
                     .await?;
             } else {
                 self.run_convergence(
@@ -448,13 +454,17 @@ impl SyncConnection {
     }
 
     /// A home acknowledgment is sent only after persistence. A missing ACK
-    /// leaves every unconfirmed queue row intact for the next reconnect.
+    /// leaves every unconfirmed queue row intact for the next reconnect. The
+    /// wait ends once no row of `sent` is queued; a row never sent is never
+    /// acknowledged.
     async fn wait_residence_acks(
         &self,
         write: &mut WsSink,
         read: &mut WsSource,
         client: &mut SyncClient,
+        sent: &[QueuedUpdate],
     ) -> Result<(), String> {
+        let sent: BTreeSet<u64> = sent.iter().map(|update| update.seq).collect();
         let budgets = self
             .manager
             .vault()
@@ -464,11 +474,12 @@ impl SyncConnection {
         // Rows a device-only world keeps here were never sent.
         self.clear_residence_acks(client)?;
         tokio::time::timeout(Duration::from_millis(budgets.ack_timeout_ms), async {
-            while !self
+            while self
                 .queue
                 .drain_updates()
                 .map_err(|e| e.to_string())?
-                .is_empty()
+                .iter()
+                .any(|update| sent.contains(&update.seq))
             {
                 let message = read
                     .next()
@@ -479,6 +490,8 @@ impl SyncConnection {
                     for response in client
                         .handle_server_message(&data)
                         .map_err(|e| e.to_string())?
+                        .into_iter()
+                        .filter(|frame| !client.document_frame_withheld(frame))
                     {
                         write
                             .send(Message::Binary(response.into()))
