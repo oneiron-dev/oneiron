@@ -106,9 +106,9 @@ fn scoped_temporal_widening_stops_at_its_bound() -> Result<()> {
     Ok(())
 }
 
-/// A scoped call's widening trims; it never moves sigma. The adaptive rounds
-/// stop once the window can fill the request, with or without a widened
-/// scan, as an unscoped call's rounds do.
+/// A scoped call's widening trims; it never moves sigma. Sigma settles once
+/// the window can fill the request, with or without a widened scan, as an
+/// unscoped call's does.
 #[test]
 fn a_widened_temporal_scan_keeps_the_requests_sigma() -> Result<()> {
     use super::super::types::{EntityMetadataCache, TemporalSearchConfig};
@@ -161,6 +161,29 @@ fn a_widened_temporal_scan_keeps_the_requests_sigma() -> Result<()> {
     );
     // Same sigma, so the same scores for the rows both return.
     assert_eq!(&widened[..2], &requested[..]);
+    Ok(())
+}
+
+/// Rows outside a scope can fill the first window by themselves. A scoped
+/// call's window keeps growing until it could fill the widened rows, so the
+/// in-scope row ten days out is still found, as it was before the bound.
+#[test]
+fn a_scoped_temporal_window_grows_past_rows_its_scope_drops() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    // A month back, clear of the rows the vault seeds at its open.
+    let anchor = crate::unix_seconds_now() - 30 * 86_400;
+    let (outside, inside) = (entity_id(0xD1), entity_id(0xD2));
+    put_entity(&vault, outside, 2, anchor, anchor, anchor)?;
+    let back = anchor - 10 * 86_400;
+    put_entity(&vault, inside, 1, back, back, back)?;
+
+    let hits = vault
+        .query()
+        .search_temporal(anchor, anchor, 1)
+        .filter_types(&[1])
+        .limit(1)
+        .run()?;
+    assert_eq!(hits.iter().map(|hit| hit.id).collect::<Vec<_>>(), [inside]);
     Ok(())
 }
 

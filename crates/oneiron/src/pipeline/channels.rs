@@ -103,12 +103,15 @@ pub(super) fn execute_temporal(
     let learned_anchor_mid = midpoint(learned_anchor.0, learned_anchor.1);
 
     let range_width = effective_range_width(config.anchor_start, config.anchor_end);
-    // A scoped call scans and returns its widened rows; the rounds below
-    // widen sigma only until the window can fill the request.
+    // A scoped call scans and returns its widened rows. Its window grows
+    // until it can fill them, as an unscoped call's for that many rows would,
+    // but its rows are scored with the sigma the request settles on: the one
+    // in force once the window could fill the request.
     let rows = config.widened.unwrap_or(config.limit);
     let per_scan_cap = rows.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
 
     let mut sigma = sigma_initial;
+    let mut settled_sigma = None;
     let mut previous_radius = None;
     let mut candidates = HashSet::<EntityId>::new();
 
@@ -141,7 +144,10 @@ pub(super) fn execute_temporal(
 
         previous_radius = Some(radius);
 
-        if !config.adaptive || candidates.len() >= config.limit || round + 1 == ADAPTIVE_ROUNDS {
+        if settled_sigma.is_none() && candidates.len() >= config.limit {
+            settled_sigma = Some(sigma);
+        }
+        if !config.adaptive || candidates.len() >= rows || round + 1 == ADAPTIVE_ROUNDS {
             break;
         }
 
@@ -149,7 +155,7 @@ pub(super) fn execute_temporal(
     }
 
     let scoring = TemporalScoringContext {
-        sigma,
+        sigma: settled_sigma.unwrap_or(sigma),
         now,
         anchor_mid,
         learned_anchor,

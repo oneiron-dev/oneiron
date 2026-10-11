@@ -87,8 +87,8 @@ impl PipelineBuilder<'_> {
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
         )?);
-        // Widen the collector's scan caps and score truncation, not the
-        // request the adaptive rounds fill.
+        // Widen the collector's window, scan caps and score truncation, not
+        // the request sigma settles on.
         let mut scores = execute_temporal(
             &self.vault.store,
             rtxn,
