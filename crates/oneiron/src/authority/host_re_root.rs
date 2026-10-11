@@ -201,7 +201,7 @@ fn carried_by_live_root(
     let tip = trusted_machine_handoff(store, txn, target)?;
     for packet in verified_handoff_chain(store, txn, &tip, fold)? {
         if packet.previous_handoff_hash.is_some()
-            && packet.authority_head.as_slice() == carried_at
+            && *carried_at == packet.authority_head[..]
             && fold.valid_entries.contains(&packet.authority_head)
             && fold
                 .roster
