@@ -440,6 +440,10 @@ impl EsignSealer for HostedSealer<'_> {
             .with(ASK_IDENTITY, &identity)
             .with(ASK_SIGN, &sign)
             .with(ASK_NET_FETCH, &fetch);
+        let _publish = Publish {
+            asked: &self.asked,
+            handlers: &handlers,
+        };
         let args = to_value(&SealArgs {
             operation_id: request.operation_id.clone(),
             profile: request.profile,
@@ -458,14 +462,15 @@ impl EsignSealer for HostedSealer<'_> {
                 bytes: call.suffixes(),
             },
         ];
-        let outcome = self.host.call_with(
-            self.vault,
-            self.call(VERB_SEAL, SEAL_SCHEMA, args),
-            lent,
-            &handlers,
-        );
-        *self.asked.lock().unwrap_or_else(PoisonError::into_inner) = handlers.asked();
-        let outcome = outcome.map_err(host_failure)?;
+        let outcome = self
+            .host
+            .call_with(
+                self.vault,
+                self.call(VERB_SEAL, SEAL_SCHEMA, args),
+                lent,
+                &handlers,
+            )
+            .map_err(host_failure)?;
         let (evidence_sha256, requested, achieved, degraded, self_verify) =
             match from_value(&outcome.report)? {
                 SealReply::Failed(failure) => return Err(failure.into_error()),
@@ -559,6 +564,20 @@ impl AskHandler for Identity<'_> {
 /// by this call ([`SealCall::sign`]).
 struct Sign<'c> {
     call: &'c SealCall<'c>,
+}
+
+/// Puts a seal call's ask lines where [`HostedSealer::asked`] reads them,
+/// in place of the last call's, however the call ends: a handler's panic
+/// included, so a key that signed and then panicked leaves its prehash.
+struct Publish<'s, 'h> {
+    asked: &'s Mutex<Vec<AskReceipt>>,
+    handlers: &'s AskHandlers<'h>,
+}
+
+impl Drop for Publish<'_, '_> {
+    fn drop(&mut self) {
+        *self.asked.lock().unwrap_or_else(PoisonError::into_inner) = self.handlers.asked();
+    }
 }
 
 #[derive(Serialize)]

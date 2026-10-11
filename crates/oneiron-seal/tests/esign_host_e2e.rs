@@ -83,13 +83,16 @@ impl SealKeys for Keys {
     }
 }
 
-/// Keys whose signature is made but never comes back, as when a remote
-/// key's reply is lost.
-struct LostReply<'a>(&'a Keys);
+/// Keys whose signature is made but never comes back: a remote key's
+/// reply is lost, or the key's code panics after signing.
+struct LostReply<'a> {
+    keys: &'a Keys,
+    panics: bool,
+}
 
 impl SealKeys for LostReply<'_> {
     fn identity(&self, deadline: Instant) -> Result<SealIdentity, SealKeyError> {
-        self.0.identity(deadline)
+        self.keys.identity(deadline)
     }
 
     fn sign_prehash(
@@ -98,7 +101,8 @@ impl SealKeys for LostReply<'_> {
         digest: &[u8; 32],
         deadline: Instant,
     ) -> Result<Vec<u8>, SealKeyError> {
-        self.0.sign_prehash(operation, digest, deadline)?;
+        self.keys.sign_prehash(operation, digest, deadline)?;
+        assert!(!self.panics, "the key panicked after signing");
         Err(SealKeyError {
             detail: "the key's reply was lost".to_owned(),
             retryable: true,
@@ -561,38 +565,51 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     Ok(())
 }
 
-/// The key signs and its reply is lost. The seal fails, and every prehash
-/// the key signed is still on the receipt, with no signature (ARCH-0075:
-/// every prehash the key signs is in the receipt; Sol R7 on #1379).
+/// The key signs, then its reply is lost or its code panics. The seal
+/// fails, and every prehash the key signed is still on the receipt, with no
+/// signature (ARCH-0075: every prehash the key signs is in the receipt; Sol
+/// R7 and R9 on #1379).
 #[test]
 fn a_key_that_signs_and_then_fails_leaves_its_prehash_on_record() -> TestResult {
     let (keys, cert) = synthetic_keys()?;
-    let lost = LostReply(&keys);
-    let host = OrganHost::new(HostConfig::default());
-    host.install(seal_spec(ORGAN, FetchGrant::default()));
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::device())?;
-    let sealer = HostedSealer::new(&host, &vault, &lost, SealSettings::new(vec![cert], "seal"));
     let request = EsignSealRequest {
         operation_id: "op".to_owned(),
         profile: SealProfile::BaselineB,
     };
     let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-    assert!(sealer.seal(&input, &request).is_err());
-    let signed = keys.signed();
-    assert!(!signed.is_empty());
-    let receipts: Vec<_> = sealer
-        .asked()
-        .into_iter()
-        .filter(|line| line.verb == ASK_SIGN)
-        .filter_map(|line| line.signed)
-        .collect();
-    for prehash in &signed {
-        let receipt = receipts
-            .iter()
-            .find(|receipt| receipt.prehash == *prehash)
-            .ok_or("a prehash the key signed is not on record")?;
-        assert_eq!(receipt.signature_sha256, None);
+    for panics in [false, true] {
+        let lost = LostReply {
+            keys: &keys,
+            panics,
+        };
+        let host = OrganHost::new(HostConfig::default());
+        host.install(seal_spec(ORGAN, FetchGrant::default()));
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        let settings = SealSettings::new(vec![cert.clone()], "seal");
+        let sealer = HostedSealer::new(&host, &vault, &lost, settings);
+        let before = keys.signed().len();
+        let sealed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            sealer.seal(&input, &request)
+        }));
+        assert!(!matches!(sealed, Ok(Ok(_))), "panics: {panics}");
+        let signed = keys.signed()[before..].to_vec();
+        assert!(!signed.is_empty(), "panics: {panics}");
+        let receipts: Vec<_> = sealer
+            .asked()
+            .into_iter()
+            .filter(|line| line.verb == ASK_SIGN)
+            .filter_map(|line| line.signed)
+            .collect();
+        for prehash in &signed {
+            let receipt = receipts
+                .iter()
+                .find(|receipt| receipt.prehash == *prehash)
+                .ok_or_else(|| {
+                    format!("panics: {panics}: a prehash the key signed is not on record")
+                })?;
+            assert_eq!(receipt.signature_sha256, None);
+        }
     }
     Ok(())
 }
