@@ -113,6 +113,7 @@ impl Read {
             "recall" => {
                 let mut request: RecallRequest = params(value)?;
                 request.limit = Some(facade_limit(request.limit, 10)?);
+                oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;
                 Self::Recall(request)
             }
             _ => return Err(AppError::bad_request("unknown read RPC", Some("method"))),
@@ -122,6 +123,7 @@ impl Read {
     pub(super) fn run(
         self,
         server: &crate::server::SyncServer,
+        auth: &crate::auth::CoreAuth,
         memory: &Memory<'_>,
     ) -> Result<Value, AppError> {
         match self {
@@ -132,8 +134,11 @@ impl Read {
             Self::Receipts(limit) => result(memory.receipts(limit)),
             Self::ClaimList(filter) => result(memory.claim_list(&filter)),
             Self::ClaimHistory(claim_ref) => result(memory.claim_history(&claim_ref)),
+            // Its own reader, so a deadline can leave the read behind.
             Self::Recall(request) => {
-                result(crate::server::blocking(|| server.recall(memory, request)))
+                let (actor, class) = super::bound_reader(auth)?;
+                let proof = auth.verified_slip().cloned();
+                result(server.recall_at_sync_door(actor, class, proof, request))
             }
         }
     }

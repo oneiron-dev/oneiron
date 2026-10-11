@@ -10,6 +10,7 @@ use super::embedder::EmbedderConfig;
 use super::feedback::FeedbackConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
+use super::recall::RecallConfig;
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
 
@@ -232,6 +233,8 @@ pub struct ServeConfig {
     pub backup: BackupConfig,
     /// The `[feedback]` section: where the owner's feedback goes.
     pub feedback: FeedbackConfig,
+    /// The `[recall]` section: call mode's deadline.
+    pub recall: RecallConfig,
     /// The `[import]` section: the queue a running `serve` imports session
     /// logs from, off unless set.
     pub import: super::ImportConfig,
@@ -289,6 +292,7 @@ impl Default for ServeConfig {
             oneironer: None,
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
+            recall: RecallConfig::default(),
             import: super::ImportConfig::default(),
             models: None,
             // Hosting is opt-in: an operator must name the posture AND supply
@@ -347,6 +351,7 @@ impl fmt::Debug for ServeConfig {
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
+            .field("recall", &self.recall)
             .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
@@ -400,6 +405,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
             deployment: if self.privacy_posture == HostingPrivacyPosture::Hosted {
                 oneiron::config::failure_signals::DeploymentTier::Managed
