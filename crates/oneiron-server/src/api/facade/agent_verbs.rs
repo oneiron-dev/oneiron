@@ -587,12 +587,7 @@ async fn rooms_speak(
 
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
-    Ok(Json(facade_invoke(
-        &server,
-        &headers,
-        actor,
-        class,
-        "rooms.speak",
-        value,
-    )?))
+    let output = facade_invoke(&server, &headers, actor, class, "rooms.speak", value)?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(Json(output))
 }
