@@ -411,10 +411,12 @@ impl ScopedRead<'_> {
         // Inside a room turn a withheld row may be another room's or a peer's
         // private one; its count would say it exists, so it reads as absent.
         // A row outside the worlds the read asked for is not withheld by
-        // policy; scope honesty names its world instead. A TASK outside the
-        // credential's worlds or facets has no name and no count.
+        // policy; scope honesty names its world instead. A row in a world the
+        // credential cannot read has no name and no count (DEC-0005), and
+        // neither has a TASK outside the credential's worlds or facets.
         if self.actor_key.room_turn.is_none()
             && !self.outside_asked_worlds_in(txn, id, &row)?
+            && !self.outside_credential_worlds_in(txn, id, &row)?
             && !self.outside_credential_task_position_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
         {
@@ -478,6 +480,50 @@ impl ScopedRead<'_> {
             Some(view) => record_world_in(view, txn, *id, kind, data),
             None => record_world_in(&self.vault.store, txn, *id, kind, data),
         }
+    }
+
+    /// Whether the stored row `row` of `id` sits wholly outside the worlds
+    /// the read's verified credential grants: a claim at the position the
+    /// read door selects it; any other record where `record_world_in` places
+    /// it. A claim with no such position is judged by the other axes; a TASK
+    /// that cannot prove its world is outside.
+    fn outside_credential_worlds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &EntityRecord,
+    ) -> Result<bool> {
+        let Some(granted) = self.actor_key.authority_scope() else {
+            return Ok(false);
+        };
+        if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
+            return Ok(false);
+        }
+        // A TASK and its authority facts sit at their birth. Every other
+        // record that is not a claim is base reality, stamped or not: a row
+        // replayed with no stamp is no less outside a credential that cannot
+        // read base (Astra #1388b P2).
+        if row.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(self
+                .record_world_in(txn, id, row.entity_type, &row.body)?
+                .is_none_or(|world| {
+                    let world = world.unwrap_or_else(crate::claim::base_world_id);
+                    !granted.worlds.contains(&crate::federation::ScopeId(world))
+                }));
+        }
+        // A claim with no decodable world names none, as a read that asked
+        // for worlds judges it.
+        if crate::claim::decode_claim_body(&row.body, true).is_err() {
+            return Ok(true);
+        }
+        let record = crate::federation::record_scope::disclosure_scope_for_stored_row(
+            &self.vault.store,
+            txn,
+            *id,
+            row.entity_type,
+            &row.body,
+        )?;
+        Ok(record.is_some_and(|record| record.worlds.meet(&granted.worlds).is_bottom()))
     }
 
     pub(super) fn admit_entity_in(

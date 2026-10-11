@@ -190,6 +190,30 @@ impl Vault {
                 .collect(),
         )
     }
+    /// Where in `conversation`'s ledger the join that opened `person`'s
+    /// current membership sits, in the caller's snapshot; `None` when they
+    /// are not a member. Leaving and joining again opens a new membership,
+    /// so the answer moves.
+    pub(crate) fn current_join_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+    ) -> Result<Option<u64>> {
+        body::body_in(self, txn, conversation)?;
+        let mut current = None;
+        for (index, row) in (0_u64..).zip(rows_in(&self.store, txn, conversation)?) {
+            if row.person != person {
+                continue;
+            }
+            match row.action {
+                MembershipAction::Join => current = Some(index),
+                MembershipAction::Leave => current = None,
+                MembershipAction::History => {}
+            }
+        }
+        Ok(current)
+    }
     pub fn windows(
         &self,
         conversation: EntityId,
