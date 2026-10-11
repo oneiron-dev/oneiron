@@ -296,15 +296,21 @@ impl PipelineBuilder<'_> {
 
             #[cfg(test)]
             if text_channel_index.is_some() {
-                let hook = self
-                    .vault
-                    .test_hooks()
+                let hooks = self.vault.test_hooks();
+                let hook = hooks
                     .after_retrieval_text
                     .lock()
                     .expect("retrieval text hook")
                     .take();
                 if let Some(hook) = hook {
                     hook();
+                }
+                if hooks
+                    .cancel_deadline_after_retrieval_text
+                    .swap(false, std::sync::atomic::Ordering::Relaxed)
+                    && let Some(deadline) = self.deadline
+                {
+                    deadline.cancel();
                 }
             }
 

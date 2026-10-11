@@ -215,4 +215,8 @@ pub struct RecallExecution<'a> {
     /// partial. The door itself published the empty pack it answers with
     /// before then ([`crate::task_verb::sdk::RecallDoor`]).
     pub on_cut: Option<&'a (dyn Fn(crate::memory::MemoryPack) + Sync)>,
+    /// That empty pack. Its door answers with it, or with a later one
+    /// `on_cut` received, once the deadline comes; past the deadline the
+    /// recall stops at its next check and returns it.
+    pub door_fallback: Option<&'a crate::memory::MemoryPack>,
 }
