@@ -188,11 +188,62 @@ fn a_reaction_never_outranks_an_ordinary_memory_of_equal_relevance() {
     assert!(note_at < reaction_at, "{:?}", pack.items);
 }
 
+/// Puts `by`'s `glyph` on the room's message as the claim `Vault::react`
+/// writes, plus a `sensitivity: private` stamp. A first-party reaction is
+/// unstamped, and an unstamped claim is Tier A, which no contact clearance
+/// admits; the stamp leaves the reaction to the clearance's bands.
+fn react_private(room: &Room, by: EntityId, glyph: &str) {
+    let now = room.vault.store.clock.now_recorded_at();
+    let value = ReactionValue {
+        glyph: glyph.to_owned(),
+        occurred_at: now,
+        by,
+        external_id: None,
+    };
+    let envelope = crate::WriteEnvelope::new(
+        human(by),
+        crate::ClaimSource::UserStated,
+        crate::WriteProvenance::new(rmpv::Value::Map(vec![(
+            "kind".into(),
+            "conversation_reaction".into(),
+        )]))
+        .unwrap(),
+        crate::claim::ClaimApprovalStatus::Auto,
+    );
+    let id = EntityId::now();
+    room.vault
+        .batch()
+        .claim_candidate(
+            &id,
+            crate::ClaimCandidate::new(
+                PREDICATE_CONVERSATION_REACTION,
+                crate::claim::ClaimSubject::Entity(room.message),
+                value.to_value(),
+                1.0,
+            )
+            .with_salience(0.1)
+            .with_scope(rmpv::Value::Map(vec![(
+                "sensitivity".into(),
+                "private".into(),
+            )])),
+            &envelope,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .commit()
+        .unwrap();
+}
+
 /// A pack read under a disclosure clamp carries only the reaction data the
 /// clamp admits (Astra #1394 P2). Under a guest's bottom clearance no signal
 /// names the withheld message. A clearance that admits messages and turns
-/// but no claims leaves an admitted message without reaction lines. The
-/// owner alone gets both back through the same clamped doors.
+/// but no claims leaves an admitted message without reaction lines. A
+/// clearance that admits the stamped reactions' band gets their signals and
+/// lines back, as an unclamped read does, but never Alice's unstamped
+/// (Tier A) one.
 #[test]
 fn reactions_ride_the_packs_disclosure_clamp() {
     use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyFirstTouch};
@@ -201,7 +252,15 @@ fn reactions_ride_the_packs_disclosure_clamp() {
     use crate::interlocutor::{Interlocutor, InterlocutorSet};
     use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 
-    let room = reacted_room();
+    let room = room();
+    for by in [room.bob, room.dave, room.erin] {
+        react_private(&room, by, "👍");
+    }
+    react_private(&room, room.bob, "🎉");
+    room.vault
+        .remove_reaction(room.message, room.dave, "👍", human(room.dave))
+        .unwrap();
+    react(&room, room.alice, "🎉");
     let contact = EntityId::now();
     let introduced =
         CounterpartyContactRecord::user_introduction(EntityId::now(), "guest@example.com", 10)
@@ -257,9 +316,11 @@ fn reactions_ride_the_packs_disclosure_clamp() {
             .get(REACTIONS_FIELD)
             .cloned()
     };
-    let expected = Some(serde_json::json!(["👍×2 (Bob, Erin)", "🎉×1 (Bob)"]));
     assert_eq!(readable(None), signals.len());
-    assert_eq!(lines(None), expected);
+    assert_eq!(
+        lines(None),
+        Some(serde_json::json!(["👍×2 (Bob, Erin)", "🎉×2 (Bob, Alice)"]))
+    );
 
     let bottom = clamp(None, 0);
     assert_eq!(readable(Some(&bottom)), 0);
@@ -272,7 +333,10 @@ fn reactions_ride_the_packs_disclosure_clamp() {
     );
     assert_eq!(readable(Some(&words)), 0);
     assert_eq!(lines(Some(&words)), None);
-    let alone = DisclosureContext::resolve(&room.vault, InterlocutorSet::owner_alone()).unwrap();
-    assert_eq!(readable(Some(&alone)), signals.len());
-    assert_eq!(lines(Some(&alone)), expected);
+    let all = clamp(Some(Scope::top()), 300);
+    assert_eq!(readable(Some(&all)), signals.len());
+    assert_eq!(
+        lines(Some(&all)),
+        Some(serde_json::json!(["👍×2 (Bob, Erin)", "🎉×1 (Bob)"]))
+    );
 }

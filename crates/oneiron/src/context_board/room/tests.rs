@@ -1095,7 +1095,15 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
         "the owner alone reads the summary"
     );
     let bound = host.for_room_turn(room).expect("open room turn");
-    assert_eq!(listed(&bound, "note.topic"), [note]);
+    assert_eq!(listed(&bound, "note.topic"), std::slice::from_ref(&note));
+    assert_eq!(
+        bound
+            .hydrate(&[note])
+            .expect("hydrate the note")
+            .value
+            .len(),
+        1
+    );
     assert!(listed(&bound, "conversation.summary").is_empty());
     assert!(
         bound
@@ -1104,12 +1112,9 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
             .value
             .is_none()
     );
-    assert!(
-        bound
-            .hydrate(&[summary_hex])
-            .expect("hydrate")
-            .value
-            .is_empty()
-    );
+    // A withheld hydrate is NOT_FOUND, and the refusal carries the receipt.
+    let refused = bound.hydrate(&[summary_hex]).expect_err("withheld hydrate");
+    assert_eq!(refused.code, crate::MEMORY_CODE_NOT_FOUND);
+    assert!(refused.read_receipt.is_some());
     Ok(())
 }
