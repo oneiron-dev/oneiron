@@ -13,7 +13,7 @@ use crate::write_envelope::{SourceLineage, WriteActor};
 
 use super::manifest_types::ConnectorClassPrecedence;
 use super::manifest_types::{
-    GateDecisionRetentionPolicy, PolicyManifestResolution, TeacherProbeRow,
+    GateDecisionRetentionPolicy, PolicyManifestResolution, SheetAnswerPrecedence, TeacherProbeRow,
 };
 use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
@@ -57,6 +57,43 @@ pub(crate) fn resolve_credential_lifetimes(
 
 // One fold per manifest row, in manifest order: splitting it would scatter one manifest.
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+/// What a resolution takes from the shipped manifest: its sheet-answer
+/// default and precedence. The shipped manifest is a constant of the build,
+/// so a store decodes it once and keeps these rows beside its handle.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ShippedPolicyRows {
+    sheet_answer_default_max_count: u64,
+    sheet_answer_precedence: SheetAnswerPrecedence,
+}
+
+fn shipped_policy_rows(store: &impl crate::store::ManifestDbs) -> Result<ShippedPolicyRows> {
+    if let Some(rows) = store.shipped_policy_rows().get() {
+        return Ok(*rows);
+    }
+    let shipped =
+        decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest()?).ok_or(
+            Error::InvariantViolation("shipped sheet-answer policy manifest invalid"),
+        )?;
+    let default_max_count = shipped
+        .sheet_answer_limits
+        .iter()
+        .find(|row| row.artifact_ref.is_none() && row.sheet.is_none())
+        .map(|row| row.max_count);
+    let (Some(sheet_answer_default_max_count), Some(sheet_answer_precedence)) =
+        (default_max_count, shipped.sheet_answer_precedence)
+    else {
+        return Err(Error::InvariantViolation(
+            "shipped sheet-answer policy rows missing",
+        ));
+    };
+    Ok(*store
+        .shipped_policy_rows()
+        .get_or_init(|| ShippedPolicyRows {
+            sheet_answer_default_max_count,
+            sheet_answer_precedence,
+        }))
+}
+
 pub(crate) fn resolve_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -64,23 +101,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     // The shipped manifest supplies bootstrap policy even when a replacement
     // omits optional count rows; a peer cannot replace these trusted defaults.
-    let shipped =
-        decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest()?).ok_or(
-            Error::InvariantViolation("shipped sheet-answer policy manifest invalid"),
-        )?;
-    resolution.sheet_answer_default_max_count = shipped
-        .sheet_answer_limits
-        .iter()
-        .find(|row| row.artifact_ref.is_none() && row.sheet.is_none())
-        .map(|row| row.max_count);
-    resolution.sheet_answer_precedence = shipped.sheet_answer_precedence;
-    if resolution.sheet_answer_default_max_count.is_none()
-        || resolution.sheet_answer_precedence.is_none()
-    {
-        return Err(Error::InvariantViolation(
-            "shipped sheet-answer policy rows missing",
-        ));
-    }
+    let shipped = shipped_policy_rows(store)?;
+    resolution.sheet_answer_default_max_count = Some(shipped.sheet_answer_default_max_count);
+    resolution.sheet_answer_precedence = Some(shipped.sheet_answer_precedence);
     let mut untrusted_source_rows = Vec::new();
     let mut untrusted_teacher_rows = Vec::new();
     let mut untrusted_sheet_limits = Vec::new();

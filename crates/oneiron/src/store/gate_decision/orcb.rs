@@ -634,6 +634,19 @@ pub(super) fn is_orcb(raw: &[u8]) -> bool {
     raw.starts_with(MAGIC)
 }
 
+/// The claim an ORCB row is bound to, read from its header without the key.
+/// The header is authenticated only when the row is decrypted, so a reader
+/// that acts on the row decodes it in full.
+pub(super) fn header_claim_id(raw: &[u8]) -> Result<[u8; 16]> {
+    if !raw.starts_with(MAGIC)
+        || raw.len() < HEADER_LEN + 16
+        || !matches!(raw[4], VERSION | ROTATED_VERSION)
+    {
+        return Err(corrupt());
+    }
+    raw[5..21].try_into().map_err(|_| corrupt())
+}
+
 #[cfg(test)]
 mod tests {
     use sha2::{Digest, Sha256};
