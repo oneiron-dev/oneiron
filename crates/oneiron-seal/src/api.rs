@@ -55,6 +55,33 @@ pub struct SignDigestRequest {
     pub digest: Sha256Digest,
 }
 
+/// One signature over a signature revision's signed attributes. `digest`
+/// is SHA-256 over `signed_attributes_der` under the universal `SET OF`
+/// tag, as in [`SignDigestRequest`]. The rest lets a signer across a trust
+/// boundary recompute that hash from a revision it wrote itself, rather
+/// than sign the one it is given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignRevisionRequest {
+    pub operation_id: String,
+    /// The revision's index among those the caller supplied
+    /// ([`PreparedRevision`]); `None` for a revision the engine wrote.
+    pub revision_id: Option<u32>,
+    pub byte_range: [u64; 4],
+    /// The `[0] IMPLICIT` signed attributes, as the CMS carries them.
+    pub signed_attributes_der: Vec<u8>,
+    pub digest: Sha256Digest,
+}
+
+/// A signature revision the caller wrote: the prepared input followed by
+/// `suffix` is the whole revision, its `/Contents` hole all ASCII zeros,
+/// and `byte_range` leaves out exactly that hole. The engine fills the hole
+/// and writes no PDF object of its own into the revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreparedRevision<'a> {
+    pub suffix: &'a [u8],
+    pub byte_range: [u64; 4],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendSignature {
     RsaPkcs1v15 { bytes: Vec<u8> },
@@ -96,6 +123,22 @@ pub trait SealBackend: Send + Sync {
         &self,
         request: SignDigestRequest,
     ) -> Result<BackendSignature, BackendError>;
+
+    /// Signs one signature revision. The default signs `request.digest`
+    /// through [`Self::sign_digest`]; a backend whose key sits across a
+    /// trust boundary sends the rest, so the key's holder computes the hash
+    /// it signs.
+    async fn sign_revision(
+        &self,
+        request: SignRevisionRequest,
+    ) -> Result<BackendSignature, BackendError> {
+        self.sign_digest(SignDigestRequest {
+            operation_id: request.operation_id,
+            digest_algorithm: DigestAlgorithm::Sha256,
+            digest: request.digest,
+        })
+        .await
+    }
 }
 
 /// Bound for `operation_id` (§4): opaque, non-empty, at most this many UTF-8

@@ -18,14 +18,16 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
+use std::sync::{
+    Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, TryLockError,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
-    PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame, recv_frame_until, send_frame_until,
-    spin,
+    PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled, recv_frame_until, send_frame_if,
+    send_frame_until, spin,
 };
 
 use crate::asks::{AskStep, CallAsks};
@@ -48,6 +50,8 @@ struct Pending {
     deliver: SyncSender<Delivery>,
     /// An ask of this call waits for its answer.
     asking: bool,
+    /// A revocation is cancelling the call: no answer of it starts now.
+    revoked: bool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -55,8 +59,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Waits for `mutex` until `deadline`, so a stuck holder cannot hold a
-/// caller past its own deadline.
-fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T>> {
+/// caller past its own deadline; `None` then, or as soon as `give_up` says
+/// the wait is for nothing.
+fn lock_until<T>(
+    mutex: &Mutex<T>,
+    deadline: Instant,
+    give_up: impl Fn() -> bool,
+) -> Option<MutexGuard<'_, T>> {
     let mut pause = Duration::from_micros(20);
     loop {
         match mutex.try_lock() {
@@ -65,7 +74,7 @@ fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T
             Err(TryLockError::WouldBlock) => {}
         }
         let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
+        if left.is_zero() || give_up() {
             return None;
         }
         thread::sleep(pause.min(left));
@@ -112,19 +121,21 @@ impl Inbox {
         call.deliver.try_send(Delivery::Ask(ask)).is_ok()
     }
 
-    /// The call's ask is being answered; its next one may come. `false`,
-    /// and nothing changes, once the call is no longer in flight.
-    fn answered(&self, id: u64) -> bool {
-        lock(&self.pending).get_mut(&id).is_some_and(|call| {
-            call.asking = false;
-            true
-        })
-    }
-
     /// Whether call `id` still waits for its reply: the reader takes its
     /// entry when the reply comes or the process ends.
     fn in_flight(&self, id: u64) -> bool {
         lock(&self.pending).contains_key(&id)
+    }
+
+    /// Holds the calls in flight while call `id` is one of them and no
+    /// revocation has marked it: no reply or ask is routed, and no
+    /// revocation marks it, until the guard drops.
+    fn holding_answerable(&self, id: u64) -> Option<MutexGuard<'_, HashMap<u64, Pending>>> {
+        let pending = lock(&self.pending);
+        pending
+            .get(&id)
+            .is_some_and(|call| !call.revoked)
+            .then_some(pending)
     }
 }
 
@@ -251,6 +262,9 @@ impl Drop for Seated<'_> {
 enum Overrun {
     /// The handler returned before the deadline.
     InTime,
+    /// The deadline passed after the reader had taken the call's entry, for
+    /// its reply or as the process ended: nothing was cancelled.
+    Ended,
     /// The deadline passed and the call was cancelled; within the grace
     /// the reader took the call's entry, for its reply or as the process
     /// ended.
@@ -281,11 +295,56 @@ pub(crate) enum CallFailure {
     Ended(HostError),
 }
 
+/// The call grants a host has withdrawn. A revocation is recorded by a
+/// write, and an answer's first byte goes under a read
+/// ([`Grant::holding_unrevoked`]), so each revocation comes either before
+/// the answer's check or after that byte.
+#[derive(Debug, Default)]
+pub(crate) struct Revocations(RwLock<HashSet<String>>);
+
+impl Revocations {
+    pub(crate) fn record(&self, grant: &str) {
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(grant.to_owned());
+    }
+
+    pub(crate) fn contains(&self, grant: &str) -> bool {
+        self.read().contains(grant)
+    }
+
+    fn read(&self) -> Unrevoked<'_> {
+        self.0.read().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+type Unrevoked<'a> = RwLockReadGuard<'a, HashSet<String>>;
+
+/// A call's grant, as the host's revocations see it.
+#[derive(Clone, Copy)]
+pub(crate) struct Grant<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) revocations: &'a Revocations,
+}
+
+impl<'a> Grant<'a> {
+    fn revoked(self) -> bool {
+        self.revocations.contains(self.name)
+    }
+
+    /// A read of the revocations while this grant is not among them: none
+    /// is recorded until it drops.
+    fn holding_unrevoked(self) -> Option<Unrevoked<'a>> {
+        let revoked = self.revocations.read();
+        (!revoked.contains(self.name)).then_some(revoked)
+    }
+}
+
 /// How a call waits for its reply: until `deadline`, answering asks
 /// through `asks`, then `grace` for a cancel to take.
 pub(crate) struct Wait<'a, 'b> {
-    /// Whether the call's grant was withdrawn.
-    pub(crate) revoked: &'a dyn Fn() -> bool,
+    pub(crate) grant: Grant<'a>,
     pub(crate) asks: &'a mut CallAsks<'b>,
     pub(crate) deadline: Instant,
     pub(crate) grace: Duration,
@@ -304,15 +363,18 @@ fn wait_reply(reply: &mpsc::Receiver<Delivery>, grace: Duration, asks: &mut Call
     }
 }
 
-/// Whether a call whose entry the reader has taken got its reply, rather
-/// than the process ending. Never waits long: the entry held the only
+/// The reply of a call whose entry the reader has taken; `None` when the
+/// process ended instead. Never waits long: the entry held the only
 /// sender, and the reader drops it right after delivering.
-fn replied(reply: &mpsc::Receiver<Delivery>, asks: &mut CallAsks<'_>) -> bool {
+fn taken(
+    reply: &mpsc::Receiver<Delivery>,
+    asks: &mut CallAsks<'_>,
+) -> Option<(Reply, Vec<OwnedFd>)> {
     loop {
         match reply.recv() {
-            Ok(Delivery::Reply(..)) => return true,
+            Ok(Delivery::Reply(reply, fds)) => return Some((reply, fds)),
             Ok(Delivery::Ask(ask)) => asks.skipped(&ask),
-            Ok(Delivery::Closed) | Err(_) => return false,
+            Ok(Delivery::Closed) | Err(_) => return None,
         }
     }
 }
@@ -356,6 +418,10 @@ impl OrganProcess {
         let own = started + config.handshake_timeout;
         let handshake_by = deadline.map_or(own, |deadline| deadline.min(own));
         let (ours, theirs) = UnixStream::pair()?;
+        // Nonblocking for its whole life, and so for its clones: a timed
+        // send needs it (macOS ignores MSG_DONTWAIT while a send waits for
+        // room), and the reader waits in poll(2) instead.
+        ours.set_nonblocking(true)?;
         let reader = ours.try_clone()?;
         let shutdown = ours.try_clone()?;
         let mut command = Command::new(&spec.program);
@@ -414,6 +480,12 @@ impl OrganProcess {
         self.inbox.alive.load(Ordering::SeqCst)
     }
 
+    /// Whether the organ has exited, whether or not the reader has seen
+    /// its socket close yet. It looks without reaping.
+    pub(crate) fn exited(&self) -> bool {
+        self.lifeline.exited()
+    }
+
     /// Whether the process may still run, even with its socket closed: only
     /// `end` makes this false. Waits for an `end` in progress.
     pub(crate) fn is_running(&self) -> bool {
@@ -467,14 +539,13 @@ impl OrganProcess {
     /// the organ's asks through `asks` as they come; then cancels, waits
     /// `grace`, and kills the process if it still has not answered.
     ///
-    /// The process is marked as holding `grant` before `revoked` is asked,
-    /// and a revocation records itself before it looks for holders, so one
-    /// of the two always sees the other.
+    /// The process is marked as holding the call's grant before the grant
+    /// is checked, and a revocation records itself before it looks for
+    /// holders, so one of the two always sees the other.
     pub(crate) fn call(
         &self,
         mut call: Call,
         fds: &[BorrowedFd<'_>],
-        grant: &str,
         wait: Wait<'_, '_>,
     ) -> Result<(Reply, Vec<OwnedFd>), CallFailure> {
         self.take_seat(wait.deadline)?;
@@ -485,6 +556,7 @@ impl OrganProcess {
         let pending = Pending {
             deliver,
             asking: false,
+            revoked: false,
         };
         lock(&self.inbox.pending).insert(id, pending);
         let _seated = Seated {
@@ -492,18 +564,18 @@ impl OrganProcess {
             id,
             grace: wait.grace,
         };
-        lock(&self.grants).insert(grant.to_owned());
         let Wait {
-            revoked,
+            grant,
             asks,
             deadline,
             grace,
         } = wait;
-        let result = if revoked() {
+        lock(&self.grants).insert(grant.name.to_owned());
+        let result = if grant.revoked() {
             Err(CallFailure::Revoked)
         } else {
             let wait = Wait {
-                revoked,
+                grant,
                 asks: &mut *asks,
                 deadline,
                 grace,
@@ -537,7 +609,7 @@ impl OrganProcess {
         limit: u32,
         deadline: Instant,
     ) -> Result<(), FrameError> {
-        let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
+        let writer = lock_until(&self.writer, deadline, || false).ok_or(FrameError::Late)?;
         send_frame_until(&writer, msg, fds, limit, Some(deadline))
     }
 
@@ -547,31 +619,62 @@ impl OrganProcess {
     /// Once it holds the writer, it drops the answer if the call's grant was
     /// revoked or the call is no longer in flight. A revocation records
     /// itself before its cancel takes the writer, so an answer that waited
-    /// for the writer never follows its call's revoked cancel; and one never
-    /// goes after the reply the reader has already taken. (A reply the organ
-    /// sends while the answer is on its way crosses it, as an ask crosses a
-    /// cancel.)
+    /// for the writer never follows its call's revoked cancel. Either one,
+    /// while the answer still waits for the writer or at its deadline, drops
+    /// it there, so a call that has replied takes its reply, not a deadline.
+    /// The answer's first byte goes under the lock the reader routes replies
+    /// and asks under and `cancel_all` marks calls under, with the call
+    /// checked in flight and unmarked again, and under a read of the host's
+    /// revocations, with its grant checked unrevoked again. So an answer
+    /// never goes after the reply the reader has taken, nor once its call is
+    /// marked or its grant's revocation is recorded; one that waits for room
+    /// meanwhile is dropped when any of them comes. (A reply the organ sends
+    /// once the answer has started crosses it, as an ask crosses a cancel.)
     ///
-    /// The call may ask again only once this holds the writer, so a second
-    /// ask that comes while the answer waits for the writer still breaks the
-    /// protocol. It may ask again from the moment the answer starts out, not
+    /// The call may ask again from the moment that first byte leaves, not
     /// when the write returns: the organ can read the whole answer and ask
     /// again before this thread sees its write finish, so a check there
-    /// would end an organ that kept the rule.
+    /// would end an organ that kept the rule. An ask that comes before it,
+    /// while the answer waits for the writer or for room, still breaks the
+    /// protocol.
     fn send_answer(
         &self,
         id: u64,
         answer: &ToOrgan,
         fds: &[BorrowedFd<'_>],
         deadline: Instant,
-        revoked: &dyn Fn() -> bool,
+        grant: Grant<'_>,
     ) -> Result<bool, FrameError> {
-        let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
-        if revoked() || !self.inbox.answered(id) {
+        let dropped = || grant.revoked() || self.inbox.holding_answerable(id).is_none();
+        let Some(writer) = lock_until(&self.writer, deadline, dropped) else {
+            return if dropped() {
+                Ok(false)
+            } else {
+                Err(FrameError::Late)
+            };
+        };
+        if dropped() {
             return Ok(false);
         }
-        send_frame_until(&writer, answer, fds, self.max_call_frame, Some(deadline))?;
-        Ok(true)
+        // The first byte also holds a read of the host's revocations, taken
+        // only while the grant is not among them: recording a revocation
+        // waits for that byte. (Lock order: the writer, `pending`, the
+        // revocations.)
+        let still = || {
+            let pending = self.inbox.holding_answerable(id)?;
+            Some((pending, grant.holding_unrevoked()?))
+        };
+        let started = |held: &mut (MutexGuard<'_, HashMap<u64, Pending>>, Unrevoked<'_>)| {
+            if let Some(call) = held.0.get_mut(&id) {
+                call.asking = false;
+            }
+        };
+        let limit = self.max_call_frame;
+        match send_frame_if(&writer, answer, fds, limit, deadline, still, started) {
+            Ok(()) => Ok(true),
+            Err(FrameError::Withdrawn) => Ok(false),
+            Err(err) => Err(err),
+        }
     }
 
     /// Runs an ask's handler on this thread while a watchdog keeps the
@@ -606,9 +709,10 @@ impl OrganProcess {
     }
 
     /// Keeps call `id`'s deadline while one of its ask handlers runs. At
-    /// the deadline, or when the handler panics, it cancels the call; if
-    /// the organ has not replied when the grace ends, it stops the process.
-    /// It waits out the grace itself, whatever the handler does meanwhile.
+    /// the deadline, or when the handler panics, it cancels the call if it
+    /// is still in flight; if the organ has not replied when the grace ends,
+    /// it stops the process. It waits out the grace itself, whatever the
+    /// handler does meanwhile.
     fn watch(
         &self,
         id: u64,
@@ -623,6 +727,11 @@ impl OrganProcess {
             // The handler panicked: the call is over for its caller.
             Err(RecvTimeoutError::Disconnected) => CancelReason::Caller,
         };
+        // Settled before any cancel: a call the reader has taken has its
+        // reply queued (or its process ended), and there is nothing to cancel.
+        if !self.inbox.in_flight(id) {
+            return Overrun::Ended;
+        }
         let until = Instant::now() + grace;
         self.cancel(id, reason, until);
         loop {
@@ -655,7 +764,7 @@ impl OrganProcess {
         wait: Wait<'_, '_>,
     ) -> Result<(Reply, Vec<OwnedFd>), CallFailure> {
         let Wait {
-            revoked,
+            grant,
             asks,
             deadline,
             grace,
@@ -687,7 +796,7 @@ impl OrganProcess {
                     // already replied (the reader took the call's entry, and
                     // the reply waits behind this ask): run and answer
                     // nothing more. Past the deadline, the call is cancelled.
-                    if revoked() || !self.inbox.in_flight(id) {
+                    if grant.revoked() || !self.inbox.in_flight(id) {
                         asks.skipped(&ask);
                         continue;
                     }
@@ -702,9 +811,11 @@ impl OrganProcess {
                     }
                     match overrun {
                         Overrun::InTime => {}
+                        // The settle point below takes the reply.
+                        Overrun::Ended => break,
                         // A reply in the grace counts even if the organ then
                         // ended: its end is the reader's to report, as a crash.
-                        Overrun::Cancelled if replied(reply, asks) => {
+                        Overrun::Cancelled if taken(reply, asks).is_some() => {
                             return Err(CallFailure::Deadline { stopped: false });
                         }
                         Overrun::Cancelled | Overrun::Stopped => {
@@ -717,7 +828,7 @@ impl OrganProcess {
                         asks.unsent();
                         return Err(CallFailure::Crashed);
                     }
-                    if revoked() {
+                    if grant.revoked() {
                         asks.unsent();
                         continue;
                     }
@@ -731,7 +842,7 @@ impl OrganProcess {
                             let held: Vec<BorrowedFd<'_>> =
                                 region.iter().map(|region| region.fd()).collect();
                             let answer = ToOrgan::Answer(answer);
-                            let sent = self.send_answer(id, &answer, &held, deadline, revoked);
+                            let sent = self.send_answer(id, &answer, &held, deadline, grant);
                             if !matches!(sent, Ok(true)) {
                                 asks.unsent();
                             }
@@ -765,6 +876,13 @@ impl OrganProcess {
                 }
                 Err(RecvTimeoutError::Timeout) => break,
             }
+        }
+        // Past the deadline, by any cutoff above. The call fails on it only
+        // while it is still in flight: the reader queues a reply under the
+        // lock it takes the call under, so a call it has taken has its reply
+        // waiting, and that reply stands.
+        if !self.inbox.in_flight(id) {
+            return taken(reply, asks).ok_or(CallFailure::Crashed);
         }
         self.cancel(id, CancelReason::Deadline, Instant::now() + grace);
         if wait_reply(reply, grace, asks) {
@@ -807,9 +925,17 @@ impl OrganProcess {
         }
     }
 
-    /// Cancels every call in flight, as a revoked grant does.
+    /// Cancels every call in flight, as a revoked grant does. Each is first
+    /// marked revoked under the lock an answer's first byte goes under, so
+    /// an answer that has not started by then never does.
     pub(crate) fn cancel_all(&self, reason: CancelReason, deadline: Instant) {
-        let ids: Vec<u64> = lock(&self.inbox.pending).keys().copied().collect();
+        let ids: Vec<u64> = lock(&self.inbox.pending)
+            .iter_mut()
+            .map(|(id, call)| {
+                call.revoked = true;
+                *id
+            })
+            .collect();
         for id in ids {
             self.cancel(id, reason, deadline);
         }
@@ -939,11 +1065,13 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
 fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: u32) {
     loop {
         spin::poll_readable(stream);
-        match recv_frame::<FromOrgan>(stream, limit) {
+        match recv_frame_polled::<FromOrgan>(stream, limit) {
             Ok((FromOrgan::Reply(reply), fds)) => {
-                let waiter = lock(&inbox.pending).remove(&reply.id);
+                // Queued under the lock the call is taken under, so a call
+                // taken for its reply already has the reply waiting.
+                let mut pending = lock(&inbox.pending);
                 // A reply nobody waits for came after its deadline: drop it.
-                if let Some(waiter) = waiter {
+                if let Some(waiter) = pending.remove(&reply.id) {
                     let _ = waiter.deliver.try_send(Delivery::Reply(reply, fds));
                 }
             }

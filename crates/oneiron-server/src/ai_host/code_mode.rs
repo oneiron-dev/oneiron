@@ -25,7 +25,7 @@ use super::compaction::CodeModeCompaction;
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
 use crate::mcp::McpQuickJsProvider;
-use crate::models::{ModelRuntime, settle_answered};
+use crate::models::ModelRuntime;
 use crate::server::SyncServer;
 
 /// Binds `execute_code` on `server` when `models` asks for it and the
@@ -109,7 +109,7 @@ pub(super) async fn bind(
         determinism: CodeRunDeterminism::new(0, [0; CODE_RUN_RNG_SEED_LEN]),
         limits: EngineExecutorLimits::default(),
     };
-    let provider = match McpQuickJsProvider::new(Arc::new(component), backend, lease, config) {
+    let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider.with_clock_from_first_start(),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
@@ -182,16 +182,18 @@ fn code_checker(settings: &CodeCheckSettings) -> Result<Arc<dyn CodeCheck>, Chec
 
 /// Each executor step's model call, admitted like a chat turn against the
 /// vault's live model policy (its manifest and route, else the seat), then
-/// metered on code mode's own budget.
+/// sent as a run on code mode's own budget: each provider call takes its own
+/// permit and settles itself (its usage, or its reservation when it reports
+/// none or fails after it went out).
 struct CodeModeBackend {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
     guard: BudgetGuard,
 }
 
-/// What one provider call costs on the meter when it reports no usage: the
-/// reservation every call is admitted against.
-const CALL_FLOOR_UNITS: u64 = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
+/// The run each code-mode call is admitted under, one run per call so the
+/// server keeps no per-call state.
+const CODE_MODE_RUN: &str = "code-mode";
 
 impl LlmBackend for CodeModeBackend {
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
@@ -203,21 +205,10 @@ impl LlmBackend for CodeModeBackend {
                     tracing::warn!(%refusal, "a code-mode model call was refused");
                     LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
                 })?;
-            let lease = self.guard.admit_for_request(&call.request)?.lease;
-            // A call that failed made every attempt its backend makes.
-            let every_attempt = (call.attempts as u64).saturating_mul(CALL_FLOOR_UNITS);
-            match call.backend.generate(call.request, &lease).await {
-                Ok(response) => {
-                    settle_answered(&self.guard, &lease, &response.usage, CALL_FLOOR_UNITS)?;
-                    Ok(response)
-                }
-                Err(error) => {
-                    if let Err(denied) = self.guard.settle_usage(&lease, every_attempt) {
-                        tracing::error!(%denied, "a failed code-mode call's settlement was refused");
-                    }
-                    Err(error)
-                }
-            }
+            let run = self
+                .models
+                .undeclared_run(CODE_MODE_RUN, self.guard.clone());
+            call.ladder.generate(&run, call.request, None).await
         })
     }
 

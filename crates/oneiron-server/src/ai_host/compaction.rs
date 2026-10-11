@@ -30,13 +30,14 @@ use super::CHAT_ROLE;
 use super::status::{CompactionState, CompactionStatus, StatusCell};
 use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::mcp::McpQuickJsProvider;
-use crate::models::{ModelRuntime, RoleRefusal, settle_answered};
+use crate::models::{ModelRuntime, RoleRefusal};
 
 /// The registry key a run's memory profile names.
 const BACKEND_KEY: &str = "code-mode-compaction";
 
-/// What one provider call costs on the meter when it reports no usage.
-const CALL_FLOOR_UNITS: u64 = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
+/// The run each pass's model call is admitted under, one run per call so the
+/// server keeps no per-pass state.
+const COMPACTION_RUN: &str = "code-mode-compaction";
 
 /// Output room for the reply's JSON frame around a summary the provider's
 /// tokenizer may count up to twice as long as the engine's.
@@ -265,7 +266,10 @@ impl CompactionSpawn for ThreadSpawn {
 }
 
 /// A pass's model call: admitted on the configured role against the vault's
-/// live model policy, metered on code mode's budget.
+/// live model policy, then sent as a run on code mode's budget: each provider
+/// call takes its own permit, goes through the run's gate and settles itself
+/// (its usage, or its reservation when it reports none or fails after it went
+/// out).
 struct ServedCompactionBackend {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
@@ -401,26 +405,19 @@ impl CompactionBackend for ServedCompactionBackend {
         // one) is asked in plain text: the prompt asks for the same JSON, and
         // the gate's schema check refuses anything else.
         if !call
-            .backend
-            .supports(&call.request.model, LlmCapability::JsonResponse)
+            .ladder
+            .supports(&call.request.model, &LlmCapability::JsonResponse)
         {
             call.request.envelope.response_format = ResponseFormat::Text;
         }
-        let lease = self
-            .guard
-            .admit_for_request(&call.request)
-            .map_err(|denied| refused(CompactionSuppression::NoCredit, denied.to_string()))?
-            .lease;
-        // A call that failed made every attempt its backend makes.
-        let every_attempt = (call.attempts as u64).saturating_mul(CALL_FLOOR_UNITS);
+        let run = self
+            .models
+            .undeclared_run(COMPACTION_RUN, self.guard.clone());
         let reply = self
             .handle
-            .block_on(call.backend.generate(call.request, &lease));
+            .block_on(call.ladder.generate(&run, call.request, None));
         match reply {
             Ok(response) => {
-                settle_answered(&self.guard, &lease, &response.usage, CALL_FLOOR_UNITS).map_err(
-                    |denied| refused(CompactionSuppression::NoCredit, denied.to_string()),
-                )?;
                 let summary_text = response
                     .message
                     .content
@@ -437,9 +434,6 @@ impl CompactionBackend for ServedCompactionBackend {
                 })
             }
             Err(error) => {
-                if let Err(denied) = self.guard.settle_usage(&lease, every_attempt) {
-                    tracing::error!(%denied, "a failed compaction call's settlement was refused");
-                }
                 let suppression = match &error {
                     LlmError::Fatal(FatalLlmError::Auth) => CompactionSuppression::Auth,
                     LlmError::BudgetDenied(_) => CompactionSuppression::NoCredit,
