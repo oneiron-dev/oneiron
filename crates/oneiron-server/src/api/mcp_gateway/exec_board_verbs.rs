@@ -44,8 +44,13 @@ pub(crate) async fn execute_mcp_execute_code(
     // Revocation takes effect at once: a credential that died while its run
     // ran gets its own refusal, never the run's results or failure. The run's
     // durable record stays for a re-entry its credential admits.
-    super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
-    let outcome = outcome.map_err(|error| mcp_code_execution_error(&error))?;
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
+            return Err(mcp_code_execution_error(&error));
+        }
+    };
 
     let steps = outcome
         .replay_record
@@ -99,14 +104,18 @@ pub(crate) async fn execute_mcp_execute_code(
     if let Some(receipt) = &outcome.seat_receipt {
         structured["model_choice"] = json!(receipt);
     }
-    Ok(mcp_endpoint_result(
+    let result = mcp_endpoint_result(
         server,
         actor,
         "execute_code run recorded",
         structured,
         McpCarrierPolicy::Drain,
     )
-    .await)
+    .await;
+    // Checked after the result's last wait, so no wait parks the run's
+    // results past their credential's death.
+    super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
+    Ok(result)
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {

@@ -189,9 +189,10 @@ impl<'a> HostSelfDispatcher<'a> {
     ///
     /// # Errors
     ///
-    /// The door's refusal, or [`crate::Error::InvalidConfig`] for a refusal
-    /// spelled as a gate's outcome word: replay tells a door's refusal, which
-    /// the guest handles, from a gate's trap by that word alone.
+    /// A refusal spelled as a gate's outcome word is that gate's
+    /// [`crate::error::GateError::GateWriteRejected`]: replay tells a door's
+    /// refusal, which the guest handles, from a gate's, which halts the run's
+    /// bridge, by that word alone.
     pub(crate) fn admit_run_call(
         &self,
         call: RunCall,
@@ -201,12 +202,14 @@ impl<'a> HostSelfDispatcher<'a> {
         };
         let admitted = door.admit_run_call(call);
         if let Err(refusal) = &admitted
-            && crate::error::GateDenialOutcome::parse(&refusal.code).is_some()
+            && let Some(outcome) = crate::error::GateDenialOutcome::parse(&refusal.code)
         {
-            return Err(crate::Error::InvalidConfig(format!(
-                "a host door refused with the gate outcome word {:?}",
-                refusal.code
-            )));
+            return Err(crate::Error::Gate(
+                crate::error::GateError::GateWriteRejected {
+                    outcome: outcome.as_str(),
+                    reason_codes: Vec::new(),
+                },
+            ));
         }
         Ok(admitted)
     }

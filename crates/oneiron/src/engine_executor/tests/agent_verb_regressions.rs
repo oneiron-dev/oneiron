@@ -555,3 +555,109 @@ fn a_closed_door_speaks_no_trailing_bubble_until_it_opens() {
     assert_eq!(outcome.status, EngineExecutorStatus::Complete);
     assert_eq!(messages(), before + 1, "the retry delivers the kept intent");
 }
+
+/// A custom host door that refuses a run's search with a gate's own outcome
+/// word, `deny`, and admits the run's other calls.
+struct GateWordDoor;
+
+impl AgentVerbDoor for GateWordDoor {
+    fn call(
+        &self,
+        _: &SelfAgentVerbCall,
+        _: &HostWriteOrigin,
+    ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+        Err(AgentVerbRefusal {
+            code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+        })
+    }
+
+    fn admit_run_call(
+        &self,
+        call: RunCall,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        if call == RunCall::Bridge(SelfEffect::MemorySearch) {
+            return Err(AgentVerbRefusal {
+                code: "deny".to_owned(),
+            });
+        }
+        Ok(None)
+    }
+}
+
+/// One step whose guest catches each refused call and goes on, as a QuickJS
+/// guest catches `host_call_refused`.
+struct CatchingStep {
+    calls: Vec<SelfCall>,
+}
+
+impl JsCodeModeRuntime for CatchingStep {
+    fn run_step(
+        &mut self,
+        _step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> Result<JsCodeModeStepOutcome> {
+        for call in self.calls.clone() {
+            let _caught = host.dispatch_self(call);
+        }
+        Ok(JsCodeModeStepOutcome::complete(""))
+    }
+}
+
+/// Review repro (Sol R3, burn engine-prs-03): a door refused a run's search
+/// with `deny`, a gate's own outcome word. The host failed that call without
+/// recording it, the guest caught the failure and spoke, and the bubble
+/// committed one bridge position past a gap, so its step could not keep its
+/// checkpoint. A door's `deny` is now the gate's refusal: recorded where it
+/// fell, and the bridge halts after it as after any gate's.
+#[test]
+fn a_door_refusal_spelled_as_a_gate_word_halts_the_bridge_as_a_gate_does() {
+    let (_dir, vault) = open_test_vault();
+    let gated = gated_actor_write(&vault, "run-gate-word-door")
+        .with_agent_verb_door(Arc::new(GateWordDoor));
+    let config = executor_config(entity(0xEA), EngineExecutorLimits::default());
+    let backend = FixtureBackend::new(["await self.memory.search({query: 'heron lantern'});"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let messages = || {
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .len()
+    };
+    let before = messages();
+    let mut step = CatchingStep {
+        calls: vec![
+            SelfCall::MemorySearch(SelfMemorySearchCall::new("heron lantern", 4)),
+            SelfCall::Speak(SelfSpeechCall::new("still here")),
+        ],
+    };
+
+    let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut step, &gated);
+    let failed = block_on_ready(executor.run(&config)).expect_err("the step fails on the refusal");
+    drop(executor);
+    assert!(
+        matches!(
+            &failed,
+            EngineExecutorError::Engine(Error::Gate(GateError::GateWriteRejected {
+                outcome: "deny",
+                ..
+            }))
+        ),
+        "{failed}"
+    );
+    assert_eq!(messages(), before, "nothing is spoken past the refusal");
+    let record = vault
+        .get_code_run_replay_record(&config.run_id)
+        .expect("read the run's record")
+        .expect("the run's record");
+    assert_eq!(
+        record
+            .bridge_calls
+            .iter()
+            .map(|call| (call.seq, call.effect.as_str(), bridge_outcome_kind(call)))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, "self.memory.search", "denied"),
+            (1, "self.speak", "failed")
+        ]
+    );
+}
