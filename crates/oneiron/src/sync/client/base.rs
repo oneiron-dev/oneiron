@@ -202,15 +202,18 @@ impl SyncClient {
 
     /// Whether raw local bytes for window `key` stay on this device now: its
     /// world is flagged device-only, or the window carries such a world's
-    /// claim or an edge naming one. An unreadable window stays.
-    pub(crate) fn window_withheld(&self, key: &str) -> bool {
+    /// claim or an edge naming one. A window that cannot be opened is judged
+    /// by its key alone.
+    pub(crate) fn window_withheld(&self, key: &str) -> crate::Result<bool> {
         let Some(window_key) = WindowKey::try_new(key) else {
-            return false;
+            return Ok(false);
         };
-        self.ensure_window(key).ok().is_none_or(|window| {
-            crate::sync::window::window_withheld(&self.vault, &window_key, &window.doc)
-                .unwrap_or(true)
-        })
+        match self.manager.open_window(&window_key) {
+            Ok(window) => {
+                crate::sync::window::window_withheld(&self.vault, &window_key, &window.doc)
+            }
+            Err(_) => crate::sync::window::window_is_device_only(&self.vault, &window_key),
+        }
     }
 
     /// Returns the live window for `key` if loaded — registry lookup only,

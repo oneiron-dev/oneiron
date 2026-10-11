@@ -337,7 +337,7 @@ impl SyncConnection {
         queued.retain(|update| {
             !*held
                 .entry(update.window_key.clone())
-                .or_insert_with(|| client.window_withheld(&update.window_key))
+                .or_insert_with(|| client.window_withheld(&update.window_key).unwrap_or(true))
         });
         let full_resync_markers = self.full_resync_markers()?;
         let force_resync: BTreeSet<String> = full_resync_markers
@@ -360,7 +360,12 @@ impl SyncConnection {
                 queued_updates = queued.len(),
                 "replaying queued sync updates"
             );
-            for update in &queued {
+            let mut sent = Vec::with_capacity(queued.len());
+            for update in queued {
+                // The flag may turn between the filter above and this send.
+                if client.window_withheld(&update.window_key).unwrap_or(true) {
+                    continue;
+                }
                 // Mirror the queued ops into the LOCAL window doc first:
                 // convergence is confirmed by VV equality with the server,
                 // which only vouches for ops the local doc knows about
@@ -390,6 +395,7 @@ impl SyncConnection {
                     .send(Message::Binary(msg.into()))
                     .await
                     .map_err(|e| format!("Queue replay failed: {e}"))?;
+                sent.push(update);
             }
 
             // ARCH-0023b Fig. 2 convergence dance. Any error here leaves the
@@ -403,7 +409,7 @@ impl SyncConnection {
                     &mut read,
                     client,
                     event_tx,
-                    &queued,
+                    &sent,
                     &force_resync,
                 )
                 .await?;

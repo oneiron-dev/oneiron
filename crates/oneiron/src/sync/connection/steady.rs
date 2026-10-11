@@ -235,7 +235,7 @@ impl SyncConnection {
                     for (i, local_update) in pending.iter().enumerate() {
                         // A world flagged device-only since this commit keeps
                         // it; the window's next export reads the flag again.
-                        if client.window_withheld(&local_update.window_key) {
+                        if client.window_withheld(&local_update.window_key).unwrap_or(true) {
                             queued_count += usize::from(opened);
                             continue;
                         }

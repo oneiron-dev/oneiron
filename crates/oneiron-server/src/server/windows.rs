@@ -164,7 +164,7 @@ pub(super) fn attach_local_read_tee(
 /// Whether a raw window update stays on this server: its world was flagged
 /// device-only since the commit, or the window now carries such a world's
 /// claim. Read against the flag as it stands now; an unreadable window stays.
-pub(super) fn withheld_from_peers(manager: &Arc<WindowManager>, window_key: &str) -> bool {
+pub(crate) fn withheld_from_peers(manager: &Arc<WindowManager>, window_key: &str) -> bool {
     let Some(key) = WindowKey::try_new(window_key) else {
         return false;
     };

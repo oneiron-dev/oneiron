@@ -342,6 +342,7 @@ async fn handle_connection(
                         let subscribed_window = if data.first() == Some(&protocol::TAG_WINDOW_SYNC)
                         {
                             window_broadcast_allowed(protocol_version, &conn_state, &data)
+                                && !window_update_withheld(&server, &data)
                         } else {
                             should_forward_broadcast(protocol_version, &data)
                         };
@@ -426,6 +427,10 @@ async fn handle_connection(
                         Ok(frames) if frames.is_empty() => continue,
                         _ => break,
                     }
+                }
+                if window_update_withheld(&server, &data) {
+                    transport.app_jti = None;
+                    continue;
                 }
                 let sent = transport.send_binary(data).await;
                 transport.app_jti = None;
@@ -634,6 +639,22 @@ fn window_broadcast_allowed(
         }
         _ => false,
     }
+}
+
+/// Whether `frame` is a window UPDATE this server now withholds as
+/// device-only. Read at the socket, since the flag may turn after the frame
+/// was queued for this connection.
+fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
+    if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
+        return false;
+    }
+    frame
+        .get(1..)
+        .and_then(|payload| protocol::decode_window_sync(payload).ok())
+        .is_some_and(|(key, sub_tag, _)| {
+            sub_tag == protocol::window_sub_tags::UPDATE
+                && crate::server::withheld_from_peers(&server.reassert_manager, key)
+        })
 }
 
 pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> bool {

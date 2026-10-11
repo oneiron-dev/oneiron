@@ -294,6 +294,7 @@ fn scoped_export_withholds_rows_of_a_device_only_world() -> Result<()> {
     let private = entity(38);
     let portable = entity(39);
     vault.put_entity(&world, crate::registry::ENTITY_TYPE_WORLD, AT, 10, b"world")?;
+    vault.put_entity(&entity(31), ENTITY_TYPE_PERSON, AT, 10, b"subject")?;
     let mut in_world = body();
     in_world.world = Some(world);
     vault.put_claim(&private, &in_world, AT, 10)?;

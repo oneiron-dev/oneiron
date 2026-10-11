@@ -218,7 +218,10 @@ impl SyncConnection {
         let mut through = None;
         for queued in self.queue.drain_updates().map_err(|e| e.to_string())? {
             let Some(ack) = client.residence_acks.get(&queued.seq) else {
-                if client.window_withheld(&queued.window_key) {
+                if client
+                    .window_withheld(&queued.window_key)
+                    .map_err(|e| e.to_string())?
+                {
                     through = Some(queued.seq);
                     continue;
                 }

@@ -269,6 +269,7 @@ fn authorized_base_edge_endpoints(
     kept: &BTreeSet<EntityId>,
     selector: &SyncSelector,
     position: &Position,
+    withhold_device_only: bool,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -307,7 +308,14 @@ fn authorized_base_edge_endpoints(
                 Err(error) => return Err(error),
             };
             reverse_rematerialize(vault, &base, &base_key)?;
-            let selected = filter_window_doc(vault, &base, &base_key, selector, position, true)?;
+            let selected = filter_window_doc(
+                vault,
+                &base,
+                &base_key,
+                selector,
+                position,
+                withhold_device_only,
+            )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -650,7 +658,14 @@ pub(super) fn filter_window_doc(
     drop(rtxn);
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position)?
+        authorized_base_edge_endpoints(
+            vault,
+            &source_edges,
+            &kept,
+            selector,
+            position,
+            withhold_device_only,
+        )?
     } else {
         BTreeSet::new()
     };
