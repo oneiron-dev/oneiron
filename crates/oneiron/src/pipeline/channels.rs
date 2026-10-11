@@ -91,7 +91,10 @@ pub(super) fn execute_temporal(
     let learned_anchor_mid = midpoint(learned_anchor.0, learned_anchor.1);
 
     let range_width = effective_range_width(config.anchor_start, config.anchor_end);
-    let per_scan_cap = config.limit.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
+    // A scoped call scans and returns its widened rows; the rounds below
+    // widen sigma only until the window can fill the request.
+    let rows = config.widened.unwrap_or(config.limit);
+    let per_scan_cap = rows.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
 
     let mut sigma = sigma_initial;
     let mut previous_radius = None;
@@ -155,7 +158,7 @@ pub(super) fn execute_temporal(
     }
 
     sort_temporal_candidate_scores(&mut scored);
-    scored.truncate(config.limit);
+    scored.truncate(rows);
 
     Ok(scored
         .into_iter()
@@ -613,8 +616,9 @@ pub(super) fn scoped_vector_channel_limit(
     Ok(requested.max(crate::hnsw::hnsw_entity_count(store, rtxn)?))
 }
 
-/// The temporal channel's limit under a strict scope: widened to the entity
-/// count, as the other channels are, but at most [`temporal_widening_bound`].
+/// How many rows a temporal channel under a strict scope collects, scores
+/// and returns before the scope narrows them: the entity count, as for the
+/// other channels, but at most [`temporal_widening_bound`].
 /// Unbounded, every scoped recall reads, scores and sorts every row of the
 /// vault (ARCH-0004 #temporal-bound); bounded, its rankings may differ from
 /// that scan only past the bound.

@@ -144,6 +144,11 @@ pub(super) struct TemporalSearchConfig {
     pub(super) anchor_mode: TemporalAnchorMode,
     pub(super) adaptive: bool,
     pub(super) limit: usize,
+    /// A scoped call's widening: the rows the channel collects, scores and
+    /// returns before the scope narrows them to `limit`. The adaptive rounds
+    /// still stop once the window can fill `limit`, as an unscoped call's
+    /// do, so a scope never changes sigma. `None` means `limit`.
+    pub(super) widened: Option<usize>,
     /// Query-derived occurred restriction. Applied before temporal scan caps
     /// and score truncation; host-supplied temporal modes leave this unset.
     pub(super) query_occurred_range: Option<(u64, u64)>,

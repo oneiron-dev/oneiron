@@ -106,6 +106,63 @@ fn scoped_temporal_widening_stops_at_its_bound() -> Result<()> {
     Ok(())
 }
 
+/// A scoped call's widening trims; it never moves sigma. The adaptive rounds
+/// stop once the window can fill the request, with or without a widened
+/// scan, as an unscoped call's rounds do.
+#[test]
+fn a_widened_temporal_scan_keeps_the_requests_sigma() -> Result<()> {
+    use super::super::types::{EntityMetadataCache, TemporalSearchConfig};
+
+    let (_dir, vault) = open_test_vault();
+    let now = crate::unix_seconds_now();
+    // A month back, clear of the rows the vault seeds at its open.
+    let anchor = now - 30 * 86_400;
+    // Three rows within hours of the anchor fill a request for two; a row a
+    // year back keeps even the widest window from holding the whole vault.
+    for (byte, at) in [
+        (0xC5, anchor - 3_600),
+        (0xC6, anchor - 7_200),
+        (0xC7, anchor - 10_800),
+        (0xC8, anchor - 365 * 86_400),
+    ] {
+        put_entity(&vault, entity_id(byte), 1, at, at, at)?;
+    }
+    let config = |widened| TemporalSearchConfig {
+        anchor_start: anchor,
+        anchor_end: anchor,
+        learned_start: None,
+        learned_end: None,
+        sigma_secs: 86_400,
+        anchor_mode: TemporalAnchorMode::Auto,
+        adaptive: true,
+        limit: 2,
+        widened,
+        query_occurred_range: None,
+        effort_anchor: false,
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let run = |widened| {
+        super::super::channels::execute_temporal(
+            &vault.store,
+            &rtxn,
+            &config(widened),
+            now,
+            &mut EntityMetadataCache::default(),
+        )
+    };
+    let requested = run(None)?;
+    let widened = run(Some(1_000))?;
+    assert_eq!(requested.len(), 2);
+    assert_eq!(
+        widened.len(),
+        3,
+        "the widened scan returns every row in the window"
+    );
+    // Same sigma, so the same scores for the rows both return.
+    assert_eq!(&widened[..2], &requested[..]);
+    Ok(())
+}
+
 #[test]
 fn temporal_type_scope_does_not_spend_limit_on_excluded_hit() -> Result<()> {
     let (_dir, vault) = open_test_vault();

@@ -77,7 +77,7 @@ impl PipelineBuilder<'_> {
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<Vec<ScoredEntity>> {
         let mut scoped_config = config.clone();
-        scoped_config.limit = scoped_temporal_channel_limit(
+        scoped_config.widened = Some(scoped_temporal_channel_limit(
             &self.vault.store,
             rtxn,
             config.limit,
@@ -86,8 +86,9 @@ impl PipelineBuilder<'_> {
                 || filters.corpus_scope != &CorpusScope::All
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
-        )?;
-        // Widen before the temporal collector's scan caps and score truncation.
+        )?);
+        // Widen the collector's scan caps and score truncation, not the
+        // request the adaptive rounds fill.
         let mut scores =
             execute_temporal(&self.vault.store, rtxn, &scoped_config, now, metadata_cache)?;
         self.truncate_corpus_channel(
