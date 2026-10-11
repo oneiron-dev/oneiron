@@ -75,7 +75,11 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     // which must not run on a runtime worker.
     let embedder_config = config.embedder.clone();
     let embedder =
-        tokio::task::spawn_blocking(move || crate::embedder::build_slot(embedder_config.as_ref()))
+        tokio::task::spawn_blocking(move || {
+            // The server's sink before a host chooses one: the log.
+            let receipts = Arc::new(crate::models::ServerReceipts::default());
+            crate::embedder::build_slot(embedder_config.as_ref(), receipts)
+        })
             .await
             .map_err(|e| anyhow::anyhow!("embedder slot task failed: {e}"))??;
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;

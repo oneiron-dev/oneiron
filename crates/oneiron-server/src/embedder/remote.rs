@@ -1,5 +1,5 @@
 //! Builds a remote rung with a nonblocking host egress predicate.
-use super::admitted::AdmittedEmbedder;
+use super::admitted::AdmittedRequests;
 use super::endpoint::HttpEmbedder;
 use super::local::evidence::RunProfile;
 use crate::config::{EmbedderConfig, remote_embedder::EgressPolicy};
@@ -77,8 +77,8 @@ impl EgressPredicate for ConfiguredEgress {
 
 /// The remote rung `primary` configures, if any. Its answers are held to the
 /// vault's model and to `hold`, the space the vault admits from the primary
-/// provider ([`HttpEmbedder::hold_as_rung`]). Each batch it sends is admitted
-/// and settled as a paid call, its rows written to `receipts`.
+/// provider ([`HttpEmbedder::hold_as_rung`]). Each embedding request it sends
+/// is admitted and settled as a paid call, its rows written to `receipts`.
 pub(crate) fn build_remote_rung(
     primary: &EmbedderConfig,
     hold: Arc<Mutex<RungHold>>,
@@ -93,11 +93,12 @@ pub(crate) fn build_remote_rung(
     })?;
     let embedder = HttpEmbedder::from_config(&config.endpoint_config(primary))?;
     embedder.hold_as_rung(hold);
-    let embedder = AdmittedEmbedder::unmetered(embedder, config, receipts)?;
-    let mut rung = RemoteRung::new(
-        Arc::new(embedder),
-        Arc::new(ConfiguredEgress::new(policy)?),
-    );
+    embedder.pay_through(Arc::new(AdmittedRequests::unmetered(
+        config,
+        oneiron::embed::Embedder::locality(&*embedder),
+        receipts,
+    )?));
+    let mut rung = RemoteRung::new(embedder, Arc::new(ConfiguredEgress::new(policy)?));
     rung.lease_duration_ms = config.lease_ms;
     Ok(Some(rung))
 }

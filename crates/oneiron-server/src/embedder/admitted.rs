@@ -1,73 +1,68 @@
-//! A remote rung under run admission (ARCH-0053 `#run-admission`): each batch
-//! the rung sends is one paid call of a run that declares nothing. The batch
-//! is admitted on the rung's meter before the authenticated send, starts its
-//! permit just before the send, and settles after. A refused batch fails the
-//! rung, so the reconciler embeds it on device instead. On-device embedding
-//! is not admitted.
+//! A remote embedder's requests under run admission (ARCH-0053
+//! `#run-admission`). Each embedding request a remote sends is one paid call
+//! of a run that declares nothing. The request is admitted before it is
+//! sent, its permit starts just before the send, and it settles after. A
+//! refused request fails the embed, so the reconciler embeds the rows on
+//! device instead. The `/models` listing is metadata, not a paid call, and
+//! on-device embedding is not admitted.
 use std::sync::Arc;
 
-use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, payload_text};
+use oneiron::embed::EmbedderLocality;
 use oneiron::llm::run_admission::{
     CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, RunDenied,
     RunReceiptSink,
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, ModelLocality};
 
+use super::endpoint::PaidRequests;
 use crate::config::remote_embedder::RemoteEmbedderConfig;
 use crate::models::undeclared_run;
 
-/// The run each remote batch is admitted under, one run per batch.
+/// The run each remote request is admitted under, with the request's own
+/// id after it.
 const EMBEDDING_RUN: &str = "remote-embedding";
 
-/// The tokens an input may cost beyond its text's bytes: the instruction a
-/// wire adds and the model's own special tokens.
-const INPUT_OVERHEAD_TOKENS: u64 = 16;
+/// The tokens a text may cost beyond its bytes: the model's special tokens.
+const TEXT_OVERHEAD_TOKENS: u64 = 8;
 
-/// The remote rung's embedder, each batch admitted and settled.
-pub(crate) struct AdmittedEmbedder {
-    inner: Arc<dyn Embedder>,
+/// The paid door of one remote embedder.
+pub(crate) struct AdmittedRequests {
     connector: PaidConnector,
-    meter: BudgetGuard,
+    /// Each request's line. No host pushes one yet, so it has no limit:
+    /// each request still takes its permit and writes its rows.
+    limit_units: u64,
     receipts: Arc<dyn RunReceiptSink>,
 }
 
-impl AdmittedEmbedder {
-    /// `inner` sent as `config`'s rung, on a meter with no limit: each batch
-    /// takes its permit and writes its rows, and no line refuses it until a
-    /// host pushes one.
+impl AdmittedRequests {
+    /// The door for `config`'s remote at `locality`, its rows written to
+    /// `receipts`, on a line with no limit.
     pub(crate) fn unmetered(
-        inner: Arc<dyn Embedder>,
         config: &RemoteEmbedderConfig,
+        locality: EmbedderLocality,
         receipts: Arc<dyn RunReceiptSink>,
     ) -> oneiron::Result<Self> {
-        let meter = BudgetGuard::with_reserve_units(
-            EMBEDDING_RUN,
-            u64::MAX,
-            1,
-            BudgetExhaustionPolicy::Suspend,
-        );
-        Self::new(inner, config, meter, receipts)
+        Self::on_line(config, locality, receipts, u64::MAX)
     }
 
-    pub(super) fn new(
-        inner: Arc<dyn Embedder>,
+    pub(super) fn on_line(
         config: &RemoteEmbedderConfig,
-        meter: BudgetGuard,
+        locality: EmbedderLocality,
         receipts: Arc<dyn RunReceiptSink>,
+        limit_units: u64,
     ) -> oneiron::Result<Self> {
-        let connector = connector(config, inner.locality())?;
         Ok(Self {
-            inner,
-            connector,
-            meter,
+            connector: connector(config, locality)?,
+            limit_units,
             receipts,
         })
     }
 }
 
-/// The paid connector a remote rung's batches are admitted as: the model it
-/// serves, at the endpoint's origin. A rung with a key pays with the owner's
-/// own key, held in this process (T1); one without is the owner's own server.
+/// The paid connector a remote's requests are admitted as: the model it
+/// serves, at the endpoint's origin. A remote with a key pays with the
+/// owner's own key, held in this process (T1). One without is the owner's
+/// own server.
 fn connector(
     config: &RemoteEmbedderConfig,
     locality: EmbedderLocality,
@@ -105,60 +100,54 @@ fn connector(
     })
 }
 
-/// A batch's reservation in tokens: no tokenizer makes more tokens than its
-/// text has bytes, plus each input's overhead. The endpoint reports no usage,
-/// so the reservation is also what an answered batch settles.
-fn estimate(inputs: &[PendingEmbeddingInput]) -> oneiron::Result<u64> {
-    inputs.iter().try_fold(0_u64, |tokens, input| {
-        let text = payload_text(&input.payload)?;
+/// A request's reservation in tokens: no tokenizer makes more tokens than a
+/// text has bytes, plus each text's special tokens. The endpoint reports no
+/// usage, so the reservation is also what an answered request settles.
+fn estimate(texts: &[&str]) -> u64 {
+    texts.iter().fold(0_u64, |tokens, text| {
         let bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
-        Ok(tokens
+        tokens
             .saturating_add(bytes)
-            .saturating_add(INPUT_OVERHEAD_TOKENS))
+            .saturating_add(TEXT_OVERHEAD_TOKENS)
     })
 }
 
 fn refused(denied: RunDenied) -> oneiron::Error {
     oneiron::Error::UpstreamToolFailure {
         tool: "embedder-remote",
-        code: format!("run admission refused the batch: {denied}"),
+        code: format!("run admission refused the request: {denied}"),
     }
 }
 
-impl Embedder for AdmittedEmbedder {
-    fn model_id(&self) -> &str {
-        self.inner.model_id()
-    }
-
-    fn dimensions(&self) -> usize {
-        self.inner.dimensions()
-    }
-
-    fn locality(&self) -> EmbedderLocality {
-        self.inner.locality()
-    }
-
-    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> oneiron::Result<Vec<Vec<f32>>> {
-        if inputs.is_empty() {
-            return Ok(Vec::new());
-        }
-        let tokens = estimate(inputs)?;
-        let run = undeclared_run(
-            EMBEDDING_RUN,
-            self.meter.clone(),
-            Arc::clone(&self.receipts),
+impl PaidRequests for AdmittedRequests {
+    fn send(
+        &self,
+        texts: &[&str],
+        post: &mut dyn FnMut() -> oneiron::Result<Vec<Vec<f32>>>,
+    ) -> oneiron::Result<Vec<Vec<f32>>> {
+        let tokens = estimate(texts);
+        // A meter of its own per request: its lease ids are the request's,
+        // and nothing outlives the call.
+        let run = format!("{EMBEDDING_RUN}:{}", oneiron::EntityId::now().to_hex());
+        let meter = BudgetGuard::with_reserve_units(
+            run.clone(),
+            self.limit_units,
+            1,
+            BudgetExhaustionPolicy::Suspend,
         );
+        let run = undeclared_run(run, meter, Arc::clone(&self.receipts));
         let permit = run.admit_paid(&self.connector, tokens).map_err(refused)?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(refused)?;
-        let (embedded, outcome) = match self.inner.embed(inputs) {
-            Ok(vectors) => (Ok(vectors), CallOutcome::Used(tokens)),
-            // The send started: a failed batch keeps its reservation as spend.
-            Err(error) => (Err(error), CallOutcome::Failed),
+        let posted = post();
+        // The request went out: a failed one keeps its reservation as spend.
+        let outcome = match &posted {
+            Ok(_) => CallOutcome::Used(tokens),
+            Err(_) => CallOutcome::Failed,
         };
         if let Err(denied) = permit.settle(outcome) {
-            tracing::error!(%denied, "a remote embedding batch's settlement was refused");
+            tracing::error!(%denied, "a remote embedding request's settlement was refused");
         }
-        embedded
+        posted
     }
 }
