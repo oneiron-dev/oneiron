@@ -182,10 +182,7 @@ pub(crate) fn mcp_raw_call_arguments(body: &[u8]) -> Option<String> {
 }
 
 /// Where `params.arguments` sits in one raw JSON-RPC body, as a byte range.
-///
-/// `oneiron mcp` splices the caller identity into that object without
-/// re-serializing the call, so every other number keeps its spelling too.
-pub(crate) fn mcp_raw_call_arguments_span(text: &str) -> Option<Range<usize>> {
+fn mcp_raw_call_arguments_span(text: &str) -> Option<Range<usize>> {
     let node = McpRawJsonNode::scan(text)?;
     Some(node.entry("params")?.entry("arguments")?.span.clone())
 }

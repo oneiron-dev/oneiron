@@ -57,6 +57,8 @@ fn actor_class_schema() -> Value {
     })
 }
 
+/// Optional on every tool: a call runs as the credential's own actor, and a
+/// block that is sent must name that actor (ARCH-0028 #surface).
 pub(super) fn actor_schema() -> Value {
     json!({
         "type": "object",
