@@ -450,6 +450,11 @@ pub struct AgentVerbRefusal {
 /// The refusal a verb call gets from a run whose host binds no verb door.
 pub const AGENT_VERB_DOOR_UNBOUND: &str = "agent_verb_door_unbound";
 
+/// The refusal a verb call gets from a run bound to an off-record session:
+/// the host's door runs on the canonical vault, where the session's route
+/// and saver are not checked.
+pub const AGENT_VERB_SESSION_BOUND: &str = "agent_verb_session_bound";
+
 /// The host's door onto the SDK verb table.
 ///
 /// The engine runs no verb here. The host that binds this door runs each call
