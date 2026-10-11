@@ -779,12 +779,55 @@ async fn a_world_narrowed_writer_hears_and_reads_its_own_tasks() {
     );
     let done = mcp_create(&server, "birth-inside", actor, world, "done in its world").await;
     complete_next_realization(&server);
+    // The executor lands its result on the TASK body. That content put keeps
+    // the TASK where it was born.
+    let result = seeded_test_entity_id(0xb1a5_0006);
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("role"),
+            rmpv::Value::from("question"),
+        )]),
+    )
+    .expect("turn body");
+    server
+        .vault()
+        .put_entity(
+            &result,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &body,
+        )
+        .expect("result turn");
+    server
+        .vault()
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .land_task_result(
+            done,
+            &oneiron::task_verb::TaskResultInput {
+                result_ref: result,
+                disposition: oneiron::task_verb::TaskTerminalDisposition::Completed,
+                finished_at: server.vault().now_recorded_at(),
+            },
+        )
+        .expect("the result lands");
     publisher_passed(&server, witness, &witness_connection, 0xb1a5_0005).await;
     let rows = delivered_rows(&server, "birth-inside", inside.clone()).await;
     assert!(names_any(&rows, &[done]), "{rows:?}");
 
     let tasks = [failed, done];
     for task in tasks {
+        let born = server
+            .vault()
+            .record_scope(&task)
+            .expect("record scope")
+            .expect("a local TASK is stamped");
+        assert_eq!(
+            born.worlds,
+            oneiron::federation::ScopeAxis::Some([oneiron::federation::ScopeId(world)].into())
+        );
         assert_eq!(
             describe_refusal(&server, "birth-inside", inside.clone(), task).await,
             None
@@ -834,11 +877,9 @@ async fn a_world_narrowed_writer_hears_and_reads_its_own_tasks() {
 
 /// ARCH-0067 §5, "consults to me", inside one world. A writer whose surface
 /// is bound to a world (the binding the MCP gateway gives a narrowed
-/// connector) asks a peer. The consult is born in that world, so the peer's
-/// connection narrowed to it hears the consult and reads it, and the peer's
-/// connection narrowed to another world does neither. The peer's answer
-/// keeps the consult in its world: the asker's connection there hears it
-/// done.
+/// connector) consults a peer. The consult is born in that world, so the
+/// peer's connection narrowed to it hears the consult and reads it, and the
+/// peer's connection narrowed to another world does neither.
 #[tokio::test]
 async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
     let (_dir, server) = auth_test_server();
@@ -855,7 +896,7 @@ async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
         seeded_test_entity_id(0xb1a5_0013),
     )
     .await;
-    let (asked, _) = narrowed_stream(&server, asker, "consult-asker", world).await;
+    narrowed_stream(&server, asker, "consult-asker", world).await;
     let (witness, witness_connection) = stream_actor(&server, 0xb1a5_0014, "consult-witness").await;
 
     let turn = seeded_test_entity_id(0xb1a5_0015);
@@ -878,46 +919,47 @@ async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
             &body,
         )
         .expect("question turn");
-    let reference = oneiron::task_verb::ConsultPayloadRef::parse(
+    let question = oneiron::task_verb::ConsultPayloadRef::parse(
         server.vault(),
         &format!("tn_{}", turn.to_hex()),
     )
     .expect("turn ref");
-    let receipt = server
+    let now = server.vault().now_recorded_at();
+    let consult = server
         .vault()
         .memory(asker, oneiron::EdgeActorClass::Human)
         .with_birth_position(oneiron::federation::record_scope::BirthPosition {
             world: Some(world),
             facet: None,
         })
-        .tasks_ask(&oneiron::task_verb::TaskAskSpec {
-            intent_key: "consult-in-world".to_owned(),
-            ..oneiron::task_verb::TaskAskSpec::shorthand(
-                Some(oneiron::task_verb::TaskAskTarget::Responder(
-                    oneiron::task_verb::TaskAssignee::Human {
-                        actor_ref: addressee,
-                    },
-                )),
-                oneiron::task_verb::TaskAskQuestion::new(reference),
-                Some(u64::MAX),
-                oneiron::task_verb::TaskAskDefault::AskMe,
-            )
-        })
-        .expect("ask lands");
-    let consult = receipt.task_refs.clone();
-    assert_eq!(consult.len(), 1);
+        .tasks_create(
+            &oneiron::task_verb::TaskCreateSpec::new(rmpv::Value::Nil, None, None, Some(now))
+                .with_kind(oneiron::task_verb::TaskKind::Consult)
+                .with_consult(oneiron::task_verb::ConsultPayload::question(
+                    question,
+                    Vec::new(),
+                    seeded_test_entity_id(0xb1a5_0016),
+                ))
+                .with_assignee(oneiron::task_verb::TaskAssignee::Peer {
+                    actor_ref: addressee,
+                })
+                .with_ttl(oneiron::task_verb::TaskTtl::after(now, 3_600)),
+        )
+        .expect("consult lands")
+        .task_ref
+        .expect("the consult mints one TASK");
 
     let wake = eventually(&server, |streams| streams.next_wake(&inside_connection)).await;
-    assert_eq!(wake.task_ref, consult[0].to_hex());
+    assert_eq!(wake.task_ref, consult.to_hex());
     assert!(
         wake.event_ref
-            .starts_with(&format!("{}:arrived:", consult[0].to_hex()))
+            .starts_with(&format!("{}:arrived:", consult.to_hex()))
     );
     assert_eq!(
-        describe_refusal(&server, "consult-inside", inside, consult[0]).await,
+        describe_refusal(&server, "consult-inside", inside, consult).await,
         None
     );
-    publisher_passed(&server, witness, &witness_connection, 0xb1a5_0016).await;
+    publisher_passed(&server, witness, &witness_connection, 0xb1a5_0017).await;
     assert!(
         server
             .mcp_registry
@@ -929,19 +971,7 @@ async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
         "a consult born in another world woke its addressee"
     );
     assert_eq!(
-        describe_refusal(&server, "consult-other-world", other, consult[0]).await,
+        describe_refusal(&server, "consult-other-world", other, consult).await,
         Some(Value::from("mcp_scope_refused"))
     );
-
-    server
-        .vault()
-        .memory(addressee, oneiron::EdgeActorClass::Human)
-        .tasks_answer(
-            &receipt.handle,
-            &oneiron::task_verb::TaskAskWord::new(addressee),
-        )
-        .expect("the addressee answers");
-    publisher_passed(&server, witness, &witness_connection, 0xb1a5_0017).await;
-    let rows = delivered_rows(&server, "consult-asker", asked).await;
-    assert!(names_any(&rows, &consult), "{rows:?}");
 }

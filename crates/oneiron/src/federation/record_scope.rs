@@ -292,6 +292,37 @@ pub(crate) fn stamp_task_birth(
     )?;
     Ok(())
 }
+/// An authority fact about one TASK is born at that TASK's settled position,
+/// so a reader outside the TASK's world reads none of the facts about it. A
+/// TASK at its default birth, or with no stamp, leaves the fact at its own.
+pub(crate) fn stamp_task_fact(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    fact: EntityId,
+    task: EntityId,
+) -> Result<()> {
+    let Some(stamp) = SCOPE_RECORD.get(store, txn, &task)? else {
+        return Ok(());
+    };
+    if stamp.version != 2 || stamp.kind != crate::registry::ENTITY_TYPE_TASK {
+        return Ok(());
+    }
+    let world = match &stamp.scope.worlds {
+        ScopeAxis::Some(worlds) if worlds.len() == 1 => worlds.first().map(|world| world.0),
+        _ => None,
+    };
+    let substrate = crate::claim::substrate_facet_id(task)?;
+    let position = BirthPosition {
+        world: world.filter(|world| *world != crate::claim::base_world_id()),
+        facet: EntityId::from_bytes(stamp.birth_facet)
+            .ok()
+            .filter(|facet| *facet != substrate),
+    };
+    if position == BirthPosition::default() {
+        return Ok(());
+    }
+    stamp_task_birth(store, txn, fact, position)
+}
 /// Restamp a locally authenticated leader-chat TURN/MESSAGE at the ordinary
 /// record-position scope door, after the typed write's full batch succeeds.
 /// Opaque replicated rows cannot call this door and remain unstamped.
