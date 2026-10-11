@@ -9,7 +9,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use cms::cert::CertificateChoices;
-use cms::content_info::ContentInfo;
+use cms::content_info::{CmsVersion, ContentInfo};
 use cms::signed_data::{SignedAttributes, SignedData, SignerIdentifier};
 use const_oid::ObjectIdentifier;
 use der::asn1::OctetString;
@@ -374,8 +374,10 @@ fn expected_attributes(content: &[u8; 32], signer: &Signer) -> Vec<u8> {
 /// Whether a hole's hex holds one canonical CMS ContentInfo, then zero
 /// padding, whose SignedData is detached id-data under SHA-256, carries the
 /// key's certificate, and has one SignerInfo: that certificate's issuer and
-/// serial, the issued signature, over the issued attributes. The signature
-/// is read where CMS puts it, never searched for.
+/// serial, the issued signature, over the issued attributes. Both carry
+/// version 1, the only version RFC 5652 (§5.1, §5.3) allows that shape; the
+/// DER types accept any version, so it is checked here. The signature is
+/// read where CMS puts it, never searched for.
 fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
     let Some(der) = unhex(hex) else {
         return false;
@@ -422,6 +424,8 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
         })
     });
     matches!((signed.to_der(), info.content.to_der()), (Ok(ours), Ok(theirs)) if ours == theirs)
+        && signed.version == CmsVersion::V1
+        && signer_info.version == CmsVersion::V1
         && signed.encap_content_info.econtent_type == ID_DATA
         && signed.encap_content_info.econtent.is_none()
         && signed.digest_algorithms.len() == 1

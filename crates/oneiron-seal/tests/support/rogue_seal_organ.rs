@@ -16,7 +16,9 @@
 //! - `append-update`: seals for real, then appends an update after the
 //!   signed revision and still calls it B-B;
 //! - `drop-certs`: seals for real, then rebuilds the CMS in the hole
-//!   without its certificates.
+//!   without its certificates;
+//! - `signed-data-v0` / `signer-info-v3`: seals for real, then rebuilds the
+//!   CMS in the hole with that one version field changed.
 //!
 //! Its `seal.verify` always passes.
 
@@ -52,6 +54,8 @@ mod rogue {
         AlterPrefix,
         AppendUpdate,
         DropCerts,
+        SignedDataV0,
+        SignerInfoV3,
     }
 
     impl Mode {
@@ -62,6 +66,8 @@ mod rogue {
                 "alter-prefix" => Some(Self::AlterPrefix),
                 "append-update" => Some(Self::AppendUpdate),
                 "drop-certs" => Some(Self::DropCerts),
+                "signed-data-v0" => Some(Self::SignedDataV0),
+                "signer-info-v3" => Some(Self::SignerInfoV3),
                 _ => None,
             }
         }
@@ -218,7 +224,11 @@ mod rogue {
                     ));
                 }
                 Mode::Unsigned => (pdf.to_vec(), args.profile),
-                Mode::AlterPrefix | Mode::AppendUpdate | Mode::DropCerts => {
+                Mode::AlterPrefix
+                | Mode::AppendUpdate
+                | Mode::DropCerts
+                | Mode::SignedDataV0
+                | Mode::SignerInfoV3 => {
                     let backend = Backend {
                         asker: call.asker(),
                         identity: Mutex::new(None),
@@ -242,7 +252,28 @@ mod rogue {
                             b"\n9999 0 obj\n<< /Type /Annot /Subtype /FreeText \
                               /Contents (paid in full) >>\nendobj\n",
                         ),
-                        _ => drop_certificates(&mut bytes, pdf.len(), &revisions)?,
+                        Mode::DropCerts => {
+                            rebuild_cms(&mut bytes, pdf.len(), &revisions, |signed| {
+                                signed.certificates = None;
+                                Ok(())
+                            })?
+                        }
+                        Mode::SignedDataV0 => {
+                            rebuild_cms(&mut bytes, pdf.len(), &revisions, |signed| {
+                                signed.version = cms::content_info::CmsVersion::V0;
+                                Ok(())
+                            })?
+                        }
+                        _ => rebuild_cms(&mut bytes, pdf.len(), &revisions, |signed| {
+                            let infos = signed.signer_infos.0.clone().into_vec();
+                            signed.signer_infos.0 = der::asn1::SetOfVec::from_iter(
+                                infos.into_iter().map(|mut info| {
+                                    info.version = cms::content_info::CmsVersion::V3;
+                                    info
+                                }),
+                            )?;
+                            Ok(())
+                        })?,
                     }
                     (bytes, PadesProfile::BaselineB)
                 }
@@ -455,12 +486,13 @@ mod rogue {
         }
     }
 
-    /// Rebuilds the CMS in the signed revision's hole without its
-    /// certificates; the signature and its attributes stay as issued.
-    fn drop_certificates(
+    /// Rebuilds the CMS in the signed revision's hole after `edit`; the
+    /// signature and its attributes stay as issued.
+    fn rebuild_cms(
         bytes: &mut [u8],
         base: usize,
         revisions: &[PreparedRevision<'_>],
+        edit: impl FnOnce(&mut cms::signed_data::SignedData) -> der::Result<()>,
     ) -> Result<(), OrganError> {
         let revision = revisions
             .iter()
@@ -482,7 +514,7 @@ mod rogue {
         let mut reader = der::SliceReader::new(&der).map_err(bad)?;
         let mut info = cms::content_info::ContentInfo::decode(&mut reader).map_err(bad)?;
         let mut signed: cms::signed_data::SignedData = info.content.decode_as().map_err(bad)?;
-        signed.certificates = None;
+        edit(&mut signed).map_err(bad)?;
         info.content = der::Any::encode_from(&signed).map_err(bad)?;
         let hex: String = info
             .to_der()

@@ -866,4 +866,26 @@ mod hostile {
         assert_eq!(keys.signed().len(), 1);
         Ok(())
     }
+
+    /// The organ seals for real, then rebuilds the CMS in the hole with one
+    /// version RFC 5652 forbids for its shape: SignedData 0, or SignerInfo 3
+    /// beside an issuer-and-serial signer. The signature, its attributes and
+    /// the certificate are the ones issued, and the DER types accept any
+    /// version, so only admission can refuse it (Astra re-check on #1379).
+    #[test]
+    fn a_signature_in_a_misversioned_envelope_is_not_admitted() -> TestResult {
+        for mode in ["signed-data-v0", "signer-info-v3"] {
+            let (keys, cert) = synthetic_keys()?;
+            let host = rogue_host(mode);
+            let dir = tempfile::tempdir()?;
+            let vault = Vault::open(dir.path(), VaultConfig::device())?;
+            let sealer =
+                HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
+            let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+            let refused = sealer.seal(&input, &request());
+            assert!(unbound(&refused), "{mode}: {refused:?}");
+            assert_eq!(keys.signed().len(), 1, "{mode}");
+        }
+        Ok(())
+    }
 }
