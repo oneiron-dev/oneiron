@@ -297,8 +297,9 @@ async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
 }
 
 /// ONE-1704 B3: narrowed admission is fail-closed on the world and facet axes
-/// INDEPENDENTLY, for `execute_code` and for `tasks.create` alike, and a
-/// vault-wide credential is untouched.
+/// INDEPENDENTLY for `execute_code`, and a vault-wide credential is untouched.
+/// `tasks.create` carries the scope instead: on each axis alone it lands, and
+/// its TASK is born at that axis (ARCH-0067 §5).
 #[tokio::test]
 async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
     let (_dir, server) = auth_test_server();
@@ -344,31 +345,38 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
             )
         };
 
-    // The world axis alone refuses, with NO facet narrowing in the fixture.
-    let world_refusal = mcp_refusal(
-        &server,
-        create("one-1704-world-only", "axis-world", &world_only),
-    )
-    .await;
-    assert_mcp_structured_error(&world_refusal, "mcp_scope_refused");
-    assert_scoped_refusal(
-        &world_refusal,
-        &crate::mcp::mcp_effective_scope_value(&world_only),
-        "world-only tasks.create",
-    );
-
-    // The facet axis alone refuses, with NO world narrowing in the fixture.
-    let facet_refusal = mcp_refusal(
-        &server,
-        create("one-1704-facet-only", "axis-facet", &facet_only),
-    )
-    .await;
-    assert_mcp_structured_error(&facet_refusal, "mcp_scope_refused");
-    assert_scoped_refusal(
-        &facet_refusal,
-        &crate::mcp::mcp_effective_scope_value(&facet_only),
-        "facet-only tasks.create",
-    );
+    // Each axis alone lands its TASK at that axis and leaves the other at
+    // its default: a world-only TASK keeps its own substrate facet, a
+    // facet-only one stays in base reality.
+    for (credential, id, scope) in [
+        ("one-1704-world-only", "axis-world", &world_only),
+        ("one-1704-facet-only", "axis-facet", &facet_only),
+    ] {
+        let (_, created) = route_json(server.clone(), create(credential, id, scope)).await;
+        let task = created["result"]["structuredContent"]["output"]["task_ref"]
+            .as_str()
+            .and_then(|hex| oneiron::EntityId::from_hex(hex).ok())
+            .unwrap_or_else(|| panic!("{id}: the narrowed create lands: {created}"));
+        let born = server
+            .vault()
+            .record_scope(&task)
+            .expect("record scope")
+            .expect("a local TASK is stamped");
+        let axis = |id: oneiron::EntityId| {
+            oneiron::federation::ScopeAxis::Some([oneiron::federation::ScopeId(id)].into())
+        };
+        let world = scope
+            .world_ref
+            .unwrap_or_else(oneiron::claim::base_world_id);
+        let facet = scope
+            .facet_ref
+            .unwrap_or_else(|| oneiron::claim::substrate_facet_id(task).expect("facet"));
+        assert_eq!(
+            (born.worlds, born.facets),
+            (axis(world), axis(facet)),
+            "{id}"
+        );
+    }
 
     // A vault-wide credential is NOT scope-refused: an actor-wide create is
     // exactly its ceiling, whatever the facade then decides.

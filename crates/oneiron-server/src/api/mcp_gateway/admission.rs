@@ -25,12 +25,13 @@ use std::sync::Arc;
 ///    scope of its own.
 ///
 /// The fourth is the ONE-1704 B3 close: this admission no longer answers `Ok`
-/// for every non-verb call. `execute_code` builds an actor-wide gated write and
-/// `tasks.create` writes through the actor-wide memory facade, so neither can
-/// be narrowed downstream; under a world- OR facet-narrowed credential both are
-/// refused here, fail-closed, with the two axes enforced independently. There is
-/// no scoped-positive service for narrowed credentials in this release, and a
-/// refusal is the truthful shape of that.
+/// for every non-verb call. `execute_code` builds an actor-wide gated write, so
+/// it cannot be narrowed downstream; under a world- OR facet-narrowed
+/// credential it is refused here, fail-closed, with the two axes enforced
+/// independently, and so is every verb row marked `unrestricted`. The one
+/// scoped-positive write is `tasks.create`: the TASK it mints is born in the
+/// connector's own world and facet (ARCH-0067 §5), so its writer reads it and
+/// a credential narrowed elsewhere does not.
 ///
 /// A caller echo can only ever narrow. Nothing a caller sends creates
 /// authority, and a refusal here happens before dispatch, not after.
@@ -272,11 +273,13 @@ pub(super) fn mcp_scope_covers_entity(
 }
 
 /// A TASK is inside a narrowed ceiling when the world and facet the engine
-/// stamped it with at birth are inside it. A locally written TASK is born in
-/// base reality under its own substrate facet, so a credential narrowed to
-/// base reality reads its TASKs and one narrowed to any other world or to a
-/// facet reads none. A TASK with no stamp (an opaque replicated row) is
-/// outside every narrowed ceiling.
+/// stamped it with at birth are inside it. A TASK is born in its writer's
+/// world and facet: a narrowed connector's inside that connector's ceiling, a
+/// vault-wide writer's in base reality under the TASK's own substrate facet.
+/// So a credential narrowed to base reality reads the vault-wide writers'
+/// TASKs, and one narrowed to another world or to a facet reads those written
+/// inside it. A TASK with no stamp (an opaque replicated row) is outside every
+/// narrowed ceiling.
 fn mcp_task_in_scope(
     vault: &oneiron::Vault,
     scope: &crate::mcp::McpConnectorScope,

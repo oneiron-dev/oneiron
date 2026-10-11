@@ -803,7 +803,11 @@ pub(crate) async fn execute_agent_verb_input(
             format!("{tool} input names unknown field `{field}`"),
         ));
     }
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    // A narrowed connector's TASKs are born in its own world and facet.
+    let memory = server
+        .vault
+        .memory(actor.actor_ref, actor.actor_class)
+        .with_birth_position(actor.scope.birth_position());
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,

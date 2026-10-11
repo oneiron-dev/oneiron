@@ -76,6 +76,15 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
 }
+/// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
+/// a peer hears "my tasks" only where it may read them). An axis left `None`
+/// keeps the default birth: base reality, under the record's own substrate
+/// facet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BirthPosition {
+    pub world: Option<EntityId>,
+    pub facet: Option<EntityId>,
+}
 pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
     Scope {
         worlds: singleton(ScopeId(crate::claim::base_world_id())),
@@ -177,11 +186,9 @@ pub(crate) fn stamp_put(
     if let Some(prior) = prior {
         // Content is mutable. The type, facet and authority position are NOT.
         // A changed facet/sensitivity/world/audience is a fork with a new id.
-        if prior.version != 2
-            || prior.kind != kind
-            || prior.birth_facet != *facet.as_bytes()
-            || (prior.scope != scope && !leader_settled(kind, &prior.scope, &scope))
-        {
+        let kept = prior.birth_facet == *facet.as_bytes()
+            && (prior.scope == scope || leader_settled(kind, &prior.scope, &scope));
+        if prior.version != 2 || prior.kind != kind || !(kept || writer_settled(&prior, &scope)) {
             return Err(Error::InvalidClaimBody("record scope restamp refused"));
         }
         return Ok(());
@@ -215,6 +222,75 @@ fn leader_settled(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
         audience: proposed.audience.clone(),
         ..prior.clone()
     } == *proposed
+}
+/// A TASK body never proposes a position either: only `stamp_task_birth`
+/// settles its writer's world and facet, at the record's birth. A later
+/// content put recomputes the default and keeps that settled position.
+fn writer_settled(prior: &Stamp, proposed: &Scope) -> bool {
+    prior.kind == crate::registry::ENTITY_TYPE_TASK
+        && matches!(&prior.scope.worlds, ScopeAxis::Some(worlds) if worlds.len() == 1)
+        && EntityId::from_bytes(prior.birth_facet)
+            .is_ok_and(|facet| prior.scope.facets == singleton(ScopeId(facet)))
+        && Scope {
+            worlds: proposed.worlds.clone(),
+            facets: proposed.facets.clone(),
+            ..prior.scope.clone()
+        } == *proposed
+}
+/// Settle a locally minted TASK at its writer's world and facet, in the
+/// transaction that put its first body. The writer's facet is provenance:
+/// the mask that spoke stamps the record (ARCH-0022 "Every record carries a
+/// facet").
+///
+/// The birth position is immutable (see `stamp_put`): like
+/// `stamp_leader_project`, this door only moves the record's own default
+/// birth stamp, or confirms the position it already carries. Any other prior
+/// position is refused. Opaque replicated rows cannot call it and remain
+/// unstamped.
+pub(crate) fn stamp_task_birth(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    position: BirthPosition,
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("task birth scope header"))?;
+    let kind = header.entity_type;
+    if kind != crate::registry::ENTITY_TYPE_TASK {
+        return Err(Error::InvalidEntityType(kind));
+    }
+    let substrate = crate::claim::substrate_facet_id(id)?;
+    let facet = position.facet.unwrap_or(substrate);
+    let mut scope = default_stamp(kind, facet);
+    if let Some(world) = position.world {
+        scope.worlds = singleton(ScopeId(world));
+    }
+    if let Some(prior) = SCOPE_RECORD.get(store, txn, &id)? {
+        let settled = prior.birth_facet == *facet.as_bytes() && prior.scope == scope;
+        let birth = prior.birth_facet == *substrate.as_bytes()
+            && prior.scope == default_stamp(kind, substrate);
+        if prior.version != 2 || prior.kind != kind || !(settled || birth) {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+        if settled {
+            return Ok(());
+        }
+    }
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *facet.as_bytes(),
+            scope,
+        },
+    )?;
+    Ok(())
 }
 /// Restamp a locally authenticated leader-chat TURN/MESSAGE at the ordinary
 /// record-position scope door, after the typed write's full batch succeeds.
@@ -290,6 +366,12 @@ fn stored_scope(
         Some(id)
     } else if carries_birth_stamp(kind) {
         birth_facet(store, txn, id)?
+    } else if kind == crate::registry::ENTITY_TYPE_TASK {
+        // A TASK is born under its writer's facet (`stamp_task_birth`) or its
+        // own substrate facet; the stamp's one facet names which.
+        EntityId::from_bytes(stamp.birth_facet)
+            .ok()
+            .filter(|facet| stamp.scope.facets == singleton(ScopeId(*facet)))
     } else {
         Some(crate::claim::substrate_facet_id(id)?)
     };

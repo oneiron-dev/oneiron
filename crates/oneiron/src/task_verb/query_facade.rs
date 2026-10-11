@@ -597,12 +597,20 @@ impl Memory<'_> {
         provenance: Value,
     ) -> MemoryResult<(EntityId, Option<String>)> {
         let proposal_ref = self.vault().store.clock.entity_id()?;
-        let candidate = ClaimCandidate::new(
+        let mut candidate = ClaimCandidate::new(
             predicate.to_owned(),
             ClaimSubject::Entity(subject),
             value,
             1.0,
         );
+        // A parked proposal is born where its writer's TASK would be.
+        let position = self.birth_position();
+        if let Some(world) = position.world {
+            candidate = candidate.with_world(world);
+        }
+        if let Some(facet) = position.facet {
+            candidate = candidate.with_scope_stamps(facet, crate::claim::default_project_id());
+        }
         let envelope = match self.host_envelope(ClaimApprovalStatus::Proposed)? {
             Some(envelope) => envelope,
             None => WriteEnvelope::new(

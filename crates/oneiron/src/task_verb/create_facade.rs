@@ -8,6 +8,7 @@ use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::federation::record_scope::{BirthPosition, stamp_task_birth};
 use crate::gate::PolicyApprovalCeiling;
 use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
@@ -295,6 +296,10 @@ impl Memory<'_> {
             created_at: now,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
+        // A TASK is born in its writer's world and facet (ARCH-0067 §5).
+        if self.birth_position() != BirthPosition::default() {
+            stamp_task_birth(&self.vault().store, wtxn, task_ref, self.birth_position())?;
+        }
         put_task_authority_fact_in_txn(
             self.vault(),
             wtxn,

@@ -154,7 +154,7 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "born",
       "section": true
     },
     {

@@ -25,6 +25,7 @@
 
 mod archive_purge;
 mod authorship;
+mod birth_position;
 mod booking;
 mod claim_conflict;
 mod skill_authoring;

@@ -627,3 +627,321 @@ async fn a_narrowed_connection_never_carries_an_erased_or_unreadable_task() {
     let rows = delivered_rows(&server, "wake-narrowed-reads", envelope).await;
     assert!(!names_any(&rows, &hidden), "{rows:?}");
 }
+
+/// Claims the next queued realization and completes it: the TASK it realizes
+/// folds to `done`.
+fn complete_next_realization(server: &SyncServer) {
+    let queue = oneiron::AttemptQueue::new(server.vault());
+    let now = server.vault().now_recorded_at();
+    let oneiron::attempt_queue::ClaimOutcome::Claimed(leased) = queue
+        .claim_kind(
+            "tasks.realize",
+            oneiron::attempt_queue::ClaimAttempt {
+                lease_owner: "board-done-worker".to_owned(),
+                now,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("a realization is queued");
+    };
+    queue
+        .complete(oneiron::attempt_queue::CompleteAttempt {
+            id: leased.id,
+            lease_owner: "board-done-worker".to_owned(),
+            attempt_count: leased.attempt_count,
+            now,
+        })
+        .expect("complete");
+}
+
+/// `tasks.create` over MCP under `actor`'s `credential` narrowed to `world`;
+/// the TASK it minted.
+async fn mcp_create(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor: oneiron::EntityId,
+    world: oneiron::EntityId,
+    label: &str,
+) -> oneiron::EntityId {
+    let scope = crate::mcp::McpConnectorScope::scoped(Some(world), None);
+    let (status, created) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            label,
+            "tasks.create",
+            mcp_merge_args(
+                mcp_scoped_envelope(actor, "write_tasks", &scope),
+                json!({ "arguments": { "spec": { "goal": label }, "label": label } }),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    created["result"]["structuredContent"]["output"]["task_ref"]
+        .as_str()
+        .and_then(|hex| oneiron::EntityId::from_hex(hex).ok())
+        .unwrap_or_else(|| panic!("{credential} creates its TASK: {created:#}"))
+}
+
+/// The MCP error code `describe` answers `credential` for one TASK; `None`
+/// when the card is served.
+async fn describe_refusal(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    envelope: Value,
+    task: oneiron::EntityId,
+) -> Option<Value> {
+    let (status, described) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "describe-task",
+            "describe",
+            mcp_merge_args(
+                envelope,
+                json!({ "arguments": { "task_ref": task.to_hex() } }),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{described}");
+    described
+        .get("error")
+        .map(|error| error["data"]["error_code"].clone())
+}
+
+/// What the /v1 read lane answers `authorization` for one TASK's timeline.
+async fn timeline_status(
+    server: &Arc<SyncServer>,
+    authorization: String,
+    task: oneiron::EntityId,
+) -> StatusCode {
+    route_json(
+        server.clone(),
+        core_request_with_authz(
+            "GET",
+            &format!("/v1/core/memory/{}/timeline", task.to_hex()),
+            authorization,
+            None,
+        ),
+    )
+    .await
+    .0
+}
+
+/// ARCH-0067 §5, "my tasks", for a writer narrowed to a world other than
+/// base reality. The TASKs it creates over MCP are born in its world, so it
+/// hears one's failed WAKE and another's done CARRIER delta, and reads both
+/// on MCP and on the /v1 read lane. The same actor's credentials narrowed to
+/// another world and to base reality hear neither and read neither; the
+/// owner and the actor's vault-wide credential still read them.
+#[tokio::test]
+async fn a_world_narrowed_writer_hears_and_reads_its_own_tasks() {
+    let (_dir, server) = auth_test_server();
+    let _publisher = server.spawn_board_publisher();
+    let actor = seeded_test_entity_id(0xb1a5_0001);
+    let world = seeded_test_entity_id(0xb1a5_0002);
+    let (inside, inside_connection) = narrowed_stream(&server, actor, "birth-inside", world).await;
+    let (other, other_connection) = narrowed_stream(
+        &server,
+        actor,
+        "birth-other-world",
+        seeded_test_entity_id(0xb1a5_0003),
+    )
+    .await;
+    let (base, base_connection) = narrowed_stream(
+        &server,
+        actor,
+        "birth-base-reality",
+        oneiron::claim::base_world_id(),
+    )
+    .await;
+    register_mcp_actor(
+        &server,
+        "birth-vault-wide",
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let (witness, witness_connection) = stream_actor(&server, 0xb1a5_0004, "birth-witness").await;
+
+    let failed = mcp_create(&server, "birth-inside", actor, world, "fails in its world").await;
+    fail_next_realization(&server);
+    let wake = eventually(&server, |streams| streams.next_wake(&inside_connection)).await;
+    assert_eq!(wake.task_ref, failed.to_hex());
+    assert!(
+        wake.event_ref
+            .starts_with(&format!("{}:failed:", failed.to_hex()))
+    );
+    let done = mcp_create(&server, "birth-inside", actor, world, "done in its world").await;
+    complete_next_realization(&server);
+    publisher_passed(&server, witness, &witness_connection, 0xb1a5_0005).await;
+    let rows = delivered_rows(&server, "birth-inside", inside.clone()).await;
+    assert!(names_any(&rows, &[done]), "{rows:?}");
+
+    let tasks = [failed, done];
+    for task in tasks {
+        assert_eq!(
+            describe_refusal(&server, "birth-inside", inside.clone(), task).await,
+            None
+        );
+        for credential in ["birth-inside", "birth-vault-wide"] {
+            assert_eq!(
+                timeline_status(&server, format!("Bearer {credential}"), task).await,
+                StatusCode::OK,
+                "{credential}"
+            );
+        }
+        assert_eq!(
+            timeline_status(&server, owner_bearer(), task).await,
+            StatusCode::OK
+        );
+    }
+    for (credential, envelope, connection) in [
+        ("birth-other-world", other, other_connection),
+        ("birth-base-reality", base, base_connection),
+    ] {
+        assert!(
+            server
+                .mcp_registry
+                .lock()
+                .await
+                .streams_mut()
+                .next_wake(&connection)
+                .is_none(),
+            "{credential} heard a TASK born outside its world"
+        );
+        let rows = delivered_rows(&server, credential, envelope.clone()).await;
+        assert!(!names_any(&rows, &tasks), "{credential}: {rows:?}");
+        for task in tasks {
+            assert_eq!(
+                describe_refusal(&server, credential, envelope.clone(), task).await,
+                Some(Value::from("mcp_scope_refused")),
+                "{credential}"
+            );
+            assert_eq!(
+                timeline_status(&server, format!("Bearer {credential}"), task).await,
+                StatusCode::NOT_FOUND,
+                "{credential}"
+            );
+        }
+    }
+}
+
+/// ARCH-0067 §5, "consults to me", inside one world. A writer whose surface
+/// is bound to a world (the binding the MCP gateway gives a narrowed
+/// connector) asks a peer. The consult is born in that world, so the peer's
+/// connection narrowed to it hears the consult and reads it, and the peer's
+/// connection narrowed to another world does neither. The peer's answer
+/// keeps the consult in its world: the asker's connection there hears it
+/// done.
+#[tokio::test]
+async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
+    let (_dir, server) = auth_test_server();
+    let _publisher = server.spawn_board_publisher();
+    let asker = seeded_test_entity_id(0xb1a5_0010);
+    let addressee = seeded_test_entity_id(0xb1a5_0011);
+    let world = seeded_test_entity_id(0xb1a5_0012);
+    let (inside, inside_connection) =
+        narrowed_stream(&server, addressee, "consult-inside", world).await;
+    let (other, other_connection) = narrowed_stream(
+        &server,
+        addressee,
+        "consult-other-world",
+        seeded_test_entity_id(0xb1a5_0013),
+    )
+    .await;
+    let (asked, _) = narrowed_stream(&server, asker, "consult-asker", world).await;
+    let (witness, witness_connection) = stream_actor(&server, 0xb1a5_0014, "consult-witness").await;
+
+    let turn = seeded_test_entity_id(0xb1a5_0015);
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("role"),
+            rmpv::Value::from("question"),
+        )]),
+    )
+    .expect("turn body");
+    server
+        .vault()
+        .put_entity(
+            &turn,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &body,
+        )
+        .expect("question turn");
+    let reference = oneiron::task_verb::ConsultPayloadRef::parse(
+        server.vault(),
+        &format!("tn_{}", turn.to_hex()),
+    )
+    .expect("turn ref");
+    let receipt = server
+        .vault()
+        .memory(asker, oneiron::EdgeActorClass::Human)
+        .with_birth_position(oneiron::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_ask(&oneiron::task_verb::TaskAskSpec {
+            intent_key: "consult-in-world".to_owned(),
+            ..oneiron::task_verb::TaskAskSpec::shorthand(
+                Some(oneiron::task_verb::TaskAskTarget::Responder(
+                    oneiron::task_verb::TaskAssignee::Human {
+                        actor_ref: addressee,
+                    },
+                )),
+                oneiron::task_verb::TaskAskQuestion::new(reference),
+                Some(u64::MAX),
+                oneiron::task_verb::TaskAskDefault::AskMe,
+            )
+        })
+        .expect("ask lands");
+    let consult = receipt.task_refs.clone();
+    assert_eq!(consult.len(), 1);
+
+    let wake = eventually(&server, |streams| streams.next_wake(&inside_connection)).await;
+    assert_eq!(wake.task_ref, consult[0].to_hex());
+    assert!(
+        wake.event_ref
+            .starts_with(&format!("{}:arrived:", consult[0].to_hex()))
+    );
+    assert_eq!(
+        describe_refusal(&server, "consult-inside", inside, consult[0]).await,
+        None
+    );
+    publisher_passed(&server, witness, &witness_connection, 0xb1a5_0016).await;
+    assert!(
+        server
+            .mcp_registry
+            .lock()
+            .await
+            .streams_mut()
+            .next_wake(&other_connection)
+            .is_none(),
+        "a consult born in another world woke its addressee"
+    );
+    assert_eq!(
+        describe_refusal(&server, "consult-other-world", other, consult[0]).await,
+        Some(Value::from("mcp_scope_refused"))
+    );
+
+    server
+        .vault()
+        .memory(addressee, oneiron::EdgeActorClass::Human)
+        .tasks_answer(
+            &receipt.handle,
+            &oneiron::task_verb::TaskAskWord::new(addressee),
+        )
+        .expect("the addressee answers");
+    publisher_passed(&server, witness, &witness_connection, 0xb1a5_0017).await;
+    let rows = delivered_rows(&server, "consult-asker", asked).await;
+    assert!(names_any(&rows, &consult), "{rows:?}");
+}

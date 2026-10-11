@@ -22,7 +22,9 @@ for row in RUN_ROWS:
 # so a row carries no opt-out. A row's tool takes its whole typed input as `spec`
 # unless it names a projection, and refuses a world/facet-narrowed connector
 # unless it names a scope it can carry: a new row is listed, and fails closed.
-MCP_SCOPES = {'filtered', 'unrestricted', 'addressed'}
+# `born` carries the connector's own world and facet into what it writes: the
+# TASK it mints is born there (ARCH-0067 §5).
+MCP_SCOPES = {'filtered', 'unrestricted', 'addressed', 'born'}
 for row in ROWS:
     if 'mcp' in row: raise ValueError(f'{row["name"]}: every verb row is an MCP tool; drop "mcp"')
     row.setdefault('mcp_fields', {'spec': '$'})
@@ -370,7 +372,8 @@ pub(crate) async fn execute_agent_verb_input(
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
     }
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    // A narrowed connector's TASKs are born in its own world and facet.
+    let memory = server.vault.memory(actor.actor_ref, actor.actor_class).with_birth_position(actor.scope.birth_position());
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
     match tool {
 '''
