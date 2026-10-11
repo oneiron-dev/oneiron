@@ -1437,7 +1437,7 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let vault = Arc::new(vault);
     let reader = seed_recallable_base_turn(&vault, "forwardedlanternneedle");
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
     let room = EntityId::now();
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
