@@ -74,43 +74,6 @@ impl Drop for RowEnvelope {
     }
 }
 
-/// The staged-row wipe hook, so a test can see that a row holding a value
-/// went through [`RowEnvelope`]'s wipe.
-#[cfg(test)]
-pub(crate) mod wiped_rows {
-    use std::cell::RefCell;
-
-    thread_local! {
-        // Per thread: a put stages its rows on the thread that writes.
-        static WATCH: RefCell<Option<(Vec<u8>, usize)>> = const { RefCell::new(None) };
-    }
-
-    /// Counts, from now on, the staged rows this thread wipes that hold
-    /// `needle`.
-    pub(crate) fn watch(needle: &[u8]) {
-        WATCH.with_borrow_mut(|watch| *watch = Some((needle.to_vec(), 0)));
-    }
-
-    pub(super) fn saw(row: &[u8]) {
-        WATCH.with_borrow_mut(|watch| {
-            let Some((needle, count)) = watch else {
-                return;
-            };
-            if row
-                .windows(needle.len())
-                .any(|window| window == needle.as_slice())
-            {
-                *count += 1;
-            }
-        });
-    }
-
-    /// How many staged rows holding the watched bytes this thread wiped.
-    pub(crate) fn count() -> usize {
-        WATCH.with_borrow(|watch| watch.as_ref().map_or(0, |(_, count)| *count))
-    }
-}
-
 /// Stages the type and temporal index rows every materialized entity carries
 /// (ONE-1728 K11). Target-parameterized alongside [`stage_entity_body_row`]:
 /// the session's type/temporal readers compose over these overlay rows, so an
@@ -608,4 +571,41 @@ pub(super) fn stage_task_and_turn(
         crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, id)?;
     }
     Ok(())
+}
+
+/// The staged-row wipe hook, so a test can see that a row holding a value
+/// went through [`RowEnvelope`]'s wipe.
+#[cfg(test)]
+pub(crate) mod wiped_rows {
+    use std::cell::RefCell;
+
+    thread_local! {
+        // Per thread: a put stages its rows on the thread that writes.
+        static WATCH: RefCell<Option<(Vec<u8>, usize)>> = const { RefCell::new(None) };
+    }
+
+    /// Counts, from now on, the staged rows this thread wipes that hold
+    /// `needle`.
+    pub(crate) fn watch(needle: &[u8]) {
+        WATCH.with_borrow_mut(|watch| *watch = Some((needle.to_vec(), 0)));
+    }
+
+    pub(super) fn saw(row: &[u8]) {
+        WATCH.with_borrow_mut(|watch| {
+            let Some((needle, count)) = watch else {
+                return;
+            };
+            if row
+                .windows(needle.len())
+                .any(|window| window == needle.as_slice())
+            {
+                *count += 1;
+            }
+        });
+    }
+
+    /// How many staged rows holding the watched bytes this thread wiped.
+    pub(crate) fn count() -> usize {
+        WATCH.with_borrow(|watch| watch.as_ref().map_or(0, |(_, count)| *count))
+    }
 }
