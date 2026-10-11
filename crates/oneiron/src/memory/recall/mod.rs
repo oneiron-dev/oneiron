@@ -6,9 +6,12 @@ use super::structural::*;
 use super::*;
 use crate::ports::EntityStoreRead;
 
+mod call_mode;
 mod items;
 mod presentation;
 mod scope_honesty;
+
+pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_recall_dial};
 
 use self::presentation::{hedge_bucket_for, value_text_of};
 pub(super) use self::presentation::{parse_pack_format, truncate_text};
@@ -287,7 +290,8 @@ impl MemoryItem {
 pub struct ScopeHonesty {
     /// Worlds holding surfaceable claims outside the requested scope.
     pub out_of_scope_worlds: Vec<String>,
-    /// The census stopped at its scan cap, so a world past it may be missing.
+    /// The census stopped at its scan cap or at the answer's deadline, so a
+    /// world past it may be missing.
     #[serde(default, skip_serializing_if = "is_false")]
     pub census_capped: bool,
 }
@@ -314,7 +318,8 @@ pub struct RetrievalMeta {
     pub claims_returned: u64,
     /// Retained wire field. Always `None`: paid work never pretends to complete.
     pub deep_pending: Option<bool>,
-    /// Requested stages skipped at the explicit deadline.
+    /// Requested stages skipped or cut at the explicit deadline: the pack
+    /// holds what was ready when it came due.
     #[serde(default)]
     pub partial: bool,
     /// Time phrases read from the query, in order. `used` ones narrowed the
@@ -899,8 +904,8 @@ impl Memory<'_> {
         };
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
-        Ok(MemoryPack {
-            scope_honesty: self.out_of_scope_worlds(&census, &mut receipt, &worlds)?,
+        let mut pack = MemoryPack {
+            scope_honesty: ScopeHonesty::default(),
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,
                 degradation: retrieval_quality.degradation,
@@ -918,7 +923,43 @@ impl Memory<'_> {
             pack_version: MEMORY_PACK_VERSION,
             rendered,
             narrowing: Box::new(receipt),
-        })
+        };
+        if let Some(on_cut) = execution.on_cut {
+            // The items are ready. A door that stops waiting during the
+            // census answers with them, the census marked unfinished.
+            let mut ready = pack.clone();
+            ready.scope_honesty.census_capped = true;
+            ready.retrieval_meta.partial = true;
+            on_cut(ready);
+        }
+        pack.scope_honesty =
+            self.out_of_scope_worlds(&census, &mut pack.narrowing, &worlds, execution.deadline)?;
+        Ok(pack)
+    }
+}
+
+/// The pack a recall answers with when its door stops waiting at the
+/// deadline before retrieval finished: nothing was ready, so no items, marked
+/// partial, under the reader's own read receipt. The census did not run, so
+/// it says it stopped early.
+fn cut_pack(receipt: &ScopedReadReceipt) -> MemoryPack {
+    let quality = RetrievalQuality::Passthrough;
+    MemoryPack {
+        items: Vec::new(),
+        scope_honesty: ScopeHonesty {
+            out_of_scope_worlds: Vec::new(),
+            census_capped: true,
+        },
+        retrieval_meta: RetrievalMeta {
+            quality,
+            confidence_adjustment: quality.confidence_adjustment(),
+            sparse: Some(true),
+            partial: true,
+            ..RetrievalMeta::default()
+        },
+        pack_version: MEMORY_PACK_VERSION,
+        rendered: None,
+        narrowing: Box::new(receipt.clone()),
     }
 }
 
