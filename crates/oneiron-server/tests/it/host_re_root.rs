@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use oneiron::memory::{Effort, RecallScope, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::{RecallEffort, RecallScope, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron_remote::{OneironClient, unix_seconds_now};
 use serde_json::Value;
 
@@ -123,9 +123,10 @@ fn recall(client: &OneironClient) -> Result<bool, String> {
     client
         .recall(
             "Varnholt orchard ladder",
-            Effort::Medium,
+            RecallEffort::Medium,
             &RecallScope::default(),
             10,
+            None,
             None,
             None,
         )
