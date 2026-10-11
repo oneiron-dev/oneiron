@@ -47,9 +47,10 @@ mod probe {
         /// it ignores cancels, as a hostile organ would. `probe.fork` leaves
         /// a child behind and reports its pid. `probe.outputs {count, bytes}`
         /// answers with `count` outputs of `bytes` bytes each.
-        /// `probe.ask {verb, value, times}` asks `times` times, going on past
-        /// refusals, and reports each answer (its value, the length and fold
-        /// of its bytes) or refusal code; a cancel ends it as cancelled.
+        /// `probe.ask {verb, value, times, fail}` asks `times` times, going on
+        /// past refusals, and reports each answer (its value, the length and
+        /// fold of its bytes) or refusal code; a cancel ends it as cancelled.
+        /// With `fail`, it ends in an error once it has asked.
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
             let field = |key: &str| {
                 call.args
@@ -105,6 +106,9 @@ mod probe {
                             }
                         };
                         report.push(line);
+                    }
+                    if field("fail").and_then(|v| v.as_bool()) == Some(true) {
+                        return Err(OrganError::new(ErrorCode::Internal, "failed after asking"));
                     }
                     Ok(Answer {
                         report: rmpv::Value::Array(report),
@@ -253,6 +257,67 @@ mod rogue {
         asking(|call| (0..100).map(|n| ask(call + 1000, n)).collect());
     }
 
+    fn reply(call: u64) -> FromOrgan {
+        FromOrgan::Reply(Reply {
+            id: call,
+            outcome: Outcome::Proposal(Proposal {
+                body: None,
+                outputs: Vec::new(),
+                report: rmpv::Value::Nil,
+                notes: Notes::default(),
+            }),
+        })
+    }
+
+    /// Answers the handshake, then meets the `n`th call with the frames
+    /// `meet` returns and a nap without reading. It exits at once if it is
+    /// ever sent an answer: these modes never wait for one, so an answer is
+    /// the host's mistake.
+    fn never_answered(meet: impl Fn(u64, usize) -> (Vec<FromOrgan>, Duration)) {
+        let stream = socket();
+        let Some(organ) = hello_organ(&stream) else {
+            return;
+        };
+        if send_frame(&stream, &ack_for(organ), &[], DEFAULT_FRAME_LIMIT).is_err() {
+            return;
+        }
+        let mut calls = 0;
+        while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
+            match message {
+                ToOrgan::Call(call) => {
+                    let (frames, nap) = meet(call.id, calls);
+                    calls += 1;
+                    for frame in frames {
+                        if send_frame(&stream, &frame, &[], DEFAULT_FRAME_LIMIT).is_err() {
+                            return;
+                        }
+                    }
+                    std::thread::sleep(nap);
+                }
+                ToOrgan::Answer(_) => return,
+                _ => {}
+            }
+        }
+    }
+
+    /// Asks, and replies right behind the ask, so the ask waits in the
+    /// host's queue after the call is over.
+    pub(super) fn ask_then_reply() {
+        never_answered(|call, _| (vec![ask(call, 1), reply(call)], Duration::ZERO));
+    }
+
+    /// Asks on its first call, then stops reading for 1.5 s, so a large
+    /// frame holds the host's writer; later calls get a reply at once.
+    pub(super) fn ask_then_nap() {
+        never_answered(|call, n| {
+            if n == 0 {
+                (vec![ask(call, 1)], Duration::from_millis(1500))
+            } else {
+                (vec![reply(call)], Duration::ZERO)
+            }
+        });
+    }
+
     /// An organ built against protocol 1.0: it acks 1.0, echoes each call's
     /// args, and exits on any message 1.0 does not have.
     pub(super) fn v1_0() {
@@ -328,6 +393,14 @@ fn main() -> std::process::ExitCode {
         }
         Some("--stale-asks") => {
             rogue::stale_asks();
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--ask-then-reply") => {
+            rogue::ask_then_reply();
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--ask-then-nap") => {
+            rogue::ask_then_nap();
             std::process::ExitCode::SUCCESS
         }
         Some("--v1-0") => {

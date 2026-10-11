@@ -11,6 +11,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
 use oneiron_organ_protocol::{
@@ -20,7 +21,7 @@ use oneiron_organ_protocol::{
 
 use crate::error::HostError;
 use crate::fetch;
-use crate::receipt::{AskReceipt, FetchTarget, bound_text, digest};
+use crate::receipt::{AskReceipt, FetchTarget, Unanswered, bound_text, digest};
 use crate::spec::{FetchGrant, OrganSpec};
 
 const MAX_DETAIL_BYTES: usize = 512;
@@ -72,10 +73,14 @@ impl Default for Answered {
     }
 }
 
-/// The handlers a caller supplies for one call, by ask verb.
+/// The handlers a caller supplies for one call, by ask verb. They also
+/// keep the receipt line of every ask the organ made, however the call
+/// ended: a call that fails returns no receipt, but what its handlers did
+/// stays on record here.
 #[derive(Default)]
 pub struct AskHandlers<'a> {
     handlers: Vec<(String, &'a dyn AskHandler)>,
+    asked: Mutex<Vec<AskReceipt>>,
 }
 
 impl<'a> AskHandlers<'a> {
@@ -92,6 +97,17 @@ impl<'a> AskHandlers<'a> {
         self.handlers.retain(|(named, _)| named != &verb);
         self.handlers.push((verb, handler));
         self
+    }
+
+    /// The receipt line of every ask made on the calls these handlers
+    /// served, in order, whether each call succeeded or not. Give each call
+    /// its own set to keep the calls' lines apart.
+    #[must_use]
+    pub fn asked(&self) -> Vec<AskReceipt> {
+        self.asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn get(&self, verb: &str) -> Option<&'a dyn AskHandler> {
@@ -155,7 +171,7 @@ pub(crate) struct CallAsks<'a> {
     asked: u32,
     per_verb: HashMap<String, u32>,
     bytes_left: u64,
-    /// Answer bytes lent so far.
+    /// Answer bytes lent so far, values and data.
     lent: u64,
     refused_past_cap: bool,
     pub(crate) receipts: Vec<AskReceipt>,
@@ -197,22 +213,14 @@ impl<'a> CallAsks<'a> {
     /// `watched` says whether a watchdog keeps the call's deadline; with
     /// none the handler is not run and the ask is refused, retryable.
     pub(crate) fn take(&mut self, ask: Ask, watched: bool) -> AskStep {
+        let started = Instant::now();
+        let mut line = line(&ask);
         // One budget refusal, of either kind; any ask after it ends the call.
         if self.refused_past_cap {
+            line.unanswered = Some(Unanswered::NotRun);
+            self.receipts.push(line);
             return AskStep::End(HostError::AskBudget);
         }
-        let started = Instant::now();
-        let mut line = AskReceipt {
-            id: ask.id,
-            verb: bound_text(&ask.verb, MAX_VERB_BYTES),
-            value_digest: digest(&ask.value),
-            refused: None,
-            answer_digest: None,
-            data_hash: None,
-            data_len: 0,
-            fetch: None,
-            handler_us: 0,
-        };
         self.asked = self.asked.saturating_add(1);
         let cap = self
             .spec
@@ -272,14 +280,34 @@ impl<'a> CallAsks<'a> {
             max_bytes: self.bytes_left,
             fetch: &self.spec.fetch,
         };
+        // On record while the handler runs, so a handler that panics leaves
+        // its line; the settled line replaces it once the handler returns.
+        let mut running = line.clone();
+        running.unanswered = Some(Unanswered::NotSent);
+        self.receipts.push(running);
         let answered = {
             let _scope = HandlerScope::enter();
             handler.answer(&request)
         };
+        self.receipts.pop();
         line.handler_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         match answered {
             Ok(answered) => self.answer(&ask, line, answered),
             Err(refusal) => self.refuse(&ask, line, refusal),
+        }
+    }
+
+    /// An ask the host took but did not run: its call was ending.
+    pub(crate) fn skipped(&mut self, ask: &Ask) {
+        let mut line = line(ask);
+        line.unanswered = Some(Unanswered::NotRun);
+        self.receipts.push(line);
+    }
+
+    /// The last ask's handler ran, but its answer was not sent.
+    pub(crate) fn unsent(&mut self) {
+        if let Some(line) = self.receipts.last_mut() {
+            line.unanswered.get_or_insert(Unanswered::NotSent);
         }
     }
 
@@ -288,18 +316,23 @@ impl<'a> CallAsks<'a> {
         if fetch.is_some() {
             line.fetch = fetch;
         }
+        // The value is answer bytes too: a fetch's final URL, or anything a
+        // handler puts there, crosses inline and lands in the organ's heap.
+        let value_len =
+            rmp_serde::to_vec_named(&value).map_or(u64::MAX, |bytes| bytes.len() as u64);
+        let data_len = data.as_ref().map_or(0, |bytes| bytes.len() as u64);
+        let charged = value_len.saturating_add(data_len);
+        if charged > self.bytes_left {
+            let refusal = AskRefusal::new(
+                AskCode::TooLarge,
+                "the answer is over the call's answer bytes",
+            );
+            return self.refuse(ask, line, refusal);
+        }
         let mut region = None;
         let data = match data {
             None => None,
             Some(bytes) => {
-                let len = bytes.len() as u64;
-                if len > self.bytes_left {
-                    let refusal = AskRefusal::new(
-                        AskCode::TooLarge,
-                        "the answer is over the call's answer bytes",
-                    );
-                    return self.refuse(ask, line, refusal);
-                }
                 let content_hash = Hash32::of(&bytes);
                 let payload = if bytes.len() <= self.inline_max {
                     Payload::Inline(ByteBuf::from(bytes))
@@ -319,17 +352,17 @@ impl<'a> CallAsks<'a> {
                         }
                     }
                 };
-                self.bytes_left -= len;
-                self.lent += len;
                 line.data_hash = Some(content_hash);
-                line.data_len = len;
+                line.data_len = data_len;
                 Some(AskData {
-                    len,
+                    len: data_len,
                     content_hash,
                     data: payload,
                 })
             }
         };
+        self.bytes_left -= charged;
+        self.lent += charged;
         line.answer_digest = Some(digest(&value));
         self.receipts.push(line);
         let answer = AskAnswer {
@@ -350,5 +383,32 @@ impl<'a> CallAsks<'a> {
             outcome: AskOutcome::Refused(refusal),
         };
         AskStep::Answer(answer, None)
+    }
+}
+
+impl Drop for CallAsks<'_> {
+    /// Hands the call's lines to its handlers, however the call ended.
+    fn drop(&mut self) {
+        self.handlers
+            .asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(self.receipts.iter().cloned());
+    }
+}
+
+/// An ask's receipt line before anything is decided.
+fn line(ask: &Ask) -> AskReceipt {
+    AskReceipt {
+        id: ask.id,
+        verb: bound_text(&ask.verb, MAX_VERB_BYTES),
+        value_digest: digest(&ask.value),
+        refused: None,
+        answer_digest: None,
+        data_hash: None,
+        data_len: 0,
+        fetch: None,
+        handler_us: 0,
+        unanswered: None,
     }
 }

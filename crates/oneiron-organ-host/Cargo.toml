@@ -20,11 +20,13 @@ blake3 = { workspace = true }
 ipnet = "2"
 # The guarded `net.fetch`: the engine already builds this client and TLS
 # stack, so this adds no crate to the graph.
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
+# reqwest's own runtime, driven here so one deadline bounds a whole fetch.
+tokio = { version = "1", features = ["rt", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

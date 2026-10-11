@@ -6,13 +6,13 @@
 //! granted CIDR names it, and the connection goes only to the addresses
 //! checked, so a name cannot rebind between the check and the connect. At
 //! most three redirects, each checked afresh. No proxy, no cookies, no
-//! credentials, no compression. The body is capped, and the whole fetch
-//! runs inside the call's time left. These are the rules the seal crate's
-//! own guarded fetcher keeps (ARCH-0064a, SGN-00).
+//! credentials, no compression. The body is capped, and the whole fetch,
+//! every hop's send and its whole body, runs inside the call's time left.
+//! These are the rules the seal crate's own guarded fetcher keeps
+//! (ARCH-0064a, SGN-00).
 //!
 //! The handler blocks, as a host call does: run it off any async runtime.
 
-use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::mpsc;
 use std::thread;
@@ -160,98 +160,129 @@ impl AskHandler for GuardedFetch {
     fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
         let (request, first) = parse(ask.value)?;
         let cap = ask.fetch.max_bytes.min(ask.max_bytes);
-        let mut target = FetchTarget {
-            origin: bound_text(&origin(&first), MAX_CONTENT_TYPE_BYTES),
-            url_digest: Hash32::of(first.as_str().as_bytes()),
-            status: 0,
+        let deadline = ask.deadline;
+        // One deadline over the whole fetch, every hop's send and all of its
+        // body: at the deadline the fetch is dropped, and its connection
+        // with it. (reqwest's blocking timeout starts afresh at every read,
+        // so a server that drips its body would outlast it.)
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| failed(format!("fetch: {err}")))?;
+        runtime.block_on(async {
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                fetch(&request, first, ask.fetch, cap, deadline),
+            )
+            .await
+            .unwrap_or_else(|_| Err(failed("out of time")))
+        })
+    }
+}
+
+/// The fetch itself, hop by hop. DNS is bounded by `deadline` here; the
+/// caller bounds the rest.
+async fn fetch(
+    request: &FetchAsk,
+    first: Url,
+    grant: &FetchGrant,
+    cap: u64,
+    deadline: Instant,
+) -> Result<Answered, AskRefusal> {
+    let mut target = FetchTarget {
+        origin: bound_text(&origin(&first), MAX_CONTENT_TYPE_BYTES),
+        url_digest: Hash32::of(first.as_str().as_bytes()),
+        status: 0,
+    };
+    let mut url = first;
+    let mut hops = 0u8;
+    loop {
+        allowed(&url, grant)?;
+        let addrs = resolve(&url, grant, deadline)?;
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(failed("out of time"));
+        }
+        let host = url.host_str().unwrap_or_default().to_owned();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve_to_addrs(&host, &addrs)
+            .build()
+            .map_err(|err| failed(format!("client: {err}")))?;
+        let builder = match request.method {
+            FetchMethod::Get => client.get(url.clone()),
+            FetchMethod::Post => {
+                let builder = client.post(url.clone());
+                let builder = match &request.content_type {
+                    Some(content_type) => {
+                        builder.header(reqwest::header::CONTENT_TYPE, content_type.as_str())
+                    }
+                    None => builder,
+                };
+                builder.body(
+                    request
+                        .body
+                        .clone()
+                        .map_or_else(Vec::new, ByteBuf::into_vec),
+                )
+            }
         };
-        let mut url = first;
-        let mut hops = 0u8;
-        loop {
-            allowed(&url, ask.fetch)?;
-            let addrs = resolve(&url, ask.fetch, ask.deadline)?;
-            let left = ask.deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return Err(failed("out of time"));
+        let mut response = builder
+            .send()
+            .await
+            .map_err(|err| failed(format!("fetch: {err}")))?;
+        let status = response.status();
+        target.status = status.as_u16();
+        if status.is_redirection() {
+            if hops >= MAX_REDIRECTS {
+                return Err(refused(AskCode::Failed, "more than 3 redirects"));
             }
-            let host = url.host_str().unwrap_or_default().to_owned();
-            let client = reqwest::blocking::Client::builder()
-                .no_proxy()
-                .no_gzip()
-                .no_brotli()
-                .no_deflate()
-                .redirect(reqwest::redirect::Policy::none())
-                .resolve_to_addrs(&host, &addrs)
-                .timeout(left)
-                .build()
-                .map_err(|err| failed(format!("client: {err}")))?;
-            let builder = match request.method {
-                FetchMethod::Get => client.get(url.clone()),
-                FetchMethod::Post => {
-                    let builder = client.post(url.clone());
-                    let builder = match &request.content_type {
-                        Some(content_type) => {
-                            builder.header(reqwest::header::CONTENT_TYPE, content_type.as_str())
-                        }
-                        None => builder,
-                    };
-                    builder.body(
-                        request
-                            .body
-                            .clone()
-                            .map_or_else(Vec::new, ByteBuf::into_vec),
-                    )
-                }
-            };
-            let response = builder
-                .send()
-                .map_err(|err| failed(format!("fetch: {err}")))?;
-            let status = response.status();
-            target.status = status.as_u16();
-            if status.is_redirection() {
-                if hops >= MAX_REDIRECTS {
-                    return Err(refused(AskCode::Failed, "more than 3 redirects"));
-                }
-                url = response
-                    .headers()
-                    .get(reqwest::header::LOCATION)
-                    .and_then(|location| location.to_str().ok())
-                    .and_then(|location| url.join(location).ok())
-                    .ok_or_else(|| refused(AskCode::Failed, "a redirect with no location"))?;
-                hops += 1;
-                continue;
-            }
-            let content_type = response
+            url = response
                 .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .map(|value| bound_text(value, MAX_CONTENT_TYPE_BYTES));
-            let mut body = Vec::new();
-            response
-                .take(cap.saturating_add(1))
-                .read_to_end(&mut body)
-                .map_err(|err| failed(format!("body: {err}")))?;
+                .get(reqwest::header::LOCATION)
+                .and_then(|location| location.to_str().ok())
+                .and_then(|location| url.join(location).ok())
+                .ok_or_else(|| refused(AskCode::Failed, "a redirect with no location"))?;
+            hops += 1;
+            continue;
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| bound_text(value, MAX_CONTENT_TYPE_BYTES));
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|err| failed(format!("body: {err}")))?
+        {
+            body.extend_from_slice(&chunk);
             if body.len() as u64 > cap {
                 return Err(refused(
                     AskCode::TooLarge,
                     format!("the body is over {cap} bytes"),
                 ));
             }
-            let answer = FetchAnswer {
-                status: status.as_u16(),
-                content_type,
-                final_url: url.to_string(),
-            };
-            let encoded = rmp_serde::to_vec_named(&answer)
-                .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
-            let value = rmpv::decode::read_value(&mut encoded.as_slice())
-                .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
-            return Ok(Answered {
-                value,
-                data: Some(body),
-                fetch: Some(target),
-            });
         }
+        let answer = FetchAnswer {
+            status: status.as_u16(),
+            content_type,
+            final_url: url.to_string(),
+        };
+        let encoded = rmp_serde::to_vec_named(&answer)
+            .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
+        let value = rmpv::decode::read_value(&mut encoded.as_slice())
+            .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
+        return Ok(Answered {
+            value,
+            data: Some(body),
+            fetch: Some(target),
+        });
     }
 }
 
