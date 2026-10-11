@@ -165,6 +165,30 @@ impl CoreAuth {
         }
         Ok(())
     }
+    /// A write whose records are born at `worlds` and `facets` carries those
+    /// two axes of the credential's record bounds and no other. The proof may
+    /// narrow worlds and facets to cover them; any other narrowing, and any
+    /// record or channel caveat, fails closed as in
+    /// [`Self::require_unrestricted_record_scope`].
+    pub(crate) fn require_record_scope_carried(
+        &self,
+        worlds: oneiron::federation::ScopeAxis<oneiron::federation::ScopeId>,
+        facets: oneiron::federation::ScopeAxis<oneiron::federation::ScopeId>,
+    ) -> Result<(), ApiError> {
+        if let Some(proof) = self.verified_slip() {
+            let mut required = oneiron::federation::Scope::top();
+            required.verbs = proof.scope().verbs.clone();
+            required.worlds = worlds;
+            required.facets = facets;
+            if !proof.claims().records.is_empty()
+                || !proof.claims().channels.is_empty()
+                || !required.is_narrowing_of(proof.scope())
+            {
+                return Err(ApiError::forbidden_scope("record-scope"));
+            }
+        }
+        Ok(())
+    }
     /// May this credential read `id`? A verified slip reads through the
     /// actor-scoped lane its own proof builds, so its policy floor applies on
     /// every route. A credential with no verified slip is the owner's server

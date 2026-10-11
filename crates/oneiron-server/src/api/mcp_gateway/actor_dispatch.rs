@@ -367,10 +367,20 @@ pub(crate) async fn execute_mcp_tool(
         // Setup renders filtered board rows; execute_code persists its run
         // at once, whatever the program does.
         McpValidatedToolArgs::Setup(_) => {
-            mcp_credential_gate(server, actor, true, McpCallEffect::Reads)?;
+            mcp_credential_gate(
+                server,
+                actor,
+                McpRecordBounds::Filtered,
+                McpCallEffect::Reads,
+            )?;
         }
         McpValidatedToolArgs::ExecuteCode(_) => {
-            mcp_credential_gate(server, actor, false, McpCallEffect::Commits)?;
+            mcp_credential_gate(
+                server,
+                actor,
+                McpRecordBounds::Unrestricted,
+                McpCallEffect::Commits,
+            )?;
         }
     }
     match args {
@@ -389,43 +399,68 @@ pub(crate) async fn execute_mcp_tool(
 /// record scope instead of dropping caveats. A filtered read that names one
 /// task reads that task's card, which is task detail too. `describe(self)`
 /// renders the whole run brief, not filtered rows, so it takes the same guard.
+/// A `born` write (`tasks.create`) carries the connector's world and facet
+/// into the records it mints, so only those two axes may be narrowed.
 pub(crate) fn mcp_verb_gate(
     server: &Arc<SyncServer>,
     tool: crate::mcp::McpGeneratedVerbTool,
     arguments: &crate::mcp::McpVerbArguments,
     actor: &McpCallContext,
 ) -> Result<(), McpGatewayError> {
-    let filtered_read =
-        tool.filtered_read() && arguments.task_ref.is_none() && arguments.self_target != Some(true);
-    mcp_credential_gate(
-        server,
-        actor,
-        filtered_read,
-        McpCallEffect::of(tool, arguments),
-    )
+    let bounds = if tool.filtered_read()
+        && arguments.task_ref.is_none()
+        && arguments.self_target != Some(true)
+    {
+        McpRecordBounds::Filtered
+    } else if tool.born_in_scope() {
+        McpRecordBounds::Born
+    } else {
+        McpRecordBounds::Unrestricted
+    };
+    mcp_credential_gate(server, actor, bounds, McpCallEffect::of(tool, arguments))
 }
 
-/// The connector credential is live, inside its record bounds unless the call
-/// is a filtered list, and holds the verb for what the call does.
+/// How much of the credential's record bounds one call can carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum McpRecordBounds {
+    /// A list filtered row by row: every bound applies per row.
+    Filtered,
+    /// A write whose records are born at the connector's world and facet.
+    Born,
+    /// Anything else: no projection, so no record bound at all.
+    Unrestricted,
+}
+
+/// The connector credential is live, inside the record bounds the call can
+/// carry, and holds the verb for what the call does.
 fn mcp_credential_gate(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
-    filtered_read: bool,
+    bounds: McpRecordBounds,
     effect: McpCallEffect,
 ) -> Result<(), McpGatewayError> {
     let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
     if !auth.credential_is_live(server.vault().as_ref()) {
         return Err(mcp_proof_error());
     }
-    if !filtered_read {
-        auth.require_unrestricted_record_scope().map_err(|_| {
-            McpGatewayError::new(
-                -32020,
-                "mcp_scope_unprojectable",
-                "this facade cannot project the credential's record bounds",
-            )
-        })?;
-    }
+    let axis = |id: Option<oneiron::EntityId>| {
+        id.map_or(ScopeAxis::All, |id| {
+            ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(id)]))
+        })
+    };
+    let carried = match bounds {
+        McpRecordBounds::Filtered => Ok(()),
+        McpRecordBounds::Born => auth
+            .require_record_scope_carried(axis(actor.scope.world_ref), axis(actor.scope.facet_ref)),
+        McpRecordBounds::Unrestricted => auth.require_unrestricted_record_scope(),
+    };
+    carried.map_err(|_| {
+        McpGatewayError::new(
+            -32020,
+            "mcp_scope_unprojectable",
+            "this facade cannot project the credential's record bounds",
+        )
+    })?;
     auth.require(mcp_call_scope(server, actor, auth, effect))
         .map_err(|_| mcp_proof_error())
 }

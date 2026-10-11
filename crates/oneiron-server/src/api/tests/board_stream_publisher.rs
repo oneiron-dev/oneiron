@@ -686,6 +686,32 @@ async fn mcp_create(
         .unwrap_or_else(|| panic!("{credential} creates its TASK: {created:#}"))
 }
 
+/// Whether the TASKS section `credential`'s board serves lists `task`.
+async fn board_lists(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    envelope: Value,
+    task: oneiron::EntityId,
+) -> bool {
+    let (status, described) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "board-tasks",
+            "describe",
+            envelope,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{described}");
+    described["result"]["structuredContent"]["output"]["rows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{credential} reads its TASKS section: {described:#}"))
+        .iter()
+        .any(|row| row["id"] == task.to_hex().as_str())
+}
+
 /// The MCP error code `describe` answers `credential` for one TASK; `None`
 /// when the card is served.
 async fn describe_refusal(
@@ -828,10 +854,7 @@ async fn a_world_narrowed_writer_hears_and_reads_its_own_tasks() {
             born.worlds,
             oneiron::federation::ScopeAxis::Some([oneiron::federation::ScopeId(world)].into())
         );
-        assert_eq!(
-            describe_refusal(&server, "birth-inside", inside.clone(), task).await,
-            None
-        );
+        assert!(board_lists(&server, "birth-inside", inside.clone(), task).await);
         for credential in ["birth-inside", "birth-vault-wide"] {
             assert_eq!(
                 timeline_status(&server, format!("Bearer {credential}"), task).await,
@@ -861,6 +884,7 @@ async fn a_world_narrowed_writer_hears_and_reads_its_own_tasks() {
         let rows = delivered_rows(&server, credential, envelope.clone()).await;
         assert!(!names_any(&rows, &tasks), "{credential}: {rows:?}");
         for task in tasks {
+            assert!(!board_lists(&server, credential, envelope.clone(), task).await);
             assert_eq!(
                 describe_refusal(&server, credential, envelope.clone(), task).await,
                 Some(Value::from("mcp_scope_refused")),
@@ -887,8 +911,7 @@ async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
     let asker = seeded_test_entity_id(0xb1a5_0010);
     let addressee = seeded_test_entity_id(0xb1a5_0011);
     let world = seeded_test_entity_id(0xb1a5_0012);
-    let (inside, inside_connection) =
-        narrowed_stream(&server, addressee, "consult-inside", world).await;
+    let (_, inside_connection) = narrowed_stream(&server, addressee, "consult-inside", world).await;
     let (other, other_connection) = narrowed_stream(
         &server,
         addressee,
@@ -956,8 +979,8 @@ async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
             .starts_with(&format!("{}:arrived:", consult.to_hex()))
     );
     assert_eq!(
-        describe_refusal(&server, "consult-inside", inside, consult).await,
-        None
+        timeline_status(&server, "Bearer consult-inside".to_owned(), consult).await,
+        StatusCode::OK
     );
     publisher_passed(&server, witness, &witness_connection, 0xb1a5_0017).await;
     assert!(
@@ -973,5 +996,9 @@ async fn a_consult_born_in_a_world_reaches_its_addressee_there() {
     assert_eq!(
         describe_refusal(&server, "consult-other-world", other, consult).await,
         Some(Value::from("mcp_scope_refused"))
+    );
+    assert_eq!(
+        timeline_status(&server, "Bearer consult-other-world".to_owned(), consult).await,
+        StatusCode::NOT_FOUND
     );
 }

@@ -213,6 +213,9 @@ impl AgentVerb {
                 | Self::RoomsSpeak
         )
     }
+    pub const fn born_in_scope(self) -> bool {
+        matches!(self, Self::TasksCreate)
+    }
     pub const fn writes(self) -> bool {
         matches!(
             self,

@@ -697,6 +697,7 @@ export function agentVerbs(invoke: AgentInvoke) {
         ('continuable', lambda r: r.get('mcp_page', 'page' in r or r['output'].startswith('Vec<'))),
         ('filtered_read', lambda r: r['mcp_scope'] == 'filtered'),
         ('requires_unscoped', lambda r: r['mcp_scope'] == 'unrestricted'),
+        ('born_in_scope', lambda r: r['mcp_scope'] == 'born'),
         ('writes', lambda r: r['scope'] == 'Write'),
         ('proposes', lambda r: r.get('proposes', False)),
     ]:
