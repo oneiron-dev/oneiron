@@ -122,10 +122,12 @@ impl ScopedRead<'_> {
                     id,
                     body,
                 )?,
+                // The shared view of this snapshot's fold, not a copy: this
+                // runs per claim, and a copy grows with the vault's agents.
                 None => crate::authority::claim_causal_admitted(
                     &self.vault.store,
                     rtxn,
-                    &self.vault.authority_fold_readonly_in_txn(rtxn)?,
+                    &self.vault.authority_view_readonly_in_txn(rtxn)?,
                     id,
                     body,
                 )?,
