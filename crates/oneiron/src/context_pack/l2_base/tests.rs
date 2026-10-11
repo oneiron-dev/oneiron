@@ -239,7 +239,12 @@ fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<
 #[test]
 fn a_pack_over_a_room_keeps_no_summary_in_the_vaults_cache() -> Result<()> {
     let (_dir, vault, subject) = fixture();
-    claim(&vault, crate::test_util::entity(0x31), subject, "a preference")?;
+    claim(
+        &vault,
+        crate::test_util::entity(0x31),
+        subject,
+        "a preference",
+    )?;
     let session = vault.off_record_session_vault().enter(
         "sess-l2-room",
         crate::off_record::OffRecordBackendClass::Local,

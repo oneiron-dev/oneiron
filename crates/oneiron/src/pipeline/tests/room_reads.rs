@@ -59,7 +59,7 @@ fn room_vector(id: EntityId, vector: [f32; 4]) -> BatchOp {
     }
 }
 
-fn enter(vault: &Vault, session_ref: &str) -> Result<OffRecordSession<'_>> {
+fn enter<'v>(vault: &'v Vault, session_ref: &str) -> Result<OffRecordSession<'v>> {
     vault
         .off_record_session_vault()
         .enter(session_ref, OffRecordBackendClass::Local)
@@ -120,7 +120,11 @@ fn on_record_a_run_over_a_room_that_staged_only_a_vector_keeps_no_base_run() -> 
     let row = entity_id(0xA4);
     put_vector(&vault, row, [0.0, 1.0, 0.0, 0.0])?;
     let session = enter(&vault, "sess-room-vector-only")?;
-    stage_in_room(&vault, &session, vec![room_vector(row, [1.0, 0.0, 0.0, 0.0])])?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![room_vector(row, [1.0, 0.0, 0.0, 0.0])],
+    )?;
     session.flip_on_record()?;
     let base_runs = vault.retrieval_runs(64)?.len();
 
@@ -235,9 +239,10 @@ fn a_scoped_read_in_the_room_searches_the_room() -> Result<()> {
     assert!(outside.value.is_empty(), "base holds nothing of it");
 
     let view = session.read_view()?;
-    let inside = vault
-        .scoped_read_in_session(key, &view)
-        .search_text("roomscopedneedle", 10, None)?;
+    let inside =
+        vault
+            .scoped_read_in_session(key, &view)
+            .search_text("roomscopedneedle", 10, None)?;
     assert!(
         inside.value.iter().any(|hit| hit.id == staged),
         "the room's read finds the room's row, got {:?}",

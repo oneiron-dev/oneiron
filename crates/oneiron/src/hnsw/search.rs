@@ -189,8 +189,8 @@ pub(crate) fn exact_score(
     } else {
         score_dims_for(config)
     };
-    let distance =
-        PreparedCosine::new(score_prefix(query_vector, dims)?).distance(score_prefix(vector, dims)?);
+    let distance = PreparedCosine::new(score_prefix(query_vector, dims)?)
+        .distance(score_prefix(vector, dims)?);
     Ok((1.0 - distance).clamp(-1.0, 1.0))
 }
 
