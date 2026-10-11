@@ -2,7 +2,7 @@
 //! connector, is admitted against the run's own declaration and its lease,
 //! and gets a one-use permit bound to the run, the model, the route, the
 //! locality and the offer that pays.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
@@ -18,6 +18,10 @@ use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
 
+/// The subject of the `Denied` row for a selector the run could not resolve:
+/// the row keeps none of the selector's bytes.
+pub const UNRESOLVED_SELECTOR: &str = "unresolved-selector";
+
 /// Why the run admission refused a call or an edit. Every refusal comes
 /// before any byte leaves and leaves no reservation behind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
@@ -25,10 +29,14 @@ use super::settle::CallOutcome;
 pub enum RunDenied {
     #[error("the run did not declare teacher {model}")]
     UndeclaredTeacher { model: ModelId },
-    #[error("the run knows no model or alias named {selector}")]
-    UnknownSelector { selector: String },
+    /// The selector names no model id and no alias the run froze. A caller
+    /// may pass any text there, so the denial keeps only its length.
+    #[error("the run knows no model or alias by the {len}-byte selector given")]
+    UnknownSelector { len: usize },
     #[error("the offer binds another model than the call names")]
     OfferMismatch,
+    #[error("no offer on this host serves {model}")]
+    NoOffer { model: ModelId },
     #[error("the call's locality differs from its route's")]
     LocalityMismatch,
     #[error("the call picks its model or route through {key}")]
@@ -104,6 +112,10 @@ pub(super) struct RunInner {
     pub(super) host: Option<Arc<HostAccount>>,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
+    /// The open paid-connector permits' leases. A model permit's lease is in
+    /// `calls`. A meter other runs share issues their leases too, so the
+    /// meter alone cannot tell a permit's run.
+    paid: Mutex<BTreeSet<String>>,
 }
 
 struct Revisioned {
@@ -139,6 +151,24 @@ impl RunAdmission {
             budget.reserve_units,
             BudgetExhaustionPolicy::Suspend,
         );
+        Self::with_meter(run, declaration, guard, host, receipts)
+    }
+
+    /// Starts a run at revision 1 of `declaration` on a meter the host built
+    /// for its line, such as the vault's budget policy for one actor's calls.
+    /// `meter` holds the line `declaration.budget()` names, and each call
+    /// reserves that line's `reserve_units` on it. Runs that share a meter
+    /// share its line, never their permits: a permit starts only at the gate
+    /// of the run that admitted it.
+    #[must_use]
+    pub fn with_meter(
+        run: impl Into<String>,
+        declaration: RunDeclaration,
+        meter: BudgetGuard,
+        host: Option<Arc<HostAccount>>,
+        receipts: Arc<dyn RunReceiptSink>,
+    ) -> Self {
+        let run = run.into();
         Self {
             inner: Arc::new(RunInner {
                 run,
@@ -146,10 +176,11 @@ impl RunAdmission {
                     revision: 1,
                     declaration,
                 }),
-                guard,
+                guard: meter,
                 host,
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
+                paid: Mutex::new(BTreeSet::new()),
             }),
         }
     }
@@ -186,8 +217,25 @@ impl RunAdmission {
             return Ok(model.clone());
         }
         ModelId::new(selector).map_err(|_| RunDenied::UnknownSelector {
-            selector: selector.to_owned(),
+            len: selector.len(),
         })
+    }
+
+    /// Records a call the host refused before admission, such as one whose
+    /// body picks its own route or one naming a model no offer serves: one
+    /// `Denied` row, nothing reserved. Returns `reason`.
+    pub fn refuse(&self, selector: Option<&str>, subject: &str, reason: RunDenied) -> RunDenied {
+        let revision = self.revision();
+        self.inner.record(
+            revision,
+            RunEvent::Denied {
+                selector: selector.map(str::to_owned),
+                subject: Some(subject.to_owned()),
+                lease: None,
+                reason: reason.clone(),
+            },
+        );
+        reason
     }
 
     /// Admits one model call: the declared teachers, the host's offer, the
@@ -343,7 +391,18 @@ impl RunInner {
         lease: &BudgetLease,
         call: &DispatchBinding,
     ) -> Result<(), RunDenied> {
-        self.guard.begin_dispatch(lease, call).map_err(|refused| {
+        let ours = self.lock_calls().contains_key(lease.id());
+        let ours = ours || self.lock_paid().contains(lease.id());
+        let started = if ours {
+            self.guard.begin_dispatch(lease, call)
+        } else if self.guard.lease_open(lease) == Some(false) {
+            // A settled permit, which its run no longer holds.
+            Err(DispatchRefused::Closed)
+        } else {
+            // Another run's permit, on a meter the two share.
+            Err(DispatchRefused::ForeignLease)
+        };
+        started.map_err(|refused| {
             let reason = RunDenied::Dispatch { refused };
             self.refuse(Some(&call.subject), Some(lease), reason.clone());
             reason
@@ -428,6 +487,8 @@ impl RunInner {
                             settled_units: None,
                         },
                     );
+                } else {
+                    self.lock_paid().insert(permit.lease.id().to_owned());
                 }
                 self.record(revision, RunEvent::Admitted(Box::new(permit.facts.clone())));
                 Ok(permit)
@@ -475,6 +536,10 @@ impl RunInner {
 
     pub(super) fn lock_calls(&self) -> MutexGuard<'_, BTreeMap<String, CallFacts>> {
         self.calls.lock().expect("run call mutex poisoned")
+    }
+
+    pub(super) fn lock_paid(&self) -> MutexGuard<'_, BTreeSet<String>> {
+        self.paid.lock().expect("run permit mutex poisoned")
     }
 }
 

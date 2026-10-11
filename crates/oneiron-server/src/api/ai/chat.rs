@@ -24,9 +24,9 @@ use oneiron::memory::{
     StreamSyncVisibility, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
-    ContentPart, EdgeActorClass, EntityId, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, LlmStreamEvent, ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
+    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,
+    EntityId, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmStream, LlmStreamEvent,
+    ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
 };
 use oneiron_driver::SessionHint;
 use serde::{Deserialize, Serialize};
@@ -377,8 +377,11 @@ fn start_turn(
         )
         .map_err(|error| engine(&error))?;
 
-    let call = admitted.request;
-    let metered = vault
+    // The turn is a run on the vault's budget policy for this actor, one line
+    // per turn. Each rung the call reaches is admitted on its own permit and
+    // settles itself; the first is admitted here, so a turn the line cannot
+    // hold is refused before any model is called.
+    let started = vault
         .policy_budget_guard(
             format!("chat:{}", handle.message_id().to_hex()),
             settings.turn_budget_units,
@@ -386,22 +389,26 @@ fn start_turn(
             BudgetExhaustionPolicy::Suspend,
             WriteActor::new(actor, class),
         )
-        .and_then(|guard| {
-            let lease = guard.admit_for_request(&call).map_err(|denied| {
-                oneiron::Error::InvalidConfig(format!("chat budget: {denied:?}"))
-            })?;
-            Ok((guard, lease.lease))
+        .map_err(|error| error.to_string())
+        .and_then(|meter| {
+            let run = server
+                .ai
+                .undeclared_run(format!("chat:{}", handle.message_id().to_hex()), meter);
+            admitted
+                .ladder
+                .stream(&run, admitted.request, None)
+                .map_err(|error| format!("chat budget: {error:?}"))
         });
-    let (guard, lease) = match metered {
-        Ok(metered) => metered,
-        Err(error) => {
+    let stream = match started {
+        Ok(stream) => stream,
+        Err(reason) => {
             let _ = vault
                 .memory(agent, EdgeActorClass::Agent)
                 .cancel_stream(handle, StreamCancelReason::AgentAborted);
             return Err(refused(
                 StatusCode::PAYMENT_REQUIRED,
                 "turn_not_admitted",
-                error.to_string(),
+                reason,
             ));
         }
     };
@@ -427,10 +434,7 @@ fn start_turn(
     let turn = server.ai.enter_turn();
     let producer = Producer {
         bus,
-        backend: admitted.backend,
-        call,
-        guard,
-        lease,
+        stream,
         vault,
         agent,
         handle,
@@ -603,10 +607,8 @@ impl TerminalSink for AssistantMessage {
 
 struct Producer {
     bus: LlmEventBus,
-    backend: Arc<dyn LlmBackend>,
-    call: LlmRequest,
-    guard: BudgetGuard,
-    lease: BudgetLease,
+    /// The turn's call, admitted and settled rung by rung under its run.
+    stream: LlmStream<'static>,
     vault: Arc<Vault>,
     agent: EntityId,
     handle: MessageStreamHandle,
@@ -616,33 +618,15 @@ struct Producer {
     turn: TurnGuard,
 }
 
-/// Charges a terminal what it reports, or the turn's reservation when it
-/// reports nothing, plus the reservation for each rung that failed before it
-/// (`settle_answered`, the rule code mode and workflow steps use).
-fn settle(
-    guard: &BudgetGuard,
-    lease: &BudgetLease,
-    usage: &oneiron::LlmUsage,
-) -> Result<(), String> {
-    let floor = guard
-        .reserved_for(lease)
-        .unwrap_or(oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS);
-    crate::models::settle_answered(guard, lease, usage, floor)
-        .map(|_| ())
-        .map_err(|denied| format!("chat settlement: {denied:?}"))
-}
-
-/// Drives the model stream into the presence plane and the bus. Settles the
-/// turn's meter on every exit: honest usage on a terminal (saved or not),
-/// the reservation otherwise. A credential that lapses mid-turn stops the
-/// call: nothing more reaches any plane, and the message is cancelled.
+/// Drives the model stream into the presence plane and the bus. The run
+/// settles each rung: honest usage on a terminal (saved or not), the
+/// reservation of a rung that went out and failed, or was stopped. A
+/// credential that lapses mid-turn stops the call: nothing more reaches any
+/// plane, and the message is cancelled.
 async fn produce(producer: Producer) -> Result<(), String> {
     let Producer {
         mut bus,
-        backend,
-        call,
-        guard,
-        lease,
+        mut stream,
         vault,
         agent,
         handle,
@@ -657,17 +641,11 @@ async fn produce(producer: Producer) -> Result<(), String> {
     };
     let fail = |reason: String| {
         cancel(StreamCancelReason::AgentAborted);
-        let _ = guard.settle_reserved(&lease);
         Err(reason)
     };
     let revoked = || {
         cancel(StreamCancelReason::Custom(REVOKED.into()));
-        let _ = guard.settle_reserved(&lease);
         Err("the turn's credential was revoked".to_owned())
-    };
-    let mut stream = match backend.stream(call, &lease) {
-        Ok(stream) => stream,
-        Err(error) => return fail(format!("model stream did not start: {error:?}")),
     };
     let mut keepalive = tokio::time::interval(keepalive);
     keepalive.reset();
@@ -692,19 +670,18 @@ async fn produce(producer: Producer) -> Result<(), String> {
             Ok(event) => event,
             Err(error) => return fail(format!("model stream failed: {error:?}")),
         };
-        if let LlmStreamEvent::Done { usage, .. } = &event {
-            // The provider spent this whether or not the answer is saved.
-            let usage = usage.clone();
+        if matches!(event, LlmStreamEvent::Done { .. }) {
+            // The run settled the answer before it arrived: the provider
+            // spent it whether or not the answer is saved.
             if let Err(error) = bus.publish(event) {
                 if credential.live() {
                     cancel(StreamCancelReason::AgentAborted);
                 } else {
                     cancel(StreamCancelReason::Custom(REVOKED.into()));
                 }
-                let _ = settle(&guard, &lease, &usage);
                 return Err(format!("terminal message was not saved: {error:?}"));
             }
-            return settle(&guard, &lease, &usage);
+            return Ok(());
         }
         if !credential.live() {
             return revoked();
