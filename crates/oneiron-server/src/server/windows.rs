@@ -200,11 +200,15 @@ pub(super) fn spawn_local_change_producer(
     reassert_manager.outbound().attach(updates_tx);
 
     let broadcast_tx = broadcast_tx.clone();
-    let manager = Arc::clone(reassert_manager);
+    // Weak: the manager's outbound sink holds this channel's sender, so a
+    // strong handle here would keep the manager, and its vault, alive forever.
+    let manager = Arc::downgrade(reassert_manager);
     runtime.spawn(async move {
         while let Some(update) = updates_rx.recv().await {
             let window_key = update.window_key;
-            if withheld_from_peers(&manager, &window_key, &update.update_bytes) {
+            if manager.upgrade().is_none_or(|manager| {
+                withheld_from_peers(&manager, &window_key, &update.update_bytes)
+            }) {
                 continue;
             }
             match crate::protocol::encode_window_sync(
