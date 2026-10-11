@@ -414,7 +414,7 @@ pub enum ApiCommand {
 
 /// `oneiron mcp`: a stdio MCP server in front of a running server's MCP
 /// endpoint. The endpoint is the operator's choice, made here in the agent's
-/// MCP config; nothing the agent sends can change it.
+/// MCP config, or else the server's; nothing the agent sends can change it.
 #[derive(Args, Clone, Debug)]
 pub struct McpArgs {
     /// The running server's origin. The default is where `oneiron serve`
@@ -422,9 +422,11 @@ pub struct McpArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
-    /// Which MCP endpoint to forward to.
-    #[arg(long, value_enum, default_value_t = McpSurface::ToolFirst)]
-    pub surface: McpSurface,
+    /// Which MCP endpoint to forward to. Without it, the bridge asks the
+    /// server at the first request: `primary` when the server has a bound
+    /// code host (its `/mcp` lists `execute_code`), `tool-first` otherwise.
+    #[arg(long, value_enum)]
+    pub surface: Option<McpSurface>,
 
     /// File holding the paired credential, as `token agent --out` writes it.
     /// Only its owner may be able to read it. Without this flag the slip and

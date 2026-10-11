@@ -198,8 +198,16 @@ impl Bridge {
         )
     }
 
-    /// `oneiron mcp` with `args`, and only `env` of the credential variables.
+    /// `oneiron mcp --surface tool-first` with `args`, and only `env` of the
+    /// credential variables.
     fn spawn_with(args: &[&str], env: &[(&str, &str)], curl_dir: &Path, stderr: &Path) -> Self {
+        let args = [&["--surface", "tool-first"][..], args].concat();
+        Self::spawn_bare(&args, env, curl_dir, stderr)
+    }
+
+    /// `oneiron mcp` with `args` alone: it picks its endpoint unless `args`
+    /// names one.
+    fn spawn_bare(args: &[&str], env: &[(&str, &str)], curl_dir: &Path, stderr: &Path) -> Self {
         let path = std::env::join_paths(
             std::iter::once(curl_dir.to_path_buf()).chain(
                 std::env::var_os("PATH")
@@ -209,7 +217,7 @@ impl Bridge {
         )
         .unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_oneiron"))
-            .args(["mcp", "--surface", "tool-first"])
+            .arg("mcp")
             .args(args)
             .env("PATH", path)
             .env_remove("ONEIRON_SECRET")
@@ -494,15 +502,10 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         names.contains("witness") && names.contains("recall"),
         "{names:?}"
     );
+    // WHO is the credential's: no tool asks the agent to name an actor.
     for tool in tools {
-        let schema = &tool["inputSchema"];
-        assert!(schema["properties"].get("actor").is_none(), "{tool:#}");
-        assert!(
-            !schema["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("actor"))
-        );
+        let required = tool["inputSchema"]["required"].as_array().unwrap();
+        assert!(!required.contains(&json!("actor")), "{tool:#}");
     }
     let witness = tools.iter().find(|tool| tool["name"] == "witness").unwrap();
     let version = witness["inputSchema"]["properties"]["schema_version"]["const"].clone();
@@ -709,20 +712,33 @@ impl Minted {
         }
     }
 
-    /// `request` with this slip and a fresh holder proof; the HTTP status.
+    /// `request` with this slip and a fresh holder proof.
+    fn signed(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        request.bearer_auth(&self.token).header(
+            "x-oneiron-binding",
+            holder_proof(&self.slip, &self.key, unix_seconds_now())
+                .unwrap()
+                .to_string(),
+        )
+    }
+
+    /// `request`, signed; the HTTP status.
     fn send(&self, request: reqwest::blocking::RequestBuilder) -> u16 {
-        request
-            .bearer_auth(&self.token)
-            .header(
-                "x-oneiron-binding",
-                holder_proof(&self.slip, &self.key, unix_seconds_now())
-                    .unwrap()
-                    .to_string(),
-            )
-            .send()
-            .unwrap()
-            .status()
-            .as_u16()
+        self.signed(request).send().unwrap().status().as_u16()
+    }
+
+    /// One JSON-RPC request to `endpoint`, signed and with no bridge; the
+    /// server's answer.
+    fn rpc(&self, endpoint: &str, id: u64, method: &str, params: Value) -> Value {
+        let request = reqwest::blocking::Client::new()
+            .post(endpoint)
+            .json(&json!({
+                "jsonrpc": "2.0", "id": id, "method": method, "params": params,
+            }));
+        self.signed(request).send().unwrap().json().unwrap()
     }
 
     /// The raw batch door: one PERSON put at `id`, committed at once.
@@ -850,21 +866,26 @@ fn an_agent_holds_its_latest_tier_at_every_write_door() {
     scout_bridge.close();
 }
 
+/// What a fake endpoint saw: each request's path and JSON-RPC body.
+type Seen = Arc<Mutex<Vec<(String, Value)>>>;
+
 /// One fake MCP endpoint per test: it records each request and answers by
-/// the request's JSON-RPC method, stalling or flooding where told to.
-fn fake_mcp_server(seen: Arc<Mutex<Vec<Value>>>) -> u16 {
+/// the request's JSON-RPC method, stalling or flooding where told to, and
+/// lists `listed` as its tools (a `null` list: it stalls on `tools/list`).
+fn fake_mcp_server(seen: Seen, listed: Value) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let seen = Arc::clone(&seen);
-            std::thread::spawn(move || answer_fake(stream, &seen));
+            let listed = listed.clone();
+            std::thread::spawn(move || answer_fake(stream, &seen, &listed));
         }
     });
     port
 }
 
-fn answer_fake(mut stream: TcpStream, seen: &Mutex<Vec<Value>>) {
+fn answer_fake(mut stream: TcpStream, seen: &Mutex<Vec<(String, Value)>>, listed: &Value) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
@@ -889,7 +910,10 @@ fn answer_fake(mut stream: TcpStream, seen: &Mutex<Vec<Value>>) {
     let mut body = vec![0; length];
     reader.read_exact(&mut body).unwrap();
     let request: Value = serde_json::from_slice(&body).unwrap();
-    seen.lock().unwrap().push(request.clone());
+    let path = request_line.split_whitespace().nth(1).unwrap_or_default();
+    seen.lock()
+        .unwrap()
+        .push((path.to_owned(), request.clone()));
     let head = |length: usize| {
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n"
@@ -909,6 +933,14 @@ fn answer_fake(mut stream: TcpStream, seen: &Mutex<Vec<Value>>) {
             .to_string();
             format!("{}{answer}", head(answer.len()))
         }
+        Some("tools/list") if listed.is_null() => head(64),
+        Some("tools/list") => {
+            let answer = json!({
+                "jsonrpc": "2.0", "id": request["id"], "result": { "tools": listed },
+            })
+            .to_string();
+            format!("{}{answer}", head(answer.len()))
+        }
         _ => {
             let answer = json!({ "jsonrpc": "2.0", "id": request["id"], "result": {} }).to_string();
             format!("{}{answer}", head(answer.len()))
@@ -918,10 +950,11 @@ fn answer_fake(mut stream: TcpStream, seen: &Mutex<Vec<Value>>) {
     let _ = stream
         .write_all(reply.as_bytes())
         .and_then(|()| stream.flush());
-    if request["method"]
-        .as_str()
-        .is_some_and(|method| method.starts_with("stall/"))
-    {
+    let stalls = match request["method"].as_str() {
+        Some("tools/list") => listed.is_null(),
+        method => method.is_some_and(|method| method.starts_with("stall/")),
+    };
+    if stalls {
         std::thread::sleep(Duration::from_secs(600));
     }
 }
@@ -957,7 +990,10 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
     let token = printed["token"].as_str().unwrap().to_owned();
     let seed = printed["binding_key"].as_str().unwrap().to_owned();
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let origin = format!("http://127.0.0.1:{}", fake_mcp_server(Arc::clone(&seen)));
+    let origin = format!(
+        "http://127.0.0.1:{}",
+        fake_mcp_server(Arc::clone(&seen), json!([]))
+    );
     let env_log = dir.path().join("curl-env.log");
     let curl_dir = recording_curl(
         dir.path(),
@@ -1041,7 +1077,7 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
             .lock()
             .unwrap()
             .iter()
-            .any(|request| request["id"] == json!(4))
+            .any(|(_, request)| request["id"] == json!(4))
     );
 
     // One cut inside its numeric id (`"id":12` kept as `"id":1`) names no
@@ -1593,4 +1629,163 @@ fn oneiron_api_and_token_pair_keep_the_credential_out_of_curls_environment() {
     for secret in [token, seed, SECRET] {
         assert!(!env.contains(secret), "a credential reached curl");
     }
+}
+
+/// A tool call names no one: it runs as its credential's actor, and a call
+/// that names another actor is refused, not re-addressed (ARCH-0028
+/// #surface, "Calling code never supplies WHO"; drift E1). Before, every tool
+/// required `actor`, and the bridge appended the credential's own block last,
+/// which silently outvoted the one the agent sent.
+#[test]
+fn a_tool_call_runs_as_its_credential_and_one_naming_another_actor_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let mint = |name: &str| {
+        Minted::new(
+            &config,
+            dir.path().join(format!("{name}.cred")),
+            name,
+            "full-access",
+        )
+    };
+    let (writer, other) = (mint("writer"), mint("other"));
+    let [_, room, turn] = seed_failed_task_and_open_turn(&dir.path().join("vault"), &writer, &[]);
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let endpoint = format!("{origin}/mcp/tool-first");
+    let listed = writer.rpc(&endpoint, 1, "tools/list", json!({}));
+    let first = &listed["result"]["tools"][0];
+    let version = first["inputSchema"]["properties"]["schema_version"]["const"].clone();
+
+    // Straight to the server, with no bridge and no actor: the claim is the
+    // writer's.
+    let claim = json!({ "room_ref": room, "turn_ref": turn });
+    let (id, params) = tool_call(2, "rooms.claim", &version, claim);
+    let claimed = writer.rpc(&endpoint, id, "tools/call", params);
+    assert_eq!(
+        output(&claimed)["Claimed"]["actor"],
+        writer.printed["principal_ref"],
+        "{claimed:#}"
+    );
+
+    // Holding its own credential, an agent that names the writer is refused,
+    // straight to the server and through the bridge alike.
+    let writer_actor = writer.rpc(&endpoint, 3, "initialize", json!({}))["result"]["actor"].clone();
+    assert!(writer_actor.is_object(), "{writer_actor:#}");
+    let task = json!({ "spec": { "kind": "review" } });
+    let (id, mut params) = tool_call(4, "tasks.create", &version, task);
+    params["arguments"]["actor"] = writer_actor;
+    let direct = other.rpc(&endpoint, id, "tools/call", params.clone());
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let mut bridge = Bridge::spawn(
+        &origin,
+        &other.file,
+        &curl_dir,
+        &dir.path().join("mcp.stderr"),
+    );
+    let bridged = bridge.call(id, "tools/call", params);
+    for refused in [&direct, &bridged] {
+        assert_eq!(
+            refused["error"]["data"]["error_code"],
+            json!("mcp_actor_mismatch"),
+            "{refused:#}"
+        );
+    }
+}
+
+/// With no `--surface`, the bridge forwards to `/mcp`, the code-mode pair
+/// (`setup_oneiron`, `execute_code`), when the server lists `execute_code`,
+/// which it does only with a bound code host; to `/mcp/tool-first`
+/// otherwise; and a named `--surface` is used as named, with nothing asked
+/// (ARCH-0028; drift E4). Before, it was always `/mcp/tool-first`. A probe
+/// the server never answers ends each call that waited on it within that
+/// call's own deadline (Sol pre-review: they probed again in turn).
+#[test]
+fn the_bridge_takes_the_code_mode_pair_when_the_server_has_a_code_host() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let printed: Value = serde_json::from_str(&stdout(oneiron(
+        &["token", "agent", "--name", "codex"],
+        &config,
+    )))
+    .unwrap();
+    let (token, seed) = (printed["token"].as_str(), printed["binding_key"].as_str());
+    let env = [
+        ("ONEIRON_SECRET", token.unwrap()),
+        ("ONEIRON_BINDING_KEY", seed.unwrap()),
+    ];
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let stderr = dir.path().join("mcp.stderr");
+    // Each request the server saw, as "<path> <method>".
+    let forwarded = |code_host: bool, surface: &[&str]| -> Vec<String> {
+        let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+        let mut listed = vec![json!({ "name": "setup_oneiron" })];
+        if code_host {
+            listed.push(json!({ "name": "execute_code" }));
+        }
+        let port = fake_mcp_server(Arc::clone(&seen), Value::Array(listed));
+        let origin = format!("http://127.0.0.1:{port}");
+        let args = [&["--url", origin.as_str()][..], surface].concat();
+        let mut bridge = Bridge::spawn_bare(&args, &env, &curl_dir, &stderr);
+        ask(&mut bridge, 1, "initialize");
+        ask(&mut bridge, 2, "tools/list");
+        bridge.close();
+        let seen = seen.lock().unwrap();
+        seen.iter()
+            .map(|(path, request)| format!("{path} {}", request["method"].as_str().unwrap()))
+            .collect()
+    };
+    assert_eq!(
+        forwarded(true, &[]),
+        ["/mcp tools/list", "/mcp initialize", "/mcp tools/list"]
+    );
+    assert_eq!(
+        forwarded(false, &[]),
+        [
+            "/mcp tools/list",
+            "/mcp/tool-first initialize",
+            "/mcp/tool-first tools/list"
+        ]
+    );
+    for code_host in [true, false] {
+        assert_eq!(
+            forwarded(code_host, &["--surface", "tool-first"]),
+            ["/mcp/tool-first initialize", "/mcp/tool-first tools/list"]
+        );
+    }
+
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let port = fake_mcp_server(Arc::clone(&seen), Value::Null);
+    let origin = format!("http://127.0.0.1:{port}");
+    let args = ["--url", origin.as_str(), "--request-timeout-secs", "3"];
+    let mut bridge = Bridge::spawn_bare(&args, &env, &curl_dir, &stderr);
+    for id in 1..=4 {
+        bridge.send(&json!({ "jsonrpc": "2.0", "id": id, "method": "initialize", "params": {} }));
+    }
+    // Timed from the probe's arrival, not from the bridge's start.
+    let spawned = Instant::now();
+    while seen.lock().unwrap().is_empty() {
+        assert!(spawned.elapsed() < Duration::from_secs(30), "no probe came");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let started = Instant::now();
+    for _ in 1..=4 {
+        let answer = bridge.next_within(Duration::from_secs(30));
+        assert_eq!(
+            answer["error"]["data"]["kind"],
+            json!("server_unreachable"),
+            "{answer:#}"
+        );
+    }
+    // The calls that waited share the one probe's answer. A call whose
+    // thread started after that probe failed may probe once more; a probe
+    // per waiting call would be four, ending at 3, 6, 9 and 12 s.
+    let took = started.elapsed();
+    let probes = seen.lock().unwrap().len();
+    assert!(probes <= 2, "{probes} probes");
+    assert!(
+        took < Duration::from_secs(8),
+        "four waiting calls took {took:?}"
+    );
 }
