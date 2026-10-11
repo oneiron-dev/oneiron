@@ -11,7 +11,7 @@ use std::time::Duration;
 use oneiron::embed::{Embedder, PendingEmbeddingReconcileReport, PendingEmbeddingReconciler};
 
 use super::core::SyncServer;
-use crate::embedder::{EmbedQueryRefusal, QueryEmbedder};
+use crate::embedder::{EmbedQueryRefusal, EmbedderSlot, QueryEmbedder};
 
 /// Ceiling on the error backoff. Long enough that a sleeping laptop or a
 /// stopped endpoint does not spin, short enough that recovery is automatic.
@@ -27,6 +27,18 @@ pub(crate) struct EmbedderDescriptor {
 }
 
 impl SyncServer {
+    /// The embedder as this server serves it, for the owner: what config
+    /// asks for, what the vault pins and what loaded. Blocking: it reads the
+    /// vault's pins.
+    pub(crate) fn embedder_report(&self) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
+        let doctor = self.vault.doctor()?;
+        Ok(crate::owner::embedder::EmbedderReport::served(
+            self.embedder.as_ref().map(EmbedderSlot::config),
+            &doctor,
+            self.embedder.as_ref().map(EmbedderSlot::dense_state),
+        ))
+    }
+
     /// The active provider's identity, or `None` at rung 0.
     pub(crate) fn embedder_descriptor(&self) -> Option<EmbedderDescriptor> {
         let slot = self.embedder.as_ref()?;

@@ -193,20 +193,31 @@ async fn blocking<T: Send + 'static>(
         .map_err(owner_error)
 }
 
+/// `GET /v1/owner/status`: where the data lives, and the embedder as this
+/// server serves it.
+#[derive(serde::Serialize)]
+struct OwnerStatus {
+    #[serde(flatten)]
+    location: location::Location,
+    embedder: crate::owner::embedder::EmbedderReport,
+}
+
 async fn status(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<location::Location> {
+) -> OwnerReply<OwnerStatus> {
     owner(&auth, &server)?;
     let host = host(&server)?;
     let report = blocking(move || {
-        location::locate(
-            &host.vault_path,
-            Some(server.vault()),
-            &host.backups,
-            host.every.map(|every| every.as_secs() / 3_600),
-        )
-        .map_err(OwnerError::from)
+        Ok::<_, OwnerError>(OwnerStatus {
+            location: location::locate(
+                &host.vault_path,
+                Some(server.vault()),
+                &host.backups,
+                host.every.map(|every| every.as_secs() / 3_600),
+            )?,
+            embedder: server.embedder_report()?,
+        })
     })
     .await?;
     Ok(Json(report))

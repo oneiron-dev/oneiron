@@ -44,7 +44,7 @@ use self::prompts::Prompts;
 use self::qwen3_embedding::{Config, LoadContext, Model};
 use self::spec::LocalModelSpec;
 use self::st_modules::{Chain, StModules};
-use super::{EmbedderCommon, QueryEmbedder};
+use super::{EmbedderCommon, LoadedModel, QueryEmbedder};
 use crate::config::EmbedderConfig;
 
 /// Tokens one forward packs, at most; one input longer than this runs alone.
@@ -76,6 +76,8 @@ pub(crate) struct LocalEmbedder {
     /// Tokens one forward packs, at most ([`FORWARD_TOKENS`]).
     forward_tokens: usize,
     truncations: AtomicU64,
+    /// What loaded: the model, its checked width, its device and weights.
+    loaded: LoadedModel,
 }
 
 /// Which prompt a text is embedded behind.
@@ -291,7 +293,22 @@ impl LocalEmbedder {
             dimensions = modules.chain().dimensions(),
             "local embedder ready"
         );
+        let loaded = LoadedModel {
+            repo: config.local.repo.clone(),
+            revision: config.local.revision.clone(),
+            dimensions: modules.chain().dimensions(),
+            device: device::device_label(&run_device),
+            quant: config.local.quant.as_str(),
+            artifacts: if config.local.model_dir.is_some() {
+                "model_dir"
+            } else if model_manager::pinned_files(&config.local).is_some() {
+                "pinned_digests"
+            } else {
+                "unpinned"
+            },
+        };
         Ok(std::sync::Arc::new(Self {
+            loaded,
             common: EmbedderCommon::from_config(config),
             model,
             turns: Turns::default(),
@@ -574,6 +591,10 @@ impl Embedder for LocalEmbedder {
 impl QueryEmbedder for LocalEmbedder {
     fn truncations(&self) -> u64 {
         self.truncations.load(Ordering::Relaxed)
+    }
+
+    fn loaded(&self) -> Option<&LoadedModel> {
+        Some(&self.loaded)
     }
 
     fn embed_query(&self, text: &str) -> oneiron::Result<Vec<f32>> {
