@@ -5114,7 +5114,13 @@ fn an_epoch_summary_stays_home_when_no_window_exports_its_source() -> crate::Res
     )?;
     vault
         .batch()
-        .put(&event, ENTITY_TYPE_EVENT, at(feb), feb, b"the faceted event")
+        .put(
+            &event,
+            ENTITY_TYPE_EVENT,
+            at(feb),
+            feb,
+            b"the faceted event",
+        )
         .put(
             &summary,
             crate::registry::ENTITY_TYPE_SUMMARY,
@@ -5246,7 +5252,10 @@ fn an_epoch_summary_stays_home_when_its_source_history_spans_windows() -> crate:
         ));
     }
     assert!(sent.contains(&person), "the selector exports");
-    assert!(!sent.contains(&claim), "no window carries the claim's history whole");
+    assert!(
+        !sent.contains(&claim),
+        "no window carries the claim's history whole"
+    );
     assert!(
         !sent.contains(&summary),
         "the summary stays home with a source whose history no window carries"

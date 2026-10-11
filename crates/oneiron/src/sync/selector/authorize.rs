@@ -9,7 +9,7 @@ use crate::authority::{AuthorityFold, FederationGrantActivation, federation_gran
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncError, SyncSelectorValidation as SelectorError};
+use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::{
     Ceiling, FederationDirectionScope, FederationGrantScope, Position, ScopeAxis, ScopeId,
     base_world_axis, decode_federation_grant_body,
@@ -22,11 +22,9 @@ use crate::sync::loro_support::{
 };
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
-use crate::sync::window::{
-    apply_pending_window_updates, load_window_from_state, reverse_rematerialize,
-};
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
+use super::epoch_egress::{rematerialized_window, unbacked_epochs};
 use super::scope::{
     band_filter, coreference_export_context, entity_selector_decision, facet_filter,
     facet_scope_by_source,
@@ -269,6 +267,7 @@ fn authorized_base_edge_endpoints(
     kept: &BTreeSet<EntityId>,
     selector: &SyncSelector,
     position: &Position,
+    elsewhere: bool,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -297,17 +296,9 @@ fn authorized_base_edge_endpoints(
         }
         let base_key = WindowKey::from_timestamp(header.learned_at);
         if !selected_by_month.contains_key(base_key.as_str()) {
-            let base = match load_window_from_state(vault, "selector-base", &base_key) {
-                Ok(doc) => doc,
-                Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
-                    let doc = create_window_doc("selector-base", &base_key);
-                    apply_pending_window_updates(vault, &doc, &base_key)?;
-                    doc
-                }
-                Err(error) => return Err(error),
-            };
-            reverse_rematerialize(vault, &base, &base_key)?;
-            let selected = filter_window_doc(vault, &base, &base_key, selector, position)?;
+            let base = rematerialized_window(vault, "selector-base", &base_key)?;
+            let selected =
+                filter_window_doc_in(vault, &base, &base_key, selector, position, elsewhere)?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -321,58 +312,11 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
-/// The epoch fence at sync egress: an epoch summary's words leave only while
-/// this peer would receive every record they came from, each read from
-/// stored truth, since a source need not sit in this window. Never by
-/// sending those sources along. A summary born in a device-only world stays
-/// on this device, even out of a window packed before the flag.
-fn epoch_carried(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    (id, blob): (&EntityId, &[u8]),
-    selector: &SyncSelector,
-    (admission, device_only): (
-        Option<&super::document_admission::DocumentGrant>,
-        &BTreeSet<EntityId>,
-    ),
-) -> Result<bool> {
-    let Some(header) = EntityMetadataHeader::parse(blob) else {
-        return Ok(false);
-    };
-    if crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)? {
-        return Ok(false);
-    }
-    crate::compaction::epoch_exportable_in(
-        &vault.store,
-        rtxn,
-        id,
-        header.entity_type,
-        &blob[ENTITY_METADATA_HEADER_LEN..],
-        |source, _| {
-            let Some(admission) = admission else {
-                return Ok(false);
-            };
-            // A source this door would withhold as undecodable, or whose
-            // selection outgrows its budget, carries nothing.
-            match super::document_admission::egress_selected_in_txn(
-                vault,
-                rtxn,
-                *source,
-                selector,
-                (admission, device_only),
-            ) {
-                Err(Error::InvalidClaimBody(_) | Error::IndexOverflow(_)) => Ok(false),
-                carried => carried,
-            }
-        },
-    )
-}
-
 /// The rows a machine CLAIM's authenticated history needs beside it in an
 /// export, read from stored truth: its birth event, each transition event and
 /// every handoff of its chain. `None` when that history does not resolve
 /// whole (a missing or malformed row, a cycle in the chain).
-pub(super) fn machine_history_controls(
+fn machine_history_controls(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     id: EntityId,
@@ -443,6 +387,20 @@ pub(super) fn filter_window_doc(
     key: &WindowKey,
     selector: &SyncSelector,
     position: &Position,
+) -> Result<LoroDoc> {
+    filter_window_doc_in(vault, source, key, selector, position, true)
+}
+
+/// [`filter_window_doc`]. `elsewhere` lets an epoch summary's source be
+/// proven in the export of the window that packs it; inside that proof it
+/// is false, so no proof reaches a third window.
+pub(super) fn filter_window_doc_in(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    selector: &SyncSelector,
+    position: &Position,
+    elsewhere: bool,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -520,9 +478,6 @@ pub(super) fn filter_window_doc(
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
-    // The stored selection the epoch fence reads sources through, built at
-    // the first epoch summary; a grant it cannot authorize carries none.
-    let mut epoch_admission = None;
     let device_only = crate::settings::device_only_worlds_in(&vault.store, &rtxn)?;
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
@@ -596,24 +551,12 @@ pub(super) fn filter_window_doc(
         ) else {
             return;
         };
-        if !is_tombstoned
-            && let Some(header) = EntityMetadataHeader::parse(blob)
-            && header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-        {
-            let admission = &*epoch_admission.get_or_insert_with(|| {
-                super::document_admission::authorize_in_txn(
-                    vault,
-                    &rtxn,
-                    grant.scope,
-                    selector,
-                    None,
-                )
-                .ok()
-            });
-            let fence = (admission.as_ref(), &device_only);
-            match epoch_carried(vault, &rtxn, (&id, blob), selector, fence) {
-                Ok(true) => {}
-                Ok(false) => return,
+        // A summary born in a device-only world stays on this device, even
+        // out of a window packed before the flag.
+        if !is_tombstoned && blob.first() == Some(&crate::registry::ENTITY_TYPE_SUMMARY) {
+            match crate::settings::device_only_withholds(&vault.store, &rtxn, &device_only, &id) {
+                Ok(false) => {}
+                Ok(true) => return,
                 Err(error) => {
                     scope_error = Some(error);
                     return;
@@ -667,17 +610,6 @@ pub(super) fn filter_window_doc(
         });
     }
 
-    let out_entities = out.get_map("entities");
-    map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
-        let Some(blob) = maybe_blob else { return };
-        let Ok(id) = EntityId::from_hex(raw_key) else {
-            return;
-        };
-        if id.to_hex() != raw_key || !kept.contains(&id) || tombstoned.contains(&id) {
-            return;
-        }
-        let _ = map_insert_bytes(&out_entities, raw_key, blob);
-    });
     // A fresh peer may hold a valid selected target but only part of its
     // scoped birth/event/handoff closure in the source CRDT. Never emit the
     // target alone: the receiving replica would mistake missing history for
@@ -715,13 +647,33 @@ pub(super) fn filter_window_doc(
             incomplete.insert(id);
         }
     }
-    for id in &incomplete {
-        crate::sync::loro_support::map_delete(&out_entities, &id.to_hex())?;
-    }
     drop(rtxn);
+    // An epoch summary leaves only beside every record it was written from;
+    // the pass reads what this export ships, so it runs after every other
+    // withholding and before anything is written.
+    let mut shipped = kept
+        .iter()
+        .filter(|id| !tombstoned.contains(id) && !incomplete.contains(id))
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let withheld = unbacked_epochs(vault, (source, key), &shipped, selector, position, elsewhere)?;
+    kept.retain(|id| !withheld.contains(id));
+    shipped.retain(|id| !withheld.contains(id));
+
+    let out_entities = out.get_map("entities");
+    map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
+        let Some(blob) = maybe_blob else { return };
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
+        if id.to_hex() != raw_key || !shipped.contains(&id) {
+            return;
+        }
+        let _ = map_insert_bytes(&out_entities, raw_key, blob);
+    });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position)?
+        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position, elsewhere)?
     } else {
         BTreeSet::new()
     };

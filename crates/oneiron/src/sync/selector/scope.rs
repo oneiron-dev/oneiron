@@ -541,9 +541,9 @@ pub(super) fn settled_position_selected(
     let world = record.worlds == crate::federation::base_world_axis()
         || record.worlds.is_narrowing_of(&position.worlds);
     let generic = record.facets
-        == ScopeAxis::Some(BTreeSet::from([ScopeId(
-            crate::claim::substrate_facet_id(*id)?,
-        )]));
+        == ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::substrate_facet_id(
+            *id,
+        )?)]));
     Ok(world && (generic || record.facets.is_narrowing_of(&position.facets)))
 }
 

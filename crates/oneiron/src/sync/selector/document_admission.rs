@@ -13,7 +13,6 @@ use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::decode_federation_grant_body;
 use crate::federation::{FederationGrant, FederationGrantRole, FederationGrantScope, Position};
 use crate::{EntityId, Vault};
-use std::collections::BTreeSet;
 
 pub(super) struct DocumentGrant {
     pub(super) grant: FederationGrant,
@@ -144,8 +143,8 @@ pub(in crate::sync) fn admit_document_write_in_txn(
     admit_selected_in_txn(vault, txn, id, selector, &admission)
 }
 
-/// Admits `id` only when it sits in the closed subgraph `admission`
-/// resolved, read from stored rows in this writer.
+/// Whether `id` sits in the closed subgraph `admission` resolved, read from
+/// stored rows in this writer.
 pub(super) fn admit_selected_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -153,65 +152,53 @@ pub(super) fn admit_selected_in_txn(
     selector: &SyncSelector,
     admission: &DocumentGrant,
 ) -> Result<()> {
-    if selected_in_txn(vault, txn, id, selector, admission, None)? {
-        Ok(())
-    } else {
-        Err(denied())
-    }
-}
-
-/// Whether sync egress under `admission` would carry `id`: it sits in the
-/// closed subgraph of the window that packs it, neither it nor the seed that
-/// selects it is a row the export withholds before selection, and that
-/// window carries its authenticated history whole. `device_only` is the
-/// export's own read of the flagged worlds.
-pub(super) fn egress_selected_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    selector: &SyncSelector,
-    (admission, device_only): (&DocumentGrant, &BTreeSet<EntityId>),
-) -> Result<bool> {
-    selected_in_txn(vault, txn, id, selector, admission, Some(device_only))
-}
-
-/// Whether `id` sits in the closed subgraph `admission` resolved, read from
-/// stored rows in this writer.
-fn selected_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    selector: &SyncSelector,
-    admission: &DocumentGrant,
-    egress: Option<&BTreeSet<EntityId>>,
-) -> Result<bool> {
     let selection = StoredSelection {
         vault,
         txn,
         selector,
         admission,
-        egress,
     };
     let mut budget = crate::vault::MAX_EDGE_QUERY_RESULTS;
-    if !selection.selected(id, &mut budget)? {
-        return Ok(false);
+    let Some((visible, seed)) = selection.candidate(id, &mut budget)? else {
+        return Err(denied());
+    };
+    if facet_filter(admission.position.as_scope()).is_none() || visible || seed {
+        return Ok(());
     }
-    match egress {
-        Some(_) => selection.history_carried(id, &mut budget),
-        None => Ok(true),
+    // The export's facet closure is ONE hop from a selected seed, never a
+    // transitive walk. Re-read both endpoint rows and every live facet stamp
+    // from this writer; a stale window cannot preserve a removed seed.
+    for row in crate::ports::EdgeStoreRead::port_edges(
+        &vault.store,
+        txn,
+        &id,
+        crate::ports::EdgeDirection::Both,
+        None,
+        None,
+    )? {
+        spend(&mut budget)?;
+        let edge = row?;
+        if edge.kind == EdgeKind::SameAs
+            && !super::scope::document_coreference_context_in_txn(
+                vault,
+                txn,
+                &admission.fold,
+                selector,
+                id,
+                edge.target,
+            )?
+            .allows(id, edge.target)
+        {
+            continue;
+        }
+        if selection
+            .candidate(edge.target, &mut budget)?
+            .is_some_and(|(_, seed)| seed)
+        {
+            return Ok(());
+        }
     }
-}
-
-/// The window sync packs a stored row into: its learned-at month, in the
-/// partition of its world (only a CLAIM names one, every other row is base).
-/// `None` for a row that cannot be placed.
-fn carrier_window(raw: &[u8]) -> Option<crate::sync::WindowKey> {
-    let header = EntityMetadataHeader::parse(raw)?;
-    let month = crate::sync::WindowKey::from_timestamp(header.learned_at);
-    Some(match crate::sync::types::entity_world(raw).ok()? {
-        None => month,
-        Some(world) => crate::sync::WindowKey::for_month_world(&month, world),
-    })
+    Err(denied())
 }
 
 struct StoredSelection<'a, 'env> {
@@ -219,127 +206,9 @@ struct StoredSelection<'a, 'env> {
     txn: &'a heed::RoTxn<'env>,
     selector: &'a SyncSelector,
     admission: &'a DocumentGrant,
-    /// Sync egress, with the worlds flagged device-only: a row also passes
-    /// the exporter's own withholdings, so a row the export withholds never
-    /// justifies another's selection.
-    egress: Option<&'a BTreeSet<EntityId>>,
 }
 
 impl StoredSelection<'_, '_> {
-    /// Whether the selection takes `id`: a candidate that is visible or a
-    /// seed itself, or one hop from a seed.
-    fn selected(&self, id: EntityId, budget: &mut usize) -> Result<bool> {
-        let Some((visible, seed)) = self.candidate(id, budget)? else {
-            return Ok(false);
-        };
-        if facet_filter(self.admission.position.as_scope()).is_none() || visible || seed {
-            return Ok(true);
-        }
-        // The export's facet closure is ONE hop from a selected seed, never a
-        // transitive walk. Re-read both endpoint rows and every live facet
-        // stamp from this writer; a stale window cannot preserve a removed
-        // seed. Egress closes over the one window that packs `id`, as the
-        // exporter does: a seed selects it only when that window packs the
-        // seed too, across an edge the window packs. A row no window places
-        // selects nothing, and a seed in another window never stands in for
-        // one here.
-        let window = match self.egress {
-            Some(_) => match self
-                .vault
-                .get_raw_in(self.txn, &id)?
-                .as_deref()
-                .and_then(carrier_window)
-            {
-                Some(window) => Some(window),
-                None => return Ok(false),
-            },
-            None => None,
-        };
-        for row in crate::ports::EdgeStoreRead::port_edges(
-            &self.vault.store,
-            self.txn,
-            &id,
-            crate::ports::EdgeDirection::Both,
-            None,
-            None,
-        )? {
-            spend(budget)?;
-            let edge = row?;
-            if let Some(window) = &window
-                && (edge.kind == EdgeKind::Blocks
-                    || self
-                        .vault
-                        .get_raw_in(self.txn, &edge.target)?
-                        .as_deref()
-                        .and_then(carrier_window)
-                        .as_ref()
-                        != Some(window))
-            {
-                continue;
-            }
-            if edge.kind == EdgeKind::SameAs
-                && !super::scope::document_coreference_context_in_txn(
-                    self.vault,
-                    self.txn,
-                    &self.admission.fold,
-                    self.selector,
-                    id,
-                    edge.target,
-                )?
-                .allows(id, edge.target)
-            {
-                continue;
-            }
-            if self
-                .candidate(edge.target, budget)?
-                .is_some_and(|(_, seed)| seed)
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    /// The exporter withdraws a selected machine CLAIM unless its window
-    /// carries the claim's authenticated history whole, so egress carries
-    /// such a source only when every history row packs into the source's own
-    /// window and is selected there too. History that does not resolve, or
-    /// a row no window places, carries nothing.
-    fn history_carried(&self, id: EntityId, budget: &mut usize) -> Result<bool> {
-        let Some(raw) = self.vault.get_raw_in(self.txn, &id)? else {
-            return Ok(false);
-        };
-        if raw.first().copied() != Some(crate::registry::ENTITY_TYPE_CLAIM) {
-            return Ok(true);
-        }
-        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
-            return Ok(false);
-        };
-        if !crate::authority::machine_claim_needs_history(&self.vault.store, self.txn, &body)? {
-            return Ok(true);
-        }
-        let Some(controls) = super::authorize::machine_history_controls(self.vault, self.txn, id)?
-        else {
-            return Ok(false);
-        };
-        let Some(window) = carrier_window(&raw) else {
-            return Ok(false);
-        };
-        for control in controls {
-            spend(budget)?;
-            let resident = self
-                .vault
-                .get_raw_in(self.txn, &control)?
-                .as_deref()
-                .and_then(carrier_window);
-            if resident.as_ref() != Some(&window) || !self.selected(control, budget)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
     fn candidate(&self, id: EntityId, budget: &mut usize) -> Result<Option<(bool, bool)>> {
         let Some(raw) = self.vault.get_raw_in(self.txn, &id)? else {
             return Ok(None);
@@ -362,18 +231,12 @@ impl StoredSelection<'_, '_> {
         else {
             return Ok(None);
         };
-        let withheld = match self.egress {
-            Some(device_only) => !self.egress_carries(id, &raw, device_only)?,
-            None => false,
-        };
-        if withheld
-            || !super::scope::settled_position_selected(
-                &id,
-                &raw,
-                &record,
-                self.admission.position.as_scope(),
-            )?
-        {
+        if !super::scope::settled_position_selected(
+            &id,
+            &raw,
+            &record,
+            self.admission.position.as_scope(),
+        )? {
             return Ok(None);
         }
         // Role verbs gate peer writes on top of the stored authority scope.
@@ -452,44 +315,6 @@ impl StoredSelection<'_, '_> {
             }
         }
         Ok(Some((decision.facet_visible, seed)))
-    }
-}
-
-impl StoredSelection<'_, '_> {
-    /// The exporter's and the window packer's withholdings: an erased row, a
-    /// claim no sync door ships, custody that may not sync, a row of a
-    /// device-only world, an LFS chunk, a row its causal history does not
-    /// admit. A stale row still ships and still selects; an epoch refuses a
-    /// stale source before asking.
-    fn egress_carries(
-        &self,
-        id: EntityId,
-        raw: &[u8],
-        device_only: &BTreeSet<EntityId>,
-    ) -> Result<bool> {
-        let state = crate::ports::TombstoneStoreRead::port_deletion_state(
-            &self.vault.store,
-            self.txn,
-            &id,
-        )?;
-        if state.deleted
-            || !crate::sync::local_claims::claim_sync_allowed(raw)
-            || (raw.first().copied() == Some(crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
-                && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..]))
-            || crate::settings::device_only_withholds(
-                &self.vault.store,
-                self.txn,
-                device_only,
-                &id,
-            )?
-            || crate::origin::lfs::is_lfs_chunk_asset_in_txn(&self.vault.store, self.txn, &id)?
-        {
-            return Ok(false);
-        }
-        match crate::authority::row_causal_admitted(self.vault, self.txn, &id, raw) {
-            Err(Error::InvalidClaimBody(_)) => Ok(false),
-            admitted => admitted,
-        }
     }
 }
 

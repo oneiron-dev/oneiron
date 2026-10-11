@@ -38,7 +38,13 @@ pub(crate) fn word_sources_in(
         ENTITY_TYPE_SUMMARY if crate::compaction::decode_epoch_summary_body(body).is_ok() => {
             let sources = vault
                 .store
-                .port_edges(txn, id, EdgeDirection::Out, Some(EdgeKind::DerivedFrom), None)?
+                .port_edges(
+                    txn,
+                    id,
+                    EdgeDirection::Out,
+                    Some(EdgeKind::DerivedFrom),
+                    None,
+                )?
                 .map(|edge| edge.map(|edge| edge.target))
                 .collect::<Result<Vec<_>>>()?;
             if sources.is_empty() {

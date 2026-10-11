@@ -99,7 +99,14 @@ fn bundle_notes(bundle: &NoteReviewBundle) -> BTreeSet<EntityId> {
         .chain(bundle.landed.iter().map(|row| row.note))
         .collect()
 }
-fn blocked(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &LoroDoc, note: &EntityId) -> Result<bool> {
+/// Whether no export of `doc` carries `note`: it is tombstoned there, deleted
+/// here, off the record, or an erased shell.
+pub(crate) fn blocked(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    note: &EntityId,
+) -> Result<bool> {
     if crate::sync::loro_support::tombstone_map_contains_id(&doc.get_map("tombstones"), note)
         || vault.local_hard_delete_marker_exists_in_txn(txn, note)?
         || vault.store.off_record_sessions.contains_entity(note)?
