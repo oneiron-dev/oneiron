@@ -162,6 +162,7 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
                 10,
                 None,
                 None,
+                None,
             )
             .unwrap();
         let receipts = client.receipts(100).unwrap();
@@ -207,6 +208,7 @@ async fn a_core_read_slip_lets_a_non_owner_agent_recall() {
                 effort,
                 &RecallScope::default(),
                 10,
+                None,
                 None,
                 None,
             )

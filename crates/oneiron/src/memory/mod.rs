@@ -105,8 +105,9 @@ pub use outbound::{
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
 pub(crate) use recall::check_recall_request;
 pub use recall::{
-    CONTAINER_KINDS, CitedMessage, Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
-    MemoryProvenance, RecallScope, RetrievalMeta, ScopeHonesty,
+    CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
+    MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallScope, RetrievalMeta,
+    ScopeHonesty, resolve_recall_dial,
 };
 pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;
