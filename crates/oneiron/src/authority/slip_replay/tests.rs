@@ -417,6 +417,7 @@ fn a_vault_without_the_mark_recovers_unless_a_proof_admitted_in_the_jump_evicted
 fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     let start = 1_900_000_000;
     let holder = Holder::paired(start);
+    holder.clock.set(start + 50);
     holder.admit(start + 50, 1).unwrap();
     let root = tempfile::tempdir().unwrap();
     let image = root.path().join("image");
@@ -438,10 +439,14 @@ fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     .unwrap();
     holder.clock.set(start + 40);
     holder.admit(start + 20, 2).unwrap();
-    assert!(matches!(
-        holder.recover(),
-        Ok(ProofClockRecovery::Recovered { .. })
-    ));
+    assert_eq!(
+        holder.recover().unwrap(),
+        ProofClockRecovery::Recovered {
+            old_floor: start + 50,
+            new_floor: start + 40,
+            not_before: start + 40,
+        }
+    );
 
     let swapped = std::cell::Cell::new(false);
     let refused = holder.vault.swap_in_replacement(&replacement, || {
