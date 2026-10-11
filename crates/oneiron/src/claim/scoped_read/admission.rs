@@ -448,7 +448,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
         row: &EntityRecord,
     ) -> Result<bool> {
-        use crate::federation::record_scope::scope_for_blob;
+        use crate::federation::record_scope::task_inside_credential;
         let Some(granted) = self.actor_key.authority_scope() else {
             return Ok(false);
         };
@@ -456,14 +456,11 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let raw = row.encode();
-        let position = match self.session_view {
-            Some(view) => scope_for_blob(view, txn, *id, &raw)?,
-            None => scope_for_blob(&self.vault.store, txn, *id, &raw)?,
+        let inside = match self.session_view {
+            Some(view) => task_inside_credential(view, txn, *id, &raw, granted)?,
+            None => task_inside_credential(&self.vault.store, txn, *id, &raw, granted)?,
         };
-        Ok(position.is_none_or(|position| {
-            position.worlds.meet(&granted.worlds).is_bottom()
-                || position.facets.meet(&granted.facets).is_bottom()
-        }))
+        Ok(!inside)
     }
 
     /// The world the stored row `id` sits in, read in `txn` over this read's

@@ -1129,3 +1129,76 @@ async fn a_deleted_task_stays_in_the_world_it_was_born_in() {
         StatusCode::OK
     );
 }
+
+/// The whole answer the /v1 query lane gives `credential` for `word`.
+async fn query_answer(server: &Arc<SyncServer>, credential: &str, word: &str) -> (StatusCode, Value) {
+    route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/query",
+            format!("Bearer {credential}"),
+            Some(&json!({ "query": word, "limit": 10 })),
+        ),
+    )
+    .await
+}
+
+/// Sol R6 on #1401: a TASK born in a world a credential cannot read adds to
+/// no count on the query lane either, where retrieval turns a row away by
+/// type before the final read. A base-only credential that reads NOTEs and
+/// no TASKs gets the same whole answer once a TASK born in another world is
+/// indexed under its word; a base TASK indexed under it counts as withheld.
+#[tokio::test]
+async fn a_task_born_outside_a_credential_adds_to_no_query_count() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0xb1a5_0040);
+    let world = seeded_test_entity_id(0xb1a5_0041);
+    let base_world = oneiron::claim::base_world_id();
+    narrowed_stream(&server, actor, "query-inside", world).await;
+    narrowed_stream(&server, actor, "query-base", base_world).await;
+    register_scoped_mcp_actor(
+        &server,
+        "query-reader",
+        actor,
+        crate::mcp::McpConnectorScope::scoped(Some(base_world), None),
+    )
+    .await;
+    let mut notes_only = oneiron::federation::Scope::top();
+    notes_only.bands =
+        oneiron::federation::ScopeAxis::Some([oneiron::registry::ENTITY_TYPE_NOTE].into());
+    attenuate_mcp_credential(
+        &server,
+        "query-reader",
+        oneiron::authority::SlipCaveat {
+            scope: Some(notes_only),
+            ..Default::default()
+        },
+    );
+    let index = |task: oneiron::EntityId| {
+        server
+            .vault()
+            .batch()
+            .text(&task, &[("body", "lantern harbor")])
+            .commit()
+            .expect("index the TASK");
+    };
+    let before = query_answer(&server, "query-reader", "lantern").await;
+    assert_eq!(before.0, StatusCode::OK, "{}", before.1);
+    assert_eq!(before.1["narrowing"]["suppressed_count"], Value::from(0));
+
+    index(mcp_create(&server, "query-inside", actor, world, "work in its world").await);
+    assert_eq!(
+        query_answer(&server, "query-reader", "lantern").await,
+        before,
+        "a TASK born outside the credential changed its answer"
+    );
+    index(mcp_create(&server, "query-base", actor, base_world, "base work").await);
+    let counted = query_answer(&server, "query-reader", "lantern").await;
+    assert_eq!(
+        counted.1["narrowing"]["suppressed_count"],
+        Value::from(1),
+        "{}",
+        counted.1
+    );
+}
