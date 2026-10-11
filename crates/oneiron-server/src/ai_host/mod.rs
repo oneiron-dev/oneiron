@@ -8,8 +8,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
+use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::manifest::ModelRole;
-use oneiron::{DreamerRunnerStore, ModelId, ModelLocality, Vault};
+use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocality, Vault};
 use oneiron_driver::{HintPusher, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig};
@@ -57,6 +58,8 @@ pub struct AiHandle {
     chat: ChatSettings,
     raw_budget_units: Option<u64>,
     turns: TurnTracker,
+    /// The running Dreamer has a summary instruction to write bodies with.
+    summaries: bool,
 }
 
 impl AiHandle {
@@ -90,7 +93,28 @@ impl AiHandle {
             ),
             raw_budget_units: models.map(|models| models.raw_budget_units),
             turns: TurnTracker::new(),
+            summaries: false,
         }
+    }
+
+    /// Whether a declared scope summary will be written: only the Dreamer
+    /// writes a summary body (ARCH-0006a), so without a running Dreamer and
+    /// its summary instruction a declaration is refused, never parked.
+    pub fn summary_writer(&self) -> Result<(), String> {
+        if self.summaries {
+            return Ok(());
+        }
+        Err(match self.status().dreamer.reason {
+            Some(reason) if self.hints.is_none() => {
+                let reason = serde_json::to_value(reason)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_default();
+                format!("the Dreamer is idle: {reason}")
+            }
+            _ => "the Dreamer has no summary instruction ([models.dreamer] summary_prompt)"
+                .to_owned(),
+        })
     }
 
     #[must_use]
@@ -153,6 +177,55 @@ impl AiHandle {
             tracing::warn!(?error, ?hint, "dreamer session hint dropped");
         }
     }
+
+    /// A turn landed: a due turn queues the running Dreamer's Micro wake
+    /// (ARCH-0026 RD-26), off the request path. A no-op without a running
+    /// Dreamer, so a model-free vault queues nothing that never runs.
+    pub fn turn_landed(&self, vault: &Arc<Vault>, subject: WakeTurnSubject) {
+        if self.hints.is_none() {
+            return;
+        }
+        let (vault, handle) = (Arc::clone(vault), self.clone());
+        tokio::task::spawn_blocking(move || {
+            match vault.wake_dreamer_on_turn(subject, vault.now_recorded_at()) {
+                Ok(true) => handle.attempt_queued(),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, ?subject, "turn wake not queued"),
+            }
+        });
+    }
+
+    /// A Dreamer attempt was queued outside the driver: the running Dreamer
+    /// takes a pass for it now instead of at its next deadline.
+    pub fn attempt_queued(&self) {
+        let Some(hints) = &self.hints else {
+            return;
+        };
+        if let Err(error) = hints.push_hint() {
+            tracing::warn!(?error, "dreamer pass hint dropped");
+        }
+    }
+
+    /// [`Self::turn_landed`] for a turn `actor` wrote: an agent with a stored
+    /// definition counts it on its own cadence dial, anyone else on the
+    /// vault's grain.
+    pub fn turn_landed_by(&self, vault: &Arc<Vault>, actor: EntityId, class: EdgeActorClass) {
+        let agent = class == EdgeActorClass::Agent
+            && vault
+                .get_agent_definition(&actor)
+                .is_ok_and(|found| found.is_some());
+        self.turn_landed(
+            vault,
+            if agent {
+                WakeTurnSubject::Agent {
+                    id: actor,
+                    signals: AgentWakeSignals::default(),
+                }
+            } else {
+                WakeTurnSubject::Vault
+            },
+        );
+    }
 }
 
 /// The running workers, owned by the serve path until shutdown.
@@ -195,6 +268,7 @@ impl AiHost {
         match start_dreamer(&vault, &runtime, models, host_root, &status).await {
             Ok(dreamer) => {
                 handle.hints = Some(dreamer.hints());
+                handle.summaries = models.dreamer.summary_instruction.is_some();
                 host.dreamer = Some(dreamer);
             }
             Err(reason) => status.update(|status| status.dreamer = WorkStatus::idle(reason)),
@@ -204,6 +278,9 @@ impl AiHost {
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
         host.handle = handle;
+        // Turns that landed while no Dreamer ran, or just before a crash,
+        // get their due wake now rather than waiting for the next turn.
+        host.handle.turn_landed(&vault, WakeTurnSubject::Vault);
         host
     }
 
@@ -379,7 +456,7 @@ async fn start_dreamer(
         vault: Arc::clone(vault),
         runtime: Arc::clone(runtime),
         seat,
-        settings: models.dreamer,
+        settings: models.dreamer.clone(),
         egress,
         status: Arc::clone(status),
     })

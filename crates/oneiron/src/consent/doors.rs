@@ -102,6 +102,24 @@ impl AuthenticatedOwner {
         Ok(())
     }
 
+    /// [`Self::revalidate_in_txn`], and the actor owns this vault even when
+    /// no transport bound a credential. A native host's proof shows a live
+    /// person, not whose vault this is, so a door that writes the talk of a
+    /// room into this vault asks for both.
+    pub(crate) fn revalidate_as_vault_owner_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        self.revalidate_in_txn(vault, txn)?;
+        if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &self.actor)? {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "authenticated actor is not an owner of this vault",
+            )));
+        }
+        Ok(())
+    }
+
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,

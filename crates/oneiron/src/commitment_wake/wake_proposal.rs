@@ -130,7 +130,7 @@ pub fn commitment_wake_proposal_claim_id(attempt_id: AttemptId) -> EntityId {
 /// The sentinel-safe raw-prefix rule, factored out so the perturb branch is
 /// reachable by a fixture: a BLAKE3 prefix landing on a reserved id is roughly
 /// a 2^-120 event and would otherwise be untestable.
-pub(super) fn entity_id_from_digest_prefix(mut raw: [u8; 16]) -> EntityId {
+pub(crate) fn entity_id_from_digest_prefix(mut raw: [u8; 16]) -> EntityId {
     EntityId::from_bytes(raw).unwrap_or_else(|_| {
         raw[0] ^= 0x01;
         raw[15] ^= 0x01;

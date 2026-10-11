@@ -16,6 +16,8 @@ pub(crate) use ask_soft_confirm::validate_dispatch as validate_ask_soft_confirm_
 mod ask_soft_confirm_delivery;
 mod ask_soft_confirm_types;
 mod ask_types;
+mod board_task;
+pub(crate) use board_task::board_task_for_id;
 mod consts;
 mod consult_fanout_admission;
 mod consult_fanout_facade;

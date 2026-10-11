@@ -822,7 +822,7 @@ impl PipelineBuilder<'_> {
             signal_components,
             self.text_search.as_ref().map(|(query, _)| query.as_str()),
             self.vector_search.is_some(),
-            self.vault.config.vector_evidence,
+            self.vault.vector_evidence(),
         ) {
             capabilities.clear();
         }
@@ -839,7 +839,7 @@ impl PipelineBuilder<'_> {
                 signal_components,
                 self.text_search.as_ref().map(|(query, _)| query.as_str()),
                 self.vector_search.is_some(),
-                self.vault.config.vector_evidence,
+                self.vault.vector_evidence(),
             )
         {
             scores.clear();

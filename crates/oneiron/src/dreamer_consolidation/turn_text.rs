@@ -149,6 +149,18 @@ impl TurnText {
             .map(|pin| (pin.id, &pin.version))
     }
 
+    /// Each MESSAGE the text was read from: its id, the content hash of the
+    /// logical body read, and that version as a scope resource. None for
+    /// inline text.
+    pub(super) fn message_pins(
+        &self,
+    ) -> impl Iterator<Item = (EntityId, [u8; 32], &ScopeResource)> {
+        self.messages
+            .iter()
+            .flatten()
+            .map(|pin| (pin.id, pin.revision, &pin.version))
+    }
+
     /// A supplied scope is authority, not a request: it must already read
     /// every dependency. Returns the frozen text.
     pub(super) fn readable_text(&self, scope: &Scope) -> Result<Option<&str>> {

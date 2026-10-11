@@ -356,7 +356,9 @@ pub struct VaultConfig {
     pub embedding_transform: Option<String>,
     /// Where vector evidence starts in this vault's embedding space
     /// ([`VectorEvidenceFloors`]), as the host's embedder states it. Opening
-    /// a vault refuses floors outside [`VectorEvidenceFloors::validate`].
+    /// a vault refuses floors outside [`VectorEvidenceFloors::validate`]. A
+    /// host that learns its provider's floors only once it is admitted sets
+    /// them on the open vault ([`crate::Vault::set_vector_evidence`]).
     pub vector_evidence: VectorEvidenceFloors,
     /// How long a call-mode recall may take before it answers with the best
     /// results ready (retrieval hub #call-mode). Defaults to
