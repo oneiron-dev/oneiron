@@ -196,8 +196,9 @@ It refuses, and changes nothing, when:
 - the host clock stayed ahead for more than a day while agents connected, or agents connected
   while it was ahead under a version without `recover-clock` (it kept a nonce for a minute).
   The vault keeps a proof's nonce for a day, so it no longer remembers every proof from that
-  time, and lowering its clock would let those be replayed. Agents get in again once the host
-  clock reaches the time the refusal names.
+  time. It must keep refusing every proof signed up to the time the refusal names, which is
+  still ahead of the host clock, so lowering its clock would not let agents in. They get in
+  again once the host clock reaches the proof clock.
 
 ## Export
 

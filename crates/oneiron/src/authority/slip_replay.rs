@@ -94,9 +94,11 @@ pub enum ProofClockRecovery {
     NotAhead { floor: u64, wall: u64 },
     /// Nonce rows of proofs signed up to `forgotten_before` are gone: the
     /// host clock stayed ahead for over a day while proofs were admitted, or
-    /// admissions that kept rows for the window only admitted them.
-    /// Lowering the clock would reopen those proofs, so nothing changed, and
-    /// fresh proofs get in once wall time reaches `floor`.
+    /// admissions that kept rows for the window only admitted them. Every
+    /// proof signed before `forgotten_before` stays refused, and that is
+    /// still past the window around `wall`, so lowering the clock would let
+    /// no fresh proof in. Nothing changed; fresh proofs get in once wall
+    /// time reaches `floor`.
     Forgotten {
         floor: u64,
         forgotten_before: u64,
@@ -120,8 +122,8 @@ impl Vault {
     /// No proof the vault admitted before is admitted again. A proof whose
     /// nonce row is gone was signed before the committed `not_before`, which
     /// rises to at least the recovery's wall time; every other admitted proof
-    /// keeps its row. When the clock stayed ahead long enough to forget a
-    /// proof signed after that wall time, the act refuses
+    /// keeps its row. When the vault forgot a proof signed past that wall
+    /// time's window, no fresh proof could get in either, so the act refuses
     /// ([`ProofClockRecovery::Forgotten`]). The recording clock and every
     /// stamp on it are left as they are.
     pub fn recover_proof_clock(&self, owner: &AuthenticatedOwner) -> Result<ProofClockRecovery> {

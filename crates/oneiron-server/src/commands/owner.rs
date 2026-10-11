@@ -293,8 +293,9 @@ pub fn recover_clock(args: RecoverClockArgs) -> anyhow::Result<()> {
             "not recovered: agents connected while the host clock was ahead, and the vault \
              no longer remembers every proof it admitted then (up to {}): the clock stayed \
              ahead for over a day, or an older version kept each proof for a minute only. \
-             Lowering its clock would let those be replayed. Agents get in again once this \
-             host's clock ({}) reaches {}",
+             It must keep refusing every proof signed before then, so lowering its clock \
+             would not let agents in. Agents get in again once this host's clock ({}) \
+             reaches {}",
             rfc3339_secs(forgotten_before),
             rfc3339_secs(wall),
             rfc3339_secs(floor)
