@@ -11,6 +11,8 @@ mod delete_tombstone;
 mod diary_admission_matrix;
 mod export;
 mod self_grant;
+mod session_recall;
+mod session_union_reads;
 mod session_witness;
 mod shared_effects;
 mod support;

@@ -426,7 +426,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     if header.entity_type == crate::registry::ENTITY_TYPE_TURN
         && !entity_owns_revision_in_txn(store, txn, id, target)?
         && let Some(row) =
-            super::turn_text::turn_row_for_text_revision_in_txn(vault, txn, id, target)?
+            super::turn_text::turn_row_for_text_revision_in_txn(vault, store, txn, id, target)?
     {
         return read_entity_revision_from_store_in_txn(
             vault,

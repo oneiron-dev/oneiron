@@ -353,10 +353,17 @@ impl OffRecordSession<'_> {
             limit,
             &crate::config::Bm25RankProfile::default(),
         )?;
+        let holds_room_rows = view.read().holds_room_rows()?;
         drop(view);
 
         let telemetry = self.retrieval_telemetry(route)?;
-        if !self.vault.store.retrieval_telemetry_capture_enabled() {
+        // The search read the room. While the room holds rows of its own,
+        // its run may name them, and base holds no reference to a live
+        // overlay row (the taint guard covers references): on record, such a
+        // run keeps no row in base.
+        if !self.vault.store.retrieval_telemetry_capture_enabled()
+            || (telemetry.writes_to_base() && holds_room_rows)
+        {
             telemetry.revalidate_without_capture()?;
             return Ok(search.scores);
         }
@@ -371,9 +378,9 @@ impl OffRecordSession<'_> {
         // Both targets go through the room's one registration door, so the
         // in-room BM25 path and the assembled paths cannot drift: the overlay
         // arm stages under the route, and the base arm — post-flip the room is
-        // on record and telemetry routes to base ordinarily (K10) — publishes
-        // under the same route rather than through the routeless canonical
-        // door.
+        // on record and, once it holds no row of its own, telemetry routes to
+        // base ordinarily (K10) — publishes under the same route rather than
+        // through the routeless canonical door.
         telemetry.register_run(&record, false)?;
 
         Ok(search.scores)

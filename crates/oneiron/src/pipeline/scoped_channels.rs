@@ -41,7 +41,7 @@ impl PipelineBuilder<'_> {
         // Fetch the indexed population, not a fixed overfetch factor: arbitrarily
         // many excluded top hits must not hide an eligible lower hit.
         let channel_limit = scoped_vector_channel_limit(
-            &self.vault.store,
+            &self.read,
             rtxn,
             requested,
             codebase_scope_active
@@ -50,6 +50,7 @@ impl PipelineBuilder<'_> {
                 || self.memory_category,
         )?;
         let mut scores = self.vault.scoped_vector_search_quality_in_txn(
+            &self.read,
             rtxn,
             query,
             channel_limit,
@@ -78,7 +79,7 @@ impl PipelineBuilder<'_> {
     ) -> Result<Vec<ScoredEntity>> {
         let mut scoped_config = config.clone();
         scoped_config.limit = scoped_entity_channel_limit(
-            &self.vault.store,
+            &self.read,
             rtxn,
             config.limit,
             self.has_codebase_scope_filter()
@@ -88,8 +89,7 @@ impl PipelineBuilder<'_> {
                 || self.memory_category,
         )?;
         // Widen before the temporal collector's scan caps and score truncation.
-        let mut scores =
-            execute_temporal(&self.vault.store, rtxn, &scoped_config, now, metadata_cache)?;
+        let mut scores = execute_temporal(&self.read, rtxn, &scoped_config, now, metadata_cache)?;
         self.truncate_corpus_channel(
             &mut scores,
             rtxn,
@@ -112,7 +112,7 @@ impl PipelineBuilder<'_> {
     ) -> Result<()> {
         let (metadata_cache, claim_gate) = caches;
         if self.memory_category {
-            super::capabilities::retain_memory_candidates(scores, &self.vault.store, rtxn)?;
+            super::capabilities::retain_memory_candidates(scores, &self.read, rtxn)?;
         }
         if (!strict_scope
             && filters.corpus_scope == &CorpusScope::All
@@ -148,7 +148,7 @@ impl PipelineBuilder<'_> {
         }
         truncate_widened_channel_results_to_scope(
             scores,
-            &self.vault.store,
+            &self.read,
             rtxn,
             retained_limit,
             filters,

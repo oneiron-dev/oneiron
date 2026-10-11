@@ -10,7 +10,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_RELATIONSHIP};
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::corpus_filter::pipeline_candidate_matches_corpus_filter;
 use super::support::intervals_overlap;
@@ -36,7 +36,7 @@ use crate::error::RegistryError;
 /// in `gate` for context-pack field projection.
 pub(super) fn apply_claim_status_gate(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
@@ -54,7 +54,7 @@ pub(super) fn apply_claim_status_gate(
 }
 
 pub(super) fn claim_status_gate_allows(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     metadata_cache: &mut EntityMetadataCache,
@@ -174,7 +174,7 @@ pub(super) fn import_claim_gate_decisions_for_scores(
 /// never generalizes to "disclosure-inert".
 pub(super) fn apply_facet_filter(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     active_facet: &EntityId,
@@ -234,7 +234,7 @@ pub(super) fn apply_facet_filter(
 /// over the 17-byte `(claim_id ‖ FacetOf)` prefix. Only the edge KEY is
 /// read — `(source, kind, target)` carries the whole facet-scope signal.
 fn claim_facet_scope(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     claim_id: &EntityId,
     active_facet: &EntityId,
@@ -305,7 +305,7 @@ enum ClaimFacetScope {
 /// truncation, so excluded claims free their slots.
 pub(super) fn apply_relationship_filter(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     active_relationship: &EntityId,
@@ -341,7 +341,7 @@ pub(super) fn apply_relationship_filter(
     Ok(())
 }
 
-fn claim_rel(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+fn claim_rel(store: &StoreRead<'_>, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
@@ -355,7 +355,7 @@ fn claim_rel(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<En
 
 pub(super) fn apply_world_filter(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     scope: &WorldScope,
     active_set: Option<&WorldAuthoritySet>,
@@ -431,10 +431,10 @@ pub(super) fn apply_world_filter(
 /// re-scanned, so the cost is one prefix scan regardless of candidate count.
 fn drop_stale_federated_claims(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
 ) -> Result<()> {
-    let stale = crate::federation::stale_stamped_worlds(store, rtxn)?;
+    let stale = crate::federation::stale_stamped_worlds(store.base(), rtxn)?;
     if stale.is_empty() {
         return Ok(());
     }
@@ -458,7 +458,7 @@ fn drop_stale_federated_claims(
 /// `Some(world_id)` for a world-scoped claim. The claim body is decoded once
 /// through the pinned claim validator (the world key was structurally
 /// validated to 16 bytes at write time).
-fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+fn claim_world(store: &StoreRead<'_>, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
@@ -478,7 +478,7 @@ fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
 /// a selected member; no other world is reachable, and nothing here consults
 /// the codebase scope key.
 fn active_set_admits(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     active_set: &WorldAuthoritySet,
@@ -488,7 +488,7 @@ fn active_set_admits(
 
 pub(super) fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     filters: PipelineFilterConfig<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -565,7 +565,7 @@ pub(super) fn apply_filters(
 }
 
 pub(super) fn pipeline_candidate_matches_filters_and_gate(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     filters: PipelineFilterConfig<'_>,
@@ -707,7 +707,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
 /// disclosable — the unstamped sensitivity floor and the ONE-1646
 /// [`crate::disclosure::DisclosableSet`] conjunct own that axis.
 fn pipeline_candidate_matches_facet_filter(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -739,7 +739,7 @@ fn pipeline_candidate_matches_facet_filter(
 }
 
 fn pipeline_candidate_matches_relationship_filter(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -770,7 +770,7 @@ fn pipeline_candidate_matches_relationship_filter(
 }
 
 fn pipeline_candidate_matches_world_filter(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     scope: &WorldScope,

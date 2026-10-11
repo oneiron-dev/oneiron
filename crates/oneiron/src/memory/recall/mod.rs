@@ -368,7 +368,7 @@ impl Memory<'_> {
             .as_deref()
             .map(|reference| self.resolve_ref(reference))
             .transpose()?;
-        let filter = |store: &crate::store::Store,
+        let filter = |store: &crate::store::StoreRead<'_>,
                       txn: &heed::RoTxn<'_>,
                       id: &EntityId|
          -> crate::Result<bool> {
@@ -469,9 +469,10 @@ impl Memory<'_> {
         )
     }
 
-    /// Recalls inside a session. Retrieval and scope are unchanged; every
-    /// telemetry write (including the seed search and pack finalization) rides
-    /// the one session route captured for this call. Off-record rows therefore
+    /// Recalls inside a session. Retrieval reads the room's overlay ∪ base
+    /// under the same scope and gates (ARCH-0052 §2); every telemetry write
+    /// (including the seed search and pack finalization) rides the one
+    /// session route captured for this call. Off-record rows therefore
     /// evaporate with the room, never leaking into the base retrieval ledger.
     #[expect(
         clippy::too_many_arguments,
@@ -634,33 +635,34 @@ impl Memory<'_> {
             crate::pipeline::TurnFold::Fold
         };
         // Admission runs in each candidate's retrieval transaction before ranking.
-        let admitted = |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &EntityId| {
-            // Reject irrelevant kind/predicate rows before the actor gate.
-            if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
-                return Ok(false);
-            }
-            // A caller's own filter already chose its kinds; otherwise the
-            // scope's kinds, or the default kinds, decide.
-            if kinds.is_some() || candidate_filter.is_none() {
-                let Some(kind) = store
-                    .port_entity_record(txn, id)?
-                    .map(|row| row.entity_type)
-                else {
-                    return Ok(false);
-                };
-                let wanted = match &kinds {
-                    Some(kinds) => {
-                        kinds.contains(&kind)
-                            || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
-                    }
-                    None => !CONTAINER_KINDS.contains(&kind),
-                };
-                if !wanted {
+        let admitted =
+            |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
+                // Reject irrelevant kind/predicate rows before the actor gate.
+                if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
                     return Ok(false);
                 }
-            }
-            lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
-        };
+                // A caller's own filter already chose its kinds; otherwise the
+                // scope's kinds, or the default kinds, decide.
+                if kinds.is_some() || candidate_filter.is_none() {
+                    let Some(kind) = store
+                        .port_entity_record(txn, id)?
+                        .map(|row| row.entity_type)
+                    else {
+                        return Ok(false);
+                    };
+                    let wanted = match &kinds {
+                        Some(kinds) => {
+                            kinds.contains(&kind)
+                                || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
+                        }
+                        None => !CONTAINER_KINDS.contains(&kind),
+                    };
+                    if !wanted {
+                        return Ok(false);
+                    }
+                }
+                lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
+            };
 
         let seeds = if effective != Effort::Light
             && !execution
@@ -728,6 +730,9 @@ impl Memory<'_> {
                 pipeline = pipeline.filter_candidates(&admitted);
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
+                }
+                if let Some(view) = session_view.as_ref() {
+                    pipeline = pipeline.reading(view.read());
                 }
 
                 if let Some(deadline) = execution.deadline {
@@ -806,6 +811,9 @@ impl Memory<'_> {
 
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     builder = builder.in_session(telemetry);
+                }
+                if let Some(view) = session_view.as_ref() {
+                    builder = builder.reading(view.read());
                 }
                 if let Some(deadline) = execution.deadline {
                     builder = builder.deadline(deadline);

@@ -222,6 +222,7 @@ impl ScopedRead<'_> {
         };
         crate::context_pack::context_entity_matches_read_snapshot(
             self.vault,
+            &self.store_read(),
             txn,
             entity,
             &revision.raw,

@@ -275,6 +275,16 @@ impl<'a> ScopedRead<'a> {
         self.vault
     }
 
+    /// The content this read sees: its room's overlay ∪ base, or base alone.
+    /// A reader handed it reads what this read admits from, with no code of
+    /// its own for the room.
+    pub(crate) fn store_read(&self) -> crate::store::StoreRead<'a> {
+        match self.session_view {
+            Some(view) => view.read(),
+            None => self.vault.store.read(),
+        }
+    }
+
     /// Both canonical and session reads use the same ports. A session adapter
     /// composes overlay union base without changing policy admission.
     pub(super) fn entity_record_in(

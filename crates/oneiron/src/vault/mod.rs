@@ -44,6 +44,7 @@ pub(crate) use self::doctor_manifest::{
 pub(crate) use self::edges::edge_kind_prefix;
 pub(crate) use self::edges::{
     CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT,
+    filtered_edge_peers_in,
 };
 pub use self::entities::HydratedShortId;
 /// The composed session census bounds itself exactly like [`Vault::entities_by_type`],

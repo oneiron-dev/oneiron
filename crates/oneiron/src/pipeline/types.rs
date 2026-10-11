@@ -23,7 +23,7 @@ use crate::registry::{
     ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
 use crate::retrieval_quality::RetrievalQualityReport;
-use crate::store::{RetrievalRunId, RetrievalSignal, Store};
+use crate::store::{RetrievalRunId, RetrievalSignal, StoreRead};
 use crate::temporal::TemporalAnchorMode;
 
 // Referenced only by the intra-doc links below; `cfg(doc)` keeps it out of
@@ -156,7 +156,7 @@ pub(super) struct EntityMetadata {
     pub(super) learned_at: u64,
 }
 
-pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::Store, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
+pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
     + Send
     + Sync
     + 'a;
@@ -297,7 +297,11 @@ impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
     /// scoped caller's final admission gate.
-    pub(super) fn countable_suppressed(&self, store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
+    pub(super) fn countable_suppressed(
+        &self,
+        store: &StoreRead<'_>,
+        txn: &RoTxn<'_>,
+    ) -> Result<usize> {
         let mut count = 0;
         for id in &self.read_suppressed {
             let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
@@ -316,7 +320,7 @@ impl EntityMetadataCache {
 
     pub(super) fn get(
         &mut self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityMetadata>> {

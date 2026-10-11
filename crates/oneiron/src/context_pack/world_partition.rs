@@ -11,7 +11,7 @@ use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::types::ContextEntity;
 
@@ -47,7 +47,7 @@ pub(super) fn resolve_edge_short_ids(
 ///
 /// When no non-base claim survives, `results` are left flat in score order.
 pub(super) fn partition_results_by_world(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     results: &mut Vec<ContextEntity>,
     non_base_fraction: f32,
@@ -121,7 +121,7 @@ pub const WORLD_STALE_FIELD: &str = "world_stale";
 /// the WORLD entity itself — the row that heads its section. The caller owns
 /// the stamp set so results and neighbors are marked from ONE read per pack.
 pub(super) fn annotate_stale_federated_worlds(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     stale: &BTreeMap<EntityId, crate::federation::WorldStaleStamp>,
     results: &mut [ContextEntity],
@@ -164,7 +164,7 @@ pub(super) fn annotate_stale_federated_worlds(
 /// world grouping (D19 AC 9). The raw-read fallback only covers a defensive
 /// cache miss.
 fn entity_world(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     entity: &ContextEntity,
     claim_bodies: &HashMap<EntityId, ClaimBody>,
@@ -185,7 +185,7 @@ fn entity_world(
 /// `world` key are base reality (`None`); a claim body that fails to decode
 /// fails closed, exactly as the pipeline's world filter does.
 pub(super) fn claim_world_by_id(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {

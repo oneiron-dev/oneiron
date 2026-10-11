@@ -389,6 +389,9 @@ pub struct Store {
 )]
 pub(crate) struct SessionStoreView<'store> {
     _owner: &'store StoreOwner,
+    /// The canonical store this view composes over: a reader handed the view
+    /// still consults the vault's own authority there ([`StoreRead::base`]).
+    base: &'store Store,
     /// The shared substrate this view's writes belong to. Held so a writer
     /// generic over [`ManifestDbs`] records a diagnostic into the vault it is
     /// writing rather than into a process-wide counter.
@@ -462,12 +465,83 @@ impl SessionStoreView<'_> {
     }
 }
 
-/// Generates [`ManifestDbs`] and its two implementations from ONE list of the
-/// manifest's named databases, so the trait cannot drift from the structs: a
-/// database renamed in `Store` or `SessionStoreView` and not here fails to
-/// compile.
+/// Generates [`ManifestDbs`], its implementations and [`StoreRead`] from ONE
+/// list of the manifest's named databases, so neither the trait nor the read
+/// target can drift from the structs: a database renamed in `Store` or
+/// `SessionStoreView` and not here fails to compile.
 macro_rules! manifest_dbs {
     ($($name:ident: $ty:ty),+ $(,)?) => {
+        /// The content a reader reads: the 28 accessors of [`Store`] or of one
+        /// [`SessionStoreView`], borrowed (ARCH-0052 §2: reads compose overlay
+        /// ∪ base at the storage-accessor layer). A reader that takes
+        /// `&StoreRead` keeps its body (`store.entities.get(..)`, `store.env`)
+        /// and sees the union when it is handed a session's view, with no code
+        /// of its own for it.
+        ///
+        /// Content only. Authority (the policy manifest, gates, grants, blend
+        /// weights) is the vault's and is read on [`Store`]: a row staged in a
+        /// room never becomes a grant or a policy.
+        #[derive(Clone, Copy)]
+        pub(crate) struct StoreRead<'a> {
+            base: &'a Store,
+            room: Option<&'a crate::session_overlay::SessionOverlay>,
+            $(pub(crate) $name: &'a $ty,)+
+        }
+
+        impl<'a> StoreRead<'a> {
+            /// Whether this target reads a room's overlay ∪ base. A cache keyed
+            /// by base versions cannot answer for it: overlay writes bump none.
+            pub(crate) fn is_union(&self) -> bool {
+                self.room.is_some()
+            }
+
+            /// Whether the room holds a live row of its own, which a read here
+            /// may name. Base holds no reference to one (ARCH-0052: the taint
+            /// guard covers references).
+            pub(crate) fn holds_room_rows(&self) -> crate::Result<bool> {
+                self.room.map_or(Ok(false), |room| room.has_entities())
+            }
+
+            /// The vault's canonical store, for authority a content reader
+            /// consults on its way: the policy manifest, gates and grants.
+            pub(crate) fn base(&self) -> &'a Store {
+                self.base
+            }
+        }
+
+        impl Store {
+            /// This store's canonical accessors as a read target.
+            pub(crate) fn read(&self) -> StoreRead<'_> {
+                StoreRead {
+                    base: self,
+                    room: None,
+                    $($name: &self.$name,)+
+                }
+            }
+        }
+
+        impl SessionStoreView<'_> {
+            /// This view's composed accessors as a read target: one overlay
+            /// snapshot ∪ base for every database.
+            pub(crate) fn read(&self) -> StoreRead<'_> {
+                StoreRead {
+                    base: self.base,
+                    room: Some(&self.overlay),
+                    $($name: &self.$name,)+
+                }
+            }
+        }
+
+        impl ManifestDbs for StoreRead<'_> {
+            $(fn $name(&self) -> &$ty { self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.base.core.diagnostics }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.base.core.clock }
+            fn gate_key_root(&self) -> &std::path::Path { &self.base.core.gate_custody_root }
+            fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { self.room.is_some() }
+        }
+
         /// The manifest's named databases, addressed uniformly by write target
         /// (ARCH-0052 D2, ONE-1728 K11).
         ///
@@ -500,6 +574,10 @@ macro_rules! manifest_dbs {
             fn clock(&self) -> &crate::ports::StoreClock;
             fn gate_key_root(&self) -> &std::path::Path;
             fn gate_custody_archived(&self) -> bool;
+            /// Whether reads see a room's overlay ∪ base rather than base
+            /// alone. A cache keyed and validated by base versions cannot
+            /// answer for such a read: overlay writes bump none of them.
+            fn is_union(&self) -> bool;
         }
 
         impl ManifestDbs for Store {
@@ -509,6 +587,7 @@ macro_rules! manifest_dbs {
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { false }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -518,6 +597,7 @@ macro_rules! manifest_dbs {
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { true }
         }
     };
 }
@@ -558,6 +638,14 @@ impl std::ops::Deref for Store {
 
     fn deref(&self) -> &StoreCore {
         &self.core
+    }
+}
+
+impl std::ops::Deref for StoreRead<'_> {
+    type Target = StoreCore;
+
+    fn deref(&self) -> &StoreCore {
+        &self.base.core
     }
 }
 
@@ -650,6 +738,7 @@ impl Store {
             |base, keyspace| OverlayDb::composed(base, overlay.clone(), snapshot.clone(), keyspace);
         Ok(SessionStoreView {
             _owner: &self.owner,
+            base: self,
             core: &self.core,
             overlay: overlay.clone(),
             entities: db(self.core.raw.entities, OverlayKeyspace::Entities),

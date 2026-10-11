@@ -15,33 +15,54 @@ use heed::{RoTxn, RwTxn};
 impl Vault {
     /// Actor-bound diary ids are evaluated by the scoped query in this read
     /// transaction. The ownerless RetrievalIndex trait always passes None.
+    /// `store` is what the search reads: the vault's own accessors, or a
+    /// room's view, whose staged vectors and graph nodes compose with base.
     pub(crate) fn scoped_vector_search_quality_in_txn(
         &self,
+        store: &impl crate::store::ManifestDbs,
         txn: &RoTxn<'_>,
         query: &[f32],
         limit: usize,
         skip_rescore: bool,
         private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
     ) -> Result<Vec<ScoredEntity>> {
-        let population = crate::hnsw::hnsw_entity_count(&self.store, txn)?;
+        let population = crate::hnsw::hnsw_entity_count(store, txn)?;
         // A nonzero request still validates an apparently empty index.
         let mut requested = limit.min(population.max(1));
         loop {
-            let rows = crate::hnsw::hnsw_search(
-                &self.store,
-                &self.config,
-                txn,
-                query,
-                requested,
-                skip_rescore,
-            )?;
-            let mut visible = filter_results(self, txn, rows, private_note_ids)?;
+            let rows =
+                crate::hnsw::hnsw_search(store, &self.config, txn, query, requested, skip_rescore)?;
+            let mut visible = filter_results(store, txn, rows, private_note_ids)?;
             visible.truncate(limit);
             if visible.len() >= limit || requested >= population {
                 return Ok(visible);
             }
             requested = requested.saturating_mul(2).max(1).min(population);
         }
+    }
+}
+
+impl Vault {
+    /// [`RetrievalIndex::port_retrieval_vector_get`] read through `store`,
+    /// a room's view included.
+    pub(crate) fn vector_in_txn(
+        &self,
+        store: &impl crate::store::ManifestDbs,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<f32>>> {
+        let visibility = store.port_deletion_state(txn, id)?;
+        if visibility.deleted || visibility.stale {
+            return Ok(None);
+        }
+        let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+        if vector.len() != self.config.dimensions {
+            return Err(Error::CorruptedIndex("vector value"));
+        }
+        Ok(Some(vector))
     }
 }
 
@@ -53,7 +74,7 @@ impl RetrievalIndex for Vault {
         limit: usize,
         skip_rescore: bool,
     ) -> Result<Vec<ScoredEntity>> {
-        self.scoped_vector_search_quality_in_txn(txn, query, limit, skip_rescore, None)
+        self.scoped_vector_search_quality_in_txn(&self.store, txn, query, limit, skip_rescore, None)
     }
 
     fn port_retrieval_phonetic_upsert(
@@ -70,18 +91,7 @@ impl RetrievalIndex for Vault {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<Vec<f32>>> {
-        let visibility = self.port_deletion_state(txn, id)?;
-        if visibility.deleted || visibility.stale {
-            return Ok(None);
-        }
-        let Some(raw) = self.store.vectors.get(txn, id.as_bytes())? else {
-            return Ok(None);
-        };
-        let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
-        if vector.len() != self.config.dimensions {
-            return Err(Error::CorruptedIndex("vector value"));
-        }
-        Ok(Some(vector))
+        self.vector_in_txn(&self.store, txn, id)
     }
 
     fn port_retrieval_upsert(
@@ -121,21 +131,21 @@ impl RetrievalIndex for Vault {
         let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
         let rows =
             crate::bm25::search_text(&self.store, txn, &self.analyzer, &config, query, limit)?;
-        filter_results(self, txn, rows, None)
+        filter_results(&self.store, txn, rows, None)
     }
 }
 fn filter_results(
-    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     rows: Vec<ScoredEntity>,
     private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
 ) -> Result<Vec<ScoredEntity>> {
     let mut result = Vec::new();
     for row in rows {
-        if !vault.port_tombstone_is_deleted(txn, &row.id)?
-            && !stale_in_txn(&vault.store, txn, &row.id)?
+        if !store.port_deletion_state(txn, &row.id)?.deleted
+            && !stale_in_txn(store, txn, &row.id)?
             && (private_note_ids.is_some_and(|ids| ids.contains(&row.id))
-                || crate::note::ordinary_entity_visible(&vault.store, txn, &row.id)?)
+                || crate::note::ordinary_entity_visible(store, txn, &row.id)?)
         {
             result.push(row);
         }

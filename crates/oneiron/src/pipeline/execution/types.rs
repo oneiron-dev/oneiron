@@ -51,6 +51,8 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) early_empty_no_telemetry: bool,
 }
 
+/// Pending-embedding markers are base rows only (K6: a room keeps no `pe:`
+/// keyspace), so they are read on the vault's own store.
 pub(super) fn pending_vectors_for_scores(
     store: &Store,
     rtxn: &RoTxn<'_>,

@@ -7,7 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use crate::ports::{EntityTime, TimeAxis, TimelineQuery};
-use crate::store::Store;
+use crate::store::StoreRead;
 use crate::temporal::TemporalAnchorMode;
 
 use super::filters::pipeline_candidate_matches_filters_and_gate;
@@ -58,7 +58,7 @@ struct TemporalIndexRow {
 }
 
 pub(super) fn execute_phonetic(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     codes: &[String],
 ) -> Result<Vec<ScoredEntity>> {
@@ -66,7 +66,7 @@ pub(super) fn execute_phonetic(
 }
 
 pub(super) fn execute_temporal(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
     now: u64,
@@ -166,7 +166,7 @@ pub(super) fn execute_temporal(
 }
 
 pub(super) fn collect_temporal_candidates(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
     collection: TemporalCandidateCollectionContext,
@@ -343,7 +343,7 @@ fn sort_temporal_candidate_scores(scores: &mut [TemporalCandidateScore]) {
 }
 
 fn collect_occurred_candidates(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext,
     metadata_cache: &mut EntityMetadataCache,
@@ -371,7 +371,7 @@ fn collect_occurred_candidates(
 }
 
 fn collect_query_occurred_candidates(
-    store: &Store,
+    store: &StoreRead<'_>,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext,
@@ -439,7 +439,7 @@ fn collect_query_occurred_candidates(
 }
 
 pub(super) fn collect_index_candidates(
-    store: &Store,
+    store: &StoreRead<'_>,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext,
@@ -527,7 +527,7 @@ where
 }
 
 fn normalize_backward_boundary_bucket(
-    store: &Store,
+    store: &StoreRead<'_>,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     rows: &mut Vec<TemporalIndexRow>,
@@ -587,7 +587,7 @@ fn compare_temporal_index_rows(
 }
 
 pub(super) fn scoped_text_channel_limit(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     requested: usize,
     text_scope_widening_active: bool,
@@ -601,7 +601,7 @@ pub(super) fn scoped_text_channel_limit(
 }
 
 pub(super) fn scoped_vector_channel_limit(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     requested: usize,
     scope_widening_active: bool,
@@ -613,7 +613,7 @@ pub(super) fn scoped_vector_channel_limit(
 }
 
 pub(super) fn scoped_entity_channel_limit(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     requested: usize,
     scope_widening_active: bool,
@@ -628,7 +628,7 @@ pub(super) fn scoped_entity_channel_limit(
 
 pub(super) fn truncate_widened_channel_results_to_scope(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     requested: usize,
     filters: PipelineFilterConfig<'_>,

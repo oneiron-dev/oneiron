@@ -87,7 +87,7 @@ impl ScopedRead<'_> {
         if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
             return Ok(false);
         }
-        if !crate::claim::has_live_support_in_txn(&self.vault.store, rtxn, body)? {
+        if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
             return Ok(false);
         }
         let principal = claim_principal_id(body)?;
