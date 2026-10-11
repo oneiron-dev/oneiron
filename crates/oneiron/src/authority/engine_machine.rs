@@ -46,19 +46,48 @@ impl Vault {
     /// the first call enrolls, later calls only retain the signers, and an
     /// existing vault gets its engine keys before its first engine write.
     pub fn provision_engine_machine_identities(&self, issuer: &HostSlipIssuer) -> Result<()> {
+        for machine in self.engine_machine_actors()? {
+            self.provision_host_machine_identity(issuer, machine)?;
+        }
+        Ok(())
+    }
+
+    /// Every engine MACHINE writer, its row created on first use.
+    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 6]> {
         let seed = ENGINE_MACHINE_SEED_TIME;
-        let machines = [
+        Ok([
             self.ensure_commitment_projection_machine(seed)?,
             crate::calendar::ingest::ensure_ics_import_actor(self, seed)?,
             crate::calendar::transcript::file_drop_import_actor(self, seed)?,
             crate::reaction::ensure_conversation_mirror_actor(self, seed)?,
             self.ensure_esign_artifact_machine(seed)?,
             self.dreamer_authority()?.entity_ref(),
-        ];
-        for machine in machines {
-            self.provision_host_machine_identity(issuer, machine)?;
-        }
-        Ok(())
+        ])
+    }
+
+    /// Enroll a writer again under a successor root's key, in its re-root's
+    /// transaction. The ReRoot retired the writer's old key with the old
+    /// root, and `provision_host_machine_identity` never enrolls an actor
+    /// that has a binding, so the re-root must give it the key the new
+    /// secret derives; the next host open then retains that signer.
+    pub(super) fn enroll_engine_machine_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        vault_id: &[u8; 32],
+        machine: EntityId,
+    ) -> Result<()> {
+        let signing = engine_machine_signing_key(issuer, vault_id, machine);
+        let public_key = signing.verifying_key().to_bytes();
+        let transport = blake3::derive_key(ENGINE_MACHINE_TRANSPORT_DOMAIN, &public_key);
+        self.enroll_machine_identity_in_txn(
+            txn,
+            issuer,
+            machine,
+            public_key,
+            transport,
+            |transcript| Ok(signing.sign(transcript).to_bytes()),
+        )
     }
 
     /// Give one stored MACHINE a software key derived from the host root and
