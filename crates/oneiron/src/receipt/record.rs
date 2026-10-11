@@ -227,7 +227,7 @@ pub(crate) fn validate_receipt_record_put(
             )));
         }
     }
-    if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
+    if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)? {
         let header = EntityMetadataHeader::parse(&prior)
             .ok_or(Error::CorruptedIndex("outbound suppression prior header"))?;
         if header.entity_type == ENTITY_TYPE_RECEIPT_RECORD {

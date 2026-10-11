@@ -26,7 +26,7 @@ pub(crate) fn reject_ruling_delete(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && is_ruling(&raw)?
     {
         return Err(invalid());
@@ -43,7 +43,7 @@ pub(crate) fn guard_ruling_overwrite(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && is_ruling(&raw)?
     {
         let header =

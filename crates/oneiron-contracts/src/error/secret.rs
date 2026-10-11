@@ -65,6 +65,18 @@ pub enum SecretError {
     /// (SECRET-02).
     #[error("no live secret custody record for ref `{name}`")]
     SecretRefNotFound { name: String },
+    /// An owner registration asks for more than the repo manifest declares
+    /// for the name: a wider class, a binding the entry does not declare, a
+    /// higher tier or another scope (ARCH-0069 S2: the manifest may only
+    /// narrow).
+    #[error("registration of `{secret_ref}` is wider than the repo manifest: {reason}")]
+    SecretWiderThanManifest {
+        secret_ref: String,
+        reason: &'static str,
+    },
+    /// The named repository publishes no secret manifest at the named ref.
+    #[error("no secret manifest published at `{source_ref}`")]
+    SecretManifestNotFound { source_ref: String },
     /// A secret-lease call named a lease id with no row (SECRET-02).
     #[error("no secret lease row for id {}", lease_id.to_hex())]
     SecretLeaseNotFound { lease_id: EntityId },
@@ -135,6 +147,8 @@ impl SecretError {
             Self::SecretTierDenied { .. } => ErrorKind::SecretTierDenied,
             Self::SecretDoorPolicyRefused { .. } => ErrorKind::SecretDoorPolicyRefused,
             Self::SecretRefNotFound { .. } => ErrorKind::SecretRefNotFound,
+            Self::SecretWiderThanManifest { .. } => ErrorKind::SecretWiderThanManifest,
+            Self::SecretManifestNotFound { .. } => ErrorKind::SecretManifestNotFound,
             Self::SecretLeaseNotFound { .. } => ErrorKind::SecretLeaseNotFound,
             Self::SecretLeaseNotActive { .. } => ErrorKind::SecretLeaseNotActive,
             Self::SecretLeasePathNotDeclared { .. } => ErrorKind::SecretLeasePathNotDeclared,

@@ -352,7 +352,7 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     id: EntityId,
     kind: u8,
 ) -> Result<Option<T>> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &id)? else {
         return Ok(None);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
@@ -385,7 +385,7 @@ pub(crate) fn is_project_entity(
     };
     let root_header = EntityMetadataHeader::parse(&root_raw)
         .ok_or(Error::CorruptedIndex("project root header"))?;
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &id)? else {
         return Ok(false);
     };
     let header =
