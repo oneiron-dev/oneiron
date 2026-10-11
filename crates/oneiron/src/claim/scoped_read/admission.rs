@@ -103,8 +103,9 @@ impl<'a> ScopedRead<'a> {
     /// The audience conjunct over the exact revision `raw` being served. A
     /// key that asked for a world set keeps the row inside it. A key bound to
     /// a room turn adds the room's world ceiling, its whole roster as an
-    /// audience, and every other member's own read of that same revision, so
-    /// the turn reads inside the room's Scope (ARCH-0067 §8). The roster is
+    /// audience, P7 under the members' met clearance, and every other member's
+    /// own read of that same revision, so the turn reads inside the room's
+    /// Scope (ARCH-0067 §8). The roster is
     /// read in this snapshot, so a member who joined after the key was built
     /// binds this row too.
     pub(super) fn audience_readable_raw_in(
@@ -131,7 +132,10 @@ impl<'a> ScopedRead<'a> {
             let Some(room) = self.room_ceiling_in(txn, turn)? else {
                 return Ok(false);
             };
+            // A member's contact clearance holds the row to P7 too: it is
+            // positively public or sits under the room's Scope (ILDF2).
             if !room.admits_world(world)
+                || !room.discloses(&self.vault.store, txn, *id, raw)?
                 || !self
                     .audience_cache
                     .lock()

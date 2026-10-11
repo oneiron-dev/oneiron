@@ -937,7 +937,7 @@ impl Memory<'_> {
                 .expect("one default per actor"),
         };
         let room = match self.room_turn_now()? {
-            Some(turn) => crate::context_board::scope_worlds(&turn.scope)?,
+            Some(turn) => crate::context_board::scope_worlds(&turn.worlds)?,
             None => None,
         };
         Ok(match room {

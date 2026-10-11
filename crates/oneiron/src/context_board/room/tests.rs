@@ -19,6 +19,7 @@ fn member(actor: EntityId, worlds: WorldAuthoritySet) -> RoomPresence {
         label: actor.to_hex(),
         present: true,
         active_worlds: worlds,
+        clearance: None,
     }
 }
 
@@ -40,7 +41,7 @@ fn room_scope_is_the_ordinary_scope_and_a_join_only_narrows() -> Result<()> {
         ..b
     };
     assert_eq!(room_scope(&[a, away])?, one);
-    assert_eq!(room_scope(&[])?, Scope::default());
+    assert_eq!(room_scope::<RoomPresence>(&[])?, Scope::default());
     // A world id equal to the reserved base id is not base authority.
     let smuggled = member(
         id(8),
@@ -129,6 +130,9 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
             b"agent",
         )?;
     }
+    // The agent is the vault's own: it adds no clearance term.
+    crate::test_util::bind_test_agent(&vault, agent);
+    crate::test_util::bind_test_owner(&vault, owner);
     let fiction = id(0x42);
     // The agent's grant holds base only, so the room reads base reality. The
     // stranger, not yet a member, holds the fiction world alone.
@@ -284,6 +288,9 @@ fn a_member_who_joins_mid_read_binds_the_rows_it_serves() -> Result<()> {
             b"agent",
         )?;
     }
+    // The agent is the vault's own: it adds no clearance term.
+    crate::test_util::bind_test_agent(&vault, agent);
+    crate::test_util::bind_test_owner(&vault, owner);
     // The room reads base reality. The stranger holds the fiction world
     // alone, so once it joins the room reads no world at all.
     let fiction = id(0x62);
@@ -407,6 +414,9 @@ fn a_room_lane_rebuilds_its_ceiling_only_for_a_new_member() -> Result<()> {
             b"agent",
         )?;
     }
+    // The agent is the vault's own: it adds no clearance term.
+    crate::test_util::bind_test_agent(&vault, agent);
+    crate::test_util::bind_test_owner(&vault, owner);
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
@@ -546,5 +556,114 @@ fn a_grant_that_lost_its_edge_still_governs_past_one_pass() -> Result<()> {
         ScopeAxis::Bottom,
         "the room reads nothing"
     );
+    Ok(())
+}
+
+/// ILDF2 in a room (ARCH-0067 §8): a guest's contact clearance bounds every
+/// read a room turn makes. Its bottom clearance keeps a tier-B note and the
+/// room's own default-Sensitive history out and a positively public note
+/// in. A wider clearance admits them on the next turn, never mid-turn. The
+/// owner adds no term, and the room roster and the context-pack interlocutor
+/// set resolve one clearance through one function.
+#[test]
+fn a_guests_clearance_bounds_every_read_a_room_turn_makes() -> Result<()> {
+    use crate::disclosure::{DisclosableSet, DisclosureScope, disclosable_set};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let guest = id(0x71);
+    vault.put_entity(
+        &guest,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"guest",
+    )?;
+    let contact = id(0x72);
+    let introduced = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        id(0x73),
+        "guest@example.com",
+        10,
+    )
+    .expect("contact record");
+    vault.create_counterparty_contact(&contact, &introduced)?;
+    vault.put_edge(&contact, crate::edge::EdgeKind::About, &guest, 1.0)?;
+    crate::test_util::authorize_readers(&vault, &[&guest.to_hex()]);
+    let (_, record) = project_room(&vault, owner, &[guest])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let hex_of = |input: ClaimInput| {
+        let receipt = host.claim_upsert(&input).expect("note");
+        host.get_entity(&receipt.claim_short_id)
+            .expect("note read")
+            .value
+            .expect("owner reads the note")
+            .id_hex
+    };
+    let tier_b = hex_of(note(room, "lantern ledger", None));
+    let mut public = note(room, "lantern harbor", None);
+    public.scope = Some(serde_json::json!({"sensitivity": "public"}));
+    let public = hex_of(public);
+    host.rooms_speak(&spoken(room, EntityId::now(), 2))
+        .expect("speak");
+    let filter = ClaimListFilter {
+        subject_ref: Some(room.to_hex()),
+        predicate: Some("note.topic".into()),
+        lifecycle: None,
+        limit: 10,
+    };
+    // What one room turn reads: the room's notes, each note by id, and the
+    // room's own history.
+    let reads = |turn: &crate::memory::RoomTurnHandle<'_>| {
+        let mut listed: Vec<_> = turn
+            .claim_list(&filter)
+            .expect("claim list")
+            .value
+            .into_iter()
+            .map(|claim| claim.claim_ref)
+            .collect();
+        listed.sort();
+        let got = |note: &str| turn.get_entity(note).expect("read").value.is_some();
+        let history = turn.rooms_messages().expect("history").len();
+        (listed, got(&tier_b), got(&public), history)
+    };
+
+    let roster = host.room_roster(room).expect("roster");
+    assert_eq!(disclosable_set(&roster)?, room_scope(&roster)?);
+    let terms: Vec<_> = roster
+        .iter()
+        .map(|member| member.clearance.clone())
+        .collect();
+    assert_eq!(
+        terms.iter().filter(|term| term.is_none()).count(),
+        1,
+        "the owner adds none"
+    );
+    let interlocutors = crate::interlocutor::InterlocutorSet::with_session_owner(vec![
+        crate::interlocutor::Interlocutor::known_contact(
+            contact,
+            "guest@example.com",
+            crate::counterparty_contact::CounterpartyFirstTouch::UserIntroduction,
+        ),
+    ]);
+    assert_eq!(
+        &disclosable_set(&terms)?,
+        DisclosableSet::resolve(&vault, &interlocutors, false)?.clearance()
+    );
+
+    let narrow = host.for_room_turn(room).expect("open room turn");
+    assert_eq!(reads(&narrow), (vec![public.clone()], false, true, 0));
+    vault.set_counterparty_disclosure_scope(
+        &contact,
+        &DisclosureScope::new(Scope::top(), "room guest", 200)?,
+    )?;
+    assert_eq!(
+        reads(&narrow),
+        (vec![public.clone()], false, true, 0),
+        "a turn never widens mid-turn"
+    );
+    let mut both = vec![tier_b.clone(), public.clone()];
+    both.sort();
+    let wide = host.for_room_turn(room).expect("open room turn");
+    assert_eq!(reads(&wide), (both, true, true, 1));
     Ok(())
 }

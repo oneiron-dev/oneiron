@@ -12,7 +12,7 @@ use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
     run_context_pack_builder,
 };
-use super::{resolve_core_disclosure, resolve_core_interlocutor_set};
+use super::{bound_room_owner, resolve_core_disclosure, resolve_core_interlocutor_set};
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -79,11 +79,16 @@ pub(crate) async fn run_context_pack(
                 .map_err(|error| core_engine_error("room audience failed", error))
         })
         .transpose()?;
+    let room_owner = match room_members.as_deref() {
+        Some(members) => bound_room_owner(&server.vault, auth, members)?,
+        None => None,
+    };
     let interlocutors = resolve_core_interlocutor_set(
         &server.vault,
         auth,
         req.interlocutors.as_ref(),
         room_members.as_deref(),
+        room_owner,
     )?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
@@ -164,7 +169,7 @@ pub(crate) async fn run_context_pack(
     let disclosure = resolve_core_disclosure(
         &server.vault,
         interlocutors.as_ref(),
-        room_members.is_some(),
+        room_members.as_ref().map(|_| room_owner.is_some()),
     )?;
 
     let mut builder = server

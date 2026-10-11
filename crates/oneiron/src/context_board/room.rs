@@ -21,22 +21,82 @@ pub struct RoomPresence {
     pub present: bool,
     /// The worlds this member reads by default (ARCH-0022).
     pub active_worlds: WorldAuthoritySet,
+    /// The member's contact clearance (ILDF2). `None` for the vault owner
+    /// and the vault's own agents, which add no clearance term; bottom for a
+    /// member with no contact or an unknown, revoked or undecodable one.
+    pub clearance: Option<Scope>,
 }
 
-/// ARCH-0067 §8: the only function from a roster to a Scope. It meets the
-/// present members' world sets into the ordinary Scope; every other axis
-/// stays open here and each member's own grants still bind at the read door.
-/// A member who joins can only narrow the result.
-pub fn room_scope(roster: &[RoomPresence]) -> Result<Scope> {
-    let mut present = roster.iter().filter(|member| member.present);
-    let Some(first) = present.next() else {
+/// One party to the roster-to-Scope meet: a room member, or a resolved
+/// interlocutor, whose only term is its clearance (`Option<Scope>`).
+pub trait RosterParty {
+    /// Whether the party is in the meet.
+    fn present(&self) -> bool;
+    /// The worlds the party reads by default, if it brings a world term.
+    fn worlds(&self) -> Option<&WorldAuthoritySet>;
+    /// The party's clearance term; `None` adds none.
+    fn clearance(&self) -> Option<&Scope>;
+}
+
+impl RosterParty for RoomPresence {
+    fn present(&self) -> bool {
+        self.present
+    }
+    fn worlds(&self) -> Option<&WorldAuthoritySet> {
+        Some(&self.active_worlds)
+    }
+    fn clearance(&self) -> Option<&Scope> {
+        self.clearance.as_ref()
+    }
+}
+
+impl RosterParty for Option<Scope> {
+    fn present(&self) -> bool {
+        true
+    }
+    fn worlds(&self) -> Option<&WorldAuthoritySet> {
+        None
+    }
+    fn clearance(&self) -> Option<&Scope> {
+        self.as_ref()
+    }
+}
+
+/// ARCH-0067 §8 and ILDF2 R17: the only function from a roster to a Scope,
+/// also exported as `disclosure::disclosable_set`. It meets the present
+/// parties' world sets into the room's world ceiling, then meets in every
+/// present party's clearance. The owner and the vault's own agents add no
+/// clearance term, so with no other party present the clearance half is the
+/// top (P1). A record is disclosed under the result iff it is positively
+/// public or sits under it (P7). No party present gives bottom, and a party
+/// who joins can only narrow the result.
+pub fn room_scope<P: RosterParty>(roster: &[P]) -> Result<Scope> {
+    let mut scope = room_worlds(roster)?;
+    for party in roster.iter().filter(|party| party.present()) {
+        if let Some(clearance) = party.clearance() {
+            scope = scope.meet(clearance);
+        }
+    }
+    Ok(scope)
+}
+
+/// The world ceiling of [`room_scope`]: the meet of the present parties'
+/// world sets, every other axis open. Every row a room reads lies in it,
+/// public or not; a clearance narrows only what may be disclosed.
+pub(crate) fn room_worlds<P: RosterParty>(roster: &[P]) -> Result<Scope> {
+    let mut present = roster.iter().filter(|party| party.present()).peekable();
+    if present.peek().is_none() {
         return Ok(Scope::default());
+    }
+    let mut sets = present.filter_map(|party| party.worlds());
+    let Some(first) = sets.next() else {
+        return Ok(Scope::top());
     };
-    let mut base = first.active_worlds.include_base();
-    let mut worlds = first.active_worlds.worlds().clone();
-    for member in present {
-        base &= member.active_worlds.include_base();
-        worlds.retain(|id| member.active_worlds.worlds().contains(id));
+    let mut base = first.include_base();
+    let mut worlds = first.worlds().clone();
+    for set in sets {
+        base &= set.include_base();
+        worlds.retain(|id| set.worlds().contains(id));
     }
     // Keep the world-set bound at this door too.
     let meet = WorldAuthoritySet::new(base, worlds)?;

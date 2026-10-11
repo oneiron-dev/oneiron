@@ -1,6 +1,8 @@
 //! The rooms.* facade family delegates to existing reads, witness and claim gates.
 
-use super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
+use super::room::{
+    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope, room_worlds,
+};
 use crate::claim::{PointRead, RoomTurnCeiling};
 use crate::federation::Scope;
 use crate::memory::{ClaimListFilter, Memory, MemoryError, MemoryResult};
@@ -32,16 +34,18 @@ impl Memory<'_> {
             .filter(|members| members.contains(&self.actor()))
             .ok_or_else(unknown_room)?;
         let worlds = reading_defaults_in(vault, &txn, &members)?;
+        let clearances = clearances_in(vault, &txn, &members)?;
         drop(txn);
         let mut roster = members
             .into_iter()
-            .zip(worlds)
-            .map(|(member, active_worlds)| RoomPresence {
+            .zip(worlds.into_iter().zip(clearances))
+            .map(|(member, (active_worlds, clearance))| RoomPresence {
                 actor: member,
                 actor_class: (member == self.actor()).then(|| self.actor_class()),
                 label: member.to_hex(),
                 present: true,
                 active_worlds,
+                clearance,
             })
             .collect::<Vec<_>>();
         roster.sort_by_key(|member| member.actor);
@@ -56,6 +60,23 @@ impl Memory<'_> {
             .own_read_lane(crate::claim::ClaimReadStatus::Recorded)?
             .read(&[PointRead::id(room)], None)?;
         Ok(read.value.into_iter().flatten().next().is_some())
+    }
+
+    /// P7 for one record a room reads under `scope`; see
+    /// [`crate::disclosure::discloses_raw`].
+    fn room_discloses(&self, scope: &Scope, id: EntityId) -> MemoryResult<bool> {
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let Some(record) = vault.store.port_entity_record(&txn, &id)? else {
+            return Ok(false);
+        };
+        Ok(crate::disclosure::discloses_raw(
+            &vault.store,
+            &txn,
+            scope,
+            id,
+            &record.encode(),
+        )?)
     }
 
     /// The ARCH-0022 reading default of each actor under one authority
@@ -74,7 +95,22 @@ impl Memory<'_> {
     /// roster: a grant added mid-turn cannot widen it, and a removal narrows it.
     pub fn room_read_scope(&self, room: EntityId) -> MemoryResult<Scope> {
         self.refuse_other_room(room)?;
-        self.within_room_turn(room, room_scope(&self.roster_of(room)?)?)
+        Ok(self.within_turn_scope(room_scope(&self.roster_of(room)?)?))
+    }
+
+    /// Meets the room Scope `current` with the turn this handle is bound to,
+    /// if any.
+    fn within_turn_scope(&self, current: Scope) -> Scope {
+        match self.room_turn() {
+            Some(turn) => turn.room_scope().meet(&current),
+            None => current,
+        }
+    }
+
+    /// The world ceiling of [`Self::room_read_scope`], the same way: every
+    /// row `room` reads lies in it, public or not.
+    pub(crate) fn room_read_worlds(&self, room: EntityId) -> MemoryResult<Scope> {
+        self.within_room_turn(room, room_worlds(&self.roster_of(room)?)?)
     }
 
     /// A turn bound to one room reads no other room, and says nothing about it.
@@ -88,12 +124,12 @@ impl Memory<'_> {
         }
     }
 
-    /// Meets `current` with the turn this handle is bound to, if any. A turn
-    /// bound to another room refuses.
-    pub(crate) fn within_room_turn(&self, room: EntityId, current: Scope) -> MemoryResult<Scope> {
+    /// Meets the world ceiling `current` with the turn this handle is bound
+    /// to, if any. A turn bound to another room refuses.
+    fn within_room_turn(&self, room: EntityId, current: Scope) -> MemoryResult<Scope> {
         self.refuse_other_room(room)?;
         Ok(match self.room_turn() {
-            Some(turn) => turn.scope.meet(&current),
+            Some(turn) => turn.worlds.meet(&current),
             None => current,
         })
     }
@@ -116,7 +152,11 @@ impl Memory<'_> {
         };
         let now = self.room_ceiling(turn.room)?;
         Ok(Some(RoomTurnCeiling {
-            scope: turn.scope.meet(&now.scope),
+            worlds: turn.worlds.meet(&now.worlds),
+            clearance: crate::claim::meet_clearance(
+                turn.clearance.as_ref(),
+                now.clearance.as_ref(),
+            ),
             ..now
         }))
     }
@@ -151,7 +191,13 @@ impl Memory<'_> {
                 &[],
             ));
         }
-        let scope = self.within_room_turn(room, room_scope(&roster)?)?;
+        let worlds = self.within_room_turn(room, room_worlds(&roster)?)?;
+        let scope = self.within_turn_scope(room_scope(&roster)?);
+        // A clearance in the meet holds each rule to P7 as well.
+        let cleared = roster.iter().any(|member| member.clearance.is_some())
+            || self
+                .room_turn()
+                .is_some_and(|turn| turn.clearance.is_some());
         let read = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
         // Each rule must also pass every present peer's ordinary read.
         let present: Vec<_> = roster
@@ -196,11 +242,14 @@ impl Memory<'_> {
                 .transpose()?
                 .unwrap_or_else(crate::claim::base_world_id);
             if own.value[index].is_none()
-                || !scope.worlds.contains(&crate::federation::ScopeId(world))
+                || !worlds.worlds.contains(&crate::federation::ScopeId(world))
             {
                 continue;
             }
-            if peer_rows.iter().any(|rows| rows[index].is_none()) {
+            if peer_rows.iter().any(|rows| rows[index].is_none())
+                || (cleared
+                    && !self.room_discloses(&scope, EntityId::from_hex(&claim.claim_ref)?)?)
+            {
                 receipt.add_suppressed(1);
                 continue;
             }
@@ -309,9 +358,41 @@ fn reading_defaults_in(
         .collect()
 }
 
+/// Whether `member` is positively known as the vault owner: the embedded
+/// owner, or a live human owner binding in a rooted vault.
+fn is_vault_owner(
+    fold: &crate::authority::AuthorityFold,
+    embedded_owner: EntityId,
+    member: &EntityId,
+) -> bool {
+    *member == embedded_owner
+        || (fold.vault_id.is_some()
+            && crate::authority::actor_binding_is_active(fold, member, "human"))
+}
+
+/// Each member's clearance term in `txn` (ILDF2): none for the vault owner
+/// and the vault's own agents, else the member's contact clearance, bottom
+/// when there is none.
+fn clearances_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    members: &[EntityId],
+) -> crate::Result<Vec<Option<Scope>>> {
+    let embedded_owner = crate::vault::embedded_owner_actor_id()?;
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    members
+        .iter()
+        .map(|member| {
+            if is_vault_owner(&fold, embedded_owner, member) {
+                return Ok(None);
+            }
+            crate::disclosure::room_party_in(vault, txn, &fold, *member)?.clearance_in(vault, txn)
+        })
+        .collect()
+}
+
 /// One read key per member other than `caller`. A member positively known
-/// as the vault owner (the embedded owner, or a live human owner binding in
-/// a rooted vault) reads with the owner's key. Any other member names no
+/// as the vault owner reads with the owner's key. Any other member names no
 /// class, so only class-agnostic grants admit it, and its access grants
 /// apply.
 fn peer_read_keys_in(
@@ -326,10 +407,7 @@ fn peer_read_keys_in(
         .iter()
         .filter(|member| **member != caller)
         .map(|member| {
-            let owner = *member == embedded_owner
-                || (fold.vault_id.is_some()
-                    && crate::authority::actor_binding_is_active(&fold, member, "human"));
-            if owner {
+            if is_vault_owner(&fold, embedded_owner, member) {
                 return Ok(crate::claim::ScopedReadActorKey::vault_owner(*member));
             }
             // The same positive and private-access gates the member's own
@@ -356,10 +434,11 @@ pub(crate) fn room_roster_in(
 }
 
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room
-/// (ARCH-0067 §8): `room_scope` over the roster in this snapshot, that roster
-/// as the audience, and every other member's read key. One snapshot builds
-/// all of it, the same one that serves the row it is checked against.
-/// `None` when the room is not one `caller` belongs to here.
+/// (ARCH-0067 §8): `room_scope` over the roster in this snapshot, as its
+/// world ceiling and its clearance, that roster as the audience, and every
+/// other member's read key. One snapshot builds all of it, the same one that
+/// serves the row it is checked against. `None` when the room is not one
+/// `caller` belongs to here.
 pub(crate) fn room_ceiling_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -373,21 +452,31 @@ pub(crate) fn room_ceiling_in(
         return Ok(None);
     }
     let worlds = reading_defaults_in(vault, txn, &members)?;
+    let clearances = clearances_in(vault, txn, &members)?;
     let roster: Vec<_> = members
         .iter()
-        .zip(worlds)
-        .map(|(member, active_worlds)| RoomPresence {
+        .zip(worlds.into_iter().zip(clearances))
+        .map(|(member, (active_worlds, clearance))| RoomPresence {
             actor: *member,
             actor_class: None,
             label: String::new(),
             present: true,
             active_worlds,
+            clearance,
         })
         .collect();
+    let worlds = room_worlds(&roster)?;
+    let clearance = roster
+        .iter()
+        .filter_map(|member| member.clearance.as_ref())
+        .fold(None, |met, term| {
+            crate::claim::meet_clearance(met.as_ref(), Some(term))
+        });
     Ok(Some(RoomTurnCeiling {
         room,
         caller,
-        scope: room_scope(&roster)?,
+        worlds,
+        clearance,
         peers: peer_read_keys_in(vault, txn, caller, &members)?,
         roster: members,
     }))

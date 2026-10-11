@@ -611,6 +611,16 @@ impl Vault {
         issuer: &HostSlipIssuer,
         person: crate::EntityId,
     ) -> Result<()> {
+        self.bind_host_actor_for_test(issuer, person, "human")
+    }
+
+    /// Binds `person` at `class` under the host root.
+    pub(crate) fn bind_host_actor_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        person: crate::EntityId,
+        class: &str,
+    ) -> Result<()> {
         let fold = self.authority_fold()?;
         let now = self.now_recorded_at();
         let bind = next_entry(
@@ -619,7 +629,7 @@ impl Vault {
             AuthorityOp::BindActor {
                 authority_key: issuer.public_key(),
                 actor_ref: person,
-                actor_class: "human".into(),
+                actor_class: class.into(),
                 epoch: 1,
             },
             now,

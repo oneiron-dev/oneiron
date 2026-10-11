@@ -34,9 +34,14 @@ pub(crate) struct RoomTurnCeiling {
     pub(crate) room: EntityId,
     /// The member reading through this ceiling; every other member is a peer.
     pub(crate) caller: EntityId,
-    /// The room's Scope for this read: what `room_scope` returned when the
-    /// turn opened, met with what it returns for the current roster.
-    pub(crate) scope: crate::federation::Scope,
+    /// The room's world ceiling for this read: what `room_worlds` returned
+    /// when the turn opened, met with what it returns for the current
+    /// roster. Every row lies in it, public or not.
+    pub(crate) worlds: crate::federation::Scope,
+    /// The met clearance of the members that bring one (ILDF2), the same
+    /// way: `None` while only the owner and the vault's own agents have
+    /// been present. See [`Self::room_scope`].
+    pub(crate) clearance: Option<crate::federation::Scope>,
     /// The room's members, sorted and unique: each row must pass the
     /// all-of-audience rule for every one of them (ARCH-0006a).
     pub(crate) roster: Vec<EntityId>,
@@ -49,9 +54,34 @@ impl RoomTurnCeiling {
     /// World membership of one ordinary record: a claim's world, else base
     /// reality, which also holds every record that is not a claim.
     pub(crate) fn admits_world(&self, world: Option<EntityId>) -> bool {
-        self.scope.worlds.contains(&crate::federation::ScopeId(
+        self.worlds.worlds.contains(&crate::federation::ScopeId(
             world.unwrap_or_else(crate::claim::base_world_id),
         ))
+    }
+
+    /// The room's Scope, what `room_scope` gives: the world ceiling met
+    /// with the clearance.
+    pub(crate) fn room_scope(&self) -> crate::federation::Scope {
+        match &self.clearance {
+            Some(clearance) => self.worlds.meet(clearance),
+            None => self.worlds.clone(),
+        }
+    }
+
+    /// P7 for one record the room reads: with a clearance in the meet, the
+    /// record's own Scope sits under the room's Scope or is positively
+    /// public. A record with no stamp is never public.
+    pub(crate) fn discloses(
+        &self,
+        store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+    ) -> crate::Result<bool> {
+        if self.clearance.is_none() {
+            return Ok(true);
+        }
+        crate::disclosure::discloses_raw(store, txn, &self.room_scope(), id, raw)
     }
 
     /// This ceiling conjoined with `now`, the room as a later snapshot reads
@@ -74,7 +104,8 @@ impl RoomTurnCeiling {
         Self {
             room: self.room,
             caller: self.caller,
-            scope: self.scope.meet(&now.scope),
+            worlds: self.worlds.meet(&now.worlds),
+            clearance: meet_clearance(self.clearance.as_ref(), now.clearance.as_ref()),
             roster,
             peers,
         }
@@ -85,6 +116,17 @@ impl RoomTurnCeiling {
         roster
             .iter()
             .all(|member| self.roster.binary_search(member).is_ok())
+    }
+}
+
+/// Two clearance terms met; `None` is no term, so it never narrows.
+pub(crate) fn meet_clearance(
+    a: Option<&crate::federation::Scope>,
+    b: Option<&crate::federation::Scope>,
+) -> Option<crate::federation::Scope> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.meet(b)),
+        (one, other) => one.or(other).cloned(),
     }
 }
 

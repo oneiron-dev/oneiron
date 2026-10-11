@@ -12,11 +12,15 @@
 //! the agent-visible assembly block.
 
 mod disclosable_set;
+mod room_party;
 mod scope_codec;
 mod tier_classification;
 mod vault_context;
 
+pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
+pub use self::room_party::RoomParty;
+pub(crate) use self::room_party::room_party_in;
 
 pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,

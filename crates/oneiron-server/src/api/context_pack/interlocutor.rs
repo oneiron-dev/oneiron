@@ -19,12 +19,14 @@ use crate::error::ApiError;
 /// Owner-grade is `CoreAuth::is_owner_grade` — un-narrowed on BOTH axes. A
 /// delegated token narrowed by scope alone is NOT owner-grade, so it takes
 /// the clamp like any other narrowed credential rather than silently
-/// skipping the gate.
+/// skipping the gate. `bound_room_owner` is [`bound_room_owner`] over
+/// `room_members`.
 pub(crate) fn resolve_core_interlocutor_set(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     controls: Option<&CoreInterlocutorControls>,
     room_members: Option<&[oneiron::EntityId]>,
+    bound_room_owner: Option<oneiron::EntityId>,
 ) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
     if controls.is_none() && room_members.is_none() && auth.is_owner_grade() {
         return Ok(None);
@@ -54,63 +56,26 @@ pub(crate) fn resolve_core_interlocutor_set(
 
     // Membership is durable; it is not evidence of physical presence. Include
     // every member conservatively, so an omitted or spoofed wire party cannot
-    // remove a room participant from the disclosure meet. A person maps to a
+    // remove a room participant from the disclosure meet. A member maps to a
     // contact dial only through a unique About link; ambiguous/missing links
-    // remain unknown and therefore grant no absent-owner clearance.
-    let mut bound_room_owner = None;
+    // remain unknown and therefore grant no absent-owner clearance. The
+    // vault's own agents act for the owner and add no term (ARCH-0067 §8).
     if let Some(members) = room_members {
-        // A bare host credential authenticates the caller but identifies no
-        // PERSON in the room. Only an identified, owner-grade human slip with
-        // a live owner-capable actor binding can exclude its exact holder from
-        // the non-owner meet. The presence flag and PROJECT leader are not
-        // identity evidence.
-        let bound_owner = if auth.is_owner_grade() && auth.actor_class() == Some("human") {
-            auth.principal_ref()
-                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
-                .filter(|id| members.contains(id))
-                .and_then(|id| {
-                    (vault.get_entity_type(&id).ok()
-                        == Some(Some(oneiron::registry::ENTITY_TYPE_PERSON)))
-                    .then_some(id)
-                })
-        } else {
-            None
-        };
-        let bound_owner = if let Some(id) = bound_owner {
-            let fold = vault
-                .authority_fold()
-                .map_err(|error| core_engine_error("room owner binding failed", error))?;
-            oneiron::authority::actor_binding_is_active(&fold, &id, "human").then_some(id)
-        } else {
-            None
-        };
-        bound_room_owner = bound_owner;
-        for member in members {
-            if bound_owner == Some(*member) {
-                continue;
-            }
-            let contacts = vault
-                .sources(
-                    member,
-                    oneiron::EdgeKind::About,
-                    Some(oneiron::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT),
-                )
-                .map_err(|error| core_engine_error("room contact resolution failed", error))?;
-            let contact = if let [contact] = contacts.as_slice() {
-                let people = vault
-                    .targets(
-                        contact,
-                        oneiron::EdgeKind::About,
-                        Some(oneiron::registry::ENTITY_TYPE_PERSON),
-                    )
-                    .map_err(|error| core_engine_error("room contact resolution failed", error))?;
-                (people.as_slice() == [*member]).then_some(*contact)
-            } else {
-                None
-            };
-            parties.push(match contact {
-                Some(contact) => oneiron::InterlocutorPartyInput::ContactRef(contact),
-                None => oneiron::InterlocutorPartyInput::UnknownLabel {
+        let others: Vec<_> = members
+            .iter()
+            .copied()
+            .filter(|member| bound_room_owner != Some(*member))
+            .collect();
+        let resolved = vault
+            .room_parties(&others)
+            .map_err(|error| core_engine_error("room contact resolution failed", error))?;
+        for (member, party) in others.into_iter().zip(resolved) {
+            parties.push(match party {
+                oneiron::disclosure::RoomParty::VaultAgent => continue,
+                oneiron::disclosure::RoomParty::Contact(contact) => {
+                    oneiron::InterlocutorPartyInput::ContactRef(contact)
+                }
+                _ => oneiron::InterlocutorPartyInput::UnknownLabel {
                     label: member.to_hex(),
                     claimed_owner: false,
                 },
@@ -171,19 +136,50 @@ pub(crate) fn resolve_core_interlocutor_set(
         })
 }
 
+/// The room member the caller is proven to be the vault owner as, if any.
+/// A bare host credential authenticates the caller but identifies no PERSON
+/// in the room. Only an identified, owner-grade human slip with a live
+/// owner-capable actor binding can exclude its exact holder from the
+/// non-owner meet. The presence flag and PROJECT leader are not identity
+/// evidence.
+pub(crate) fn bound_room_owner(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    members: &[oneiron::EntityId],
+) -> Result<Option<oneiron::EntityId>, ApiError> {
+    if !auth.is_owner_grade() || auth.actor_class() != Some("human") {
+        return Ok(None);
+    }
+    let Some(id) = auth
+        .principal_ref()
+        .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+        .filter(|id| members.contains(id))
+        .filter(|id| {
+            vault.get_entity_type(id).ok() == Some(Some(oneiron::registry::ENTITY_TYPE_PERSON))
+        })
+    else {
+        return Ok(None);
+    };
+    let fold = vault
+        .authority_fold()
+        .map_err(|error| core_engine_error("room owner binding failed", error))?;
+    Ok(oneiron::authority::actor_binding_is_active(&fold, &id, "human").then_some(id))
+}
+
 /// The disclosure clamp a resolved interlocutor set applies (OF-365 ILD-2):
 /// its contacts' current clearance and the current Tier-A marks. `None` is
 /// an unclamped owner session. A room read never takes owner presence as
-/// clearance.
+/// clearance. `room` is set for a room read, with whether the room's own
+/// proven owner reads it.
 pub(crate) fn resolve_core_disclosure(
     vault: &oneiron::Vault,
     interlocutors: Option<&oneiron::InterlocutorSet>,
-    in_room: bool,
+    room: Option<bool>,
 ) -> Result<Option<oneiron::DisclosureContext>, ApiError> {
     interlocutors
         .map(|set| {
-            if in_room {
-                oneiron::DisclosureContext::resolve_room(vault, set.clone())
+            if let Some(owner_reads) = room {
+                oneiron::DisclosureContext::resolve_room(vault, set.clone(), owner_reads)
             } else {
                 oneiron::DisclosureContext::resolve(vault, set.clone())
             }

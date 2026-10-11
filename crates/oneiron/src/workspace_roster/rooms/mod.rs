@@ -144,7 +144,7 @@ pub struct RoomPage {
 }
 
 /// A room TURN is an ordinary record, not a claim, so it lives in base
-/// reality: a room Scope without base reads none of the room's turns.
+/// reality: a room whose world ceiling lacks base reads none of its turns.
 fn turns_readable(scope: &crate::federation::Scope) -> bool {
     scope
         .worlds
@@ -268,7 +268,7 @@ impl Memory<'_> {
     pub fn rooms_list(&self) -> MemoryResult<Vec<(EntityId, ProjectRoom)>> {
         if let Some(turn) = self.room_turn() {
             let room = turn.room;
-            if !self.room_record_readable(room)? || !turns_readable(&self.room_read_scope(room)?) {
+            if !self.room_record_readable(room)? || !turns_readable(&self.room_read_worlds(room)?) {
                 return Ok(Vec::new());
             }
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -296,7 +296,7 @@ impl Memory<'_> {
         drop(txn);
         let mut readable = Vec::with_capacity(result.len());
         for (id, room) in result {
-            if self.room_record_readable(id)? && turns_readable(&self.room_read_scope(id)?) {
+            if self.room_record_readable(id)? && turns_readable(&self.room_read_worlds(id)?) {
                 readable.push((id, room));
             }
         }
@@ -308,7 +308,7 @@ impl Memory<'_> {
         turn: EntityId,
         now: u64,
     ) -> MemoryResult<RoomClaimOutcome> {
-        if !turns_readable(&self.room_read_scope(room)?) {
+        if !turns_readable(&self.room_read_worlds(room)?) {
             return Err(outside_scope());
         }
         // A claim names who holds the turn, so the turn must be one this
@@ -355,7 +355,7 @@ impl Memory<'_> {
     /// the claim, membership, reply binding, and addressing before any message.
     pub fn rooms_speak(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         let room = EntityId::from_hex(&turn.conversation_ref)?;
-        if !turns_readable(&self.room_read_scope(room)?) {
+        if !turns_readable(&self.room_read_worlds(room)?) {
             return Err(outside_scope());
         }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;

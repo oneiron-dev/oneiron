@@ -21,8 +21,10 @@ pub use read_set::{
     ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
     ProposalReason, ServedLifecycle, SessionReadSet,
 };
-pub(crate) use room::scope_worlds;
-pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
+pub use room::{
+    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
+};
+pub(crate) use room::{room_worlds, scope_worlds};
 pub(crate) use room_verbs::{room_ceiling_in, room_roster_in};
 pub use worlds::{WorldPresence, WorldsSection};
 mod frame;

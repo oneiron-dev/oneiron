@@ -988,3 +988,102 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
         "unbound host cannot disclose Tier A: {unbound}"
     );
 }
+
+/// Engine-lane ruling 2026-10-11 (ARCH-0067 §8): the vault's own agent acts
+/// for the owner and adds no clearance term. A room holding the bound owner
+/// and that agent assembles its own default-Sensitive history, owner present
+/// or away. Before, the agent was an unknown party and the room public-only.
+#[tokio::test]
+async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
+    let (_dir, server) = interlocutor_test_server();
+    let owner = seeded_test_entity_id(0x2094_0301);
+    let agent = seeded_test_entity_id(0x2094_0302);
+    for person in [owner, agent] {
+        server
+            .vault
+            .put_entity(
+                &person,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"room member",
+            )
+            .expect("onboard person");
+    }
+    bind_room_owner(&server, owner);
+    bind_room_actor(&server, agent, "agent");
+    let root = server.vault.root_project().expect("root project");
+    let project = seeded_test_entity_id(0x2094_0303);
+    let mut roster =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    create_owned_project(&server, owner, project, &roster);
+    roster.roster.push(agent.to_hex());
+    let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
+    let exact_room = oneiron::workspace_roster::ProjectRoom {
+        schema_version: 1,
+        kind: "channel".into(),
+        project_id: project.to_hex(),
+        member_ids: roster.roster.clone(),
+        claims_scope_ref: roster.claims_scope_ref.clone(),
+        origin: None,
+    };
+    server
+        .vault
+        .batch()
+        .put(
+            &project,
+            server.vault.project_type_byte().unwrap(),
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&roster).unwrap(),
+        )
+        .put(
+            &room,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&exact_room).unwrap(),
+        )
+        .commit()
+        .expect("onboard exact project and room in one batch");
+    let turn = oneiron::EntityId::now();
+    let message = oneiron::EntityId::now();
+    server
+        .vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .rooms_speak(&oneiron::memory::WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![oneiron::memory::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: oneiron::memory::WitnessAuthor::User,
+                message_type: "text".into(),
+                content: "lantern harbor room2094".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 2,
+        })
+        .expect("speak");
+    let spoken = [turn.to_hex(), message.to_hex()];
+
+    for (owner_present, mode) in [(None, "absence_clamp"), (Some(true), "owner_alone")] {
+        let mut request = json!({"conversation_id": room.to_hex(), "query": "room2094"});
+        if let Some(present) = owner_present {
+            request["interlocutors"] = json!({ "owner_present": present });
+        }
+        let (status, body) = room_owner_json(server.clone(), owner, &request).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["disclosure"]["mode"], mode, "{body}");
+        assert!(
+            body["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|row| row["id"].as_str())
+                .any(|id| spoken.iter().any(|spoken| spoken == id)),
+            "the room reads its own history ({mode}): {body}"
+        );
+    }
+}

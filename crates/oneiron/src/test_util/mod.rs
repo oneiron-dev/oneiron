@@ -356,6 +356,16 @@ pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
         .expect("owner binding");
 }
 
+/// Roots the vault under the test host and binds `agent` as one of the
+/// vault's own agents (an active `agent` binding).
+pub(crate) fn bind_test_agent(vault: &Vault, agent: EntityId) {
+    let issuer = test_host_issuer();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .bind_host_actor_for_test(&issuer, agent, "agent")
+        .expect("agent binding");
+}
+
 /// First open seeds the bootstrap skills, whose activation edits wait for
 /// idle publication like any other revision. Publishes them through the
 /// model-free drain so an idle-refresh law observes only its own entities.

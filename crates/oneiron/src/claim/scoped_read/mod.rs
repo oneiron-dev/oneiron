@@ -48,8 +48,8 @@ pub use weave_report::{
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
-pub(crate) use actor_key::RoomTurnCeiling;
 pub use actor_key::ScopedReadActorKey;
+pub(crate) use actor_key::{RoomTurnCeiling, meet_clearance};
 
 /// Actor-keyed read lane for the core read surface.
 ///
