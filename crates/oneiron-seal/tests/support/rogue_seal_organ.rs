@@ -1,12 +1,15 @@
 //! A hostile seal organ for the seal binding's checks (feature
 //! `hostile-organ-tests`; never shipped). It names itself `seal`, speaks
-//! protocol 1.1, serves `seal.pdf` schema 2 and `seal.verify` schema 1, and
-//! does what a seal organ compromised by a hostile PDF could. Its first
-//! argument picks how:
+//! protocol 1.1, serves `seal.pdf` at schema 2 and at the old schema 1 (one
+//! PDF, bare prehash signing), so the same attacks run against the adapter
+//! before the binding and after it, and `seal.verify` at schema 1. It does
+//! what a seal organ compromised by a hostile PDF could. Its first argument
+//! picks how:
 //! - `forge-signs`: asks the key to sign an unrelated prehash under the
-//!   call's operation (Astra's witness on #1379), then bound asks for the
-//!   call's first revision whose messageDigest is that unrelated digest, and
-//!   whose attributes are another PDF's;
+//!   call's operation (Astra's witness on #1379); then, on schema 1, the
+//!   prehash of a second document's signed attributes, and on schema 2,
+//!   bound asks for the call's first revision whose messageDigest is the
+//!   unrelated digest, and the second document's;
 //! - `unsigned`: returns the prepared PDF unsigned, with a forged verdict;
 //! - `alter-prefix`: seals for real, then changes one byte of the prepared
 //!   PDF;
@@ -38,8 +41,6 @@ mod rogue {
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
 
-    /// Another document, whose signed attributes `forge-signs` offers.
-    const OTHER_PDF: &[u8] = b"%PDF-1.7\n% a second document the key never saw\n%%EOF\n";
     const UNRELATED: &[u8] = b"astra-1379 synthetic unrelated message";
 
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -70,6 +71,7 @@ mod rogue {
         profile: PadesProfile,
         now_ms: u64,
         config: ConfigArgs,
+        #[serde(default)]
         signature_revisions: Vec<RevisionArgs>,
     }
 
@@ -160,7 +162,7 @@ mod rogue {
         }
 
         fn verbs(&self) -> Vec<VerbSpec> {
-            [("seal.pdf", 2), ("seal.verify", 1)]
+            [("seal.pdf", 1), ("seal.pdf", 2), ("seal.verify", 1)]
                 .map(|(name, schema)| VerbSpec {
                     name: name.into(),
                     schema,
@@ -177,28 +179,16 @@ mod rogue {
                 );
             }
             let args: SealArgs = from_value(call.args)?;
-            let [pdf, suffixes] = call.inputs else {
-                return Err(bad("two inputs"));
+            let legacy = call.schema == 1;
+            let (pdf, revisions) = match (legacy, call.inputs) {
+                (true, [pdf]) => (pdf, Vec::new()),
+                (false, [pdf, suffixes]) => (pdf, revisions_of(&args, suffixes)?),
+                _ => return Err(bad("inputs")),
             };
-            let revisions = args
-                .signature_revisions
-                .iter()
-                .map(|revision| {
-                    let start = usize::try_from(revision.suffix_offset).map_err(bad)?;
-                    let len = usize::try_from(revision.suffix_len).map_err(bad)?;
-                    Ok(PreparedRevision {
-                        suffix: suffixes
-                            .get(start..start + len)
-                            .ok_or_else(|| bad("suffix"))?,
-                        byte_range: revision.byte_range,
-                    })
-                })
-                .collect::<Result<Vec<_>, OrganError>>()?;
             let sub_operation = format!("{}:0000000000000000:sign:65536", args.operation_id);
             let (bytes, achieved) = match self.0 {
                 Mode::ForgeSigns => {
-                    let first = revisions.first().ok_or_else(|| bad("no revision"))?;
-                    forge_signs(&call.asker(), &sub_operation, first.byte_range)?;
+                    forge_signs(&call.asker(), &sub_operation, pdf, revisions.first())?;
                     return Err(OrganError::new(
                         ErrorCode::Internal,
                         "every forgery refused",
@@ -221,6 +211,7 @@ mod rogue {
                         Arc::new(Backend {
                             asker: call.asker(),
                             identity: Mutex::new(None),
+                            legacy,
                         }),
                         Arc::new(OfflineFetcher),
                         Arc::new(Clock(args.now_ms)),
@@ -230,10 +221,12 @@ mod rogue {
                         operation_id: args.operation_id,
                         target_profile: PadesProfile::BaselineB,
                     };
-                    let mut bytes =
+                    let sealed = if legacy {
+                        block_on(engine.seal_pdf(pdf, &request))
+                    } else {
                         block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions))
-                            .map_err(bad)?
-                            .bytes;
+                    };
+                    let mut bytes = sealed.map_err(bad)?.bytes;
                     if self.0 == Mode::AlterPrefix {
                         bytes[pdf.len() / 2] ^= 0x01;
                     } else {
@@ -256,11 +249,40 @@ mod rogue {
         }
     }
 
-    /// Astra's witness, an unrelated prehash under the call's operation;
-    /// then a bound ask for the first revision whose messageDigest is that
-    /// unrelated digest; then one with another PDF's attributes. Each must
-    /// be refused before the key signs.
-    fn forge_signs(asker: &Asker, operation: &str, byte_range: [u64; 4]) -> Result<(), OrganError> {
+    /// The engine's revisions, as the call's args place them in its second
+    /// input.
+    fn revisions_of<'a>(
+        args: &SealArgs,
+        suffixes: &'a [u8],
+    ) -> Result<Vec<PreparedRevision<'a>>, OrganError> {
+        args.signature_revisions
+            .iter()
+            .map(|revision| {
+                let start = usize::try_from(revision.suffix_offset).map_err(bad)?;
+                let len = usize::try_from(revision.suffix_len).map_err(bad)?;
+                Ok(PreparedRevision {
+                    suffix: suffixes
+                        .get(start..start + len)
+                        .ok_or_else(|| bad("suffix"))?,
+                    byte_range: revision.byte_range,
+                })
+            })
+            .collect()
+    }
+
+    /// Astra's witness, an unrelated prehash under the call's operation.
+    /// Then a second document: the prepared PDF with one byte of its first
+    /// stream changed. On schema 1 the organ asks for the prehash of that
+    /// document's signed attributes. On schema 2 it asks, for the call's
+    /// first revision, with attributes whose messageDigest is the unrelated
+    /// digest, then with the second document's, hashed over the same
+    /// revision. Each must be refused before the key signs.
+    fn forge_signs(
+        asker: &Asker,
+        operation: &str,
+        pdf: &[u8],
+        revision: Option<&PreparedRevision<'_>>,
+    ) -> Result<(), OrganError> {
         let identity: IdentityAnswer = from_value(
             &asker
                 .ask("seal.identity", rmpv::Value::Map(Vec::new()))
@@ -269,19 +291,48 @@ mod rogue {
         )?;
         let cert = identity.signer_certificate.into_vec();
         let unrelated: [u8; 32] = Sha256::digest(UNRELATED).into();
-        let other: [u8; 32] = Sha256::digest(OTHER_PDF).into();
-        let legacy = LegacySign {
-            operation_id: operation.to_owned(),
-            digest_algorithm: "sha256",
-            digest: ByteBuf::from(unrelated.to_vec()),
+        let mut second = pdf.to_vec();
+        let at = pdf
+            .windows(7)
+            .position(|window| window == b"stream\n")
+            .map_or(pdf.len() / 2, |at| at + 7);
+        if let Some(byte) = second.get_mut(at) {
+            *byte ^= 0x01;
+        }
+        let bare = |digest: [u8; 32]| -> Result<rmpv::Value, OrganError> {
+            to_value(&LegacySign {
+                operation_id: operation.to_owned(),
+                digest_algorithm: "sha256",
+                digest: ByteBuf::from(digest.to_vec()),
+            })
         };
         // Refusals are the point: each is on the host's record.
-        let _ = asker.ask("seal.sign", to_value(&legacy)?);
+        let _ = asker.ask("seal.sign", bare(unrelated)?);
+        let Some(revision) = revision else {
+            let mut set = signed_attributes(&cert, &Sha256::digest(&second).into())?;
+            set[0] = 0x31;
+            let _ = asker.ask("seal.sign", bare(Sha256::digest(&set).into())?);
+            return Ok(());
+        };
+        let [_, open, close, _] = revision.byte_range;
+        let open = usize::try_from(open).map_err(bad)?;
+        let close = usize::try_from(close).map_err(bad)?;
+        let (head, tail) = (
+            revision.suffix.get(..open.saturating_sub(pdf.len())),
+            revision.suffix.get(close.saturating_sub(pdf.len())..),
+        );
+        let (head, tail) = head.zip(tail).ok_or_else(|| bad("byte range"))?;
+        let other: [u8; 32] = Sha256::new()
+            .chain_update(&second)
+            .chain_update(head)
+            .chain_update(tail)
+            .finalize()
+            .into();
         for digest in [unrelated, other] {
             let bound = BoundSign {
                 operation_id: operation.to_owned(),
                 revision_id: 0,
-                byte_range,
+                byte_range: revision.byte_range,
                 signed_attributes_der: ByteBuf::from(signed_attributes(&cert, &digest)?),
             };
             let _ = asker.ask("seal.sign", to_value(&bound)?);
@@ -309,7 +360,7 @@ mod rogue {
             0x30,
             &[tlv(0x04, &Sha256::digest(cert)), issuer_serial].concat(),
         );
-        let mut attributes = vec![
+        let mut attributes = [
             attribute(oid("1.2.840.113549.1.9.3")?, oid("1.2.840.113549.1.7.1")?),
             attribute(oid("1.2.840.113549.1.9.4")?, tlv(0x04, digest)),
             attribute(
@@ -336,10 +387,35 @@ mod rogue {
         out
     }
 
-    /// Signs through the engine's bound asks, as the real organ does.
+    /// Signs as the real organ does: through the bound ask on schema 2,
+    /// through the old bare prehash ask on schema 1.
     struct Backend {
         asker: Asker,
         identity: Mutex<Option<SigningIdentity>>,
+        legacy: bool,
+    }
+
+    impl Backend {
+        fn sign(
+            &self,
+            ask: Result<rmpv::Value, OrganError>,
+        ) -> Result<BackendSignature, BackendError> {
+            let algorithm = self.signing_identity()?.algorithm;
+            let rejected = || BackendError::Rejected {
+                code: BackendRejectCode::Unauthorized,
+            };
+            let reply = self
+                .asker
+                .ask("seal.sign", ask.map_err(|_| rejected())?)
+                .map_err(|_| rejected())?;
+            let answer: SignAnswer =
+                from_value(&reply.value).map_err(|_| BackendError::MalformedSignature)?;
+            let bytes = answer.signature.into_vec();
+            Ok(match algorithm {
+                SignatureAlgorithm::RsaPkcs1v15Sha256 => BackendSignature::RsaPkcs1v15 { bytes },
+                SignatureAlgorithm::EcdsaP256Sha256 => BackendSignature::EcdsaP256Der { bytes },
+            })
+        }
     }
 
     #[async_trait]
@@ -368,36 +444,35 @@ mod rogue {
 
         async fn sign_digest(
             &self,
-            _request: SignDigestRequest,
+            request: SignDigestRequest,
         ) -> Result<BackendSignature, BackendError> {
-            Err(BackendError::Rejected {
-                code: BackendRejectCode::Unauthorized,
-            })
+            if !self.legacy {
+                return Err(BackendError::Rejected {
+                    code: BackendRejectCode::Unauthorized,
+                });
+            }
+            self.sign(to_value(&LegacySign {
+                operation_id: request.operation_id,
+                digest_algorithm: "sha256",
+                digest: ByteBuf::from(request.digest.to_vec()),
+            }))
         }
 
         async fn sign_revision(
             &self,
             request: SignRevisionRequest,
         ) -> Result<BackendSignature, BackendError> {
-            let algorithm = self.signing_identity()?.algorithm;
-            let rejected = || BackendError::Rejected {
-                code: BackendRejectCode::Unauthorized,
+            let Some(revision_id) = request.revision_id else {
+                return Err(BackendError::Rejected {
+                    code: BackendRejectCode::Unauthorized,
+                });
             };
-            let ask = BoundSign {
+            self.sign(to_value(&BoundSign {
                 operation_id: request.operation_id,
-                revision_id: request.revision_id.ok_or_else(rejected)?,
+                revision_id,
                 byte_range: request.byte_range,
                 signed_attributes_der: ByteBuf::from(request.signed_attributes_der),
-            };
-            let value = to_value(&ask).map_err(|_| rejected())?;
-            let reply = self.asker.ask("seal.sign", value).map_err(|_| rejected())?;
-            let answer: SignAnswer =
-                from_value(&reply.value).map_err(|_| BackendError::MalformedSignature)?;
-            let bytes = answer.signature.into_vec();
-            Ok(match algorithm {
-                SignatureAlgorithm::RsaPkcs1v15Sha256 => BackendSignature::RsaPkcs1v15 { bytes },
-                SignatureAlgorithm::EcdsaP256Sha256 => BackendSignature::EcdsaP256Der { bytes },
-            })
+            }))
         }
     }
 

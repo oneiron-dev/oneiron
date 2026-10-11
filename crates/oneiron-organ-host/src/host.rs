@@ -286,7 +286,7 @@ impl OrganHost {
     /// [`Self::call_with`], in a process started for this call alone: it
     /// never served another call, never serves a later one, and is stopped
     /// when this call ends, however it ends. The organ's warm process, if
-    /// any, is left as it was. A second opinion runs this way, so nothing an
+    /// any, does not serve it. A second opinion runs this way, so nothing an
     /// earlier call left in a process can decide it.
     ///
     /// # Errors
@@ -559,8 +559,14 @@ struct OneCall<'a> {
 }
 
 impl Drop for OneCall<'_> {
+    /// A process that ended on its own before its call let it go crashed,
+    /// as a warm process found dead does; one the host stopped did not.
     fn drop(&mut self) {
-        self.slot.stopped(&self.process);
+        if self.process.is_alive() || self.process.stopped_by_host() {
+            self.slot.stopped(&self.process);
+        } else {
+            self.slot.crashed(&self.process);
+        }
         self.process.stop();
         self.slot.prune();
     }

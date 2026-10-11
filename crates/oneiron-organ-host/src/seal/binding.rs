@@ -8,6 +8,7 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
+use cms::cert::CertificateChoices;
 use cms::content_info::ContentInfo;
 use cms::signed_data::{SignedAttributes, SignedData, SignerIdentifier};
 use const_oid::ObjectIdentifier;
@@ -360,7 +361,7 @@ fn expected_attributes(content: &[u8; 32], signer: &Signer) -> Vec<u8> {
         0x30,
         &tlv(0x30, &tlv(0x30, &[cert_hash, issuer_serial].concat())),
     );
-    let mut attributes = vec![
+    let mut attributes = [
         attribute(ID_CONTENT_TYPE, &tlv(0x06, ID_DATA.as_bytes())),
         attribute(ID_MESSAGE_DIGEST, &tlv(0x04, content)),
         attribute(ID_SIGNING_CERT_V2, &signing_certificate),
@@ -370,10 +371,10 @@ fn expected_attributes(content: &[u8; 32], signer: &Signer) -> Vec<u8> {
 }
 
 /// Whether a hole's hex holds one canonical CMS ContentInfo, then zero
-/// padding, whose SignedData is detached id-data under SHA-256 with one
-/// SignerInfo: the key's certificate, the issued signature, over the
-/// issued attributes. The signature is read where CMS puts it, never
-/// searched for.
+/// padding, whose SignedData is detached id-data under SHA-256, carries the
+/// key's certificate, and has one SignerInfo: that certificate's issuer and
+/// serial, the issued signature, over the issued attributes. The signature
+/// is read where CMS puts it, never searched for.
 fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
     let Some(der) = unhex(hex) else {
         return false;
@@ -410,6 +411,15 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
         }
         SignerIdentifier::SubjectKeyIdentifier(_) => false,
     };
+    // signingCertificateV2 names the leaf: a verifier must find it here.
+    let carries_leaf = signed.certificates.as_ref().is_some_and(|set| {
+        set.0.iter().any(|choice| match choice {
+            CertificateChoices::Certificate(cert) => {
+                cert.to_der().ok().as_deref() == Some(signer.identity.signer_certificate.as_slice())
+            }
+            CertificateChoices::Other(_) => false,
+        })
+    });
     matches!((signed.to_der(), info.content.to_der()), (Ok(ours), Ok(theirs)) if ours == theirs)
         && signed.encap_content_info.econtent_type == ID_DATA
         && signed.encap_content_info.econtent.is_none()
@@ -421,6 +431,7 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
         && signer_info.digest_alg.oid == ID_SHA256
         && signer_info.signature_algorithm.oid == algorithm
         && same_signer
+        && carries_leaf
         && signer_info
             .signed_attrs
             .as_ref()
