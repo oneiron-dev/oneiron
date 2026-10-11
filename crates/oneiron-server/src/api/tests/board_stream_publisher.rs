@@ -1202,3 +1202,49 @@ async fn a_task_born_outside_a_credential_adds_to_no_query_count() {
         counted.1
     );
 }
+
+/// The Engine lane on #1401: a credential's world check asks where a TASK
+/// was born, not "every record that is not a claim is base reality". A
+/// credential narrowed to W that reads NOTEs and no TASKs is withheld a TASK
+/// born in W by its band, not by its world, so its timeline 404 counts that
+/// TASK; for an id nothing holds it counts none.
+#[tokio::test]
+async fn a_credential_counts_a_task_it_withholds_inside_its_world() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0xb1a5_0050);
+    let world = seeded_test_entity_id(0xb1a5_0051);
+    narrowed_stream(&server, actor, "inside-writer", world).await;
+    register_scoped_mcp_actor(
+        &server,
+        "inside-reader",
+        actor,
+        crate::mcp::McpConnectorScope::scoped(Some(world), None),
+    )
+    .await;
+    let mut notes_only = oneiron::federation::Scope::top();
+    notes_only.bands =
+        oneiron::federation::ScopeAxis::Some([oneiron::registry::ENTITY_TYPE_NOTE].into());
+    attenuate_mcp_credential(
+        &server,
+        "inside-reader",
+        oneiron::authority::SlipCaveat {
+            scope: Some(notes_only),
+            ..Default::default()
+        },
+    );
+    let task = mcp_create(&server, "inside-writer", actor, world, "work in its world").await;
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "GET",
+            &format!("/v1/core/memory/{}/timeline", task.to_hex()),
+            "Bearer inside-reader".to_owned(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["narrowing"]["suppressed_count"], Value::from(1), "{body}");
+    let absent = timeline_answer(&server, "inside-reader", seeded_test_entity_id(0xb1a5_0052)).await;
+    assert!(absent.1.contains("\"suppressed_count\":0"), "{}", absent.1);
+}

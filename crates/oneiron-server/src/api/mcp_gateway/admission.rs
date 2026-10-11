@@ -363,8 +363,9 @@ pub(super) fn mcp_scoped_tasks_section(
 
 /// Whether the TASK this board id names sits, by its birth stamp, inside both
 /// the registered world/facet ceiling and the verified slip's worlds and
-/// facets: only such a withheld row may be counted. Any other row cannot
-/// prove it, so it is not.
+/// facets: only such a withheld row may be counted. A credential that
+/// narrows neither excludes no TASK. Any other row cannot prove it, so it is
+/// not counted.
 fn mcp_row_position_inside(
     vault: &oneiron::Vault,
     actor: &McpResolvedActor,
@@ -382,18 +383,29 @@ fn mcp_row_position_inside(
     {
         return Ok(false);
     }
+    let granted = actor
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.verified_slip())
+        .map(|proof| proof.scope());
+    let whole = |axis: &oneiron::federation::ScopeAxis<_>| {
+        matches!(axis, oneiron::federation::ScopeAxis::All)
+    };
+    if !actor.scope.is_narrow()
+        && granted.is_none_or(|granted| whole(&granted.worlds) && whole(&granted.facets))
+    {
+        return Ok(true);
+    }
     let Some(position) = vault
         .record_scope(&id)
         .map_err(|error| mcp_engine_error("mcp board row scope read failed", error))?
     else {
         return Ok(false);
     };
-    let Some(proof) = actor.auth.as_ref().and_then(|auth| auth.verified_slip()) else {
-        return Ok(true);
-    };
-    let granted = proof.scope();
-    Ok(position.worlds.is_narrowing_of(&granted.worlds)
-        && position.facets.is_narrowing_of(&granted.facets))
+    Ok(granted.is_none_or(|granted| {
+        position.worlds.is_narrowing_of(&granted.worlds)
+            && position.facets.is_narrowing_of(&granted.facets)
+    }))
 }
 
 /// Resolves one `tools/call` name against THIS endpoint's registration.

@@ -139,3 +139,81 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     }
     Ok(())
 }
+
+/// Sol R7 on #1401: a credential that narrows neither worlds nor facets
+/// excludes no TASK on them, so a TASK it is denied counts, stamped or not.
+/// The root slip's NOTE-only search counts a replicated TASK, which arrives
+/// unstamped, as it did before TASKs were born in worlds; a slip narrowed to
+/// base reality cannot place that TASK, so it counts it nowhere.
+#[test]
+fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let writer = EntityId::now();
+    vault.put_entity(
+        &writer,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"writer",
+    )?;
+    // A TASK minted here lends the replica its body.
+    let local = vault
+        .memory(writer, crate::EdgeActorClass::Human)
+        .tasks_create(&crate::task_verb::TaskCreateSpec::new(
+            Value::from("lantern work"),
+            None,
+            None,
+            Some(2),
+        ))
+        .expect("the writer creates a TASK")
+        .task_ref
+        .expect("the create mints a TASK");
+    let body = vault.get(&local)?.expect("the TASK body");
+    let replica = EntityId::now();
+    vault
+        .batch()
+        .put_replicated(
+            &replica,
+            crate::registry::ENTITY_TYPE_TASK,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .text(&replica, &[("body", "lantern harbor")])
+        .commit()?;
+    assert!(vault.record_scope(&replica)?.is_none(), "a replica is unstamped");
+
+    let issuer = HostSlipIssuer::from_secret(b"whole slip count host root")?;
+    let mut base_only = vault.ensure_host_root_slip(&issuer)?;
+    let root = vault.verified_host_root_slip(&issuer)?;
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::base_world_id())]));
+    issuer.attenuate(
+        &mut base_only,
+        SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        },
+    )?;
+    let narrowed = vault.verify_capability_slip(
+        &issuer.public_key(),
+        &base_only,
+        b"base only",
+        &issuer.binding_proof(&base_only, b"base only")?,
+    )?;
+    let notes_only = crate::gate::RetrievalFilter {
+        entity_types: Some(BTreeSet::from([crate::registry::ENTITY_TYPE_NOTE])),
+        ..Default::default()
+    };
+    let counted = |proof: &crate::authority::VerifiedSlip| -> Result<usize> {
+        Ok(vault
+            .scoped_read(ScopedReadActorKey::from_verified_slip(proof).expect("read proof"))
+            .search_text("lantern", 10, Some(&notes_only))?
+            .receipt
+            .suppressed_count)
+    };
+    assert_eq!(counted(&root)?, 1, "the root slip counts the replica");
+    assert_eq!(counted(&narrowed)?, 0, "a base-only slip counts it nowhere");
+    Ok(())
+}

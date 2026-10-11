@@ -449,8 +449,10 @@ pub(crate) fn record_world_in(
 }
 /// Whether the TASK or authority-fact row `id`, with header and body `raw`,
 /// sits by its birth stamp inside the worlds and facets `credential` grants.
-/// One that cannot prove its position is not inside, so no count names a
-/// denial of it (ARCH-0067 §5, DEC-0005).
+/// An axis the credential leaves whole holds every position, so a credential
+/// that narrows neither excludes no TASK. Under one that does, a row that
+/// cannot prove its position is not inside, so no count names a denial of it
+/// (ARCH-0067 §5, DEC-0005).
 pub(crate) fn task_inside_credential(
     store: &(impl ManifestDbs + MachineHistoryScope),
     txn: &heed::RoTxn<'_>,
@@ -458,9 +460,13 @@ pub(crate) fn task_inside_credential(
     raw: &[u8],
     credential: &Scope,
 ) -> Result<bool> {
+    let whole = |axis: &ScopeAxis<ScopeId>| matches!(axis, ScopeAxis::All);
+    if whole(&credential.worlds) && whole(&credential.facets) {
+        return Ok(true);
+    }
     Ok(scope_for_blob(store, txn, id, raw)?.is_some_and(|position| {
-        !position.worlds.meet(&credential.worlds).is_bottom()
-            && !position.facets.meet(&credential.facets).is_bottom()
+        (whole(&credential.worlds) || !position.worlds.meet(&credential.worlds).is_bottom())
+            && (whole(&credential.facets) || !position.facets.meet(&credential.facets).is_bottom())
     }))
 }
 /// A promoted edit may change content but cannot re-position the same id.
