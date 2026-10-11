@@ -13,6 +13,11 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::{Read, Seek, SeekFrom, Write};
 
+/// The largest object the write door reads whole: a chunk edge splits no
+/// field, value or JSON member of it. Above it, each chunk is read alone and
+/// the stream seam reads what each edge splits.
+const LFS_WHOLE_SCAN_MAX: u64 = 8 * 1024 * 1024;
+
 /// Local hard-delete marker (`deletion::tombstone` owns the writer side; this is a read-only
 /// existence check bound to the SAME declaration, never decoding the value — presence-only,
 /// exactly as every other reader of this row treats it). Key: hex32.
@@ -126,8 +131,34 @@ impl Vault {
     /// Installs a verified ordered manifest with one chunk transaction at a time.
     /// The supplier must return every ordered chunk (including repeats), so it
     /// can be a sequential file reader. Sync ingress uses the same admission.
+    /// With the write scan on, an object up to [`LFS_WHOLE_SCAN_MAX`] is held
+    /// whole and read by the batch door's scan before its first chunk lands.
     pub(crate) fn install_lfs_manifest<F>(
         &self,
+        oid: LfsOid,
+        manifest: &LfsManifest,
+        occurred: TimeRange,
+        learned_at: u64,
+        supply: F,
+    ) -> Result<LfsPutOutcome>
+    where
+        F: FnMut(&LfsChunkRef) -> Result<Vec<u8>>,
+    {
+        self.install_lfs_manifest_reading_whole(
+            LFS_WHOLE_SCAN_MAX,
+            oid,
+            manifest,
+            occurred,
+            learned_at,
+            supply,
+        )
+    }
+
+    /// [`Self::install_lfs_manifest`] with the bound up to which an object is
+    /// read whole; a test lowers it to reach the seam.
+    pub(super) fn install_lfs_manifest_reading_whole<F>(
+        &self,
+        whole_scan_max: u64,
         oid: LfsOid,
         manifest: &LfsManifest,
         occurred: TimeRange,
@@ -149,28 +180,24 @@ impl Vault {
             JOURNAL.put(&self.store, txn, &owner, &journal_heartbeat(oid))?;
             Ok(())
         })?;
-        // Each chunk passes the batch door alone; the seam reads what a chunk
-        // edge splits, under the same switch.
-        let seam = {
+        // Each chunk passes the batch door alone. Within the bound the object
+        // is read whole too, before any chunk lands; above it, the seam reads
+        // what each chunk edge splits. Both follow the batch door's switch.
+        let scan = {
             let txn = self.store.env.read_txn()?;
             crate::batch::secret_scan::secret_scan_mode_in_txn(&self.store, &txn)?
                 == crate::batch::secret_scan::SecretScanMode::On
         };
+        let whole_scan = scan && manifest.size_bytes <= whole_scan_max;
         let outcome = (|| {
             let mut seen = BTreeSet::new();
             let mut sha = Sha256::new();
-            let mut scanner = super::scanner::CredentialStream::with_write_seam(seam);
-            for chunk in &manifest.chunks {
-                let bytes = supply(chunk)?;
-                if bytes.len() != chunk.size as usize
-                    || blake3::hash(&bytes).as_bytes() != &chunk.hash
-                {
-                    return Err(chunks::invalid("lfs chunk does not match manifest"));
-                }
-                scanner.feed(&bytes)?;
-                sha.update(&bytes);
+            let mut scanner =
+                super::scanner::CredentialStream::with_write_seam(scan && !whole_scan);
+            let mut whole = Vec::new();
+            let mut install = |chunk: &LfsChunkRef, bytes: &[u8]| -> Result<()> {
                 if !seen.insert(chunk.hash) {
-                    continue;
+                    return Ok(());
                 }
                 let id = chunks::chunk_id(&chunk.hash)?;
                 self.with_write_txn_grouped(|txn| {
@@ -188,9 +215,14 @@ impl Vault {
                         if body != bytes {
                             return Err(Error::CorruptedIndex("lfs chunk collision"));
                         }
+                        // A stored chunk may have landed with the switch off:
+                        // reusing it is a write, and the batch door reads it.
+                        if scan {
+                            crate::batch::secret_scan::scan_write_payload(bytes)?;
+                        }
                     } else {
                         self.batch_in()
-                            .put(&id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
+                            .put(&id, ENTITY_TYPE_ASSET, occurred, learned_at, bytes)
                             .apply(txn)?;
                     }
                     chunks::CHUNK_MARKS.put(&self.store, txn, &id, &chunk.hash)?;
@@ -198,11 +230,35 @@ impl Vault {
                     chunks::OWNER_REFS.put(&self.store, txn, &(owner, chunk.hash), &())?;
                     JOURNAL.put(&self.store, txn, &owner, &journal_heartbeat(oid))?;
                     Ok(())
-                })?;
+                })
+            };
+            for chunk in &manifest.chunks {
+                let bytes = supply(chunk)?;
+                if bytes.len() != chunk.size as usize
+                    || blake3::hash(&bytes).as_bytes() != &chunk.hash
+                {
+                    return Err(chunks::invalid("lfs chunk does not match manifest"));
+                }
+                scanner.feed(&bytes)?;
+                sha.update(&bytes);
+                if whole_scan {
+                    whole.extend_from_slice(&bytes);
+                } else {
+                    install(chunk, &bytes)?;
+                }
             }
             let actual: [u8; 32] = sha.finalize().into();
             if actual != *oid.as_bytes() {
                 return Err(chunks::invalid("lfs manifest pointer mismatch"));
+            }
+            if whole_scan {
+                crate::batch::secret_scan::scan_write_payload(&whole)?;
+                let mut start = 0;
+                for chunk in &manifest.chunks {
+                    let end = start + chunk.size as usize;
+                    install(chunk, &whole[start..end])?;
+                    start = end;
+                }
             }
             self.with_write_txn_grouped(|txn| {
                 if !JOURNAL.contains(&self.store, txn, &owner)?

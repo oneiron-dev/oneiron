@@ -44,7 +44,7 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
             .map_err(|_| Error::InvariantViolation("redacted MessagePack encode failed"))?;
         return Ok(output);
     }
-    if crate::batch::secret_scan::scan_file_content("", &bytes).is_some() {
+    if crate::batch::secret_scan::scan_undecoded_body(&bytes).is_some() {
         Ok(b"[redacted]".to_vec())
     } else {
         Ok(bytes)
@@ -62,7 +62,7 @@ pub fn redacted_memory_body(bytes: &[u8]) -> Value {
         crate::companion::companion_value_to_json(&value)
     } else if let Ok(value) = serde_json::from_slice(bytes) {
         value
-    } else if crate::batch::secret_scan::scan_file_content("", bytes).is_some() {
+    } else if crate::batch::secret_scan::scan_undecoded_body(bytes).is_some() {
         Value::String("[redacted]".into())
     } else {
         serde_json::json!({"bodyBytes": bytes})
@@ -113,7 +113,7 @@ impl Vault {
                 crate::companion::companion_value_to_json(&value)
             } else if let Ok(value) = serde_json::from_slice(bytes) {
                 value
-            } else if crate::batch::secret_scan::scan_file_content("", bytes).is_some() {
+            } else if crate::batch::secret_scan::scan_undecoded_body(bytes).is_some() {
                 nulled = true;
                 Value::Null
             } else {
@@ -224,6 +224,54 @@ mod tests {
         assert_eq!(
             redacted_memory_body(&carrier),
             Value::String("[redacted]".into())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_body_nested_past_its_decoder_is_served_by_no_release_door() -> Result<()> {
+        let member = r#"{"pass\u0077ord":"private fixture"}"#;
+        let deep = format!("{}{member}{}", "[".repeat(129), "]".repeat(129)).into_bytes();
+        assert_eq!(
+            redacted_memory_payload(deep.clone())?,
+            b"[redacted]".to_vec()
+        );
+        assert_eq!(
+            redacted_memory_body(&deep),
+            Value::String("[redacted]".into())
+        );
+        let asset = crate::registry::ENTITY_TYPE_ASSET;
+        assert_eq!(
+            crate::serialize::ExportBody::from_bytes(&deep, asset),
+            crate::serialize::ExportBody::Nulled
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_credential_shaped_key_leaves_with_its_member_and_takes_no_real_key() -> Result<()> {
+        // A token-shaped key, assembled at run time.
+        let key = format!("gh{}_{}", 'p', "0123456789abcdefghijklmnopqrstuvwxyz");
+        let json = format!(r#"{{"[redacted]":"kept","{key}":"discarded"}}"#);
+        let served: Value = serde_json::from_slice(&redacted_memory_payload(json.into_bytes())?)
+            .map_err(|_| Error::InvariantViolation("served JSON"))?;
+        assert_eq!(served, serde_json::json!({"[redacted]": "kept"}));
+        let map = rmpv::Value::Map(vec![
+            (rmpv::Value::from("[redacted]"), rmpv::Value::from("kept")),
+            (
+                rmpv::Value::from(key.as_str()),
+                rmpv::Value::from("discarded"),
+            ),
+        ]);
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &map).unwrap();
+        let served = redacted_memory_payload(encoded)?;
+        assert_eq!(
+            rmpv::decode::read_value(&mut served.as_slice()).unwrap(),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("[redacted]"),
+                rmpv::Value::from("kept")
+            )])
         );
         Ok(())
     }

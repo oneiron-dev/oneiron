@@ -249,6 +249,16 @@ fn cross_transport_boundary_credentials_never_publish_assets() {
 /// Installs `parts` as one object whose peer-chosen chunks are exactly those
 /// parts, as the sync chunk protocol lets a peer choose them.
 fn install_parts(vault: &Vault, parts: &[&[u8]]) -> crate::error::Result<LfsPutOutcome> {
+    install_parts_within(vault, parts, None)
+}
+
+/// [`install_parts`] with the bound up to which the object is read whole
+/// lowered (`Some(0)`: every object is read by chunk and seam).
+fn install_parts_within(
+    vault: &Vault,
+    parts: &[&[u8]],
+    whole_scan_max: Option<u64>,
+) -> crate::error::Result<LfsPutOutcome> {
     let whole = parts.concat();
     let manifest = chunks::LfsManifest {
         size_bytes: whole.len() as u64,
@@ -260,14 +270,35 @@ fn install_parts(vault: &Vault, parts: &[&[u8]]) -> crate::error::Result<LfsPutO
             })
             .collect(),
     };
-    let mut supply = parts.iter();
-    vault.install_lfs_manifest(
-        LfsOid::digest(&whole),
-        &manifest,
-        time(),
-        time().start,
-        |_| Ok(supply.next().unwrap().to_vec()),
-    )
+    let mut parts = parts.iter();
+    let supply = move |_: &chunks::LfsChunkRef| Ok(parts.next().unwrap().to_vec());
+    let oid = LfsOid::digest(&whole);
+    match whole_scan_max {
+        None => vault.install_lfs_manifest(oid, &manifest, time(), time().start, supply),
+        Some(max) => vault.install_lfs_manifest_reading_whole(
+            max,
+            oid,
+            &manifest,
+            time(),
+            time().start,
+            supply,
+        ),
+    }
+}
+
+fn set_secret_scan(vault: &Vault, mode: crate::batch::secret_scan::SecretScanMode) {
+    let mut txn = vault.store.env.write_txn().unwrap();
+    crate::batch::secret_scan::put_secret_scan_mode_in_txn(&vault.store, &mut txn, mode).unwrap();
+    txn.commit().unwrap();
+}
+
+fn refused_as_sensitive(result: crate::error::Result<LfsPutOutcome>) {
+    let error = result.unwrap_err();
+    assert!(
+        matches!(&error, crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { reason_codes, .. })
+            if reason_codes.contains(&"gate.secret_scan.sensitive_env")),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -278,29 +309,62 @@ fn a_credential_assignment_split_across_peer_chunks_is_read_whole() {
     ];
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let assets_before = vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap();
-    let error = install_parts(&vault, &parts).unwrap_err();
-    assert!(
-        matches!(&error, crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { reason_codes, .. })
-            if reason_codes.contains(&"gate.secret_scan.sensitive_env")),
-        "{error:?}"
-    );
-    assert!(
-        vault
-            .lfs_object(LfsOid::digest(&parts.concat()))
-            .unwrap()
-            .is_none()
-    );
+    // Read whole within the bound, and by the seam above it.
+    for whole_scan_max in [None, Some(0)] {
+        refused_as_sensitive(install_parts_within(&vault, &parts, whole_scan_max));
+        assert!(
+            vault
+                .lfs_object(LfsOid::digest(&parts.concat()))
+                .unwrap()
+                .is_none()
+        );
+    }
     // With the owner's switch off the batch door stores it, and so does the seam.
-    let mut txn = vault.store.env.write_txn().unwrap();
-    crate::batch::secret_scan::put_secret_scan_mode_in_txn(
-        &vault.store,
-        &mut txn,
-        crate::batch::secret_scan::SecretScanMode::Off,
-    )
-    .unwrap();
-    txn.commit().unwrap();
+    set_secret_scan(&vault, crate::batch::secret_scan::SecretScanMode::Off);
     install_parts(&vault, &parts).unwrap();
     assert!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len() > assets_before.len());
+}
+
+#[test]
+fn an_object_within_the_bound_is_read_whole_however_a_peer_cuts_it() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    // Padding that outruns any seam, and a JSON key escaped and cut mid-member.
+    let mut padded = b"password=".to_vec();
+    padded.extend([b' '; 1016]);
+    padded.extend_from_slice(b"t7Rk2pLq9WzX\n");
+    let cases: [[&[u8]; 2]; 2] = [
+        [&padded[..1025], &padded[1025..]],
+        [br#"{"pass\u0077ord":"#, br#""private fixture"}"#],
+    ];
+    for parts in &cases {
+        refused_as_sensitive(install_parts(&vault, parts));
+        assert!(
+            vault
+                .lfs_object(LfsOid::digest(&parts.concat()))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn a_stored_chunk_is_read_again_when_another_object_reuses_it() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let stored: &[u8] = b"password=t7Rk2pLq9WzX\n";
+    set_secret_scan(&vault, crate::batch::secret_scan::SecretScanMode::Off);
+    install_parts(&vault, &[stored]).unwrap();
+    set_secret_scan(&vault, crate::batch::secret_scan::SecretScanMode::On);
+    let parts: [&[u8]; 2] = [stored, b"host = db.internal\n"];
+    // Read by chunk, as above the bound, and read whole.
+    for whole_scan_max in [Some(0), None] {
+        refused_as_sensitive(install_parts_within(&vault, &parts, whole_scan_max));
+        assert!(
+            vault
+                .lfs_object(LfsOid::digest(&parts.concat()))
+                .unwrap()
+                .is_none()
+        );
+    }
 }
 
 struct RepeatingReader {

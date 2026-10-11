@@ -359,7 +359,9 @@ fn a_credential_shaped_json_key_is_read_like_a_value() {
 
 #[test]
 fn a_repeated_json_key_cannot_hide_its_first_value_from_the_write_door() {
-    let payload = r#"{"password":"Xq7-not-for-memory-42","password":"[redacted]"}"#;
+    // The first key is escaped, so no text rule reads it: only a reading that
+    // keeps both members does.
+    let payload = r#"{"pass\u0077ord":"Xq7-not-for-memory-42","password":"[redacted]"}"#;
     assert_eq!(
         write_reason(payload),
         Some("gate.secret_scan.sensitive_env")
@@ -485,4 +487,33 @@ fn a_framed_receipt_is_read_through_its_frame() {
     let plain = refinement_carrier("merge the two skills?");
     assert!(scan_payload(&plain).is_ok());
     assert_eq!(scan_file_content("", &plain), None);
+}
+
+#[test]
+fn a_body_nested_past_its_decoder_is_refused_by_name() {
+    let member = r#"{"pass\u0077ord":"private fixture"}"#;
+    let json = format!("{}{member}{}", "[".repeat(129), "]".repeat(129));
+    let mut messagepack = vec![0x91; 1100];
+    rmpv::encode::write_value(
+        &mut messagepack,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("password"),
+            rmpv::Value::from("private fixture"),
+        )]),
+    )
+    .unwrap();
+    for (payload, reason) in [
+        (json.as_bytes(), REASON_JSON_TOO_DEEP),
+        (&messagepack[..], REASON_MESSAGEPACK_TOO_DEEP),
+    ] {
+        let error = scan_payload(payload).expect_err(reason);
+        assert!(
+            matches!(&error, Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
+                if reason_codes.contains(&reason)),
+            "{error:?}"
+        );
+    }
+    // As deep as the decoder reads, a body is read member by member.
+    let readable = format!("{}{}", "[".repeat(127), "]".repeat(127));
+    assert!(scan_payload(readable.as_bytes()).is_ok());
 }

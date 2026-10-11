@@ -431,3 +431,52 @@ fn a_credential_carried_in_an_id_slot_is_nulled_before_any_row_is_derived() {
         .validate(crate::registry::ENTITY_TYPE_CLAIM)
         .unwrap();
 }
+
+#[test]
+fn a_claim_whose_subject_carries_a_credential_exports_nulled_and_valid() {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let carried = messagepack(&rmpv::Value::Map(vec![(
+        rmpv::Value::from("token"),
+        rmpv::Value::from("Zq8wX4mK"),
+    )]));
+    let subject = EntityId::from_bytes(carried.try_into().unwrap()).unwrap();
+    let mut claim = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("matcha"),
+        0.75,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    claim.world = Some(EntityId::now());
+    claim.scope_facet = EntityId::now();
+    claim.scope_project = EntityId::now();
+    let bytes = crate::claim::encode_claim_body(&claim).unwrap();
+    crate::claim::decode_claim_body(&bytes, true).unwrap();
+    let exported = super::ExportBody::from_bytes(&bytes, crate::registry::ENTITY_TYPE_CLAIM);
+    exported
+        .validate(crate::registry::ENTITY_TYPE_CLAIM)
+        .unwrap();
+    assert_eq!(exported, super::ExportBody::Nulled);
+}
+
+#[test]
+fn a_string_array_export_is_its_own_fixed_point() {
+    let words = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    let mut items: Vec<rmpv::Value> = words.split(' ').map(rmpv::Value::from).collect();
+    items.insert(
+        6,
+        rmpv::Value::from(r#"{"pass\u0077ord":"private fixture"}"#),
+    );
+    let body = messagepack(&rmpv::Value::Map(vec![(
+        rmpv::Value::from("words"),
+        rmpv::Value::Array(items),
+    )]));
+    let exported = super::ExportBody::from_bytes(&body, crate::registry::ENTITY_TYPE_ASSET);
+    exported
+        .validate(crate::registry::ENTITY_TYPE_ASSET)
+        .unwrap();
+    let json = serde_json::to_string(&exported).unwrap();
+    assert!(!json.contains("sausage"), "{json}");
+}

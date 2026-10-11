@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::credential_nulling::{credential_key, null_credentials, reference_carries_credential};
-use crate::batch::secret_scan::{release_joined_strings, scan_file_content};
+use crate::batch::secret_scan::{
+    nested_past_decoder, release_joined_strings, scan_file_content, scan_undecoded_body,
+};
 use crate::error::{Error, Result};
 
 /// A MessagePack value with explicit numeric widths and binary-reference types.
@@ -101,7 +103,11 @@ impl ExportBody {
             {
                 export_note_references(&note, &mut exported);
             }
-            null_credential_references(&mut exported);
+            // An id slot is required where it sits (a CLAIM's subject), so a
+            // body with one nulled is no body its codec reads: none goes out.
+            if null_credential_references(&mut exported) {
+                return Self::Nulled;
+            }
             return Self::MessagePack(exported);
         }
         match std::str::from_utf8(bytes) {
@@ -159,17 +165,19 @@ impl ExportBody {
 /// before any writer derives rows from the tree: the whole-vault document, an
 /// agent's portable knowledge (which spells ids as hex, past any later byte
 /// reading) and a bundle all start from the same nulled row.
-fn null_credential_references(value: &mut ExportValue) {
+fn null_credential_references(value: &mut ExportValue) -> bool {
     match value {
         ExportValue::EntityReference(bytes) if reference_carries_credential(bytes, 0) => {
             *value = ExportValue::Nil;
+            true
         }
-        ExportValue::Array(values) => values.iter_mut().for_each(null_credential_references),
-        ExportValue::Map(entries) => entries.iter_mut().for_each(|(key, value)| {
-            null_credential_references(key);
-            null_credential_references(value);
+        ExportValue::Array(values) => values.iter_mut().fold(false, |nulled, value| {
+            null_credential_references(value) | nulled
         }),
-        _ => {}
+        ExportValue::Map(entries) => entries.iter_mut().fold(false, |nulled, (key, value)| {
+            null_credential_references(key) | null_credential_references(value) | nulled
+        }),
+        _ => false,
     }
 }
 
@@ -302,12 +310,13 @@ fn safe_text(text: &str) -> bool {
     }
     match serde_json::from_str::<Value>(text) {
         Ok(value @ (Value::Object(_) | Value::Array(_))) => null_credentials("", &value) == value,
-        _ => true,
+        Ok(_) => true,
+        Err(_) => nested_past_decoder(text.as_bytes()).is_none(),
     }
 }
 
 fn byte_container_is_opaque_or_tainted(bytes: &[u8]) -> bool {
-    if scan_file_content("", bytes).is_some() {
+    if scan_undecoded_body(bytes).is_some() {
         return true;
     }
     if let Ok(text) = std::str::from_utf8(bytes)
@@ -385,12 +394,23 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize) -> ExportV
             if release_joined_strings(&strings) {
                 return ExportValue::Nil;
             }
-            ExportValue::Array(
-                values
-                    .iter()
-                    .map(|value| export_value(value, "", entity_type, depth + 1))
-                    .collect(),
-            )
+            let exported: Vec<ExportValue> = values
+                .iter()
+                .map(|value| export_value(value, "", entity_type, depth + 1))
+                .collect();
+            // Read again once items are nulled: the strings left are the ones
+            // a second pass reads joined, so the array is its own fixed point.
+            let kept: Vec<&str> = exported
+                .iter()
+                .filter_map(|value| match value {
+                    ExportValue::String(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if release_joined_strings(&kept) {
+                return ExportValue::Nil;
+            }
+            ExportValue::Array(exported)
         }
         Mp::Map(entries) => ExportValue::Map(
             entries

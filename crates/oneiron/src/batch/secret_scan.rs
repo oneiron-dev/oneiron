@@ -19,6 +19,12 @@ const REASON_OPENAI_KEY: &str = "gate.secret_scan.openai_key";
 const REASON_PRIVATE_KEY: &str = "gate.secret_scan.private_key";
 const REASON_SLACK_TOKEN: &str = "gate.secret_scan.slack_token";
 const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
+const REASON_JSON_TOO_DEEP: &str = "gate.secret_scan.json_depth_over_127";
+const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_over_1024";
+
+/// The containers `serde_json` holds open at once before it stops: it
+/// refuses the 128th.
+const JSON_DECODER_DEPTH: usize = 128;
 
 /// The vault's `secrets` setting: whether the write door scans what a host
 /// writes into this vault for credential shapes. On by default; only the
@@ -124,10 +130,20 @@ pub(super) fn scan_batch_ops(
 pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static str> {
     let haystack = String::from_utf8_lossy(bytes);
     detect(&haystack, Door::Release).or_else(|| {
-        let mut value = decode_members(framed_payload(bytes)?)?;
+        let payload = framed_payload(bytes)?;
+        let Some(mut value) = decode_members(payload) else {
+            return nested_past_decoder(payload);
+        };
         sanitize_messagepack(&mut value, false, Door::Release)
             .then_some("gate.secret_scan.sensitive_env")
     })
+}
+
+/// The release reading of a body no decoder took whole: its text, and a
+/// nesting past the decoders ([`nested_past_decoder`]), whose members no
+/// scan read.
+pub(crate) fn scan_undecoded_body(bytes: &[u8]) -> Option<&'static str> {
+    scan_file_content("", bytes).or_else(|| nested_past_decoder(bytes))
 }
 
 /// The body a known framed carrier wraps behind its magic and ids: an inert
@@ -149,6 +165,64 @@ pub(crate) fn decode_members(data: &[u8]) -> Option<rmpv::Value> {
     rmpv::decode::read_value(&mut cursor)
         .ok()
         .filter(|_| cursor.position() == data.len() as u64)
+}
+
+/// [`decode_members`] at the write door, which refuses a body nested past
+/// its decoder: none of its members was read.
+fn read_members(data: &[u8]) -> Result<Option<rmpv::Value>> {
+    match decode_members(data) {
+        Some(value) => Ok(Some(value)),
+        None => nested_past_decoder(data).map_or(Ok(None), |reason| Err(secret_scan_error(reason))),
+    }
+}
+
+/// JSON or MessagePack nested past what its decoder reads (127 open JSON
+/// containers, 1024 MessagePack levels). Its decode fails, so no scan read
+/// its members, and no door takes it as clean.
+pub(crate) fn nested_past_decoder(data: &[u8]) -> Option<&'static str> {
+    if json_nesting_reaches(data, JSON_DECODER_DEPTH) {
+        return Some(REASON_JSON_TOO_DEEP);
+    }
+    let container = matches!(data.first(), Some(0x80..=0x9f | 0xdc..=0xdf));
+    let too_deep = container
+        && matches!(
+            rmpv::decode::read_value(&mut std::io::Cursor::new(data)),
+            Err(rmpv::decode::Error::DepthLimitExceeded)
+        );
+    too_deep.then_some(REASON_MESSAGEPACK_TOO_DEEP)
+}
+
+/// Whether text that opens like JSON (`{` or `[`) holds `limit` containers
+/// open at once, its strings skipped.
+fn json_nesting_reaches(data: &[u8], limit: usize) -> bool {
+    let first = data.iter().find(|byte| !byte.is_ascii_whitespace());
+    if !matches!(first, Some(b'{' | b'[')) {
+        return false;
+    }
+    let (mut depth, mut string, mut escaped) = (0usize, false, false);
+    for &byte in data {
+        if string {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => string = true,
+            b'{' | b'[' => {
+                depth += 1;
+                if depth >= limit {
+                    return true;
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The release doors' text rules over strings a reader keeps apart (one
@@ -231,16 +305,14 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     if let Some(reason) = detect(&haystack, Door::Write) {
         return Err(secret_scan_error(reason));
     }
-    // Every member is read, a repeated JSON key and every map key included.
-    let structured = decode_members(data)
-        .is_some_and(|mut value| sanitize_messagepack(&mut value, false, Door::Write));
-    let framed = || {
-        framed_payload(data)
-            .and_then(decode_members)
+    // Every member is read, a repeated JSON key and every map key included,
+    // and a framed carrier's body as a body too.
+    for body in std::iter::once(data).chain(framed_payload(data)) {
+        if read_members(body)?
             .is_some_and(|mut value| sanitize_messagepack(&mut value, false, Door::Write))
-    };
-    if structured || framed() {
-        return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+        {
+            return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+        }
     }
     Ok(secrets_nulled)
 }
@@ -396,19 +468,24 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
                 })
             }
         }
-        Value::Map(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
-            let sensitive = key
-                .as_str()
-                .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door));
-            let key_changed = sanitize_messagepack(key, null, door);
-            let value_changed = if sensitive {
-                *value = replacement();
-                true
-            } else {
-                sanitize_messagepack(value, null, door)
-            };
-            changed | key_changed | value_changed
-        }),
+        Value::Map(fields) => {
+            // A key shaped like a credential goes with its member, as a JSON
+            // object's does: a marker in its place could repeat a real key.
+            let before = fields.len();
+            fields.retain(|(key, _)| !sanitize_messagepack(&mut key.clone(), null, door));
+            let dropped = fields.len() != before;
+            fields.iter_mut().fold(dropped, |changed, (key, value)| {
+                let sensitive = key
+                    .as_str()
+                    .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door));
+                if sensitive {
+                    *value = replacement();
+                    true
+                } else {
+                    sanitize_messagepack(value, null, door) | changed
+                }
+            })
+        }
         _ => false,
     }
 }
