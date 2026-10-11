@@ -154,10 +154,17 @@ oneiron-server init ~/vaults/notes --embedder endpoint \
   --embedder-model-key "$MODEL" --embedder-model-id "$MODEL" --dimensions 1024
 ```
 
-The vectors are the ones a `local` vault makes, to the bit: the server runs the
-same verified files, tokenizer, pooling and module chain, returns the chain's
-output, and the vault normalises and rounds it exactly as the local provider
-does. The vault's client recognises this server from its `/v1/models` listing
+On the same backend as the local vault, and with the same settings (weight
+precision and input cap among them), the vectors are the ones a `local` vault
+makes, to the bit: the server runs the same verified files, tokenizer, pooling
+and module chain, returns the chain's output, and the vault normalises and
+rounds it exactly as the local provider does. On another backend they are
+close but not equal: a CUDA server's vectors differ slightly from a CPU vault's
+(cosine 0.998 or more), and CPU builds that sum in another order (aarch64,
+x86_64 with AVX2) can differ in the last bits. Neither the transform nor the
+run settings name the device, so the vault admits such a server; whether a
+device change should need `reembed` is open (ARCH-0036 #space-identity-open).
+The vault's client recognises this server from its `/v1/models` listing
 and then sends whole texts marked query or document, so the server's tokenizer
 cuts long inputs and its prompts apply where a local vault's would. The server
 names the model it loaded, its transform and the settings it runs with on

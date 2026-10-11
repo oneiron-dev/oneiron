@@ -13,7 +13,9 @@
 //! The transform it moves to is resolved before anything is decided: the
 //! local model's metadata files are fetched and verified when they are not on
 //! this host (never its weights), and a transform that cannot be resolved stops
-//! `reembed` before it touches the vault. An endpoint declares no transform.
+//! `reembed` before it touches the vault. An `embedder serve` endpoint declares
+//! its transform through its `/models` listing and a probe; any other endpoint
+//! declares none.
 //!
 //! `--force` runs the same swap under the pins the vault already holds.
 

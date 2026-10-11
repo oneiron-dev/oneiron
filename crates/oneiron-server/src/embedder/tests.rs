@@ -971,6 +971,98 @@ fn an_unreachable_endpoint_fails_closed_without_a_vector() {
     );
 }
 
+const PROXY_CHILD: &str = "ONEIRON_TEST_EMBEDDER_PROXY_CHILD";
+const PROXY_CHECKED: &str = "embedder proxy isolation checked";
+const PROXY_KEY_ENV: &str = "ONEIRON_TEST_EMBEDDER_PROXY_KEY";
+
+/// The endpoint client takes no proxy from the environment or the system:
+/// with every proxy variable naming a recording listener and no exclusion,
+/// the listing, the probe and an embedding all reach the embedder, and the
+/// listener records nothing, so neither the bearer key nor a text passes it.
+/// Only a child process carries the variables, so no sibling test sees them.
+#[test]
+fn the_endpoint_client_never_routes_through_an_inherited_proxy() {
+    use std::io::{Read, Write};
+    if std::env::var_os(PROXY_CHILD).is_some() {
+        let mock = MockEndpoint::start(MockBehaviour::Ok);
+        let mut config = endpoint_config(&mock.base);
+        config.endpoint.api_key_env = Some(PROXY_KEY_ENV.to_owned());
+        // reembed's resolution reads the listing and probes; the worker embeds.
+        endpoint::resolve_transform(&config).expect("listing and probe");
+        let embedder = endpoint::HttpEmbedder::from_config(&config).expect("http embedder");
+        oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("a private note")])
+            .expect("embedded");
+        assert!(
+            mock.requests()
+                .iter()
+                .any(|request| request["input"] == json!(["a private note"]))
+        );
+        println!("{PROXY_CHECKED}");
+        return;
+    }
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").expect("proxy listener");
+    let proxy_url = format!("http://{}", proxy.local_addr().expect("proxy addr"));
+    let recorded = Arc::new(Mutex::new(Vec::<String>::new()));
+    {
+        let recorded = Arc::clone(&recorded);
+        std::thread::spawn(move || {
+            for stream in proxy.incoming() {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                let mut head = [0_u8; 4096];
+                let read = stream.read(&mut head).unwrap_or(0);
+                recorded
+                    .lock()
+                    .expect("proxy record")
+                    .push(String::from_utf8_lossy(&head[..read]).into_owned());
+                let _ = stream.write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+            }
+        });
+    }
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    child.args([
+        "--exact",
+        "embedder::tests::the_endpoint_client_never_routes_through_an_inherited_proxy",
+        "--nocapture",
+        "--test-threads=1",
+    ]);
+    for name in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        child.env(name, &proxy_url);
+    }
+    // No exclusion, and no CGI marker that would switch the proxy off.
+    for name in ["NO_PROXY", "no_proxy", "REQUEST_METHOD"] {
+        child.env_remove(name);
+    }
+    child
+        .env(PROXY_CHILD, "1")
+        .env(PROXY_KEY_ENV, "synthetic-key");
+    let output = child.output().expect("child test process");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        *recorded.lock().expect("proxy record"),
+        Vec::<String>::new(),
+        "an embedder request went to the proxy"
+    );
+    assert!(
+        output.status.success(),
+        "stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // A mistyped --exact filter exits successfully having run nothing.
+    assert!(stdout.contains(PROXY_CHECKED), "{stdout}");
+}
+
 #[test]
 fn an_over_long_input_is_shortened_and_counted() {
     let mock = MockEndpoint::start(MockBehaviour::Ok);

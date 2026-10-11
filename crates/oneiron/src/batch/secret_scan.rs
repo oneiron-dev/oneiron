@@ -147,6 +147,12 @@ pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Both doors' text rules and no structured reading, for text a caller joined
+/// from separate strings: the join is no record a field walk could read.
+pub(crate) fn scan_joined_text(text: &str) -> Option<&'static str> {
+    detect(text, Door::Write).or_else(|| detect(text, Door::Release))
+}
+
 /// The batch write door's scan of one payload, for a planner that must say
 /// what that door would refuse without staging a write. It does not read the
 /// owner's switch; the caller does.

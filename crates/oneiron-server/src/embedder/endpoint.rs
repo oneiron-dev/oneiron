@@ -283,8 +283,11 @@ impl HttpEmbedder {
         }
         // One attempt, no redirects, bounded body — the house transport shape.
         // The worker loop is the retry; a retry inside the client would hide a
-        // dead remote behind a long stall and re-charge a metered one.
+        // dead remote behind a long stall and re-charge a metered one. No
+        // proxy either: one from the environment or the system would receive
+        // the bearer key and every text the vault embeds.
         let client = reqwest::blocking::Client::builder()
+            .no_proxy()
             .default_headers(headers)
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)

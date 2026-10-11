@@ -427,3 +427,100 @@ fn hub_pack_contact_line_loads_and_is_carried() -> Result<()> {
     assert!(pack(&"a".repeat(512)).is_ok());
     Ok(())
 }
+
+#[test]
+fn escaped_credential_in_any_pack_md_value_is_refused() {
+    // The source scans read the raw file, where a JSON escape hides a
+    // credential, so every value class is read decoded. Each pair differs only
+    // in what one escape decodes to.
+    const HIDDEN: &str = "\\u0067hp_0123456789abcdefghijklmnopqrstuvwxyz";
+    const KEPT: &str = "\\u0073elected";
+    let capability = |line: String| {
+        PackSource::from_files(vec![HubFile::new(
+            "PACK.md",
+            format!(
+                "---\nname: example.contacts\ndescription: Contact predicate pack\nversion: 1.0.0\nkind: capability\npredicates: [\"example.contacts.phone\"]\n{line}\n---\nExact pack source.\n"
+            )
+            .into_bytes(),
+        )])
+    };
+    let migration = |old: &str, note: &str| {
+        format!(
+            "migrations: [{{\"from\":\"0.9.0\",\"rewrites\":{{\"{old}\":{{\"kind\":\"equivalent\",\"to\":\"example.contacts.phone\",\"note\":\"{note}\"}}}}}}]"
+        )
+    };
+    // The knowledge file carries the decoded name, so the facet resolves.
+    let agent = |word: &str| -> Result<PackSource> {
+        let decoded: String = serde_json::from_str(&format!("\"{word}\"")).unwrap();
+        let mut files = agent_files()?;
+        for file in &mut files {
+            if file.path == "PACK.md" {
+                file.content = String::from_utf8(file.content.clone())
+                    .unwrap()
+                    .replace("knowledge/selected.json", &format!("knowledge/{word}.json"))
+                    .into_bytes();
+            } else if file.path == "knowledge/selected.json" {
+                file.path = format!("knowledge/{decoded}.json");
+            }
+        }
+        PackSource::from_files(files)
+    };
+    let classes = |word: &str| {
+        [
+            ("quoted scalar", capability(format!("license: \"{word}\""))),
+            ("list item", capability(format!("grants: [\"{word}\"]"))),
+            ("facet", agent(word)),
+            (
+                "migration note",
+                capability(migration("example.contacts.tel", word)),
+            ),
+            (
+                "migration key",
+                capability(migration(&format!("example.contacts.{word}"), "Same field")),
+            ),
+        ]
+    };
+    for (class, kept) in classes(KEPT) {
+        assert!(kept.is_ok(), "{class}: {:?}", kept.err());
+    }
+    for (class, hidden) in classes(HIDDEN) {
+        let err = hidden.expect_err(class);
+        assert!(
+            format!("{err:?}").contains("gate.secret_scan.github_token"),
+            "{class}: {err:?}"
+        );
+    }
+    // A recovery phrase spread over a list, one escaped word per entry, is
+    // read as one run, as the raw file shows an unescaped list. A BIP39
+    // reference vector (trezor/python-mnemonic); it guards no funds. Its twin
+    // breaks the checksum.
+    let escaped = |phrase: &str| {
+        phrase
+            .split(' ')
+            .map(|word| format!("\"\\u{:04x}{}\"", word.as_bytes()[0], &word[1..]))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let words = "ozone drill grab fiber curtain grace pudding thank cruise elder eight";
+    assert!(capability(format!("grants: [{}]", escaped(&format!("{words} pilot")))).is_ok());
+    let err = capability(format!("grants: [{}]", escaped(&format!("{words} picnic"))))
+        .expect_err("recovery phrase");
+    assert!(
+        format!("{err:?}").contains("credential material"),
+        "{err:?}"
+    );
+    // The run is joined text, not a record: two entries that only form an
+    // object once joined are not read as one. It still gets both doors' text
+    // rules: a placeholder key block split over three entries, behind a decoy
+    // marker the release door's header rule stops at, is refused.
+    assert!(capability(r#"grants: ["{\"token\"", ": \"VALUE\"}"]"#.to_owned()).is_ok());
+    let block = format!(
+        "grants: [\"-----BEGIN NOTE----- -----BEGIN PRIVATE KEY-----\", \"{}\", \"-----END PRIVATE KEY-----\"]",
+        "VALUE".repeat(8)
+    );
+    let err = capability(block).expect_err("split key block");
+    assert!(
+        format!("{err:?}").contains("credential material"),
+        "{err:?}"
+    );
+}
