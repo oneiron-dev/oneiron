@@ -307,15 +307,18 @@ fn wait_reply(reply: &mpsc::Receiver<Delivery>, grace: Duration, asks: &mut Call
     }
 }
 
-/// Whether a call whose entry the reader has taken got its reply, rather
-/// than the process ending. Never waits long: the entry held the only
+/// The reply of a call whose entry the reader has taken; `None` when the
+/// process ended instead. Never waits long: the entry held the only
 /// sender, and the reader drops it right after delivering.
-fn replied(reply: &mpsc::Receiver<Delivery>, asks: &mut CallAsks<'_>) -> bool {
+fn taken(
+    reply: &mpsc::Receiver<Delivery>,
+    asks: &mut CallAsks<'_>,
+) -> Option<(Reply, Vec<OwnedFd>)> {
     loop {
         match reply.recv() {
-            Ok(Delivery::Reply(..)) => return true,
+            Ok(Delivery::Reply(reply, fds)) => return Some((reply, fds)),
             Ok(Delivery::Ask(ask)) => asks.skipped(&ask),
-            Ok(Delivery::Closed) | Err(_) => return false,
+            Ok(Delivery::Closed) | Err(_) => return None,
         }
     }
 }
@@ -733,7 +736,7 @@ impl OrganProcess {
                         Overrun::InTime => {}
                         // A reply in the grace counts even if the organ then
                         // ended: its end is the reader's to report, as a crash.
-                        Overrun::Cancelled if replied(reply, asks) => {
+                        Overrun::Cancelled if taken(reply, asks).is_some() => {
                             return Err(CallFailure::Deadline { stopped: false });
                         }
                         Overrun::Cancelled | Overrun::Stopped => {
@@ -750,15 +753,10 @@ impl OrganProcess {
                         asks.unsent();
                         continue;
                     }
-                    // An answer after the deadline is dropped. A reply the
-                    // reader took meanwhile still stands; else the call is
-                    // cancelled, and a reply from now on is late.
+                    // An answer after the deadline is dropped.
                     if Instant::now() >= deadline {
                         asks.unsent();
-                        if self.inbox.in_flight(id) {
-                            break;
-                        }
-                        continue;
+                        break;
                     }
                     match step {
                         AskStep::Answer(answer, region) => {
@@ -799,6 +797,13 @@ impl OrganProcess {
                 }
                 Err(RecvTimeoutError::Timeout) => break,
             }
+        }
+        // Past the deadline, by any cutoff above. The call fails on it only
+        // while it is still in flight: the reader queues a reply under the
+        // lock it takes the call under, so a call it has taken has its reply
+        // waiting, and that reply stands.
+        if !self.inbox.in_flight(id) {
+            return taken(reply, asks).ok_or(CallFailure::Crashed);
         }
         self.cancel(id, CancelReason::Deadline, Instant::now() + grace);
         if wait_reply(reply, grace, asks) {

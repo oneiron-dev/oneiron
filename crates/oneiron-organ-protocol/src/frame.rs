@@ -316,12 +316,13 @@ fn send_frame_with<T: Serialize, G>(
         };
         match ready(stream, room, true) {
             // Still no room before the first byte: is the frame wanted?
-            // Asked at the deadline too, so a frame withdrawn in the last
-            // slice ends withdrawn, not late.
+            // Asked at the deadline too, and held across the clock check as
+            // on the first send, so a frame withdrawn before the deadline
+            // is seen to pass ends withdrawn, not late.
             Err(FrameError::TimedOut) if sent == 0 && gate.recheck.is_some() => {
-                if (gate.still)().is_none() {
+                let Some(_held) = (gate.still)() else {
                     return Err(FrameError::Withdrawn);
-                }
+                };
                 if wait.passed() {
                     return Err(FrameError::Late);
                 }

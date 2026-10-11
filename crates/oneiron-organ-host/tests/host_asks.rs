@@ -814,7 +814,7 @@ fn an_answer_that_waits_for_room_never_follows_its_calls_reply() {
     let mut full_spec = spec(vec![AskGrant::new(ANSWER, 4)]);
     full_spec.args = vec![
         "--reply-while-full".into(),
-        signals.path().to_string_lossy().into_owned(),
+        signals.path().as_os_str().to_owned(),
     ];
     full_spec.verbs = vec!["organ.echo".into()];
     let host = host(full_spec);
