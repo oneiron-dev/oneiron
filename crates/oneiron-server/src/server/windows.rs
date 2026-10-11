@@ -187,9 +187,16 @@ pub(super) fn spawn_local_change_producer(
     reassert_manager.outbound().attach(updates_tx);
 
     let broadcast_tx = broadcast_tx.clone();
+    let vault = Arc::clone(reassert_manager.vault());
     runtime.spawn(async move {
         while let Some(update) = updates_rx.recv().await {
             let window_key = update.window_key;
+            // A world flagged device-only since this commit keeps it here.
+            if oneiron::sync::WindowKey::try_new(window_key.as_str()).is_some_and(|key| {
+                oneiron::sync::window::window_is_device_only(&vault, &key).unwrap_or(true)
+            }) {
+                continue;
+            }
             match crate::protocol::encode_window_sync(
                 &window_key,
                 crate::protocol::window_sub_tags::UPDATE,

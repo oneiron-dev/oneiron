@@ -147,6 +147,13 @@ impl SyncServer {
                     );
                 }
                 for (window_key, update) in report.window_updates {
+                    // A world flagged device-only keeps its windows here.
+                    if oneiron::sync::WindowKey::try_new(window_key.as_str()).is_some_and(|key| {
+                        oneiron::sync::window::window_is_device_only(&self.vault, &key)
+                            .unwrap_or(true)
+                    }) {
+                        continue;
+                    }
                     match crate::protocol::encode_window_sync(
                         &window_key,
                         crate::protocol::window_sub_tags::UPDATE,
