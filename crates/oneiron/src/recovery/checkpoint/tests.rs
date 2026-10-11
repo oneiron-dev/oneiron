@@ -715,7 +715,7 @@ fn lmdb_locks_held(lock_file: &Path) -> usize {
         let lock_file = file(lock_file).expect("the lock file is there");
         std::fs::read_dir("/proc/self/fd")
             .unwrap()
-            .filter_map(Result::ok)
+            .filter_map(std::result::Result::ok)
             .filter(|descriptor| file(&descriptor.path()) == Some(lock_file))
             .map(|descriptor| {
                 // A descriptor closed since the listing took its locks with it.
