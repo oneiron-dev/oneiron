@@ -6,6 +6,7 @@
 mod codec;
 mod doors;
 mod request;
+mod word_sources;
 
 pub use codec::{
     ScopeSummaryBody, SummarySourceMessage, decode_scope_summary_body, encode_scope_summary_body,
@@ -16,6 +17,7 @@ pub(crate) use doors::{
 };
 pub(crate) use request::ComposedSummary;
 pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
+pub(crate) use word_sources::{WordSources, word_sources_in};
 
 #[cfg(test)]
 mod tests;

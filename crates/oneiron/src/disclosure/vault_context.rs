@@ -27,7 +27,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 
-use super::disclosable_set::{DisclosableSet, disclosable_set};
+use super::disclosable_set::DisclosableSet;
 use super::disclosure_tier;
 use super::scope_codec::{DisclosureScope, disclosure_scope_body_value};
 
@@ -274,7 +274,7 @@ pub struct DisclosureContext {
 }
 
 impl DisclosureContext {
-    /// Derives the mode and the audience's [`disclosable_set`]. Owner
+    /// Derives the mode and the audience's [`crate::disclosure::disclosable_set`]. Owner
     /// presence never widens a non-owner's clearance: only a separate
     /// explicit owner request may override it (ILDF2 room rule), and a
     /// presence signal is not such a request. Corruption in a clearance row
@@ -287,21 +287,25 @@ impl DisclosureContext {
     /// reader the roster does not name (a delegated caller). That reader is
     /// an unknown party and holds the empty clearance: public-only.
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
-        let disclosable = if set.supervised() || set.has_non_owner() {
-            disclosable_set(vault, &set)?
-        } else {
-            DisclosableSet::unknown_reader()
-        };
-        Ok(Self {
-            mode: DisclosureMode::from_set(&set),
-            disclosable,
-            interlocutors: set,
-        })
+        Self::resolve_with(vault, set, false)
     }
 
-    /// A room assembly follows the same rule as any other audience.
-    pub fn resolve_room(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
-        Self::resolve(vault, set)
+    /// A room assembly follows the same rule as any other audience. When a
+    /// proven `reader` reads it, the room's own owner or one of the vault's
+    /// own agents, the roster names everyone the assembly reaches, so the
+    /// reader joins the meet with no term and an empty non-owner set folds
+    /// to the top (P1). The mode still follows the set: the roster never
+    /// proves the owner present.
+    pub fn resolve_room(vault: &Vault, set: InterlocutorSet, reader: bool) -> Result<Self> {
+        Self::resolve_with(vault, set, reader)
+    }
+
+    fn resolve_with(vault: &Vault, set: InterlocutorSet, reader: bool) -> Result<Self> {
+        Ok(Self {
+            mode: DisclosureMode::from_set(&set),
+            disclosable: DisclosableSet::resolve(vault, &set, reader)?,
+            interlocutors: set,
+        })
     }
 
     #[must_use]

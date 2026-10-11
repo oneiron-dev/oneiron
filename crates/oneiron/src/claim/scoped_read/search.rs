@@ -241,6 +241,7 @@ impl ScopedRead<'_> {
         let policy = self.policy_manifest_in(&rtxn)?;
         let diagnostics = policy.diagnostics();
         if self.audience.is_none()
+            && self.peer_reads.is_empty()
             && !diagnostics.loaded_manifest_forces_fail_closed()
             && !policy.has_scoped_read_grants()
         {

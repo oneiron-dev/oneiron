@@ -91,50 +91,10 @@ impl ScopedRead<'_> {
         if self.actor_key.vault_owner_ref().is_some() {
             return Ok(true);
         }
-        let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
-        let sources = match header.entity_type {
-            crate::registry::ENTITY_TYPE_SUMMARY => crate::scope_summary::body_covers_in_txn(
-                self.vault,
-                rtxn,
-                id,
-                header.entity_type,
-                body,
-            ),
-            // A reply carries its summary under the `summary` key, in any
-            // string encoding; the decoder below decides.
-            crate::registry::ENTITY_TYPE_TURN if names(b"summary") => {
-                crate::scope_summary::body_covers_in_txn(
-                    self.vault,
-                    rtxn,
-                    id,
-                    header.entity_type,
-                    body,
-                )
-            }
-            ENTITY_TYPE_CLAIM if names(b"merge.summary") => {
-                crate::scope_summary::merge_word_sources_in_txn(
-                    self.vault,
-                    rtxn,
-                    &crate::claim::decode_claim_body(body, true)?,
-                )
-            }
-            _ => return Ok(true),
-        };
-        let sources = match sources {
-            Ok(Some(sources)) if !sources.is_empty() => sources,
-            Ok(None) => return Ok(true),
-            Ok(Some(_))
-            | Err(
-                Error::EntityNotFound
-                | Error::Record(
-                    crate::error::RecordError::InvalidScopeSummary(_)
-                    | crate::error::RecordError::InvalidConversationDag(_),
-                ),
-            ) => return Ok(false),
-            Err(error) => return Err(error),
+        let sources = match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
+            crate::scope_summary::WordSources::Own => return Ok(true),
+            crate::scope_summary::WordSources::Unresolved => return Ok(false),
+            crate::scope_summary::WordSources::From(sources) => sources,
         };
         let floor = self.actor_retrieval_floor(policy)?;
         for source in &sources {

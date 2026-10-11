@@ -304,9 +304,10 @@ pub(crate) async fn run_context_pack_builder(
             tracing::error!(error = %error, "core context-pack scoped read failed");
             core_engine_error("core context-pack scoped read failed", error)
         })?;
-    // A MESSAGE carries its current reactions, read through the same scope.
+    // A MESSAGE carries its current reactions, read through the same scope
+    // and clamp.
     scoped_read
-        .attach_reactions(&mut pack.value)
+        .attach_reactions_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(error = %error, "core context-pack reactions failed");

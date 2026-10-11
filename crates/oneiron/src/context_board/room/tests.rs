@@ -1,7 +1,7 @@
 //! ARCH-0067 §8 acceptance: one roster-to-Scope function, and every read a
 //! room turn makes runs inside the Scope it returns.
 use super::*;
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, PointRead};
 use crate::edge::EdgeActorClass;
 use crate::memory::{ClaimInput, ClaimListFilter, WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::pipeline::{PREDICATE_WORLD_ACCESS_ALLOWED_SET, world_access_claim_body};
@@ -19,6 +19,7 @@ fn member(actor: EntityId, worlds: WorldAuthoritySet) -> RoomPresence {
         label: actor.to_hex(),
         present: true,
         active_worlds: worlds,
+        clearance: None,
     }
 }
 
@@ -40,7 +41,7 @@ fn room_scope_is_the_ordinary_scope_and_a_join_only_narrows() -> Result<()> {
         ..b
     };
     assert_eq!(room_scope(&[a, away])?, one);
-    assert_eq!(room_scope(&[])?, Scope::default());
+    assert_eq!(room_scope::<RoomPresence>(&[])?, Scope::default());
     // A world id equal to the reserved base id is not base authority.
     let smuggled = member(
         id(8),
@@ -143,6 +144,9 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
     let room = EntityId::from_hex(&record.home_room)?;
     let elsewhere = EntityId::from_hex(&project_room(&vault, owner, &[])?.1.home_room)?;
+    // The agent is the vault's own: it adds no clearance term. Binding
+    // roots the vault, so it follows the projects' implicit births.
+    crate::test_util::bind_test_agent(&vault, agent);
     let host = vault.memory(owner, EdgeActorClass::Human);
     let hex_of = |input: ClaimInput| {
         let receipt = host.claim_upsert(&input).expect("note");
@@ -296,6 +300,8 @@ fn a_member_who_joins_mid_read_binds_the_rows_it_serves() -> Result<()> {
     )?;
     crate::test_util::authorize_readers(&vault, &[&agent.to_hex(), &stranger.to_hex()]);
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    // The agent's contact clears everything: only worlds and reads decide.
+    crate::test_util::clear_test_contact(&vault, agent);
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let receipt = host
@@ -345,8 +351,10 @@ fn a_member_who_leaves_mid_read_still_binds_the_rows_it_serves() -> Result<()> {
         1,
         b"agent",
     )?;
-    // The agent holds no read grant, so its own read withholds the note.
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    // The agent's contact clears everything, but it holds no read grant,
+    // so its own read withholds the note.
+    crate::test_util::clear_test_contact(&vault, agent);
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let receipt = host
@@ -408,6 +416,10 @@ fn a_room_lane_rebuilds_its_ceiling_only_for_a_new_member() -> Result<()> {
         )?;
     }
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    // Both contacts clear everything, so only the ceiling's rebuild is
+    // under test.
+    crate::test_util::clear_test_contact(&vault, agent);
+    crate::test_util::clear_test_contact(&vault, joiner);
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let mut notes = Vec::new();
@@ -546,5 +558,563 @@ fn a_grant_that_lost_its_edge_still_governs_past_one_pass() -> Result<()> {
         ScopeAxis::Bottom,
         "the room reads nothing"
     );
+    Ok(())
+}
+
+/// ILDF2 in a room (ARCH-0067 §8): a guest's contact clearance bounds every
+/// read a room turn makes. Its bottom clearance keeps a tier-B note and the
+/// room's own default-Sensitive history out and a positively public note
+/// in. A wider clearance admits them on the next turn, never mid-turn. The
+/// owner adds no term, and the room roster and the context-pack interlocutor
+/// set resolve one clearance through one function.
+#[test]
+fn a_guests_clearance_bounds_every_read_a_room_turn_makes() -> Result<()> {
+    use crate::disclosure::{DisclosableSet, DisclosureScope, disclosable_set};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let guest = id(0x71);
+    vault.put_entity(
+        &guest,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"guest",
+    )?;
+    let contact = id(0x72);
+    let introduced = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        id(0x73),
+        "guest@example.com",
+        10,
+    )
+    .expect("contact record");
+    vault.create_counterparty_contact(&contact, &introduced)?;
+    vault.put_edge(&contact, crate::edge::EdgeKind::About, &guest, 1.0)?;
+    crate::test_util::authorize_readers(&vault, &[&guest.to_hex()]);
+    let (_, record) = project_room(&vault, owner, &[guest])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let hex_of = |input: ClaimInput| {
+        let receipt = host.claim_upsert(&input).expect("note");
+        host.get_entity(&receipt.claim_short_id)
+            .expect("note read")
+            .value
+            .expect("owner reads the note")
+            .id_hex
+    };
+    let tier_b = hex_of(note(room, "lantern ledger", None));
+    let mut public = note(room, "lantern harbor", None);
+    public.scope = Some(serde_json::json!({"sensitivity": "public"}));
+    let public = hex_of(public);
+    host.rooms_speak(&spoken(room, EntityId::now(), 2))
+        .expect("speak");
+    let filter = ClaimListFilter {
+        subject_ref: Some(room.to_hex()),
+        predicate: Some("note.topic".into()),
+        lifecycle: None,
+        limit: 10,
+    };
+    // What one room turn reads: the room's notes, each note by id, and the
+    // room's own history.
+    let reads = |turn: &crate::memory::RoomTurnHandle<'_>| {
+        let mut listed: Vec<_> = turn
+            .claim_list(&filter)
+            .expect("claim list")
+            .value
+            .into_iter()
+            .map(|claim| claim.claim_ref)
+            .collect();
+        listed.sort();
+        let got = |note: &str| turn.get_entity(note).expect("read").value.is_some();
+        let history = turn.rooms_messages().expect("history").len();
+        (listed, got(&tier_b), got(&public), history)
+    };
+
+    let roster = host.room_roster(room).expect("roster");
+    assert_eq!(disclosable_set(&roster)?, room_scope(&roster)?);
+    let terms: Vec<_> = roster
+        .iter()
+        .map(|member| member.clearance.clone())
+        .collect();
+    assert_eq!(
+        terms.iter().filter(|term| term.is_none()).count(),
+        1,
+        "the owner adds none"
+    );
+    let interlocutors = crate::interlocutor::InterlocutorSet::with_session_owner(vec![
+        crate::interlocutor::Interlocutor::known_contact(
+            contact,
+            "guest@example.com",
+            crate::counterparty_contact::CounterpartyFirstTouch::UserIntroduction,
+        ),
+    ]);
+    assert_eq!(
+        &disclosable_set(&terms)?,
+        DisclosableSet::resolve(&vault, &interlocutors, false)?.clearance()
+    );
+
+    let narrow = host.for_room_turn(room).expect("open room turn");
+    assert_eq!(reads(&narrow), (vec![public.clone()], false, true, 0));
+    vault.set_counterparty_disclosure_scope(
+        &contact,
+        &DisclosureScope::new(Scope::top(), "room guest", 200)?,
+    )?;
+    assert_eq!(
+        reads(&narrow),
+        (vec![public.clone()], false, true, 0),
+        "a turn never widens mid-turn"
+    );
+    let mut both = vec![tier_b.clone(), public.clone()];
+    both.sort();
+    let wide = host.for_room_turn(room).expect("open room turn");
+    assert_eq!(reads(&wide), (both.clone(), true, true, 1));
+
+    // A turn only narrows. A clearance narrowed after the turn opened
+    // withholds the note from the lane already reading it and from the
+    // turn's next verb, and neither reads it again once the clearance
+    // widens. Only a new turn does.
+    let tier_b_id = EntityId::from_hex(&tier_b)?;
+    let lane = wide
+        .memory()
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .expect("room lane");
+    let lane_reads = || {
+        lane.read(&[PointRead::id(tier_b_id)], None)
+            .expect("lane read")
+            .value[0]
+            .is_some()
+    };
+    let set = |scope: Scope, at: u64| {
+        vault.set_counterparty_disclosure_scope(
+            &contact,
+            &DisclosureScope::new(scope, "room guest", at).expect("clearance"),
+        )
+    };
+    assert!(lane_reads());
+    set(Scope::default(), 300)?;
+    assert!(!lane_reads(), "the lane narrows in the snapshot it serves");
+    assert!(
+        wide.get_entity(&tier_b).expect("read").value.is_none(),
+        "and so does the turn's next verb"
+    );
+    set(Scope::top(), 400)?;
+    assert!(!lane_reads(), "neither widens back");
+    assert_eq!(reads(&wide), (vec![public.clone()], false, true, 0));
+    assert_eq!(
+        reads(&host.for_room_turn(room).expect("open room turn")),
+        (both, true, true, 1)
+    );
+
+    // A render judges each rule's P7 in the snapshot that reads the rule:
+    // a clearance captured wide before a narrowing renders nothing it no
+    // longer admits, and a member the render never checked keeps it out.
+    let captured = crate::claim::RoomTerms {
+        worlds: Scope::top(),
+        clearance: Some(Scope::top()),
+        p7: true,
+    };
+    let mut members = vec![owner, guest];
+    members.sort();
+    let renders = |members: &[EntityId]| {
+        host.room_discloses(room, &captured, members, tier_b_id)
+            .expect("render p7")
+    };
+    assert!(renders(&members));
+    assert!(!renders(&[owner]), "a member who joined since");
+    set(Scope::default(), 500)?;
+    assert!(!renders(&members), "a clearance narrowed since");
+    set(Scope::top(), 600)?;
+    // Through a turn, a narrowing one rule meets holds for the next rule.
+    let turn = host.for_room_turn(room).expect("open room turn");
+    let renders_in_turn = || {
+        turn.memory()
+            .room_discloses(room, &captured, &members, tier_b_id)
+            .expect("render p7")
+    };
+    assert!(renders_in_turn());
+    set(Scope::default(), 610)?;
+    assert!(!renders_in_turn());
+    set(Scope::top(), 620)?;
+    assert!(
+        !renders_in_turn(),
+        "a render through a turn never widens back"
+    );
+
+    // A revoked contact keeps its clearance row, yet its member is unknown
+    // again: bottom, as the context-pack resolver reads the same contact.
+    vault.revoke_counterparty_contact(&contact, 700)?;
+    assert_eq!(
+        reads(&host.for_room_turn(room).expect("open room turn")),
+        (vec![public.clone()], false, true, 0)
+    );
+    let terms: Vec<_> = host
+        .room_roster(room)
+        .expect("roster")
+        .iter()
+        .map(|member| member.clearance.clone())
+        .collect();
+    let revoked = vault.resolve_interlocutors(&crate::InterlocutorResolutionInput {
+        owner_session: true,
+        parties: vec![crate::InterlocutorPartyInput::ContactRef(contact)],
+        voice_session_ref: None,
+    })?;
+    assert_eq!(disclosable_set(&terms)?, Scope::default());
+    assert_eq!(
+        &disclosable_set(&terms)?,
+        DisclosableSet::resolve(&vault, &revoked, false)?.clearance()
+    );
+    Ok(())
+}
+
+/// ARCH-0067 §8, the Engine lane's rule 3: an agent bound to a contact
+/// takes that contact's clearance, an AGENT_DEF as much as a PERSON. A
+/// second contact About it makes the link ambiguous, so it is unknown.
+#[test]
+fn a_contact_bound_agent_definition_takes_its_contacts_clearance() -> Result<()> {
+    use crate::counterparty_contact::CounterpartyContactRecord;
+    use crate::disclosure::RoomParty;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let agent = crate::test_util::seed_agent_definition(&vault, id(0x81), "room agent");
+    assert_eq!(vault.room_parties(&[agent])?, vec![RoomParty::VaultAgent]);
+    let contact = |seed: u8, counterparty: &str| -> Result<EntityId> {
+        let contact = id(seed);
+        let record = CounterpartyContactRecord::user_introduction(id(seed + 1), counterparty, 10)
+            .expect("contact record");
+        vault.create_counterparty_contact(&contact, &record)?;
+        vault.put_edge(&contact, crate::edge::EdgeKind::About, &agent, 1.0)?;
+        Ok(contact)
+    };
+    let first = contact(0x82, "agent@example.com")?;
+    assert_eq!(
+        vault.room_parties(&[agent])?,
+        vec![RoomParty::Contact(first)]
+    );
+    contact(0x84, "other@example.com")?;
+    assert_eq!(vault.room_parties(&[agent])?, vec![RoomParty::Unknown]);
+    Ok(())
+}
+
+/// P7 follows a record's words to where they came from (ILDF2): a room
+/// TURN is disclosed only with its messages, and a summary's TURN copy,
+/// which has no messages of its own, only with the records and messages
+/// the summary came from. A clearance that reads TURNs but not MESSAGEs
+/// discloses neither; one that reads both discloses both.
+#[test]
+fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
+    use crate::ports::EntityStoreRead;
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, record) = project_room(&vault, owner, &[])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let turn = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .rooms_speak(&spoken(room, turn, 2))
+        .expect("speak");
+    // A summary's merge header is a generated claim the owner may land.
+    crate::conversation_dag::test_support::put_dag_test_policy(
+        &vault,
+        crate::WriteActor::new(owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let scope = crate::conversation_dag::ScopeSelector {
+        conversation: room,
+        session: None,
+        path: crate::conversation_dag::ScopePath::Canonical,
+        include_forks: false,
+    };
+    let (summary, landed) = vault.mint_and_land_scope_summary(
+        &scope,
+        "lantern summary",
+        crate::WriteActor::new(owner, EdgeActorClass::Human),
+        Some(turn),
+        true,
+    )?;
+    let copy = landed.and_then(|landed| landed.record).expect("TURN copy");
+    let clearance = |bands: &[u8]| Scope {
+        bands: ScopeAxis::Some(bands.iter().copied().collect()),
+        ..Scope::top()
+    };
+    let discloses = |id: EntityId, scope: &Scope| -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .port_entity_record(&txn, &id)?
+            .expect("row")
+            .encode();
+        crate::disclosure::discloses_raw(&vault, &txn, scope, id, &raw)
+    };
+    let turns = clearance(&[ENTITY_TYPE_TURN]);
+    let both = clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE]);
+    assert!(!discloses(turn, &turns)?);
+    assert!(
+        !discloses(copy, &turns)?,
+        "the copy carries the messages' words"
+    );
+    assert!(discloses(turn, &both)?);
+    assert!(discloses(copy, &both)?);
+    let recover = |covers: Vec<EntityId>, at: u64| -> Result<()> {
+        let mut body = crate::scope_summary::decode_scope_summary_body(
+            &vault.get(&summary)?.expect("summary body"),
+        )?;
+        body.covers = covers;
+        vault.put_entity(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange { start: at, end: at },
+            at,
+            &crate::scope_summary::encode_scope_summary_body(&body)?,
+        )
+    };
+    // A summary put again over other records leaves the copy's words with
+    // the records they came from. The landing moved the room onto its DAG.
+    let later = vault
+        .append_dag_record(&crate::conversation_dag::AppendRecord {
+            conversation: room,
+            parent: Some(copy),
+            reply_to: None,
+            address: crate::conversation_dag::AddressMode::Broadcast,
+            recipients: vec![],
+            advance: true,
+            kind: ENTITY_TYPE_TURN,
+            occurred: TimeRange { start: 3, end: 3 },
+            learned_at: 3,
+            body: crate::conversation_dag::fixtures::body("later"),
+            text: vec![],
+            session: None,
+            actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
+        })?
+        .id;
+    recover(vec![later], 4)?;
+    let sources = {
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .port_entity_record(&txn, &copy)?
+            .expect("row")
+            .encode();
+        crate::scope_summary::word_sources_in(&vault, &txn, &copy, &raw)?
+    };
+    assert!(
+        matches!(
+            sources,
+            crate::scope_summary::WordSources::From(ref sources)
+                if sources.contains(&turn) && sources.contains(&later)
+        ),
+        "the copy's words still came from the first turn"
+    );
+    // A summary put again to cover its own copy makes the copy's words a
+    // cycle: P7 discloses nothing rather than walking it forever.
+    recover(vec![copy], 5)?;
+    assert!(!discloses(copy, &both)?, "a cycle discloses nothing");
+    Ok(())
+}
+
+/// A summary of summaries carries every level's words. P7 walks the whole
+/// closure on a heap stack, so the first turn's message still binds the
+/// last copy, and records the levels share are judged once.
+#[test]
+fn p7_walks_a_summary_of_summaries_to_its_first_words() -> Result<()> {
+    use crate::ports::EntityStoreRead;
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, record) = project_room(&vault, owner, &[])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let turn = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .rooms_speak(&spoken(room, turn, 2))
+        .expect("speak");
+    // A summary's merge header is a generated claim the owner may land.
+    crate::conversation_dag::test_support::put_dag_test_policy(
+        &vault,
+        crate::WriteActor::new(owner, EdgeActorClass::Human),
+        true,
+    )?;
+    let scope = crate::conversation_dag::ScopeSelector {
+        conversation: room,
+        session: None,
+        path: crate::conversation_dag::ScopePath::Canonical,
+        include_forks: false,
+    };
+    let mut head = turn;
+    for level in 0..8 {
+        let (_, landed) = vault.mint_and_land_scope_summary(
+            &scope,
+            &format!("lantern summary {level}"),
+            crate::WriteActor::new(owner, EdgeActorClass::Human),
+            Some(head),
+            true,
+        )?;
+        head = landed.and_then(|landed| landed.record).expect("TURN copy");
+    }
+    let clearance = |bands: &[u8]| Scope {
+        bands: ScopeAxis::Some(bands.iter().copied().collect()),
+        ..Scope::top()
+    };
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .port_entity_record(&txn, &head)?
+        .expect("row")
+        .encode();
+    assert!(crate::disclosure::discloses_raw(
+        &vault,
+        &txn,
+        &clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE]),
+        head,
+        &raw
+    )?);
+    assert!(
+        !crate::disclosure::discloses_raw(
+            &vault,
+            &txn,
+            &clearance(&[ENTITY_TYPE_TURN]),
+            head,
+            &raw
+        )?,
+        "the last copy carries the first turn's message"
+    );
+    Ok(())
+}
+
+/// A `conversation.summary` claim carries the words of the turns it covers
+/// (Astra #1394 P1). A guest cleared for claims but not turns keeps such a
+/// summary out of every read the owner's bound turn makes, while a note of
+/// the same kind stays readable. Cleared for the turn's words too, the
+/// summary discloses.
+#[test]
+fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
+    use crate::disclosure::DisclosureScope;
+    use crate::ports::EntityStoreRead;
+    use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let guest = id(0x75);
+    vault.put_entity(
+        &guest,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"guest",
+    )?;
+    let contact = id(0x76);
+    let introduced = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        id(0x77),
+        "guest@example.com",
+        10,
+    )
+    .expect("contact record");
+    vault.create_counterparty_contact(&contact, &introduced)?;
+    vault.put_edge(&contact, crate::edge::EdgeKind::About, &guest, 1.0)?;
+    let (_, record) = project_room(&vault, owner, &[guest])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let turn = EntityId::now();
+    host.rooms_speak(&spoken(room, turn, 2)).expect("speak");
+    let summary = EntityId::now();
+    let mut body = crate::ClaimBody::new(
+        "conversation.summary",
+        crate::ClaimSubject::Entity(room),
+        rmpv::Value::Map(vec![
+            ("text".into(), "lantern summary words".into()),
+            (
+                "covers".into(),
+                rmpv::Value::Array(vec![rmpv::Value::Binary(turn.as_bytes().to_vec())]),
+            ),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::Observed);
+    // A reader's grant makes later direct claim writes pend, so the
+    // summary lands first.
+    vault.put_claim(&summary, &body, TimeRange { start: 3, end: 3 }, 3)?;
+    crate::test_util::authorize_readers(&vault, &[&guest.to_hex()]);
+    let note = host
+        .claim_upsert(&note(room, "lantern ledger", None))
+        .expect("note");
+    let note = host
+        .get_entity(&note.claim_short_id)
+        .expect("note read")
+        .value
+        .expect("owner reads the note")
+        .id_hex;
+
+    let clearance = |bands: &[u8]| Scope {
+        bands: ScopeAxis::Some(bands.iter().copied().collect()),
+        ..Scope::top()
+    };
+    let discloses = |id: EntityId, scope: &Scope| -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .port_entity_record(&txn, &id)?
+            .expect("row")
+            .encode();
+        crate::disclosure::discloses_raw(&vault, &txn, scope, id, &raw)
+    };
+    let claims = clearance(&[ENTITY_TYPE_CLAIM]);
+    assert!(!discloses(turn, &claims)?);
+    assert!(
+        !discloses(summary, &claims)?,
+        "the summary carries the turn's words"
+    );
+    assert!(discloses(
+        summary,
+        &clearance(&[ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE])
+    )?);
+
+    vault.set_counterparty_disclosure_scope(
+        &contact,
+        &DisclosureScope::new(claims, "room guest", 200)?,
+    )?;
+    let listed = |turn: &crate::memory::RoomTurnHandle<'_>, predicate: &str| -> Vec<String> {
+        let filter = ClaimListFilter {
+            subject_ref: Some(room.to_hex()),
+            predicate: Some(predicate.into()),
+            lifecycle: None,
+            limit: 10,
+        };
+        turn.claim_list(&filter)
+            .expect("claim list")
+            .value
+            .into_iter()
+            .map(|claim| claim.claim_ref)
+            .collect()
+    };
+    let summary_hex = summary.to_hex();
+    assert_eq!(
+        host.get_entity(&summary_hex)
+            .expect("owner read")
+            .value
+            .map(|view| view.id_hex),
+        Some(summary_hex.clone()),
+        "the owner alone reads the summary"
+    );
+    let bound = host.for_room_turn(room).expect("open room turn");
+    assert_eq!(listed(&bound, "note.topic"), std::slice::from_ref(&note));
+    assert_eq!(
+        bound
+            .hydrate(&[note])
+            .expect("hydrate the note")
+            .value
+            .len(),
+        1
+    );
+    assert!(listed(&bound, "conversation.summary").is_empty());
+    assert!(
+        bound
+            .get_entity(&summary_hex)
+            .expect("read")
+            .value
+            .is_none()
+    );
+    // A withheld hydrate is NOT_FOUND, and the refusal carries the receipt.
+    let refused = bound.hydrate(&[summary_hex]).expect_err("withheld hydrate");
+    assert_eq!(refused.code, crate::MEMORY_CODE_NOT_FOUND);
+    assert!(refused.read_receipt.is_some());
     Ok(())
 }

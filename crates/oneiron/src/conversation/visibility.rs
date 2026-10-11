@@ -242,7 +242,9 @@ fn reaction_covers(claim: &crate::ClaimBody) -> Option<Vec<EntityId>> {
 /// The records a persisted `conversation.summary` claim covers, or `None` for
 /// any other claim. A value that is not a map with a `covers` array of 16-byte
 /// ids is malformed, and a malformed summary is denied like any other.
-fn conversation_summary_covers(claim: &crate::ClaimBody) -> Result<Option<Vec<EntityId>>> {
+pub(crate) fn conversation_summary_covers(
+    claim: &crate::ClaimBody,
+) -> Result<Option<Vec<EntityId>>> {
     if claim.predicate != "conversation.summary" {
         return Ok(None);
     }

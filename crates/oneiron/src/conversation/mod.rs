@@ -17,7 +17,7 @@ pub(crate) use deletion::{
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
-pub(crate) use visibility::{AudienceCache, room_for_record_in};
+pub(crate) use visibility::{AudienceCache, conversation_summary_covers, room_for_record_in};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{RecordError, Result};
