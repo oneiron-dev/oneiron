@@ -343,12 +343,19 @@ pub(super) fn filter_window_doc(
     // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
     // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
-    let (_, claims_withheld) = withheld_claim_carriers(
+    let (_, mut claims_withheld) = withheld_claim_carriers(
         vault,
         &rtxn,
         &source.get_map("entities"),
         &source.get_map("edges"),
     )?;
+    // A device-only world's rows stay here even when packed while portable.
+    claims_withheld.extend(crate::sync::window::device_only_ids(
+        vault,
+        &rtxn,
+        &source.get_map("entities"),
+        &source.get_map("edges"),
+    )?);
     let mut scope_error = None;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");

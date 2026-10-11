@@ -381,14 +381,15 @@ pub(super) fn scrub_redacted_attribution_carriers(
 
 /// Exports a full-window response without carrying pre-scrub operation bytes.
 /// The peer VV is still decoded first so malformed-VV requests never become a
-/// full-export fallback.
+/// full-export fallback. Rows a device-only world keeps here are cut last,
+/// against the flag as it stands now.
 pub fn export_window_updates_since(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
     remote_vv: &[u8],
 ) -> Result<Vec<u8>> {
-    VersionVector::decode(remote_vv).map_err(|source| {
+    let remote = VersionVector::decode(remote_vv).map_err(|source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "decode version vector",
             source,
@@ -400,11 +401,12 @@ pub fn export_window_updates_since(
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
     let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed || withdrawn_scrubbed;
-    if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
-        export_history_free_window_snapshot(doc)
+    let bytes = if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
+        export_history_free_window_snapshot(doc)?
     } else {
-        super::loro_support::export_updates_since(doc, remote_vv)
-    }
+        super::loro_support::export_updates_since(doc, remote_vv)?
+    };
+    super::device_only::cut_device_only_export(vault, doc, &remote, bytes)
 }
 
 /// A promoted device holds the canonical shallow frontier. When the home
@@ -418,7 +420,7 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
     doc: &LoroDoc,
     remote_vv: &[u8],
 ) -> Result<Vec<u8>> {
-    VersionVector::decode(remote_vv).map_err(|source| {
+    let remote = VersionVector::decode(remote_vv).map_err(|source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "decode promoted version vector",
             source,
@@ -429,11 +431,12 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
     let scrubbed = secret_scrubbed || claims_scrubbed || withdrawn_scrubbed;
-    if scrubbed || history_free_window_required(vault, key)? {
-        export_history_free_window_snapshot(doc)
+    let bytes = if scrubbed || history_free_window_required(vault, key)? {
+        export_history_free_window_snapshot(doc)?
     } else {
-        super::loro_support::export_updates_since(doc, remote_vv)
-    }
+        super::loro_support::export_updates_since(doc, remote_vv)?
+    };
+    super::device_only::cut_device_only_export(vault, doc, &remote, bytes)
 }
 
 pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {

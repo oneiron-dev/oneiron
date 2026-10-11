@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-#[cfg(feature = "sync")]
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::side_table::{self, HexId, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
@@ -605,7 +604,6 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
 mod tests;
 
 /// Every world flagged device-only on this device.
-#[cfg(feature = "sync")]
 pub(crate) fn device_only_worlds_in(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -620,7 +618,6 @@ pub(crate) fn device_only_worlds_in(
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD
 /// row itself, a CLAIM whose `worldId` is flagged, or a NOTE with a stored
 /// `InWorld` edge to a flagged world.
-#[cfg(feature = "sync")]
 pub(crate) fn device_only_withholds(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,

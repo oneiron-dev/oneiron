@@ -3961,6 +3961,213 @@ fn packing_withholds_the_world_row_flagged_device_only() -> Result<()> {
     Ok(())
 }
 
+/// Two world windows packed while every world was portable: a claim in the
+/// world later flagged device-only, and a claim in a portable world, each
+/// `About` a base PERSON that `Mentions` both, plus a portable→private edge.
+/// The private world is flagged device-only only after both windows packed.
+struct ResidentDeviceOnly {
+    private_world: EntityId,
+    private_claim: EntityId,
+    portable_claim: EntityId,
+    person: EntityId,
+    private_key: WindowKey,
+    portable_key: WindowKey,
+    private_doc: LoroDoc,
+    portable_doc: LoroDoc,
+}
+
+fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
+    let month = WindowKey::new("2026-03");
+    let (private_world, private_claim) = device_only_world_fixture(vault, &month)?;
+    let person = EntityId::from_bytes([0x72; 16])?;
+    let portable_world = EntityId::from_bytes([0x74; 16])?;
+    let portable_claim = EntityId::from_bytes([0x75; 16])?;
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &portable_world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"portable",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.portable",
+        crate::claim::ClaimSubject::Entity(person),
+        Value::from("portable fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )?;
+    body.world = Some(portable_world);
+    vault.put_claim(&portable_claim, &body, occurred, at)?;
+    vault.set_world_device_only(private_world, false)?;
+    vault
+        .batch()
+        .edge(&portable_claim, EdgeKind::About, &person, 1.0)
+        .edge(&person, EdgeKind::Mentions, &private_claim, 1.0)
+        .edge(&person, EdgeKind::Mentions, &portable_claim, 1.0)
+        .edge(&portable_claim, EdgeKind::Supports, &private_claim, 1.0)
+        .commit()?;
+    let private_key = WindowKey::for_month_world(&month, private_world);
+    let portable_key = WindowKey::for_month_world(&month, portable_world);
+    let private_doc = create_window_doc("private", &private_key);
+    let portable_doc = create_window_doc("portable", &portable_key);
+    reverse_rematerialize(vault, &private_doc, &private_key)?;
+    reverse_rematerialize(vault, &portable_doc, &portable_key)?;
+    let packed = private_doc.get_map("entities");
+    assert!(packed.get(&private_claim.to_hex()).is_some());
+    vault.set_world_device_only(private_world, true)?;
+    Ok(ResidentDeviceOnly {
+        private_world,
+        private_claim,
+        portable_claim,
+        person,
+        private_key,
+        portable_key,
+        private_doc,
+        portable_doc,
+    })
+}
+
+/// What a receiver holding nothing gets from one window export.
+fn exported_to_empty_receiver(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<LoroDoc> {
+    let bytes =
+        export_window_updates_since(vault, key, doc, &loro::VersionVector::default().encode())?;
+    let received = create_window_doc("receiver", key);
+    import_doc(&received, &bytes)?;
+    Ok(received)
+}
+
+fn names_entity_in_any_edge(doc: &LoroDoc, id: EntityId) -> bool {
+    let mut named = false;
+    crate::sync::loro_support::map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
+        let (src, _, dst) = crate::sync::bridge::parse_edge_key(key).expect("edge key");
+        named |= src == id || dst == id;
+    });
+    named
+}
+
+/// R11133: a claim packed while its world was portable, and both its edges,
+/// stop leaving once the world turns device-only. Portable controls ship.
+#[test]
+fn world_window_export_withholds_device_claims_and_incident_edges_but_keeps_portable_controls()
+-> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let private = exported_to_empty_receiver(&vault, &fx.private_key, &fx.private_doc)?;
+    let portable = exported_to_empty_receiver(&vault, &fx.portable_key, &fx.portable_doc)?;
+
+    for received in [&private, &portable] {
+        let entities = received.get_map("entities");
+        assert!(entities.get(&fx.private_claim.to_hex()).is_none());
+        assert!(!names_entity_in_any_edge(received, fx.private_claim));
+    }
+    let edges = portable.get_map("edges");
+    assert!(
+        portable
+            .get_map("entities")
+            .get(&fx.portable_claim.to_hex())
+            .is_some()
+    );
+    for (src, kind, dst) in [
+        (fx.portable_claim, EdgeKind::About, fx.person),
+        (fx.person, EdgeKind::Mentions, fx.portable_claim),
+    ] {
+        let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
+        assert!(edges.get(&key).is_some());
+    }
+    Ok(())
+}
+
+/// The flag is read at export time and the stored window keeps the carrier:
+/// clearing the flag ships the claim and every edge again.
+#[test]
+fn clearing_device_only_exports_the_resident_claim_again() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    exported_to_empty_receiver(&vault, &fx.private_key, &fx.private_doc)?;
+    exported_to_empty_receiver(&vault, &fx.portable_key, &fx.portable_doc)?;
+    vault.set_world_device_only(fx.private_world, false)?;
+
+    let private = exported_to_empty_receiver(&vault, &fx.private_key, &fx.private_doc)?;
+    let portable = exported_to_empty_receiver(&vault, &fx.portable_key, &fx.portable_doc)?;
+    assert!(
+        private
+            .get_map("entities")
+            .get(&fx.private_claim.to_hex())
+            .is_some()
+    );
+    for (received, src, kind, dst) in [
+        (&private, fx.private_claim, EdgeKind::About, fx.person),
+        (&private, fx.person, EdgeKind::Mentions, fx.private_claim),
+        (
+            &portable,
+            fx.portable_claim,
+            EdgeKind::Supports,
+            fx.private_claim,
+        ),
+    ] {
+        let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
+        assert!(received.get_map("edges").get(&key).is_some(), "{key}");
+    }
+    Ok(())
+}
+
+/// A receiver that already holds the rows is sent nothing that removes them:
+/// a bare edge removal would delete its own stored edge.
+#[test]
+fn device_only_flag_never_removes_edges_a_receiver_already_holds() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let about =
+        crate::sync::bridge::format_edge_key(&fx.private_claim, EdgeKind::About, &fx.person);
+    // Delta transport, then the history-free snapshot transport.
+    for history_free in [false, true] {
+        let receiver = create_window_doc("receiver", &fx.private_key);
+        import_doc(
+            &receiver,
+            &crate::sync::loro_support::export_snapshot(&fx.private_doc)?,
+        )?;
+        if history_free {
+            require_history_free_window(&vault, &fx.private_key)?;
+        }
+        let bytes = export_window_updates_since(
+            &vault,
+            &fx.private_key,
+            &fx.private_doc,
+            &receiver.oplog_vv().encode(),
+        )?;
+        import_doc(&receiver, &bytes)?;
+        assert!(receiver.get_map("edges").get(&about).is_some());
+    }
+    Ok(())
+}
+
+/// The promoted-device reply reads the same flag.
+#[test]
+fn promoted_window_export_withholds_a_resident_device_only_claim() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let bytes = export_promoted_window_updates_since(
+        &vault,
+        &fx.private_key,
+        &fx.private_doc,
+        &loro::VersionVector::default().encode(),
+    )?;
+    let received = create_window_doc("receiver", &fx.private_key);
+    import_doc(&received, &bytes)?;
+
+    assert!(
+        received
+            .get_map("entities")
+            .get(&fx.private_claim.to_hex())
+            .is_none()
+    );
+    assert!(!names_entity_in_any_edge(&received, fx.private_claim));
+    Ok(())
+}
+
 #[test]
 fn dreamer_actor_conflicting_peer_put_and_tombstone_quarantine_without_disabling_open() -> Result<()>
 {
