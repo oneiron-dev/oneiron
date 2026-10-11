@@ -8256,14 +8256,17 @@ name = "oneiron-organ-host"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "ipnet",
  "libc",
  "oneiron",
  "oneiron-organ-protocol",
+ "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
  "serde",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
  "toml 0.8.2",
 ]
 

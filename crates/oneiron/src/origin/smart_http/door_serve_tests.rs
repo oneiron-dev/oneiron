@@ -1,55 +1,117 @@
 //! Serve command and door tests: closed env/argv, vetted hook, unlandable names,
 //! framed blobs, coordinator, door request parse, repo names, noop seam, dial.
 
-use super::tests::{git, hooks_dir, landing_outcome, landing_time, seeded_repo, temp_vault};
+use super::tests::{git, landing_outcome, landing_time, seeded_repo, temp_vault};
 use super::*;
 use crate::error::CodeError;
 
+#[cfg(unix)]
 #[test]
-fn smart_http_serve_command_env_allowlist_is_closed() {
-    let (root, hooks) = hooks_dir();
-    let repo = root.path().join("demo.git");
-    std::fs::create_dir_all(&repo).expect("repo dir");
-    let command =
-        ServeCommand::http_backend(&repo, root.path(), hooks.path()).expect("build serve command");
-
-    let base = command.env().keys().cloned().collect::<Vec<_>>();
-    assert_eq!(base, SERVE_BASE_ENV_KEYS.to_vec(), "closed serve baseline");
-    assert_eq!(
-        command.env().get("GIT_HTTP_EXPORT_ALL").map(String::as_str),
-        Some("1"),
-        "export pin"
-    );
-    assert_eq!(
-        command
-            .env()
-            .get("GIT_NO_REPLACE_OBJECTS")
-            .map(String::as_str),
-        Some("1"),
-        "every git under this serve reads true object bytes"
-    );
-
-    let request = ServeRequest {
-        method: "POST".to_owned(),
-        path_info: "/demo.git/git-receive-pack".to_owned(),
-        query_string: String::new(),
-        content_type: Some("application/x-git-receive-pack-request".to_owned()),
-        content_length: Some(7),
-        content_encoding: Some("gzip".to_owned()),
-        git_protocol: Some("version=2".to_owned()),
-        remote_user: Some("principal:tester".to_owned()),
-        remote_addr: None,
-    };
-    let child_env = command.child_env(&request);
-    for key in child_env.keys() {
-        let known = SERVE_BASE_ENV_KEYS.contains(&key.as_str())
-            || SERVE_REQUEST_ENV_KEYS.contains(&key.as_str());
-        assert!(known, "unexpected serve environment key {key}");
+fn receive_pack_rejects_secret_under_hostile_inherited_git_config() {
+    use super::tests::{CapturingSink, commit_file, served_repo};
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD: &str = "ONEIRON_HOSTILE_GIT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let hostile = tempfile::tempdir().unwrap();
+        let hook = hostile.path().join("pre-receive");
+        std::fs::write(
+            &hook,
+            b"#!/bin/sh\nprintf invoked > \"$0.invoked\"\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "origin::smart_http::door_serve_tests::receive_pack_rejects_secret_under_hostile_inherited_git_config",
+                "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1").env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+            .env("GIT_CONFIG_VALUE_0", hostile.path())
+            .env("GIT_CONFIG_KEY_1", "receive.fsckObjects")
+            .env("GIT_CONFIG_VALUE_1", "false")
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        assert!(!hostile.path().join("pre-receive.invoked").exists());
+        return;
     }
-    assert!(
-        !child_env.contains_key("GIT_CONFIG_PARAMETERS"),
-        "the config policy travels in argv, never in the environment"
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo, _, head) = served_repo(&vault);
+    let pusher = EntityId::now().to_hex();
+    let push = |path: &str, contents: &str, name: &str| {
+        let tip = commit_file(source.path(), path, contents);
+        // Transfer objects only; the receive-pack below proposes their first new served ref.
+        git(
+            &repo,
+            &["fetch", "--", source.path().to_str().unwrap(), tip.as_str()],
+        );
+        let pack = std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["pack-objects", "--stdout"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(pack.status.success());
+        let command = format!(
+            "{} {} {name}\0report-status\n",
+            "0".repeat(40),
+            tip.as_str()
+        );
+        let mut bytes = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
+        bytes.extend(pack.stdout);
+        let request = ServeRequest {
+            method: "POST".into(),
+            path_info: "/demo.git/git-receive-pack".into(),
+            query_string: String::new(),
+            content_type: Some("application/x-git-receive-pack-request".into()),
+            content_length: Some(bytes.len() as u64),
+            content_encoding: None,
+            git_protocol: None,
+            remote_user: Some(pusher.clone()),
+            remote_addr: Some("127.0.0.1".into()),
+        };
+        let mut sink = CapturingSink::default();
+        let mut body = io::Cursor::new(bytes);
+        let report = serve(
+            &vault,
+            "demo",
+            &request,
+            DoorSeam::Landed,
+            &mut body,
+            &mut sink,
+        )
+        .expect("real CGI exchange completes");
+        (tip, report)
+    };
+    // Positive control: under the same hostile config a clean push scans and lands.
+    let (clean, report) = push("notes.txt", "plain notes\n", "refs/heads/hostile-clean");
+    assert_eq!(report.door.verdict, DoorWindowVerdict::Clean);
+    assert!(report.landing.is_some());
+    assert_eq!(
+        git(&repo, &["rev-parse", "refs/heads/hostile-clean"]),
+        clean.as_str()
     );
+    let published = vault.origin_publication_ids(None).unwrap();
+    let (_, report) = push(
+        "secret.txt",
+        "token=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
+        "refs/heads/hostile-secret",
+    );
+    // Refused by detection: the one reason names the secret's path. Unreadable
+    // input, a scan that cannot run and a lost intent write name no path.
+    let DoorWindowVerdict::Rejected { reasons } = &report.door.verdict else {
+        panic!("secret push admitted: {:?}", report.door.verdict);
+    };
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].starts_with("secret.txt: "), "{reasons:?}");
+    assert!(!reasons[0].contains("ghp_"));
+    assert!(report.landing.is_none());
+    assert!(git(&repo, &["for-each-ref", "refs/heads/hostile-secret"]).is_empty());
+    assert_eq!(git(&repo, &["rev-parse", "refs/heads/main"]), head.as_str());
+    assert_eq!(vault.origin_publication_ids(None).unwrap(), published);
 }
 
 /// Frames one record the way the vetted hook does.
