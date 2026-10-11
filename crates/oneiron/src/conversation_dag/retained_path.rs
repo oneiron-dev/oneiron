@@ -144,10 +144,15 @@ fn prove_childof_only(
         None,
     )? {
         let id = entry?.target;
+        // A row the caller does not admit is never looked at, not even for
+        // whether it exists.
+        if !admits(&id) {
+            continue;
+        }
         let Some(raw) = store.port_entity_record(txn, &id)? else {
             return Err(Error::CorruptedIndex("conversation ChildOf row"));
         };
-        if raw.entity_type != ENTITY_TYPE_TURN || !admits(&id) {
+        if raw.entity_type != ENTITY_TYPE_TURN {
             continue;
         }
         if !graph::edge_ids(store, txn, &id, EdgeKind::Parent, false, 2)?.is_empty()
