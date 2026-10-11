@@ -485,26 +485,6 @@ fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
     Ok(())
 }
 
-#[test]
-fn an_organ_binary_that_cannot_run_is_not_retried()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (keys, cert) = synthetic_keys()?;
-    let bin = tempfile::tempdir()?;
-    let program = bin.path().join("not-an-organ");
-    std::fs::write(&program, b"not an executable")?;
-    let host = OrganHost::new(HostConfig::default());
-    host.install(seal_spec(&program, FetchGrant::default()));
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::device())?;
-    let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
-    let failed = sealer.verify(ORIGINAL);
-    assert!(
-        matches!(&failed, Err(EsignSealerError::Fatal { code, .. }) if code == "not_runnable"),
-        "{failed:?}"
-    );
-    Ok(())
-}
-
 /// A 100 KB PDF whose 1,024 signature fields all name one 64 KiB string,
 /// so its full verification report is over 64 MiB.
 fn many_long_named_fields() -> Vec<u8> {

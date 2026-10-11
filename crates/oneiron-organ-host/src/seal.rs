@@ -634,10 +634,12 @@ fn host_failure(err: HostError) -> EsignSealerError {
         HostError::Backoff { retry_after, .. } => EsignSealerError::Unavailable {
             retry_after_ms: Some(u64::try_from(retry_after.as_millis()).unwrap_or(u64::MAX)),
         },
-        // A binary that cannot run stays that way until it is reinstalled.
-        HostError::NotRunnable { .. } => organ("not_runnable"),
         // The organ died or the host had no room: it may pass. A frame the
-        // socket could not carry means the process was gone.
+        // socket could not carry means the process was gone. A start that
+        // failed counts as a crash too, a bad binary included: the host
+        // cannot tell one from a condition someone can fix (a security
+        // policy, a limit, stdio), and a bad binary costs only backoff,
+        // then quarantine until it is reinstalled.
         HostError::Crashed(_)
         | HostError::StartFailed { .. }
         | HostError::BudgetTimeout

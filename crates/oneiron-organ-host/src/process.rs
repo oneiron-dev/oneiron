@@ -14,7 +14,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::Shutdown;
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -354,7 +353,7 @@ impl OrganProcess {
         let mut command = Command::new(&spec.program);
         command.args(&spec.args);
         sandbox::confine(&mut command, theirs.as_raw_fd(), spec);
-        let child = command.spawn().map_err(|err| start_error(spec, err))?;
+        let child = command.spawn()?;
         drop(theirs);
         let pid = child.id();
         let lifeline = Arc::new(Lifeline {
@@ -783,32 +782,6 @@ impl OrganProcess {
 impl Drop for OrganProcess {
     fn drop(&mut self) {
         self.kill();
-    }
-}
-
-/// A start that failed before the organ ran. A binary that cannot run is
-/// [`HostError::NotRunnable`], told by looking at the binary itself: the
-/// error alone cannot say, since the sandbox's steps before exec, stdio
-/// and the host's security policy fail with the same errnos as exec does.
-fn start_error(spec: &OrganSpec, err: std::io::Error) -> HostError {
-    let not_runnable = err.raw_os_error() == Some(libc::ENOEXEC)
-        || match std::fs::metadata(&spec.program) {
-            Err(missing) => {
-                err.kind() == std::io::ErrorKind::NotFound
-                    && missing.kind() == std::io::ErrorKind::NotFound
-            }
-            Ok(binary) => {
-                err.kind() == std::io::ErrorKind::PermissionDenied
-                    && (!binary.is_file() || binary.permissions().mode() & 0o111 == 0)
-            }
-        };
-    if not_runnable {
-        HostError::NotRunnable {
-            organ: spec.name.clone(),
-            reason: err.to_string(),
-        }
-    } else {
-        HostError::Io(err)
     }
 }
 
