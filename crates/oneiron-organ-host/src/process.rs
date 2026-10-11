@@ -4,6 +4,12 @@
 //! (a peer that stops reading cannot hold a writer), and each reply. Ending
 //! a process never needs the socket: the host kills the organ's process
 //! group, shuts its socket down so the reader thread wakes, and reaps it.
+//!
+//! On a 1.1 session the organ may ask inside a call. The reader thread hands
+//! each ask to the thread waiting on that call, which answers it there and
+//! keeps waiting. One ask is in flight per call: a second one, or more asks
+//! for calls not in flight than calls the host cancelled, breaks the
+//! protocol and ends the process.
 
 use std::collections::{HashMap, HashSet};
 use std::net::Shutdown;
@@ -17,15 +23,32 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
-    Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
-    PROTOCOL, Reply, ToOrgan, recv_frame, recv_frame_until, send_frame_until, spin,
+    Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
+    PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame, recv_frame_until, send_frame_until,
+    spin,
 };
 
+use crate::asks::{AskStep, CallAsks};
 use crate::error::HostError;
 use crate::sandbox;
 use crate::spec::{HostConfig, OrganSpec};
 
-type Delivery = Option<(Reply, Vec<OwnedFd>)>;
+/// What the reader thread hands a waiting call.
+#[derive(Debug)]
+enum Delivery {
+    Reply(Reply, Vec<OwnedFd>),
+    Ask(Ask),
+    /// The process ended.
+    Closed,
+}
+
+/// A call in flight, as the reader thread sees it.
+#[derive(Debug)]
+struct Pending {
+    deliver: SyncSender<Delivery>,
+    /// An ask of this call waits for its answer.
+    asking: bool,
+}
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -54,15 +77,54 @@ fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Option<MutexGuard<'_, T
 #[derive(Debug, Default)]
 struct Inbox {
     alive: AtomicBool,
-    pending: Mutex<HashMap<u64, SyncSender<Delivery>>>,
+    pending: Mutex<HashMap<u64, Pending>>,
+    /// The session speaks 1.1 or later, so the organ may ask.
+    asks: bool,
+    /// Calls the host cancelled on this process: an ask of each may cross
+    /// the cancel honestly.
+    cancels: AtomicU64,
+    /// Asks that came for calls not in flight.
+    stale_asks: AtomicU64,
 }
 
 impl Inbox {
     fn close(&self) {
         self.alive.store(false, Ordering::SeqCst);
-        for (_, waiter) in lock(&self.pending).drain() {
-            let _ = waiter.try_send(None);
+        for (_, pending) in lock(&self.pending).drain() {
+            let _ = pending.deliver.try_send(Delivery::Closed);
         }
+    }
+
+    /// Hands an ask to the call it names. `false` when the ask breaks the
+    /// protocol: a second one in flight for its call, or more stale asks
+    /// than cancelled calls.
+    fn route_ask(&self, ask: Ask) -> bool {
+        let mut pending = lock(&self.pending);
+        let Some(call) = pending.get_mut(&ask.call) else {
+            drop(pending);
+            let stale = self.stale_asks.fetch_add(1, Ordering::SeqCst) + 1;
+            return stale <= self.cancels.load(Ordering::SeqCst);
+        };
+        if call.asking {
+            return false;
+        }
+        call.asking = true;
+        call.deliver.try_send(Delivery::Ask(ask)).is_ok()
+    }
+
+    /// The call's ask is being answered; its next one may come. `false`,
+    /// and nothing changes, once the call is no longer in flight.
+    fn answered(&self, id: u64) -> bool {
+        lock(&self.pending).get_mut(&id).is_some_and(|call| {
+            call.asking = false;
+            true
+        })
+    }
+
+    /// Whether call `id` still waits for its reply: the reader takes its
+    /// entry when the reply comes or the process ends.
+    fn in_flight(&self, id: u64) -> bool {
+        lock(&self.pending).contains_key(&id)
     }
 }
 
@@ -160,6 +222,43 @@ impl Drop for EndOnDrop {
     }
 }
 
+/// Ends a call's hold on its process however its wait ends, a panic
+/// included. A call a panic left in flight is cancelled, so the organ's ask
+/// wakes rather than holding one of its threads. (A panic in an ask's
+/// handler is the watchdog's: it cancels the call itself.)
+struct Seated<'p> {
+    process: &'p OrganProcess,
+    id: u64,
+    grace: Duration,
+}
+
+impl Drop for Seated<'_> {
+    fn drop(&mut self) {
+        // Cancelled before the entry goes, so an ask crossing the cancel
+        // is excused rather than read as stale.
+        let in_flight = lock(&self.process.inbox.pending).contains_key(&self.id);
+        if in_flight && thread::panicking() {
+            let until = Instant::now() + self.grace;
+            self.process.cancel(self.id, CancelReason::Caller, until);
+        }
+        lock(&self.process.inbox.pending).remove(&self.id);
+        *lock(&self.process.last_used) = Instant::now();
+        self.process.free_seat();
+    }
+}
+
+/// What a call's deadline did while an ask's handler ran.
+enum Overrun {
+    /// The handler returned before the deadline.
+    InTime,
+    /// The deadline passed and the call was cancelled; within the grace
+    /// the reader took the call's entry, for its reply or as the process
+    /// ended.
+    Cancelled,
+    /// The organ did not reply within the grace, or ended: it was stopped.
+    Stopped,
+}
+
 /// Why a call to a live process did not come back.
 #[derive(Debug)]
 pub(crate) enum CallFailure {
@@ -178,12 +277,52 @@ pub(crate) enum CallFailure {
     /// process saw nothing and is unharmed.
     Refused(HostError),
     Frame(HostError),
+    /// The host ended the call itself, as for an organ asking past its caps.
+    Ended(HostError),
+}
+
+/// How a call waits for its reply: until `deadline`, answering asks
+/// through `asks`, then `grace` for a cancel to take.
+pub(crate) struct Wait<'a, 'b> {
+    /// Whether the call's grant was withdrawn.
+    pub(crate) revoked: &'a dyn Fn() -> bool,
+    pub(crate) asks: &'a mut CallAsks<'b>,
+    pub(crate) deadline: Instant,
+    pub(crate) grace: Duration,
+}
+
+/// Waits `grace` for a cancelled call's reply. Its asks are not run, only
+/// receipted: their waits end with the cancel. `true` if the reply came.
+fn wait_reply(reply: &mpsc::Receiver<Delivery>, grace: Duration, asks: &mut CallAsks<'_>) -> bool {
+    let until = Instant::now() + grace;
+    loop {
+        match reply.recv_timeout(until.saturating_duration_since(Instant::now())) {
+            Ok(Delivery::Reply(..)) => return true,
+            Ok(Delivery::Ask(ask)) => asks.skipped(&ask),
+            Ok(Delivery::Closed) | Err(_) => return false,
+        }
+    }
+}
+
+/// Whether a call whose entry the reader has taken got its reply, rather
+/// than the process ending. Never waits long: the entry held the only
+/// sender, and the reader drops it right after delivering.
+fn replied(reply: &mpsc::Receiver<Delivery>, asks: &mut CallAsks<'_>) -> bool {
+    loop {
+        match reply.recv() {
+            Ok(Delivery::Reply(..)) => return true,
+            Ok(Delivery::Ask(ask)) => asks.skipped(&ask),
+            Ok(Delivery::Closed) | Err(_) => return false,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct OrganProcess {
     pub(crate) pid: u32,
     pub(crate) hello: HelloAck,
+    /// The version the session speaks: one major, the lower minor.
+    pub(crate) session: ProtocolVersion,
     pub(crate) spawn_time: Duration,
     pub(crate) net_isolated: bool,
     max_call_frame: u32,
@@ -233,7 +372,11 @@ impl OrganProcess {
         });
         let mut guard = EndOnDrop(Some(Arc::clone(&lifeline)));
         let hello = handshake(&ours, spec, config, handshake_by, handshake_by < own)?;
-        let inbox = Arc::new(Inbox::default());
+        let session = PROTOCOL.session(hello.protocol).unwrap_or(hello.protocol);
+        let inbox = Arc::new(Inbox {
+            asks: session.asks(),
+            ..Inbox::default()
+        });
         inbox.alive.store(true, Ordering::SeqCst);
         let reader_inbox = Arc::clone(&inbox);
         let reader_lifeline = Arc::clone(&lifeline);
@@ -248,6 +391,7 @@ impl OrganProcess {
         Ok(Arc::new(Self {
             pid,
             hello,
+            session,
             spawn_time: started.elapsed(),
             net_isolated: sandbox::net_isolated(pid),
             max_call_frame: spec.max_call_frame,
@@ -319,8 +463,9 @@ impl OrganProcess {
         lock(&self.grants).contains(grant)
     }
 
-    /// Sends one call and waits for its reply until `deadline`; then cancels,
-    /// waits `grace`, and kills the process if it still has not answered.
+    /// Sends one call and waits for its reply until `deadline`, answering
+    /// the organ's asks through `asks` as they come; then cancels, waits
+    /// `grace`, and kills the process if it still has not answered.
     ///
     /// The process is marked as holding `grant` before `revoked` is asked,
     /// and a revocation records itself before it looks for holders, so one
@@ -330,25 +475,56 @@ impl OrganProcess {
         mut call: Call,
         fds: &[BorrowedFd<'_>],
         grant: &str,
-        revoked: &dyn Fn() -> bool,
-        deadline: Instant,
-        grace: Duration,
+        wait: Wait<'_, '_>,
     ) -> Result<(Reply, Vec<OwnedFd>), CallFailure> {
-        self.take_seat(deadline)?;
+        self.take_seat(wait.deadline)?;
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         call.id = id;
-        let (waiter, reply) = mpsc::sync_channel(1);
-        lock(&self.inbox.pending).insert(id, waiter);
+        // Room for the one ask in flight and the reply behind it.
+        let (deliver, reply) = mpsc::sync_channel(2);
+        let pending = Pending {
+            deliver,
+            asking: false,
+        };
+        lock(&self.inbox.pending).insert(id, pending);
+        let _seated = Seated {
+            process: self,
+            id,
+            grace: wait.grace,
+        };
         lock(&self.grants).insert(grant.to_owned());
-        let outcome = if revoked() {
+        let Wait {
+            revoked,
+            asks,
+            deadline,
+            grace,
+        } = wait;
+        let result = if revoked() {
             Err(CallFailure::Revoked)
         } else {
-            self.exchange(call, fds, &reply, deadline, grace)
+            let wait = Wait {
+                revoked,
+                asks: &mut *asks,
+                deadline,
+                grace,
+            };
+            self.exchange(call, fds, &reply, wait)
         };
+        self.settle(id, &reply, asks);
+        result
+    }
+
+    /// Ends call `id`'s deliveries, however it ended. Once its entry is gone
+    /// the reader can route it no ask (it sends an ask only under the lock
+    /// that holds the entry), so every ask still queued is receipted here,
+    /// not run.
+    fn settle(&self, id: u64, reply: &mpsc::Receiver<Delivery>, asks: &mut CallAsks<'_>) {
         lock(&self.inbox.pending).remove(&id);
-        *lock(&self.last_used) = Instant::now();
-        self.free_seat();
-        outcome
+        while let Ok(delivery) = reply.try_recv() {
+            if let Delivery::Ask(ask) = delivery {
+                asks.skipped(&ask);
+            }
+        }
     }
 
     /// Sends one frame, the writer's lock and the frame both bounded by
@@ -365,14 +541,125 @@ impl OrganProcess {
         send_frame_until(&writer, msg, fds, limit, Some(deadline))
     }
 
+    /// Sends the answer to call `id`'s ask; `false` when it is dropped
+    /// instead.
+    ///
+    /// Once it holds the writer, it drops the answer if the call's grant was
+    /// revoked or the call is no longer in flight. A revocation records
+    /// itself before its cancel takes the writer, so an answer that waited
+    /// for the writer never follows its call's revoked cancel; and one never
+    /// goes after the reply the reader has already taken. (A reply the organ
+    /// sends while the answer is on its way crosses it, as an ask crosses a
+    /// cancel.)
+    ///
+    /// The call may ask again only once this holds the writer, so a second
+    /// ask that comes while the answer waits for the writer still breaks the
+    /// protocol. It may ask again from the moment the answer starts out, not
+    /// when the write returns: the organ can read the whole answer and ask
+    /// again before this thread sees its write finish, so a check there
+    /// would end an organ that kept the rule.
+    fn send_answer(
+        &self,
+        id: u64,
+        answer: &ToOrgan,
+        fds: &[BorrowedFd<'_>],
+        deadline: Instant,
+        revoked: &dyn Fn() -> bool,
+    ) -> Result<bool, FrameError> {
+        let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
+        if revoked() || !self.inbox.answered(id) {
+            return Ok(false);
+        }
+        send_frame_until(&writer, answer, fds, self.max_call_frame, Some(deadline))?;
+        Ok(true)
+    }
+
+    /// Runs an ask's handler on this thread while a watchdog keeps the
+    /// call's deadline (see [`Self::watch`]). `handler` learns whether the
+    /// watchdog runs: with none it must refuse the ask without running it,
+    /// since nothing would stop the organ at the deadline.
+    fn run_handler<T>(
+        &self,
+        id: u64,
+        deadline: Instant,
+        grace: Duration,
+        handler: impl FnOnce(bool) -> T,
+    ) -> (T, Overrun) {
+        thread::scope(|scope| {
+            let (done, finished) = mpsc::channel::<()>();
+            let watchdog = thread::Builder::new()
+                .name("organ-ask-deadline".into())
+                .spawn_scoped(scope, move || self.watch(id, deadline, grace, &finished));
+            let Ok(watchdog) = watchdog else {
+                return (handler(false), Overrun::InTime);
+            };
+            let out = handler(true);
+            // A panic drops `done` unsent instead, and the scope waits for
+            // the watchdog before the panic goes on.
+            let _ = done.send(());
+            let overrun = watchdog.join().unwrap_or_else(|_| {
+                self.stop();
+                Overrun::Stopped
+            });
+            (out, overrun)
+        })
+    }
+
+    /// Keeps call `id`'s deadline while one of its ask handlers runs. At
+    /// the deadline, or when the handler panics, it cancels the call; if
+    /// the organ has not replied when the grace ends, it stops the process.
+    /// It waits out the grace itself, whatever the handler does meanwhile.
+    fn watch(
+        &self,
+        id: u64,
+        deadline: Instant,
+        grace: Duration,
+        finished: &mpsc::Receiver<()>,
+    ) -> Overrun {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let reason = match finished.recv_timeout(left) {
+            Ok(()) => return Overrun::InTime,
+            Err(RecvTimeoutError::Timeout) => CancelReason::Deadline,
+            // The handler panicked: the call is over for its caller.
+            Err(RecvTimeoutError::Disconnected) => CancelReason::Caller,
+        };
+        let until = Instant::now() + grace;
+        self.cancel(id, reason, until);
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            {
+                let mut pending = lock(&self.inbox.pending);
+                // The reader takes a call's entry when its reply comes.
+                // Taking it here once the grace is over, under the same
+                // lock, settles which came first: a reply after it is late.
+                if !pending.contains_key(&id) {
+                    break;
+                }
+                if left.is_zero() {
+                    pending.remove(&id);
+                    drop(pending);
+                    self.stop();
+                    return Overrun::Stopped;
+                }
+            }
+            thread::sleep(left.min(Duration::from_millis(5)));
+        }
+        Overrun::Cancelled
+    }
+
     fn exchange(
         &self,
         call: Call,
         fds: &[BorrowedFd<'_>],
         reply: &mpsc::Receiver<Delivery>,
-        deadline: Instant,
-        grace: Duration,
+        wait: Wait<'_, '_>,
     ) -> Result<(Reply, Vec<OwnedFd>), CallFailure> {
+        let Wait {
+            revoked,
+            asks,
+            deadline,
+            grace,
+        } = wait;
         if !self.is_alive() {
             return Err(CallFailure::Crashed);
         }
@@ -392,13 +679,95 @@ impl OrganProcess {
                 return Err(CallFailure::Frame(err.into()));
             }
         }
-        match spin::recv_spinning(reply, Some(deadline)) {
-            Ok(Some(delivery)) => return Ok(delivery),
-            Ok(None) | Err(RecvTimeoutError::Disconnected) => return Err(CallFailure::Crashed),
-            Err(RecvTimeoutError::Timeout) => {}
+        loop {
+            match spin::recv_spinning(reply, Some(deadline)) {
+                Ok(Delivery::Reply(reply, fds)) => return Ok((reply, fds)),
+                Ok(Delivery::Ask(ask)) => {
+                    // A revocation is ending the call, or the organ has
+                    // already replied (the reader took the call's entry, and
+                    // the reply waits behind this ask): run and answer
+                    // nothing more. Past the deadline, the call is cancelled.
+                    if revoked() || !self.inbox.in_flight(id) {
+                        asks.skipped(&ask);
+                        continue;
+                    }
+                    if Instant::now() >= deadline {
+                        asks.skipped(&ask);
+                        break;
+                    }
+                    let (step, overrun) =
+                        self.run_handler(id, deadline, grace, |watched| asks.take(ask, watched));
+                    if !matches!(overrun, Overrun::InTime) {
+                        asks.unsent();
+                    }
+                    match overrun {
+                        Overrun::InTime => {}
+                        // A reply in the grace counts even if the organ then
+                        // ended: its end is the reader's to report, as a crash.
+                        Overrun::Cancelled if replied(reply, asks) => {
+                            return Err(CallFailure::Deadline { stopped: false });
+                        }
+                        Overrun::Cancelled | Overrun::Stopped => {
+                            self.stop();
+                            return Err(CallFailure::Deadline { stopped: true });
+                        }
+                    }
+                    // The organ broke the protocol while the handler ran.
+                    if !self.is_alive() {
+                        asks.unsent();
+                        return Err(CallFailure::Crashed);
+                    }
+                    if revoked() {
+                        asks.unsent();
+                        continue;
+                    }
+                    // An answer after the deadline is dropped.
+                    if Instant::now() >= deadline {
+                        asks.unsent();
+                        break;
+                    }
+                    match step {
+                        AskStep::Answer(answer, region) => {
+                            let held: Vec<BorrowedFd<'_>> =
+                                region.iter().map(|region| region.fd()).collect();
+                            let answer = ToOrgan::Answer(answer);
+                            let sent = self.send_answer(id, &answer, &held, deadline, revoked);
+                            if !matches!(sent, Ok(true)) {
+                                asks.unsent();
+                            }
+                            match sent {
+                                Ok(_) => {}
+                                Err(FrameError::Late) => break,
+                                Err(FrameError::TimedOut) => {
+                                    self.stop();
+                                    return Err(CallFailure::Deadline { stopped: true });
+                                }
+                                Err(err) => {
+                                    self.kill();
+                                    return Err(CallFailure::Frame(err.into()));
+                                }
+                            }
+                        }
+                        AskStep::End(err) => {
+                            return Err(self.end_call(
+                                id,
+                                CancelReason::Caller,
+                                reply,
+                                grace,
+                                asks,
+                                err,
+                            ));
+                        }
+                    }
+                }
+                Ok(Delivery::Closed) | Err(RecvTimeoutError::Disconnected) => {
+                    return Err(CallFailure::Crashed);
+                }
+                Err(RecvTimeoutError::Timeout) => break,
+            }
         }
         self.cancel(id, CancelReason::Deadline, Instant::now() + grace);
-        if matches!(reply.recv_timeout(grace), Ok(Some(_))) {
+        if wait_reply(reply, grace, asks) {
             Err(CallFailure::Deadline { stopped: false })
         } else {
             self.stop();
@@ -406,9 +775,29 @@ impl OrganProcess {
         }
     }
 
+    /// Cancels a call the host ends itself, waits `grace` for the organ to
+    /// stop, and kills it if it does not.
+    fn end_call(
+        &self,
+        id: u64,
+        reason: CancelReason,
+        reply: &mpsc::Receiver<Delivery>,
+        grace: Duration,
+        asks: &mut CallAsks<'_>,
+        err: HostError,
+    ) -> CallFailure {
+        self.cancel(id, reason, Instant::now() + grace);
+        if !wait_reply(reply, grace, asks) {
+            self.stop();
+        }
+        CallFailure::Ended(err)
+    }
+
     /// Cancels one call. An organ that cannot take the cancel by `deadline`
     /// is not reading: it is stopped.
     pub(crate) fn cancel(&self, id: u64, reason: CancelReason, deadline: Instant) {
+        // Counted first: an ask that crosses this cancel is then excused.
+        self.inbox.cancels.fetch_add(1, Ordering::SeqCst);
         let cancel = ToOrgan::Cancel { id, reason };
         if self
             .send(&cancel, &[], DEFAULT_FRAME_LIMIT, deadline)
@@ -550,13 +939,21 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
 fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: u32) {
     loop {
         spin::poll_readable(stream);
-        let Ok((FromOrgan::Reply(reply), fds)) = recv_frame::<FromOrgan>(stream, limit) else {
-            break;
-        };
-        let waiter = lock(&inbox.pending).remove(&reply.id);
-        // A reply nobody waits for came after its deadline: drop it.
-        if let Some(waiter) = waiter {
-            let _ = waiter.try_send(Some((reply, fds)));
+        match recv_frame::<FromOrgan>(stream, limit) {
+            Ok((FromOrgan::Reply(reply), fds)) => {
+                let waiter = lock(&inbox.pending).remove(&reply.id);
+                // A reply nobody waits for came after its deadline: drop it.
+                if let Some(waiter) = waiter {
+                    let _ = waiter.deliver.try_send(Delivery::Reply(reply, fds));
+                }
+            }
+            Ok((FromOrgan::Ask(ask), _)) if inbox.asks => {
+                if !inbox.route_ask(ask) {
+                    break;
+                }
+            }
+            // An ask on a 1.0 session, a second hello_ack, a broken frame.
+            _ => break,
         }
     }
     inbox.close();

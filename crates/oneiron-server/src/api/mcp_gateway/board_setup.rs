@@ -1,6 +1,6 @@
 //! Board state, setup grammar, and page preflight.
 
-use super::stream_reads::mcp_live_task_lines;
+use super::stream_reads::{mcp_live_task_lines, mcp_own_task_lines};
 use super::{
     McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
     mcp_facade_error, mcp_scope_covers_entity, mcp_scoped_read, mcp_text_content,
@@ -46,19 +46,20 @@ pub(super) enum McpCarrierPolicy {
 /// No branch hand-builds an envelope beside this one: after M1 there is no
 /// unlisted executor left that could.
 ///
-/// ONE-1704 B4: a world- or facet-NARROWED connection is delivered ZERO carrier
-/// frames here. The engine's router matches a carrier subscription by category
-/// and actor equality only, so two credentials for one actor with disjoint
-/// worlds or facets are eligible for the same events; until the router can
-/// filter those axes, the truthful delivery for a narrowed connection is none
-/// at all. This is a delivery ceiling, not a discard: the server takes no
-/// payload for such a connection, so nothing the engine queued is destroyed
-/// here. Vault-wide connections are untouched.
+/// ONE-1704 B4: a world- or facet-NARROWED connection, or one whose credential
+/// carries record-scope caveats, is delivered its own-task `tasks:` lines and
+/// nothing else. The board publisher admits each own-task event under that
+/// connection's own read of the TASK, projected through its world and facet
+/// ceiling (`mcp_stream_reads_task`), so two
+/// credentials for one actor with disjoint worlds or facets hear disjoint
+/// events. No other carrier row is projected through those ceilings, so none
+/// rides, and the rider never runs for such a connection. Its setup keyframe
+/// is still taken, so its carrier holds the epoch a delta rides at.
 ///
-/// A vault-wide call also binds this credential as the connection's reader,
-/// the one the board publisher admits own-task events under, and every
-/// queued TASK line is read again before it rides: a line whose TASK was
-/// erased, or that this credential may no longer read, is dropped.
+/// Every call binds this credential as the connection's reader, the one the
+/// board publisher admits own-task events under, and every queued TASK line
+/// is read again before it rides: a line whose TASK was erased, or that this
+/// credential may no longer read, is dropped.
 pub(super) async fn mcp_endpoint_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -67,9 +68,7 @@ pub(super) async fn mcp_endpoint_result(
     policy: McpCarrierPolicy,
 ) -> Value {
     let mut capabilities = Vec::new();
-    let carrier = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
-        None
-    } else {
+    let carrier = {
         let mut registry = server.mcp_registry.lock().await;
         registry.bind_stream_reader(actor);
         match policy {
@@ -90,7 +89,9 @@ pub(super) async fn mcp_endpoint_result(
     let carrier = carrier.and_then(|frame| mcp_live_task_lines(server, actor, frame));
     // Never turn lifecycle movement into a push. A narrowed connector never
     // reaches the rider and an empty queue remains empty.
-    let carrier = if carrier.is_some() {
+    let carrier = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
+        carrier.and_then(mcp_own_task_lines)
+    } else if carrier.is_some() {
         let original = carrier.clone();
         super::board_observations::ride(server, actor, carrier, &capabilities)
             .await
