@@ -406,3 +406,45 @@ fn a_filtered_vector_search_in_the_room_widens_over_base_rows_added_on_record() 
     session.close()?;
     Ok(())
 }
+
+/// A room stages its BM25 document count with its postings. Once it is on
+/// record base keeps indexing, so the union's postings outnumber that count.
+/// A text search in the room still answers, with base's new rows.
+#[test]
+fn a_text_search_in_the_room_reads_base_rows_indexed_after_it_went_on_record() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let first = entity_id(0xC1);
+    put_text_and_vector(&vault, first, "unionneedle", [1.0, 0.0, 0.0, 0.0])?;
+    let session = enter(&vault, "sess-room-bm25-count")?;
+    let staged = entity_id(0xC2);
+    stage_in_room(
+        &vault,
+        &session,
+        vec![
+            room_put(staged),
+            BatchOp::Text {
+                id: staged,
+                fields: vec![("body".to_owned(), "unionneedle".to_owned())],
+            },
+        ],
+    )?;
+    session.flip_on_record()?;
+    let later = [entity_id(0xC3), entity_id(0xC4)];
+    for id in later {
+        put_text_and_vector(&vault, id, "unionneedle", [0.0, 1.0, 0.0, 0.0])?;
+    }
+
+    let view = session.read_view()?;
+    let hits = vault
+        .query()
+        .search_text("unionneedle", 10)
+        .reading(view.read())
+        .run()?;
+    let ids: Vec<_> = hits.iter().map(|hit| hit.id).collect();
+    for id in [first, staged, later[0], later[1]] {
+        assert!(ids.contains(&id), "{id:?} is found, got {hits:?}");
+    }
+    drop(view);
+    session.close()?;
+    Ok(())
+}

@@ -11,7 +11,11 @@ pub(super) fn score_query_terms(
 ) -> Result<Vec<(EntityId, f64)>> {
     let diagnostics = &store.diagnostics().bm25;
     let total_docs = read_total_docs(store, rtxn)?;
-    if total_docs == 0 {
+    // A room stages the count it read when it indexed, and base keeps
+    // growing on record: a union's postings may outnumber that count. There
+    // a term's postings bound it from below, and the gap is no corruption.
+    let union = store.is_union();
+    if total_docs == 0 && !union {
         return Ok(Vec::new());
     }
     let n = f64::from(total_docs);
@@ -53,13 +57,14 @@ pub(super) fn score_query_terms(
             continue;
         }
         let df = count as f64;
-        if df > n {
+        if df > n && !union {
             return Err(corrupted_with_diagnostic(
                 diagnostics,
                 "posting list length exceeds total_docs",
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
         }
+        let n = n.max(df);
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
         let Some(dups) = store
             .text_postings()
