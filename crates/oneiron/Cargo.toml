@@ -26,6 +26,8 @@ oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
+# The optional type check of code-mode programs (shadow mode).
+oneiron-code-check = { path = "../oneiron-code-check" }
 # Native DOCX revisions: organ crate remains independent of the vault engine.
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 # Default xlsx recalc of the edit round trip: the in-process formula engine on
