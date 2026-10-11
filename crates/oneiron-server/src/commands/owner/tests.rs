@@ -111,15 +111,23 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
 
 /// ARCH-0036 (owner, 2026-10-11): doctor counts the stored vectors by the
 /// device and runtime that computed them, an unmarked one as unknown, and
-/// `--vectors-from` lists exactly the ids one device computed.
+/// `--vectors-from` lists exactly the ids one device computed. Bug repro:
+/// doctor opened every vault under no model, which a vault holding vectors
+/// refuses, so it reported none of them; it reports this one although the
+/// config names another model.
 #[test]
 fn doctor_counts_vectors_by_device_and_lists_one_devices_ids() {
     use oneiron::embed::{EmbeddingDevice, EmbeddingProvenance};
     let root = tempfile::tempdir().unwrap();
     let vault_path = root.path().join("vault");
     let mut vault_config = oneiron::VaultConfig::server();
-    vault_config.dimensions = 4;
+    vault_config.dimensions = 1024;
     vault_config.embedding_model = Some("test/model@v1".to_owned());
+    let unit = |axis: usize| {
+        let mut vector = vec![0.0; 1024];
+        vector[axis] = 1.0;
+        vector
+    };
     let on_cuda = oneiron::EntityId::now();
     {
         let vault = oneiron::Vault::open_owned(&vault_path, vault_config).unwrap();
@@ -127,23 +135,28 @@ fn doctor_counts_vectors_by_device_and_lists_one_devices_ids() {
             .batch()
             .vector_with_provenance(
                 &on_cuda,
-                &[1.0, 0.0, 0.0, 0.0],
+                &unit(0),
                 EmbeddingProvenance::new(EmbeddingDevice::Cuda, "candle 0.11.0 q8_0"),
             )
             .vector_with_provenance(
                 &oneiron::EntityId::now(),
-                &[0.0, 1.0, 0.0, 0.0],
+                &unit(1),
                 EmbeddingProvenance::new(EmbeddingDevice::Cpu, "candle 0.11.0 q8_0 x86_64"),
             )
-            .vector(&oneiron::EntityId::now(), &[0.0, 0.0, 1.0, 0.0])
+            .vector(&oneiron::EntityId::now(), &unit(2))
             .commit()
             .unwrap();
     }
+    // The default local embedder, whose model is not the vault's.
     let config = root.path().join("oneiron.toml");
-    std::fs::write(&config, "").unwrap();
+    std::fs::write(
+        &config,
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\n",
+    )
+    .unwrap();
     let report = doctor_report(DoctorArgs {
         path: vault_path,
-        dimensions: Some(4),
+        dimensions: None,
         map_size: None,
         dict_search_paths: None,
         config: Some(config),

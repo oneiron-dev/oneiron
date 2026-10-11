@@ -103,10 +103,12 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
     let mut vault_config = oneiron::VaultConfig::server();
     let serve_config = resolve_serve_config(&serve);
     let unresolved = serve_config.is_err();
+    let mut configured_model = None;
     let dict_search_paths = match serve_config {
         Ok(config) => {
             vault_config.dimensions = config.dimensions;
             vault_config.map_size = config.map_size;
+            configured_model = config.vault_config().embedding_model;
             config.dict_search_paths
         }
         Err(error) => {
@@ -125,7 +127,7 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
     });
     let plan = BackupPlan::new(&args.path, backup.dir_for(&args.path), backup.keep);
     let every = backup.enabled.then_some(backup.every_hours);
-    let mut report = match oneiron::Vault::open_owned(&args.path, vault_config) {
+    let mut report = match open_for_doctor(&args.path, vault_config, configured_model) {
         Ok(vault) => {
             let mut report = serde_json::to_value(vault.doctor()?)?;
             // Which device and runtime computed the stored vectors, so one
@@ -165,6 +167,35 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
         report["config_errors"] = serde_json::to_value(config_errors)?;
     }
     Ok(report)
+}
+
+/// Opens the vault for doctor without pinning anything new: under no model
+/// first, as a vault without vectors opens. One that holds vectors opens only
+/// under its own model (bug repro: doctor failed on every such vault), so
+/// after that refusal it is opened under the configured model and, when it
+/// holds another, under the one it holds.
+fn open_for_doctor(
+    path: &Path,
+    mut config: oneiron::VaultConfig,
+    configured_model: Option<String>,
+) -> oneiron::Result<oneiron::Vault> {
+    let first = oneiron::Vault::open_owned(path, config.clone());
+    let Some(model) =
+        configured_model.filter(|_| matches!(first, Err(oneiron::Error::InvalidConfig(_))))
+    else {
+        return first;
+    };
+    config.embedding_model = Some(model);
+    match oneiron::Vault::open_owned(path, config.clone()) {
+        Err(oneiron::Error::Store(oneiron::error::StoreError::EmbeddingModelChanged {
+            stored,
+            ..
+        })) => {
+            config.embedding_model = Some(stored);
+            oneiron::Vault::open_owned(path, config)
+        }
+        other => other,
+    }
 }
 
 pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
