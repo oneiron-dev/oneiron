@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::StreamExt;
-use oneiron::llm::run_admission::RunAdmission;
+use oneiron::llm::run_admission::{RunAdmission, RunDenied};
 use oneiron::{LlmError, LlmRequest, LlmStreamEvent};
 use std::sync::Arc;
 
@@ -110,8 +110,12 @@ fn admit(
         return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
     }
     // The request's model id picks the model and its route; a body field that
-    // names another is refused before anything is reserved.
+    // names another is refused before anything is reserved, with its row.
     if let Some(key) = request.route_selector_override() {
+        if let Some(raw) = &server.llm {
+            let reason = RunDenied::RouteOverride { key: key.clone() };
+            raw.refuse(request, reason, server.run_receipts());
+        }
         return Err(Box::new(route_selector_refusal(&key)));
     }
     let Some(raw) = &server.llm else {

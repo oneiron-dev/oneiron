@@ -540,6 +540,7 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     seed_models(&vault);
     let budget = BudgetGuard::with_reserve_units("raw", 100, 10, BudgetExhaustionPolicy::Suspend);
     let backend = Arc::new(Counting(AtomicUsize::new(0)));
+    let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
     let server = SyncServer::new(
         vault,
         crate::config::SyncServerConfig {
@@ -548,7 +549,8 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
         },
     )
     .unwrap()
-    .with_llm_backend(backend.clone(), budget.clone());
+    .with_llm_backend(backend.clone(), budget.clone())
+    .with_run_receipts(receipts.clone());
     let server = Arc::new(server);
     let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-route-selector");
     let router = crate::api::api_routes(server.clone());
@@ -603,4 +605,19 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     );
     assert_eq!(budget.read().used_units, 0);
     assert_eq!(budget.read().reserved_units, 0);
+    // Each refusal is receipted on the raw run: one denial naming the key,
+    // with no lease.
+    let denied: Vec<String> = receipts
+        .rows()
+        .into_iter()
+        .map(|row| match row.event {
+            oneiron::llm::run_admission::RunEvent::Denied {
+                reason: oneiron::llm::run_admission::RunDenied::RouteOverride { key },
+                lease: None,
+                ..
+            } => key,
+            other => panic!("not a route denial: {other:?}"),
+        })
+        .collect();
+    assert_eq!(denied, ["model", "openai.models", "provider"].repeat(2));
 }

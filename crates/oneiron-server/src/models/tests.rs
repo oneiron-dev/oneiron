@@ -842,6 +842,24 @@ async fn a_declared_run_calls_only_its_teachers_and_a_t1_key_only_when_allowed()
         [RunDenied::UndeclaredTeacher { .. }, RunDenied::KeyAtT1]
     ));
 
+    // A declared teacher no offer here serves, and a selector the run cannot
+    // resolve: each is refused before admission, and each has its row.
+    let missing = ModelId::new("missing/teacher@v1").unwrap();
+    let run = runtime.declared_run("distill-1b", declared(&[&missing]), None);
+    for selector in [missing.as_str(), "no-provider-separator"] {
+        assert!(
+            run.generate(selector, request(&missing, "hi"))
+                .await
+                .is_err()
+        );
+    }
+    assert!(matches!(
+        &denied(receipts.rows())[2..],
+        [RunDenied::NoOffer { model }, RunDenied::UnknownSelector { selector }]
+            if *model == missing && selector == "no-provider-separator"
+    ));
+    assert_eq!(run.admission().read().reserved_units, 0);
+
     // A keyless declared teacher holds the run's rules.
     let run = runtime.declared_run("distill-3", declared(&[&own_id]), None);
     let answer = run

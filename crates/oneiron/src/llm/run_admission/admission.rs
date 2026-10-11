@@ -29,6 +29,8 @@ pub enum RunDenied {
     UnknownSelector { selector: String },
     #[error("the offer binds another model than the call names")]
     OfferMismatch,
+    #[error("no offer on this host serves {model}")]
+    NoOffer { model: ModelId },
     #[error("the call's locality differs from its route's")]
     LocalityMismatch,
     #[error("the call picks its model or route through {key}")]
@@ -211,6 +213,23 @@ impl RunAdmission {
         ModelId::new(selector).map_err(|_| RunDenied::UnknownSelector {
             selector: selector.to_owned(),
         })
+    }
+
+    /// Records a call the host refused before admission, such as one whose
+    /// body picks its own route or one naming a model no offer serves: one
+    /// `Denied` row, nothing reserved. Returns `reason`.
+    pub fn refuse(&self, selector: Option<&str>, subject: &str, reason: RunDenied) -> RunDenied {
+        let revision = self.revision();
+        self.inner.record(
+            revision,
+            RunEvent::Denied {
+                selector: selector.map(str::to_owned),
+                subject: Some(subject.to_owned()),
+                lease: None,
+                reason: reason.clone(),
+            },
+        );
+        reason
     }
 
     /// Admits one model call: the declared teachers, the host's offer, the

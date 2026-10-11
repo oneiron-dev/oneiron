@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{
-    KeyCustody, OfferBinding, OfferRoute, Payer, RunAdmission, RunReceiptSink,
+    KeyCustody, OfferBinding, OfferRoute, Payer, RunAdmission, RunDenied, RunReceiptSink,
 };
 use oneiron::{
     BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture,
@@ -66,6 +66,21 @@ impl RawInference {
             ladder,
             undeclared_run(RAW_RUN, self.meter.clone(), receipts),
         ))
+    }
+
+    /// Records a raw call refused before admission under the run it would
+    /// have been admitted in: one `Denied` row, nothing reserved.
+    pub(crate) fn refuse(
+        &self,
+        request: &LlmRequest,
+        reason: RunDenied,
+        receipts: Arc<dyn RunReceiptSink>,
+    ) {
+        undeclared_run(RAW_RUN, self.meter.clone(), receipts).refuse(
+            None,
+            request.model.as_str(),
+            reason,
+        );
     }
 }
 
