@@ -72,16 +72,6 @@ fn revoke_dreamer_device(vault: &Vault, root: &HostSlipIssuer) {
         .unwrap();
 }
 
-fn carry_recorded(vault: &Vault, id: EntityId) -> bool {
-    let key = [
-        crate::side_table::CLAIM_MACHINE_HISTORY_CARRY.prefix,
-        id.as_bytes(),
-    ]
-    .concat();
-    let txn = vault.store.env.read_txn().unwrap();
-    vault.store.vault_meta.get(&txn, &key).unwrap().is_some()
-}
-
 #[test]
 fn a_re_rooted_vault_keeps_engine_claims_and_writers_under_the_new_secret_only() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
@@ -184,27 +174,99 @@ fn a_new_birth_at_a_deleted_carried_id_does_not_inherit_the_carry() {
     );
 }
 
-/// Both local deletes, the batch's and the facade's purge, retire the
-/// move's carry record with the history.
+/// A replica reads a history the move carried (ASTRA-1367b, second P2). It
+/// imports the signed authority history, receives the claim's signed rows and
+/// adopts the new root's handoff, as the authenticated transfer does. The
+/// carry is in that chain, so the replica admits what the source admits.
 #[test]
-fn a_delete_retires_the_carry_record_with_the_history() {
+fn a_replica_reads_a_history_the_move_carried() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let old = crate::test_util::provision_engine_machines(&vault);
-    let batch = dreamer_writes(&vault, 0x56);
-    let purged = dreamer_writes(&vault, 0x57);
+    let target = dreamer_writes(&vault, 0x58);
     let next = HostSlipIssuer::from_secret(b"successor self-host root").unwrap();
-    assert_eq!(
-        vault.re_root_host(&old, &next).unwrap().histories_carried,
-        2
-    );
-    assert!(carry_recorded(&vault, batch) && carry_recorded(&vault, purged));
+    assert_eq!(vault.re_root_host(&old, &next).unwrap().histories_carried, 1);
+    assert!(readable(&vault, target));
 
-    vault.batch().delete(&batch).commit().unwrap();
-    vault
-        .delete_entity_with_reason(&purged, crate::deletion::DeleteReason::UserHardDelete)
+    let replica_dir = tempfile::tempdir().unwrap();
+    let replica = Vault::open(replica_dir.path(), crate::VaultConfig::device()).unwrap();
+    replica
+        .import_signed_authority_history(&vault.export_signed_authority_history().unwrap())
+        .unwrap();
+    let dreamer = vault.dreamer_authority().unwrap().entity_ref();
+    let at = TimeRange { start: 1, end: 1 };
+    replica
+        .put_entity(&dreamer, crate::registry::ENTITY_TYPE_MACHINE, at, 1, b"machine")
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let controls =
+        crate::claim::history_store::machine_history_ids_for_target(&vault.store, &txn, target)
+            .unwrap();
+    let handoff =
+        crate::claim::history_projection::trusted_machine_handoff(&vault.store, &txn, target)
+            .unwrap();
+    drop(txn);
+    let vault_id = handoff.vault_id;
+    let signer = next.public_key();
+    let pin = crate::claim::ClaimHistoryHandoffPin {
+        vault_id: &vault_id,
+        genesis_hash: &vault_id,
+        expected_signer: &signer,
+        scope: &handoff.scope,
+        previous_handoff_hash: handoff.previous_handoff_hash,
+        challenge: &handoff.challenge,
+    };
+    replica
+        .pin_machine_history_handoff_pending(target, &handoff, &pin, &next)
+        .unwrap();
+    let replicate = |id: &EntityId| {
+        let raw = vault.get_raw(id).unwrap().unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        replica
+            .batch()
+            .put_replicated(
+                id,
+                header.entity_type,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()
+            .unwrap();
+    };
+    replicate(&target);
+    replica
+        .batch()
+        .edge(&target, crate::edge::EdgeKind::ClaimOf, &dreamer, 1.0)
+        .commit()
+        .unwrap();
+    let mut controls = controls
+        .into_iter()
+        .map(|id| {
+            let raw = vault.get_raw(&id).unwrap().unwrap();
+            let body = crate::claim::decode_claim_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )
+            .unwrap();
+            (id, body.predicate)
+        })
+        .collect::<Vec<_>>();
+    controls.sort_by_key(|(_, predicate)| match predicate.as_str() {
+        "machine.birth" => 0,
+        "machine.transition" => 1,
+        _ => 2,
+    });
+    for (id, _) in &controls {
+        replicate(id);
+    }
+    replica
+        .adopt_machine_history_handoff(target, &handoff, &pin)
         .unwrap();
     assert!(
-        !carry_recorded(&vault, batch) && !carry_recorded(&vault, purged),
-        "a carry record outlived its history"
+        readable(&replica, target),
+        "a replica quarantined a history the move carried"
     );
 }
