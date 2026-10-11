@@ -25,11 +25,12 @@ impl Memory<'_> {
     /// key: DEC-0005's own-device ceiling, all of the owner's vault. So does
     /// the owner bound to its own live, full owner-grade credential. Any
     /// other actor bound to a verified credential reads under that
-    /// credential's key, and every actor but the owner under its
-    /// relationship grants too. Every other actor reads under its grants. `claims` is
-    /// the verb's contract: record verbs serve every claim status, retrieval
-    /// channels only surfaceable claims. A handle bound to a room turn reads
-    /// inside that room on every lane.
+    /// credential's key; one other than the owner reads a relationship-scoped
+    /// or private row only on a live grant for its relationship, and an
+    /// unscoped row as the credential's records allow. Every other actor
+    /// reads under its grants. `claims` is the verb's contract: record verbs
+    /// serve every claim status, retrieval channels only surfaceable claims.
+    /// A handle bound to a room turn reads inside that room on every lane.
     pub(crate) fn read_lane(&self, claims: ClaimReadStatus) -> MemoryResult<ScopedRead<'_>> {
         // The room resolver opens its own snapshots, so it runs only once the
         // verification snapshot here has closed: LMDB allows one per thread.
@@ -80,11 +81,12 @@ impl Memory<'_> {
                 return Ok(ScopedReadActorKey::vault_owner(self.actor).while_live(proof));
             }
             // Relationship data needs a participant or an approved grant
-            // (ARCH-0006a), on top of what the credential itself admits.
+            // (ARCH-0006a), on top of what the credential itself admits. An
+            // unscoped row is the vault's own: the credential alone decides it.
             return Ok(if owner {
                 key
             } else {
-                key.require_access_grants(Some(self.actor))
+                key.require_relationship_grants(self.actor)
             });
         }
         let key = if owner {

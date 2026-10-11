@@ -275,7 +275,8 @@ fn rooted_reader_with(
 
 /// The reader's credential: it names the `readable` conversations and
 /// turns and every message of those turns, so the reader's relationship
-/// grants alone decide which of those messages it reads. A record a
+/// grants alone decide which of those messages in a space it reads, and it
+/// reads every one in none. A record a
 /// credential does not name is withheld from every read made with it; a
 /// record facet never is a boundary (`Scope::admits`).
 fn credential(
@@ -324,7 +325,8 @@ fn reader_slip(
 }
 
 /// Two conversations. The first has a turn whose message is in the space, a
-/// later turn whose message is outside it, and a last turn in it again; the
+/// later turn whose message is in a space the reader holds no grant on, and
+/// a last turn in the first space again; the
 /// second has one turn in the space. The reader's read ceiling takes in the
 /// first conversation, its turns and its messages, and not the second.
 struct ScopedVault {
@@ -359,7 +361,7 @@ fn scoped_vault() -> ScopedVault {
                 kept,
                 turns[1],
                 AT + 10,
-                said(user, "the locker code is 4471", None),
+                said(user, "the locker code is 4471", Some(entity(0x69))),
             ),
             (
                 kept,
@@ -1208,15 +1210,19 @@ fn the_owners_full_credential_lists_what_the_owner_lists() {
     assert!(owner_list(None).rows.iter().any(|(id, _)| *id == room));
 }
 
-/// A credential reads relationship words only on its holder's live grant,
-/// as the holder's own lane does (ARCH-0006a rule 2; Astra #1388 P1, on
-/// main before this). A message in a space the reader holds no grant for
-/// never previews. Revoking the grant while the credential stays live takes
-/// the preview away.
+/// A credential reads relationship words only on its holder's live grant
+/// (ARCH-0006a rule 2; Astra #1388 P1, on main before this). A message in a
+/// space the reader holds no grant for never previews. Revoking the grant
+/// while the credential stays live takes the preview away. A message in no
+/// space is the vault's own: the credential alone decides it, so the reader
+/// still previews and recalls it.
 #[test]
 fn a_credential_reads_relationship_words_only_on_a_live_grant() {
-    let (granted, ungranted) = (entity(0xBA), entity(0xBB));
-    let (granted_turn, ungranted_turn) = (entity(0xBC), entity(0xBD));
+    use crate::memory::{Effort, RecallScope};
+
+    let (granted, ungranted, unscoped) = (entity(0xBA), entity(0xBB), entity(0xBE));
+    let (granted_turn, ungranted_turn, unscoped_turn) = (entity(0xBC), entity(0xBD), entity(0xBF));
+    let kettle = "the kettle hums by the stove";
     let ReaderVault {
         _dir,
         vault,
@@ -1240,8 +1246,21 @@ fn a_credential_reads_relationship_words_only_on_a_live_grant() {
                 AT + 10,
                 said(WitnessAuthor::User, "words elsewhere", Some(entity(0x69))),
             ),
+            (
+                unscoped,
+                unscoped_turn,
+                AT + 20,
+                said(WitnessAuthor::User, kettle, None),
+            ),
         ],
-        &[granted, granted_turn, ungranted, ungranted_turn],
+        &[
+            granted,
+            granted_turn,
+            ungranted,
+            ungranted_turn,
+            unscoped,
+            unscoped_turn,
+        ],
     );
     let read = reader_list(&vault, &reader, 50);
     assert!(
@@ -1255,4 +1274,28 @@ fn a_credential_reads_relationship_words_only_on_a_live_grant() {
         .expect("revoke the grant");
     let read = reader_list(&vault, &reader, 50);
     assert!(read.rows.contains(&(granted, None)), "{:?}", read.rows);
+    assert!(
+        read.rows.contains(&(unscoped, Some(kettle.to_owned()))),
+        "{:?}",
+        read.rows
+    );
+    let pack = reader
+        .memory(&vault)
+        .recall(
+            "kettle",
+            Effort::Light,
+            &RecallScope::default(),
+            20,
+            None,
+            None,
+        )
+        .expect("recall");
+    assert!(
+        pack.items.iter().any(|item| item
+            .cited_messages
+            .iter()
+            .any(|message| message.value_text == kettle)),
+        "{:?}",
+        pack.items
+    );
 }

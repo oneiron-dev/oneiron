@@ -325,14 +325,14 @@ impl Memory<'_> {
         Ok(read.value)
     }
 
-    /// What of the conversation `id`, stored as `body`, a reader other than
-    /// the owner may see in the snapshot `txn`, or `None` when it may not see
-    /// the conversation at all. A group, channel or mirror is relationship
-    /// data (ARCH-0006a rule 2): a member sees the turns its membership
-    /// windows show, a member the ledger keeps no windows for (a derived
-    /// room's) every turn, and anyone else the whole conversation only on a
-    /// grant that opens its relationship. A body that does not decode is
-    /// withheld.
+    /// What of the conversation `id`, stored as `body`, the reader may see in
+    /// the snapshot `txn`, or `None` when it may not see the conversation at
+    /// all. The vault owner sees all of it, whatever credential it reads
+    /// with. A group, channel or mirror is relationship data (ARCH-0006a rule
+    /// 2): a member sees the turns its membership windows show, a member the
+    /// ledger keeps no windows for (a derived room's) every turn, and anyone
+    /// else the whole conversation only on a grant that opens its
+    /// relationship. A body that does not decode is withheld.
     fn sight_in<'v>(
         &'v self,
         txn: &heed::RoTxn<'_>,
@@ -340,6 +340,9 @@ impl Memory<'_> {
         body: &[u8],
         grants: &mut Option<crate::access_grant::AccessContext<'v>>,
     ) -> MemoryResult<Option<Sight>> {
+        if self.is_vault_owner_in_txn(txn)? {
+            return Ok(Some(Sight::Whole));
+        }
         let Ok(decoded) = ConversationBody::from_bytes(body) else {
             return Ok(None);
         };
