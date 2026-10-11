@@ -1,7 +1,9 @@
 //! Where the words of one stored revision came from.
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
@@ -16,9 +18,9 @@ pub(crate) enum WordSources {
     Unresolved,
 }
 
-/// The word sources of the stored revision `raw` of `id`: a scope summary,
-/// a TURN that copies one, a claim whose merge header names one, or a
-/// `conversation.summary` claim's typed coverage.
+/// The word sources of the stored revision `raw` of `id`: an epoch summary,
+/// a scope summary, a TURN that copies one, a claim whose merge header names
+/// one, or a `conversation.summary` claim's typed coverage.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -29,6 +31,14 @@ pub(crate) fn word_sources_in(
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
     let sources = match header.entity_type {
+        // An epoch summary's words are those of every record it was written
+        // from, its `DerivedFrom` targets (agent-runtime-v1 §d7); a nested
+        // epoch among them carries its own.
+        ENTITY_TYPE_SUMMARY if crate::compaction::decode_epoch_summary_body(body).is_ok() => vault
+            .store
+            .port_edges(txn, id, EdgeDirection::Out, Some(EdgeKind::DerivedFrom), None)
+            .and_then(|edges| edges.map(|edge| edge.map(|edge| edge.target)).collect())
+            .map(Some),
         ENTITY_TYPE_SUMMARY => super::body_covers_in_txn(vault, txn, id, header.entity_type, body),
         // A reply carries its summary under the `summary` key, in any
         // string encoding; the decoder below decides. Its words are the

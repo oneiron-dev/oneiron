@@ -572,6 +572,27 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
     };
     assert!(admits(&summary)? && admits(&nested)?);
 
+    // A room's P7 rule reads the same words: a clearance that takes both
+    // summaries' own stamps, but not their source's, discloses neither.
+    let discloses = |scope: &crate::federation::Scope, id: EntityId| -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault.get_raw_in(&rtxn, &id)?.expect("a stored summary");
+        super::discloses_raw(&vault, &rtxn, scope, id, &raw)
+    };
+    let top = crate::federation::Scope::top();
+    assert!(discloses(&top, summary)? && discloses(&top, nested)?);
+    let mut summaries_only = top.clone();
+    summaries_only.facets = crate::federation::ScopeAxis::Some(
+        [summary, nested]
+            .into_iter()
+            .map(|id| crate::claim::substrate_facet_id(id).map(crate::federation::ScopeId))
+            .collect::<Result<_>>()?,
+    );
+    assert!(
+        !discloses(&summaries_only, summary)? && !discloses(&summaries_only, nested)?,
+        "a room clearance short of the source discloses neither summary"
+    );
+
     vault.set_disclosure_tier_a(&source, 100)?;
     assert!(!admits(&summary)?, "its source is withheld");
     assert!(
