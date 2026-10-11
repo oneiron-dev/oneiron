@@ -593,6 +593,56 @@ async fn an_mcp_witness_turn_wakes_the_dreamer() {
     host.shutdown().await;
 }
 
+/// Room speech lands its turn through the same witness gate, so the generated
+/// `rooms.speak` tool wakes the turn producer too.
+#[tokio::test]
+async fn an_mcp_room_speech_wakes_the_dreamer() {
+    use oneiron::workspace_roster::ProjectRecord;
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, host) = server_past_the_start_scan(&fake).await;
+    let owner = seeded_test_entity_id(0x0024_6513);
+    let credential = "mcp-room-speech-wake";
+    register_mcp_actor(&server, credential, owner, EdgeActorClass::Human).await;
+    let project = EntityId::now();
+    let root = server.vault.root_project().expect("root");
+    let record = ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    bind_room_owner(&server, owner);
+    create_owned_project(&server, owner, project, &record);
+    let mut turn = later_turn(&server);
+    turn["conversation_ref"] = json!(record.home_room);
+    turn["turn_ref"] = json!(EntityId::now().to_hex());
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(owner, "speak_room"),
+        json!({"arguments": {"spec": turn, "room_ref": record.home_room}}),
+    );
+    let (_, body) = route_json(
+        Arc::clone(&server),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "speak",
+            "rooms.speak",
+            args,
+        ),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &fake, "Sapporo"
+        ))
+        .await,
+        "no Micro round read the room's turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
 /// No Dreamer writes summaries here, so a declaration is refused rather than
 /// queued for a writer that never comes.
 #[tokio::test]
