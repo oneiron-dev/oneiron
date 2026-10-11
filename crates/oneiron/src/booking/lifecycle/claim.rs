@@ -416,7 +416,9 @@ pub(super) fn supersede_exact_claim(
     Ok(())
 }
 
-/// Every live claim on `subject` carrying exactly `predicate`.
+/// Every surfaceable claim about `subject` carrying exactly `predicate`: the
+/// heads the readers take as the record. A pending proposal is left to its
+/// review; closing it must never stand in the way of the transition.
 fn live_claims_with_predicate(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -428,7 +430,10 @@ fn live_claims_with_predicate(
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
         };
-        if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active {
+        if body.predicate == predicate
+            && crate::claim::claim_surfaceable(&body)
+            && body.subject == ClaimSubject::Entity(*subject)
+        {
             out.push(claim_id);
         }
     }
