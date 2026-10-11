@@ -1130,14 +1130,80 @@ fn a_room_turned_direct_during_a_list_keeps_its_bound() {
     assert_eq!(preview_of(&memory, room), None);
 }
 
+/// A message keeps its own place in a room's history whatever turn quotes
+/// it: a later turn that also links a message from before the reader joined
+/// never previews it for the late joiner, though the owner's preview quotes
+/// it (Astra #1388b P1).
+#[test]
+fn a_pre_join_message_a_later_turn_links_stays_hidden() {
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let (room, old, new) = (entity(0xB7), entity(0xC6), entity(0xC7));
+    let words = "said before the reader joined";
+    let (rooted, _) = rooted_reader_with(|vault, owner, reader| {
+        let member = entity(0xB4);
+        vault
+            .put_entity(
+                &member,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a member",
+            )
+            .expect("put the member");
+        let actor = WriteActor::new(owner, EdgeActorClass::Human);
+        let body = ConversationBody {
+            kind: ConversationKind::Group,
+            member_ids: vec![member],
+            ..ConversationBody::default()
+        };
+        vault
+            .create_conversation(room, &body, actor, AT - 100)
+            .expect("create the group");
+        witness(
+            vault,
+            owner,
+            room,
+            old,
+            AT,
+            said(WitnessAuthor::User, words, Some(entity(SPACE))),
+        );
+        vault
+            .join_member(room, reader, actor, AT + 5, HistoryChoice::None)
+            .expect("the reader joins without history");
+        let unseen = WitnessMessage {
+            is_visible: false,
+            ..said(WitnessAuthor::Companion, "never shown", Some(entity(SPACE)))
+        };
+        witness(vault, owner, room, new, AT + 10, unseen);
+    });
+    let vault = &rooted.vault;
+    let memory = rooted.reader.memory(vault);
+    assert_eq!(preview_of(&memory, room), None);
+    let quoted = {
+        let txn = vault.store.env.read_txn().expect("read txn");
+        vault.turn_message_ids_in(&txn, &old).expect("messages")[0]
+    };
+    vault
+        .batch()
+        .edge(&quoted, crate::EdgeKind::PartOf, &new, 1.0)
+        .commit()
+        .expect("the later turn links the message");
+    let owner = vault.memory(rooted.owner, EdgeActorClass::Human);
+    assert_eq!(preview_of(&owner, room).as_deref(), Some(words));
+    assert_eq!(preview_of(&memory, room), None);
+}
+
 /// A credential that cannot read base reality learns nothing about it: no
 /// row, no count and no row-authority hint, however many conversations base
-/// holds (DEC-0005: no name, no count; Astra #1388 P2).
+/// holds (DEC-0005: no name, no count; Astra #1388 P2), a conversation
+/// replayed with no disclosure stamp included (Astra #1388b P2).
 #[test]
 fn a_world_the_credential_cannot_read_adds_no_count() {
+    use crate::conversation::ConversationBody;
     use crate::federation::{ScopeAxis, ScopeId};
 
-    let listed_with = |rooms: &[u8]| {
+    let listed_with = |rooms: &[u8], replayed: &[u8]| {
         let witnessed: Vec<Witnessed> = rooms
             .iter()
             .map(|room| {
@@ -1150,6 +1216,23 @@ fn a_world_the_credential_cannot_read_adds_no_count() {
             })
             .collect();
         let (rooted, issuer) = rooted_reader(&witnessed);
+        let body = ConversationBody::default()
+            .to_bytes()
+            .expect("encode the body");
+        for room in replayed {
+            rooted
+                .vault
+                .batch()
+                .put_replicated(
+                    &entity(*room),
+                    ENTITY_TYPE_CONVERSATION,
+                    TimeRange { start: AT, end: AT },
+                    AT,
+                    &body,
+                )
+                .commit()
+                .expect("replay a conversation");
+        }
         let mut scope = read_preset();
         scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(entity(0x7A))]));
         let reader = Reader {
@@ -1170,9 +1253,11 @@ fn a_world_the_credential_cannot_read_adds_no_count() {
             .any(|axis| axis == "row_authority");
         (read.rows, read.total, read.withheld, hinted)
     };
-    let one = listed_with(&[0x33]);
+    let one = listed_with(&[0x33], &[]);
     assert_eq!(one, (Vec::new(), Some(0), 0, false));
-    assert_eq!(listed_with(&[0x33, 0x34]), one);
+    assert_eq!(listed_with(&[0x33, 0x34], &[]), one);
+    assert_eq!(listed_with(&[0x33], &[0x3A]), one);
+    assert_eq!(listed_with(&[0x33], &[0x3A, 0x3B]), one);
 }
 
 /// The owner's own full credential reads as the owner: a manifest that

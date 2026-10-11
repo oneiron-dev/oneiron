@@ -435,18 +435,51 @@ impl Memory<'_> {
         self.member_sight_in(txn, id, &decoded, &stored.body, &mut None)
     }
 
-    /// Whether the reader's sight under `bound`, as the snapshot `txn` holds
-    /// it, shows `turn`.
-    fn shows_in(&self, txn: &heed::RoTxn<'_>, bound: Bound, turn: &EntityId) -> MemoryResult<bool> {
+    /// The reader's sight under `bound`, as the snapshot `txn` holds it,
+    /// when it shows `turn`.
+    fn sight_of_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        bound: Bound,
+        turn: &EntityId,
+    ) -> MemoryResult<Option<Sight>> {
         if bound == Bound::Lane {
-            return Ok(true);
+            return Ok(Some(Sight::Whole));
         }
         let Some(stored) = self.vault.store.port_entity_record(txn, turn)? else {
-            return Ok(false);
+            return Ok(None);
         };
         Ok(self
             .sight_now_in(txn, bound)?
-            .is_some_and(|sight| sight.shows(stored.occurred.start)))
+            .filter(|sight| sight.shows(stored.occurred.start)))
+    }
+
+    /// `rows`, a shown turn's own row and its messages as the lane admitted
+    /// them, less each message a member's history does not show. A message
+    /// keeps its own place in its room's history whatever turn quotes it, so
+    /// the audience check judges it by its own time (Astra #1388b P1).
+    fn quoted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        sight: &Sight,
+        turn: &EntityId,
+        rows: Vec<Option<ReadRow>>,
+    ) -> MemoryResult<Vec<Option<ReadRow>>> {
+        if matches!(sight, Sight::Whole) {
+            return Ok(rows);
+        }
+        let mut audience = crate::conversation::AudienceCache::default();
+        let mut quoted = Vec::with_capacity(rows.len());
+        for row in rows {
+            let shown = match &row {
+                Some(row) if row.id != *turn => {
+                    audience.readable(self.vault, txn, row.id, &[self.actor])?
+                }
+                _ => true,
+            };
+            quoted.push(row.filter(|_| shown));
+        }
+        Ok(quoted)
     }
 
     /// `conversation`'s preview as the reader may read it. The turns it may
@@ -458,8 +491,8 @@ impl Memory<'_> {
     /// preview. Only turns the reader's sight under `bound` shows count,
     /// before any is ordered. Then each readable turn, in order, is read again
     /// with its messages in bounded reads, until one has text. The sight is
-    /// judged again in each of those reads, and a turn it no longer shows
-    /// gives no text.
+    /// judged again in each of those reads: a turn it no longer shows gives
+    /// no text, and a member's history judges each message by its own time.
     fn preview(
         &self,
         lane: &ScopedRead<'_>,
@@ -502,7 +535,9 @@ impl Memory<'_> {
                     .map(PointRead::id)
                     .collect();
                 let read = lane.read_projected(&reads, None, |txn, rows| {
-                    Ok::<_, MemoryError>(self.shows_in(txn, bound, &turn)?.then_some(rows))
+                    self.sight_of_in(txn, bound, &turn)?
+                        .map(|sight| self.quoted_in(txn, &sight, &turn, rows))
+                        .transpose()
                 })?;
                 fold_scope(receipt, read.receipt);
                 let Some(value) = read.value else {

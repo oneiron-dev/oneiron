@@ -394,8 +394,9 @@ impl ScopedRead<'_> {
     }
 
     /// Whether the stored row `row` of `id` sits wholly outside the worlds
-    /// the read's verified credential grants, at the position the read door
-    /// selects it. A row with no such position is judged by the other axes.
+    /// the read's verified credential grants: a record that is not a claim
+    /// in base reality, otherwise at the position the read door selects it.
+    /// A claim with no such position is judged by the other axes.
     fn outside_credential_worlds_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -407,6 +408,16 @@ impl ScopedRead<'_> {
         };
         if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
             return Ok(false);
+        }
+        // Every record that is not a claim is base reality, stamped or not
+        // (as `revision_world` reads it): a row replayed with no stamp is no
+        // less outside a credential that cannot read base (Astra #1388b P2).
+        if row.entity_type != ENTITY_TYPE_CLAIM
+            && !granted
+                .worlds
+                .contains(&crate::federation::ScopeId(crate::claim::base_world_id()))
+        {
+            return Ok(true);
         }
         // A claim with no decodable world names none, as a read that asked
         // for worlds judges it.
