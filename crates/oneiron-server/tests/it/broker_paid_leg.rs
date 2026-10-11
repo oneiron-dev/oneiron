@@ -151,9 +151,12 @@ impl SecondUser {
             .env_clear()
             .env("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
             .arg("--user")
-            .arg(format!("--map-users={uid}:{uid}:1"))
+            // One `--map-user` and one `--map-users`: util-linux 2.39 (Ubuntu
+            // 24.04) keeps only the last `--map-users`, which would leave this
+            // user unmapped (65534) to the broker's peer check.
+            .arg(format!("--map-user={uid}"))
             .arg(format!("--map-users={broker_uid}:{broker_uid}:1"))
-            .arg(format!("--map-groups={gid}:{gid}:1"))
+            .arg(format!("--map-group={gid}"))
             .arg(format!("--map-groups={broker_gid}:{broker_gid}:1"))
             .arg(format!("--setuid={broker_uid}"))
             .arg(format!("--setgid={broker_gid}"))
