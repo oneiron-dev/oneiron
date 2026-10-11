@@ -124,7 +124,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 6 crate-vis | — | Execute-code and board-verb executors |
 | `src/api/mcp_gateway/memory_response.rs` | src | s | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 8 crate-vis | — | — |
-| `src/api/mcp_gateway/stream_reads.rs` | src | s | 2 crate-vis | — | Own-task STREAM lines as one connection's credential may read them now: the board publisher admits each… |
+| `src/api/mcp_gateway/stream_reads.rs` | src | s | 3 crate-vis | — | Own-task STREAM lines as one connection's credential may read them now: the board publisher admits each… |
 | `src/api/mcp_gateway/tasks_response.rs` | src | L | 11 crate-vis | — | Tasks verb and response shaping |
 | `src/api/memory/mod.rs` | src | m | 19 crate-vis | — | — |
 | `src/api/memory/watch.rs` | src | s | 3 crate-vis | — | — |
