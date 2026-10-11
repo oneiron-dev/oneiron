@@ -651,9 +651,9 @@ fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
     frame
         .get(1..)
         .and_then(|payload| protocol::decode_window_sync(payload).ok())
-        .is_some_and(|(key, sub_tag, _)| {
+        .is_some_and(|(key, sub_tag, update)| {
             sub_tag == protocol::window_sub_tags::UPDATE
-                && crate::server::withheld_from_peers(&server.reassert_manager, key)
+                && crate::server::withheld_from_peers(&server.reassert_manager, key, update)
         })
 }
 

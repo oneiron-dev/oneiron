@@ -273,7 +273,7 @@ pub(super) async fn handle_window_sync(
 
             // A world flagged device-only on this server stays here, even as
             // another device's relayed update.
-            if !oneiron::sync::window::window_withheld(server.vault.as_ref(), &key, &doc)
+            if !oneiron::sync::window::update_withheld(server.vault.as_ref(), &key, &doc, update)
                 .map_err(map_delta_export_err)?
             {
                 let broadcast_msg =

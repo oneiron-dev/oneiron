@@ -216,6 +216,22 @@ impl SyncClient {
         }
     }
 
+    /// Whether raw local `update` bytes for window `key` stay on this device
+    /// now: the window is withheld, or the update's own operations insert a
+    /// device-only world's claim or an edge naming one. A window that cannot
+    /// be opened is judged by its key alone.
+    pub(crate) fn update_withheld(&self, key: &str, update: &[u8]) -> crate::Result<bool> {
+        let Some(window_key) = WindowKey::try_new(key) else {
+            return Ok(false);
+        };
+        match self.manager.open_window(&window_key) {
+            Ok(window) => {
+                crate::sync::window::update_withheld(&self.vault, &window_key, &window.doc, update)
+            }
+            Err(_) => crate::sync::window::window_is_device_only(&self.vault, &window_key),
+        }
+    }
+
     /// Returns the live window for `key` if loaded — registry lookup only,
     /// never opens.
     pub fn window(&self, key: &str) -> Option<Arc<LoadedWindow>> {

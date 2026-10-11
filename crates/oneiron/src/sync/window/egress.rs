@@ -390,7 +390,7 @@ pub fn export_window_updates_since(
     doc: &LoroDoc,
     remote_vv: &[u8],
 ) -> Result<Vec<u8>> {
-    VersionVector::decode(remote_vv).map_err(|source| {
+    let remote = VersionVector::decode(remote_vv).map_err(|source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "decode version vector",
             source,
@@ -405,7 +405,11 @@ pub fn export_window_updates_since(
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
     let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed || withdrawn_scrubbed;
-    if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
+    if scrubbed
+        || history_free_window_required(vault, key)?
+        || doc.is_shallow()
+        || super::device_only::delta_carries_device_only(vault, doc, &remote)?
+    {
         export_history_free_window_snapshot(doc)
     } else {
         super::loro_support::export_updates_since(doc, remote_vv)
@@ -423,7 +427,7 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
     doc: &LoroDoc,
     remote_vv: &[u8],
 ) -> Result<Vec<u8>> {
-    VersionVector::decode(remote_vv).map_err(|source| {
+    let remote = VersionVector::decode(remote_vv).map_err(|source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "decode promoted version vector",
             source,
@@ -437,7 +441,10 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
     let scrubbed = secret_scrubbed || claims_scrubbed || withdrawn_scrubbed;
-    if scrubbed || history_free_window_required(vault, key)? {
+    if scrubbed
+        || history_free_window_required(vault, key)?
+        || super::device_only::delta_carries_device_only(vault, doc, &remote)?
+    {
         export_history_free_window_snapshot(doc)
     } else {
         super::loro_support::export_updates_since(doc, remote_vv)

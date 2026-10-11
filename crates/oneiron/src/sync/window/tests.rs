@@ -4236,6 +4236,46 @@ fn base_window_carrying_an_edge_to_a_device_only_claim_is_withheld_whole() -> Re
     Ok(())
 }
 
+/// A flagged world's claim written into a base window and removed again still
+/// sits in the window's Loro history: the base export ships only what the
+/// window holds now, never that insertion.
+#[test]
+fn base_window_history_never_ships_a_removed_device_only_claim() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let month = WindowKey::new("2026-03");
+    let base = create_window_doc("base", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+    let key = fx.private_claim.to_hex();
+    let entities = base.get_map("entities");
+    map_insert_bytes(&entities, &key, &vault.get_raw(&fx.private_claim)?.unwrap())?;
+    base.commit();
+    crate::sync::loro_support::map_delete(&entities, &key)?;
+    base.commit();
+
+    let received = exported_to_empty_receiver(&vault, &month, &base)?;
+    assert!(
+        received
+            .get_map("entities")
+            .get(&fx.person.to_hex())
+            .is_some()
+    );
+    let history =
+        received.export_json_updates(&loro::VersionVector::default(), &received.oplog_vv());
+    assert!(
+        !history
+            .changes
+            .iter()
+            .flat_map(|change| &change.ops)
+            .any(|op| matches!(
+                &op.content,
+                loro::json::JsonOpContent::Map(loro::json::MapOp::Insert { key: inserted, .. })
+                    if &**inserted == key.as_str()
+            ))
+    );
+    Ok(())
+}
+
 #[test]
 fn dreamer_actor_conflicting_peer_put_and_tombstone_quarantine_without_disabling_open() -> Result<()>
 {

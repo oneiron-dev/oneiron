@@ -13,12 +13,15 @@
 //! edge; that removal would also flow back here. For the same reason another
 //! window that carries such a claim or edge out of residence (a base edge
 //! admitted before its endpoint was known, or a raw local write) is withheld
-//! whole too.
+//! whole too. Loro history keeps a carrier a later write removed, so a delta
+//! or raw update whose operations insert one is withheld as well, and an export
+//! falls back to the window's history-free snapshot.
 
 use std::collections::{BTreeSet, HashSet};
 
 use heed::RoTxn;
-use loro::{LoroDoc, LoroMap, VersionVector};
+use loro::json::{JsonOpContent, JsonSchema, MapOp};
+use loro::{ContainerID, ContainerType, LoroDoc, LoroMap, LoroValue, VersionVector};
 
 use super::super::bridge::parse_edge_key;
 use super::super::loro_support::{export_updates_from, map_for_each_value_bytes};
@@ -42,8 +45,76 @@ pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> 
 /// to a flagged world, or it carries a CLAIM of a flagged world or an edge
 /// naming one.
 pub fn window_withheld(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
+    carries_device_only(vault, &flagged_worlds(vault)?, key, doc)
+}
+
+/// Whether raw update bytes of window `key` stay on this device now: the
+/// window is withheld, or the update's own operations, read from `doc`,
+/// insert a CLAIM of a flagged world or an edge naming one, even one a later
+/// write removed. An update whose operations `doc` does not hold stays too.
+pub fn update_withheld(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    update: &[u8],
+) -> Result<bool> {
+    let flagged = flagged_worlds(vault)?;
+    if carries_device_only(vault, &flagged, key, doc)? {
+        return Ok(true);
+    }
+    if flagged.is_empty() {
+        return Ok(false);
+    }
+    let Ok(meta) = LoroDoc::decode_import_blob_meta(update, true) else {
+        return Ok(true);
+    };
+    let held = doc.oplog_vv();
+    if meta
+        .partial_end_vv
+        .iter()
+        .any(|(peer, end)| held.get(peer).is_none_or(|counter| counter < end))
+    {
+        return Ok(true);
+    }
+    history_inserts_device_only(
+        vault,
+        &flagged,
+        &doc.export_json_updates(&meta.partial_start_vv, &meta.partial_end_vv),
+    )
+}
+
+/// Whether the delta of `doc` past `from` inserts a CLAIM of a flagged world
+/// or an edge naming one, even one a later write removed. Such a delta must
+/// not ship; the window's history-free snapshot carries only what it holds now.
+pub(super) fn delta_carries_device_only(
+    vault: &Vault,
+    doc: &LoroDoc,
+    from: &VersionVector,
+) -> Result<bool> {
+    let flagged = flagged_worlds(vault)?;
+    if flagged.is_empty() {
+        return Ok(false);
+    }
+    // The export commits a pending edit too, so read it into the range.
+    doc.commit();
+    history_inserts_device_only(
+        vault,
+        &flagged,
+        &doc.export_json_updates(from, &doc.oplog_vv()),
+    )
+}
+
+fn flagged_worlds(vault: &Vault) -> Result<BTreeSet<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let flagged = crate::settings::device_only_worlds_in(&vault.store, &rtxn)?;
+    crate::settings::device_only_worlds_in(&vault.store, &rtxn)
+}
+
+fn carries_device_only(
+    vault: &Vault,
+    flagged: &BTreeSet<EntityId>,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<bool> {
     if flagged.is_empty() {
         return Ok(false);
     }
@@ -53,19 +124,55 @@ pub fn window_withheld(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<
     let mut carried = false;
     let mut endpoints = BTreeSet::new();
     map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
-        carried |= blob.is_some_and(|raw| claim_in(raw, &flagged));
+        carried |= blob.is_some_and(|raw| claim_in(raw, flagged));
     });
     map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
         if let Some((src, _, tgt)) = parse_edge_key(key) {
             endpoints.extend([src, tgt]);
         }
     });
-    if carried {
-        return Ok(true);
+    Ok(carried || stored_claim_among(vault, flagged, endpoints)?)
+}
+
+/// Read from `history` (taken before any read transaction opens: taking it
+/// commits a pending edit, which runs the window's observers).
+fn history_inserts_device_only(
+    vault: &Vault,
+    flagged: &BTreeSet<EntityId>,
+    history: &JsonSchema,
+) -> Result<bool> {
+    let entities = ContainerID::new_root("entities", ContainerType::Map);
+    let edges = ContainerID::new_root("edges", ContainerType::Map);
+    let mut endpoints = BTreeSet::new();
+    for op in history.changes.iter().flat_map(|change| &change.ops) {
+        let JsonOpContent::Map(MapOp::Insert { key, value }) = &op.content else {
+            continue;
+        };
+        if op.container == entities {
+            if let LoroValue::Binary(blob) = value
+                && claim_in(&blob[..], flagged)
+            {
+                return Ok(true);
+            }
+        } else if op.container == edges
+            && let Some((src, _, tgt)) = parse_edge_key(key)
+        {
+            endpoints.extend([src, tgt]);
+        }
     }
-    for id in endpoints {
+    stored_claim_among(vault, flagged, endpoints)
+}
+
+/// Whether any of `ids` is stored as a CLAIM of a flagged world.
+fn stored_claim_among(
+    vault: &Vault,
+    flagged: &BTreeSet<EntityId>,
+    ids: BTreeSet<EntityId>,
+) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    for id in ids {
         if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, &id)?
-            .is_some_and(|raw| claim_in(&raw, &flagged))
+            .is_some_and(|raw| claim_in(&raw, flagged))
         {
             return Ok(true);
         }

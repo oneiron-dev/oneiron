@@ -362,10 +362,6 @@ impl SyncConnection {
             );
             let mut sent = Vec::with_capacity(queued.len());
             for update in queued {
-                // The flag may turn between the filter above and this send.
-                if client.window_withheld(&update.window_key).unwrap_or(true) {
-                    continue;
-                }
                 // Mirror the queued ops into the LOCAL window doc first:
                 // convergence is confirmed by VV equality with the server,
                 // which only vouches for ops the local doc knows about
@@ -377,6 +373,14 @@ impl SyncConnection {
                         "Queued update import failed (window {}, seq {}): {e}",
                         update.window_key, update.seq
                     )));
+                }
+                // The flag may turn between the filter above and this send,
+                // and the bytes may insert a carrier the live window lost.
+                if client
+                    .update_withheld(&update.window_key, &update.encoded)
+                    .unwrap_or(true)
+                {
+                    continue;
                 }
                 // Re-encode as WindowSync wire message
                 let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
