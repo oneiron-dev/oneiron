@@ -74,6 +74,25 @@ impl Drop for SaverCheck<'_, '_> {
     }
 }
 
+/// A base write's first step in its transaction: the route it was taken on
+/// still stands and, in a room on record, its saver still holds.
+pub(super) struct Landing<'r, 's, 'vault> {
+    pub(super) route: &'r SessionWriteRoute,
+    saver: Option<SaverCheck<'s, 'vault>>,
+}
+
+impl Landing<'_, '_, '_> {
+    pub(super) fn in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if let Some(saver) = &self.saver {
+            saver.in_txn(txn)?;
+        }
+        // The route is checked again here, not only before the writer: a
+        // room that went off record, or whose saving stopped, while this
+        // write waited for the writer keeps nothing of it.
+        self.route.revalidate()
+    }
+}
+
 impl<'vault> OffRecordSession<'vault> {
     /// Flips the stretch on record for the owner: later turns are saved as
     /// they land, and the room hears a `saving_from_here` notice. In a room
@@ -118,6 +137,7 @@ impl<'vault> OffRecordSession<'vault> {
             });
             let at = self.vault.store.clock.now_recorded_at();
             post_notice(
+                self.vault,
                 &mut state,
                 OffRecordNoticeAct::SavingFromHere,
                 owner.actor(),
@@ -162,6 +182,18 @@ impl<'vault> OffRecordSession<'vault> {
         Ok(Some(self.check_saver(saver)))
     }
 
+    /// The [`Landing`] a base write on `route`, a route taken earlier, runs
+    /// first in its transaction.
+    pub(super) fn landing<'r>(
+        &self,
+        route: &'r SessionWriteRoute,
+    ) -> Result<Landing<'r, '_, 'vault>> {
+        Ok(Landing {
+            route,
+            saver: self.saver_check_for(route)?,
+        })
+    }
+
     fn check_saver(&self, saver: OnRecordSaver) -> SaverCheck<'_, 'vault> {
         SaverCheck {
             session: self,
@@ -202,6 +234,7 @@ impl<'vault> OffRecordSession<'vault> {
         )?;
         let at = self.vault.store.clock.now_recorded_at();
         post_notice(
+            self.vault,
             &mut state,
             OffRecordNoticeAct::SavingStopped,
             saver.owner.actor(),

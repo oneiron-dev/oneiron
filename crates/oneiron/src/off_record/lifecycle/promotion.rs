@@ -141,6 +141,7 @@ impl OffRecordSession<'_> {
             })?;
             if let Some(owner) = owner {
                 post_notice(
+                    self.vault,
                     &mut state,
                     super::types::OffRecordNoticeAct::SavedTurn,
                     owner.actor(),

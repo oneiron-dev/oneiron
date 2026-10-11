@@ -9,7 +9,8 @@
 //! or export posts a notice to the room's own timeline, naming who and what,
 //! never the content. An agent may suggest a save: the suggestion is a notice
 //! everyone sees, and it saves nothing. A stretch the owner entered alone has
-//! no room. It is the 1:1 with their own companion, and it posts no notice.
+//! no room. It is the 1:1 with their own companion, and it posts no notice;
+//! nor does a room that holds only the owner and the vault's own agents.
 //!
 //! Each room names its own stretches: the registry keys one as
 //! [`room_session_key`], so a name taken in one room says nothing about
@@ -222,7 +223,13 @@ impl OffRecordSession<'_> {
         self.require_in_room(agent)?;
         let mut state = self.recording_state()?;
         let at = self.vault.store.clock.now_recorded_at();
-        post_notice(&mut state, OffRecordNoticeAct::SaveSuggested, agent, at);
+        post_notice(
+            self.vault,
+            &mut state,
+            OffRecordNoticeAct::SaveSuggested,
+            agent,
+            at,
+        );
         self.entry.publish_state(&state);
         Ok(())
     }
@@ -252,7 +259,13 @@ impl OffRecordSession<'_> {
             turns: gathered.finish(Some(windows.as_slice())),
         };
         let at = self.vault.store.clock.now_recorded_at();
-        post_notice(&mut state, OffRecordNoticeAct::Exported, person, at);
+        post_notice(
+            self.vault,
+            &mut state,
+            OffRecordNoticeAct::Exported,
+            person,
+            at,
+        );
         self.entry.publish_state(&state);
         Ok(talk)
     }
@@ -350,20 +363,25 @@ impl OffRecordSession<'_> {
                 }
             }
             drop(snapshot);
-            if plans.is_empty() {
-                return Ok(Vec::new());
-            }
-            let saved = self.promote_plans(&mut state, plans, |wtxn| {
-                authority(self.vault, wtxn)?;
+            let check = |txn: &heed::RoTxn<'_>| {
+                authority(self.vault, txn)?;
                 match room {
                     Some(room) => {
-                        require_sight_in_txn(self.vault, wtxn, &self.session_ref, room, by, &times)
+                        require_sight_in_txn(self.vault, txn, &self.session_ref, room, by, &times)
                     }
                     None => Ok(()),
                 }
-            })?;
+            };
+            // A save that finds nothing new keeps nothing, and the room still
+            // hears it, on the same checks a save that keeps something runs.
+            let saved = if plans.is_empty() {
+                check(&self.vault.store.env.read_txn()?)?;
+                Vec::new()
+            } else {
+                self.promote_plans(&mut state, plans, |wtxn| check(wtxn))?
+            };
             let at = self.vault.store.clock.now_recorded_at();
-            post_notice(&mut state, OffRecordNoticeAct::SavedTalk, by, at);
+            post_notice(self.vault, &mut state, OffRecordNoticeAct::SavedTalk, by, at);
             self.entry.publish_state(&state);
             saved
         };
@@ -509,24 +527,55 @@ impl Talk {
     }
 }
 
-/// Posts a notice to the room's timeline. A stretch with no room is the
-/// owner's 1:1 with their own companion: no other person is there to hear it.
+/// Posts a notice to the room's timeline. A stretch with no room, and a room
+/// whose roster is the owner and the vault's own agents, is the owner's 1:1
+/// with their own companion: no other person is there to hear it.
 pub(super) fn post_notice(
+    vault: &Vault,
     state: &mut OffRecordSessionEntryState,
     act: OffRecordNoticeAct,
     by: EntityId,
     at: u64,
 ) {
-    if state.record.room.is_some() {
-        if state.record.notices.len() >= MAX_ROOM_NOTICES {
-            state.record.notices.remove(0);
-        }
-        state.record.notices.push(OffRecordNotice {
-            act,
-            by: *by.as_bytes(),
-            at,
-        });
+    let Some(room) = state.record.room else {
+        return;
+    };
+    if !heard_by_another(vault, room) {
+        return;
     }
+    if state.record.notices.len() >= MAX_ROOM_NOTICES {
+        state.record.notices.remove(0);
+    }
+    state.record.notices.push(OffRecordNotice {
+        act,
+        by: *by.as_bytes(),
+        at,
+    });
+}
+
+/// Whether `room`'s roster now holds anyone but one owner of this vault and
+/// the vault's own agents: another person, a second owner, or someone
+/// else's agent. A roster that does not read counts as heard, so the notice
+/// posts.
+fn heard_by_another(vault: &Vault, room: [u8; 16]) -> bool {
+    let read = || -> Result<bool> {
+        let room = EntityId::from_bytes(room)?;
+        let txn = vault.store.env.read_txn()?;
+        let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+        let mut owners = 0_usize;
+        for member in vault.members_in_txn(&txn, room)? {
+            if crate::policy_model::is_live_vault_owner_in_txn(vault, &txn, &member)? {
+                owners += 1;
+            } else if !crate::disclosure::is_vault_agent_in(vault, &txn, &fold, &member)? {
+                return Ok(true);
+            }
+        }
+        Ok(owners > 1)
+    };
+    read().unwrap_or_else(|error| {
+        tracing::warn!(error = %error, "a room's roster did not read; its notice posts");
+        true
+    })
 }
 
 /// The refusal of an unbound save or flip on a stretch in a room: there it

@@ -1105,6 +1105,55 @@ fn a_rooms_failed_run_registration_sinks_the_retrieval() -> Result<()> {
     Ok(())
 }
 
+/// ARCH-0052 D5 (drift E4): in a room on record, a retrieval's opt-in run
+/// row lands in base only while the owner who put the room on record still
+/// holds, as every other landing does. Once they left the room, the row is
+/// refused in the transaction that would write it, nothing the room asked
+/// about reaches the base ledger, and the saving stops.
+#[test]
+fn a_room_retrieval_publishes_no_run_once_its_saver_left() -> Result<()> {
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let (_tmp, vault) = temp_vault();
+    seed_recallable_base_turn(&vault, "saverleftneedle");
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let room = EntityId::now();
+    vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
+    vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    let session = vault.off_record_session_vault().enter_in_room(
+        "lamp",
+        OffRecordBackendClass::Local,
+        room,
+        owner,
+    )?;
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    session.flip_on_record_as(&proof)?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+    vault.leave_member(room, owner, by, 50)?;
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let error = vault
+        .query()
+        .search_text("saverleftneedle", 10)
+        .in_session(&door)
+        .run_with_telemetry()
+        .expect_err("a room whose saver left publishes no run");
+    assert!(
+        matches!(
+            error,
+            Error::OffRecord(OffRecordError::OffRecordSavingStopped { .. })
+        ),
+        "{error:?}"
+    );
+    assert_eq!(vault.retrieval_runs(64)?.len(), base_runs_before);
+    drop(door);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    Ok(())
+}
+
 /// A facade and a session are independent borrows, so nothing in the types
 /// stops safe code from pairing a facade on vault A with a room on vault B.
 /// That pairing would read A while staging A's run row and `result_ids` into
