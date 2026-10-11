@@ -100,6 +100,17 @@ pub(super) fn state_in(
 ) -> Result<EsignState> {
     fold(&events_in(vault, txn, document)?)?.ok_or_else(|| invalid("unknown signing document"))
 }
+/// Appends `Sent` in its own write, for a test that drives the ceremony
+/// from another crate (`crate::test_support`).
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn mark_sent_for_test(
+    vault: &Vault,
+    document: EntityId,
+    actor: EsignAuditActor,
+    now: u64,
+) -> Result<()> {
+    vault.with_write_txn(|txn| append(vault, txn, document, EsignEvent::Sent, actor, now).map(drop))
+}
 pub(super) fn append(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
