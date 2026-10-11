@@ -69,15 +69,23 @@ impl PackManifest {
         let fields = frontmatter_fields(text)?;
         // The source scans read the raw file, where a JSON escape can hide a
         // credential; every decoded string gets both detectors again. A run
-        // is joined text, not a record, so it gets no structured reading: only
-        // the release door's text rules, which cover the write door's.
+        // is joined text, not a record: both doors' text rules, no structured
+        // reading.
         for (_, decoded) in decoded_fields(&fields) {
             for value in &decoded.strings {
                 crate::batch::secret_scan::scan_metadata_field(value)?;
+                if crate::batch::secret_scan::scan_file_content("PACK.md", value.as_bytes())
+                    .is_some()
+                {
+                    return Err(invalid("pack source contains credential material"));
+                }
             }
-            if decoded.strings.iter().chain(&decoded.run).any(|text| {
-                crate::batch::secret_scan::scan_file_content("PACK.md", text.as_bytes()).is_some()
-            }) {
+            if decoded
+                .run
+                .as_deref()
+                .and_then(crate::batch::secret_scan::scan_joined_text)
+                .is_some()
+            {
                 return Err(invalid("pack source contains credential material"));
             }
         }

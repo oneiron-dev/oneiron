@@ -510,6 +510,17 @@ fn escaped_credential_in_any_pack_md_value_is_refused() {
         "{err:?}"
     );
     // The run is joined text, not a record: two entries that only form an
-    // object once joined are not read as one.
+    // object once joined are not read as one. It still gets both doors' text
+    // rules: a placeholder key block split over three entries, behind a decoy
+    // marker the release door's header rule stops at, is refused.
     assert!(capability(r#"grants: ["{\"token\"", ": \"VALUE\"}"]"#.to_owned()).is_ok());
+    let block = format!(
+        "grants: [\"-----BEGIN NOTE----- -----BEGIN PRIVATE KEY-----\", \"{}\", \"-----END PRIVATE KEY-----\"]",
+        "VALUE".repeat(8)
+    );
+    let err = capability(block).expect_err("split key block");
+    assert!(
+        format!("{err:?}").contains("credential material"),
+        "{err:?}"
+    );
 }
