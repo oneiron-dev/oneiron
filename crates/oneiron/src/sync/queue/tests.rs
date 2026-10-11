@@ -1391,20 +1391,68 @@ fn seq_resumes_after_reopen() {
 }
 
 #[test]
-fn key_encoding_roundtrip() {
-    // Two key families round-trip through their encode/decode pair.
-    // Update keys carry a u64 sequence (boundary values: 0, 1, 255,
-    // 65535, u64::MAX). Embed keys carry an EntityId.
-    for seq in [0u64, 1, 255, 65535, u64::MAX] {
-        let encoded = encode_update_key(seq);
-        let decoded = decode_update_key(&encoded)
-            .unwrap_or_else(|e| panic!("update_key seq={seq}: decode failed: {e:?}"));
-        assert_eq!(decoded, seq, "update_key seq={seq}");
+fn queue_writes_literal_update_and_embed_keys_to_lmdb() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let queue = SyncQueue::new(Arc::clone(&vault)).unwrap();
+    assert_eq!(queue.push("2026-03", b"first").unwrap(), 1);
+    {
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(
+                &mut wtxn,
+                b"m:last_update_seq",
+                &[0x07, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01],
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
     }
-
-    let id = EntityId::now();
-    let encoded = encode_embed_key(&id);
-    let decoded = decode_embed_key(&encoded)
-        .unwrap_or_else(|e| panic!("embed_key id={id:?}: decode failed: {e:?}"));
-    assert_eq!(decoded, id, "embed_key roundtrip");
+    assert_eq!(
+        queue.push("2026-03", b"wide").unwrap(),
+        0x0102_0304_0506_0708
+    );
+    let id = EntityId::from_bytes([
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x77, 0x18, 0x89, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+        0x20,
+    ])
+    .unwrap();
+    queue.push_embed_job(&id, 2).unwrap();
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert_eq!(
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &[b'q', b':', 0, 0, 0, 0, 0, 0, 0, 1],)
+            .unwrap()
+            .as_deref(),
+        Some(b"\x072026-03first".as_slice())
+    );
+    assert_eq!(
+        vault
+            .store
+            .sync_queue
+            .get(
+                &rtxn,
+                &[b'q', b':', 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            )
+            .unwrap()
+            .as_deref(),
+        Some(b"\x072026-03wide".as_slice())
+    );
+    let embed = vault
+        .store
+        .sync_queue
+        .get(
+            &rtxn,
+            &[
+                b'e', b':', 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x77, 0x18, 0x89, 0x1A, 0x1B, 0x1C,
+                0x1D, 0x1E, 0x1F, 0x20,
+            ],
+        )
+        .unwrap()
+        .expect("literal embed key is persisted");
+    assert_eq!(embed.len(), 9);
+    assert_eq!(embed[0], 2);
 }

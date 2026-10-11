@@ -685,6 +685,7 @@
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
       "scope": "Write",
+      "lands_turn": true,
       "mcp_fields": {
         "spec": "$",
         "room_ref": "=conversation_ref"

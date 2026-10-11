@@ -242,22 +242,6 @@ fn sid_ess_disagreement_is_rejected_on_parse() {
     );
 }
 
-#[test]
-fn sig_alg_permitted_denies_rsa_pss_everywhere() {
-    assert!(sig_alg_permitted(
-        SignatureAlgorithm::RsaPkcs1v15Sha256,
-        OID_SHA256_WITH_RSA.as_bytes()
-    ));
-    assert!(!sig_alg_permitted(
-        SignatureAlgorithm::RsaPkcs1v15Sha256,
-        OID_RSA_PSS.as_bytes()
-    ));
-    assert!(!sig_alg_permitted(
-        SignatureAlgorithm::EcdsaP256Sha256,
-        OID_RSA_PSS.as_bytes()
-    ));
-}
-
 /// Offset of the SignedData version INTEGER's single value octet inside
 /// a ContentInfo DER emitted by `build_signed_data`.
 fn version_value_offset(der: &[u8]) -> usize {

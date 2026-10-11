@@ -56,22 +56,52 @@ fn manifest_with_blame(
 }
 
 #[test]
-fn code_symbol_manifest_codec_is_deterministic_and_sorts_constructor_inputs() -> Result<()> {
-    let manifest = manifest_with_blame(Some(entity(0x51)), Some("session-alpha".to_owned()))?;
-    assert_eq!(manifest.chunks[0].start_line, 1);
-    assert_eq!(manifest.chunks[1].start_line, 10);
-    assert_eq!(
-        manifest.symbols[0].chunk_indexes,
-        vec![1],
-        "constructor must remap symbol indexes after sorting chunks"
+fn manifest_wire_fixture_pins_sorted_indexes_and_provenance() -> Result<()> {
+    const FROZEN: &[u8] = b"\x84\xa8repo_ref\xd93github:a/b#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xabcommit_hash\xd9(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xa6chunks\x92\x85\xa4path\xa4a.rs\xaastart_line\x01\xa8end_line\x01\xaccontent_hash\xc4 \x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\xb4producing_operations\x90\x85\xa4path\xa4a.rs\xaastart_line\x0a\xa8end_line\x0c\xaccontent_hash\xc4 \x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\xb4producing_operations\x91\x95\xc4\x10\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\xc4\x10\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\xc4\x10\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\xc4\x10\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\xc4\x10\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\xa7symbols\x91\x88\xa4path\xa4a.rs\xa4name\xa1f\xa4kind\xa8function\xabfingerprint\xc4 33333333333333333333333333333333\xadchunk_indexes\x91\x01\xb3provenance_claim_id\xc4\x10QQQQQQQQQQQQQQQQ\xaesource_session\xadsession-alpha\xb4producing_operations\x91\x95\xc4\x10\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\xc4\x10\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\xc4\x10\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\xc4\x10\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\xc4\x10\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f";
+    let op = CodeProducingOperation {
+        operation: entity(11),
+        actor: entity(12),
+        turn: entity(13),
+        activity: entity(14),
+        intent: entity(15),
+    };
+    let mut late = CodeChunk::new("a.rs", 10, 12, [0x22; 32]);
+    late.producing_operations = vec![op.clone()];
+    let early = CodeChunk::new("a.rs", 1, 1, [0x11; 32]);
+    let mut revision = CodeSymbolRevision::new(
+        "a.rs",
+        "f",
+        "function",
+        [0x33; 32],
+        vec![0],
+        Some(entity(0x51)),
+        Some("session-alpha".to_owned()),
     );
-
-    let encoded = encode_code_symbol_manifest(&manifest)?;
-    let decoded = decode_code_symbol_manifest(&encoded)?;
-    let encoded_again = encode_code_symbol_manifest(&decoded)?;
-
-    assert_eq!(decoded, manifest);
-    assert_eq!(encoded_again, encoded);
+    revision.producing_operations = vec![op];
+    let manifest = CodeSymbolManifest::new(
+        RepoRef::parse("github:a/b#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+        vec![late, early],
+        vec![revision],
+    )?;
+    assert_eq!(encode_code_symbol_manifest(&manifest)?.as_slice(), FROZEN);
+    let decoded = decode_code_symbol_manifest(FROZEN)?;
+    assert_eq!(decoded.chunks[0].start_line, 1);
+    assert_eq!(decoded.chunks[1].content_hash, [0x22; 32]);
+    assert_eq!(decoded.symbols[0].chunk_indexes, vec![1]);
+    assert_eq!(decoded.symbols[0].provenance_claim_id, Some(entity(0x51)));
+    assert_eq!(
+        decoded.symbols[0].source_session.as_deref(),
+        Some("session-alpha")
+    );
+    assert_eq!(
+        decoded.symbols[0].producing_operations[0].operation,
+        entity(11)
+    );
+    assert_eq!(
+        decoded.symbols[0].producing_operations[0].intent,
+        entity(15)
+    );
     Ok(())
 }
 

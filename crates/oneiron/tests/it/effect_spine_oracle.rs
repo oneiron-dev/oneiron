@@ -1241,7 +1241,7 @@ fn calendar_invite_gate_and_intent_ledger_oracle() {
 // fourth: its one definition is `pub(crate)` and feature-gated
 // (`any(sync, test)`), i.e. an origin-validated replay door for bytes a peer
 // already authored, not a public write door.
-// `one1891_put_replicated_is_not_a_fourth_write_door` pins that by source, so
+// `type_boundaries_compilefail` pins that from an external crate, so
 // "three doors" cannot quietly become "three doors plus a hole".
 
 mod one1891 {
@@ -1252,25 +1252,6 @@ mod one1891 {
         EntityResolutionCandidate, EntityResolutionWaterfallDecision, TimeRange,
     };
     use rmpv::Value;
-
-    pub(super) const INGEST_SOURCE: &str = concat!(
-        include_str!("../../src/ingest/mod.rs"),
-        include_str!("../../src/ingest/resolution.rs"),
-        include_str!("../../src/ingest/types.rs"),
-        include_str!("../../src/ingest/admission.rs"),
-        include_str!("../../src/ingest/registry.rs"),
-        include_str!("../../src/ingest/transcripts.rs"),
-    );
-    pub(super) const BATCH_BUILDER_SOURCE: &str = concat!(
-        include_str!("../../src/batch/builder/mod.rs"),
-        include_str!("../../src/batch/builder/apply.rs"),
-        include_str!("../../src/batch/builder/ops.rs"),
-        include_str!("../../src/batch/builder/puts.rs"),
-        include_str!("../../src/batch/builder/claims.rs"),
-        include_str!("../../src/batch/builder/edges.rs"),
-        include_str!("../../src/batch/builder/commit.rs"),
-        include_str!("../../src/batch/builder/preflight.rs"),
-    );
 
     /// A vault WITHOUT the default policy manifest, for the two legs whose
     /// subject is a claim WRITE rather than the waterfall read: the Gate's
@@ -1458,33 +1439,6 @@ mod one1891 {
         oneiron::set_provider_confidence_index_raw(vault, provider, actor_row, prior_head_row)
             .expect("set raw index rows");
     }
-
-    /// Extracts `[start_marker, end_marker)` from a source file, for the
-    /// assertions whose subject is a property of the CODE — how many
-    /// transactions a function opens, which validator arm sits where. A
-    /// behavioural test cannot see either.
-    pub(super) fn source_slice<'a>(
-        source: &'a str,
-        start_marker: &str,
-        end_marker: &str,
-    ) -> &'a str {
-        let start = source
-            .find(start_marker)
-            .unwrap_or_else(|| panic!("start marker absent: {start_marker}"));
-        let rest = &source[start..];
-        let end = rest
-            .find(end_marker)
-            .unwrap_or_else(|| panic!("end marker absent: {end_marker}"));
-        &rest[..end]
-    }
-
-    pub(super) fn waterfall_body() -> &'static str {
-        source_slice(
-            INGEST_SOURCE,
-            "pub fn evaluate_entity_resolution_waterfall",
-            "\npub type IngestResult",
-        )
-    }
 }
 
 /// The three DEFAULT-FEATURE doors a `provider.enrichment` claim can be
@@ -1586,49 +1540,59 @@ mod one1891_doors {
 
 // ── One transaction, not one per candidate ─────────────────────────────────
 
-/// STRUCTURAL: the waterfall opens EXACTLY ONE write transaction, around the
-/// whole candidate loop.
-///
-/// This cannot be observed from outside — a per-candidate transaction returns
-/// the same numbers — but it is the difference between one consistent snapshot
-/// and N snapshots a concurrent prior write can slide between, and (given
-/// `with_write_txn` takes the LMDB writer mutex first) between a scoring pass
-/// and a deadlock when a caller already holds the writer.
 #[test]
-fn one1891_waterfall_scores_every_candidate_in_one_write_transaction() {
-    let body = one1891::waterfall_body();
-
-    assert_eq!(
-        body.matches("with_write_txn").count(),
-        1,
-        "the waterfall must open exactly one transaction, not one per candidate"
-    );
-    let txn_at = body.find("with_write_txn").expect("the single transaction");
-    let loop_at = body
-        .find("for candidate in candidates")
-        .expect("the candidate loop");
+fn concurrent_prior_updates_never_mix_candidate_scores_within_a_waterfall_pass() {
+    let (_dir, vault) = one1891::open_unseeded_vault();
+    let candidates = (0_u8..24)
+        .map(|index| {
+            one1891::candidate(&vault, 0x30 + index, 0x70 + index, "snapshot-provider", 0.8)
+        })
+        .collect::<Vec<_>>();
+    one1891::write_prior(&vault, "snapshot-provider", 0.0, "evidence:low");
+    let low = one1891::decide(&vault, &candidates, false);
+    assert_eq!(low.ranked.len(), 24);
+    assert!(low.ranked.iter().all(|row| row.effective_confidence == 0.0));
+    one1891::write_prior(&vault, "snapshot-provider", 1.0, "evidence:high");
+    let high = one1891::decide(&vault, &candidates, false);
+    assert_eq!(high.ranked.len(), 24);
     assert!(
-        txn_at < loop_at,
-        "the loop must run INSIDE the transaction, not open one per iteration"
+        high.ranked
+            .iter()
+            .all(|row| row.effective_confidence == 0.8)
     );
-    assert!(
-        body.contains("effective_confidence_in_txn"),
-        "scoring must compose inside the caller's transaction"
-    );
-    assert!(
-        !body.contains("provider_confidence::effective_confidence("),
-        "the transaction-opening read door would nest a writer per candidate"
-    );
-    assert!(
-        !body.contains("body.confidence"),
-        "ranking on the stored confidence is the exact bug this leg exists to \
-         prevent"
-    );
-    assert!(
-        !body.contains("read_txn"),
-        "a second, separate read snapshot would defeat the single-transaction \
-         guarantee"
-    );
+    let start = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        let writer = scope.spawn(|| {
+            start.wait();
+            for index in 0..64 {
+                let prior = if index % 2 == 0 { 0.0 } else { 1.0 };
+                oneiron::provider_confidence::write_provider_prior(
+                    &vault,
+                    "snapshot-provider",
+                    prior,
+                    "evidence:concurrent-update",
+                )
+                .expect("concurrent prior update");
+                std::thread::yield_now();
+            }
+        });
+        start.wait();
+        for _ in 0..64 {
+            let decision = one1891::decide(&vault, &candidates, false);
+            assert_eq!(decision.ranked.len(), 24);
+            let score = decision.ranked[0].effective_confidence;
+            assert!(score == 0.0 || score == 0.8);
+            assert!(
+                decision
+                    .ranked
+                    .iter()
+                    .all(|row| row.effective_confidence == score),
+                "one pass cannot combine candidates from two committed prior states"
+            );
+            std::thread::yield_now();
+        }
+        writer.join().expect("prior writer");
+    });
 }
 
 // ── The write-time validator ───────────────────────────────────────────────
@@ -1803,37 +1767,6 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
         ),
         "expected a reserved-predicate refusal, got {error}"
     );
-}
-
-/// STRUCTURAL: `put_replicated` is not a fourth write door. Its definition is
-/// `pub(crate)` and feature-gated, so the three doors exercised above are
-/// the whole default-feature write surface for an enrichment claim — and a
-/// replicated body still meets the same validator inside `apply_put`, so this
-/// is a statement about REACH, not about a bypass.
-#[test]
-fn one1891_put_replicated_is_not_a_fourth_write_door() {
-    for (label, source) in [("builder", one1891::BATCH_BUILDER_SOURCE)] {
-        assert!(
-            !source.contains("pub fn put_replicated"),
-            "{label}: put_replicated must never become public"
-        );
-        let Some(door_at) = source.find("fn put_replicated") else {
-            continue;
-        };
-        assert!(
-            source.contains("pub(crate) fn put_replicated"),
-            "{label}: the replay door must stay crate-private"
-        );
-        // The gate must sit on the door ITSELF, not merely somewhere in the
-        // file: nothing but the visibility keyword may separate them.
-        let gate_at = source[..door_at]
-            .rfind("#[cfg(")
-            .expect("a feature gate above the replay door");
-        assert!(
-            !source[gate_at..door_at].contains("fn "),
-            "{label}: the feature gate must sit on the replay door itself"
-        );
-    }
 }
 
 // ── The two DISPOSABLE shortcut rows ───────────────────────────────────────
