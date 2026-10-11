@@ -444,8 +444,25 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
 /// and the speech MESSAGE M takes every epoch whose window could quote it.
 #[test]
 fn an_epoch_goes_with_the_host_words_it_holds() {
-    for erased in ["the first epoch", "the speech message"] {
+    for erased in [
+        "the first epoch",
+        "the speech message",
+        "an unspoken position",
+    ] {
         let run = LongRun::start(12);
+        // Bridge position 0 is the run's memory search, not speech: a record
+        // a caller stores at that position's MESSAGE id is none of its words.
+        let unspoken = crate::code_run::executor_speech_message_id_in_run(RUN_REF, run.run_id, 0)
+            .expect("position id");
+        run.vault
+            .put_entity(
+                &unspoken,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                b"a caller's person",
+            )
+            .expect("a caller's record");
         let compactor = Arc::new(Compactor::default());
         let compact_at = run.base_tokens + run.step_tokens * 7 / 2;
         let mut seat = run.seat(compact_at, &compactor);
@@ -487,22 +504,27 @@ fn an_epoch_goes_with_the_host_words_it_holds() {
         let [message] = messages.as_slice() else {
             panic!("{erased}: one speech MESSAGE, got {messages:?}");
         };
-        if erased == "the first epoch" {
-            assert!(run.vault.delete_entity(&first).expect("erase the epoch"));
-        } else {
+        match erased {
+            "the first epoch" => {
+                assert!(run.vault.delete_entity(&first).expect("erase the epoch"));
+            }
             // A MESSAGE leaves through its room's door, as its author.
-            run.vault
-                .delete_own_room_record(*message, crate::DeleteReason::UserDelete)
-                .expect("erase the MESSAGE");
+            "the speech message" => {
+                run.vault
+                    .delete_own_room_record(*message, crate::DeleteReason::UserDelete)
+                    .expect("erase the MESSAGE");
+            }
+            _ => assert!(run.vault.delete_entity(&unspoken).expect("erase it")),
         }
         let epochs = run
             .vault
             .code_run_compaction_epochs(run.run_id)
             .expect("epochs");
         assert_eq!(epochs.len(), 2, "{erased}: the steps stay covered");
+        let withdrawn = erased != "an unspoken position";
         assert!(
-            epochs.iter().all(|(_, text)| text.is_none()),
-            "{erased}: every epoch holding its words is withdrawn"
+            epochs.iter().all(|(_, text)| text.is_none() == withdrawn),
+            "{erased}: every epoch holding its words is withdrawn, and no other"
         );
     }
 }

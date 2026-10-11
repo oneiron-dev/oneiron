@@ -199,6 +199,17 @@ impl CodeRunBridgeCall {
             )
     }
 
+    /// The bubble position this row emitted at, when it emitted one.
+    pub(crate) fn emitted_speech_order(&self) -> Option<u32> {
+        if !self.emitted_speech() {
+            return None;
+        }
+        match decode_self_dispatch_outcome(&self.outcome) {
+            Ok(SelfDispatchOutcome::Speech(result)) => Some(result.order),
+            _ => None,
+        }
+    }
+
     /// The visible TEXT this row spoke, when it emitted an addressed bubble.
     ///
     /// Read from the row's own request payload — the same canonical value

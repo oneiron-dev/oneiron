@@ -480,11 +480,15 @@ pub(super) fn failure_pin(content: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Bridge positions a run's speech can take: every call's position (an
-/// explicit utterance takes its own) and the next one, where the trailing
-/// fallback speaks.
-pub(super) fn speech_orders(record: &CodeRunReplayRecord) -> std::ops::RangeInclusive<u32> {
-    0..=u32::try_from(record.bridge_calls.len()).unwrap_or(u32::MAX)
+/// The bridge positions this run spoke at: each call that emitted a bubble.
+/// A position no call spoke at names none of the run's records, whatever
+/// sits at its id. The trailing fallback speaks only once the run completes,
+/// after its last window. A blocked report's receipt is in its call's outcome.
+pub(super) fn speech_orders(record: &CodeRunReplayRecord) -> impl Iterator<Item = u32> + '_ {
+    record
+        .bridge_calls
+        .iter()
+        .filter_map(crate::code_run::CodeRunBridgeCall::emitted_speech_order)
 }
 
 /// Frame marks a summary may not forge: the record marks and this frame.
