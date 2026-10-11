@@ -57,7 +57,13 @@ impl HostSelfDispatcher<'_> {
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
-        // halted) halts the bridge, so no later call reaches this door.
+        // halted) halts the bridge, so no later call reaches this door. One
+        // whose kept answer the door refused does not halt it, so a write
+        // past it gets that refusal too: the step cannot close without the
+        // kept write, and nothing past the refusal may commit.
+        if let Some(refused) = self.earlier_write_refused(site)? {
+            return Ok(SelfDispatchOutcome::Denied(refused));
+        }
         let ordinal = site.earlier.iter().filter(is_write).count() as u64;
         let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
         if let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? {
@@ -94,6 +100,31 @@ impl HostSelfDispatcher<'_> {
         self.storage
             .put_code_run_replay_record_if_generation_with_heal(&receipt, Some(generation), None)?;
         Ok(outcome)
+    }
+
+    /// The refusal the door gave an earlier write of this step in place of
+    /// its kept answer, if it gave one.
+    fn earlier_write_refused(
+        &self,
+        site: ExecutorCallSite<'_>,
+    ) -> Result<Option<SelfDeniedResult>> {
+        for (ordinal, made) in (0_u64..).zip(site.earlier.iter().filter(is_write)) {
+            let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
+            let receipt = self.storage.get_code_run_replay_record(&receipt_id)?;
+            let met = receipt
+                .as_ref()
+                .and_then(|receipt| receipt.bridge_calls.first())
+                .is_some_and(|kept| {
+                    row_identity(kept) == row_identity(made) && answered_as_kept(kept, made)
+                });
+            if !met
+                && let Ok(SelfDispatchOutcome::Denied(refused)) =
+                    decode_self_dispatch_outcome(&made.outcome)
+            {
+                return Ok(Some(refused));
+            }
+        }
+        Ok(None)
     }
 
     /// Refuses to close a step that left out a write an earlier attempt of it

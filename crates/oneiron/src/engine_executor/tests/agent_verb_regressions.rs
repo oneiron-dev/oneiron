@@ -11,12 +11,14 @@ use crate::task_verb::sdk::{AgentVerb, TaskCreateRequest};
 /// A host's verb door reduced to the one verb this run calls: `tasks.create`
 /// on the host's memory surface, under the origin the dispatcher hands it.
 /// Its answer is the task receipt, with `extra` fields beside it. Once
-/// `closed`, it refuses every call as the MCP door refuses a revoked slip's.
+/// `closed`, it refuses every call as the MCP door refuses a revoked slip's;
+/// one that `refuses_kept` refuses reading a kept answer back, and only that.
 struct TaskCreateDoor {
     vault: Arc<Vault>,
     actor: WriteActor,
     extra: serde_json::Map<String, serde_json::Value>,
     closed: std::sync::atomic::AtomicBool,
+    refuses_kept: std::sync::atomic::AtomicBool,
 }
 
 impl TaskCreateDoor {
@@ -56,8 +58,15 @@ impl AgentVerbDoor for TaskCreateDoor {
 
     fn admit_run_call(
         &self,
-        _: RunCall,
+        call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        if call == RunCall::RecordedOutput
+            && self.refuses_kept.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(AgentVerbRefusal {
+                code: "read_refused".to_owned(),
+            });
+        }
         self.admits().map(|()| None)
     }
 }
@@ -137,6 +146,7 @@ impl<'a> VerbWriteRun<'a> {
             actor,
             extra,
             closed: std::sync::atomic::AtomicBool::new(false),
+            refuses_kept: std::sync::atomic::AtomicBool::new(false),
         });
         let gated_write = GatedActorWrite::new(vault, actor, "verb-write-resume")
             .expect("gated actor write")
@@ -461,6 +471,38 @@ fn a_closed_door_refuses_a_resumed_write_its_kept_answer() {
         first,
         "the admitted resume answers with the first receipt"
     );
+}
+
+/// Review repro (Sol R6, #1405): a door refused a resumed write's kept answer
+/// but admitted fresh writes, and the guest caught the refusal and made the
+/// write again. The retry counted the refused write as made, took the next
+/// receipt, and committed a second task. A write past a refused kept answer
+/// now gets that refusal too, and the vault keeps its one write.
+#[test]
+fn a_retry_past_a_refused_kept_answer_writes_nothing() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    run.stop_after(vec![create_task()]);
+
+    run.door
+        .refuses_kept
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut retried = resumed_step(vec![create_task(), create_task()]);
+    let outcome = run.resume(&run.config, &mut retried);
+    assert!(
+        matches!(
+            outcome,
+            Err(EngineExecutorError::Engine(Error::InvariantViolation(_)))
+        ),
+        "a step whose write was refused does not close: {outcome:?}"
+    );
+    let refused = SelfDispatchOutcome::Denied(crate::code_run::SelfDeniedResult {
+        effect: SelfEffect::AgentVerb,
+        outcome: "read_refused".to_owned(),
+        reason_codes: Vec::new(),
+    });
+    assert_eq!(retried.answers, vec![refused.clone(), refused]);
 }
 
 /// A host door that admits a run's own calls until it closes, as a connector
