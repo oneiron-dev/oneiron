@@ -1,15 +1,15 @@
 //! A hostile seal organ for the seal binding's checks (feature
 //! `hostile-organ-tests`; never shipped). It names itself `seal`, speaks
-//! protocol 1.1, serves `seal.pdf` at schema 2 and at the old schema 1 (one
-//! PDF, bare prehash signing), so the same attacks run against the adapter
-//! before the binding and after it, and `seal.verify` at schema 1. It does
-//! what a seal organ compromised by a hostile PDF could. Its first argument
-//! picks how:
+//! protocol 1.1, and serves `seal.verify` at schema 1 and `seal.pdf` at
+//! schema 2, or, with `schema-1` as its second argument, at the old schema
+//! 1 (one PDF, bare prehash signing), so the same attacks run against the
+//! adapter before the binding and after it. It does what a seal organ
+//! compromised by a hostile PDF could. Its first argument picks how:
 //! - `forge-signs`: asks the key to sign an unrelated prehash under the
-//!   call's operation (Astra's witness on #1379); then, on schema 1, the
-//!   prehash of a second document's signed attributes, and on schema 2,
-//!   bound asks for the call's first revision whose messageDigest is the
-//!   unrelated digest, and the second document's;
+//!   call's operation (Astra's witness on #1379), then the prehash of a
+//!   second document's signature revision: on schema 1 a bare prehash, on
+//!   schema 2 bound asks for the call's first revision whose messageDigest
+//!   is the unrelated digest, then the second document's;
 //! - `unsigned`: returns the prepared PDF unsigned, with a forged verdict;
 //! - `alter-prefix`: seals for real, then changes one byte of the prepared
 //!   PDF;
@@ -35,10 +35,10 @@ mod rogue {
         OutputBytes, VerbSpec,
     };
     use oneiron_seal::{
-        BackendError, BackendRejectCode, BackendSignature, FetchPolicy, NativeSealEngine,
-        OfflineFetcher, PadesProfile, PreparedRevision, SealBackend, SealClock, SealConfig,
-        SealRequest, SealResourceLimits, SignDigestRequest, SignRevisionRequest,
-        SignatureAlgorithm, SigningIdentity,
+        BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchPolicy,
+        NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine, PreparedRevision,
+        SealBackend, SealClock, SealConfig, SealRequest, SealResourceLimits, SignDigestRequest,
+        SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
     };
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
@@ -67,7 +67,19 @@ mod rogue {
         }
     }
 
-    pub(super) struct Rogue(pub(super) Mode);
+    /// The mode, and the schema it serves `seal.pdf` at.
+    pub(super) struct Rogue(pub(super) Mode, pub(super) u32);
+
+    impl Rogue {
+        pub(super) fn from_args() -> Option<Self> {
+            let mode = Mode::from_args()?;
+            let schema = match std::env::args().nth(2).as_deref() {
+                Some("schema-1") => 1,
+                _ => 2,
+            };
+            Some(Self(mode, schema))
+        }
+    }
 
     #[derive(Deserialize)]
     struct SealArgs {
@@ -166,7 +178,7 @@ mod rogue {
         }
 
         fn verbs(&self) -> Vec<VerbSpec> {
-            [("seal.pdf", 1), ("seal.pdf", 2), ("seal.verify", 1)]
+            [("seal.pdf", self.1), ("seal.verify", 1)]
                 .map(|(name, schema)| VerbSpec {
                     name: name.into(),
                     schema,
@@ -192,7 +204,14 @@ mod rogue {
             let sub_operation = format!("{}:0000000000000000:sign:65536", args.operation_id);
             let (bytes, achieved) = match self.0 {
                 Mode::ForgeSigns => {
-                    forge_signs(&call.asker(), &sub_operation, pdf, revisions.first())?;
+                    let asker = call.asker();
+                    let witness = Witness {
+                        asker: &asker,
+                        operation: &sub_operation,
+                        anchors: &args.config.trust_anchors,
+                        now_ms: args.now_ms,
+                    };
+                    witness.forge_signs(pdf, revisions.first())?;
                     return Err(OrganError::new(
                         ErrorCode::Internal,
                         "every forgery refused",
@@ -200,27 +219,13 @@ mod rogue {
                 }
                 Mode::Unsigned => (pdf.to_vec(), args.profile),
                 Mode::AlterPrefix | Mode::AppendUpdate | Mode::DropCerts => {
-                    let engine = NativeSealEngine::new(
-                        SealConfig {
-                            trust_anchors_der: args
-                                .config
-                                .trust_anchors
-                                .into_iter()
-                                .map(ByteBuf::into_vec)
-                                .collect(),
-                            timestamp_authorities: Vec::new(),
-                            fetch_policy: FetchPolicy::default(),
-                            resource_limits: SealResourceLimits::default(),
-                        },
-                        Arc::new(Backend {
-                            asker: call.asker(),
-                            identity: Mutex::new(None),
-                            legacy,
-                        }),
-                        Arc::new(OfflineFetcher),
-                        Arc::new(Clock(args.now_ms)),
-                    )
-                    .map_err(bad)?;
+                    let backend = Backend {
+                        asker: call.asker(),
+                        identity: Mutex::new(None),
+                        legacy,
+                    };
+                    let engine =
+                        native(&args.config.trust_anchors, args.now_ms, Arc::new(backend))?;
                     let request = SealRequest {
                         operation_id: args.operation_id,
                         target_profile: PadesProfile::BaselineB,
@@ -274,74 +279,180 @@ mod rogue {
             .collect()
     }
 
-    /// Astra's witness, an unrelated prehash under the call's operation.
-    /// Then a second document: the prepared PDF with one byte of its first
-    /// stream changed. On schema 1 the organ asks for the prehash of that
-    /// document's signed attributes. On schema 2 it asks, for the call's
-    /// first revision, with attributes whose messageDigest is the unrelated
-    /// digest, then with the second document's, hashed over the same
-    /// revision. Each must be refused before the key signs.
-    fn forge_signs(
-        asker: &Asker,
-        operation: &str,
-        pdf: &[u8],
-        revision: Option<&PreparedRevision<'_>>,
-    ) -> Result<(), OrganError> {
-        let identity: IdentityAnswer = from_value(
-            &asker
-                .ask("seal.identity", rmpv::Value::Map(Vec::new()))
-                .map_err(bad)?
-                .value,
-        )?;
-        let cert = identity.signer_certificate.into_vec();
-        let unrelated: [u8; 32] = Sha256::digest(UNRELATED).into();
-        let mut second = pdf.to_vec();
-        let at = pdf
-            .windows(7)
-            .position(|window| window == b"stream\n")
-            .map_or(pdf.len() / 2, |at| at + 7);
-        if let Some(byte) = second.get_mut(at) {
-            *byte ^= 0x01;
+    /// The organ's own seal engine over `backend`, as the real organ builds
+    /// it for a call.
+    fn native(
+        anchors: &[ByteBuf],
+        now_ms: u64,
+        backend: Arc<dyn SealBackend>,
+    ) -> Result<NativeSealEngine, OrganError> {
+        NativeSealEngine::new(
+            SealConfig {
+                trust_anchors_der: anchors.iter().map(|anchor| anchor.to_vec()).collect(),
+                timestamp_authorities: Vec::new(),
+                fetch_policy: FetchPolicy::default(),
+                resource_limits: SealResourceLimits::default(),
+            },
+            backend,
+            Arc::new(OfflineFetcher),
+            Arc::new(Clock(now_ms)),
+        )
+        .map_err(bad)
+    }
+
+    /// What `forge-signs` needs of its call.
+    struct Witness<'a> {
+        asker: &'a Asker,
+        operation: &'a str,
+        anchors: &'a [ByteBuf],
+        now_ms: u64,
+    }
+
+    impl Witness<'_> {
+        /// Astra's witness, an unrelated prehash under the call's
+        /// operation. Then a second document B: the PDF with its first
+        /// page's MediaBox one digit wider, the same length, so a revision
+        /// written for the PDF is a valid revision of B. On schema 1 the
+        /// organ's own writer appends B's signature revision and the organ
+        /// asks for the prehash of its signed attributes. On schema 2 it
+        /// asks, for the call's first revision, with attributes whose
+        /// messageDigest is the unrelated digest, then B's: the hash of
+        /// that revision's ByteRange over B. Each must be refused before
+        /// the key signs.
+        fn forge_signs(
+            &self,
+            pdf: &[u8],
+            revision: Option<&PreparedRevision<'_>>,
+        ) -> Result<(), OrganError> {
+            let identity: IdentityAnswer = from_value(
+                &self
+                    .asker
+                    .ask("seal.identity", rmpv::Value::Map(Vec::new()))
+                    .map_err(bad)?
+                    .value,
+            )?;
+            let cert = identity.signer_certificate.into_vec();
+            let unrelated: [u8; 32] = Sha256::digest(UNRELATED).into();
+            let second = second_document(pdf)?;
+            // Refusals are the point: each is on the host's record.
+            let _ = self.asker.ask("seal.sign", self.bare(unrelated)?);
+            let Some(revision) = revision else {
+                let prehash = self.revision_prehash(
+                    &second,
+                    SigningIdentity {
+                        algorithm: identity.algorithm,
+                        signer_certificate_der: cert,
+                        certificate_chain_der: identity
+                            .chain
+                            .into_iter()
+                            .map(ByteBuf::into_vec)
+                            .collect(),
+                    },
+                )?;
+                let _ = self.asker.ask("seal.sign", self.bare(prehash)?);
+                return Ok(());
+            };
+            let [_, open, close, _] = revision.byte_range;
+            let open = usize::try_from(open).map_err(bad)?;
+            let close = usize::try_from(close).map_err(bad)?;
+            let (head, tail) = (
+                revision.suffix.get(..open.saturating_sub(pdf.len())),
+                revision.suffix.get(close.saturating_sub(pdf.len())..),
+            );
+            let (head, tail) = head.zip(tail).ok_or_else(|| bad("byte range"))?;
+            let other: [u8; 32] = Sha256::new()
+                .chain_update(&second)
+                .chain_update(head)
+                .chain_update(tail)
+                .finalize()
+                .into();
+            for digest in [unrelated, other] {
+                let bound = BoundSign {
+                    operation_id: self.operation.to_owned(),
+                    revision_id: 0,
+                    byte_range: revision.byte_range,
+                    signed_attributes_der: ByteBuf::from(signed_attributes(&cert, &digest)?),
+                };
+                let _ = self.asker.ask("seal.sign", to_value(&bound)?);
+            }
+            Ok(())
         }
-        let bare = |digest: [u8; 32]| -> Result<rmpv::Value, OrganError> {
+
+        /// A bare prehash ask under the call's operation.
+        fn bare(&self, digest: [u8; 32]) -> Result<rmpv::Value, OrganError> {
             to_value(&LegacySign {
-                operation_id: operation.to_owned(),
+                operation_id: self.operation.to_owned(),
                 digest_algorithm: "sha256",
                 digest: ByteBuf::from(digest.to_vec()),
             })
-        };
-        // Refusals are the point: each is on the host's record.
-        let _ = asker.ask("seal.sign", bare(unrelated)?);
-        let Some(revision) = revision else {
-            let mut set = signed_attributes(&cert, &Sha256::digest(&second).into())?;
-            set[0] = 0x31;
-            let _ = asker.ask("seal.sign", bare(Sha256::digest(&set).into())?);
-            return Ok(());
-        };
-        let [_, open, close, _] = revision.byte_range;
-        let open = usize::try_from(open).map_err(bad)?;
-        let close = usize::try_from(close).map_err(bad)?;
-        let (head, tail) = (
-            revision.suffix.get(..open.saturating_sub(pdf.len())),
-            revision.suffix.get(close.saturating_sub(pdf.len())..),
-        );
-        let (head, tail) = head.zip(tail).ok_or_else(|| bad("byte range"))?;
-        let other: [u8; 32] = Sha256::new()
-            .chain_update(&second)
-            .chain_update(head)
-            .chain_update(tail)
-            .finalize()
-            .into();
-        for digest in [unrelated, other] {
-            let bound = BoundSign {
-                operation_id: operation.to_owned(),
-                revision_id: 0,
-                byte_range: revision.byte_range,
-                signed_attributes_der: ByteBuf::from(signed_attributes(&cert, &digest)?),
-            };
-            let _ = asker.ask("seal.sign", to_value(&bound)?);
         }
-        Ok(())
+
+        /// The prehash a seal of `pdf` asks the key for: the signed
+        /// attributes of the signature revision the organ's own writer
+        /// appends, whose messageDigest covers that revision's ByteRange.
+        fn revision_prehash(
+            &self,
+            pdf: &[u8],
+            identity: SigningIdentity,
+        ) -> Result<[u8; 32], OrganError> {
+            let capture = Arc::new(Capture {
+                identity,
+                prehash: Mutex::new(None),
+            });
+            let backend: Arc<dyn SealBackend> = Arc::<Capture>::clone(&capture);
+            let engine = native(self.anchors, self.now_ms, backend)?;
+            let request = SealRequest {
+                operation_id: self.operation.to_owned(),
+                target_profile: PadesProfile::BaselineB,
+            };
+            // It stops at the signature, which `Capture` never makes.
+            let _ = block_on(engine.seal_pdf(pdf, &request));
+            capture
+                .prehash
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+                .ok_or_else(|| bad("the writer asked for no signature"))
+        }
+    }
+
+    /// A second document, the same length as `pdf`: the first nonzero digit
+    /// of its first MediaBox raised by one.
+    fn second_document(pdf: &[u8]) -> Result<Vec<u8>, OrganError> {
+        let at = pdf
+            .windows(9)
+            .position(|window| window == b"/MediaBox")
+            .ok_or_else(|| bad("no MediaBox"))?;
+        let digit = pdf[at..]
+            .iter()
+            .position(|byte| (b'1'..=b'8').contains(byte))
+            .ok_or_else(|| bad("no MediaBox digit"))?;
+        let mut second = pdf.to_vec();
+        second[at + digit] += 1;
+        Ok(second)
+    }
+
+    /// A key that keeps the prehash it is asked for and signs nothing.
+    struct Capture {
+        identity: SigningIdentity,
+        prehash: Mutex<Option<[u8; 32]>>,
+    }
+
+    #[async_trait]
+    impl SealBackend for Capture {
+        fn signing_identity(&self) -> Result<SigningIdentity, BackendError> {
+            Ok(self.identity.clone())
+        }
+
+        async fn sign_digest(
+            &self,
+            request: SignDigestRequest,
+        ) -> Result<BackendSignature, BackendError> {
+            *self.prehash.lock().unwrap_or_else(PoisonError::into_inner) = Some(request.digest);
+            Err(BackendError::Rejected {
+                code: BackendRejectCode::Unauthorized,
+            })
+        }
     }
 
     /// Rebuilds the CMS in the signed revision's hole without its
@@ -508,6 +619,15 @@ mod rogue {
             &self,
             request: SignRevisionRequest,
         ) -> Result<BackendSignature, BackendError> {
+            if self.legacy {
+                return self
+                    .sign_digest(SignDigestRequest {
+                        operation_id: request.operation_id,
+                        digest_algorithm: DigestAlgorithm::Sha256,
+                        digest: request.digest,
+                    })
+                    .await;
+            }
             let Some(revision_id) = request.revision_id else {
                 return Err(BackendError::Rejected {
                     code: BackendRejectCode::Unauthorized,
@@ -581,8 +701,8 @@ mod rogue {
 
 #[cfg(unix)]
 fn main() -> std::process::ExitCode {
-    match rogue::Mode::from_args() {
-        Some(mode) => oneiron_organ_protocol::serve(rogue::Rogue(mode)),
+    match rogue::Rogue::from_args() {
+        Some(rogue) => oneiron_organ_protocol::serve(rogue),
         None => std::process::ExitCode::FAILURE,
     }
 }

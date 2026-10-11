@@ -560,12 +560,14 @@ struct OneCall<'a> {
 
 impl Drop for OneCall<'_> {
     /// A process that ended on its own before its call let it go crashed,
-    /// as a warm process found dead does; one the host stopped did not.
+    /// as a warm process found dead does, even when the reader has not yet
+    /// seen its socket close; one the host stopped did not.
     fn drop(&mut self) {
-        if self.process.is_alive() || self.process.stopped_by_host() {
-            self.slot.stopped(&self.process);
-        } else {
+        let ended = !self.process.is_alive() || self.process.exited();
+        if ended && !self.process.stopped_by_host() {
             self.slot.crashed(&self.process);
+        } else {
+            self.slot.stopped(&self.process);
         }
         self.process.stop();
         self.slot.prune();
