@@ -1060,6 +1060,76 @@ fn a_room_narrowed_during_a_list_narrows_its_preview() {
     assert_eq!(left, None);
 }
 
+/// A room listed as a room keeps the room's bound when its body names
+/// another kind before the preview reads it: a late joiner still sees no
+/// turn from before it joined (Sol R2-F1).
+#[test]
+fn a_room_turned_direct_during_a_list_keeps_its_bound() {
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let room = entity(0xB6);
+    let (rooted, _) = rooted_reader_with(|vault, owner, reader| {
+        let member = entity(0xB4);
+        vault
+            .put_entity(
+                &member,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a member",
+            )
+            .expect("put the member");
+        let actor = WriteActor::new(owner, EdgeActorClass::Human);
+        let body = ConversationBody {
+            kind: ConversationKind::Group,
+            member_ids: vec![member],
+            ..ConversationBody::default()
+        };
+        vault
+            .create_conversation(room, &body, actor, AT - 100)
+            .expect("create the group");
+        witness(
+            vault,
+            owner,
+            room,
+            entity(0xC5),
+            AT,
+            said(
+                WitnessAuthor::User,
+                "said before the reader joined",
+                Some(entity(SPACE)),
+            ),
+        );
+        vault
+            .join_member(room, reader, actor, AT + 5, HistoryChoice::None)
+            .expect("the reader joins without history");
+    });
+    let vault = &rooted.vault;
+    let memory = rooted.reader.memory(vault);
+    assert_eq!(preview_of(&memory, room), None);
+    BEFORE_PREVIEWS.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move |vault: &Vault| {
+            let mut direct = vault.conversation_body(room).expect("the room's body");
+            direct.kind = ConversationKind::Direct;
+            vault
+                .batch()
+                .put(
+                    &room,
+                    ENTITY_TYPE_CONVERSATION,
+                    TimeRange {
+                        start: AT + 6,
+                        end: AT + 6,
+                    },
+                    AT + 6,
+                    &direct.to_bytes().expect("encode the body"),
+                )
+                .commit()
+                .expect("the room now names itself direct");
+        }));
+    });
+    assert_eq!(preview_of(&memory, room), None);
+}
+
 /// A credential that cannot read base reality learns nothing about it: no
 /// row, no count and no row-authority hint, however many conversations base
 /// holds (DEC-0005: no name, no count; Astra #1388 P2).

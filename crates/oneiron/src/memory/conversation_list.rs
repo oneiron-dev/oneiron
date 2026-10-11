@@ -111,14 +111,19 @@ impl Sight {
     }
 }
 
-/// What bounds a listed conversation's preview beyond the lane.
+/// What bounds a listed conversation's preview beyond the lane. Each read
+/// of a bounded conversation's turns judges the reader's [`Sight`] again, in
+/// that read's own snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Bound {
-    /// Nothing: the owner reads, or the conversation is not a room.
+    /// Nothing: the owner reads with its own key.
     Lane,
-    /// The room: each read of its turns judges the reader's [`Sight`] again,
-    /// in that read's own snapshot.
-    Room,
+    /// A conversation that was no room when the list read it; it is judged
+    /// by the kind it names in each read.
+    Conversation(EntityId),
+    /// A room when the list read it; it is judged as a room in each read,
+    /// whatever kind it names by then.
+    Room(EntityId),
 }
 
 /// One walk of the whole list.
@@ -311,9 +316,9 @@ impl Memory<'_> {
                         };
                         let body = row.body.as_deref().unwrap_or_default();
                         let bound = if is_room(body) {
-                            Bound::Room
+                            Bound::Room(row.id)
                         } else {
-                            Bound::Lane
+                            Bound::Conversation(row.id)
                         };
                         let sight = self.sight_in(txn, row.id, body, &mut grants.borrow_mut())?;
                         Ok(sight.map(|_| (row, bound)))
@@ -349,6 +354,22 @@ impl Memory<'_> {
         if !is_room_kind(decoded.kind) {
             return Ok(Some(Sight::Whole));
         }
+        self.member_sight_in(txn, id, &decoded, body, grants)
+    }
+
+    /// What of the room `id`, stored as `body` and decoded as `decoded`, a
+    /// reader other than the owner may see in the snapshot `txn`, whatever
+    /// kind the body names: a member the turns its windows show, or every
+    /// turn when the ledger keeps none for it, and anyone else the whole room
+    /// only on a grant that opens its relationship.
+    fn member_sight_in<'v>(
+        &'v self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        decoded: &ConversationBody,
+        body: &[u8],
+        grants: &mut Option<crate::access_grant::AccessContext<'v>>,
+    ) -> MemoryResult<Option<Sight>> {
         let members = self
             .vault
             .room_audience_members_in_txn(txn, id)
@@ -387,39 +408,44 @@ impl Memory<'_> {
             .then_some(Sight::Whole))
     }
 
-    /// The reader's sight of `room` as the snapshot `txn` holds it, or every
-    /// turn the lane admits when no room bounds the read. `None`: the reader
-    /// may not see the room, or it is gone.
-    fn room_sight_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        room: Option<&EntityId>,
-    ) -> MemoryResult<Option<Sight>> {
-        let Some(room) = room else {
-            return Ok(Some(Sight::Whole));
+    /// The reader's sight of a listed conversation as the snapshot `txn`
+    /// holds it: every turn the lane admits when nothing bounds the read. A
+    /// conversation the list read as a room is judged as one whatever kind it
+    /// names by then, so a room turned direct mid-list shows no more than its
+    /// membership did (Sol R2-F1). `None`: the reader may not see it, or it
+    /// is gone.
+    fn sight_now_in(&self, txn: &heed::RoTxn<'_>, bound: Bound) -> MemoryResult<Option<Sight>> {
+        let (id, room) = match bound {
+            Bound::Lane => return Ok(Some(Sight::Whole)),
+            Bound::Conversation(id) => (id, false),
+            Bound::Room(id) => (id, true),
         };
-        let Some(stored) = self.vault.store.port_entity_record(txn, room)? else {
+        let Some(stored) = self.vault.store.port_entity_record(txn, &id)? else {
             return Ok(None);
         };
-        self.sight_in(txn, *room, &stored.body, &mut None)
+        if !room {
+            return self.sight_in(txn, id, &stored.body, &mut None);
+        }
+        if self.is_vault_owner_in_txn(txn)? {
+            return Ok(Some(Sight::Whole));
+        }
+        let Ok(decoded) = ConversationBody::from_bytes(&stored.body) else {
+            return Ok(None);
+        };
+        self.member_sight_in(txn, id, &decoded, &stored.body, &mut None)
     }
 
-    /// Whether the reader's sight of `room`, as the snapshot `txn` holds it,
-    /// shows `turn`.
-    fn shows_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        room: Option<&EntityId>,
-        turn: &EntityId,
-    ) -> MemoryResult<bool> {
-        if room.is_none() {
+    /// Whether the reader's sight under `bound`, as the snapshot `txn` holds
+    /// it, shows `turn`.
+    fn shows_in(&self, txn: &heed::RoTxn<'_>, bound: Bound, turn: &EntityId) -> MemoryResult<bool> {
+        if bound == Bound::Lane {
             return Ok(true);
         }
         let Some(stored) = self.vault.store.port_entity_record(txn, turn)? else {
             return Ok(false);
         };
         Ok(self
-            .room_sight_in(txn, room)?
+            .sight_now_in(txn, bound)?
             .is_some_and(|sight| sight.shows(stored.occurred.start)))
     }
 
@@ -429,9 +455,9 @@ impl Memory<'_> {
     /// With no selected HEAD the readable ones are ordered by their own
     /// learned time and proved by themselves, and a turn whose session the
     /// reader may not read is left out, so nothing hidden decides the
-    /// preview. In a room, only turns the reader's sight shows count, before
-    /// any is ordered. Then each readable turn, in order, is read again with
-    /// its messages in bounded reads, until one has text. A room's sight is
+    /// preview. Only turns the reader's sight under `bound` shows count,
+    /// before any is ordered. Then each readable turn, in order, is read again
+    /// with its messages in bounded reads, until one has text. The sight is
     /// judged again in each of those reads, and a turn it no longer shows
     /// gives no text.
     fn preview(
@@ -441,7 +467,6 @@ impl Memory<'_> {
         bound: Bound,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Option<String>> {
-        let room = (bound == Bound::Room).then_some(conversation);
         let candidates = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             self.vault.preview_candidates_in(&txn, conversation)?
@@ -449,12 +474,12 @@ impl Memory<'_> {
         let order: Vec<EntityId> = match candidates {
             PreviewCandidates::Unresolved => return Ok(None),
             PreviewCandidates::Path(turns) => self
-                .admitted(lane, &turns, room, receipt)?
+                .admitted(lane, &turns, bound, receipt)?
                 .into_iter()
                 .map(|(_, id)| id)
                 .collect(),
             PreviewCandidates::ChildOf(turns) => {
-                let readable = self.admitted(lane, &turns, room, receipt)?;
+                let readable = self.admitted(lane, &turns, bound, receipt)?;
                 drop(turns);
                 let readable = self.in_readable_sessions(lane, readable, receipt)?;
                 match self.vault.readable_childof_order(conversation, readable)? {
@@ -477,7 +502,7 @@ impl Memory<'_> {
                     .map(PointRead::id)
                     .collect();
                 let read = lane.read_projected(&reads, None, |txn, rows| {
-                    Ok::<_, MemoryError>(self.shows_in(txn, room, &turn)?.then_some(rows))
+                    Ok::<_, MemoryError>(self.shows_in(txn, bound, &turn)?.then_some(rows))
                 })?;
                 fold_scope(receipt, read.receipt);
                 let Some(value) = read.value else {
@@ -512,14 +537,14 @@ impl Memory<'_> {
         &self,
         lane: &ScopedRead<'_>,
         ids: &[EntityId],
-        room: Option<&EntityId>,
+        bound: Bound,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Vec<(u64, EntityId)>> {
         let mut admitted = Vec::new();
         for chunk in ids.chunks(PREVIEW_TURNS_PER_READ) {
             let reads: Vec<_> = chunk.iter().copied().map(PointRead::id).collect();
             let read = lane.read_projected(&reads, None, |txn, rows| {
-                let sight = self.room_sight_in(txn, room)?;
+                let sight = self.sight_now_in(txn, bound)?;
                 Ok::<_, MemoryError>(
                     rows.into_iter()
                         .flatten()
@@ -568,7 +593,7 @@ impl Memory<'_> {
         asked.sort_unstable();
         asked.dedup();
         let readable: Vec<EntityId> = self
-            .admitted(lane, &asked, None, receipt)?
+            .admitted(lane, &asked, Bound::Lane, receipt)?
             .into_iter()
             .map(|(_, id)| id)
             .collect();
