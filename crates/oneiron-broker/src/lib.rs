@@ -44,7 +44,7 @@ pub use child::ChildBroker;
 #[cfg(unix)]
 pub use client::{BrokerClient, BrokerConnection, BrokerReply};
 #[cfg(unix)]
-pub use serve::{ServeConfig, serve};
+pub use serve::{LISTENING, ServeConfig, serve};
 
 use serde::{Deserialize, Serialize};
 

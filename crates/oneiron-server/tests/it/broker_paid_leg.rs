@@ -595,6 +595,12 @@ async fn p2(mode: Mode) {
         Mode::SeparateUser => BrokerIsolation::SeparateUser,
         Mode::SameUser => BrokerIsolation::SameUser,
     };
+    // The owner's status names the mode, and the same-user child's badge.
+    let provider = &f.runtime.status().providers[0];
+    assert_eq!(
+        (provider.broker_isolation, provider.unproven),
+        (Some(isolation), mode == Mode::SameUser)
+    );
     let run = f.run("p2", 20);
     let answer = run
         .generate(SMALL, request(SMALL, "hi"))
@@ -822,6 +828,7 @@ async fn n4b(mode: Mode) {
     let workdir = tempfile::tempdir().expect("runner dir");
     let ca = workdir.path().join("ca.pem");
     std::fs::write(&ca, f.fake.ca_pem()).expect("ca");
+    let broker = f.broker_pid();
     let mut runner = Command::new(std::env::current_exe().expect("test binary"))
         .args(["--exact", "broker_paid_leg::n4b_runner", "--nocapture"])
         .env_clear()
@@ -832,7 +839,7 @@ async fn n4b(mode: Mode) {
                 f.fake.origin(),
                 HANDLE,
                 ca.display(),
-                f.broker_pid()
+                broker
             ),
         )
         .current_dir(workdir.path())
@@ -856,6 +863,8 @@ async fn n4b(mode: Mode) {
             && report.iter().any(|line| line == "BROKER MEM DENIED"),
         "the runner read the broker: {report:?}"
     );
+    // It was the live broker that refused.
+    assert_eq!(f.broker_pid(), broker);
     // The second user here lives in a user namespace this uid made, and a
     // namespace's maker may trace inside it, so only the same-user child's
     // trace check says something about the broker.
@@ -922,16 +931,20 @@ fn n4b_runner() {
     // The broker is another user, or a same-user child that closed itself:
     // its environment and memory are closed, and it cannot be traced.
     // Reading `mem` needs a mapped address, so a `mem` that opens is open.
+    // Only a refusal counts as closed: a broker that is gone proves nothing.
     for (what, path) in [("ENVIRON", "environ"), ("MEM", "mem")] {
-        let open = match std::fs::File::open(format!("/proc/{broker}/{path}")) {
-            Err(_) => false,
-            Ok(_) if path == "mem" => true,
-            Ok(mut file) => file.read(&mut [0; 1]).is_ok(),
+        let state = match std::fs::File::open(format!("/proc/{broker}/{path}")) {
+            Ok(_) if path == "mem" => Ok(()),
+            Ok(mut file) => file.read(&mut [0; 1]).map(drop),
+            Err(error) => Err(error),
         };
-        println!("BROKER {what} {}", if open { "OPEN" } else { "DENIED" });
+        println!("BROKER {what} {}", closing(state));
     }
-    let traced = broker.parse::<u32>().is_ok_and(seize);
-    println!("BROKER PTRACE {}", if traced { "OPEN" } else { "DENIED" });
+    let traced = broker
+        .parse::<u32>()
+        .map_err(std::io::Error::other)
+        .and_then(seize);
+    println!("BROKER PTRACE {}", closing(traced));
     // A direct call with what the runner holds: the handle, not the key.
     let client = reqwest::blocking::Client::builder()
         .add_root_certificate(
@@ -1021,7 +1034,7 @@ async fn same_user_the_child_is_closed_to_the_daemon_that_started_it() {
         .spawn()
         .expect("an open child");
     let control =
-        std::fs::File::open(format!("/proc/{}/mem", open.id())).is_ok() && seize(open.id());
+        std::fs::File::open(format!("/proc/{}/mem", open.id())).is_ok() && seize(open.id()).is_ok();
     let _ = open.kill();
     let _ = open.wait();
     if !control {
@@ -1035,21 +1048,32 @@ async fn same_user_the_child_is_closed_to_the_daemon_that_started_it() {
     }
     let pid = f.broker_pid();
     for path in ["mem", "environ"] {
-        assert!(
-            std::fs::File::open(format!("/proc/{pid}/{path}")).is_err(),
-            "the daemon opened the child's {path}"
-        );
+        let opened = std::fs::File::open(format!("/proc/{pid}/{path}")).map(drop);
+        assert_eq!(closing(opened), "DENIED", "the child's {path}");
     }
-    assert!(!seize(pid), "the daemon could trace the child");
+    assert_eq!(closing(seize(pid)), "DENIED", "a trace of the child");
+    // It was the live broker child that refused.
+    assert_eq!(child_broker_pid(), Some(pid));
 }
 
-/// The pid of this process's `oneiron-broker` child, the runtime's.
+/// How a probe of the broker's memory ended: `DENIED` only for a refusal.
+fn closing(probe: std::io::Result<()>) -> &'static str {
+    match probe {
+        Ok(()) => "OPEN",
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => "DENIED",
+        Err(_) => "FAILED",
+    }
+}
+
+/// The pid of this process's one `oneiron-broker` child, the runtime's. Each
+/// case runs in its own process (nextest), so a second one is an error, not
+/// a choice.
 fn child_broker_pid() -> Option<u32> {
     let parent = std::process::id().to_string();
-    std::fs::read_dir("/proc")
+    let mut children: Vec<u32> = std::fs::read_dir("/proc")
         .ok()?
         .filter_map(Result::ok)
-        .find_map(|entry| {
+        .filter_map(|entry| {
             let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
             let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
             // `pid (comm) state ppid …`: comm may hold spaces and parentheses.
@@ -1057,22 +1081,45 @@ fn child_broker_pid() -> Option<u32> {
             let ppid = rest.split_whitespace().nth(1)?;
             (head.ends_with("(oneiron-broker") && ppid == parent).then_some(pid)
         })
+        .collect();
+    assert!(children.len() <= 1, "broker children {children:?}");
+    children.pop()
 }
 
-/// Whether this process may trace `pid`. A seize stops nothing, and a seized
-/// process is let go when this one ends.
-fn seize(pid: u32) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
+/// Traces `pid`, or why not. A seize stops nothing, and a seized process is
+/// let go when this one ends.
+fn seize(pid: u32) -> std::io::Result<()> {
+    let pid = libc::pid_t::try_from(pid).map_err(std::io::Error::other)?;
     // SAFETY: PTRACE_SEIZE reads and writes no memory through its null
     // address and data.
-    unsafe {
+    let seized = unsafe {
         libc::ptrace(
             libc::PTRACE_SEIZE,
             pid,
             std::ptr::null_mut::<libc::c_void>(),
             std::ptr::null_mut::<libc::c_void>(),
-        ) == 0
+        )
+    };
+    if seized == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
+}
+
+/// BROKER-MAC: a socket another process of this uid put at the child's path
+/// never passes for the child, which says it listens on its own pipe.
+#[test]
+fn same_user_a_socket_at_the_childs_path_is_not_the_child() {
+    let child = oneiron_broker::ChildBroker::new(
+        env!("CARGO_BIN_EXE_oneiron-broker").into(),
+        &[],
+        Duration::from_secs(20),
+    )
+    .expect("child");
+    let _impostor = std::os::unix::net::UnixListener::bind(child.socket()).expect("impostor");
+    let started = Instant::now();
+    assert!(child.ensure().is_err(), "the impostor passed for the child");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert_eq!(child_broker_pid(), None, "the refused child is gone");
 }

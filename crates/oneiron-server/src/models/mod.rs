@@ -165,8 +165,11 @@ impl ModelRuntime {
         for (name, provider) in &config.providers {
             match build_provider(name, provider, config, site.as_ref(), keys.as_ref()) {
                 Ok(Some(backend)) => {
+                    let broker = backend.broker_isolation();
                     built.insert(name.clone(), backend);
-                    status.providers.push(ProviderStatus::ready(name, provider));
+                    status
+                        .providers
+                        .push(ProviderStatus::ready(name, provider, broker));
                 }
                 Ok(None) => status
                     .providers

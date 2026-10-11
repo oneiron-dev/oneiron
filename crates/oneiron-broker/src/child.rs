@@ -6,11 +6,13 @@
 //! The child confines itself as an organ is confined, and closes its memory
 //! as its first act ([`crate::peer::confine_child`]). It listens on a socket
 //! in a directory only the daemon's uid may enter, and serves only the
-//! daemon's pid. The daemon checks the other way: the peer on the socket must
-//! be the child it started. Another process of the same uid can reach the
-//! socket, but it can neither pose as the broker nor be served by it. The
-//! child exits when its stdin, which the daemon holds, closes. That happens
-//! when the daemon drops it or dies.
+//! daemon's pid. It says it listens on its stdout, a pipe only the daemon
+//! holds, so a socket another process put at the path never passes for it.
+//! The daemon checks the other way too: the peer on the socket must be the
+//! child it started. Another process of the same uid can reach the socket,
+//! but it can neither pose as the broker nor be served by it. The child exits
+//! when its stdin, which the daemon holds, closes. That happens when the
+//! daemon drops it or dies.
 //!
 //! What this mode cannot close: a process of the same uid that opens the
 //! child's memory in the moment between its start and its first act keeps
@@ -23,8 +25,10 @@ use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::io::{BufRead as _, Read as _};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// How long a starting child has to listen.
 const START_DEADLINE: Duration = Duration::from_secs(10);
@@ -116,41 +120,20 @@ impl ChildBroker {
             .env_clear()
             .current_dir("/")
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             // Its own group, so a terminal's signal to the daemon's group
             // leaves it to end at its stdin's close.
             .process_group(0)
             .spawn()?;
-        let lifeline = process.stdin.take();
-        let deadline = Instant::now() + START_DEADLINE;
-        // It binds its socket once it has closed its memory. A socket left by
-        // an earlier child refuses until the new one has replaced it.
-        loop {
-            if std::os::unix::net::UnixStream::connect(&self.socket).is_ok() {
-                break;
-            }
-            let failed = match process.try_wait() {
-                Ok(None) if Instant::now() < deadline => None,
-                Ok(None) => Some(std::io::Error::from(std::io::ErrorKind::TimedOut)),
-                Ok(Some(status)) => Some(std::io::Error::other(format!(
-                    "the broker exited before it listened ({status})"
-                ))),
-                Err(error) => Some(error),
-            };
-            if let Some(error) = failed {
+        match listening(&mut process) {
+            Ok(lifeline) => Ok(Running { process, lifeline }),
+            Err(error) => {
                 let _ = process.kill();
                 let _ = process.wait();
-                return Err(error);
+                Err(error)
             }
-            std::thread::sleep(Duration::from_millis(10));
         }
-        let Some(lifeline) = lifeline else {
-            let _ = process.kill();
-            let _ = process.wait();
-            return Err(std::io::ErrorKind::BrokenPipe.into());
-        };
-        Ok(Running { process, lifeline })
     }
 }
 
@@ -165,6 +148,40 @@ impl Drop for ChildBroker {
             child.stop();
         }
         let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// The started child's lifeline, once the child has said on its stdout that
+/// it listens, which it does after it has closed its memory: at most
+/// [`START_DEADLINE`]. A child that exits first, or says anything else, never
+/// listened.
+fn listening(process: &mut Child) -> std::io::Result<ChildStdin> {
+    let lifeline = process.stdin.take();
+    let said = process.stdout.take();
+    let (Some(lifeline), Some(said)) = (lifeline, said) else {
+        return Err(std::io::ErrorKind::BrokenPipe.into());
+    };
+    let (tell, heard) = std::sync::mpsc::channel();
+    // Reads until the line or the pipe's end; a child killed for the deadline
+    // ends it.
+    std::thread::Builder::new()
+        .name("broker-start".to_owned())
+        .spawn(move || {
+            let mut line = Vec::new();
+            let read = std::io::BufReader::new(said)
+                .take(crate::LISTENING.len() as u64)
+                .read_until(b'\n', &mut line);
+            let _ = tell.send(read.is_ok() && line == crate::LISTENING);
+        })?;
+    match heard.recv_timeout(START_DEADLINE) {
+        Ok(true) => Ok(lifeline),
+        Ok(false) | Err(RecvTimeoutError::Disconnected) => match process.try_wait()? {
+            Some(status) => Err(std::io::Error::other(format!(
+                "the broker exited before it listened ({status})"
+            ))),
+            None => Err(std::io::Error::other("the broker did not say it listens")),
+        },
+        Err(RecvTimeoutError::Timeout) => Err(std::io::ErrorKind::TimedOut.into()),
     }
 }
 

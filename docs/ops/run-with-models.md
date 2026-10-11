@@ -106,7 +106,7 @@ server then starts the broker as its own child, under its own user, at the first
 `key_secret` call. The child makes itself non-dumpable (`PT_DENY_ATTACH` on
 macOS), so another process of that user cannot read or trace its memory, and it
 serves only the server that started it. Its calls' receipts say `same_user`, and
-the run shows the unproven badge. A separate user stays the first choice. The
+the provider's entry in the model status carries `"unproven": true`, the badge. A separate user stays the first choice. The
 child is the `oneiron-broker` beside the server's binary, or:
 
 ```toml

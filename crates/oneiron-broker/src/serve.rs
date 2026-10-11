@@ -25,6 +25,10 @@ const FRAME_DEADLINE: Duration = Duration::from_secs(10);
 /// listener behind it counts as live.
 const LIVENESS_PROBE: Duration = Duration::from_secs(1);
 
+/// The line a same-user child writes to its stdout, a pipe only its parent
+/// holds, once it listens. The parent waits for it, not for the socket.
+pub const LISTENING: &[u8] = b"listening\n";
+
 /// A broker serving one daemon.
 #[derive(Debug, Clone)]
 pub struct ServeConfig {
@@ -34,7 +38,8 @@ pub struct ServeConfig {
     /// The daemon's uid, the only peer served.
     pub client_uid: u32,
     /// The daemon's pid, for a same-user child: its uid is the daemon's, so
-    /// only the pid tells the daemon from another process of that user.
+    /// only the pid tells the daemon from another process of that user. A
+    /// child writes [`LISTENING`] to its stdout once it listens.
     pub client_pid: Option<u32>,
     /// How calls are sent.
     pub policy: SendPolicy,
@@ -82,6 +87,12 @@ pub async fn serve(config: ServeConfig) -> io::Result<()> {
     let listener = UnixListener::bind(&config.socket)?;
     // Any local user may connect; only the daemon's uid is answered.
     std::fs::set_permissions(&config.socket, std::fs::Permissions::from_mode(0o666))?;
+    if config.client_pid.is_some() {
+        use std::io::Write as _;
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(LISTENING)?;
+        stdout.flush()?;
+    }
     let permits = Arc::new(Semaphore::new(MAX_CONCURRENT));
     loop {
         let stream = match listener.accept().await {
