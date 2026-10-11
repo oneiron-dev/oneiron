@@ -57,6 +57,13 @@ fn a_param_or_provider_option_that_picks_the_model_or_route_is_named() {
         namespace.route_selector_override().as_deref(),
         Some("provider")
     );
+    // A namespace no adapter reads is caller text: it is never quoted.
+    let mut unknown = request();
+    unknown.provider_options.insert(
+        "Bearer sk-test-sentinel-0000".into(),
+        json!({ "model": "fake/large@v1" }),
+    );
+    assert_eq!(unknown.route_selector_override().as_deref(), Some("*.model"));
 }
 
 #[test]

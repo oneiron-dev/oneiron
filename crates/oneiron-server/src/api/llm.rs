@@ -32,7 +32,8 @@ fn refusal(status: StatusCode, code: &str) -> Response {
     (status, Json(serde_json::json!({"error":{"code":code}}))).into_response()
 }
 /// A param or provider option that would pick the model or the route
-/// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`.
+/// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`,
+/// with `*` for a namespace no adapter reads.
 fn route_selector_refusal(key: &str) -> Response {
     (
         StatusCode::BAD_REQUEST,
