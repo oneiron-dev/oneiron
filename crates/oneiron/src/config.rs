@@ -644,7 +644,11 @@ impl VaultConfig {
             // server does not by itself mean a third party hosts the vault.
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 33,
-            max_readers: 126,
+            // LMDB keeps a reader slot for each thread that has read, and a
+            // server reads on its blocking pool (up to 512 threads): at 126
+            // slots, 128 agents recalling at once were refused with
+            // MDB_READERS_FULL. A slot is 64 bytes of the lock file.
+            max_readers: 1024,
             hnsw: HnswConfig::default(),
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
