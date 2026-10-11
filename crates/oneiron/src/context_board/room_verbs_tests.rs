@@ -71,6 +71,11 @@ fn room_render_reads_return_their_receipt() -> Result<()> {
         )?;
         vault.put_claim(&EntityId::now(), &access, at(1), 1)?;
     }
+    // Each member's contact clears everything, so only each member's own
+    // read decides which rule the room renders (ILDF2 holds the rest).
+    for member in [alice, bob] {
+        crate::test_util::clear_test_contact(&vault, member);
+    }
     let room = EntityId::now();
     vault.create_conversation(
         room,

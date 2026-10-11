@@ -3,8 +3,13 @@
 //! Every provider kind is reached over HTTP through the matching adapter
 //! crate (`oneiron-llm-openai` for OpenAI-compatible and local servers,
 //! `oneiron-llm-anthropic` for Anthropic-compatible ones). Each role's ladder
-//! becomes a `LadderBackend` behind one seat model id, so the engine pins a
+//! becomes an `OfferLadder` behind one seat model id, so the engine pins a
 //! single identity while the ladder falls back across rungs.
+//!
+//! No caller reaches a provider backend: a call goes through a ladder under a
+//! run admission, which admits each rung it reaches on a one-use permit and
+//! sends it through the run's gate for that rung's offer (ARCH-0053
+//! `#run-admission`).
 //!
 //! Building never fails the server: a provider that cannot start (its key
 //! variable unset, say) drops out of its ladders and the reason shows in
@@ -12,8 +17,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::{LlmBackend, ModelId, ModelLocality};
+use oneiron::llm::run_admission::{
+    BudgetLine, HostAccount, LeaseUnit, RunAdmission, RunDeclaration, RunReceiptSink,
+};
+use oneiron::{BudgetGuard, ModelId, ModelLocality};
 use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
 use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
 
@@ -21,54 +30,67 @@ use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind
 
 mod anthropic;
 mod catalog;
+mod declared;
+mod driven;
 mod http;
 mod ladder;
+mod offer;
 mod openai;
 mod output_cap;
+mod raw;
+mod receipts;
 mod role_route;
 mod router;
+mod run_backend;
 mod served;
 mod sse;
 mod status;
 #[cfg(test)]
 mod tests;
 
+pub use declared::DeclaredRun;
+pub use ladder::OfferLadder;
+pub use offer::ServedOffer;
+pub(crate) use raw::{InjectedRuns, RawInference};
+pub(crate) use receipts::ServerReceipts;
+pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
-pub(crate) use served::settle_answered;
+pub use run_backend::RunBackend;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank};
-use ladder::{LadderBackend, LadderRung};
+use ladder::LadderRung;
+use offer::provider_offer;
 use output_cap::OutputCap;
 
-/// One filled seat: the ladder backend, the single model id the engine
-/// pins for it, and the widest route any of its rungs may take.
+/// One filled seat: its ladder, the single model id the engine pins for it,
+/// and the widest route any of its rungs may take.
 #[derive(Clone)]
 pub struct Seat {
     pub role: ModelRole,
     pub model: ModelId,
     pub locality: ModelLocality,
-    pub backend: Arc<dyn LlmBackend>,
-    /// How many rungs the ladder tries before a call fails.
-    rung_count: usize,
+    pub ladder: Arc<OfferLadder>,
     /// Each rung on its own, keyed by its engine model id, so a call the
     /// vault's manifest binds to one rung's model keeps that rung's prompt.
-    rungs: BTreeMap<ModelId, Arc<dyn LlmBackend>>,
+    rungs: BTreeMap<ModelId, Arc<OfferLadder>>,
 }
 
 impl Seat {
     /// The rung that serves `model`, alone and with its prompt.
-    fn rung(&self, model: &ModelId) -> Option<Arc<dyn LlmBackend>> {
+    fn rung(&self, model: &ModelId) -> Option<Arc<OfferLadder>> {
         self.rungs.get(model).cloned()
     }
 }
 
-/// Every seat the config fills, plus a router over every configured model.
+/// Every seat the config fills, plus a router over every configured model,
+/// and where the runs their calls are admitted under write their receipts.
 pub struct ModelRuntime {
     seats: BTreeMap<ModelRole, Seat>,
     router: Option<Arc<ModelRouter>>,
     status: ModelsStatus,
+    receipts: Arc<dyn RunReceiptSink>,
 }
 
 impl ModelRuntime {
@@ -79,7 +101,41 @@ impl ModelRuntime {
             seats: BTreeMap::new(),
             router: None,
             status: ModelsStatus::unconfigured(),
+            receipts: Arc::new(LoggedReceipts),
         }
+    }
+
+    /// Writes the receipts of every run this runtime admits to `receipts`
+    /// instead of the log.
+    #[must_use]
+    pub fn with_receipts(mut self, receipts: Arc<dyn RunReceiptSink>) -> Self {
+        self.receipts = receipts;
+        self
+    }
+
+    /// A run that declares nothing, on a meter its host built (see
+    /// [`undeclared_run`]), with this runtime's receipts.
+    #[must_use]
+    pub fn undeclared_run(&self, run: impl Into<String>, meter: BudgetGuard) -> RunAdmission {
+        undeclared_run(run, meter, Arc::clone(&self.receipts))
+    }
+
+    /// A declared run (ARCH-0053 `#run-declaration`) on its own line, over
+    /// this runtime's models: its teachers, connectors and budget, as the host
+    /// that starts it states them. `host` is the account whose allocation
+    /// pays host-paid offers. Its paid keys must sit at T0 unless the owner
+    /// allowed an offer at T1; a `key_env` key is at T1.
+    #[must_use]
+    pub fn declared_run(
+        &self,
+        run: impl Into<String>,
+        declaration: RunDeclaration,
+        host: Option<Arc<HostAccount>>,
+    ) -> DeclaredRun {
+        DeclaredRun::new(
+            RunAdmission::new(run, declaration, host, Arc::clone(&self.receipts)),
+            self.router.clone(),
+        )
     }
 
     #[must_use]
@@ -107,10 +163,15 @@ impl ModelRuntime {
             }
         }
         let mut router = ModelRouter::default();
-        for (name, provider) in &built {
+        for (name, backend) in &built {
+            let provider = &config.providers[name];
             for model in referenced_models(config, name) {
-                if let Ok(id) = engine_model_id(&model, &config.providers[name]) {
-                    router.insert(id, config.providers[name].locality, provider.clone());
+                if let Some(rung) = rung(name, provider, backend, &model, 0, None) {
+                    router.insert(
+                        rung.model.clone(),
+                        provider.locality,
+                        Arc::new(OfferLadder::bare(rung)),
+                    );
                 }
             }
         }
@@ -121,21 +182,22 @@ impl ModelRuntime {
             for (position, rung) in ladder.iter().enumerate() {
                 let provider = &config.providers[&rung.model.provider];
                 let mut entry = RungStatus::new(&rung.model, provider);
-                match (
-                    built.get(&rung.model.provider),
-                    engine_model_id(&rung.model, provider),
-                ) {
-                    (Some(built), Ok(model)) if provider.kind.generates() => {
-                        rungs.push(LadderRung {
-                            provider: rung.model.provider.clone(),
+                let served = built
+                    .get(&rung.model.provider)
+                    .filter(|_| provider.kind.generates())
+                    .and_then(|backend| {
+                        self::rung(
+                            &rung.model.provider,
+                            provider,
+                            backend,
+                            &rung.model,
                             position,
-                            model,
-                            wire_model: rung.model.model.clone(),
-                            prompt: rung.prompt.clone(),
-                            backend: built.clone(),
-                        });
-                    }
-                    _ => entry.available = false,
+                            rung.prompt.clone(),
+                        )
+                    });
+                match served {
+                    Some(served) => rungs.push(served),
+                    None => entry.available = false,
                 }
                 rung_status.push(entry);
             }
@@ -145,7 +207,7 @@ impl ModelRuntime {
                 SeatState::Ready
             };
             if let Some(seat) = seat_for(*role, ladder_locality(&rungs, config), rungs) {
-                router.insert(seat.model.clone(), seat.locality, seat.backend.clone());
+                router.insert(seat.model.clone(), seat.locality, Arc::clone(&seat.ladder));
                 status.seats.push(SeatStatus::new(
                     *role,
                     Some(&seat.model),
@@ -164,6 +226,7 @@ impl ModelRuntime {
             seats,
             router: (!router.is_empty()).then(|| Arc::new(router)),
             status,
+            receipts: Arc::new(LoggedReceipts),
         }
     }
 
@@ -173,8 +236,8 @@ impl ModelRuntime {
         self.seats.get(&role)
     }
 
-    /// A backend over every configured model and seat, for raw calls that
-    /// name their model. `None` when nothing is configured.
+    /// Every configured model and seat by id, for raw calls that name their
+    /// model. `None` when nothing is configured.
     #[must_use]
     pub fn router(&self) -> Option<Arc<ModelRouter>> {
         self.router.clone()
@@ -186,16 +249,37 @@ impl ModelRuntime {
     }
 }
 
+/// A run that declares nothing, on a meter its host built: the vault's
+/// budget policy for one actor's turn or step, or a route's own line. Each
+/// call reserves the meter's own reservation, takes a one-use permit bound to
+/// its offer, route and locality, and nothing else is checked: no allowlist,
+/// no teachers.
+#[must_use]
+pub fn undeclared_run(
+    run: impl Into<String>,
+    meter: BudgetGuard,
+    receipts: Arc<dyn RunReceiptSink>,
+) -> RunAdmission {
+    let line = BudgetLine {
+        limit_units: meter.read().limit_units,
+        reserve_units: meter.reserve_units(),
+        unit: LeaseUnit::tokens(),
+    };
+    RunAdmission::with_meter(run, RunDeclaration::undeclared(line), meter, None, receipts)
+}
+
+/// One provider's wire backend. Each sends one request per call (its
+/// transport is `SingleSend`), so a run's gate can wrap it.
 fn build_provider(
     name: &str,
     provider: &ProviderConfig,
     config: &ModelsConfig,
-) -> anyhow::Result<Option<Arc<dyn LlmBackend>>> {
+) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
         .map(|model| catalog_entry(model, provider))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let backend: Arc<dyn LlmBackend> = match provider.kind {
+    let backend: Arc<dyn SingleRouteBackend> = match provider.kind {
         ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
             Arc::new(OpenAiCompatBackend::new(
@@ -229,6 +313,38 @@ fn build_provider(
         ProviderKind::Oneironer => return Ok(None),
     };
     Ok(Some(backend))
+}
+
+/// `model` on `provider` as a rung at `position`: the offer a run admits its
+/// calls under, over the provider's backend. `None` when the model has no
+/// engine id or the provider's URL no route.
+fn rung(
+    name: &str,
+    provider: &ProviderConfig,
+    backend: &Arc<dyn SingleRouteBackend>,
+    model: &ModelRef,
+    position: usize,
+    prompt: Option<String>,
+) -> Option<LadderRung> {
+    let id = engine_model_id(model, provider).ok()?;
+    let binding = match provider_offer(provider, id.clone()) {
+        Ok(binding) => binding,
+        Err(error) => {
+            tracing::warn!(provider = %name, %error, "model has no offer route");
+            return None;
+        }
+    };
+    Some(LadderRung {
+        provider: name.to_owned(),
+        position,
+        model: id,
+        wire_model: model.model.clone(),
+        prompt,
+        offer: ServedOffer {
+            binding,
+            backend: Arc::clone(backend),
+        },
+    })
 }
 
 /// Every model some ladder names on `provider`, once each.
@@ -272,18 +388,17 @@ fn seat_for(role: ModelRole, locality: ModelLocality, rungs: Vec<LadderRung>) ->
     }
     let revision = &digest.finalize().to_hex()[..12];
     let model = ModelId::new(format!("seat/{}@{revision}", role_key(role))).ok()?;
-    let mut alone: BTreeMap<ModelId, Arc<dyn LlmBackend>> = BTreeMap::new();
+    let mut alone: BTreeMap<ModelId, Arc<OfferLadder>> = BTreeMap::new();
     for rung in &rungs {
-        alone.entry(rung.model.clone()).or_insert_with(|| {
-            Arc::new(LadderBackend::new(rung.model.clone(), vec![rung.clone()]))
-        });
+        alone
+            .entry(rung.model.clone())
+            .or_insert_with(|| Arc::new(OfferLadder::seat(rung.model.clone(), vec![rung.clone()])));
     }
     Some(Seat {
         role,
         model: model.clone(),
         locality,
-        rung_count: rungs.len(),
-        backend: Arc::new(LadderBackend::new(model, rungs)),
+        ladder: Arc::new(OfferLadder::seat(model, rungs)),
         rungs: alone,
     })
 }
