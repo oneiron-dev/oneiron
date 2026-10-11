@@ -493,10 +493,37 @@ impl OrganProcess {
             grace: wait.grace,
         };
         lock(&self.grants).insert(grant.to_owned());
-        if (wait.revoked)() {
+        let Wait {
+            revoked,
+            asks,
+            deadline,
+            grace,
+        } = wait;
+        let result = if revoked() {
             Err(CallFailure::Revoked)
         } else {
+            let wait = Wait {
+                revoked,
+                asks: &mut *asks,
+                deadline,
+                grace,
+            };
             self.exchange(call, fds, &reply, wait)
+        };
+        self.settle(id, &reply, asks);
+        result
+    }
+
+    /// Ends call `id`'s deliveries, however it ended. Once its entry is gone
+    /// the reader can route it no ask (it sends an ask only under the lock
+    /// that holds the entry), so every ask still queued is receipted here,
+    /// not run.
+    fn settle(&self, id: u64, reply: &mpsc::Receiver<Delivery>, asks: &mut CallAsks<'_>) {
+        lock(&self.inbox.pending).remove(&id);
+        while let Ok(delivery) = reply.try_recv() {
+            if let Delivery::Ask(ask) = delivery {
+                asks.skipped(&ask);
+            }
         }
     }
 

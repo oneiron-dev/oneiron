@@ -294,6 +294,10 @@ fn a_handler_that_panics_frees_its_call() {
         )
     }));
     assert!(panicked.is_err());
+    // The ask stays on record though its handler never returned.
+    let asked = asks.asked();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].unanswered, Some(Unanswered::NotSent));
     // The one seat is free, and the cancel woke the organ's waiting ask, so
     // its one thread takes the next call.
     let fast = bytes(4);

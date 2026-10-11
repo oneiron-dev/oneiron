@@ -78,9 +78,10 @@ pub struct AskReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Unanswered {
-    /// No handler ran.
+    /// Nothing was decided for it: no handler ran, no refusal was made.
     NotRun,
-    /// A handler ran; what it gave was not sent.
+    /// Its answer or refusal was decided but not sent; a handler that
+    /// panicked leaves this too.
     NotSent,
 }
 

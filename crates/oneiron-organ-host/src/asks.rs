@@ -280,10 +280,16 @@ impl<'a> CallAsks<'a> {
             max_bytes: self.bytes_left,
             fetch: &self.spec.fetch,
         };
+        // On record while the handler runs, so a handler that panics leaves
+        // its line; the settled line replaces it once the handler returns.
+        let mut running = line.clone();
+        running.unanswered = Some(Unanswered::NotSent);
+        self.receipts.push(running);
         let answered = {
             let _scope = HandlerScope::enter();
             handler.answer(&request)
         };
+        self.receipts.pop();
         line.handler_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         match answered {
             Ok(answered) => self.answer(&ask, line, answered),
