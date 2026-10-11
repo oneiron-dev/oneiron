@@ -47,7 +47,7 @@ pub(crate) struct AuthorityCacheKey {
 /// caller keeps its LMDB snapshot; this handle carries no transaction or
 /// mutable state, and its cheap clone shares the exact decision image.
 #[derive(Clone)]
-pub(super) struct AuthorityView {
+pub(crate) struct AuthorityView {
     fold: Arc<AuthorityFold>,
     generation: u64,
 }

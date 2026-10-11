@@ -95,7 +95,9 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
         return Err(not_an_existing_root(root, false));
     }
     let mut options = EnvOpenOptions::new();
-    options.max_dbs(1);
+    // The full reader table: a door that opens a vault first builds the
+    // table a server opened beside it gets.
+    options.max_dbs(1).max_readers(crate::config::READER_SLOTS);
     // SAFETY: as `open_existing_environment`. The open path is the
     // `/proc/self/fd/<dirfd>` view of the root this call bound and validated,
     // and `bound` keeps that descriptor open through the call and then lives
@@ -135,7 +137,9 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
     };
     let registered = RegisteredPath::reserve(root.to_path_buf(), Some(identity.clone()))?;
     let mut options = EnvOpenOptions::new();
-    options.max_dbs(1);
+    // The full reader table: a door that opens a vault first builds the
+    // table a server opened beside it gets.
+    options.max_dbs(1).max_readers(crate::config::READER_SLOTS);
     // SAFETY: as the create-capable door on this platform: the canonical root
     // passed the preflight above and is checked again below, and
     // `registered`, reserved under the root-open guard by both path and LMDB
@@ -155,3 +159,6 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
     }
     Ok((env, registered))
 }
+
+#[cfg(test)]
+mod tests;

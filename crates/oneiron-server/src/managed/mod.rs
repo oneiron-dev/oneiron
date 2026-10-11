@@ -51,6 +51,7 @@ pub use self::state_serve::{
     ManagedShutdown, ManagedState, ObservedAlarm, ShutdownSignal, WRITES_FROZEN_TAG,
     build_managed_app, final_ledger_push, serve_managed, spawn_sigterm_shutdown,
 };
+pub(crate) use self::vault_gates::warn_if_reader_table_short;
 pub use self::vault_gates::{
     CANARY_MARKER_KEY, CANARY_MARKER_VALUE, DEK_MAC_KEY, check_managed_open_gates,
     open_managed_vault, read_managed_credentials,
