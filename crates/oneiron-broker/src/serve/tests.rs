@@ -13,8 +13,8 @@ use zeroize::Zeroizing;
 use crate::frame::{read_reply, write_call};
 use crate::testing::{FakeProvider, FakeReply};
 use crate::{
-    BrokerClient, BrokerError, CallHeader, Failure, Isolation, Outcome, Refusal, SendPolicy,
-    ServeConfig, Shape, serve,
+    BrokerClient, BrokerError, CallHeader, Failure, Isolation, MARKER, Outcome, Refusal,
+    SendPolicy, ServeConfig, Shape, serve,
 };
 
 /// A synthetic key. It must never come back out of the broker.
@@ -397,6 +397,8 @@ async fn a_key_with_a_byte_outside_visible_ascii_is_never_sent() {
         b"sk-test\\sentinel",
         b"sk-test%41sentinel",
         b"sk-test[sentinel",
+        // Inside the marker a stripped key becomes.
+        &MARKER[1..MARKER.len() - 1],
     ] {
         let reply = client(&broker.socket, broker.uid)
             .connect()
