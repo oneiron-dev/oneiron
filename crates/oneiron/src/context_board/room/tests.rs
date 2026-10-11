@@ -978,3 +978,136 @@ fn p7_walks_a_summary_of_summaries_to_its_first_words() -> Result<()> {
     );
     Ok(())
 }
+
+/// A `conversation.summary` claim carries the words of the turns it covers
+/// (Astra #1394 P1). A guest cleared for claims but not turns keeps such a
+/// summary out of every read the owner's bound turn makes, while a note of
+/// the same kind stays readable. Cleared for the turn's words too, the
+/// summary discloses.
+#[test]
+fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
+    use crate::disclosure::DisclosureScope;
+    use crate::ports::EntityStoreRead;
+    use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let guest = id(0x75);
+    vault.put_entity(
+        &guest,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"guest",
+    )?;
+    let contact = id(0x76);
+    let introduced = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        id(0x77),
+        "guest@example.com",
+        10,
+    )
+    .expect("contact record");
+    vault.create_counterparty_contact(&contact, &introduced)?;
+    vault.put_edge(&contact, crate::edge::EdgeKind::About, &guest, 1.0)?;
+    crate::test_util::authorize_readers(&vault, &[&guest.to_hex()]);
+    let (_, record) = project_room(&vault, owner, &[guest])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let turn = EntityId::now();
+    host.rooms_speak(&spoken(room, turn, 2)).expect("speak");
+    let summary = EntityId::now();
+    let mut body = crate::ClaimBody::new(
+        "conversation.summary",
+        crate::ClaimSubject::Entity(room),
+        rmpv::Value::Map(vec![
+            ("text".into(), "lantern summary words".into()),
+            (
+                "covers".into(),
+                rmpv::Value::Array(vec![rmpv::Value::Binary(turn.as_bytes().to_vec())]),
+            ),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::Observed);
+    vault.put_claim(&summary, &body, TimeRange { start: 3, end: 3 }, 3)?;
+    let note = host
+        .claim_upsert(&note(room, "lantern ledger", None))
+        .expect("note");
+    let note = host
+        .get_entity(&note.claim_short_id)
+        .expect("note read")
+        .value
+        .expect("owner reads the note")
+        .id_hex;
+
+    let clearance = |bands: &[u8]| Scope {
+        bands: ScopeAxis::Some(bands.iter().copied().collect()),
+        ..Scope::top()
+    };
+    let discloses = |id: EntityId, scope: &Scope| -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .port_entity_record(&txn, &id)?
+            .expect("row")
+            .encode();
+        crate::disclosure::discloses_raw(&vault, &txn, scope, id, &raw)
+    };
+    let claims = clearance(&[ENTITY_TYPE_CLAIM]);
+    assert!(!discloses(turn, &claims)?);
+    assert!(
+        !discloses(summary, &claims)?,
+        "the summary carries the turn's words"
+    );
+    assert!(discloses(
+        summary,
+        &clearance(&[ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE])
+    )?);
+
+    vault.set_counterparty_disclosure_scope(
+        &contact,
+        &DisclosureScope::new(claims, "room guest", 200)?,
+    )?;
+    let listed = |turn: &crate::memory::RoomTurnHandle<'_>, predicate: &str| -> Vec<String> {
+        let filter = ClaimListFilter {
+            subject_ref: Some(room.to_hex()),
+            predicate: Some(predicate.into()),
+            lifecycle: None,
+            limit: 10,
+        };
+        turn.claim_list(&filter)
+            .expect("claim list")
+            .value
+            .into_iter()
+            .map(|claim| claim.claim_ref)
+            .collect()
+    };
+    let summary_hex = summary.to_hex();
+    assert_eq!(
+        host.get_entity(&summary_hex)
+            .expect("owner read")
+            .value
+            .map(|view| view.id_hex),
+        Some(summary_hex.clone()),
+        "the owner alone reads the summary"
+    );
+    let bound = host.for_room_turn(room).expect("open room turn");
+    assert_eq!(listed(&bound, "note.topic"), [note.clone()]);
+    assert!(listed(&bound, "conversation.summary").is_empty());
+    assert!(
+        bound
+            .get_entity(&summary_hex)
+            .expect("read")
+            .value
+            .is_none()
+    );
+    assert!(
+        bound
+            .hydrate(&[summary_hex])
+            .expect("hydrate")
+            .value
+            .is_empty()
+    );
+    Ok(())
+}

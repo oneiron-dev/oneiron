@@ -187,3 +187,92 @@ fn a_reaction_never_outranks_an_ordinary_memory_of_equal_relevance() {
     let reaction_at = position(PREDICATE_CONVERSATION_REACTION).expect("reaction recalled");
     assert!(note_at < reaction_at, "{:?}", pack.items);
 }
+
+/// A pack read under a disclosure clamp carries only the reaction data the
+/// clamp admits (Astra #1394 P2). Under a guest's bottom clearance no signal
+/// names the withheld message. A clearance that admits messages and turns
+/// but no claims leaves an admitted message without reaction lines. A
+/// clearance that admits all of it gives both back.
+#[test]
+fn reactions_ride_the_packs_disclosure_clamp() {
+    use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyFirstTouch};
+    use crate::disclosure::{DisclosureContext, DisclosureScope};
+    use crate::federation::{Scope, ScopeAxis};
+    use crate::interlocutor::{Interlocutor, InterlocutorSet};
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+
+    let room = reacted_room();
+    let contact = EntityId::now();
+    let introduced =
+        CounterpartyContactRecord::user_introduction(EntityId::now(), "guest@example.com", 10)
+            .unwrap();
+    room.vault
+        .create_counterparty_contact(&contact, &introduced)
+        .unwrap();
+    let clamp = |scope: Option<Scope>, at: u64| {
+        if let Some(scope) = scope {
+            room.vault
+                .set_counterparty_disclosure_scope(
+                    &contact,
+                    &DisclosureScope::new(scope, "room guest", at).unwrap(),
+                )
+                .unwrap();
+        }
+        let set = InterlocutorSet::with_session_owner(vec![Interlocutor::known_contact(
+            contact,
+            "guest@example.com",
+            CounterpartyFirstTouch::UserIntroduction,
+        )]);
+        DisclosureContext::resolve(&room.vault, set).unwrap()
+    };
+    let read = owner_read(&room);
+    let signals = room.vault.reactions_since(room.alice, 0).unwrap();
+    assert!(!signals.is_empty());
+    let readable = |clamp: Option<&DisclosureContext>| {
+        signals
+            .iter()
+            .filter(|signal| {
+                read.is_reaction_signal_readable_under(signal, clamp)
+                    .unwrap()
+            })
+            .count()
+    };
+    let lines = |clamp: Option<&DisclosureContext>| {
+        let mut pack = room
+            .vault
+            .context_pack()
+            .search_text("Friday plan", 20)
+            .limit(20)
+            .hydrate(true)
+            .run()
+            .unwrap();
+        read.attach_reactions_under(&mut pack, clamp).unwrap();
+        pack.results
+            .iter()
+            .find(|entity| entity.id == room.message)
+            .expect("the message is packed")
+            .fields
+            .as_ref()
+            .unwrap()
+            .get(REACTIONS_FIELD)
+            .cloned()
+    };
+    let expected = Some(serde_json::json!(["👍×2 (Bob, Erin)", "🎉×1 (Bob)"]));
+    assert_eq!(readable(None), signals.len());
+    assert_eq!(lines(None), expected);
+
+    let bottom = clamp(None, 0);
+    assert_eq!(readable(Some(&bottom)), 0);
+    let words = clamp(
+        Some(Scope {
+            bands: ScopeAxis::Some([ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN].into()),
+            ..Scope::top()
+        }),
+        200,
+    );
+    assert_eq!(readable(Some(&words)), 0);
+    assert_eq!(lines(Some(&words)), None);
+    let all = clamp(Some(Scope::top()), 300);
+    assert_eq!(readable(Some(&all)), signals.len());
+    assert_eq!(lines(Some(&all)), expected);
+}

@@ -17,7 +17,8 @@ pub(crate) enum WordSources {
 }
 
 /// The word sources of the stored revision `raw` of `id`: a scope summary,
-/// a TURN that copies one, or a claim whose merge header names one.
+/// a TURN that copies one, a claim whose merge header names one, or a
+/// `conversation.summary` claim's typed coverage.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -45,11 +46,13 @@ pub(crate) fn word_sources_in(
                     .transpose()
             })
         }
-        ENTITY_TYPE_CLAIM if names(b"merge.summary") => super::merge_word_sources_in_txn(
-            vault,
-            txn,
-            &crate::claim::decode_claim_body(body, true)?,
-        ),
+        ENTITY_TYPE_CLAIM if names(b"merge.summary") || names(b"conversation.summary") => {
+            let claim = crate::claim::decode_claim_body(body, true)?;
+            match super::merge_word_sources_in_txn(vault, txn, &claim) {
+                Ok(None) => crate::conversation::conversation_summary_covers(&claim),
+                merged => merged,
+            }
+        }
         _ => return Ok(WordSources::Own),
     };
     Ok(match sources {

@@ -849,7 +849,7 @@ impl Memory<'_> {
                 let (scoped, status) = builder.run_scoped_with_run_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
                 let mut pack = scoped.value;
-                lane.attach_reactions_quoting(&mut pack, &status.cited_messages)?;
+                lane.attach_reactions_quoting(&mut pack, &status.cited_messages, None)?;
 
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {

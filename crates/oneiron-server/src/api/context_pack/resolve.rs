@@ -216,6 +216,8 @@ pub(crate) async fn run_context_pack(
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());
     }
+    // Reaction signals ride the same clamp as the pack they come with.
+    let signal_disclosure = disclosure.clone();
 
     let track_plain_pack = memories.is_none();
     let (mut response, memories, cursor) = run_context_pack_builder(
@@ -244,7 +246,14 @@ pub(crate) async fn run_context_pack(
             *observed = staged;
         }
     }
-    read_reaction_signals(server, auth, &req, &scoped_read, &mut response)?;
+    read_reaction_signals(
+        server,
+        auth,
+        &req,
+        &scoped_read,
+        signal_disclosure.as_ref(),
+        &mut response,
+    )?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     Ok((response, memories, cursor))
 }
@@ -575,6 +584,7 @@ fn read_reaction_signals(
     auth: &CoreAuth,
     req: &CoreContextPackRequest,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
+    disclosure: Option<&oneiron::disclosure::DisclosureContext>,
     response: &mut CoreContextPackResponse,
 ) -> Result<(), ApiError> {
     let Some(since) = req.signals_since else {
@@ -611,15 +621,15 @@ fn read_reaction_signals(
         .map_err(|e| core_engine_error("reaction signal read failed", e))?;
     // An owner-grade feed of one person's messages keeps the owner's reach;
     // a delegated, room-scoped or interlocutor-scoped read is filtered by
-    // the same scoped read as the pack. Paging follows the filter, so a
-    // cursor never names a signal this caller was not shown.
+    // the same scoped read and disclosure clamp as the pack. Paging follows
+    // the filter, so a cursor never names a signal this caller was not shown.
     let scoped =
         !auth.is_owner_grade() || req.conversation_id.is_some() || req.interlocutors.is_some();
     let mut kept = Vec::new();
     for signal in signals {
         if scoped
             && !scoped_read
-                .is_reaction_signal_readable(&signal)
+                .is_reaction_signal_readable_under(&signal, disclosure)
                 .map_err(|e| core_engine_error("reaction signal scope failed", e))?
         {
             continue;
