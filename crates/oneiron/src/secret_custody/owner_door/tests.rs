@@ -525,9 +525,11 @@ fn a_registration_wipes_the_staged_row_that_carried_its_value() {
 /// Sol on the staging fix: generic readers on the put path copied a custody
 /// row, value and all, into buffers freed unwiped, before they checked its
 /// kind, and so did the deletion-fence probe and the identity topology
-/// reconcile, which read a participant's whole row for its type. Neither a
-/// registration nor a rotation of it makes a plain copy of a row that holds
-/// the value.
+/// reconcile, which read a participant's whole row for its type. Astra on the
+/// fixes: a CLAIM put at the custody id copied it again in the esign
+/// event-delete guard, before the row's type refused the put. Neither a
+/// registration, a rotation of it, nor a refused put over it makes a plain
+/// copy of a row that holds the value.
 #[test]
 fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
     const VALUE: &[u8] = b"wipe-check-copied-row-value";
@@ -600,6 +602,43 @@ fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
     vault
         .rotate_secret_as_owner(&owner, "deploy-token", VALUE, 8)
         .expect("rotated");
+    // An ordinary CLAIM over the row passes the guards that read the prior
+    // row, and only then does the type check refuse it.
+    let claim = crate::claim::encode_claim_body(
+        &crate::claim::ClaimBody::new(
+            "profile.name",
+            crate::claim::ClaimSubject::Entity(
+                vault.ensure_embedded_owner_actor().expect("owner actor"),
+            ),
+            rmpv::Value::from("Placeholder"),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Proposed,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+        .expect("claim"),
+    )
+    .expect("claim body");
+    let refused = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(
+                    &id,
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    TimeRange { start: 9, end: 9 },
+                    9,
+                    &claim,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("a custody row keeps its type");
+    assert!(
+        matches!(
+            refused,
+            Error::Registry(crate::error::RegistryError::EntityTypeImmutable { .. })
+        ),
+        "{refused:?}"
+    );
     assert_eq!(
         crate::ports::row_copies::sites(),
         Vec::<String>::new(),
