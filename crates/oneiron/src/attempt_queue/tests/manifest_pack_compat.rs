@@ -89,18 +89,39 @@ fn manifest_door_refuses_every_terminal_state() -> Result<()> {
     Ok(())
 }
 
-/// The append door does not touch `updated_at`: that field is the lease-expiry
-/// clock, and turning a pack load into a lease heartbeat would silently change
-/// reclaim timing.
 #[test]
-fn manifest_append_leaves_the_lease_clock_alone() -> Result<()> {
-    let (_dir, vault) = open_queue();
+fn manifest_append_does_not_delay_expired_lease_reclaim() -> Result<()> {
+    let (_dir, vault, clock) = open_queue_at(10);
     let queue = AttemptQueue::new(&vault);
     let attempt = enqueued(&queue, 10)?;
-
-    let after = queue.append_manifest_entry(attempt.id, skill_entry("index", "1", 999))?;
-
-    assert_eq!(after.updated_at, attempt.updated_at);
+    clock.set(20);
+    let ClaimOutcome::Claimed(first) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected initial claim");
+    };
+    clock.set(29);
+    let entry = skill_entry("index", "1", 29);
+    queue.append_manifest_entry(attempt.id, entry.clone())?;
+    clock.set(30);
+    queue.cleanup_leases(CleanupAttemptLeases {
+        now: 30,
+        lease_timeout_secs: 10,
+    })?;
+    assert_eq!(queue.get(attempt.id)?.unwrap().state, AttemptState::Queued);
+    let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-b".to_owned(),
+        now: 30,
+    })?
+    else {
+        panic!("original lease must expire despite manifest append");
+    };
+    assert_eq!(reclaimed.id, attempt.id);
+    assert_eq!(reclaimed.lease_owner.as_deref(), Some("worker-b"));
+    assert!(reclaimed.attempt_count > first.attempt_count);
+    assert_eq!(reclaimed.manifest(), &[entry]);
     Ok(())
 }
 

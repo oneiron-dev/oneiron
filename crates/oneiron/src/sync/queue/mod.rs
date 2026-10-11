@@ -97,8 +97,8 @@ mod tests;
 // Private test seam: sibling tests reach these through `use super::*`.
 #[cfg(test)]
 use self::codec::{
-    decode_embed_job_row, decode_embed_key, decode_last_update_seq_metadata, decode_update_key,
-    encode_delete_bearing_key, encode_embed_key, encode_update_key, encode_update_value,
+    decode_embed_job_row, decode_last_update_seq_metadata, encode_delete_bearing_key,
+    encode_embed_key, encode_update_key, encode_update_value,
 };
 
 #[cfg(test)]

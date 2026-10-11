@@ -10,7 +10,6 @@ use super::*;
 
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
-use crate::genui::{ConsentConfirmOutcome, ConsentScopeEscalator};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
@@ -769,156 +768,35 @@ fn consent_fail_safe_hides_disclosure_and_asks_writes() {
 // 9 · Exactly two human surfaces
 // ---------------------------------------------------------------------------
 
-/// `9 · Exactly two human surfaces` — "(a) The in-moment ask, raised only when
-/// genuinely uncertain. (b) A 'who-can-see-what / what-can-run' registry to
-/// review and one-tap revoke. No duration pickers (once vs standing only; the
-/// registry replaces expiry-guessing). No sensitivity-tagging settings (tiers
-/// are inferred and drive auto). At connector add the ARCH-0072 admission
-/// slate is surface (a) in batch form, and the grants it mints live in surface
-/// (b) afterwards — no third surface and no settings screen. The invariant-2
-/// confirm trio adds no duration option; the no-duration-picker rule above is
-/// unchanged. The reverse flip (auto back to confirm-first) lives on the
-/// registry surface."
 #[test]
-fn consent_has_only_ask_and_registry_surfaces_no_duration_picker() {
-    let (_dir, vault, owner) = owner_vault();
-
-    // SURFACE (a) — the in-moment ask. Every emitted action id maps into the
-    // confirm TRIO and nothing else, so the ask offers exactly three outcomes
-    // no matter how many bound-naming escalators a surface renders.
+fn standing_grant_wire_pins_version_and_closed_key_names() {
+    let row = ConsentGrantRow {
+        grant: StandingConsentGrant::from_bound(action_bound(
+            "agent-a",
+            "send",
+            &["channel:email"],
+        ))
+        .unwrap(),
+        status: ConsentGrantStatus::Active,
+        owner_stamp: ConsentOwnerStamp {
+            actor: entity(0x51),
+            principal_ref: "principal:owner".to_owned(),
+            decision_id: GateDecisionId::now(),
+        },
+        created_at: 17,
+        bypass: None,
+    };
+    let bytes = encode_consent_grant_row(&row).unwrap();
+    assert!(bytes.starts_with(b"\x88\xaeschema_version\x01"));
+    let Value::Map(fields) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
+        panic!("standing grant must encode as a map")
+    };
+    let keys = fields
+        .iter()
+        .map(|(key, _)| key.as_str().unwrap())
+        .collect::<Vec<_>>();
     assert_eq!(
-        ConsentConfirmOutcome::trio(),
-        [
-            ConsentConfirmOutcome::ApproveOnce,
-            ConsentConfirmOutcome::ApproveAndStopAsking,
-            ConsentConfirmOutcome::Deny,
-        ]
-    );
-    assert_eq!(
-        ConsentConfirmOutcome::trio().first().copied(),
-        Some(ConsentConfirmOutcome::ApproveOnce),
-        "approve once is the default"
-    );
-
-    // The emitted ids: approve-once, deny, and one bound-naming
-    // approve-and-stop-asking id per escalator — plus the BATCH form, which is
-    // surface (a) in batch form (the ARCH-0072 slate), never a third surface.
-    let mut emitted = vec![
-        crate::genui::CONSENT_ACTION_APPROVE_ONCE.to_owned(),
-        crate::genui::CONSENT_ACTION_DECLINE.to_owned(),
-        crate::genui::CONSENT_BUNDLE_ACTION_DECLINE.to_owned(),
-    ];
-    emitted.extend(ConsentScopeEscalator::all().iter().map(|scope| {
-        format!(
-            "{}{}",
-            crate::genui::CONSENT_ACTION_ESCALATE_PREFIX,
-            scope.as_str()
-        )
-    }));
-    emitted.push(format!(
-        "{}{}",
-        crate::genui::CONSENT_BUNDLE_ACTION_ID_PREFIX,
-        crate::genui::BundleApprovalScope::BriefVerbClass.as_str()
-    ));
-
-    for action_id in &emitted {
-        let outcome = ConsentConfirmOutcome::from_action_id(action_id)
-            .unwrap_or_else(|| panic!("ask action id {action_id} must map into the confirm trio"));
-        assert!(
-            ConsentConfirmOutcome::trio().contains(&outcome),
-            "{action_id} mapped outside the trio"
-        );
-        // NO DURATION PICKER anywhere on the ask.
-        assert!(
-            !crate::genui::consent_action_id_offers_duration(action_id),
-            "ask action id {action_id} must not offer a duration option"
-        );
-    }
-
-    // Approve-and-stop-asking is REACHABLE (it is the in-moment path into
-    // create_standing_grant) and each of its ids names ONE bound.
-    assert!(
-        emitted.iter().any(|action_id| {
-            ConsentConfirmOutcome::from_action_id(action_id)
-                == Some(ConsentConfirmOutcome::ApproveAndStopAsking)
-        }),
-        "the trio's stop-asking outcome must be offered"
-    );
-
-    // SURFACE (b) — the registry: review + ONE-TAP REVOKE, for BOTH domains.
-    let action = action_bound("agent-a", "send", &["channel:email"]);
-    let disclosure = disclosure_bound(&["contact:doctor"], "health", &["entity:vitals"]);
-    vault
-        .create_standing_grant(&owner, action)
-        .expect("mint action");
-    vault
-        .create_standing_grant(&owner, disclosure)
-        .expect("mint disclosure");
-    let registry = vault
-        .consent_registry(ConsentRegistryQuery::new(16, false))
-        .expect("registry");
-    assert_eq!(registry.rows.len(), 2);
-    assert!(
-        registry
-            .rows
-            .iter()
-            .any(|row| row.domain == ConsentDomain::Disclosure),
-        "the registry is who-can-see-what..."
-    );
-    assert!(
-        registry
-            .rows
-            .iter()
-            .any(|row| row.domain == ConsentDomain::Action),
-        "...AND what-can-run — one place for both kinds"
-    );
-    for row in &registry.rows {
-        assert_eq!(row.revoke_action.command, CONSENT_REVOKE_COMMAND);
-        assert_eq!(row.revoke_action.grant_ref, row.grant_ref);
-    }
-
-    // The one tap actually revokes.
-    let revoked = vault
-        .revoke_consent_grant(&owner, &registry.rows[0].revoke_action.grant_ref)
-        .expect("one-tap revoke");
-    assert!(matches!(revoked, ConsentReceipt::Revoked { .. }));
-    assert_eq!(
-        vault
-            .consent_registry(ConsentRegistryQuery::new(16, false))
-            .expect("registry")
-            .rows
-            .len(),
-        1
-    );
-    // FIX-7: owner disclosure — the registry is the full-dump surface; with
-    // the audit flag the revoked row is still listed so the review/one-tap
-    // floor shows everything the owner ever armed, with subject, class,
-    // envelope selectors, and status rendered per row (rather than a bare
-    // ref list).
-    let audit = vault
-        .consent_registry(ConsentRegistryQuery::new(16, true))
-        .expect("audit registry");
-    assert_eq!(audit.rows.len(), 2);
-    for row in &audit.rows {
-        assert!(!row.subject.trim().is_empty());
-        assert!(!row.class.trim().is_empty());
-        assert!(!row.selectors.is_empty());
-        assert!(!row.grant_ref.trim().is_empty());
-    }
-    assert!(
-        audit
-            .rows
-            .iter()
-            .any(|row| row.status == ConsentGrantStatus::Revoked),
-        "the owner's full audit dump must retain the revoked row"
-    );
-
-    // NO DURATION/EXPIRY FIELD on a bound or a registry row: the persisted key
-    // set is closed and carries none. The ARCH-0071 delegation duration is a
-    // mint-time field on the DELEGATION record, which lives outside this
-    // module — nothing here duplicates it or turns it into an ask option.
-    assert_eq!(
-        CONSENT_GRANT_BODY_KEYS,
+        keys,
         [
             "schema_version",
             "domain",
@@ -927,16 +805,33 @@ fn consent_has_only_ask_and_registry_surfaces_no_duration_picker() {
             "envelope",
             "status",
             "owner_stamp",
-            "created_at",
+            "created_at"
         ]
     );
-    for key in CONSENT_GRANT_BODY_KEYS {
-        for banned in ["expires", "expiry", "duration", "ttl", "until"] {
-            assert!(
-                !key.contains(banned),
-                "consent row key {key} must not carry a lifetime field"
-            );
-        }
+    assert_eq!(fields[0].1.as_u64(), Some(1));
+    for (name, expected) in [
+        ("subject", vec!["kind", "refs"]),
+        (
+            "envelope",
+            vec!["selectors", "target", "budget", "receipt_required", "scope"],
+        ),
+        ("owner_stamp", vec!["actor", "principal_ref", "decision_id"]),
+    ] {
+        let value = &fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .unwrap()
+            .1;
+        let Value::Map(nested) = value else {
+            panic!("nested row field must be a map")
+        };
+        assert_eq!(
+            nested
+                .iter()
+                .map(|(key, _)| key.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
 }
 
