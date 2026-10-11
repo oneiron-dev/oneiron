@@ -579,4 +579,5 @@ fn zero_remote_lease_duration_is_rejected() {
     assert!(matches!(err, Error::InvalidConfig(_)));
 }
 
+mod device;
 mod payload;

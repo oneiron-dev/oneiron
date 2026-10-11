@@ -2,6 +2,7 @@ use super::*;
 
 use heed::RwTxn;
 
+use crate::embed::EmbeddingProvenance;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::{ManifestDbs, Store};
@@ -17,6 +18,7 @@ pub(super) fn apply_vector(
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     vector: &[f32],
+    provenance: Option<&EmbeddingProvenance>,
     pending_embedding_token: Option<&[u8]>,
 ) -> Result<AppliedVector> {
     if stored_entity_is_lexical_query_hint_claim(store, wtxn, &id)? {
@@ -39,7 +41,7 @@ pub(super) fn apply_vector(
         wtxn,
         &id,
         None,
-        Some(vector),
+        Some((vector, provenance)),
         pending_embedding_token,
     )? {
         return Ok(AppliedVector {
@@ -47,7 +49,7 @@ pub(super) fn apply_vector(
             cleared_pending_embedding: false,
         });
     }
-    stage_vector_row(store, config, wtxn, &id, vector)?;
+    stage_vector_row(store, config, wtxn, &id, vector, provenance)?;
     let cleared_pending_embedding = match pending_embedding_token {
         Some(token) => store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?,
         None => false,
@@ -59,21 +61,23 @@ pub(super) fn apply_vector(
 }
 
 /// Validates one vector against the vault's embedding contract and stages its
-/// row (ONE-1728 K11). Target-parameterized so a session witness stages the
-/// identical bytes into the overlay: the `pe:` bookkeeping around it is
-/// base-only (K6) and stays in [`apply_vector`].
+/// row (ONE-1728 K11), with who computed it. Target-parameterized so a session
+/// witness stages the identical bytes into the overlay: the `pe:` bookkeeping
+/// around it is base-only (K6) and stays in [`apply_vector`].
 pub(super) fn stage_vector_row(
     store: &impl ManifestDbs,
     config: &crate::config::VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     vector: &[f32],
+    provenance: Option<&EmbeddingProvenance>,
 ) -> Result<()> {
     validate_vector(store, config, wtxn, vector)?;
 
     let bytes = crate::store::encode_vector_row_v1(vector)?;
     store.vectors().put(wtxn, id.as_bytes(), &bytes)?;
     crate::embed::clear_embedding_locality_in_txn(store, wtxn, id)?;
+    crate::embed::record_embedding_device_in_txn(store, wtxn, id, provenance)?;
     Ok(())
 }
 

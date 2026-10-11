@@ -633,10 +633,14 @@ fn an_alias_moved_to_another_revision_is_refused_and_nothing_is_stored() {
 /// alias that came back with another revision behind it still had its answers
 /// stored. Its answers are now held to the vault's model and to the transform
 /// the vault admitted from its provider; a refused answer falls back to the
-/// provider, as any failed remote answer does.
+/// provider, as any failed remote answer does. Each vector is marked with the
+/// endpoint that answered for it (ARCH-0036), never the one first asked.
 #[test]
 fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
-    use oneiron::embed::EmbedderLocality;
+    use oneiron::embed::{EmbedderLocality, EmbeddingDevice, EmbeddingProvenance};
+    let answered_by = |base: &str| {
+        EmbeddingProvenance::new(EmbeddingDevice::Remote, format!("{MODEL_KEY}@{base}"))
+    };
     let primary = MockEndpoint::start(MockBehaviour::OneironWire);
     let remote = MockEndpoint::start(MockBehaviour::OneironWire);
     let dir = tempfile::tempdir().expect("vault dir");
@@ -665,6 +669,10 @@ fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
         vault.embedding_locality(&first).expect("read"),
         Some(EmbedderLocality::OwnerServer)
     );
+    assert_eq!(
+        vault.embedding_provenance(&first).expect("read"),
+        Some(answered_by(&remote.base))
+    );
 
     remote.serve_model(OTHER_REVISION);
     let second = put_claim(&vault, 0xE6, "a claim the moved alias would embed");
@@ -677,6 +685,10 @@ fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
     assert_eq!(
         vault.embedding_locality(&second).expect("read"),
         Some(EmbedderLocality::OnDevice)
+    );
+    assert_eq!(
+        vault.embedding_provenance(&second).expect("read"),
+        Some(answered_by(&primary.base))
     );
 }
 

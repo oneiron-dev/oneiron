@@ -44,6 +44,8 @@ fn doctor_reports_the_vault_beside_a_serve_setting_that_does_not_resolve() {
         map_size: None,
         dict_search_paths: None,
         config: Some(config),
+        vectors_from: None,
+        vectors_runtime: None,
     })
     .expect("doctor reports despite the bad setting");
     let location = &report["location"];
@@ -91,6 +93,8 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
         map_size: None,
         dict_search_paths: None,
         config: Some(config),
+        vectors_from: None,
+        vectors_runtime: None,
     })
     .expect("doctor reports despite the mistyped setting");
     let location = &report["location"]["backups"];
@@ -102,6 +106,63 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
             .iter()
             .any(|error| error.as_str().unwrap().contains("ephemeral_timeout_ms")),
         "{errors:?}"
+    );
+}
+
+/// ARCH-0036 (owner, 2026-10-11): doctor counts the stored vectors by the
+/// device and runtime that computed them, an unmarked one as unknown, and
+/// `--vectors-from` lists exactly the ids one device computed.
+#[test]
+fn doctor_counts_vectors_by_device_and_lists_one_devices_ids() {
+    use oneiron::embed::{EmbeddingDevice, EmbeddingProvenance};
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    let mut vault_config = oneiron::VaultConfig::server();
+    vault_config.dimensions = 4;
+    let on_cuda = oneiron::EntityId::now();
+    {
+        let vault = oneiron::Vault::open_owned(&vault_path, vault_config).unwrap();
+        vault
+            .batch()
+            .vector_with_provenance(
+                &on_cuda,
+                &[1.0, 0.0, 0.0, 0.0],
+                EmbeddingProvenance::new(EmbeddingDevice::Cuda, "candle 0.11.0 q8_0"),
+            )
+            .vector_with_provenance(
+                &oneiron::EntityId::now(),
+                &[0.0, 1.0, 0.0, 0.0],
+                EmbeddingProvenance::new(EmbeddingDevice::Cpu, "candle 0.11.0 q8_0 x86_64"),
+            )
+            .vector(&oneiron::EntityId::now(), &[0.0, 0.0, 1.0, 0.0])
+            .commit()
+            .unwrap();
+    }
+    let config = root.path().join("oneiron.toml");
+    std::fs::write(&config, "").unwrap();
+    let report = doctor_report(DoctorArgs {
+        path: vault_path,
+        dimensions: Some(4),
+        map_size: None,
+        dict_search_paths: None,
+        config: Some(config),
+        vectors_from: Some(EmbeddingDevice::Cuda),
+        vectors_runtime: None,
+    })
+    .unwrap();
+    assert_eq!(
+        report["vector_provenance"],
+        serde_json::json!([
+            {"device": "cpu", "runtime": "candle 0.11.0 q8_0 x86_64", "vectors": 1},
+            {"device": "cuda", "runtime": "candle 0.11.0 q8_0", "vectors": 1},
+            {"device": "unknown", "runtime": "unknown", "vectors": 1},
+        ]),
+        "{report}"
+    );
+    assert_eq!(
+        report["vectors_from"]["ids"],
+        serde_json::json!([on_cuda.to_hex()]),
+        "{report}"
     );
 }
 
