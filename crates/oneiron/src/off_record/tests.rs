@@ -1241,6 +1241,77 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
     Ok(())
 }
 
+/// ARCH-0052 D5 (drift E4; Codex burn engine-prs-02): with capture on, a
+/// run bound in a room on record searches the room, and the search matches a
+/// message nobody saved. Once the saver has left, the run row that would
+/// name it is refused in the transaction that would write it, so neither the
+/// search nor the close leaves a trace of it in base, and the saving stops.
+#[test]
+fn a_bound_runs_search_leaves_no_base_trace_once_the_saver_left() -> Result<()> {
+    use crate::code_run::{HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemorySearchCall};
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let (_tmp, vault) = temp_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let room = EntityId::now();
+    vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
+    vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    let session = vault.off_record_session_vault().enter_in_room(
+        "lamp",
+        OffRecordBackendClass::Local,
+        room,
+        owner,
+    )?;
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness_into_session_as_member(
+            &session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: None,
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: "unsavedlanternneedle".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: 10,
+            },
+            None,
+            None,
+        )
+        .unwrap_or_else(|error| panic!("the room hears the message: {error:?}"));
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    session.flip_on_record_as(&proof)?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-run")?;
+    vault.leave_member(room, owner, by, 50)?;
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let error = dispatcher
+        .dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+            "unsavedlanternneedle",
+            5,
+        )))
+        .expect_err("a room whose saver left publishes no run");
+    assert!(
+        matches!(
+            error,
+            Error::OffRecord(OffRecordError::OffRecordSavingStopped { .. })
+        ),
+        "{error:?}"
+    );
+    drop(dispatcher);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    session.close()?;
+    assert_eq!(vault.retrieval_runs(64)?.len(), base_runs_before);
+    Ok(())
+}
+
 /// A facade and a session are independent borrows, so nothing in the types
 /// stops safe code from pairing a facade on vault A with a room on vault B.
 /// That pairing would read A while staging A's run row and `result_ids` into
