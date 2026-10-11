@@ -234,6 +234,9 @@ pub struct StoreCore {
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
+    /// Policy manifest decodes kept between resolutions: the shipped
+    /// manifest's rows, and each stored manifest body by its hash.
+    pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
     /// Opt-in host root for signing scoped MACHINE history. Never populated
     /// from a transport key, peer assertion, or relay-mode vault.
     pub(crate) machine_history_issuer: Mutex<Option<crate::authority::HostSlipIssuer>>,
@@ -500,6 +503,8 @@ macro_rules! manifest_dbs {
             fn clock(&self) -> &crate::ports::StoreClock;
             fn gate_key_root(&self) -> &std::path::Path;
             fn gate_custody_archived(&self) -> bool;
+            /// The vault's memo of policy manifest decodes.
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
 
         impl ManifestDbs for Store {
@@ -509,6 +514,9 @@ macro_rules! manifest_dbs {
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -518,6 +526,9 @@ macro_rules! manifest_dbs {
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
         }
     };
 }

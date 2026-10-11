@@ -47,7 +47,7 @@ const GRANT_REF_INDEX: SideTable<Vec<u8>, OneMarker, Raw> =
     SideTable::new(&side_table::GATE_DECISION_GRANT_REF_INDEX);
 
 /// Claim-keyed secondary index; the value is an empty marker on disk.
-const CLAIM_INDEX: SideTable<Vec<u8>, (), Raw> =
+pub(super) const CLAIM_INDEX: SideTable<Vec<u8>, (), Raw> =
     SideTable::new(&side_table::GATE_DECISION_CLAIM_INDEX);
 
 const CLAIM_INDEX_BACKFILL_COMPLETE: SideTable<(), [u8; 1], Raw> =
@@ -60,7 +60,7 @@ const ATTEMPT_RUN_INDEX: SideTable<Vec<u8>, OneMarker, Raw> =
 /// strips `base_prefix` (the module's existing hand-spelled prefix constant,
 /// byte-identical to the table's declaration) from a key the module's
 /// existing builder already produced in full.
-fn suffix_of(full: Vec<u8>, base_prefix: &[u8]) -> Vec<u8> {
+pub(super) fn suffix_of(full: Vec<u8>, base_prefix: &[u8]) -> Vec<u8> {
     full[base_prefix.len()..].to_vec()
 }
 
@@ -68,7 +68,7 @@ fn suffix_of(full: Vec<u8>, base_prefix: &[u8]) -> Vec<u8> {
 /// [`SideTable::scan_from`]/[`SideTable::iter_from`] returns for a scan
 /// scoped to one string component (so the suffix still carries that
 /// component's own encoding ahead of the id).
-fn tail_id(bytes: &[u8], context: &'static str) -> Result<[u8; 16]> {
+pub(super) fn tail_id(bytes: &[u8], context: &'static str) -> Result<[u8; 16]> {
     bytes
         .len()
         .checked_sub(16)
