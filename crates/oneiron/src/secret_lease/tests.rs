@@ -433,11 +433,16 @@ fn the_door_check_agrees_with_the_door_without_reading_the_value() {
         crate::ports::row_copies::watch(VALUE_V1);
         let checked = vault.check_secret_at_door(name, EFFECTOR);
         // The check copies no row that holds the value out of the
-        // transaction.
+        // transaction, not even into a wiped buffer.
         assert_eq!(
             crate::ports::row_copies::sites(),
             Vec::<String>::new(),
             "{name}: the readers that copied a row holding the value"
+        );
+        assert_eq!(
+            crate::ports::row_copies::wiped_sites(),
+            Vec::<String>::new(),
+            "{name}: the readers that copied a row holding the value into a wiped buffer"
         );
         let injected = vault.inject_secret_at_door(name, EFFECTOR, &mut |_value| Ok(()));
         assert_eq!(checked.is_ok(), injected.is_ok(), "{name}: {checked:?}");
