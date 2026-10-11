@@ -165,10 +165,25 @@ impl Holder {
 
     /// What the 401 diagnosis finds for the proof `key` signed at `timestamp`.
     fn ahead(&self, key: &ed25519_dalek::SigningKey, timestamp: u64) -> Option<ProofClockAhead> {
-        let (nonce, signature) = self.sign(key, timestamp, 99);
+        self.ahead_on(&self.slip, key, timestamp)
+    }
+
+    fn ahead_on(
+        &self,
+        slip: &crate::authority::CapabilitySlip,
+        key: &ed25519_dalek::SigningKey,
+        timestamp: u64,
+    ) -> Option<ProofClockAhead> {
+        use ed25519_dalek::Signer;
+        let nonce = format!("{:032x}", 99);
+        let challenge = holder_proof_challenge(timestamp, &nonce);
+        let signature = key
+            .sign(&slip.binding_transcript(&challenge).unwrap())
+            .to_bytes();
         self.vault
-            .proof_clock_ahead(&self.slip, timestamp, &signature, nonce.as_bytes())
+            .proof_clock_ahead(slip, timestamp, &signature, nonce.as_bytes())
             .unwrap()
+            .map(|(ahead, _)| ahead)
     }
 
     fn recover(&self) -> Result<ProofClockRecovery> {
@@ -213,6 +228,21 @@ fn a_clock_recovery_admits_the_next_fresh_proof_and_no_proof_signed_before_it() 
         holder.ahead(&stranger, start + 40),
         None,
         "a proof the holder did not sign"
+    );
+    let mut once = holder.slip.clone();
+    once.attenuate(
+        crate::authority::SlipCaveat {
+            single_use: true,
+            expires_at: Some(once.claims.issued_at + 300),
+            ..Default::default()
+        },
+        &holder.key,
+    )
+    .unwrap();
+    assert_eq!(
+        holder.ahead_on(&once, &holder.key, start + 40),
+        None,
+        "a one-shot slip, which no transport takes"
     );
 
     assert_eq!(

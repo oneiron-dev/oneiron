@@ -177,14 +177,17 @@ impl Vault {
     /// clock sits ahead of the host's wall clock: the lockout
     /// [`Self::recover_proof_clock`] lifts. The request must verify in full
     /// on the wall clock, as [`Self::verify_logged_capability_slip_request`]
-    /// checks it, so a forged or stale one learns nothing of the clock.
+    /// checks it, and carry a slip the transport doors take (not a one-shot
+    /// one), so a forged, stale or refused one learns nothing of the clock.
+    /// Returns the slip as verified on the wall clock, for a transport's own
+    /// checks of what it takes.
     pub fn proof_clock_ahead(
         &self,
         slip: &super::CapabilitySlip,
         timestamp: u64,
         signature: &[u8],
         nonce: &[u8],
-    ) -> Result<Option<ProofClockAhead>> {
+    ) -> Result<Option<(ProofClockAhead, super::VerifiedSlip)>> {
         let txn = self.store.env.read_txn()?;
         let clock = request_now_in_txn(self, &txn)?;
         let wall = self.store.clock.wall_now();
@@ -200,16 +203,19 @@ impl Vault {
             return Ok(None);
         };
         let now = self.instant_in_txn(&txn)?.secs();
-        if slip
-            .verify(&mint.signer, &fold, now, &challenge, signature)
-            .is_err()
-        {
+        let Ok(verified) = slip.verify(&mint.signer, &fold, now, &challenge, signature) else {
+            return Ok(None);
+        };
+        if verified.claims().single_use {
             return Ok(None);
         }
-        Ok(Some(ProofClockAhead {
-            floor: clock.now,
-            wall,
-        }))
+        Ok(Some((
+            ProofClockAhead {
+                floor: clock.now,
+                wall,
+            },
+            verified,
+        )))
     }
 }
 

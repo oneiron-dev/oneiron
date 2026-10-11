@@ -103,10 +103,12 @@ impl RevokedTokenJtis for oneiron::Vault {
         nonce: &[u8],
         signature: &[u8],
     ) -> Option<ApiError> {
-        let ahead = self
+        let (ahead, verified) = self
             .proof_clock_ahead(slip, timestamp, signature, nonce)
             .ok()
             .flatten()?;
+        // Named only for a slip this transport would take on the host's clock.
+        CoreAuth::from_verified(verified, slip.caveats.is_empty()).ok()?;
         tracing::warn!(
             proof_clock = ahead.floor,
             wall_clock = ahead.wall,
