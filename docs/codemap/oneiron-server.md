@@ -438,6 +438,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/inference_egress.rs` | test | s | — | — | Extraction default changes require a host gate at storage and dispatch |
 | `tests/it/agent_credentials.rs` | test | s | — | — | A local agent's identity and read credential, from the shipped CLI |
 | `tests/it/ai_serve.rs` | test | m | 9 crate-vis | — | The shipped binary with no model, and with one: without `[models]` every model-free path works and the… |
+| `tests/it/api_cli.rs` | test | s | — | — | `oneiron api call` through the shipped binary: a literal `--data` body and an `@FILE` body reach an… |
 | `tests/it/booking_agent_api.rs` | test | L | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |
 | `tests/it/core_discover.rs` | test | s | — | — | — |
@@ -445,6 +446,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/history_import.rs` | test | L | — | — | `oneiron import <source> <path>` through the shipped binary, for each of the four sources (owner… |
 | `tests/it/import_claims.rs` | test | m | — | — | Claims from imported history wait for the owner's review (ARCH-0027 trust tier: "imported material never… |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
+| `tests/it/managed_ledger_wire.rs` | test | s | — | — | The managed wake ledger's push, through its real Unix-socket path: the frame an independent peer receives… |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |
 | `tests/it/mcp_stdio_agent.rs` | test | XL | — | — | An agent that spawns a command (Claude Code, Codex) reaches a running vault over MCP with a scoped… |
 | `tests/it/notes_import.rs` | test | m | — | — | `oneiron import notes <folder>` through the shipped binary: a folder of linked markdown notes is one batch… |

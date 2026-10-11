@@ -1405,7 +1405,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/attempt_queue/tests/manifest_pack_compat.rs",
@@ -11469,7 +11469,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/memories_projection.rs",
@@ -16970,7 +16970,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/failure_ladder/tests.rs",
@@ -24936,7 +24936,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/origin/smart_http/door_serve_tests.rs",
@@ -26105,7 +26105,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/persona_snapshot/tests.rs",
@@ -38516,7 +38516,7 @@
      "path": "tests/it/effect_spine_oracle.rs",
      "purpose": "Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener",
      "surface": {
-      "crate-vis": 73
+      "crate-vis": 69
      }
     },
     {
@@ -38706,7 +38706,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_convergence_props.rs",
@@ -38849,6 +38849,14 @@
      "notable": [],
      "path": "tests/policy_row_verbs.rs",
      "purpose": "Public-door policy-row proof independent of unrelated lib-test compilation",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -40320,7 +40328,7 @@
    "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2449,
-   "test_files": 775
+   "test_files": 776
   },
   "oneiron-android": {
    "files": [
@@ -47579,7 +47587,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/fetch_policy.rs",
@@ -52163,6 +52171,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/api_cli.rs",
+     "purpose": "`oneiron api call` through the shipped binary: a literal `--data` body and an `@FILE` body reach an…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -52216,6 +52232,14 @@
      "notable": [],
      "path": "tests/it/main.rs",
      "purpose": "Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/managed_ledger_wire.rs",
+     "purpose": "The managed wake ledger's push, through its real Unix-socket path: the frame an independent peer receives…",
      "surface": {}
     },
     {
@@ -52549,7 +52573,7 @@
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 318,
-   "test_files": 129
+   "test_files": 131
   },
   "oneiron-uniffi": {
    "files": [
