@@ -185,7 +185,12 @@ impl Broker {
     /// Starts the broker as `second`'s subordinate uid, serving this
     /// process's uid and trusting `ca_pem`.
     fn start(second: &SecondUser, ca_pem: &[u8]) -> Result<Self, String> {
-        let dir = tempfile::tempdir().map_err(|error| error.to_string())?;
+        // Under /tmp: the second user must pass through every directory above
+        // these files, and a fleet job's TMPDIR sits in a home it cannot enter.
+        let dir = tempfile::Builder::new()
+            .prefix("broker-fixture-")
+            .tempdir_in("/tmp")
+            .map_err(|error| error.to_string())?;
         set_mode(dir.path(), 0o755);
         // The broker's user reads the binary and the CA from here, and makes
         // its socket in a directory it may write.
