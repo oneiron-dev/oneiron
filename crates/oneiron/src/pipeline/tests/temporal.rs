@@ -57,12 +57,12 @@ fn scoped_temporal_widening_stops_at_its_bound() -> Result<()> {
     // Canon cites these numbers: a change here changes the page too.
     assert_eq!(
         (TEMPORAL_WIDENING_MULTIPLE, TEMPORAL_WIDENING_FLOOR),
-        (8, 2_000)
+        (8, 4_000)
     );
     let few = 2;
     let many = TEMPORAL_WIDENING_FLOOR / TEMPORAL_WIDENING_MULTIPLE + 1;
     let (near, far) = (temporal_widening_bound(few), temporal_widening_bound(many));
-    assert_eq!((near, far), (2_000, 2_008));
+    assert_eq!((near, far), (4_000, 4_008));
 
     let (_dir, vault) = open_test_vault();
     // A month back, clear of the rows the vault seeds at its open.

@@ -120,10 +120,12 @@ pub(super) const PER_SCAN_CAP_FACTOR: usize = 4;
 pub(super) const MAX_TEMPORAL_SEEK_BUFFER: usize = 8_192;
 /// A scoped temporal channel widens to at most this multiple of the rows it
 /// was asked for, and to at least [`TEMPORAL_WIDENING_FLOOR`] (ARCH-0004
-/// #temporal-bound). Measured at 10k and 100k records; the golden test
-/// `scoped_temporal_widening_stops_at_its_bound` holds both.
+/// #temporal-bound). The floor is the smallest that kept a reader whose
+/// scope holds 0.5% of the vault exact in every call measured at 10k and
+/// 100k records; the golden test `scoped_temporal_widening_stops_at_its_bound`
+/// holds both.
 pub(super) const TEMPORAL_WIDENING_MULTIPLE: usize = 8;
-pub(super) const TEMPORAL_WIDENING_FLOOR: usize = 2_000;
+pub(super) const TEMPORAL_WIDENING_FLOOR: usize = 4_000;
 pub(super) const COSINE_GHOST_VECTOR_THRESHOLD: f32 = 0.3;
 // RET-01 only gates context-pack assembly. These are deliberately
 // conservative: the vector floor needs an absent keyword signal too, while
