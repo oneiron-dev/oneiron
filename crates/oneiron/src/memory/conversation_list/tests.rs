@@ -117,6 +117,26 @@ fn reader_list(vault: &Vault, reader: &Reader, limit: usize) -> Listed {
     )
 }
 
+/// How many of `listed`'s conversations are groups, channels or mirrors
+/// `reader` is not a member of, such as the vault's root project room.
+fn rooms_outside(vault: &Vault, listed: &Listed, reader: EntityId) -> usize {
+    listed
+        .rows
+        .iter()
+        .filter(|(id, _)| {
+            vault.conversation_body(*id).is_ok_and(|body| {
+                matches!(
+                    body.kind,
+                    ConversationKind::Group | ConversationKind::Channel | ConversationKind::Mirror
+                )
+            }) && !vault
+                .room_audience_members(*id)
+                .unwrap_or_default()
+                .contains(&reader)
+        })
+        .count()
+}
+
 /// A rooted vault whose owner witnessed `witnessed`, and a reader who holds
 /// a Messages grant on the space. It reads with a credential that names the
 /// `readable` conversations and turns, and each one's messages its grant
@@ -692,10 +712,11 @@ fn a_hidden_message_in_two_turns_changes_nothing() {
         let listed = reader_list(&vault, &reader, 50);
         // Each vault seeds its own root project, so only the room's row is
         // compared between them.
+        let all = list(&vault, owner, 50);
         assert_eq!(
             listed.rows.len(),
-            list(&vault, owner, 50).rows.len(),
-            "the reader reads every conversation"
+            all.rows.len() - rooms_outside(&vault, &all, reader.id),
+            "the reader reads every conversation but a room it is not in"
         );
         let row = listed.rows.into_iter().find(|(id, _)| *id == room);
         (row, listed.receipt)
@@ -897,7 +918,10 @@ fn a_group_shows_only_to_its_members_and_only_what_they_were_shown() {
         assert!(!read.rows.iter().any(|(id, _)| *id == outside));
         assert!(read.rows.contains(&(late, None)), "{:?}", read.rows);
         assert!(read.rows.contains(&(shared, Some(words.to_owned()))));
-        assert_eq!(read.rows.len(), all.rows.len() - 1);
+        assert_eq!(
+            read.rows.len(),
+            all.rows.len() - rooms_outside(&rooted.vault, &all, rooted.reader.id)
+        );
         assert_eq!(read.total, Some(read.rows.len() as u64));
         assert_eq!(read.withheld, 0, "a group it is not in adds no count");
     }
@@ -943,9 +967,9 @@ fn a_world_the_credential_cannot_read_adds_no_count() {
             .any(|axis| axis == "row_authority");
         (read.rows, read.total, read.withheld, hinted)
     };
-    let one = listed_with(&[0xE1]);
+    let one = listed_with(&[0x33]);
     assert_eq!(one, (Vec::new(), Some(0), 0, false));
-    assert_eq!(listed_with(&[0xE1, 0xE2]), one);
+    assert_eq!(listed_with(&[0x33, 0x34]), one);
 }
 
 /// The owner's own full credential reads as the owner: a manifest that
@@ -972,6 +996,8 @@ fn the_owners_full_credential_lists_what_the_owner_lists() {
     );
     let issuer = HostSlipIssuer::from_secret(b"conversation list owner manifest").expect("issuer");
     let root = vault.ensure_host_root_slip(&issuer).expect("host root");
+    let mut messages_only = read_preset();
+    messages_only.bands = ScopeAxis::Some(std::collections::BTreeSet::from([ENTITY_TYPE_MESSAGE]));
     crate::conversation_dag::test_support::put_test_policy_manifest(
         &vault,
         WriteActor::new(owner, EdgeActorClass::Human),
@@ -982,7 +1008,7 @@ fn the_owners_full_credential_lists_what_the_owner_lists() {
             "defaults": {}, "rules": [], "actor_ceilings": [],
             "scoped_grants": [{
                 "actor_ref": owner.to_hex(), "actor_class": "human",
-                "effector": "core:read", "scope": {"entity_types": [ENTITY_TYPE_MESSAGE]},
+                "effector": "core:read", "scope": messages_only,
                 "receipt_required": false,
             }],
         }),
@@ -1024,10 +1050,7 @@ fn the_owners_full_credential_lists_what_the_owner_lists() {
     let full = credential(b"conversation-list-owner-manifest-full", None);
     assert!(full.is_full_vault_owner_grade());
     let with_full = owner_list(Some(&full));
-    assert_eq!(
-        (with_full.rows, with_full.total),
-        (plain.rows, plain.total)
-    );
+    assert_eq!((with_full.rows, with_full.total), (plain.rows, plain.total));
     let narrow = credential(b"conversation-list-owner-manifest-read", Some("read"));
     assert!(owner_list(Some(&narrow)).rows.is_empty());
 }
@@ -1052,7 +1075,11 @@ fn a_credential_reads_relationship_words_only_on_a_live_grant() {
                 granted,
                 granted_turn,
                 AT,
-                said(WitnessAuthor::User, "words in the space", Some(entity(SPACE))),
+                said(
+                    WitnessAuthor::User,
+                    "words in the space",
+                    Some(entity(SPACE)),
+                ),
             ),
             (
                 ungranted,
