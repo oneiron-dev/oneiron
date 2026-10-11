@@ -580,7 +580,11 @@ impl OrganProcess {
     ) -> Result<bool, FrameError> {
         let dropped = || revoked() || !self.inbox.in_flight(id);
         let Some(writer) = lock_until(&self.writer, deadline, dropped) else {
-            return if dropped() { Ok(false) } else { Err(FrameError::Late) };
+            return if dropped() {
+                Ok(false)
+            } else {
+                Err(FrameError::Late)
+            };
         };
         if dropped() {
             return Ok(false);
