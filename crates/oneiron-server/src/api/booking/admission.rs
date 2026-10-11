@@ -13,7 +13,10 @@ use oneiron::booking::{
     BookingStatus, BookingStatusValue, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
 };
 use oneiron::registry::ENTITY_TYPE_EVENT;
-use oneiron::{CalendarReadRequest, ClaimLifecycleStatus, EntityId, TimeRange, Vault};
+use oneiron::{
+    CalendarReadRequest, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, EntityId,
+    TimeRange, Vault,
+};
 
 use super::BookingTransportContext;
 use super::constants::{INTAKE_DOMAIN, SELECTED_SLOT_DOMAIN};
@@ -305,7 +308,16 @@ fn booking_is_active_future_for(
         let Some(body) = vault.get_claim(&claim_id).map_err(engine_read_error)? else {
             continue;
         };
-        if body.lifecycle != ClaimLifecycleStatus::Active {
+        // The engine's surfaceable record only, as the lifecycle writer reads
+        // it: a pending proposal beside it must not shrink this tally.
+        if body.lifecycle != ClaimLifecycleStatus::Active
+            || body.stale
+            || !matches!(
+                body.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+            || body.subject != ClaimSubject::Entity(event_ref)
+        {
             continue;
         }
         match body.predicate.as_str() {

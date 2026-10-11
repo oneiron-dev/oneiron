@@ -34,8 +34,8 @@ mod conversation_dag;
 mod conversation_reactions;
 mod conversation_rooms;
 mod core_memory_conversations;
-#[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_booking_publication;
+#[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_code_check;
 mod mcp_memory;
 mod mcp_paging_cursors;

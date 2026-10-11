@@ -710,3 +710,90 @@ async fn a_daily_cap_closes_a_booked_day_but_lets_its_booking_move_within_it() {
         .expect("a booking moves within its own capped day");
     assert!(matches!(moved, BookingOperationResponse::Reschedule { .. }));
 }
+
+/// A pending `status: cancelled` proposal filed beside a confirmed booking
+/// does not free its visitor's place under the owner's active-booking cap.
+#[tokio::test]
+async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_cap() {
+    let fixture = Fixture::new();
+    let slots = fixture.slots().await;
+    assert!(slots.len() > 1);
+    let scope = BookingRuleScope {
+        page_ref: fixture.page,
+        event_type: None,
+    };
+    let rule = BookingAntiAbuseRule::BookRate {
+        per_minute_per_ip: NonZeroU32::new(100).expect("positive"),
+        max_active_future_per_email: 1,
+    };
+    apply_rule_amendment(
+        &fixture.server.vault,
+        0,
+        BookingAntiAbuseRuleRow {
+            row_id: booking_rule_row_id(&scope, &rule),
+            scope,
+            rule,
+            version: 1,
+            amended_at: 0,
+            amended_by: fixture.page,
+            owner_stamp_ref: None,
+        },
+        None,
+    )
+    .expect("active-booking cap");
+
+    let first = held_token(&fixture, &slots[0], "first").await;
+    confirmed_tokens(
+        fixture
+            .dispatch("booking.confirm", confirm(first, "first"))
+            .await
+            .expect("the visitor's one booking"),
+    );
+    let events = fixture
+        .server
+        .vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_EVENT)
+        .expect("events");
+    let [booking] = events.as_slice() else {
+        panic!("one booking EVENT, got {events:?}")
+    };
+    let now = now_secs().expect("clock");
+    let proposal = oneiron::ClaimBody::new(
+        oneiron::booking::BOOKING_STATUS_PREDICATE,
+        oneiron::ClaimSubject::Entity(*booking),
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("status"), rmpv::Value::from("cancelled")),
+            (rmpv::Value::from("recorded_at"), rmpv::Value::from(now)),
+        ]),
+        1.0,
+        oneiron::ClaimApprovalStatus::Proposed,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .expect("claim body");
+    // The highest id scans last, where an approval-blind reader lets it win.
+    fixture
+        .server
+        .vault
+        .put_claim(
+            &oneiron::EntityId::from_bytes([0xF0; 16]).expect("id"),
+            &proposal,
+            oneiron::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .expect("the proposal is stored pending review");
+
+    let second = held_token(&fixture, &slots[1], "second").await;
+    let refused = fixture
+        .route(
+            "POST",
+            &format!("/public/booking/{}/verbs/booking.confirm", fixture.token),
+            serde_json::to_value(confirm(second, "second")).expect("wire"),
+        )
+        .await;
+    assert!(!refused.status().is_success(), "{}", refused.status());
+    let body = String::from_utf8(bytes(refused).await).expect("utf-8");
+    assert!(body.contains("active upcoming"), "{body}");
+}
