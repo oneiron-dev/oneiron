@@ -4776,9 +4776,9 @@ fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() ->
 
 /// ARCH-0067 §5: a TASK a world-narrowed writer creates is born in that world,
 /// and a world row travels only where a CLAIM in that world would — under its
-/// own world or `All`. A grant that would carry every world does not lift a
-/// base-only pact or selector, nor carry the row to another world's peer. A
-/// base TASK travels under every selector.
+/// own world or `All`, and its authority facts with it. A grant that would
+/// carry every world does not lift a base-only pact or selector, nor carry the
+/// row to another world's peer. A base TASK travels under every selector.
 #[test]
 fn a_world_born_task_travels_only_under_its_own_world() {
     let member = entity_id(0x3E);
@@ -4843,9 +4843,27 @@ fn a_world_born_task_travels_only_under_its_own_world() {
             facet: None,
         });
         let base = create(crate::federation::record_scope::BirthPosition::default());
+        // Each TASK with the authority facts it was minted with.
+        let rows = |task: EntityId| {
+            let mut rows = vec![task];
+            rows.extend(
+                vault
+                    .edges_in(&task)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|row| row.kind == EdgeKind::ScopedTo)
+                    .map(|row| row.target),
+            );
+            assert!(
+                rows.len() > 1,
+                "{name}: a minted TASK carries its Owner fact"
+            );
+            rows
+        };
+        let (born_rows, base_rows) = (rows(born), rows(base));
         let doc = create_window_doc("source", &window_key);
-        for task in [born, base] {
-            insert_blob(&doc, task, &vault.get_raw(&task).unwrap().unwrap());
+        for row in born_rows.iter().chain(&base_rows) {
+            insert_blob(&doc, *row, &vault.get_raw(row).unwrap().unwrap());
         }
         doc.commit();
         let selector = SyncSelector::new(grant_id, member, selector_world, vec![], vec![]);
@@ -4856,11 +4874,15 @@ fn a_world_born_task_travels_only_under_its_own_world() {
                 .unwrap();
 
         let exported = import_ids(&update);
-        assert!(exported.contains(&base), "{name}: a base TASK travels");
-        assert_eq!(
-            exported.contains(&born),
-            born_travels,
-            "{name}: a world-born TASK"
-        );
+        for row in &base_rows {
+            assert!(exported.contains(row), "{name}: a base TASK row travels");
+        }
+        for row in &born_rows {
+            assert_eq!(
+                exported.contains(row),
+                born_travels,
+                "{name}: a world-born TASK row"
+            );
+        }
     }
 }
