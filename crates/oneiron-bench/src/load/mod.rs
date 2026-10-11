@@ -15,7 +15,8 @@
 //! * `oneiron-bench load compare <a.json> <b.json>`
 //!
 //! Latencies are measured by the client on loopback, so they include HTTP and
-//! JSON work on both ends: a little above the server-side time.
+//! JSON work on both ends: a little above the server-side time. `run` and
+//! `startup` read the server's `/proc` files, so they run on Linux only.
 
 mod client;
 mod corpus;
@@ -167,8 +168,13 @@ fn parse(args: &[String]) -> Result<Plan, String> {
     Ok(plan)
 }
 
+const LINUX_ONLY: &str =
+    "load run and load startup read the server's /proc files: run them on Linux";
+
 pub(crate) fn run(args: &[String]) -> ExitCode {
+    let linux = cfg!(target_os = "linux");
     let result = match args {
+        [cmd, ..] if (cmd == "run" || cmd == "startup") && !linux => Err(LINUX_ONLY.to_owned()),
         [cmd, rest @ ..] if cmd == "run" => parse(rest).and_then(|plan| execute(&plan)),
         [cmd, rest @ ..] if cmd == "startup" => startup::run(rest),
         [cmd, a, b] if cmd == "compare" => {
@@ -219,6 +225,7 @@ fn host() -> Host {
 }
 
 fn execute(plan: &Plan) -> Result<(), String> {
+    server::stop_servers_on_cancel(plan.work.clone());
     let mut report = Report {
         bench: "oneiron-bench load v1".to_owned(),
         label: plan.label.clone(),
@@ -336,9 +343,16 @@ fn one_run(plan: &Plan, records: usize, vectors: bool) -> Result<Run, String> {
     let server = Running::start(&plan.server, &vault, &plan.server_env, "serve.log", "warn")?;
     run.startup_empty = startup_of(&server);
     let http = Agent::http()?;
+    run.clock_skew_secs = Agent::new(&http, &server.base, &credentials[0], 0)?.clock_skew()?;
+    if run.clock_skew_secs != 0 {
+        say(&format!(
+            "holder proofs are signed {} s off the wall clock",
+            run.clock_skew_secs
+        ));
+    }
     let agents = credentials
         .iter()
-        .map(|c| Agent::new(&http, &server.base, c))
+        .map(|c| Agent::new(&http, &server.base, c, run.clock_skew_secs))
         .collect::<Result<Vec<_>, _>>()?;
     let queries = corpus.queries(records, plan.queries);
     let ctx = Ctx {
@@ -347,11 +361,12 @@ fn one_run(plan: &Plan, records: usize, vectors: bool) -> Result<Run, String> {
         server: &server,
         agents: &agents,
         queries: &queries,
+        now: corpus::recall_now(records + plan.single_writes),
         cell_requests: plan.cell_requests,
         cell_seconds: plan.cell_seconds,
         signal_cells: plan.signal_cells.clone(),
     };
-    measure(plan, &ctx, &mut run, records, stub.as_ref(), &vault);
+    measure(plan, &ctx, &mut run, records, stub.as_ref(), &vault)?;
     let exit = server.stop();
     run.notes.push(format!("serve exit: {exit}"));
     if !plan.skip.iter().any(|s| s == "restart") {
@@ -376,7 +391,7 @@ fn measure(
     records: usize,
     stub: Option<&StubEmbedder>,
     vault: &Vault,
-) {
+) -> Result<(), String> {
     let single = plan.single_writes.min(records);
     say("ingest: one caller on the empty vault");
     run.ingest
@@ -389,8 +404,13 @@ fn measure(
         .push(ctx.ingest_single("ingest_single_full", records..records + plan.single_writes));
     if let Some(stub) = stub {
         say("drain: waiting for the embedding worker");
-        let expected = (records + plan.single_writes) as u64;
-        run.drain_seconds = phases::drain(ctx.server, stub, expected, Duration::from_secs(3600));
+        let expected = records + plan.single_writes;
+        run.drain_seconds = Some(phases::drain(
+            ctx.server,
+            stub,
+            expected,
+            Duration::from_secs(3600),
+        )?);
         run.notes.push(format!(
             "stub embedded {} inputs for {expected} records",
             stub.embedded()
@@ -400,9 +420,7 @@ fn measure(
     run.steady = ctx.server.memory().0;
     run.disk_mib = vault.disk_bytes() as f64 / 1_048_576.0;
     say("golden queries");
-    let mut golden_grades = plan.grades.clone();
-    golden_grades.push(Grade::named("high"));
-    (run.golden, run.hit_at_10) = ctx.golden(&golden_grades);
+    (run.golden, run.hit_at_10) = ctx.golden(&plan.grades);
     if !plan.skip.iter().any(|s| s == "agent-memory") {
         let used = plan
             .agents
@@ -439,4 +457,5 @@ fn measure(
         say("fairness");
         run.fairness = Some(ctx.fairness(&call, &normal, 8, 8));
     }
+    Ok(())
 }

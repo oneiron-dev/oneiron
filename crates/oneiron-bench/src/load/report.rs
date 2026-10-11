@@ -1,6 +1,6 @@
 //! The result file, and `load compare`, which reads two of them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -95,13 +95,18 @@ pub(super) struct Run {
     pub(super) vectors: bool,
     pub(super) rows: Rows,
     pub(super) mint_seconds: f64,
+    /// Seconds added to the wall clock so holder proofs land in the vault's
+    /// replay window: the vault's authority clock lags while it is closed.
+    #[serde(default)]
+    pub(super) clock_skew_secs: i64,
     pub(super) startup_empty: Startup,
     pub(super) ingest: Vec<Cell>,
     pub(super) drain_seconds: Option<f64>,
     pub(super) steady: Memory,
     pub(super) disk_mib: f64,
     pub(super) golden: Vec<GoldenQuery>,
-    /// Per grade: the share of targeted golden queries whose record is in the top 10.
+    /// Per grade: the share of targeted golden queries whose record is in the
+    /// top 10; a failed query is a miss.
     pub(super) hit_at_10: BTreeMap<String, f64>,
     pub(super) memory_per_agent: Option<AgentMemory>,
     pub(super) recall: Vec<Cell>,
@@ -133,19 +138,45 @@ fn cells(run: &Run) -> BTreeMap<String, &Cell> {
         .collect()
 }
 
-/// Golden rankings equal between two runs, per grade: (equal, compared).
-fn ranking_equality(a: &Run, b: &Run) -> BTreeMap<String, (usize, usize)> {
-    let mut out = BTreeMap::<String, (usize, usize)>::new();
+/// One grade's golden queries across two runs.
+#[derive(Default)]
+struct Equality {
+    equal: usize,
+    differ: usize,
+    failed_in_a: usize,
+    failed_in_b: usize,
+    failed_in_both: usize,
+}
+
+/// Golden rankings per grade between two runs over the same queries; every
+/// query of every grade either run asked counts, failures included.
+fn ranking_equality(a: &Run, b: &Run) -> Result<BTreeMap<String, Equality>, String> {
+    let same = a.golden.len() == b.golden.len()
+        && a.golden
+            .iter()
+            .zip(&b.golden)
+            .all(|(qa, qb)| qa.query.text == qb.query.text);
+    if !same {
+        return Err("the golden queries differ: another seed, scale or --queries".into());
+    }
+    let mut out = BTreeMap::<String, Equality>::new();
     for (qa, qb) in a.golden.iter().zip(&b.golden) {
-        for (grade, ranking) in &qa.rankings {
-            if let Some(other) = qb.rankings.get(grade) {
-                let entry = out.entry(grade.clone()).or_default();
-                entry.1 += 1;
-                entry.0 += usize::from(ranking == other);
+        let grades = [qa, qb]
+            .iter()
+            .flat_map(|q| q.rankings.keys().chain(q.errors.keys()))
+            .collect::<BTreeSet<_>>();
+        for grade in grades {
+            let entry = out.entry(grade.clone()).or_default();
+            match (qa.rankings.get(grade), qb.rankings.get(grade)) {
+                (Some(x), Some(y)) if x == y => entry.equal += 1,
+                (Some(_), Some(_)) => entry.differ += 1,
+                (Some(_), None) => entry.failed_in_b += 1,
+                (None, Some(_)) => entry.failed_in_a += 1,
+                (None, None) => entry.failed_in_both += 1,
             }
         }
     }
-    out
+    Ok(out)
 }
 
 fn compare_run(out: &mut String, a: &Run, b: &Run) {
@@ -197,13 +228,22 @@ fn compare_run(out: &mut String, a: &Run, b: &Run) {
         };
         line(out, name, &fmt(cell), &fmt(other));
     }
-    for (grade, (equal, total)) in ranking_equality(a, b) {
-        line(
-            out,
-            &format!("golden {grade}: equal rankings"),
-            &format!("{equal}/{total}"),
-            "",
-        );
+    match ranking_equality(a, b) {
+        Ok(grades) => {
+            for (grade, e) in grades {
+                let total = e.equal + e.differ + e.failed_in_a + e.failed_in_b + e.failed_in_both;
+                line(
+                    out,
+                    &format!("golden {grade}: rankings"),
+                    &format!("equal {}/{total}, differ {}", e.equal, e.differ),
+                    &format!(
+                        "failed only in A {}, only in B {}, in both {}",
+                        e.failed_in_a, e.failed_in_b, e.failed_in_both
+                    ),
+                );
+            }
+        }
+        Err(error) => line(out, "golden rankings", &error, ""),
     }
     for (grade, hit) in &a.hit_at_10 {
         let other = b

@@ -1,6 +1,9 @@
 //! The shipped `oneiron-server` binary as a child process: `init`, `whoami`,
 //! `token agent` on the stopped vault, then `serve` on loopback with a
 //! sampler thread reading the child's `/proc` memory every 100 ms.
+//!
+//! A running server's pid sits in `serve.pid` beside its vault until it is
+//! stopped, so a cancelled bench stops it too ([`stop_servers_on_cancel`]).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::signal::unix::{SignalKind, signal};
 
 use super::embedder::{MODEL_ID, MODEL_KEY};
 
@@ -60,7 +64,7 @@ fn run(bin: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<String, String
 }
 
 /// The last `n` characters of `text`.
-pub(super) fn tail(text: &str, n: usize) -> &str {
+fn tail(text: &str, n: usize) -> &str {
     let skip = text.chars().count().saturating_sub(n);
     text.char_indices()
         .nth(skip)
@@ -173,7 +177,7 @@ impl Vault {
     }
 }
 
-/// Process memory in MiB from `/proc/<pid>/status`; `None` off Linux.
+/// Process memory in MiB from `/proc/<pid>/status`.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub(super) struct Memory {
     pub(super) rss_mib: f64,
@@ -222,9 +226,13 @@ pub(super) fn cpu_seconds(pid: u32) -> Option<f64> {
     Some(ticks / 100.0)
 }
 
+const PID_FILE: &str = "serve.pid";
+
 /// A running `serve`: its port, readiness time and memory peak.
 pub(super) struct Running {
     child: Child,
+    pid_file: PathBuf,
+    log: PathBuf,
     pub(super) pid: u32,
     pub(super) base: String,
     pub(super) ready_ms: f64,
@@ -251,8 +259,8 @@ impl Running {
         log_level: &str,
     ) -> Result<Self, String> {
         let port = free_port()?;
-        let log =
-            fs::File::create(vault.dir.join(log_name)).map_err(|e| format!("server log: {e}"))?;
+        let log_path = vault.dir.join(log_name);
+        let log = fs::File::create(&log_path).map_err(|e| format!("server log: {e}"))?;
         let err = log.try_clone().map_err(|e| format!("server log: {e}"))?;
         let started = Instant::now();
         let child = Command::new(bin)
@@ -271,6 +279,8 @@ impl Running {
             .spawn()
             .map_err(|e| format!("spawn serve: {e}"))?;
         let pid = child.id();
+        let pid_file = vault.dir.join(PID_FILE);
+        fs::write(&pid_file, pid.to_string()).map_err(|e| format!("{PID_FILE}: {e}"))?;
         let peak = Arc::new(Mutex::new(Memory::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let sampler = {
@@ -286,6 +296,8 @@ impl Running {
         };
         let mut running = Self {
             child,
+            pid_file,
+            log: log_path,
             pid,
             base: format!("http://127.0.0.1:{port}"),
             ready_ms: 0.0,
@@ -327,6 +339,11 @@ impl Running {
         (now, peak)
     }
 
+    /// Whether the server's log so far contains `text`.
+    pub(super) fn logged(&self, text: &str) -> bool {
+        fs::read_to_string(&self.log).is_ok_and(|log| log.contains(text))
+    }
+
     /// Sends `signal` (a `kill -s` name such as `USR2`) to the server.
     pub(super) fn signal(&self, signal: &str) -> Result<(), String> {
         let status = Command::new("kill")
@@ -356,6 +373,7 @@ impl Running {
                 }
             }
         };
+        let _ = fs::remove_file(&self.pid_file);
         self.stop.store(true, Ordering::Relaxed);
         if let Some(sampler) = self.sampler.take() {
             let _ = sampler.join();
@@ -371,5 +389,59 @@ impl Drop for Running {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+        let _ = fs::remove_file(&self.pid_file);
     }
+}
+
+/// Whether `pid` is a process that has not yet exited (a zombie has).
+fn alive(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .is_some_and(|(_, rest)| !rest.trim_start().starts_with('Z'))
+    })
+}
+
+/// On SIGINT or SIGTERM, stops every server whose `serve.pid` sits one level
+/// under `work`, waits up to 120 s for them to exit, and exits 130 or 143.
+/// Destructors do not run on a signal, so without this a cancelled run would
+/// leave its server holding the vault.
+pub(super) fn stop_servers_on_cancel(work: PathBuf) {
+    std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let code = runtime.block_on(async {
+            let (Ok(mut interrupt), Ok(mut terminate)) = (
+                signal(SignalKind::interrupt()),
+                signal(SignalKind::terminate()),
+            ) else {
+                return None;
+            };
+            tokio::select! {
+                _ = interrupt.recv() => Some(130),
+                _ = terminate.recv() => Some(143),
+            }
+        });
+        let Some(code) = code else { return };
+        let pids = fs::read_dir(&work)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| fs::read_to_string(entry.path().join(PID_FILE)).ok())
+            .filter_map(|text| text.trim().parse::<u32>().ok())
+            .collect::<Vec<_>>();
+        for pid in &pids {
+            let _ = Command::new("kill")
+                .args(["-s", "TERM", &pid.to_string()])
+                .status();
+        }
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < deadline && pids.iter().any(|&pid| alive(pid)) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        std::process::exit(code);
+    });
 }

@@ -7,16 +7,17 @@
 //! stands in for a shared embedder outside the vault process, which is how the
 //! vault's own vector work is measured without a model run.
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
 
-use super::corpus::Rng;
+use super::corpus::{Rng, tag_index};
 
 pub(super) const MODEL_KEY: &str = "bench-bag-of-words";
 pub(super) const MODEL_ID: &str = "bench/bag-of-words@v1";
@@ -25,12 +26,15 @@ pub(super) const MODEL_ID: &str = "bench/bag-of-words@v1";
 struct Stub {
     dimensions: usize,
     embedded: Arc<AtomicU64>,
+    records: Arc<Mutex<HashSet<usize>>>,
 }
 
-/// The running stub: its address and how many inputs it has embedded.
+/// The running stub: its address, how many inputs it has embedded, and which
+/// records' tagged texts were among them.
 pub(super) struct StubEmbedder {
-    pub(super) addr: SocketAddr,
+    addr: SocketAddr,
     embedded: Arc<AtomicU64>,
+    records: Arc<Mutex<HashSet<usize>>>,
     _runtime: tokio::runtime::Runtime,
 }
 
@@ -42,9 +46,11 @@ impl StubEmbedder {
             .build()
             .map_err(|e| format!("stub embedder runtime: {e}"))?;
         let embedded = Arc::new(AtomicU64::new(0));
+        let records = Arc::new(Mutex::new(HashSet::new()));
         let stub = Stub {
             dimensions,
             embedded: Arc::clone(&embedded),
+            records: Arc::clone(&records),
         };
         let listener = runtime
             .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
@@ -60,6 +66,7 @@ impl StubEmbedder {
         Ok(Self {
             addr,
             embedded,
+            records,
             _runtime: runtime,
         })
     }
@@ -68,8 +75,14 @@ impl StubEmbedder {
         format!("http://{}/v1", self.addr)
     }
 
+    /// Every input embedded: corpus texts, probes and retries alike.
     pub(super) fn embedded(&self) -> u64 {
         self.embedded.load(Ordering::Relaxed)
+    }
+
+    /// How many distinct records had a text carrying their tag embedded.
+    pub(super) fn records(&self) -> usize {
+        self.records.lock().map_or(0, |seen| seen.len())
     }
 }
 
@@ -83,13 +96,17 @@ async fn embeddings(State(stub): State<Stub>, Json(request): Json<Value>) -> Jso
         Value::String(one) => vec![one.as_str()],
         _ => Vec::new(),
     };
-    stub.embedded
-        .fetch_add(inputs.len() as u64, Ordering::Relaxed);
     let data = inputs
         .iter()
         .enumerate()
         .map(|(index, text)| json!({"object": "embedding", "index": index, "embedding": vector(text, stub.dimensions)}))
         .collect::<Vec<_>>();
+    // Counted once the vectors exist, just before they are answered.
+    stub.embedded
+        .fetch_add(inputs.len() as u64, Ordering::Relaxed);
+    if let Ok(mut seen) = stub.records.lock() {
+        seen.extend(inputs.iter().filter_map(|text| tag_index(text)));
+    }
     Json(json!({"object": "list", "model": MODEL_KEY, "data": data}))
 }
 

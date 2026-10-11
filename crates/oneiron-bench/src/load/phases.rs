@@ -41,6 +41,8 @@ pub(super) struct Ctx<'a> {
     pub(super) server: &'a Running,
     pub(super) agents: &'a [Agent],
     pub(super) queries: &'a [Query],
+    /// The `as_of` every recall sends.
+    pub(super) now: u64,
     pub(super) cell_requests: usize,
     pub(super) cell_seconds: f64,
     /// Cell names, each with a `kill -s` signal sent to the server before and after it.
@@ -119,11 +121,14 @@ impl Ctx<'_> {
         )
     }
 
-    /// One caller writes `records` in order.
+    /// One caller writes `records` in order. Records are made before the cell
+    /// starts, as for [`Self::ingest_parallel`].
     pub(super) fn ingest_single(&self, name: &str, records: Range<usize>) -> Cell {
+        let records = records.map(|i| self.corpus.record(i)).collect::<Vec<_>>();
         self.cell(name, "ingest", 1, || {
             records
-                .map(|i| self.write_one(&self.agents[0], &self.corpus.record(i)))
+                .iter()
+                .map(|record| self.write_one(&self.agents[0], record))
                 .collect()
         })
     }
@@ -160,35 +165,45 @@ impl Ctx<'_> {
         &self.queries[(agent * 7 + k) % self.queries.len()].text
     }
 
-    /// Each `(agent, grade)` pair recalls in a closed loop: one warm-up, then
-    /// up to `per_agent` timed requests, stopping early at the cell's time cap
+    fn recall(&self, agent: usize, k: usize, grade: &Grade) -> Sample {
+        self.agents[agent]
+            .recall(
+                self.query(agent, k),
+                &grade.effort,
+                grade.limit,
+                grade.deadline_ms,
+                self.now,
+            )
+            .sample
+    }
+
+    /// One untimed recall by every role at once, before its cell starts.
+    fn warm(&self, roles: &[(usize, &Grade)]) {
+        std::thread::scope(|scope| {
+            for &(agent, grade) in roles {
+                let _ = scope.spawn(move || self.recall(agent, 0, grade));
+            }
+        });
+    }
+
+    /// The roles recall in a closed loop, all at once: `total` timed requests
+    /// spread evenly over them, each stopping early at the cell's time cap
     /// once it has two.
-    fn recall_loop(&self, roles: &[(usize, &Grade)], per_agent: usize) -> Vec<(String, Sample)> {
+    fn recall_loop(&self, roles: &[(usize, &Grade)], total: usize) -> Vec<(String, Sample)> {
         let deadline = Instant::now() + Duration::from_secs_f64(self.cell_seconds);
+        let (each, extra) = (total / roles.len().max(1), total % roles.len().max(1));
         std::thread::scope(|scope| {
             // Every agent starts before any is joined.
             let mut handles = Vec::with_capacity(roles.len());
-            for &(agent, grade) in roles {
+            for (slot, &(agent, grade)) in roles.iter().enumerate() {
+                let budget = each + usize::from(slot < extra);
                 handles.push(scope.spawn(move || {
-                    let me = &self.agents[agent];
-                    let _ = me.recall(
-                        self.query(agent, 0),
-                        &grade.effort,
-                        grade.limit,
-                        grade.deadline_ms,
-                    );
-                    let mut out = Vec::new();
-                    for k in 1..=per_agent {
+                    let mut out = Vec::with_capacity(budget);
+                    for k in 1..=budget {
                         if k > 2 && Instant::now() > deadline {
                             break;
                         }
-                        let r = me.recall(
-                            self.query(agent, k),
-                            &grade.effort,
-                            grade.limit,
-                            grade.deadline_ms,
-                        );
-                        out.push((grade.name.clone(), r.sample));
+                        out.push((grade.name.clone(), self.recall(agent, k, grade)));
                     }
                     out
                 }));
@@ -200,16 +215,18 @@ impl Ctx<'_> {
         })
     }
 
-    fn per_agent(&self, agents: usize) -> usize {
-        self.cell_requests.div_ceil(agents.max(1)).max(4)
+    /// A cell's timed requests: `--cell-requests`, and at least two per agent.
+    fn budget(&self, agents: usize) -> usize {
+        self.cell_requests.max(2 * agents)
     }
 
     pub(super) fn recall_cell(&self, grade: &Grade, agents: usize) -> Cell {
         let agents = agents.min(self.agents.len());
         let roles = (0..agents).map(|a| (a, grade)).collect::<Vec<_>>();
         let name = format!("recall_{}_x{agents}", grade.name);
+        self.warm(&roles);
         self.cell(&name, &grade.name, agents, || {
-            self.recall_loop(&roles, self.per_agent(agents))
+            self.recall_loop(&roles, self.budget(agents))
         })
     }
 
@@ -220,8 +237,9 @@ impl Ctx<'_> {
             .map(|a| (a, if a % 2 == 0 { call } else { normal }))
             .collect::<Vec<_>>();
         let name = format!("mixed_x{agents}");
+        self.warm(&roles);
         let joint = self.cell(&name, "mixed", agents, || {
-            self.recall_loop(&roles, self.per_agent(agents))
+            self.recall_loop(&roles, self.budget(agents))
         });
         [call, normal]
             .iter()
@@ -229,7 +247,7 @@ impl Ctx<'_> {
                 let mut part = Cell {
                     name: format!("{name}_{}", grade.name),
                     grade: grade.name.clone(),
-                    agents: agents.div_ceil(2),
+                    agents: roles.iter().filter(|(_, g)| g.name == grade.name).count(),
                     ..Cell::default()
                 };
                 part.load_before.clone_from(&joint.load_before);
@@ -252,9 +270,10 @@ impl Ctx<'_> {
         let callers = callers.min(self.agents.len().saturating_sub(1));
         let heavy_agent = self.agents.len() - 1;
         let roles = (0..callers).map(|a| (a, call)).collect::<Vec<_>>();
-        let per_agent = self.per_agent(callers);
+        let total = self.budget(callers);
+        self.warm(&roles);
         let alone = self.cell("fairness_alone", &call.name, callers, || {
-            self.recall_loop(&roles, per_agent)
+            self.recall_loop(&roles, total)
         });
         let stop = AtomicBool::new(false);
         let mut heavy_samples = Vec::new();
@@ -264,19 +283,10 @@ impl Ctx<'_> {
             for t in 0..heavy_threads {
                 let stop = &stop;
                 handles.push(scope.spawn(move || {
-                    let me = &self.agents[heavy_agent];
                     let mut out = Vec::new();
                     let mut k = t;
                     while !stop.load(Ordering::Relaxed) {
-                        out.push(
-                            me.recall(
-                                self.query(heavy_agent, k),
-                                &heavy.effort,
-                                heavy.limit,
-                                heavy.deadline_ms,
-                            )
-                            .sample,
-                        );
+                        out.push(self.recall(heavy_agent, k, heavy));
                         k += heavy_threads;
                     }
                     out
@@ -284,7 +294,7 @@ impl Ctx<'_> {
             }
             std::thread::sleep(Duration::from_millis(500));
             let beside = self.cell("fairness_beside_heavy", &call.name, callers, || {
-                self.recall_loop(&roles, per_agent)
+                self.recall_loop(&roles, total)
             });
             stop.store(true, Ordering::Relaxed);
             for handle in handles {
@@ -308,7 +318,8 @@ impl Ctx<'_> {
         }
     }
 
-    /// Every golden query once per grade, by one agent, in order.
+    /// Every golden query once per grade, by one agent, in order. A targeted
+    /// query that fails counts as a miss in its grade's hit@10.
     pub(super) fn golden(&self, grades: &[Grade]) -> (Vec<GoldenQuery>, BTreeMap<String, f64>) {
         let agent = &self.agents[0];
         let golden = self
@@ -318,8 +329,13 @@ impl Ctx<'_> {
                 let mut rankings = BTreeMap::new();
                 let mut errors = BTreeMap::new();
                 for grade in grades {
-                    let r =
-                        agent.recall(&query.text, &grade.effort, grade.limit, grade.deadline_ms);
+                    let r = agent.recall(
+                        &query.text,
+                        &grade.effort,
+                        grade.limit,
+                        grade.deadline_ms,
+                        self.now,
+                    );
                     match r.sample.error {
                         Some(error) => {
                             errors.insert(grade.name.clone(), error);
@@ -341,12 +357,12 @@ impl Ctx<'_> {
             .map(|grade| {
                 let targeted = golden
                     .iter()
-                    .filter_map(|g| Some((g.query.target?, g.rankings.get(&grade.name)?)))
+                    .filter_map(|g| Some((g.query.target?, g.rankings.get(&grade.name))))
                     .collect::<Vec<_>>();
                 let hit = targeted
                     .iter()
                     .filter(|(target, ranking)| {
-                        ranking.iter().take(10).any(|t| *t == Some(*target))
+                        ranking.is_some_and(|r| r.iter().take(10).any(|t| *t == Some(*target)))
                     })
                     .count();
                 (
@@ -366,7 +382,8 @@ impl Ctx<'_> {
         let ids = agents.clone().collect::<Vec<_>>();
         for chunk in ids.chunks(16) {
             let roles = chunk.iter().map(|&a| (a, &light)).collect::<Vec<_>>();
-            let _ = self.recall_loop(&roles, 1);
+            self.warm(&roles);
+            let _ = self.recall_loop(&roles, roles.len());
         }
         std::thread::sleep(Duration::from_millis(500));
         let after = self.server.memory().0.anon_mib;
@@ -380,31 +397,51 @@ impl Ctx<'_> {
     }
 }
 
-/// Waits until the stub has embedded `expected` inputs (or stopped moving for
-/// 30 s) and the server has used under 0.1 CPU-second a second for 5 s.
+/// The server's warning when an embedding pass fails and it backs off.
+const PASS_FAILED: &str = "embedding reconciliation failed";
+
+/// Waits until the stub has answered a text carrying each of the `expected`
+/// records' tags and the server has then used under 0.1 CPU-second a second
+/// for 5 s; returns the seconds that took. An error when the server logs a
+/// failed embedding pass, sees no new record for 120 s, or `cap` runs out:
+/// the run's vector numbers would not be the filled vault's.
 pub(super) fn drain(
     server: &Running,
     stub: &StubEmbedder,
-    expected: u64,
+    expected: usize,
     cap: Duration,
-) -> Option<f64> {
+) -> Result<f64, String> {
     let started = Instant::now();
-    let (mut quiet, mut still) = (0, 0);
-    let (mut last_cpu, mut last_embedded) = (cpu_seconds(server.pid), stub.embedded());
+    let (mut quiet, mut stalled) = (0, 0);
+    let (mut last_cpu, mut last_records) = (cpu_seconds(server.pid), stub.records());
     while started.elapsed() < cap {
         std::thread::sleep(Duration::from_secs(1));
-        let (cpu, embedded) = (cpu_seconds(server.pid), stub.embedded());
-        let busy = cpu.zip(last_cpu).map_or(1.0, |(now, before)| now - before);
-        quiet = if busy < 0.1 { quiet + 1 } else { 0 };
-        still = if embedded == last_embedded {
-            still + 1
+        let (cpu, records) = (cpu_seconds(server.pid), stub.records());
+        let (Some(now), Some(before)) = (cpu, last_cpu) else {
+            return Err("drain: the server's CPU time is unreadable; it has exited".into());
+        };
+        if server.logged(PASS_FAILED) {
+            return Err(format!("drain: the server logged `{PASS_FAILED}`"));
+        }
+        quiet = if now - before < 0.1 { quiet + 1 } else { 0 };
+        stalled = if records == last_records {
+            stalled + 1
         } else {
             0
         };
-        (last_cpu, last_embedded) = (cpu, embedded);
-        if (embedded >= expected || still >= 30) && quiet >= 5 {
-            return Some(started.elapsed().as_secs_f64());
+        (last_cpu, last_records) = (cpu, records);
+        if records >= expected && quiet >= 5 {
+            return Ok(started.elapsed().as_secs_f64());
+        }
+        if records < expected && stalled >= 120 {
+            return Err(format!(
+                "drain: {records} of {expected} records embedded, none new for 120 s"
+            ));
         }
     }
-    None
+    Err(format!(
+        "drain: {} of {expected} records embedded within {} s",
+        stub.records(),
+        cap.as_secs()
+    ))
 }

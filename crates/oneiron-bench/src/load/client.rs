@@ -17,6 +17,8 @@ pub(super) struct Agent {
     bearer: String,
     slip: CapabilitySlip,
     key: SigningKey,
+    /// Seconds added to the wall clock for a holder proof's timestamp.
+    skew: i64,
 }
 
 /// What a recall answered, beside its timing.
@@ -52,6 +54,7 @@ impl Agent {
         http: &reqwest::blocking::Client,
         base: &str,
         credential: &Credential,
+        skew: i64,
     ) -> Result<Self, String> {
         Ok(Self {
             http: http.clone(),
@@ -60,15 +63,61 @@ impl Agent {
             slip: CapabilitySlip::from_token(&credential.token)
                 .map_err(|e| format!("slip: {e}"))?,
             key: SigningKey::from_bytes(&decode_seed(&credential.binding_key)?),
+            skew,
         })
+    }
+
+    /// The offset to add to the wall clock so holder proofs land in the middle
+    /// of the server's 60 s replay window.
+    ///
+    /// The window is checked against the vault's authority clock, which does
+    /// not run while the vault is closed. `init` and one `token agent` process
+    /// per agent leave it behind the wall clock, and past 60 s behind every
+    /// wall-clock proof is refused. This probes with one light recall per
+    /// step, 60 s apart in both directions, then centres the offset.
+    pub(super) fn clock_skew(&mut self) -> Result<i64, String> {
+        let mut accepted = |skew: i64| -> Result<bool, String> {
+            self.skew = skew;
+            let body = json!({"query": "clock", "effort": "light", "limit": 1});
+            match self.post("recall", &body).1 {
+                Ok(_) => Ok(true),
+                Err(error) if error.starts_with("401") => Ok(false),
+                Err(error) => Err(format!("clock probe: {error}")),
+            }
+        };
+        let mut found = None;
+        for step in 0..=240_i64 {
+            for skew in [-60 * step, 60 * step] {
+                if found.is_none() && accepted(skew)? {
+                    found = Some(skew);
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        let mut high = found.ok_or("no holder proof within 4 h of the wall clock was accepted")?;
+        // The window is 121 s wide, so 121 s below an accepted offset is refused.
+        let mut low = high - 121;
+        while high - low > 1 {
+            let mid = low + (high - low) / 2;
+            if accepted(mid)? {
+                high = mid;
+            } else {
+                low = mid;
+            }
+        }
+        self.skew = high + 60;
+        Ok(self.skew)
     }
 
     /// POSTs `body` to a facade verb; the time covers the round trip only,
     /// not the holder proof made before it.
     fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
-        let timestamp = SystemTime::now()
+        let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
+        let timestamp = wall.saturating_add_signed(self.skew);
         let proof = match oneiron::authority::holder_proof(&self.slip, &self.key, timestamp) {
             Ok(proof) => proof.to_string(),
             Err(e) => return (0.0, Err(format!("proof: {e}"))),
@@ -118,7 +167,7 @@ impl Agent {
                 ..
             } => json!({
                 "conversation_ref": corpus.conversation_ref(*conversation),
-                "occurred_at": 1_791_500_000 + record.index() as u64,
+                "occurred_at": record.occurred_at(),
                 "messages": messages.iter().enumerate().map(|(order, content)| json!({
                     "author": "user",
                     "message_type": "text",
@@ -139,6 +188,8 @@ impl Agent {
                     Subject::Conversation(c) => corpus.conversation_ref(*c),
                 },
                 "value": value,
+                "occurred_at": record.occurred_at(),
+                "learned_at": record.occurred_at(),
                 "confidence": 0.9,
                 "source": "user_stated",
             }),
@@ -156,15 +207,17 @@ impl Agent {
         }
     }
 
-    /// One recall at `effort`; `deadline_ms` rides beside it when given.
+    /// One recall at `effort`, resolving against `as_of` rather than the
+    /// clock; `deadline_ms` rides beside it when given.
     pub(super) fn recall(
         &self,
         query: &str,
         effort: &str,
         limit: usize,
         deadline_ms: Option<u64>,
+        as_of: u64,
     ) -> Recalled {
-        let mut body = json!({"query": query, "effort": effort, "limit": limit});
+        let mut body = json!({"query": query, "effort": effort, "limit": limit, "as_of": as_of});
         if let Some(deadline) = deadline_ms {
             body["deadline_ms"] = json!(deadline);
         }

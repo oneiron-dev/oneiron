@@ -2,7 +2,8 @@
 
 `oneiron-bench load` measures what an agent living in Oneiron feels, on the
 real `oneiron-server` binary. It is one command with fixed seeds and one JSON
-result, so two commits can be compared on the same host.
+result, so two commits can be compared on the same host. `load run` and
+`load startup` read the server's `/proc` files, so they run on Linux only.
 
 ## What one run does
 
@@ -14,7 +15,13 @@ vault:
    on the stopped vault. Agents are real signed slips; every request carries a
    fresh holder proof, as production agents do.
 2. `serve` on loopback. **startup_empty**: time to `/api/health` and peak
-   memory (VmHWM, RssAnon, RssFile from `/proc`).
+   memory (VmHWM, RssAnon, RssFile from `/proc`). Then the clock probe: the
+   server checks a holder proof's timestamp against the vault's authority
+   clock, within 60 s, and that clock does not run while the vault is closed.
+   `init` and one `token agent` process per agent leave it behind the wall
+   clock; past 60 s, every proof stamped with the wall clock is refused. The
+   bench finds the offset with a few light recalls, signs every proof with it,
+   and records it as `clock_skew_secs`.
 3. **ingest_single_empty**: one caller writes the first `--single-writes`
    records. **ingest_parallel**: `--ingest-callers` agents write the rest; each
    conversation stays with one caller. **ingest_single_full**: one caller
@@ -22,15 +29,21 @@ vault:
    witnessed turn (`POST /v1/core/facade/witness`, one or two messages) or a
    claim (`POST /v1/core/facade/claim_upsert`, about the turn's conversation,
    or about the vault owner with probability `--hot-subject`).
-4. With vectors: wait until the stub has embedded every record and the server
-   has gone quiet (`drain_seconds`). **steady** memory and **disk_mib** follow.
+4. With vectors: wait until the stub has answered a text carrying every
+   record's tag and the server has then gone quiet (`drain_seconds`). The run
+   fails instead when the server logs a failed embedding pass, no new record is
+   embedded for 120 s, or an hour passes. **steady** memory and **disk_mib**
+   follow.
 5. **golden**: each golden query once per grade by one agent; the result keeps
    every query's ranking (as record indexes, read from a tag word every record
-   carries) and the hit@10 of the record each targeted query was drawn from.
-   `high` rides along to record whether deep recall answers over HTTP.
+   carries) and the hit@10 of the record each targeted query was drawn from. A
+   failed query counts as a miss. Deep recall (`high`) needs a lease the
+   facade does not mint, so the bench does not ask for it.
 6. **memory_per_agent**: anonymous memory before and after the agents not yet
    heard from each make two light recalls.
 7. **recall_<grade>_x<agents>**: each grade at each agent count, closed loop.
+   Every agent first makes one untimed warm-up recall; then the cell's timer
+   starts.
    **mixed_x<agents>**: half the agents at call grade, half at medium.
    **fairness**: 8 call-grade agents alone, then beside one agent recalling at
    medium from 8 threads at once.
@@ -52,6 +65,10 @@ claim subject. Each claim has its own predicate, so no claim supersedes another.
 Golden queries are mostly the three rarest words of one record, plus
 common-word and tag queries.
 
+Times are fixed too: record `i` happened, and was learned, `i` seconds after a
+fixed instant, and every recall sends `as_of` one minute after the last
+record, so recency scores and rankings repeat on any day.
+
 The stub embedder answers the plain OpenAI `/v1/embeddings` wire with
 bag-of-words vectors (`--dimensions`, default 1024), so similar texts land near
 each other. It is a load device, not a model.
@@ -70,13 +87,18 @@ $B/oneiron-bench load run --server $B/oneiron-server --work /tmp/load --out befo
 ```
 
 Useful flags: `--agents 1,8,32,128`, `--ingest-callers 32`, `--single-writes
-200`, `--grades call,light,medium`, `--cell-requests 200` (requests per cell,
-spread over its agents), `--cell-seconds 60` (a cell's time cap once each
-agent has two samples), `--skip mixed,fairness,agent-memory,restart`.
+200`, `--grades call,light,medium`, `--cell-requests 200` (timed requests per cell,
+spread evenly over its agents, but at least two each, so `x128` makes 256),
+`--cell-seconds 60` (a cell's time cap once each agent has two samples),
+`--skip mixed,fairness,agent-memory,restart`.
 
 On a shared host, book the whole box and repeat each run; the result records
 the load average before and after every cell, the host's CPU and the job's
 cgroup CPU quota.
+
+Each running server's pid sits in `serve.pid` beside its vault. On SIGINT or
+SIGTERM the bench stops those servers before it exits; a SIGKILL leaves them
+running, so stop them by that pid.
 
 ## Compare two commits
 
@@ -86,9 +108,10 @@ Run the same command on the same host for each commit's binaries, then:
 oneiron-bench load compare before.json after.json
 ```
 
-It prints a markdown table of every cell both runs share, plus how many golden
-rankings are identical per grade. A change meant to keep results identical
-must keep every golden ranking equal.
+It prints a markdown table of every cell both runs share, plus, per grade, how
+many golden rankings are identical, how many differ and how many failed in
+either run. A change meant to keep results identical must keep every golden
+ranking equal, with no new failures.
 
 ## Profiling one cell
 

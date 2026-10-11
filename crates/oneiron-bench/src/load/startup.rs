@@ -78,6 +78,7 @@ fn wait_model(log: &Path, started: Instant, cap: Duration) -> Option<f64> {
 
 pub(super) fn run(args: &[String]) -> Result<(), String> {
     let args = parse(args)?;
+    super::server::stop_servers_on_cancel(args.work.clone());
     let dir = args.work.join("startup-local");
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("clear {}: {e}", dir.display()))?;

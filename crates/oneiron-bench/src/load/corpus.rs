@@ -18,14 +18,14 @@ impl Rng {
 
     /// The generator for one item of one stream: independent of the order in
     /// which items are generated.
-    pub(super) fn for_item(seed: u64, stream: u64, index: u64) -> Self {
+    fn for_item(seed: u64, stream: u64, index: u64) -> Self {
         let mut rng = Self(seed ^ stream.wrapping_mul(0xA076_1D64_78BD_642F));
         rng.0 ^= index.wrapping_mul(0xE703_7ED1_A0B4_28DB);
         rng.next_u64();
         rng
     }
 
-    pub(super) fn next_u64(&mut self) -> u64 {
+    fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -33,7 +33,7 @@ impl Rng {
         z ^ (z >> 31)
     }
 
-    pub(super) fn below(&mut self, n: usize) -> usize {
+    fn below(&mut self, n: usize) -> usize {
         (self.next_u64() % n.max(1) as u64) as usize
     }
 
@@ -47,13 +47,15 @@ const SYLLABLES: [&str; 20] = [
     "wo", "ce", "xa", "ly",
 ];
 /// 20^3 three-syllable words.
-pub(super) const VOCABULARY: usize = 8_000;
+const VOCABULARY: usize = 8_000;
 /// Turns per conversation; each conversation is also a claim subject.
 pub(super) const TURNS_PER_CONVERSATION: usize = 20;
 const TAG_PREFIX: &str = "vex";
+/// When record 0 happened; record `i` happened `i` seconds later.
+const FIRST_OCCURRED_AT: u64 = 1_791_500_000;
 
 /// Word `rank` of the vocabulary; rank 0 is the most frequent.
-pub(super) fn word(rank: usize) -> String {
+fn word(rank: usize) -> String {
     let mut out = String::with_capacity(6);
     let mut rest = rank % VOCABULARY;
     for _ in 0..3 {
@@ -76,7 +78,7 @@ fn rank_of(text: &str) -> Option<usize> {
 }
 
 /// The tag word of record `index`.
-pub(super) fn tag(index: usize) -> String {
+fn tag(index: usize) -> String {
     let mut out = String::from(TAG_PREFIX);
     let mut rest = index;
     for _ in 0..6 {
@@ -101,12 +103,12 @@ pub(super) fn tag_index(text: &str) -> Option<usize> {
 }
 
 /// Cumulative Zipf (s = 1) weights over the vocabulary ranks.
-pub(super) struct Zipf {
+struct Zipf {
     cdf: Vec<f64>,
 }
 
 impl Zipf {
-    pub(super) fn new() -> Self {
+    fn new() -> Self {
         let mut total = 0.0;
         let cdf = (1..=VOCABULARY)
             .map(|rank| {
@@ -119,7 +121,7 @@ impl Zipf {
         }
     }
 
-    pub(super) fn rank(&self, rng: &mut Rng) -> usize {
+    fn rank(&self, rng: &mut Rng) -> usize {
         let u = rng.unit();
         self.cdf.partition_point(|c| *c < u).min(VOCABULARY - 1)
     }
@@ -159,6 +161,11 @@ impl Record {
         }
     }
 
+    /// Unix seconds the record happened and was learned: fixed by its index.
+    pub(super) fn occurred_at(&self) -> u64 {
+        FIRST_OCCURRED_AT + self.index() as u64
+    }
+
     pub(super) fn conversation(&self) -> usize {
         match self {
             Self::Turn { conversation, .. } => *conversation,
@@ -167,12 +174,18 @@ impl Record {
     }
 
     /// Every word of the record's text, the tag word included.
-    pub(super) fn text(&self) -> String {
+    fn text(&self) -> String {
         match self {
             Self::Turn { messages, .. } => messages.join(" "),
             Self::Claim { value, .. } => value.clone(),
         }
     }
+}
+
+/// The fixed "now" every recall resolves against (`as_of`): a minute after the
+/// last of `records` records, so recency scores repeat on any day.
+pub(super) fn recall_now(records: usize) -> u64 {
+    FIRST_OCCURRED_AT + records as u64 + 60
 }
 
 fn turn_conversation(turn: usize) -> usize {
