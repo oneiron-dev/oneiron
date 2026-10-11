@@ -36185,7 +36185,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -49468,8 +49468,18 @@
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 22,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/credential_file.rs",
+     "purpose": "A file holding a credential, readable by its owner alone",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -51047,7 +51057,7 @@
      "purpose": "MCP endpoint surface: modes, verb bindings, and the registered tool listing",
      "surface": {
       "const": 14,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 4,
       "fn": 16,
       "struct": 3
@@ -52075,7 +52085,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it/mcp_stdio_agent.rs",
@@ -52209,7 +52219,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -52386,7 +52396,7 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 315,
+   "source_files": 316,
    "test_files": 124
   },
   "oneiron-uniffi": {
