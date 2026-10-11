@@ -24,7 +24,7 @@ use super::loro_support::map_insert_bytes;
 use super::loro_support::{map_for_each_value_bytes, map_get_bytes};
 #[cfg(test)]
 use super::schema::create_window_doc;
-use super::selector::{SyncSelector, filtered_window_doc};
+use super::selector::{SyncSelector, filtered_window_doc, granted_window_doc};
 use super::types::WindowKey;
 
 /// Collect the actor-readable lexical candidate set before applying a
@@ -273,6 +273,7 @@ pub fn admit_promoted_window_update(
 /// The selector and actor read floor must cover EVERY currently carried row;
 /// otherwise full-window promotion would disclose another principal's data.
 /// A shallow snapshot carries the home frontier but not pre-promotion history.
+/// A window this device withholds as device-only is never promoted.
 pub fn promotion_snapshot(
     vault: &Vault,
     source: &LoroDoc,
@@ -281,7 +282,9 @@ pub fn promotion_snapshot(
     selector: &SyncSelector,
     readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Option<Vec<u8>>> {
-    if !promotion_covers_full_window(vault, source, window, scope, selector, readable)? {
+    if !promotion_covers_full_window(vault, source, window, scope, selector, readable)?
+        || super::window::window_withheld(vault, window, source)?
+    {
         return Ok(None);
     }
     let bytes = super::window::export_history_free_window_snapshot(source)?;
@@ -295,7 +298,9 @@ pub fn promotion_snapshot(
 
 /// Re-check the grant and actor floor before a promoted window receives new
 /// bytes. The caller must NEVER broadcast raw full-window updates on a stale
-/// grant: a newly withheld row may have landed since promotion.
+/// grant: a newly withheld row may have landed since promotion. A device-only
+/// flag is policy, not authority: it leaves the promotion standing, and the
+/// export doors withhold the window.
 pub fn promotion_covers_full_window(
     vault: &Vault,
     source: &LoroDoc,
@@ -308,7 +313,7 @@ pub fn promotion_covers_full_window(
     // carriers. Its output may contain old history; discard it and compare
     // only the content-bearing current state against the grant selector.
     let _ = super::window::export_scrubbed_window_snapshot(vault, window, source)?;
-    let selected = filtered_window_doc(vault, source, window, scope, selector)?;
+    let selected = granted_window_doc(vault, source, window, scope, selector)?;
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }

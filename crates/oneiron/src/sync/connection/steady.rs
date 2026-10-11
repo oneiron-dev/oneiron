@@ -169,19 +169,21 @@ impl SyncConnection {
                 frame = client.document_updates.recv() => {
                     match frame {
                         Ok(frame) => {
-                            let id = match transport::decode_document(&frame[1..]) {
+                            let (id, note) = match transport::decode_document(&frame[1..]) {
                                 Ok(doc) => {
-                                    if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
+                                    let note = client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE);
+                                    if note {
                                         if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST) { continue; }
                                         if !client.note_session_bound { continue; }
                                     }
-                                    doc.entity
+                                    (doc.entity, note)
                                 },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
                             let subscribed = (|| -> crate::error::Result<bool> {
                                 let rtxn = client.vault.store.env.read_txn()?;
-                                DS_E.contains(&client.vault.store, &rtxn, &HexId(id))
+                                Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))?
+                                    && (note || !crate::sync::documents::text_withheld(&client.vault, &rtxn, id)?))
                             })();
                             match subscribed {
                                 Ok(true) => {
@@ -189,7 +191,9 @@ impl SyncConnection {
                                         return LoopExit::Disconnected(error.to_string());
                                     }
                                 }
-                                Ok(false) => {} // Offline editing before admission stays journaled.
+                                // Offline editing before admission, or on text a
+                                // device-only world keeps here, stays journaled.
+                                Ok(false) => {}
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             }
                         }
@@ -231,9 +235,8 @@ impl SyncConnection {
                     for (i, local_update) in pending.iter().enumerate() {
                         // A world flagged device-only since this commit keeps
                         // it; the window's next export reads the flag again.
-                        if crate::sync::WindowKey::try_new(&local_update.window_key).is_some_and(|key| {
-                            crate::sync::window::window_is_device_only(&client.vault, &key).unwrap_or(true)
-                        }) {
+                        if client.window_withheld(&local_update.window_key) {
+                            queued_count += usize::from(opened);
                             continue;
                         }
                         let seq = if opened {

@@ -10,12 +10,15 @@
 //!
 //! Cutting rows out of an export instead would need removal operations, and a
 //! receiver materializes a bare edge removal as the deletion of its own stored
-//! edge; that removal would also flow back here.
+//! edge; that removal would also flow back here. For the same reason another
+//! window that carries such a claim or edge out of residence (a base edge
+//! admitted before its endpoint was known, or a raw local write) is withheld
+//! whole too.
 
 use std::collections::{BTreeSet, HashSet};
 
 use heed::RoTxn;
-use loro::{LoroDoc, LoroMap};
+use loro::{LoroDoc, LoroMap, VersionVector};
 
 use super::super::bridge::parse_edge_key;
 use super::super::loro_support::{export_updates_from, map_for_each_value_bytes};
@@ -27,7 +30,7 @@ use crate::error::Result;
 
 /// Whether `key` is a window of a world flagged device-only on this device,
 /// read against the flag as it stands now.
-pub fn window_is_device_only(vault: &Vault, key: &WindowKey) -> Result<bool> {
+pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> Result<bool> {
     let Some(world) = key.world() else {
         return Ok(false);
     };
@@ -35,9 +38,45 @@ pub fn window_is_device_only(vault: &Vault, key: &WindowKey) -> Result<bool> {
     Ok(crate::settings::device_only_worlds_in(&vault.store, &rtxn)?.contains(&world))
 }
 
-/// The export of a withheld window: no operation and no state.
-pub(super) fn withheld_window_update(doc: &LoroDoc) -> Result<Vec<u8>> {
-    export_updates_from(doc, &doc.oplog_vv())
+/// Whether a full-window send of `doc` ships nothing now: the window belongs
+/// to a flagged world, or it carries a CLAIM of a flagged world or an edge
+/// naming one.
+pub fn window_withheld(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let flagged = crate::settings::device_only_worlds_in(&vault.store, &rtxn)?;
+    if flagged.is_empty() {
+        return Ok(false);
+    }
+    if key.world().is_some_and(|world| flagged.contains(&world)) {
+        return Ok(true);
+    }
+    let mut carried = false;
+    let mut endpoints = BTreeSet::new();
+    map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
+        carried |= blob.is_some_and(|raw| claim_in(raw, &flagged));
+    });
+    map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
+        if let Some((src, _, tgt)) = parse_edge_key(key) {
+            endpoints.extend([src, tgt]);
+        }
+    });
+    if carried {
+        return Ok(true);
+    }
+    for id in endpoints {
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, &id)?
+            .is_some_and(|raw| claim_in(&raw, &flagged))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The export of a withheld window: an empty document's update, so no
+/// operation of the live window (pending, concurrent or committed) rides it.
+pub(super) fn withheld_window_update() -> Result<Vec<u8>> {
+    export_updates_from(&LoroDoc::new(), &VersionVector::default())
 }
 
 /// Ids among `entities` and the endpoints of `edges` (wherever those rows

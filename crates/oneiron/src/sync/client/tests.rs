@@ -2392,3 +2392,61 @@ fn note_session_bind_frame_carries_a_holder_proof_the_vault_accepts() {
             .is_ok()
     );
 }
+
+/// R11133 on the text plane: a claim's own text edited on this device stays
+/// journaled, unsent, once its world turns device-only; after the flag clears
+/// the next exchange carries it.
+#[test]
+fn device_only_claim_text_stays_journaled_until_the_flag_clears() {
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let at = TimeRange { start: 1, end: 1 };
+    let world = EntityId::from_bytes([0x61; 16]).unwrap();
+    let person = EntityId::from_bytes([0x62; 16]).unwrap();
+    let claim = EntityId::from_bytes([0x63; 16]).unwrap();
+    vault
+        .put_entity(&world, crate::registry::ENTITY_TYPE_WORLD, at, 1, b"world")
+        .unwrap();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            1,
+            b"person",
+        )
+        .unwrap();
+    let mut body = ClaimBody::new(
+        "test.device_only",
+        ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, at, 1).unwrap();
+    let (mut client, _events) = test_client(&manager);
+    manager
+        .documents()
+        .open(claim)
+        .unwrap()
+        .edit_text(0, 0, "private text")
+        .unwrap();
+    vault.set_world_device_only(world, true).unwrap();
+    let home = LoroDoc::new();
+    home.get_text("body").insert(0, "home ").unwrap();
+    home.commit();
+    let frame = transport::encode_document(
+        claim,
+        transport::document_sub_tags::UPDATE,
+        &home.export(ExportMode::all_updates()).unwrap(),
+    )
+    .into_result()
+    .unwrap();
+
+    assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
+    vault.set_world_device_only(world, false).unwrap();
+    assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
+}

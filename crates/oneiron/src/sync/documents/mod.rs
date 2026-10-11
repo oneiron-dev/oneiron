@@ -572,6 +572,17 @@ pub(crate) fn owner_note_admission(
     Ok(())
 }
 
+/// Whether a device-only world keeps `id`'s text on this device. Its local
+/// edits stay journaled, unsent, until the flag clears.
+pub(crate) fn text_withheld(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
+    crate::settings::device_only_withholds(
+        &vault.store,
+        txn,
+        &crate::settings::device_only_worlds_in(&vault.store, txn)?,
+        &id,
+    )
+}
+
 fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {
     matches!(
         peer.partial_cmp(floor),

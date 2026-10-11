@@ -4085,20 +4085,31 @@ fn world_window_export_withholds_device_claims_and_incident_edges_but_keeps_port
     Ok(())
 }
 
-/// The flag is read at export time and the stored window keeps the carrier:
-/// clearing the flag ships the claim and every edge again.
+/// The flag is read at export time and the stored window keeps the carrier.
+/// One receiver: while the world is flagged its vector exchange gets no
+/// operation, and once the flag clears the same vector fetches the claim and
+/// every edge.
 #[test]
 fn clearing_device_only_exports_the_resident_claim_again() -> Result<()> {
     let (_dir, vault) = test_vault();
     let fx = resident_device_only_windows(&vault)?;
-    exported_to_empty_receiver(&vault, &fx.private_key, &fx.private_doc)?;
-    exported_to_empty_receiver(&vault, &fx.portable_key, &fx.portable_doc)?;
+    let receiver = create_window_doc("receiver", &fx.private_key);
+    let exchange = |receiver: &LoroDoc| -> Result<()> {
+        let bytes = export_window_updates_since(
+            &vault,
+            &fx.private_key,
+            &fx.private_doc,
+            &receiver.oplog_vv().encode(),
+        )?;
+        import_doc(receiver, &bytes)
+    };
+    exchange(&receiver)?;
+    assert!(receiver.oplog_vv().is_empty());
     vault.set_world_device_only(fx.private_world, false)?;
 
-    let private = exported_to_empty_receiver(&vault, &fx.private_key, &fx.private_doc)?;
-    let portable = exported_to_empty_receiver(&vault, &fx.portable_key, &fx.portable_doc)?;
+    exchange(&receiver)?;
     assert!(
-        private
+        receiver
             .get_map("entities")
             .get(&fx.private_claim.to_hex())
             .is_some()
@@ -4108,8 +4119,9 @@ fn clearing_device_only_exports_the_resident_claim_again() -> Result<()> {
         (fx.person, EdgeKind::Mentions, fx.private_claim),
     ] {
         let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
-        assert!(private.get_map("edges").get(&key).is_some(), "{key}");
+        assert!(receiver.get_map("edges").get(&key).is_some(), "{key}");
     }
+    let portable = exported_to_empty_receiver(&vault, &fx.portable_key, &fx.portable_doc)?;
     assert!(!names_entity_in_any_edge(&portable, fx.private_claim));
     Ok(())
 }
@@ -4165,6 +4177,62 @@ fn promoted_window_export_withholds_a_resident_device_only_claim() -> Result<()>
             .is_none()
     );
     assert!(!names_entity_in_any_edge(&received, fx.private_claim));
+    Ok(())
+}
+
+/// A withheld window's reply is an empty document's update: an edit left
+/// pending in the live doc's open transaction does not ride it.
+#[test]
+fn withheld_window_export_carries_no_pending_operation() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    fx.private_doc
+        .get_map("entities")
+        .insert("pending", "private edit")
+        .unwrap();
+    let none = loro::VersionVector::default().encode();
+    for bytes in [
+        export_window_updates_since(&vault, &fx.private_key, &fx.private_doc, &none)?,
+        export_promoted_window_updates_since(&vault, &fx.private_key, &fx.private_doc, &none)?,
+    ] {
+        let received = LoroDoc::new();
+        import_doc(&received, &bytes)?;
+        assert!(received.oplog_vv().is_empty());
+    }
+    Ok(())
+}
+
+/// A base window carrying an edge to a device-only claim out of residence
+/// (admitted before the claim was known here) ships nothing while the flag
+/// holds, since cutting the edge would need a removal op; it ships whole
+/// again once the flag clears.
+#[test]
+fn base_window_carrying_an_edge_to_a_device_only_claim_is_withheld_whole() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let month = WindowKey::new("2026-03");
+    let base = create_window_doc("base", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+    let stray =
+        crate::sync::bridge::format_edge_key(&fx.person, EdgeKind::Supports, &fx.private_claim);
+    map_insert_bytes(
+        &base.get_map("edges"),
+        &stray,
+        &encode_edge_value_for_crdt(EdgeKind::Supports, 1.0, 1, None, None)?,
+    )?;
+    base.commit();
+    assert!(base.get_map("entities").get(&fx.person.to_hex()).is_some());
+
+    let withheld = exported_to_empty_receiver(&vault, &month, &base)?;
+    assert!(withheld.oplog_vv().is_empty());
+    vault.set_world_device_only(fx.private_world, false)?;
+    let shipped = exported_to_empty_receiver(&vault, &month, &base)?;
+    assert!(
+        shipped
+            .get_map("entities")
+            .get(&fx.person.to_hex())
+            .is_some()
+    );
     Ok(())
 }
 

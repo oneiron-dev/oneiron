@@ -1,6 +1,6 @@
 //! Handshake: run loop, connect_and_sync, overflow check, resync markers.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
@@ -331,15 +331,14 @@ impl SyncConnection {
 
         // Phase 3: Drain offline queue
         let mut queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
-        if client.config.residence_mode != crate::sync::SyncResidenceMode::Opened {
-            // Bytes queued while a world was portable stay here once it is
-            // flagged device-only; its window's next export reads the flag.
-            queued.retain(|update| {
-                !crate::sync::WindowKey::try_new(&update.window_key).is_some_and(|key| {
-                    crate::sync::window::window_is_device_only(&client.vault, &key).unwrap_or(true)
-                })
-            });
-        }
+        // Bytes queued while a world was portable stay here once it is
+        // flagged device-only; its window's next export reads the flag.
+        let mut held = BTreeMap::new();
+        queued.retain(|update| {
+            !*held
+                .entry(update.window_key.clone())
+                .or_insert_with(|| client.window_withheld(&update.window_key))
+        });
         let full_resync_markers = self.full_resync_markers()?;
         let force_resync: BTreeSet<String> = full_resync_markers
             .iter()
@@ -452,6 +451,8 @@ impl SyncConnection {
             .residence_operation_budgets()
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "residence policy unavailable".to_string())?;
+        // Rows a device-only world keeps here were never sent.
+        self.clear_residence_acks(client)?;
         tokio::time::timeout(Duration::from_millis(budgets.ack_timeout_ms), async {
             while !self
                 .queue

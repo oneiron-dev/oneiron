@@ -161,6 +161,21 @@ pub(super) fn attach_local_read_tee(
 /// The attach therefore happens only once the relay task can actually run, so
 /// Observer A keeps its durable `SyncQueue` fallback and no unread sender can
 /// accumulate updates.
+/// Whether a raw window update stays on this server: its world was flagged
+/// device-only since the commit, or the window now carries such a world's
+/// claim. Read against the flag as it stands now; an unreadable window stays.
+pub(super) fn withheld_from_peers(manager: &Arc<WindowManager>, window_key: &str) -> bool {
+    let Some(key) = WindowKey::try_new(window_key) else {
+        return false;
+    };
+    manager
+        .open_window(&key)
+        .and_then(|window| {
+            oneiron::sync::window::window_withheld(manager.vault(), &key, &window.doc)
+        })
+        .unwrap_or(true)
+}
+
 pub(super) fn spawn_local_change_producer(
     reassert_manager: &Arc<WindowManager>,
     broadcast_tx: &broadcast::Sender<BroadcastPayload>,
@@ -187,14 +202,11 @@ pub(super) fn spawn_local_change_producer(
     reassert_manager.outbound().attach(updates_tx);
 
     let broadcast_tx = broadcast_tx.clone();
-    let vault = Arc::clone(reassert_manager.vault());
+    let manager = Arc::clone(reassert_manager);
     runtime.spawn(async move {
         while let Some(update) = updates_rx.recv().await {
             let window_key = update.window_key;
-            // A world flagged device-only since this commit keeps it here.
-            if oneiron::sync::WindowKey::try_new(window_key.as_str()).is_some_and(|key| {
-                oneiron::sync::window::window_is_device_only(&vault, &key).unwrap_or(true)
-            }) {
+            if withheld_from_peers(&manager, &window_key) {
                 continue;
             }
             match crate::protocol::encode_window_sync(

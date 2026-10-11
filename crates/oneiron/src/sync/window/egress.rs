@@ -381,8 +381,9 @@ pub(super) fn scrub_redacted_attribution_carriers(
 
 /// Exports a full-window response without carrying pre-scrub operation bytes.
 /// The peer VV is still decoded first so malformed-VV requests never become a
-/// full-export fallback. A window of a world flagged device-only ships
-/// nothing, against the flag as it stands now.
+/// full-export fallback. A window of a world flagged device-only, or one
+/// carrying such a world's claim or an edge naming one, ships nothing,
+/// against the flag as it stands now.
 pub fn export_window_updates_since(
     vault: &Vault,
     key: &WindowKey,
@@ -395,8 +396,8 @@ pub fn export_window_updates_since(
             source,
         })
     })?;
-    if super::device_only::window_is_device_only(vault, key)? {
-        return super::device_only::withheld_window_update(doc);
+    if super::device_only::window_withheld(vault, key, doc)? {
+        return super::device_only::withheld_window_update();
     }
     crate::sync::note::refresh(vault, doc, key)?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
@@ -428,8 +429,8 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
             source,
         })
     })?;
-    if super::device_only::window_is_device_only(vault, key)? {
-        return super::device_only::withheld_window_update(doc);
+    if super::device_only::window_withheld(vault, key, doc)? {
+        return super::device_only::withheld_window_update();
     }
     crate::sync::note::refresh(vault, doc, key)?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;

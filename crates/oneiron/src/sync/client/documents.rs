@@ -76,7 +76,19 @@ impl SyncClient {
                     )
                     .into_result()?,
                 ];
-                out.extend(doc.pending_frames().map_err(storage)?);
+                let withheld = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)
+                    .and_then(|txn| {
+                        crate::sync::documents::text_withheld(&self.vault, &txn, frame.entity)
+                    })
+                    .map_err(storage)?;
+                if !withheld {
+                    out.extend(doc.pending_frames().map_err(storage)?);
+                }
                 Ok(out)
             }
             _ => Err(TransportError::InvalidPayload(

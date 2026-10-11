@@ -200,6 +200,19 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(format!("open window {key}: {e}")))
     }
 
+    /// Whether raw local bytes for window `key` stay on this device now: its
+    /// world is flagged device-only, or the window carries such a world's
+    /// claim or an edge naming one. An unreadable window stays.
+    pub(crate) fn window_withheld(&self, key: &str) -> bool {
+        let Some(window_key) = WindowKey::try_new(key) else {
+            return false;
+        };
+        self.ensure_window(key).ok().is_none_or(|window| {
+            crate::sync::window::window_withheld(&self.vault, &window_key, &window.doc)
+                .unwrap_or(true)
+        })
+    }
+
     /// Returns the live window for `key` if loaded — registry lookup only,
     /// never opens.
     pub fn window(&self, key: &str) -> Option<Arc<LoadedWindow>> {

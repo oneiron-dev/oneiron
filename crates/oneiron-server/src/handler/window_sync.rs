@@ -177,11 +177,21 @@ pub(super) async fn handle_window_sync(
             // echo suppression to drop the response for the requester.
             let _ = direct_tx.send(response);
             // Reverse SyncStep1: send our VV so the client pushes its local
-            // diff back — this is what makes the exchange bidirectional.
+            // diff back — this is what makes the exchange bidirectional. A
+            // window withheld as device-only names only what both sides hold,
+            // so a client that sent all it has still sees convergence.
+            let mut vv = doc.oplog_vv();
+            if oneiron::sync::window::window_withheld(server.vault.as_ref(), &key, &doc)
+                .map_err(map_delta_export_err)?
+            {
+                let remote = VersionVector::decode(payload)
+                    .map_err(|_| ProtocolError::InvalidPayload("invalid version vector"))?;
+                vv = vv.intersection(&remote);
+            }
             let vv_response = protocol::encode_window_sync(
                 window_key,
                 window_sub_tags::VV_RESPONSE,
-                &doc.oplog_vv().encode(),
+                &vv.encode(),
             )
             .into_result()
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
@@ -263,7 +273,7 @@ pub(super) async fn handle_window_sync(
 
             // A world flagged device-only on this server stays here, even as
             // another device's relayed update.
-            if !oneiron::sync::window::window_is_device_only(server.vault.as_ref(), &key)
+            if !oneiron::sync::window::window_withheld(server.vault.as_ref(), &key, &doc)
                 .map_err(map_delta_export_err)?
             {
                 let broadcast_msg =

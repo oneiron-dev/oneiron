@@ -307,7 +307,7 @@ fn authorized_base_edge_endpoints(
                 Err(error) => return Err(error),
             };
             reverse_rematerialize(vault, &base, &base_key)?;
-            let selected = filter_window_doc(vault, &base, &base_key, selector, position)?;
+            let selected = filter_window_doc(vault, &base, &base_key, selector, position, true)?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -321,12 +321,15 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
+/// `withhold_device_only` applies this device's device-only flags. Every
+/// export door sets it; promotion authority asks only what the grant covers.
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
     selector: &SyncSelector,
     position: &Position,
+    withhold_device_only: bool,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -336,7 +339,7 @@ pub(super) fn filter_window_doc(
     crate::sync::note::refresh(vault, &refreshed, key)?;
     let source = &refreshed;
     let grant_raw = live_federation_grant(vault, &selector.grant_id)?;
-    if crate::sync::window::window_is_device_only(vault, key)? {
+    if withhold_device_only && crate::sync::window::window_is_device_only(vault, key)? {
         let out = create_window_doc("selector", key);
         out.commit();
         return Ok(out);
@@ -355,12 +358,14 @@ pub(super) fn filter_window_doc(
         &source.get_map("edges"),
     )?;
     // A device-only world's rows stay here even when packed while portable.
-    claims_withheld.extend(crate::sync::window::device_only_ids(
-        vault,
-        &rtxn,
-        &source.get_map("entities"),
-        &source.get_map("edges"),
-    )?);
+    if withhold_device_only {
+        claims_withheld.extend(crate::sync::window::device_only_ids(
+            vault,
+            &rtxn,
+            &source.get_map("entities"),
+            &source.get_map("edges"),
+        )?);
+    }
     let mut scope_error = None;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
