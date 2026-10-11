@@ -42,6 +42,8 @@ use crate::vault::Vault;
 
 mod accumulation;
 mod controls;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use controls::SlowRetrievalStage;
 pub use controls::{RecallExecution, RetrievalDeadline};
 mod session_scope;
 mod spend;

@@ -199,15 +199,18 @@ class Oneiron:
     def claim_upsert(self, claim: dict[str, Any]) -> dict[str, Any]:
         """Upserts one claim. The consent gate, not this call, decides approval."""
         return json.loads(_translate(lambda: self._client.claim_upsert(json.dumps(claim))))
-    def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None) -> dict[str, Any]:
+    def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> dict[str, Any]:
         """Recalls a memory pack.
 
         ``effort="high"`` is lease-gated and raises ``LEASE_REQUIRED`` until a
         lease-bearing constructor exists; this package neither mints nor
-        simulates a lease. ``format`` takes the engine's exact tokens:
+        simulates a lease. ``effort="call"`` is call mode for live calls:
+        light effort under a hard deadline (``deadline_ms``, or the vault's
+        call-mode deadline), answering with the best results ready, marked
+        ``partial``. ``format`` takes the engine's exact tokens:
         ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
         """
-        return json.loads(_translate(lambda: self._client.recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of)))
+        return json.loads(_translate(lambda: self._client.recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms)))
     def export(self, format: str | None = None) -> dict[str, Any]:
         """Exports the live vault through the five-format serializer."""
         return json.loads(_translate(lambda: self._client.export(json.dumps({"format": format}))))

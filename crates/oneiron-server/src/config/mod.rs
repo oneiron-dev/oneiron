@@ -10,6 +10,7 @@ mod lookup;
 pub mod merge;
 pub mod models;
 pub mod oneironer;
+mod recall;
 pub mod remote_embedder;
 pub mod serve_args;
 pub mod server_config;
@@ -31,6 +32,7 @@ pub use models::ModelsConfig;
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
 };
+pub use recall::RecallConfig;
 pub use serve_args::ServeArgs;
 pub use server_config::{ServeConfig, SyncServerConfig};
 
@@ -40,6 +42,8 @@ mod embedder_tests;
 mod privacy_tests;
 #[cfg(all(test, unix))]
 mod process_env_tests;
+#[cfg(test)]
+mod recall_tests;
 #[cfg(test)]
 mod tests;
 

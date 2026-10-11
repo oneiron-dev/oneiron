@@ -247,7 +247,11 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None))]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per SDK argument of the verb"
+    )]
     fn recall(
         slf: PyRef<'_, Self>,
         query: String,
@@ -256,6 +260,7 @@ impl NativeClient {
         limit: Option<usize>,
         format: Option<String>,
         as_of: Option<u64>,
+        deadline_ms: Option<u64>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -267,7 +272,17 @@ impl NativeClient {
         let inner = &slf.inner;
         let py = slf.py();
         let output = py
-            .detach(|| inner.recall(&query, effort, &scope_json, limit, format.as_deref(), as_of))
+            .detach(|| {
+                inner.recall(
+                    &query,
+                    effort,
+                    &scope_json,
+                    limit,
+                    format.as_deref(),
+                    as_of,
+                    deadline_ms,
+                )
+            })
             .map_err(raise)?;
         encode_recall(&output)
     }

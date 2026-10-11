@@ -54,3 +54,160 @@ fn empty_host_enrichment_skips_partial_and_runs_normal_final_retrieval() -> Resu
     }
     Ok(())
 }
+
+/// Call mode on ASR partials: every fire and the finalize pass answer by the
+/// session's deadline. A slow stage that yields cuts its fire short, and a
+/// promotion of that fire stays partial; a stalled one misses the deadline,
+/// which keeps the warm pack, and a finalize that misses it answers with
+/// that warm pack.
+#[test]
+fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
+    use crate::retrieval_depth::SlowRetrievalStage;
+    use crate::speculative::{SpeculativeFinal, SpeculativePartial, SpeculativeSession};
+    use crate::store::RetrievalSignal;
+    use std::time::Instant;
+
+    const DEADLINE: Duration = Duration::from_secs(3);
+    // The waiting caller wakes at the deadline; this is scheduling slack.
+    const WAKE: Duration = Duration::from_millis(500);
+    fn heard(terms: &[String]) -> SpeculativePartial<'_> {
+        SpeculativePartial {
+            text: "Tokyo launch",
+            query_vector: None,
+            entity_labels: &[],
+            salient_terms: terms,
+        }
+    }
+    let (_dir, vault) = vault();
+    let tokyo = put_text(&vault, 7, "Tokyo launch")?;
+    let config = || SpeculativeSessionConfig {
+        deadline: Some(DEADLINE),
+        ..SpeculativeSessionConfig::default()
+    };
+    let [tokyo_terms, launch_terms, osaka_terms] =
+        ["tokyo", "launch", "osaka"].map(|term| vec![term.to_owned()]);
+    let ids = |scores: &[crate::pipeline::ScoredEntity]| -> Vec<String> {
+        scores.iter().map(|scored| scored.id.to_hex()).collect()
+    };
+
+    // A fire that lands; then a stalled stage, which the fire waits out only
+    // until its deadline.
+    let mut session = SpeculativeSession::new(Arc::clone(&vault), config());
+    assert!(matches!(
+        session.observe_partial(heard(&tokyo_terms))?,
+        SpeculativeFireDecision::Fired { partial: false, .. }
+    ));
+    assert_eq!(ids(session.warm_candidates()), [tokyo.as_str()]);
+    vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
+        signal: RetrievalSignal::Text,
+        duration: Duration::from_secs(6),
+        yields: false,
+    }));
+    let started = Instant::now();
+    assert_eq!(
+        session.observe_partial(heard(&launch_terms))?,
+        SpeculativeFireDecision::MissedDeadline
+    );
+    assert!(
+        started.elapsed() < DEADLINE + WAKE,
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(session.fires_used(), 2);
+    assert_eq!(ids(session.warm_candidates()), [tokyo.as_str()]);
+    let started = Instant::now();
+    let SpeculativeFinal::Finalized {
+        scores,
+        run_id,
+        warm_appended,
+        partial: cut,
+    } = session.finalize(heard(&osaka_terms))?
+    else {
+        panic!("a changed signature runs the finalize pass");
+    };
+    assert!(
+        started.elapsed() < DEADLINE + WAKE,
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(cut && run_id.is_none());
+    assert_eq!((ids(&scores), warm_appended), (vec![tokyo], 1));
+
+    // A slow stage that yields at its share of the deadline: the fire lands
+    // in time, cut short, without the slow stage's hits.
+    vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
+        signal: RetrievalSignal::Text,
+        duration: Duration::from_secs(30),
+        yields: true,
+    }));
+    let mut session = SpeculativeSession::new(Arc::clone(&vault), config());
+    let started = Instant::now();
+    assert!(matches!(
+        session.observe_partial(heard(&tokyo_terms))?,
+        SpeculativeFireDecision::Fired { partial: true, .. }
+    ));
+    assert!(started.elapsed() < DEADLINE, "{:?}", started.elapsed());
+    assert!(session.warm_candidates().is_empty());
+    vault.arm_slow_retrieval_stage_for_test(None);
+    assert!(matches!(
+        session.finalize(heard(&tokyo_terms))?,
+        SpeculativeFinal::Promoted { partial: true, .. }
+    ));
+    Ok(())
+}
+
+/// A pass past its deadline keeps its read snapshot, and with it an LMDB
+/// reader slot, until its next checkpoint. Fires that keep missing a stalled
+/// stage stop at the vault's cap on running passes, so the vault keeps slots
+/// for its other readers.
+#[test]
+fn stalled_speculative_fires_leave_the_vault_reader_slots() -> Result<()> {
+    use crate::retrieval_depth::SlowRetrievalStage;
+    use crate::speculative::{SpeculativePartial, SpeculativeSession};
+    use crate::store::RetrievalSignal;
+
+    let (_dir, vault) = vault();
+    put_text(&vault, 7, "Tokyo launch")?;
+    vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
+        signal: RetrievalSignal::Text,
+        // Outlasts every fire below, so the stalled passes overlap.
+        duration: Duration::from_secs(30),
+        yields: false,
+    }));
+    let terms = ["tokyo".to_owned()];
+    // Twice as many utterances as the vault has reader slots, each with one
+    // fire that misses its deadline in the stalled stage (or, on a host slow
+    // to reach that stage, skips it and lands cut short).
+    for _ in 0..2 * vault.config.max_readers {
+        let mut session = SpeculativeSession::new(
+            Arc::clone(&vault),
+            SpeculativeSessionConfig {
+                deadline: Some(Duration::from_millis(100)),
+                ..SpeculativeSessionConfig::default()
+            },
+        );
+        let heard = SpeculativePartial {
+            text: "Tokyo launch",
+            query_vector: None,
+            entity_labels: &[],
+            salient_terms: &terms,
+        };
+        let decision = session.observe_partial(heard)?;
+        assert!(
+            matches!(
+                decision,
+                SpeculativeFireDecision::MissedDeadline
+                    | SpeculativeFireDecision::Fired { partial: true, .. }
+            ),
+            "{decision:?}"
+        );
+    }
+    // A reader on a thread of its own, which holds no slot yet.
+    let reader = Arc::clone(&vault);
+    std::thread::spawn(move || -> Result<()> {
+        drop(reader.store.env.read_txn()?);
+        Ok(())
+    })
+    .join()
+    .expect("reader thread")
+}

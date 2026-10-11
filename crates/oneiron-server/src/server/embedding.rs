@@ -42,7 +42,7 @@ impl SyncServer {
     /// Blocking: the endpoint provider makes a blocking HTTP call and the local
     /// provider runs a forward pass. Neither may happen on a runtime worker
     /// thread, so async callers take [`Self::embed_query_off_runtime`].
-    fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedQueryRefusal> {
+    pub(crate) fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedQueryRefusal> {
         let Some(slot) = self.embedder.as_ref() else {
             return Err(EmbedQueryRefusal::NotConfigured);
         };

@@ -85,6 +85,17 @@ impl<'v> RoomTurnHandle<'v> {
         crate::task_verb::sdk::recall_with_vector(&self.memory, input, embed)
     }
 
+    /// [`Self::recall_with_vector`] whose deadline counts from the door's
+    /// arrival; see [`crate::task_verb::sdk::recall_at_door`].
+    pub fn recall_at_door(
+        &self,
+        input: crate::task_verb::sdk::RecallRequest,
+        embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+        door: &crate::task_verb::sdk::RecallDoor<'_>,
+    ) -> MemoryResult<MemoryPack> {
+        crate::task_verb::sdk::recall_at_door(&self.memory, input, embed, door)
+    }
+
     pub fn get_entity(
         &self,
         entity_ref: &str,

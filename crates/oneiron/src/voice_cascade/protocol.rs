@@ -121,6 +121,10 @@ pub struct RetrievalContext {
     pub result_refs: Vec<String>,
     pub promoted: bool,
     pub run_id: Option<String>,
+    /// The session's call-mode deadline cut these results short: they are
+    /// the best that were ready, not a finished pass.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
 }
 
 /// Tool events are context, not authority to run a tool. The host executes tools

@@ -123,3 +123,47 @@ async fn mcp_memory_reads_use_native_clamps_and_keep_runtime_refusals_typed() {
         assert_mcp_structured_error(&reply, "mcp_scope_refused");
     }
 }
+
+/// Call mode on the MCP recall tool (retrieval hub #call-mode): `effort: "call"`
+/// and `deadline_ms` ride the tool's spec, and a deadline outside 1..=60000
+/// is refused with a typed error before recall runs.
+#[tokio::test]
+async fn mcp_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0x0024_8611);
+    let credential = "memory-call-mode";
+    register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    let recall = |spec: &Value| {
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "recall-call-mode",
+            "recall",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor, "read_memory"),
+                json!({"arguments": {"spec": spec}}),
+            ),
+        )
+    };
+    for spec in [
+        json!({"query": "lantern", "effort": "call"}),
+        json!({"query": "lantern", "effort": "call", "deadline_ms": 30_000}),
+        json!({"query": "lantern", "deadline_ms": 60_000}),
+    ] {
+        let (_, reply) = route_json(server.clone(), recall(&spec)).await;
+        assert!(reply.get("error").is_none(), "{spec}: {reply}");
+    }
+    for deadline_ms in [0, 60_001] {
+        let reply = mcp_refusal(
+            &server,
+            recall(&json!({"query": "lantern", "effort": "call", "deadline_ms": deadline_ms})),
+        )
+        .await;
+        assert_eq!(reply["error"]["code"], -32602, "{reply}");
+        assert_eq!(reply["error"]["data"]["error_code"], "facade_error");
+        assert_eq!(
+            reply["error"]["data"]["human_message"],
+            "deadline_ms must be a whole number between 1 and 60000"
+        );
+    }
+}

@@ -152,8 +152,10 @@ pub struct RoomEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallRequest {
     pub query: String,
+    /// One of the five effort levels, or `call`: call mode for live calls,
+    /// light effort under a hard deadline. Omitted means `medium`.
     #[serde(default)]
-    pub effort: Option<crate::memory::Effort>,
+    pub effort: Option<crate::memory::RecallEffort>,
     #[serde(default)]
     pub scope: Option<crate::memory::RecallScope>,
     #[serde(default)]
@@ -164,18 +166,63 @@ pub struct RecallRequest {
     /// the day before it. Omitted, they resolve against now.
     #[serde(default)]
     pub as_of: Option<u64>,
+    /// A hard deadline, in milliseconds from when the request arrives,
+    /// 1 to 60000: at it, recall answers with the best results ready, marked
+    /// `partial`. Omitted, recall runs to the end, except call mode, which
+    /// takes the vault's call-mode deadline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_ms: Option<u64>,
+}
+
+/// When a recall's clock started and what its door does if it stops waiting.
+/// A door that can stop waiting at the deadline (an async server door) starts
+/// the clock when the request arrives, and answers with the last pack
+/// `on_cut` received: the empty one before the query embeds and retrieval
+/// runs, then the assembled one before the scope census.
+pub struct RecallDoor<'a> {
+    pub arrived: std::time::Instant,
+    pub on_cut: Option<&'a (dyn Fn(crate::memory::MemoryPack) + Sync)>,
+}
+
+impl RecallDoor<'_> {
+    /// A door that waits for the answer and starts the clock now.
+    #[must_use]
+    pub fn now() -> Self {
+        Self {
+            arrived: std::time::Instant::now(),
+            on_cut: None,
+        }
+    }
 }
 
 /// `recall` with a host's query vector. Every SDK door lands here: the
 /// generated [`recall`] embeds nothing, and a server whose embedder is serving
 /// embeds the query. `embed` runs only once the request is admitted: a request
-/// recall refuses (a paid effort, an unknown format or kind) costs no vector.
+/// recall refuses (a paid effort, an unknown format or kind, a deadline out of
+/// range) costs no vector.
 pub fn recall_with_vector(
     memory: &Memory<'_>,
     input: RecallRequest,
     embed: impl FnOnce(&str) -> Option<Vec<f32>>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
-    let effort = input.effort.unwrap_or(crate::memory::Effort::Medium);
+    recall_at_door(memory, input, embed, &RecallDoor::now())
+}
+
+/// [`recall_with_vector`] whose deadline counts from `door.arrived`. A
+/// request with a deadline (call mode, or its own `deadline_ms`) runs under
+/// it as a hard cut: the stages yield at it, and the answer holds what was
+/// ready, marked partial.
+pub fn recall_at_door(
+    memory: &Memory<'_>,
+    input: RecallRequest,
+    embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+    door: &RecallDoor<'_>,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    let (effort, budget) = crate::memory::resolve_recall_dial(
+        input.effort,
+        input.deadline_ms,
+        memory.call_mode_deadline(),
+    )?;
     let scope = input.scope.unwrap_or_default();
     let limit = input.limit.unwrap_or(10);
     crate::memory::caps::check_query(&input.query)?;
@@ -191,6 +238,13 @@ pub fn recall_with_vector(
             ..Default::default()
         },
     )?;
+    let deadline =
+        budget.map(|budget| crate::retrieval_depth::RetrievalDeadline::hard(door.arrived, budget));
+    if let Some(on_cut) = door.on_cut {
+        // Before the query embeds: a door whose deadline comes due during
+        // the embedding still answers.
+        on_cut(memory.recall_cut_pack(&scope)?);
+    }
     let embedding = embed(&input.query);
     memory.recall_with_execution(
         &input.query,
@@ -200,8 +254,10 @@ pub fn recall_with_vector(
         input.format.as_deref(),
         None,
         &crate::retrieval_depth::RecallExecution {
+            deadline: deadline.as_ref(),
             embedding: embedding.as_deref(),
             as_of: input.as_of,
+            on_cut: door.on_cut,
             ..Default::default()
         },
     )
@@ -429,7 +485,8 @@ fn retired_task_verb_names_are_unknown() {
 
 /// #1323 review (CodeRabbit, Greptile): a server embedded the query of a
 /// recall that validation then refused, so a paid effort, an unknown format
-/// or an unknown kind still cost an embedding call. Each is refused first.
+/// or an unknown kind still cost an embedding call. Each is refused first,
+/// as is a deadline outside 1 to 60000 ms (call mode's typed refusal).
 #[cfg(test)]
 #[test]
 fn a_recall_the_engine_refuses_never_embeds_its_query() {
@@ -439,9 +496,9 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("vault");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let memory = vault.memory(owner, crate::EdgeActorClass::Human);
-    let request = |effort, format: Option<&str>, kinds: Option<&str>| RecallRequest {
+    let request = |effort: Effort, format: Option<&str>, kinds: Option<&str>| RecallRequest {
         query: "who fixes my car".to_owned(),
-        effort: Some(effort),
+        effort: Some(effort.into()),
         scope: kinds.map(|kind| crate::memory::RecallScope {
             kinds: Some(vec![kind.to_owned()]),
             ..Default::default()
@@ -449,8 +506,19 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         limit: None,
         format: format.map(str::to_owned),
         as_of: None,
+        deadline_ms: None,
+    };
+    let call = |deadline_ms| RecallRequest {
+        effort: Some(crate::memory::RecallEffort::Call),
+        deadline_ms: Some(deadline_ms),
+        ..request(Effort::Light, None, None)
     };
     for (input, code) in [
+        (call(0), crate::memory::MEMORY_CODE_BAD_REQUEST),
+        (
+            call(crate::memory::caps::MAX_RECALL_DEADLINE_MS + 1),
+            crate::memory::MEMORY_CODE_BAD_REQUEST,
+        ),
         (
             request(Effort::High, None, None),
             crate::memory::MEMORY_CODE_LEASE_REQUIRED,

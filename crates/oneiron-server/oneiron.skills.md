@@ -721,12 +721,14 @@ Query parameters:
 - `limit` optional: max returned items, default `10`.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
 Response:
 
 - Envelope: `items`, optional `nextCursor`, and `meta`.
 - `meta.total`: estimate count for search unless `countMode=none`.
 - `meta.countMode`: `estimate` or `none`.
+- `meta.partial`: `true` only when `deadlineMs` came due before the search finished.
 - Summary item fields: `id`, `kind`, `label`, `updatedAt`.
 - Standard item fields: `id`, `score`.
 - Full item fields: summary metadata, raw projected fields, and `score`.
@@ -759,6 +761,7 @@ Request body:
 - `limit` optional: max returned items, default `10`.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 - `depth` optional: `light`, `medium`, `high`, `xhigh`, or `max`; default `light`.
 
 Response:
@@ -811,6 +814,7 @@ Query parameters:
 - `limit` optional: max returned items, default `10`.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
 Response: Same paginated envelope and projection profiles as vector search.
 

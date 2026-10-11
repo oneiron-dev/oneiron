@@ -3,10 +3,11 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use napi_derive::napi;
+use oneiron::memory::RecallEffort;
 use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
     CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest,
-    ConsolidationAttemptInput, Effort, HabitCheckinInput, NeighborOpts, OutboundDraftInput,
+    ConsolidationAttemptInput, HabitCheckinInput, NeighborOpts, OutboundDraftInput,
 };
 
 use super::boundary::{
@@ -213,9 +214,11 @@ impl ActorScopedVault {
     }
 
     /// Effort-dialed retrieval into an S6 memory pack. `effort` is
-    /// `light` | `medium` | `high` | `xhigh` | `max`; no lease handle exists on this
-    /// surface yet, so paid effort returns the typed `LEASE_REQUIRED`
-    /// error until the LLMB chain lands the issuer.
+    /// `light` | `medium` | `high` | `xhigh` | `max`, or `call` for call mode
+    /// (light effort under a hard deadline: `deadline_ms`, or the vault's
+    /// call-mode deadline); no lease handle exists on this surface yet, so
+    /// paid effort returns the typed `LEASE_REQUIRED` error until the LLMB
+    /// chain lands the issuer.
     #[napi]
     pub fn recall(
         &self,
@@ -224,18 +227,29 @@ impl ActorScopedVault {
         scope: Option<NapiRecallScope>,
         limit: u32,
         format: Option<String>,
+        deadline_ms: Option<f64>,
     ) -> napi::Result<NapiMemoryPack> {
         crate::validate_query_len(&query).map_err(boundary_error)?;
         let limit = crate::parse_search_limit(limit).map_err(boundary_error)?;
-        let effort = Effort::parse(&effort).ok_or_else(|| {
+        let effort = RecallEffort::parse(&effort).ok_or_else(|| {
             boundary_error(format!(
-                "unknown effort {effort:?}; use light, medium, high, xhigh, or max"
+                "unknown effort {effort:?}; use light, medium, high, xhigh, max, or call"
             ))
         })?;
-        let scope = recall_scope_to_engine(scope);
-        let pack = self
-            .facade()?
-            .recall(&query, effort, &scope, limit, format.as_deref(), None)
+        let deadline_ms = deadline_ms
+            .map(oneiron::memory::caps::check_deadline_ms_number)
+            .transpose()
+            .map_err(facade_error)?;
+        let request = oneiron::task_verb::sdk::RecallRequest {
+            query,
+            effort: Some(effort),
+            scope: Some(recall_scope_to_engine(scope)),
+            limit: Some(limit),
+            format,
+            as_of: None,
+            deadline_ms,
+        };
+        let pack = oneiron::task_verb::sdk::recall_with_vector(&self.facade()?, request, |_| None)
             .map_err(facade_error)?;
         memory_pack_from_engine(pack).map_err(boundary_error)
     }

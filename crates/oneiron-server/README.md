@@ -228,6 +228,22 @@ is (`"migrated":false`), unless `--force` asks for the same swap under the
 pins it already holds. A vault's dimensions are fixed when it is created: a
 model of another width needs a new vault, and `reembed` says so.
 
+## Call-mode recall: the `[recall]` section
+
+A recall with `effort: "call"` runs in call mode (retrieval hub #call-mode): light
+effort under a hard deadline. When the deadline comes due, recall answers with
+the best results ready, marked `partial`, and never holds the turn past it. A
+request's own `deadline_ms` (1 to 60000) sets the deadline for that request at
+any effort. Call mode without one takes this server's setting:
+
+```toml
+[recall]
+call_deadline_ms = 100   # 1..60000; ONEIRON_RECALL_CALL_DEADLINE_MS
+```
+
+The default, 100 ms, is the ARCH-0042 #call-mode-budget bar: call-mode recall
+p95 at or under 100 ms server-side at 10k records.
+
 ## Linear mirror host bridge (opt-in)
 
 The server starts a mirror pass only when both

@@ -120,148 +120,39 @@ impl PipelineBuilder<'_> {
         Ok(claim_gate_text_widening_active)
     }
 
-    /// Runs the text channel and its HyDE-retry extra queries, admitting
-    /// each into `acc`. Returns the index the primary text list took in the
-    /// ranked lists, `None` when no text search is configured.
+    /// Runs the text channel, the next of `stages_left` deadline stages, and
+    /// its HyDE-retry extra queries, admitting each into `acc`. Returns the
+    /// index the primary text list took in the ranked lists, `None` when no
+    /// text search is configured or the deadline cut it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the stage count rides beside the channel's existing inputs"
+    )]
     pub(super) fn run_text_channel(
         &self,
         rtxn: &RoTxn<'_>,
-        inputs: TextChannelInputs<'_>,
+        stages_left: usize,
+        mut inputs: TextChannelInputs<'_>,
         acc: &mut ChannelAccumulator,
         diagnostics: &mut RetrievalDiagnostics,
         metadata_cache: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<Option<usize>> {
         let mut text_channel_index = None;
+        let prefix_probe_claim_gate = std::mem::take(&mut inputs.claim_gate_widening_probe);
         if let Some((query, limit)) = &self.text_search
-            && !self.deadline_reached()
+            && let Some(text_results) =
+                self.run_stage(RetrievalSignal::Text, stages_left, || {
+                    self.text_stage(
+                        rtxn,
+                        (query, *limit),
+                        &inputs,
+                        prefix_probe_claim_gate,
+                        (metadata_cache, claim_gate),
+                    )
+                })?
         {
-            let scoped_text_limit = scoped_text_channel_limit(
-                &self.vault.store,
-                rtxn,
-                if inputs.overrides.widen_channel_limits {
-                    retry_channel_limit(*limit)
-                } else {
-                    *limit
-                },
-                inputs.text_scope_widening_active,
-            )?;
-            let text_channel_limit = if inputs.recency.is_some() {
-                scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
-            } else {
-                scoped_text_limit
-            };
-            // The bound below admits turns as the fold does, in caches of its
-            // own: the scan closure holds the run's.
-            let mut fold_claim_gate = ClaimStatusGateCache {
-                include_stale: inputs.filter_config.authority_filter.include_stale,
-                private_note_ids: inputs.claim_gate_widening_probe.private_note_ids.clone(),
-                ..ClaimStatusGateCache::default()
-            };
-            let mut prefix_probe_claim_gate = inputs.claim_gate_widening_probe;
-            let mut exact_posting_matches_scope = |id: &EntityId| {
-                pipeline_candidate_matches_filters_and_gate(
-                    &self.vault.store,
-                    rtxn,
-                    id,
-                    inputs.filter_config,
-                    metadata_cache,
-                    &mut prefix_probe_claim_gate,
-                )
-            };
-            let text_query = inputs
-                .hyde_expansion
-                .as_ref()
-                .map_or(query.as_str(), |expansion| {
-                    expansion.grounded_query.as_str()
-                });
-            let candidate_limit = if self.candidate_filter.is_some() {
-                *limit
-            } else {
-                text_channel_limit
-            };
-            // A run that folds each MESSAGE into its TURN returns turns, so the
-            // bound counts turns: several messages of one turn would otherwise
-            // fill it and keep later conversations out. Such a run reads on,
-            // up to `PER_SCAN_CAP_FACTOR` times the bound, until its rows hold
-            // that many turns or the matches run out.
-            let fold_cap = candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR);
-            let mut fold_metadata = EntityMetadataCache::default();
-            let mut fetch_limit = candidate_limit;
-            let mut text_results = loop {
-                let mut rows = if self.memory_category {
-                    self.search_text_candidates(
-                        rtxn,
-                        inputs.bm25_config,
-                        text_query,
-                        fetch_limit,
-                        crate::bm25::Bm25SearchOptions {
-                            recency: None,
-                            exact_posting_matches_scope: &mut exact_posting_matches_scope,
-                            private_note_ids: inputs.private_note_ids,
-                        },
-                    )?
-                } else {
-                    crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
-                        self.vault,
-                        rtxn,
-                        crate::ports::TextQuery {
-                            query: text_query,
-                            limit: fetch_limit,
-                            rank: inputs.bm25_config,
-                            filter_all: self.candidate_filter.is_some(),
-                            matches_scope: &mut exact_posting_matches_scope,
-                            private_note_ids: inputs.private_note_ids,
-                        },
-                    )?
-                };
-                let exhausted = rows.len() < fetch_limit;
-                if self.turn_fold == TurnFold::Off || (exhausted && fetch_limit == candidate_limit)
-                {
-                    break rows;
-                }
-                if let Some(held) = turn_fold::rows_holding_distinct_turns(
-                    &rows,
-                    candidate_limit,
-                    self.turn_fold,
-                    &self.vault.store,
-                    rtxn,
-                    inputs.filter_config,
-                    &mut fold_metadata,
-                    &mut fold_claim_gate,
-                )? {
-                    rows.truncate(held);
-                    break rows;
-                }
-                if exhausted || fetch_limit >= fold_cap || self.deadline_reached() {
-                    break rows;
-                }
-                fetch_limit = fetch_limit.saturating_mul(2).min(fold_cap);
-            };
             diagnostics.succeeded.push(RetrievalSignal::Text);
-            if self.candidate_filter.is_none()
-                && text_channel_limit > *limit
-                && inputs.text_scope_widening_active
-            {
-                let scoped_result_limit = if inputs.recency.is_some() {
-                    limit.saturating_mul(PER_SCAN_CAP_FACTOR)
-                } else {
-                    *limit
-                };
-                self.truncate_widened_text_results(
-                    &mut text_results,
-                    rtxn,
-                    scoped_result_limit,
-                    inputs.filter_config,
-                    metadata_cache,
-                    &mut prefix_probe_claim_gate,
-                )?;
-            }
-            import_claim_gate_decisions_for_scores(
-                claim_gate,
-                &mut prefix_probe_claim_gate,
-                &text_results,
-            );
             text_channel_index = Some(acc.admit_channel(
                 RetrievalSignal::Text,
                 text_results,
@@ -365,6 +256,140 @@ impl PipelineBuilder<'_> {
             }
         }
         Ok(text_channel_index)
+    }
+    /// The text stage itself: the scoped BM25 read, read on while folded
+    /// turns are short, then cut to the run's own scope. Every candidate its
+    /// scope gate reads is a deadline checkpoint.
+    fn text_stage(
+        &self,
+        rtxn: &RoTxn<'_>,
+        (query, limit): (&str, usize),
+        inputs: &TextChannelInputs<'_>,
+        mut prefix_probe_claim_gate: ClaimStatusGateCache,
+        (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
+    ) -> Result<Vec<ScoredEntity>> {
+        let scoped_text_limit = scoped_text_channel_limit(
+            &self.vault.store,
+            rtxn,
+            if inputs.overrides.widen_channel_limits {
+                retry_channel_limit(limit)
+            } else {
+                limit
+            },
+            inputs.text_scope_widening_active,
+        )?;
+        let text_channel_limit = if inputs.recency.is_some() {
+            scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
+        } else {
+            scoped_text_limit
+        };
+        // The bound below admits turns as the fold does, in caches of its
+        // own: the scan closure holds the run's.
+        let mut fold_claim_gate = ClaimStatusGateCache {
+            include_stale: inputs.filter_config.authority_filter.include_stale,
+            private_note_ids: prefix_probe_claim_gate.private_note_ids.clone(),
+            ..ClaimStatusGateCache::default()
+        };
+        let mut exact_posting_matches_scope = |id: &EntityId| {
+            pipeline_candidate_matches_filters_and_gate(
+                &self.vault.store,
+                rtxn,
+                id,
+                inputs.filter_config,
+                metadata_cache,
+                &mut prefix_probe_claim_gate,
+            )
+        };
+        let text_query = inputs
+            .hyde_expansion
+            .as_ref()
+            .map_or(query, |expansion| expansion.grounded_query.as_str());
+        let candidate_limit = if self.candidate_filter.is_some() {
+            limit
+        } else {
+            text_channel_limit
+        };
+        // A run that folds each MESSAGE into its TURN returns turns, so the
+        // bound counts turns: several messages of one turn would otherwise
+        // fill it and keep later conversations out. Such a run reads on,
+        // up to `PER_SCAN_CAP_FACTOR` times the bound, until its rows hold
+        // that many turns or the matches run out.
+        let fold_cap = candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR);
+        let mut fold_metadata = EntityMetadataCache::default();
+        let mut fetch_limit = candidate_limit;
+        let mut text_results = loop {
+            let mut rows = if self.memory_category {
+                self.search_text_candidates(
+                    rtxn,
+                    inputs.bm25_config,
+                    text_query,
+                    fetch_limit,
+                    crate::bm25::Bm25SearchOptions {
+                        recency: None,
+                        exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                        private_note_ids: inputs.private_note_ids,
+                    },
+                )?
+            } else {
+                crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                    self.vault,
+                    rtxn,
+                    crate::ports::TextQuery {
+                        query: text_query,
+                        limit: fetch_limit,
+                        rank: inputs.bm25_config,
+                        filter_all: self.candidate_filter.is_some(),
+                        matches_scope: &mut exact_posting_matches_scope,
+                        private_note_ids: inputs.private_note_ids,
+                    },
+                )?
+            };
+            let exhausted = rows.len() < fetch_limit;
+            if self.turn_fold == TurnFold::Off || (exhausted && fetch_limit == candidate_limit) {
+                break rows;
+            }
+            if let Some(held) = turn_fold::rows_holding_distinct_turns(
+                &rows,
+                candidate_limit,
+                self.turn_fold,
+                &self.vault.store,
+                rtxn,
+                inputs.filter_config,
+                &mut fold_metadata,
+                &mut fold_claim_gate,
+            )? {
+                rows.truncate(held);
+                break rows;
+            }
+            if exhausted || fetch_limit >= fold_cap || self.deadline_reached() {
+                break rows;
+            }
+            fetch_limit = fetch_limit.saturating_mul(2).min(fold_cap);
+        };
+        if self.candidate_filter.is_none()
+            && text_channel_limit > limit
+            && inputs.text_scope_widening_active
+        {
+            let scoped_result_limit = if inputs.recency.is_some() {
+                limit.saturating_mul(PER_SCAN_CAP_FACTOR)
+            } else {
+                limit
+            };
+            self.truncate_widened_text_results(
+                &mut text_results,
+                rtxn,
+                scoped_result_limit,
+                inputs.filter_config,
+                metadata_cache,
+                &mut prefix_probe_claim_gate,
+            )?;
+        }
+        import_claim_gate_decisions_for_scores(
+            claim_gate,
+            &mut prefix_probe_claim_gate,
+            &text_results,
+        );
+        Ok(text_results)
     }
     /// Keeps the rows of a widened text read that the run's own scope
     /// admits, up to `requested` results. A run that folds each MESSAGE into

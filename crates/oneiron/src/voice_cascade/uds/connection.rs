@@ -199,6 +199,7 @@ impl WireSession {
                     SpeculativeFireDecision::SkippedUnchanged => "skipped_unchanged",
                     SpeculativeFireDecision::SkippedEmptySignature => "skipped_empty_signature",
                     SpeculativeFireDecision::SkippedCapExhausted => "skipped_cap_exhausted",
+                    SpeculativeFireDecision::MissedDeadline => "missed_deadline",
                 },
                 context: result.context,
             },

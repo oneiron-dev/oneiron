@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, holder_proof};
-use oneiron::memory::{Effort, RecallScope, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::{RecallEffort, RecallScope, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron_remote::{OneironClient, unix_seconds_now};
 use serde_json::Value;
 
@@ -104,9 +104,10 @@ fn recalled_ref(client: &OneironClient) -> String {
     let pack = client
         .recall(
             "Quillamere boathouse",
-            Effort::Medium,
+            RecallEffort::Medium,
             &RecallScope::default(),
             10,
+            None,
             None,
             None,
         )

@@ -213,6 +213,9 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// `AnyOf` fails the run closed before the first candidate is scanned and
     /// the candidate-scan twin stays a pure predicate.
     pub(super) corpus_scope: &'a CorpusScope,
+    /// The run's deadline. While a channel stage is open every candidate the
+    /// scope gate reads is one of its checkpoints.
+    pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
 }
 
 #[derive(Default)]

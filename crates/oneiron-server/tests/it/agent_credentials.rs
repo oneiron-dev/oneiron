@@ -145,6 +145,7 @@ async fn whoami_names_the_principal_a_write_accepts_and_token_read_only_reads() 
                 5,
                 None,
                 None,
+                None,
             )
             .unwrap();
         // The message comes back as its turn, quoting it (ARCH-0004).

@@ -735,6 +735,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 world_scope: &WorldScope::All,
                 world_active_set: None,
                 corpus_scope: &crate::corpus::CorpusScope::All,
+                deadline: None,
             };
             let mut metadata = EntityMetadataCache::default();
             // Bounded scans must use local decisions and resolved authority,

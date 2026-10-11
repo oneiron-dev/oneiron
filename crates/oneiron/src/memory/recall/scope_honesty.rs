@@ -5,12 +5,14 @@ impl Memory<'_> {
     /// Scope honesty: worlds holding surfaceable claims outside the worlds
     /// this recall read, base reality included under its reserved id. The
     /// census reads the first [`SCOPE_HONESTY_SCAN_CAP`] claims the actor may
-    /// read and says when it stopped there.
+    /// read and says when it stopped there, or when the recall's answer came
+    /// due before it finished.
     pub(super) fn out_of_scope_worlds(
         &self,
         lane: &ScopedRead<'_>,
         receipt: &mut ScopedReadReceipt,
         read: &crate::pipeline::WorldAuthoritySet,
+        deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
     ) -> MemoryResult<ScopeHonesty> {
         // Bounded page primitive, not `entities_by_type().take(cap)`: the
         // latter materializes the whole CLAIM index and errors with
@@ -20,7 +22,12 @@ impl Memory<'_> {
             self.vault
                 .entities_by_type_page(ENTITY_TYPE_CLAIM, None, SCOPE_HONESTY_SCAN_CAP)?;
         let mut worlds = BTreeSet::new();
+        let mut stopped = false;
         for chunk in ids.chunks(128) {
+            if deadline.is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due) {
+                stopped = true;
+                break;
+            }
             let reads: Vec<_> = chunk.iter().copied().map(PointRead::id).collect();
             let scoped = lane.read(&reads, None)?;
             receipt.restrict_with(&scoped.receipt);
@@ -41,7 +48,7 @@ impl Memory<'_> {
         }
         Ok(ScopeHonesty {
             out_of_scope_worlds: worlds.into_iter().collect(),
-            census_capped: ids.len() >= SCOPE_HONESTY_SCAN_CAP,
+            census_capped: stopped || ids.len() >= SCOPE_HONESTY_SCAN_CAP,
         })
     }
 }
