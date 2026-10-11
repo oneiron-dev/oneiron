@@ -145,6 +145,7 @@ mod archive;
 pub(crate) use archive::archived_provenance_body;
 mod codec;
 mod derived_attachment;
+pub(crate) use derived_attachment::support_project;
 mod edge_ref;
 mod entity_ref_wire;
 mod imported;
