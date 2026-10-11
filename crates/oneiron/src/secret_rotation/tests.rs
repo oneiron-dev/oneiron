@@ -1028,7 +1028,7 @@ fn mixed_bundle_export_nulls_tainted_exhaust_preserves_clean_payload_and_reports
             .find(|row| row["id"].as_str() == Some(tainted_id.as_str()))
             .unwrap();
         assert_eq!(clean_row, &clean_export["entities"][0]);
-        assert!(tainted_row["body"].is_null());
+        assert_eq!(tainted_row.get("body"), Some(&serde_json::Value::Null));
         let manifest: ExportManifest = serde_json::from_value(emitted["manifest"].clone()).unwrap();
         assert!(manifest.redacted());
         assert!(manifest.structurally_secret_nulled());

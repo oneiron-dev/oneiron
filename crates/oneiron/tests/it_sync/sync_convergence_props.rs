@@ -1350,6 +1350,15 @@ fn still_winning_downward_restamp_matches_fresh_recovery_edge_bytes() {
     );
     assert_eq!(child_of_parents(&incremental.vault, &child), vec![winner]);
     let before = edge_bytes_out(&incremental.vault, &child);
+    let loser_key = format_edge_key(&child, EdgeKind::ChildOf, &loser);
+    let loser_value = map_get_bytes(&incremental.window(WINDOW).doc.get_map("edges"), &loser_key);
+    assert_eq!(
+        loser_value,
+        Some(
+            encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, T0 + 70, None, None)
+                .expect("structural ChildOf value")
+        )
+    );
     deliver_child_of_candidates(&incremental, &child, &[(winner, T0 + 80)]);
     assert_eq!(child_of_parents(&incremental.vault, &child), vec![winner]);
     let after = edge_bytes_out(&incremental.vault, &child);
@@ -1387,15 +1396,14 @@ fn still_winning_downward_restamp_matches_fresh_recovery_edge_bytes() {
         edge_bytes_out(&incremental.vault, &child),
         edge_bytes_out(&fresh.vault, &child)
     );
+    // The stranded candidate is read, never rewritten.
     assert_eq!(
-        map_get_bytes(
-            &incremental.window(WINDOW).doc.get_map("edges"),
-            &format_edge_key(&child, EdgeKind::ChildOf, &loser)
-        ),
-        map_get_bytes(
-            &fresh_doc.get_map("edges"),
-            &format_edge_key(&child, EdgeKind::ChildOf, &loser)
-        )
+        map_get_bytes(&incremental.window(WINDOW).doc.get_map("edges"), &loser_key),
+        loser_value
+    );
+    assert_eq!(
+        map_get_bytes(&fresh_doc.get_map("edges"), &loser_key),
+        loser_value
     );
 }
 

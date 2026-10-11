@@ -373,7 +373,7 @@ mod tests {
             LocalityRung::OnDevice
         }
         fn caption(&self, _bytes: &[u8]) -> IngestResult<String> {
-            Ok("a receipt".to_owned())
+            Ok("cobalt".to_owned())
         }
     }
 
@@ -389,14 +389,14 @@ mod tests {
             (
                 &CannedOcr,
                 &CannedCaption,
-                "a receipt",
-                "[PROVENANCE caption_locality=0]\n[CAPTION source=caption_model]\na receipt\n",
+                "cobalt",
+                "[PROVENANCE caption_locality=0]\n[CAPTION source=caption_model]\ncobalt\n",
             ),
             (
                 &HostLocalOcr,
                 &HostLocalCaption,
-                "host caption",
-                "[PROVENANCE caption_locality=1]\n[CAPTION source=caption_model]\nhost caption\n",
+                "topaz",
+                "[PROVENANCE caption_locality=1]\n[CAPTION source=caption_model]\nhost caption topaz\n",
             ),
         ];
         for (ocr, captioner, query, evidence) in cases {
@@ -442,7 +442,7 @@ mod tests {
             LocalityRung::HostLocal
         }
         fn caption(&self, _bytes: &[u8]) -> IngestResult<String> {
-            Ok("host caption".to_owned())
+            Ok("host caption topaz".to_owned())
         }
     }
 

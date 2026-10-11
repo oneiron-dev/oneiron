@@ -420,32 +420,35 @@ pub(crate) mod tests {
             let (mut objects, dss_num) =
                 profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
             let first = dss_num + 1;
-            let head = if mode == "cycle" {
-                objects.push((first, format!("{} 0 R", first + 1).into_bytes()));
-                objects.push((first + 1, format!("{first} 0 R").into_bytes()));
-                first
+            let ocsp = build_ocsp(
+                &signer,
+                signer.cert.tbs_certificate.serial_number.clone(),
+                AT_UNIX - 60,
+                Some(AT_UNIX + 3600),
+                x509_ocsp::CertStatus::good(),
+            );
+            objects.push((first, stream_body(&ocsp)));
+            // Every row also lists the response directly, so only the chain
+            // can fail the material; the cycle is the passing 128-hop chain
+            // with its bottom link bent back to the head.
+            let hops: u32 = if mode == "cycle" {
+                128
             } else {
-                let ocsp = build_ocsp(
-                    &signer,
-                    signer.cert.tbs_certificate.serial_number.clone(),
-                    AT_UNIX - 60,
-                    Some(AT_UNIX + 3600),
-                    x509_ocsp::CertStatus::good(),
-                );
-                objects.push((first, stream_body(&ocsp)));
-                let hops: u32 = mode.parse().unwrap();
-                for offset in 1..hops {
-                    objects.push((
-                        first + offset,
-                        format!("{} 0 R", first + offset - 1).into_bytes(),
-                    ));
-                }
-                first + hops - 1
+                mode.parse().unwrap()
             };
+            let head = first + hops - 1;
+            for offset in 1..hops {
+                let target = if mode == "cycle" && offset == 1 {
+                    head
+                } else {
+                    first + offset - 1
+                };
+                objects.push((first + offset, format!("{target} 0 R").into_bytes()));
+            }
             let dss = objects.iter_mut().find(|(n, _)| *n == dss_num).unwrap();
             dss.1.truncate(dss.1.len() - 2);
             dss.1
-                .extend_from_slice(format!(" /OCSPs [{head} 0 R] >>").as_bytes());
+                .extend_from_slice(format!(" /OCSPs [{first} 0 R {head} 0 R] >>").as_bytes());
             objects.push((state.root.0, catalog_body(&state, Some(dss_num))));
             let (with_dss, _) = emit_revision(&signed, &state, &objects, None);
             let archived = append_doc_ts_revision(&with_dss, &tsa, AT_UNIX);
@@ -454,16 +457,22 @@ pub(crate) mod tests {
                 report.signatures[0].integrity,
                 crate::api::VerifyVerdict::Passed
             );
+            let material: Vec<_> = report
+                .checks()
+                .filter(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+                .map(|c| (c.status, c.finding))
+                .collect();
             assert!(
-                report
-                    .checks()
-                    .any(|c| c.kind == VerifyCheckKind::ValidationMaterial
-                        && c.status
-                            == if valid_material {
-                                VerifyCheckStatus::Pass
-                            } else {
-                                VerifyCheckStatus::Fail
-                            })
+                material.iter().any(|(status, finding)| if valid_material {
+                    *status == VerifyCheckStatus::Pass
+                } else {
+                    (*status, *finding)
+                        == (
+                            VerifyCheckStatus::Fail,
+                            Some(VerifyFindingCode::ValidationMaterialInvalid),
+                        )
+                }),
+                "{mode}: {material:?}"
             );
             if valid_material {
                 assert_eq!(

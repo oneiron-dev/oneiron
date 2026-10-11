@@ -609,14 +609,14 @@ fn equal_key_peer_histories_converge_in_both_orders_and_duplicate_replay() {
     let expected = fold_authority_log(&[fixture.genesis.clone(), a.clone(), b.clone()]);
     assert!(expected.issues.is_empty());
     assert_eq!(expected.valid_entries.len(), 3);
+    let pact = &expected.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(pact.peer_vault_id, fixture.peer_vault_id.min(other_vault));
     assert_eq!(
-        expected.federation_pacts[&fixture.pact_id].status,
-        FederationPactStatus::Active
+        pact.peer_owner_key,
+        authority_key_from_ed(&fixture.peer).min(authority_key_from_ed(&other_peer))
     );
-    assert_eq!(
-        expected.federation_pacts[&fixture.pact_id].pact_scope,
-        fixture.scope
-    );
+    assert_eq!(pact.pact_scope, fixture.scope);
     for history in [
         vec![fixture.genesis.clone(), b.clone(), a.clone()],
         vec![
