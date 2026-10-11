@@ -12,12 +12,11 @@ pub(super) fn score_query_terms(
     let diagnostics = &store.diagnostics().bm25;
     let total_docs = read_total_docs(store, rtxn)?;
     // A room stages its index rows as it read base when it indexed, and
-    // base keeps indexing on record. So a union may hold base's posting and
-    // the room's for one row, more postings than the room's count, or a row
-    // whose lengths or field stats the room hid. None of that is corruption
-    // there: a term's postings floor the count, one posting per row counts,
-    // a row the union cannot measure is not scored, and a field with no
-    // stats takes no length normalization.
+    // base keeps indexing on record. So a union may hold more postings than
+    // the room's count, or a row whose lengths or field stats the room hid.
+    // None of that is corruption there: a term's postings floor the count, a
+    // row the union cannot measure is not scored, and a field with no stats
+    // takes no length normalization.
     let union = store.is_union();
     if total_docs == 0 && !union {
         return Ok(Vec::new());
@@ -48,9 +47,6 @@ pub(super) fn score_query_terms(
             let (_, dup) = item?;
             let entry = decode_posting_entry(diagnostics, &dup)?;
             if previous.is_some_and(|id: EntityId| id.as_bytes() >= entry.id.as_bytes()) {
-                if union && previous == Some(entry.id) {
-                    continue;
-                }
                 return Err(corrupted_with_diagnostic(
                     diagnostics,
                     "duplicate posting entries for one entity",
@@ -79,12 +75,11 @@ pub(super) fn score_query_terms(
         else {
             continue;
         };
-        let mut previous = None;
         'entries: for item in dups {
             let (_, dup) = item?;
             let entry = decode_posting_entry(diagnostics, &dup)?;
             let id = entry.id;
-            if previous.replace(id) == Some(id) || !accept(&id)? {
+            if !accept(&id)? {
                 continue;
             }
 

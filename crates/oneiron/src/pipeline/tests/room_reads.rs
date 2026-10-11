@@ -485,39 +485,3 @@ fn a_text_search_in_the_room_finds_base_rows_indexed_after_it_cleared_base_text(
     session.close()?;
     Ok(())
 }
-
-/// A row the room re-indexed and base indexed again once the room was on
-/// record holds a posting of each in the union. A text search in the room
-/// answers, and counts the row once.
-#[test]
-fn a_text_search_in_the_room_counts_a_row_base_and_the_room_both_indexed_once() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let row = entity_id(0xC7);
-    put_text(&vault, row, "unionneedle")?;
-    let session = enter(&vault, "sess-room-bm25-twice")?;
-    stage_in_room(
-        &vault,
-        &session,
-        vec![BatchOp::Text {
-            id: row,
-            fields: vec![("body".to_owned(), "unionneedle unionneedle roomword".to_owned())],
-        }],
-    )?;
-    session.flip_on_record()?;
-    put_text(&vault, row, "unionneedle unionneedle unionneedle")?;
-
-    let view = session.read_view()?;
-    let hits = vault
-        .query()
-        .search_text("unionneedle", 10)
-        .reading(view.read())
-        .run()?;
-    assert_eq!(
-        hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
-        vec![row],
-        "the row is found once"
-    );
-    drop(view);
-    session.close()?;
-    Ok(())
-}
