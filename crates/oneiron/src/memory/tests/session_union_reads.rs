@@ -111,6 +111,7 @@ fn a_context_pack_bound_to_the_room_returns_the_message_only_the_room_holds() {
         "its edges, staged in the room, come with it"
     );
     drop(view);
+    drop(door);
 
     session.close().expect("close session");
 }

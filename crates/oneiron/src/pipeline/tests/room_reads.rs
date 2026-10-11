@@ -141,6 +141,7 @@ fn on_record_a_run_over_a_room_that_staged_only_a_vector_keeps_no_base_run() -> 
         "and keeps no run in base"
     );
     drop(view);
+    drop(door);
     session.close()?;
     Ok(())
 }
