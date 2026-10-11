@@ -47,7 +47,7 @@ impl SyncConnection {
                 let _ = event_tx.send(SyncEvent::Error(
                     "Queue overflow — performing re-bootstrap".to_string(),
                 ));
-                match self.queue.clear_all() {
+                match self.clear_queue_for_re_bootstrap(client) {
                     Ok(()) => client.reset_for_re_bootstrap(),
                     Err(e) => {
                         let _ = event_tx.send(SyncEvent::Error(format!("Clear queue failed: {e}")));
