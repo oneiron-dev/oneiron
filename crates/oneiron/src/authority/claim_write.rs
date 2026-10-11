@@ -99,7 +99,8 @@ pub(crate) fn check_materialized_claim_causality(
 ) -> Result<()> {
     let mut claims = Vec::new();
     for id in ids {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
+        else {
             continue;
         };
         if EntityMetadataHeader::parse(&raw)

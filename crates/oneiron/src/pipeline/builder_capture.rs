@@ -23,6 +23,13 @@ impl PipelineBuilder<'_> {
         self
     }
 
+    /// Retrieves a context pack's memory lane alone, without the skill and
+    /// agent discovery that runs beside it.
+    pub(crate) fn memory_lane_only(mut self) -> Self {
+        self.capability_lanes = false;
+        self
+    }
+
     /// Enables opt-in per-stage retrieval trace capture for this run.
     /// Supplies the pre-decision bus for iterative or offline replay callers.
     pub fn retrieval_state(mut self, state: crate::store::RetrievalState) -> Self {

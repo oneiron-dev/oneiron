@@ -1730,7 +1730,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 17
      }
     },
@@ -2929,7 +2929,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 1,
       "re-export": 1
      }
@@ -3051,7 +3051,7 @@
      "path": "src/batch/put_apply/mod.rs",
      "purpose": "Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -3081,7 +3081,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 25
      }
     },
     {
@@ -10421,7 +10421,7 @@
      "path": "src/config.rs",
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 1,
       "enum": 2,
       "fn": 12,
@@ -12048,7 +12048,7 @@
      "path": "src/context_pack/builder/query.rs",
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 59,
       "struct": 1
      }
@@ -18897,7 +18897,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -19164,7 +19164,7 @@
      "purpose": "The `GitWire` handle, its constructors, the process seam, and the read path",
      "surface": {
       "crate-vis": 6,
-      "fn": 14,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -24790,7 +24790,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "mod": 8,
+      "mod": 9,
       "re-export": 1
      }
     },
@@ -24899,6 +24899,20 @@
       "enum": 1,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginSecretManifest"
+     ],
+     "path": "src/origin/secret_manifest.rs",
+     "purpose": "The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -26236,7 +26250,7 @@
      "path": "src/pipeline/builder_capture.rs",
      "purpose": "Retrieval telemetry capture and turn context options on the pipeline builder",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -27400,7 +27414,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 6
      }
     },
@@ -27474,6 +27488,16 @@
      "purpose": "Query execution options for retrieval ports, independent of storage handles",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/row_copies.rs",
+     "purpose": "The row-copy hook, so a test can see that no entity read on a path copied a row holding a value into a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -29942,7 +29966,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 4
      }
     },
@@ -29965,8 +29989,32 @@
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
       "crate-vis": 12,
-      "re-export": 2
+      "re-export": 3
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ManifestSource",
+      "OwnerSecretRegistration",
+      "RequestedBinding",
+      "SecretRegistered"
+     ],
+     "path": "src/secret_custody/owner_door.rs",
+     "purpose": "The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody",
+     "surface": {
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/secret_custody/owner_door/tests.rs",
+     "purpose": "ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -30000,7 +30048,7 @@
      "path": "src/secret_custody/types.rs",
      "purpose": "Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata",
      "surface": {
-      "const": 4,
+      "const": 5,
       "enum": 1,
       "fn": 9,
       "re-export": 1,
@@ -30099,7 +30147,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SecretManifest",
@@ -33226,6 +33274,14 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/store/open_gates/read_only_door/tests.rs",
+     "purpose": "The reader table two processes get over one vault, whichever opens first",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -36831,7 +36887,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 10,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -36874,6 +36930,20 @@
      "purpose": "Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReaderTableShortfall"
+     ],
+     "path": "src/vault/reader_table.rs",
+     "purpose": "The LMDB reader table a vault's environment got, against what it asked for",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -39818,7 +39888,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39888,7 +39958,7 @@
      "purpose": "Policy classification over two planes"
     },
     "ports": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40028,7 +40098,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 7,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40044,7 +40114,7 @@
     "secret_manifest": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
     },
@@ -40175,7 +40245,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40280,7 +40350,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40345,8 +40415,8 @@
    },
    "over_bar": 34,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2450,
-   "test_files": 777
+   "source_files": 2454,
+   "test_files": 779
   },
   "oneiron-android": {
    "files": [
@@ -49578,6 +49648,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/owner_secrets.rs",
+     "purpose": "`/v1/owner/secrets/register`: the owner puts a secret into custody (ARCH-0069 S1–S3), with the repo…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -49809,7 +49887,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BackupArgs",
@@ -49825,16 +49903,20 @@
       "RunArgs",
       "RunDecisionArgs",
       "RunsCommand",
+      "SecretClass",
+      "SecretRegisterArgs",
+      "SecretRotateArgs",
       "SecretScanArgs",
       "SecretScanSwitch",
+      "SecretsCommand",
       "ServeOnlyArgs",
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan…",
      "surface": {
-      "enum": 3,
-      "struct": 14
+      "enum": 5,
+      "struct": 16
      }
     },
     {
@@ -50008,7 +50090,7 @@
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window recovery, export, the secret…",
      "surface": {
       "crate-vis": 1,
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -51165,7 +51247,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -51208,14 +51290,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/vault_gates.rs",
      "purpose": "Managed vault open gates: credentials, the canary marker, and the DEK MAC",
      "surface": {
       "const": 3,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -51877,13 +51959,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/secrets.rs",
-     "purpose": "The owner rotates a secret (ARCH-0069 S6)",
+     "purpose": "The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 12
      }
     },
     {
@@ -52631,7 +52713,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 175,
+     "files": 176,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52837,7 +52919,7 @@
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 318,
-   "test_files": 132
+   "test_files": 133
   },
   "oneiron-uniffi": {
    "files": [
