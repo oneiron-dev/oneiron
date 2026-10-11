@@ -8839,6 +8839,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/tests_room_saver.rs",
+     "purpose": "ARCH-0052 D5: a run in a room on record writes into the vault of the owner who put it on record, and only…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -10921,7 +10929,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 18,
       "struct": 2
      }
@@ -11489,7 +11497,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 7,
-      "re-export": 18
+      "re-export": 17
      }
     },
     {
@@ -11839,7 +11847,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/context_board/stream/mod.rs",
-     "purpose": "Board streaming frames and harness wake dispatch",
+     "purpose": "Board streaming frames, routing and the pending-wake queue",
      "surface": {
       "re-export": 5
      }
@@ -11909,34 +11917,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "BindInstanceError",
-      "HarnessInstanceKey",
-      "InstanceBindingReceipt",
-      "WakeAdapterKind",
-      "WakeDeliveryOutcome",
-      "WakeDeliveryReportError",
-      "WakeDispatch",
-      "WakeDispatchObservations",
-      "WakeEnvelope",
-      "WakeReportDisposition"
+      "WakeEnvelope"
      ],
      "path": "src/context_board/stream/wake.rs",
-     "purpose": "Wake envelopes, harness instance keys and the adapter dispatch ladder",
+     "purpose": "Wake envelopes and the host's drain",
      "surface": {
-      "crate-vis": 5,
-      "enum": 5,
-      "fn": 3,
-      "struct": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/context_board/stream/wake_dispatch.rs",
-     "purpose": "The registry's wake half: binding, dispatch, reporting and fallback",
-     "surface": {
-      "fn": 5
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -12461,7 +12448,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -22781,14 +22768,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/caps.rs",
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
-      "const": 11,
-      "fn": 9
+      "const": 12,
+      "fn": 11
      }
     },
     {
@@ -23209,6 +23196,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "RecallEffort"
+     ],
+     "path": "src/memory/recall/call_mode.rs",
+     "purpose": "Call mode (retrieval hub #call-mode): recall for live calls",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/recall/items.rs",
      "purpose": "Builds typed recall items from actor-admitted rows at the selected revision",
@@ -23236,6 +23238,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 11,
+      "re-export": 1,
       "struct": 7
      }
     },
@@ -23269,7 +23272,7 @@
      "purpose": "A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope",
      "surface": {
       "crate-vis": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 1
      }
     },
@@ -23537,6 +23540,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall/call_mode.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -23699,7 +23710,7 @@
      "purpose": "Session overlay landing: journal staging from the door's authorized values, room-shell claim",
      "surface": {
       "crate-vis": 6,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -24407,17 +24418,51 @@
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
       "crate-vis": 3,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/off_record/lifecycle/on_record.rs",
+     "purpose": "A room on record (ARCH-0052 D5)",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/promotion.rs",
+     "purpose": "Promotion out of the room (ARCH-0052 D4): the one session-overlay-to-base write, and the doors that save a…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/room.rs",
+     "purpose": "Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 11,
+      "type": 1
      }
     },
     {
@@ -24428,10 +24473,10 @@
       "OffRecordSessionVault"
      ],
      "path": "src/off_record/lifecycle/session.rs",
-     "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, promote_turn, close",
+     "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 18,
-      "fn": 13,
+      "crate-vis": 20,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -24463,15 +24508,20 @@
       "OffRecordBackendClass",
       "OffRecordCloseOutcome",
       "OffRecordMode",
-      "OffRecordSessionRecord"
+      "OffRecordNotice",
+      "OffRecordNoticeAct",
+      "OffRecordSessionRecord",
+      "OffRecordTalk",
+      "OffRecordTalkMessage",
+      "OffRecordTalkTurn"
      ],
      "path": "src/off_record/lifecycle/types.rs",
      "purpose": "Public records, enums, constants and the executor-utterance label shared by all off-record children",
      "surface": {
       "crate-vis": 3,
-      "enum": 3,
+      "enum": 4,
       "fn": 2,
-      "struct": 2
+      "struct": 6
      }
     },
     {
@@ -24481,7 +24531,7 @@
      "path": "src/off_record/lifecycle/vault_api.rs",
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -26179,7 +26229,7 @@
      "path": "src/pipeline/builder_effort.rs",
      "purpose": "Shared five-level stage selection for the raw pipeline and memory facade",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -29391,7 +29441,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 4,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3,
       "trait": 1
      }
@@ -29411,14 +29461,15 @@
      "kind": "src",
      "notable": [
       "RecallExecution",
-      "RetrievalDeadline"
+      "RetrievalDeadline",
+      "SlowRetrievalStage"
      ],
      "path": "src/retrieval_depth/controls.rs",
-     "purpose": "Per-request stage-boundary budgets",
+     "purpose": "Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and the share of the budget the…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 4,
-      "struct": 2
+      "crate-vis": 6,
+      "fn": 7,
+      "struct": 3
      }
     },
     {
@@ -30858,7 +30909,7 @@
      "path": "src/session_overlay/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -32811,7 +32862,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SpeculativeFinal",
@@ -32824,6 +32875,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 5,
       "struct": 3
@@ -33006,7 +33058,7 @@
      "path": "src/store/group_commit.rs",
      "purpose": "Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "struct": 1
      }
     },
@@ -35559,7 +35611,7 @@
      "path": "src/task_verb/board_task.rs",
      "purpose": "One committed TASK as the board STREAM publisher reads it",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -35943,6 +35995,7 @@
       "BoardSubscriptionRequest",
       "DescribeRequest",
       "EmptyRequest",
+      "RecallDoor",
       "RecallRequest",
       "ReceiptsRequest",
       "RoomClaimRequest",
@@ -35962,8 +36015,8 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 3,
-      "struct": 18
+      "fn": 5,
+      "struct": 19
      }
     },
     {
@@ -36138,7 +36191,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -39158,7 +39211,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39284,7 +39337,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 52,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39711,7 +39764,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 98,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39732,7 +39785,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 12,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40091,7 +40144,7 @@
     "speculative": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
@@ -40266,7 +40319,7 @@
    },
    "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2444,
+   "source_files": 2449,
    "test_files": 775
   },
   "oneiron-android": {
@@ -45576,7 +45629,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/facade/client/agent_verbs.rs",
@@ -45830,13 +45883,31 @@
   "oneiron-organ-host": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Answered",
+      "AskHandler",
+      "AskHandlers",
+      "AskRequest"
+     ],
+     "path": "src/asks.rs",
+     "purpose": "Protocol 1.1 asks, the engine side: who answers, within which caps, and what the receipt records",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 3,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/bin/oneiron-organ-probe.rs",
      "purpose": "A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 9
      }
     },
     {
@@ -45870,6 +45941,19 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "GuardedFetch"
+     ],
+     "path": "src/fetch.rs",
+     "purpose": "The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "OrganHost",
       "OrganOutcome",
       "OrganOutput"
@@ -45877,7 +45961,7 @@
      "path": "src/host.rs",
      "purpose": "The organ host: install, call, unload, revoke",
      "surface": {
-      "fn": 10,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -45888,32 +45972,36 @@
      "path": "src/lib.rs",
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
-      "re-export": 6
+      "re-export": 8
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/process.rs",
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AskReceipt",
       "CallReceipt",
+      "FetchTarget",
       "ReceiptInput",
-      "ReceiptOutput"
+      "ReceiptOutput",
+      "Unanswered"
      ],
      "path": "src/receipt.rs",
      "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes",
      "surface": {
       "crate-vis": 3,
-      "struct": 3
+      "enum": 1,
+      "struct": 5
      }
     },
     {
@@ -45955,8 +46043,12 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AskGrant",
       "CallClass",
+      "FetchGrant",
+      "FetchOrigin",
       "HostConfig",
+      "LentInput",
       "OrganCall",
       "OrganInput",
       "OrganSpec",
@@ -45966,9 +46058,17 @@
      "purpose": "What the engine installs and what a caller asks",
      "surface": {
       "enum": 2,
-      "fn": 1,
-      "struct": 4
+      "fn": 3,
+      "struct": 8
      }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_asks.rs",
+     "purpose": "Protocol 1.1 asks against a real organ process (the probe)",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -45996,6 +46096,13 @@
     }
    ],
    "modules": {
+    "asks": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Protocol 1.1 asks, the engine side: who answers, within which caps, and what the receipt records"
+    },
     "budget": {
      "files": 1,
      "impl_vault": false,
@@ -46010,6 +46117,13 @@
      "layout": "file",
      "purpose": "What can go wrong on the engine side of an organ call"
     },
+    "fetch": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the…"
+    },
     "host": {
      "files": 1,
      "impl_vault": false,
@@ -46020,7 +46134,7 @@
     "process": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls"
     },
@@ -46060,10 +46174,10 @@
      "purpose": "What the engine installs and what a caller asks"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 11,
-   "test_files": 3
+   "source_files": 13,
+   "test_files": 4
   },
   "oneiron-organ-protocol": {
    "files": [
@@ -46110,6 +46224,9 @@
      "kind": "src",
      "notable": [
       "Answer",
+      "AskBytes",
+      "AskReply",
+      "Asker",
       "CallContext",
       "InputBytes",
       "Organ",
@@ -46119,8 +46236,8 @@
      "purpose": "The organ side: handshake, frames, a small worker pool and cancel flags",
      "surface": {
       "const": 2,
-      "fn": 7,
-      "struct": 4,
+      "fn": 10,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -46150,9 +46267,18 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "Ask",
+      "AskAnswer",
+      "AskCode",
+      "AskData",
+      "AskOutcome",
+      "AskRefusal",
       "Call",
       "CancelReason",
       "ErrorCode",
+      "FetchAnswer",
+      "FetchAsk",
+      "FetchMethod",
       "FromOrgan",
       "Hash32",
       "Hello",
@@ -46177,10 +46303,10 @@
      "path": "src/wire.rs",
      "purpose": "The protocol's messages",
      "surface": {
-      "const": 4,
-      "enum": 7,
-      "fn": 3,
-      "struct": 16
+      "const": 7,
+      "enum": 10,
+      "fn": 7,
+      "struct": 22
      }
     },
     {
@@ -46189,6 +46315,14 @@
      "notable": [],
      "path": "tests/frames.rs",
      "purpose": "A frame is bounded by what it decodes to, not only by its bytes: a peer cannot make the other side…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sessions.rs",
+     "purpose": "The version handshake of the asks design (ARCH-0075 `#organ-host-design-asks`): a session speaks the lower…",
      "surface": {}
     }
    ],
@@ -46239,7 +46373,7 @@
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
    "source_files": 7,
-   "test_files": 1
+   "test_files": 2
   },
   "oneiron-py": {
    "files": [
@@ -48382,6 +48516,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/facade/tests/call_mode.rs",
+     "purpose": "Call mode at the HTTP recall door (retrieval hub #call-mode)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/git_http/gate.rs",
@@ -48649,7 +48791,7 @@
      "path": "src/api/mcp_gateway/stream_reads.rs",
      "purpose": "Own-task STREAM lines as one connection's credential may read them now: the board publisher admits each…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -48728,6 +48870,16 @@
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
       "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/off_record_rooms.rs",
+     "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -48878,6 +49030,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/search/deadline.rs",
+     "purpose": "Raw search under a request's hard deadline (`deadlineMs`): the page reads on the blocking pool, and the door…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -49053,6 +49215,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/mcp_quickjs/call_mode.rs",
+     "purpose": "Call mode through code mode's `self.memory.recall` (retrieval hub #call-mode)",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -49101,6 +49271,14 @@
      "surface": {
       "crate-vis": 51
      }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/off_record_rooms.rs",
+     "purpose": "ARCH-0052 D5, the notice model (owner ruling 2026-10-10, O1 = A): anyone in a room may start an off-record…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -49174,6 +49352,14 @@
      "notable": [],
      "path": "src/api/tests/run_tree.rs",
      "purpose": "Run-tree attempt-queue reads, agent_id projection, intervene effects, unbounded-read rejection",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/search_deadline.rs",
+     "purpose": "Raw search under a request's hard deadline, `deadlineMs` (retrieval hub #call-mode)",
      "surface": {}
     },
     {
@@ -49403,8 +49589,18 @@
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 22,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/credential_file.rs",
+     "purpose": "A file holding a credential, readable by its owner alone",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -49733,7 +49929,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 9,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -49829,6 +50025,27 @@
      "notable": [],
      "path": "src/config/process_env_tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecallConfig"
+     ],
+     "path": "src/config/recall.rs",
+     "purpose": "The `[recall]` section: how recall behaves at this server",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/config/recall_tests.rs",
+     "purpose": "Resolution rows for the `[recall]` section",
      "surface": {}
     },
     {
@@ -50982,7 +51199,7 @@
      "purpose": "MCP endpoint surface: modes, verb bindings, and the registered tool listing",
      "surface": {
       "const": 14,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 4,
       "fn": 16,
       "struct": 3
@@ -51338,13 +51555,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/off_record.rs",
      "purpose": "Off-record sessions (ARCH-0052, OF-326): enter a room whose writes land in an in-memory overlay, witness…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -51569,7 +51786,7 @@
      "path": "src/server/embedding.rs",
      "purpose": "The embedding worker: the one thing that drives the engine's reconciler",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -51609,7 +51826,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "re-export": 2
      }
     },
@@ -51633,7 +51850,7 @@
      "path": "src/server/recall.rs",
      "purpose": "The recall verb as every server transport runs it",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -52010,7 +52227,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it/mcp_stdio_agent.rs",
@@ -52116,7 +52333,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 168,
+     "files": 174,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52144,14 +52361,14 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 21,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52321,8 +52538,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 314,
-   "test_files": 123
+   "source_files": 318,
+   "test_files": 128
   },
   "oneiron-uniffi": {
    "files": [

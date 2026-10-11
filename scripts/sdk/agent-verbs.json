@@ -70,6 +70,7 @@
       "output": "crate::task_verb::TaskCancelReceipt",
       "call": "memory.cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
       "scope": "Write",
+      "proposes": true,
       "mcp_scope": "addressed",
       "mcp_fields": {
         "task_ref": "task_ref"
@@ -142,6 +143,7 @@
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
       "scope": "Write",
+      "proposes": true,
       "mcp_fields": {
         "spec": "spec",
         "label": "label"
@@ -179,6 +181,7 @@
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.witness(&input)?",
       "scope": "Write",
+      "lands_turn": true,
       "admission": {
         "validate": "crate::memory::caps::check_witness_turn(&input)?;"
       },
@@ -209,6 +212,7 @@
       "output": "crate::memory::CommitReceipt",
       "call": "memory.claim_upsert(&input)?",
       "scope": "Write",
+      "proposes": true,
       "admission": {
         "validate": "crate::memory::caps::check_claim_input(&input)?;"
       },
@@ -242,7 +246,7 @@
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
-        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?; crate::memory::caps::check_as_of(input.as_of)?;"
+        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?; crate::memory::caps::check_as_of(input.as_of)?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "section": false,
       "binding": {
@@ -274,12 +278,16 @@
           {
             "name": "as_of",
             "kind": "as_of"
+          },
+          {
+            "name": "deadline_ms",
+            "kind": "deadline_ms"
           }
         ],
         "docs": {
           "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease argument the engine takes is `None` and is NOT a client\n    /// input: no lease issuer exists, and a bearer slip is not one. An\n    /// `Effort::High` call therefore returns the engine's `LEASE_REQUIRED`\n    /// through both backends, spelled identically.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` is lease-gated and returns `LEASE_REQUIRED` until a\n   * lease-bearing constructor exists; this package neither mints nor\n   * simulates a lease.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` is lease-gated and raises ``LEASE_REQUIRED`` until a\n        lease-bearing constructor exists; this package neither mints nor\n        simulates a lease. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        "
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` is lease-gated and returns `LEASE_REQUIRED` until a\n   * lease-bearing constructor exists; this package neither mints nor\n   * simulates a lease. `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` is lease-gated and raises ``LEASE_REQUIRED`` until a\n        lease-bearing constructor exists; this package neither mints nor\n        simulates a lease. ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        "
         }
       },
       "uniffi": {
