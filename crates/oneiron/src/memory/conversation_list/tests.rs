@@ -117,6 +117,16 @@ fn reader_list(vault: &Vault, reader: &Reader, limit: usize) -> Listed {
     )
 }
 
+/// The vault's root project room: a channel only the owner is in.
+fn root_room(vault: &Vault) -> EntityId {
+    let project = vault.root_project().expect("root project");
+    let record = vault
+        .project(project)
+        .expect("read the project")
+        .expect("the root project");
+    EntityId::from_hex(&record.home_room).expect("its room")
+}
+
 /// How many of `listed`'s conversations are groups, channels or mirrors
 /// `reader` is not a member of, such as the vault's root project room.
 fn rooms_outside(vault: &Vault, listed: &Listed, reader: EntityId) -> usize {
@@ -298,7 +308,8 @@ fn reader_slip(
         .ensure_host_root_slip(issuer)
         .expect("host root")
         .claims;
-    claims.slip_id = *blake3::hash(b"conversation-list-reader").as_bytes();
+    let tag = format!("conversation-list-reader {scope:?} {records:?}");
+    claims.slip_id = *blake3::hash(tag.as_bytes()).as_bytes();
     claims.parent_id = None;
     claims.holder_ref = reader.to_hex();
     claims.actor_class = Some("human".into());
@@ -421,8 +432,10 @@ fn a_reader_lists_only_what_it_may_read() {
         [(kept, Some("booked for friday at eight".to_owned()))]
     );
     assert_eq!(read.total, Some(1));
-    // Every other conversation; a preview adds no count.
-    assert_eq!(read.withheld, all.rows.len() - 1);
+    // Every other conversation but a room the reader is not in; a preview
+    // adds no count.
+    let counted = all.rows.len() - 1 - rooms_outside(&vault, &all, reader.id);
+    assert_eq!(read.withheld, counted);
 
     // A filter sees only rows the reader may read: the receipt withholds
     // every conversation it may not read, whatever kind the filter names.
@@ -445,7 +458,7 @@ fn a_reader_lists_only_what_it_may_read() {
     );
     assert_eq!(
         filtered(reader.memory(&vault)).receipt.suppressed_count,
-        all.rows.len() - 1
+        counted
     );
 
     let first = reader_list(&vault, &reader, 1);
@@ -488,13 +501,14 @@ fn a_reader_lists_only_what_it_may_read() {
     );
     // The preview now passes over the message outside the reader's grant,
     // and still counts nothing of it.
-    assert_eq!(read.withheld, all.rows.len() - 1);
+    assert_eq!(read.withheld, counted);
 }
 
-/// How many conversations the owner lists beside `shown`, each one the
-/// reader may not read.
-fn others(vault: &Vault, owner: EntityId, shown: usize) -> usize {
-    list(vault, owner, 50).rows.len() - shown
+/// How many conversations the owner lists beside `shown`, each one `reader`
+/// may not read, but for a room it is not in: those add no count.
+fn others(vault: &Vault, owner: EntityId, reader: EntityId, shown: usize) -> usize {
+    let all = list(vault, owner, 50);
+    all.rows.len() - shown - rooms_outside(vault, &all, reader)
 }
 
 /// Two vaults the reader reads alike: one conversation with one turn it may
@@ -533,7 +547,7 @@ fn where_a_hidden_turn_falls_never_shows() {
             reader,
         } = reader_vault(&witnessed, &[room, shown]);
         let listed = reader_list(&vault, &reader, 50);
-        let others = others(&vault, owner, 1);
+        let others = others(&vault, owner, reader.id, 1);
         (
             listed.rows,
             listed.next,
@@ -607,7 +621,7 @@ fn where_a_hidden_conversation_falls_never_shows() {
             page(None, true),
             page(Some(&first), true),
         ];
-        (pages, others(&vault, owner, 2))
+        (pages, others(&vault, owner, reader.id, 2))
     });
     let (read, others) = &pages[0];
     assert_eq!(read[0], (vec![first], Some(first), None, *others));
@@ -849,13 +863,17 @@ fn a_deleted_session_keeps_the_owners_preview() {
 
 /// A group is relationship data (ARCH-0006a rule 2; Astra #1388 P1). A
 /// reader who may read every conversation, as itself or with a credential
-/// naming no record, never sees a group it is not in: no row, no title or
-/// roster, no words, and no count. A member who joined late with no history
-/// sees the group but nothing said before it joined. A member whose join
-/// shares the history previews it.
+/// naming no record, never sees a group it is not in, nor the vault's root
+/// project room: no row, no title or roster, no words, and no count. A
+/// member who joined late with no history sees the group but nothing said
+/// before it joined. A member whose join shares the history previews it. A
+/// room the lane withholds counts only when the reader is in it (Sol F2),
+/// whether the credential names no other room or reads no conversation.
 #[test]
 fn a_group_shows_only_to_its_members_and_only_what_they_were_shown() {
     use crate::conversation::{ConversationBody, HistoryChoice};
+    use crate::federation::ScopeAxis;
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 
     let (outside, late, shared) = (entity(0xB1), entity(0xB2), entity(0xB3));
     let words = "said only in the room";
@@ -903,6 +921,9 @@ fn a_group_shows_only_to_its_members_and_only_what_they_were_shown() {
             .any(|row| *row == (outside, Some(words.to_owned()))),
         "the owner sees every group"
     );
+    let root = root_room(&rooted.vault);
+    assert!(all.rows.iter().any(|(id, _)| *id == root));
+    assert_eq!(rooms_outside(&rooted.vault, &all, rooted.reader.id), 2);
     let unbounded = Reader {
         credential: Some(reader_slip(
             &rooted.vault,
@@ -915,7 +936,12 @@ fn a_group_shows_only_to_its_members_and_only_what_they_were_shown() {
     };
     for reader in [&rooted.reader, &unbounded] {
         let read = reader_list(&rooted.vault, reader, 50);
-        assert!(!read.rows.iter().any(|(id, _)| *id == outside));
+        assert!(
+            !read
+                .rows
+                .iter()
+                .any(|(id, _)| *id == outside || *id == root)
+        );
         assert!(read.rows.contains(&(late, None)), "{:?}", read.rows);
         assert!(read.rows.contains(&(shared, Some(words.to_owned()))));
         assert_eq!(
@@ -925,6 +951,111 @@ fn a_group_shows_only_to_its_members_and_only_what_they_were_shown() {
         assert_eq!(read.total, Some(read.rows.len() as u64));
         assert_eq!(read.withheld, 0, "a group it is not in adds no count");
     }
+
+    let named_rooms = Reader {
+        credential: Some(credential(
+            &rooted.vault,
+            &issuer,
+            rooted.reader.id,
+            &[late, shared],
+        )),
+        ..rooted.reader.clone()
+    };
+    let read = reader_list(&rooted.vault, &named_rooms, 50);
+    let ids: Vec<EntityId> = read.rows.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, [late, shared]);
+    assert_eq!(read.withheld, 0, "the rooms it is not in add no count");
+    let mut words_only = read_preset();
+    words_only.bands = ScopeAxis::Some(std::collections::BTreeSet::from([
+        ENTITY_TYPE_TURN,
+        ENTITY_TYPE_MESSAGE,
+    ]));
+    let no_conversation = Reader {
+        credential: Some(reader_slip(
+            &rooted.vault,
+            &issuer,
+            rooted.reader.id,
+            words_only,
+            Vec::new(),
+        )),
+        ..rooted.reader.clone()
+    };
+    let read = reader_list(&rooted.vault, &no_conversation, 50);
+    assert!(read.rows.is_empty());
+    assert_eq!(
+        read.withheld, 2,
+        "only the two rooms the reader is in count"
+    );
+}
+
+/// A member's sight of a room is judged in the snapshot of each read that
+/// takes a turn's words, never carried over from the list's own read (Sol
+/// F4). A history narrowed to the reader's join between the list's rows and
+/// their previews hides the turn said before the join, and so does a leave.
+#[test]
+fn a_room_narrowed_during_a_list_narrows_its_preview() {
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let room = entity(0xB5);
+    let words = "said before the reader joined";
+    let (rooted, _) = rooted_reader_with(|vault, owner, reader| {
+        let member = entity(0xB4);
+        vault
+            .put_entity(
+                &member,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a member",
+            )
+            .expect("put the member");
+        let actor = WriteActor::new(owner, EdgeActorClass::Human);
+        let body = ConversationBody {
+            kind: ConversationKind::Group,
+            member_ids: vec![member],
+            ..ConversationBody::default()
+        };
+        vault
+            .create_conversation(room, &body, actor, AT - 100)
+            .expect("create the group");
+        witness(
+            vault,
+            owner,
+            room,
+            entity(0xC4),
+            AT,
+            said(WitnessAuthor::User, words, Some(entity(SPACE))),
+        );
+        vault
+            .join_member(room, reader, actor, AT + 5, HistoryChoice::Share)
+            .expect("the reader joins");
+    });
+    let (vault, owner, reader) = (&rooted.vault, rooted.owner, rooted.reader.id);
+    let memory = rooted.reader.memory(vault);
+    let during_list = |change: Box<dyn FnOnce(&Vault)>| {
+        BEFORE_PREVIEWS.with(|hook| *hook.borrow_mut() = Some(change));
+        preview_of(&memory, room)
+    };
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    assert_eq!(preview_of(&memory, room).as_deref(), Some(words));
+    let narrowed = during_list(Box::new(move |vault: &Vault| {
+        vault
+            .set_history_visibility(room, reader, actor, AT + 6, AT + 5)
+            .expect("narrow the reader's history to its join");
+    }));
+    assert_eq!(narrowed, None);
+    let shared = during_list(Box::new(move |vault: &Vault| {
+        vault
+            .set_history_visibility(room, reader, actor, AT + 7, 0)
+            .expect("share the history again");
+    }));
+    assert_eq!(shared.as_deref(), Some(words));
+    let left = during_list(Box::new(move |vault: &Vault| {
+        vault
+            .leave_member(room, reader, actor, AT + 8)
+            .expect("the reader leaves");
+    }));
+    assert_eq!(left, None);
 }
 
 /// A credential that cannot read base reality learns nothing about it: no
@@ -974,8 +1105,10 @@ fn a_world_the_credential_cannot_read_adds_no_count() {
 
 /// The owner's own full credential reads as the owner: a manifest that
 /// narrows the owner's `core:read` to messages never drops a conversation
-/// from its list (ARCH-0057; Astra #1388 P2). The owner's narrower
-/// credential stays bounded by the manifest.
+/// from its list, the root project's room included (ARCH-0057; Astra #1388
+/// P2). The owner's narrower credential stays bounded by the manifest. The
+/// full credential still binds every read (Sol F1): a lane built with it
+/// reads nothing once it is revoked.
 #[test]
 fn the_owners_full_credential_lists_what_the_owner_lists() {
     use crate::authority::HostSlipIssuer;
@@ -1047,12 +1180,32 @@ fn the_owners_full_credential_lists_what_the_owner_lists() {
             .rows
             .contains(&(room, Some("the owner's words".to_owned())))
     );
+    let root = root_room(&vault);
+    assert!(plain.rows.iter().any(|(id, _)| *id == root));
     let full = credential(b"conversation-list-owner-manifest-full", None);
     assert!(full.is_full_vault_owner_grade());
     let with_full = owner_list(Some(&full));
+    assert!(with_full.rows.iter().any(|(id, _)| *id == root));
     assert_eq!((with_full.rows, with_full.total), (plain.rows, plain.total));
     let narrow = credential(b"conversation-list-owner-manifest-read", Some("read"));
     assert!(owner_list(Some(&narrow)).rows.is_empty());
+
+    let memory = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_read_proof(&full);
+    let lane = memory
+        .read_lane(ClaimReadStatus::Recorded)
+        .expect("the owner's lane");
+    let reads_room = || {
+        lane.read(&[PointRead::id(room)], None)
+            .is_ok_and(|read| read.value[0].is_some())
+    };
+    assert!(reads_room());
+    vault
+        .revoke_capability_slip(&issuer, full.claims().slip_id)
+        .expect("revoke the full credential");
+    assert!(!reads_room(), "a revoked credential reads nothing");
+    assert!(owner_list(None).rows.iter().any(|(id, _)| *id == room));
 }
 
 /// A credential reads relationship words only on its holder's live grant,

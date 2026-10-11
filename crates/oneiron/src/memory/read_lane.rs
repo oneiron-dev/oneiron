@@ -73,10 +73,11 @@ impl Memory<'_> {
                 })?;
             // The owner's own live, unattenuated credential reads as the
             // owner: a manifest never narrows the person on their own vault
-            // (ARCH-0057). A narrower credential, the owner's too, reads only
-            // what it grants.
+            // (ARCH-0057). The credential still binds the key, so a read made
+            // after it expires or is revoked reads nothing. A narrower
+            // credential, the owner's too, reads only what it grants.
             if owner && self.is_full_owner_credential_in_txn(&txn, proof)? {
-                return Ok(ScopedReadActorKey::vault_owner(self.actor));
+                return Ok(ScopedReadActorKey::vault_owner(self.actor).while_live(proof));
             }
             // Relationship data needs a participant or an approved grant
             // (ARCH-0006a), on top of what the credential itself admits.

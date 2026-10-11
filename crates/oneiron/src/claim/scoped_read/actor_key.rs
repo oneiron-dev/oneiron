@@ -159,6 +159,16 @@ impl ScopedReadActorKey {
         self.owner
     }
 
+    /// This key, bound to the credential it was presented with: every read
+    /// checks `proof` as it checks any credential's, live (unexpired and
+    /// unrevoked) in the read's own snapshot and within its records and
+    /// channels, while the key's own floor decides what the read admits.
+    #[must_use]
+    pub(crate) fn while_live(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
+        self.proof = Some(proof.clone());
+        self
+    }
+
     /// Read inside a room turn. The ceiling only narrows: every check this key
     /// already makes still runs.
     #[must_use]
