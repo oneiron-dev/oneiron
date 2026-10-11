@@ -243,10 +243,49 @@ fn a_restore_marks_only_the_vectors_it_embeds_again() {
             .all(|count| count.device == EmbeddingDevice::Metal),
         "{counts:?}"
     );
+    // The restore leaves its flag for a worker attached later, which then
+    // requeues nothing this one filled (bug repro, Sol R3: it re-embedded
+    // every restored record a second time).
+    assert_eq!(restored.cold_attach_embedder().unwrap(), 0);
+    assert_eq!(restored.embedding_provenance(&id).unwrap(), Some(metal()));
 
     let restored = Arc::get_mut(&mut restored).expect("one handle");
     restored.refill_embedding_space().unwrap();
     assert!(restored.embedding_provenance_counts().unwrap().is_empty());
+}
+
+/// A restore under no model leaves its records to the worker attached once
+/// the vault names its model (bug repro, Sol R2: nothing queued them then, and
+/// the restored vault never got its vectors back).
+#[test]
+fn a_restore_under_no_model_is_embedded_once_a_worker_attaches() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = crate::test_util::embedding_test_config();
+    let source = Arc::new(Vault::open(dir.path().join("source"), config.clone()).unwrap());
+    let id = entity_id(0xD2);
+    put_claim(&source, id, TEXT).unwrap();
+    drain_on(&source, cpu());
+    let checkpoint = dir.path().join("checkpoint");
+    source.snapshot_checkpoint(&checkpoint, 100).unwrap();
+    drop(source);
+
+    let target = dir.path().join("restored");
+    let mut no_model = config.clone();
+    no_model.embedding_model = None;
+    let (restored, _) = Vault::restore_checkpoint(
+        &checkpoint,
+        &target,
+        no_model,
+        crate::recovery::checkpoint::RestoreReason::Restore,
+        101,
+    )
+    .unwrap();
+    drop(restored);
+
+    let restored = Arc::new(Vault::open(&target, config).unwrap());
+    assert!(restored.cold_attach_embedder().unwrap() > 0);
+    drain_on(&restored, metal());
+    assert_eq!(restored.embedding_provenance(&id).unwrap(), Some(metal()));
 }
 
 /// Runs a worker on `device` until it leases nothing, for a vault on the

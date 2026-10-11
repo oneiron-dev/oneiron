@@ -7,9 +7,11 @@ use crate::{Error, Result};
 pub(crate) const COLD_ATTACH_PENDING_KEY: &[u8] = b"cold_attach_pending";
 
 impl crate::Vault {
-    /// Requeues pre-embedder records at priority 3 after the first model is attached.
-    /// Open with the provider's pinned model identity first. This is idempotent,
-    /// preserves hotter work, and never changes the model epoch or vector graph.
+    /// Requeues pre-embedder records at priority 3 after the first model is
+    /// attached, or after a restore: each record still owed a vector, never
+    /// one that holds its vector and is not pending. Open with the provider's
+    /// pinned model identity first. This is idempotent, preserves hotter work,
+    /// and never changes the model epoch or vector graph.
     pub fn cold_attach_embedder(&self) -> Result<usize> {
         if self.config.embedding_model.is_none() {
             return Err(Error::InvalidConfig(
@@ -57,7 +59,8 @@ pub(crate) fn remark_all_embeddable_pending_in_txn(
 ///
 /// A replacement (`replace_priority`) also drops what a record the rule does
 /// not embed still carries — a marker, a job, a lease — so none of it is left
-/// for a worker in the new space to trip over.
+/// for a worker in the new space to trip over. An attach leaves out a record
+/// that already holds its vector and is not pending.
 fn remark_pending_in_txn(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -82,6 +85,20 @@ fn remark_pending_in_txn(
         {
             retired.push(id);
         }
+    }
+    if !replace_priority {
+        // An attach queues only what is still owed a vector. A record that
+        // holds one and is not pending was embedded in this space already,
+        // e.g. a restored record the worker filled before this attach.
+        let mut owed = Vec::with_capacity(embeddable.len());
+        for (id, body) in embeddable {
+            if vault.store.vectors.get(wtxn, id.as_bytes())?.is_none()
+                || vault.store.has_current_pending_embedding_in_txn(wtxn, &id)?
+            {
+                owed.push((id, body));
+            }
+        }
+        embeddable = owed;
     }
     if replace_priority {
         for id in &retired {

@@ -128,10 +128,12 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
     // A vault that holds vectors opens only under its own model (bug repro:
     // doctor opened every vault under none and failed on each that holds
     // vectors). It is read without opening the vault; opening under it pins
-    // nothing new, and a vault that cannot be read is opened as before.
+    // nothing new. A vault that cannot be read, or whose stored id is not one
+    // a vault opens under, is opened as before, and the doctor reports it.
     vault_config.embedding_model = oneiron::Vault::stored_embedding_model(&args.path)
         .ok()
-        .flatten();
+        .flatten()
+        .filter(|model| oneiron::store::validate_embedding_model_id(model).is_ok());
     let mut report = match oneiron::Vault::open_owned(&args.path, vault_config) {
         Ok(vault) => {
             let mut report = serde_json::to_value(vault.doctor()?)?;
