@@ -21,7 +21,6 @@ use oneiron::{
     LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult, LlmStreamResult, ModelId,
     RetryableLlmError, UnsupportedCapability, Vault,
 };
-use oneiron::secret_custody::{SECRET_SCOPE_READ, SecretCustodyStatus};
 use oneiron_broker::{
     BrokerClient, BrokerError, CallHeader, Failure, Isolation, Outcome, Refusal, Shape,
 };
@@ -49,8 +48,8 @@ const REPLY_MARGIN: Duration = Duration::from_secs(15);
 
 /// Reads a provider key at the vault's custody door, for one call.
 pub trait KeyDoor: Send + Sync {
-    /// Whether the door holds an active secret `name` bound to
-    /// [`BROKER_EFFECTOR`] for reading, checked without its value, so a call
+    /// Whether the door would release the secret `name` to
+    /// [`BROKER_EFFECTOR`] now, checked without reading its value, so a call
     /// it would refuse is refused before its permit starts.
     fn check(&self, name: &str) -> anyhow::Result<()>;
 
@@ -75,26 +74,7 @@ impl VaultKeyDoor {
 
 impl KeyDoor for VaultKeyDoor {
     fn check(&self, name: &str) -> anyhow::Result<()> {
-        let id = self
-            .vault
-            .resolve_secret_ref(name)?
-            .ok_or_else(|| anyhow::anyhow!("no secret is registered as {name}"))?;
-        let metadata = self
-            .vault
-            .get_secret_metadata(&id)?
-            .ok_or_else(|| anyhow::anyhow!("secret {name} has no record"))?;
-        anyhow::ensure!(
-            metadata.status == SecretCustodyStatus::Active,
-            "secret {name} is not active"
-        );
-        anyhow::ensure!(
-            metadata.bindings.iter().any(|binding| {
-                binding.effector == BROKER_EFFECTOR
-                    && binding.scopes.iter().any(|scope| scope == SECRET_SCOPE_READ)
-            }),
-            "secret {name} has no read binding for {BROKER_EFFECTOR}"
-        );
-        Ok(())
+        Ok(self.vault.check_secret_at_door(name, BROKER_EFFECTOR)?)
     }
 
     fn read(&self, name: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
@@ -353,8 +333,12 @@ impl SingleRouteBackend for BrokerBackend {
     /// custody binding. Each refuses the call before its permit starts.
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         self.build(request, stream, "")?;
-        if !self.client.socket().exists() {
-            tracing::warn!(socket = %self.client.socket().display(), "no credential broker listens");
+        // Only a socket can be a broker: a call to any other path, or to none,
+        // would fail before anything went out.
+        let socket = std::fs::metadata(self.client.socket())
+            .is_ok_and(|meta| std::os::unix::fs::FileTypeExt::is_socket(&meta.file_type()));
+        if !socket {
+            tracing::warn!(socket = %self.client.socket().display(), "no credential broker socket");
             return Err(RetryableLlmError::StreamCut.into());
         }
         self.keys.check(&self.secret).map_err(|error| {

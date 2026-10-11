@@ -236,3 +236,16 @@ fn a_key_partly_spelled_in_escapes_is_redacted_outside_json_too() {
         );
     }
 }
+
+#[test]
+fn only_the_key_goes_from_an_escaped_run_that_percent_decodes_to_it() {
+    // Escaped spaces join the words around a percent-spelled key into one
+    // run; the words stay, and only the key's own bytes are redacted.
+    let every_byte: String = KEY.bytes().map(|byte| format!("%{byte:02x}")).collect();
+    let body = format!("{{\"error\":\"prefix\\u0020{every_byte}\\u0020suffix\"}}");
+    assert!(leaks(body.as_bytes(), KEY));
+    let stripped = strip(KEY.as_bytes(), body.as_bytes());
+    assert!(!leaks(&stripped, KEY), "{}", String::from_utf8_lossy(&stripped));
+    let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
+    assert_eq!(parsed["error"], "prefix [redacted] suffix");
+}

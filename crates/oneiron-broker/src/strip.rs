@@ -162,26 +162,35 @@ fn strip_percent_runs(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
 }
 
 fn percent_decoded(run: &[u8]) -> Zeroizing<Vec<u8>> {
+    percent_decoded_from(run).0
+}
+
+/// `run` percent-decoded, and for each decoded byte the span of `run` it
+/// came from.
+fn percent_decoded_from(run: &[u8]) -> (Zeroizing<Vec<u8>>, Vec<(usize, usize)>) {
     let hex = |byte: u8| {
         char::from(byte)
             .to_digit(16)
             .and_then(|digit| u8::try_from(digit).ok())
     };
     let mut out = Zeroizing::new(Vec::with_capacity(run.len()));
+    let mut from = Vec::with_capacity(run.len());
     let mut at = 0;
     while at < run.len() {
         let pair = (run[at] == b'%')
             .then(|| Some((hex(*run.get(at + 1)?)?, hex(*run.get(at + 2)?)?)))
             .flatten();
-        if let Some((high, low)) = pair {
+        let len = if let Some((high, low)) = pair {
             out.push((high << 4) | low);
-            at += 3;
+            3
         } else {
             out.push(run[at]);
-            at += 1;
-        }
+            1
+        };
+        from.push((at, at + len));
+        at += len;
     }
-    out
+    (out, from)
 }
 
 /// Replaces each span whose JSON-unescaped reading holds a form of the key.
@@ -243,9 +252,9 @@ fn hex4(digits: Option<&[u8]>) -> Option<u32> {
     u32::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()
 }
 
-/// Writes `run` to `out` with each match of a form in its unescaped reading
-/// replaced, at the match's source bytes. A run whose unescaped reading
-/// percent-decodes to the key is replaced whole.
+/// Writes `run` to `out` with each match of a form in its unescaped reading,
+/// and each key in that reading's percent-decoding, replaced at the match's
+/// source bytes only.
 fn strip_run(key: &[u8], forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec<u8>) {
     let mut text = Zeroizing::new(Vec::with_capacity(run.len()));
     // The source bytes each unescaped byte came from.
@@ -256,12 +265,6 @@ fn strip_run(key: &[u8], forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec
         sources.resize(text.len(), (at, at + len));
         at += len;
     }
-    if memchr::memchr(b'%', &text).is_some()
-        && memchr::memmem::find(&percent_decoded(&text), key).is_some()
-    {
-        out.extend_from_slice(MARKER);
-        return;
-    }
     let mut spans: Vec<(usize, usize)> = forms
         .iter()
         .flat_map(|form| {
@@ -270,6 +273,13 @@ fn strip_run(key: &[u8], forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec
                 .collect::<Vec<_>>()
         })
         .collect();
+    if memchr::memchr(b'%', &text).is_some() {
+        let (decoded, from) = percent_decoded_from(&text);
+        spans.extend(memchr::memmem::find_iter(&decoded, key).map(|found| {
+            let (first, last) = (from[found].0, from[found + key.len() - 1].1);
+            (sources[first].0, sources[last - 1].1)
+        }));
+    }
     spans.sort_unstable();
     let mut rest = 0;
     for (start, end) in spans {

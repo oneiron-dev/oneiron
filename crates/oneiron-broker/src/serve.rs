@@ -2,7 +2,7 @@
 //! uid only.
 
 use std::io;
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,8 +36,26 @@ pub struct ServeConfig {
 /// Listens on the socket and serves calls until the listener fails. A socket
 /// file left at the path by an earlier run, with no listener behind it, is
 /// replaced; a live one, or any other file there, is an error.
+///
+/// A broker holds an exclusive lock on `<socket>.lock` from before it looks
+/// at the path until it stops, so a second broker on the same path is
+/// refused before it can replace a socket the first has just bound.
 pub async fn serve(config: ServeConfig) -> io::Result<()> {
     let sender = Arc::new(Sender::new(&config.policy).map_err(io::Error::other)?);
+    let mut lock_path = config.socket.clone().into_os_string();
+    lock_path.push(".lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&lock_path)?;
+    // Held until serve returns.
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Err(io::ErrorKind::AddrInUse.into()),
+        Err(std::fs::TryLockError::Error(error)) => return Err(error),
+    }
     match std::fs::symlink_metadata(&config.socket) {
         Ok(meta) if meta.file_type().is_socket() => {
             match std::os::unix::net::UnixStream::connect(&config.socket) {

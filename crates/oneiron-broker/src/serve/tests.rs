@@ -408,4 +408,30 @@ async fn a_second_broker_never_takes_a_live_socket() {
         .await
         .expect("call");
     assert!(matches!(reply.outcome, Outcome::Answered { status: 200, .. }));
+
+    // A broker holding the path's lock may be between its stale check and
+    // its bind: a second one is refused and leaves the path alone.
+    let dir = tempfile::tempdir().expect("dir");
+    let socket = dir.path().join("broker.sock");
+    drop(std::os::unix::net::UnixListener::bind(&socket).expect("stale socket"));
+    let held = std::fs::File::create(dir.path().join("broker.sock.lock")).expect("lock file");
+    held.try_lock().expect("lock");
+    let second = tokio::time::timeout(
+        Duration::from_secs(5),
+        serve(ServeConfig {
+            socket: socket.clone(),
+            client_uid: live.uid,
+            policy: SendPolicy {
+                timeout: Duration::from_secs(20),
+                extra_roots: Vec::new(),
+            },
+        }),
+    )
+    .await
+    .expect("refused at once, not served");
+    assert_eq!(
+        second.err().map(|error| error.kind()),
+        Some(std::io::ErrorKind::AddrInUse)
+    );
+    assert!(socket.exists(), "the path was left to the lock holder");
 }

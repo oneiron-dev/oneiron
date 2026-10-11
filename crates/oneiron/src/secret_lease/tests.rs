@@ -391,6 +391,41 @@ fn binding_without_read_scope_denies_the_value_read() {
     );
 }
 
+#[test]
+fn the_door_check_agrees_with_the_door_without_reading_the_value() {
+    // A host asks the door before it starts a call that needs the value:
+    // each secret the door refuses, the check refuses, and each it releases,
+    // the check passes.
+    let (_tmp, vault) = temp_vault();
+    let unread = SecretBinding {
+        effector: EFFECTOR.to_owned(),
+        tier_ceiling: CustodyTier::T2LocalRegistered,
+        scopes: Vec::new(),
+    };
+    let read = binding(EFFECTOR, CustodyTier::T2LocalRegistered);
+    let cases = [
+        ("released", vec![read.clone()]),
+        (
+            "other-effector",
+            vec![binding("connector:other", CustodyTier::T2LocalRegistered)],
+        ),
+        // The door reads the first binding that names the effector.
+        ("first-unread", vec![unread, read]),
+    ];
+    for (name, bindings) in cases {
+        register(
+            &vault,
+            record(name, CustodyClass::CustodyPortable, VALUE_V1, bindings, Vec::new()),
+        );
+    }
+    for name in ["released", "other-effector", "first-unread", "never-registered"] {
+        let checked = vault.check_secret_at_door(name, EFFECTOR);
+        let injected = vault.inject_secret_at_door(name, EFFECTOR, &mut |_value| Ok(()));
+        assert_eq!(checked.is_ok(), injected.is_ok(), "{name}: {checked:?}");
+    }
+    assert!(vault.check_secret_at_door("released", EFFECTOR).is_ok());
+}
+
 // ---------------------------------------------------------------------------
 // T1 lease materialization
 // ---------------------------------------------------------------------------
