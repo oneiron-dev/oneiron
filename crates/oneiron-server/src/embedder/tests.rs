@@ -2036,7 +2036,11 @@ fn the_startup_probe_of_a_remote_rung_is_a_paid_call() {
     let mut config = endpoint_config(&local.base);
     config.remote = Some(remote_section(&remote.base, oneiron::EntityId::now()));
     let receipts = Arc::new(MemoryReceipts::default());
-    assert!(build_slot(Some(&config), receipts.clone()).unwrap().is_some());
+    assert!(
+        build_slot(Some(&config), receipts.clone())
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(remote.requests().len(), 1, "one probe post at the remote");
     assert!(matches!(
         remote_batches(&receipts).as_slice(),
