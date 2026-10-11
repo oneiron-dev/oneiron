@@ -50,7 +50,8 @@ pub enum Refusal {
     #[error("model is not the admitted one")]
     WireModel,
     /// The key is empty, too short or too long, or holds a byte outside the
-    /// strip rule's alphabet: one a URL holds, less the percent sign.
+    /// strip rule's alphabet (one a URL holds, less the percent sign), or is
+    /// part of the marker the rule writes.
     #[error("secret refused")]
     Secret,
     /// The provider could not be reached; no request byte was written.

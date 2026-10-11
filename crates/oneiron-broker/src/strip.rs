@@ -50,9 +50,12 @@ pub fn strip(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
 /// run holds, so an echo spelled in any mix of forms stays in one run the
 /// rule reads, and none is a quote, backslash or percent sign, which a
 /// reply's own JSON, escapes or percent-encoding could supply to complete a
-/// match. No provider issues a key outside this alphabet.
+/// match. No provider issues a key outside this alphabet. Nor is the key
+/// any part of [`MARKER`], which would put it back in every reply it is
+/// stripped from.
 pub(crate) fn admits(key: &[u8]) -> bool {
     key.iter().all(|&byte| is_url_byte(byte) && byte != b'%')
+        && memchr::memmem::find(MARKER, key).is_none()
 }
 
 /// Whether `bytes` holds any form of `key`.
