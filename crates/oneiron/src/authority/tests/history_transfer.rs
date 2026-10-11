@@ -765,3 +765,76 @@ fn a_handoff_hides_no_second_genesis() {
     let fold = fold_authority_log(&[genesis, other, handoff]);
     assert!(fold.vault_root_is_conflicted());
 }
+
+/// A retired key's confirmation contends with nothing (Sol review 1): it
+/// never wins a nonce collision against the new root's, so the new root's
+/// confirmation and the slip it minted after it stand.
+#[test]
+fn a_retired_root_confirmation_displaces_no_confirmation_of_the_new_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let old = ed_key(177);
+    let host = HostSlipIssuer::from_secret(b"successor root that confirms").unwrap();
+    let genesis = genesis_entry(177, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    store(&vault, &genesis);
+    vault
+        .apply_signed_re_root(&re_root_to_host(id, &genesis, &old, 1, &host))
+        .unwrap();
+    let action = |confirm: u8| {
+        AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+            kind: AuthorityConfirmKind::Accept,
+            confirm_id: [confirm; 32],
+            peer_vault_id: [78; 32],
+            epoch: 1,
+            nonce: [79; 16],
+        })
+    };
+    let fold = vault.authority_fold().unwrap();
+    let theirs = host
+        .sign_entry(
+            Some(id),
+            fold.append_sequences
+                .get(&host.public_key())
+                .copied()
+                .unwrap_or(0)
+                + 1,
+            fold.append_heads.iter().copied().collect(),
+            action(60),
+            4,
+        )
+        .unwrap();
+    vault
+        .put_authority_log_entry(&theirs, TimeRange { start: 4, end: 4 }, 4)
+        .unwrap();
+    let theirs_hash = authority_entry_hash(&theirs).unwrap();
+    let slip = vault.ensure_host_root_slip(&host).unwrap().claims.slip_id;
+    let forged = (1..=u8::MAX)
+        .filter(|confirm| *confirm != 60)
+        .map(|confirm| {
+            sign_ed(
+                unsigned_entry(
+                    Some(id),
+                    2,
+                    vec![authority_entry_hash(&genesis).unwrap()],
+                    action(confirm),
+                    authority_key_from_ed(&old),
+                    5,
+                ),
+                &old,
+            )
+        })
+        .find(|entry| authority_entry_hash(entry).unwrap() < theirs_hash)
+        .expect("a confirmation hashes below the new root's");
+
+    let (_replica_dir, replica) =
+        replica_with(vault.export_signed_authority_history().unwrap(), &forged);
+    let fold = replica.authority_fold().unwrap();
+    assert!(fold.valid_entries.contains(&theirs_hash));
+    assert!(fold.slip_is_live(&slip));
+    assert!(
+        fold.issues.contains(&AuthorityFoldIssue::RetiredSigner(
+            authority_entry_hash(&forged).unwrap()
+        ))
+    );
+}

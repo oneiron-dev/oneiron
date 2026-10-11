@@ -202,7 +202,9 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     }
     // Structure, signature and vault are not standing: a key a handoff
     // retired signs nothing new here, so its fork never reaches the log.
-    if local_fold.signed_by_retired_key(&entry_hash, &entry) {
+    if local_fold.signed_by_retired_key(&entry_hash, &entry)
+        && !crate::authority::authority_row_resident(store, wtxn, &entry)?
+    {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "authority row signed by a key a handoff retired",
         )));

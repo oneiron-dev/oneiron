@@ -569,10 +569,9 @@ fn fold_authority_log_once(
     }
 
     reject_below_concurrent_tier_floors(&mut states, &by_hash, &entry_ancestors, &mut issues);
-    // Confirmations are consumable across branches, not only in ancestry.
-    // Only entries already proven against their live roster can contend.
-    reject_replayed_federation_confirms(&mut states, &by_hash, &entry_ancestors, &mut issues);
     // A handoff's predecessor stays retired on every branch, not only its own.
+    // It runs before confirmations contend, so a retired key's confirmation
+    // never wins a nonce collision against the new root's.
     let retirements = super::retired_signers::reject_retired_signer_forks(
         &mut states,
         &by_hash,
@@ -580,6 +579,9 @@ fn fold_authority_log_once(
         &mut issues,
     );
     let retired_keys = retirements.keys();
+    // Confirmations are consumable across branches, not only in ancestry.
+    // Only entries already proven against their live roster can contend.
+    reject_replayed_federation_confirms(&mut states, &by_hash, &entry_ancestors, &mut issues);
     let mut vault_ids = BTreeSet::new();
     for state in states.values() {
         vault_ids.insert(state.vault_id);
@@ -615,13 +617,8 @@ fn fold_authority_log_once(
         };
     }
 
-    revoke_facts.add_dropped_slip_restrictions(
-        &by_hash,
-        &entry_ancestors,
-        context,
-        &states,
-        &retirements,
-    );
+    revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
+    revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = BTreeSet::new();
     for (hash, state) in &states {

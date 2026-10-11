@@ -241,6 +241,24 @@ pub(super) fn entry_signer_keys(entry: &AuthorityLogEntry) -> impl Iterator<Item
         .chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
 }
 
+/// Whether `entry` is already in the log at its own id. A resident row is
+/// history, not a new signature: replaying it adds no authority, so no door
+/// refuses it for its signer, whatever a clock-aware fold says of it now (the
+/// stale-roster window drops expired approvals from `valid_entries`).
+pub(crate) fn authority_row_resident(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entry: &AuthorityLogEntry,
+) -> crate::error::Result<bool> {
+    let id = authority_log_entity_id(entry)?;
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+        return Ok(false);
+    };
+    Ok(raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .is_some_and(|body| decode_authority_log_entry_body(body).is_ok_and(|row| row == *entry)))
+}
+
 impl AuthorityFold {
     /// Whether a row not yet in this fold is signed, as primary or co-signer,
     /// by a key a handoff retired. Such a key keeps no standing: its rows that

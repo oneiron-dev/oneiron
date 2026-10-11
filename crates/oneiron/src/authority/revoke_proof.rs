@@ -102,19 +102,16 @@ impl RevokeFacts {
     /// after it, a `SlipRevoke` or `SlipConsume` among them, and a revoked or
     /// spent slip would live again. An entry in `survivors` already applied
     /// its restriction through the ordinary fold; each dropped one is proved
-    /// on its own signed branch, as an actor revocation is. One that stands on
-    /// a key a handoff retired proves nothing: the old root withdraws no slip
-    /// the new root minted.
+    /// on its own signed branch, as an actor revocation is.
     pub(super) fn add_dropped_slip_restrictions(
         &mut self,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
         context: FoldContext<'_>,
         survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
-        retirements: &super::retired_signers::Retirements,
     ) {
         for (hash, entry) in entries {
-            if survivors.contains_key(hash) || retirements.excludes(hash, entries, ancestors) {
+            if survivors.contains_key(hash) {
                 continue;
             }
             let restriction = match &entry.op {
@@ -139,6 +136,21 @@ impl RevokeFacts {
                 },
             );
         }
+    }
+}
+
+impl RevokeFacts {
+    /// Forgets every restriction that stands on a key a handoff retired: the
+    /// old root revokes no actor and withdraws no slip the new root bound or
+    /// minted, whatever its own old branch says.
+    pub(super) fn forget_retired(
+        &mut self,
+        retirements: &super::retired_signers::Retirements,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ) {
+        self.by_hash
+            .retain(|hash, _| !retirements.excludes(hash, entries, ancestors));
     }
 }
 

@@ -128,6 +128,7 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
+pub(crate) use retired_signers::authority_row_resident;
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.

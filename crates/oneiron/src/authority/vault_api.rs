@@ -90,11 +90,12 @@ impl Vault {
             Some(self.authority_fold_readonly_in_txn(wtxn)?)
         };
         for (entry, occurred, learned_at) in entries {
-            if matches!(entry.op, AuthorityOp::RetiredCeiling { .. })
-                || local.as_ref().is_some_and(|fold| {
-                    authority_entry_hash(entry)
-                        .is_ok_and(|hash| fold.signed_by_retired_key(&hash, entry))
-                })
+            if matches!(entry.op, AuthorityOp::RetiredCeiling { .. }) {
+                return Err(invalid_authority());
+            }
+            if let Some(fold) = &local
+                && fold.signed_by_retired_key(&authority_entry_hash(entry)?, entry)
+                && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
             {
                 return Err(invalid_authority());
             }

@@ -437,7 +437,13 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
             "foreign authority log vault id",
         )));
     }
-    if local.signed_by_retired_key(&authority_entry_hash(&entry)?, &entry) {
+    if local.signed_by_retired_key(&authority_entry_hash(&entry)?, &entry)
+        && !crate::authority::authority_row_resident(
+            &vault.store,
+            &vault.store.env.read_txn()?,
+            &entry,
+        )?
+    {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "authority row signed by a key a handoff retired",
         )));
