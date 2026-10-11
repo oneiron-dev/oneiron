@@ -926,7 +926,7 @@ mod hostile {
         honest.install(seal_spec(ORGAN, FetchGrant::default()));
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
-        let settings = SealSettings::new(vec![cert.clone()], "seal");
+        let settings = SealSettings::new(vec![cert], "seal");
         let sealer = HostedSealer::new(&honest, &vault, &keys, settings);
         let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
         sealer.seal(&input, &request())?;
