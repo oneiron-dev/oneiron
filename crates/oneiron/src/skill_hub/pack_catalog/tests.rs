@@ -506,7 +506,10 @@ fn escaped_credential_in_any_pack_md_value_is_refused() {
     let err = capability(format!("grants: [{}]", escaped(&format!("{words} picnic"))))
         .expect_err("recovery phrase");
     assert!(
-        format!("{err:?}").contains("gate.secret_scan.mnemonic"),
+        format!("{err:?}").contains("credential material"),
         "{err:?}"
     );
+    // The run is joined text, not a record: two entries that only form an
+    // object once joined are not read as one.
+    assert!(capability(r#"grants: ["{\"token\"", ": \"VALUE\"}"]"#.to_owned()).is_ok());
 }

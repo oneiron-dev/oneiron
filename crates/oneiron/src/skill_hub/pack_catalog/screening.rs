@@ -143,9 +143,11 @@ impl Vault {
         if let Some(pack) = source.files().iter().find(|file| file.path == "PACK.md") {
             let text =
                 std::str::from_utf8(&pack.content).map_err(|_| invalid("PACK.md is not UTF-8"))?;
-            for (field, value) in super::manifest::decoded_frontmatter(text)? {
-                if let Some(reason) = decoded_rule(&value, &rules) {
-                    return Ok(Some(format!("PACK.md {field}: {reason}")));
+            for (field, decoded) in super::manifest::decoded_frontmatter(text)? {
+                for value in decoded.strings.iter().chain(&decoded.run) {
+                    if let Some(reason) = decoded_rule(value, &rules) {
+                        return Ok(Some(format!("PACK.md {field}: {reason}")));
+                    }
                 }
             }
             if let Some(reason) = screen_text(text, &rules) {

@@ -68,10 +68,16 @@ impl PackManifest {
     pub(super) fn parse(text: &str) -> Result<Self> {
         let fields = frontmatter_fields(text)?;
         // The source scans read the raw file, where a JSON escape can hide a
-        // credential; every decoded value gets both detectors again.
-        for (_, value) in decoded_fields(&fields) {
-            crate::batch::secret_scan::scan_metadata_field(&value)?;
-            if crate::batch::secret_scan::scan_file_content("PACK.md", value.as_bytes()).is_some() {
+        // credential; every decoded string gets both detectors again. A run
+        // is joined text, not a record, so it gets no structured reading: only
+        // the release door's text rules, which cover the write door's.
+        for (_, decoded) in decoded_fields(&fields) {
+            for value in &decoded.strings {
+                crate::batch::secret_scan::scan_metadata_field(value)?;
+            }
+            if decoded.strings.iter().chain(&decoded.run).any(|text| {
+                crate::batch::secret_scan::scan_file_content("PACK.md", text.as_bytes()).is_some()
+            }) {
                 return Err(invalid("pack source contains credential material"));
             }
         }
@@ -246,29 +252,33 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
     }
     Ok(fields)
 }
-/// Every frontmatter field's text as decoded, by key, for the scans that must
-/// see past JSON escapes.
-pub(super) fn decoded_frontmatter(text: &str) -> Result<Vec<(&str, String)>> {
+/// One frontmatter value as decoded, for the scans that must see past JSON
+/// escapes.
+pub(super) struct Decoded {
+    /// Each string a JSON string, list or map holds, map keys and repeated
+    /// keys included; any other value as written.
+    pub(super) strings: Vec<String>,
+    /// Several strings in order, one per line, as the raw file shows an
+    /// unescaped list: a recovery phrase can be spread over a list's entries.
+    /// Joined text, not a record.
+    pub(super) run: Option<String>,
+}
+/// Every frontmatter field's text as decoded, by key.
+pub(super) fn decoded_frontmatter(text: &str) -> Result<Vec<(&str, Decoded)>> {
     Ok(decoded_fields(&frontmatter_fields(text)?))
 }
-/// A JSON string, list or map yields each string it holds, map keys and
-/// repeated keys included, and when it holds several, all of them in order,
-/// one per line, as the raw file shows them (a recovery phrase can be spread
-/// over a list's entries); any other value is read as written.
-fn decoded_fields<'a>(fields: &BTreeMap<&'a str, &str>) -> Vec<(&'a str, String)> {
-    let mut decoded = Vec::new();
-    for (&key, value) in fields {
-        match serde_json::from_str::<Strings>(value) {
-            Ok(Strings(strings)) if value.starts_with(['"', '[', '{']) => {
-                if strings.len() > 1 {
-                    decoded.push((key, strings.join("\n")));
-                }
-                decoded.extend(strings.into_iter().map(|text| (key, text)));
-            }
-            _ => decoded.push((key, (*value).to_owned())),
-        }
-    }
-    decoded
+fn decoded_fields<'a>(fields: &BTreeMap<&'a str, &str>) -> Vec<(&'a str, Decoded)> {
+    fields
+        .iter()
+        .map(|(&key, value)| {
+            let strings = match serde_json::from_str::<Strings>(value) {
+                Ok(Strings(strings)) if value.starts_with(['"', '[', '{']) => strings,
+                _ => vec![(*value).to_owned()],
+            };
+            let run = (strings.len() > 1).then(|| strings.join("\n"));
+            (key, Decoded { strings, run })
+        })
+        .collect()
 }
 /// Every string a JSON value holds, decoded as serde_json decodes it.
 struct Strings(Vec<String>);
