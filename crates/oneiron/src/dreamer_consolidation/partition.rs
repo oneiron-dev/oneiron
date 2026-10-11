@@ -1,4 +1,3 @@
-use crate::ports::EdgeStoreRead;
 use std::collections::BTreeMap;
 
 use rmpv::Value;
@@ -238,6 +237,18 @@ pub(crate) fn plan_partitions_in_txn(
     partition_screened_turns_in_txn(vault, txn, &screened.kept, watermark)
 }
 
+/// The partitions `turns` plan under before any screen: the keys
+/// [`enqueue_partition_plans_in_txn`] groups the same turns by. A turn
+/// without its conversation edge plans under none.
+pub(crate) fn partition_turns_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    turns: &[WorkingSetTurn],
+    watermark: &ConsolidationWatermark,
+) -> Result<Vec<ConsolidationPartitionPlan>> {
+    partition_screened_turns_in_txn(vault, txn, turns, watermark)
+}
+
 fn partition_screened_turns_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
@@ -276,16 +287,6 @@ fn partition_screened_turns_in_txn(
 /// another.
 pub(crate) fn partition_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
     keyed_partition_round_hash(turns, &BTreeMap::new())
-}
-
-/// [`partition_round_hash`] keyed by each TURN's own re-dirty carrier, so a
-/// TURN changed again in the same second hashes as new work.
-pub(crate) fn carried_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
-    let carried = turns
-        .iter()
-        .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
-        .collect();
-    keyed_partition_round_hash(turns, &carried)
 }
 
 /// [`partition_round_hash`] over each TURN's selection key: a TURN in
@@ -350,6 +351,8 @@ fn partition_attempt_input(
 /// The caller still owns watermark settlement. Exact partition-batch replays
 /// coalesce on advisory dedupe keys; overlapping batches remain distinct.
 /// Missing, malformed, or no-longer-admissible turn rows abort the whole round.
+/// A turn without its conversation edge is left out: the settlement that
+/// passes it parks it on its carrier until the edge lands.
 pub fn enqueue_partition_attempts(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -383,15 +386,34 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     run_id: Option<&str>,
     now: u64,
 ) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
+    let keyed = enqueue_partition_plans_in_txn(
+        vault,
+        wtxn,
+        scope,
+        planned_turn_ids,
+        watermark,
+        run_id,
+        now,
+    )?;
+    Ok(keyed.into_iter().map(|(_, outcome)| outcome).collect())
+}
+
+/// [`enqueue_partition_attempts_in_txn`], naming the partition each attempt
+/// plans.
+pub(crate) fn enqueue_partition_plans_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    planned_turn_ids: &[EntityId],
+    watermark: &ConsolidationWatermark,
+    run_id: Option<&str>,
+    now: u64,
+) -> Result<Vec<(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)>> {
     if planned_turn_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let turns = read_partition_turns_in_txn(vault, wtxn, scope, planned_turn_ids)?;
-    if turns.iter().any(|turn| turn.conversation.is_none()) {
-        return Err(invalid_consolidation(
-            "dreamer planned turn has no conversation",
-        ));
-    }
+    let mut turns = read_partition_turns_in_txn(vault, wtxn, scope, planned_turn_ids)?;
+    turns.retain(|turn| turn.conversation.is_some());
     let screen = prefilter_partition_input_in_txn(vault, wtxn, &turns)?;
     let plans = partition_screened_turns_in_txn(vault, wtxn, &screen.kept, watermark)?;
     let carried: BTreeMap<_, _> = turns
@@ -401,10 +423,8 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     let store = DreamerRunnerStore::new(vault);
     let mut outcomes = Vec::with_capacity(plans.len());
     for plan in &plans {
-        outcomes.push(store.enqueue_consolidation_in_txn(
-            wtxn,
-            partition_attempt_input(scope, plan, &carried, run_id.map(str::to_owned), now),
-        )?);
+        let input = partition_attempt_input(scope, plan, &carried, run_id.map(str::to_owned), now);
+        outcomes.push((plan.key, store.enqueue_consolidation_in_txn(wtxn, input)?));
     }
     write_prefilter_receipts_in_txn(vault, wtxn, scope, &turns, &screen, now)?;
     Ok(outcomes)
@@ -414,8 +434,8 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
 /// the round watermark) for turns no sitting will end, such as the ones an
 /// import lands. Each round's plan, enqueue and watermark advance commit
 /// together, as the session close's do; rounds repeat until no dirty turn is
-/// left. A turn without a conversation stops planning at its second, exactly
-/// as it cuts a session's round. Returns how many attempts were enqueued.
+/// left. A turn without its conversation edge is parked on its carrier, as a
+/// session's round parks it. Returns how many attempts were enqueued.
 pub fn plan_dirty_turn_rounds(vault: &Vault, now: u64) -> Result<usize> {
     let scope = DreamerConsolidationScope::Meso;
     let mut enqueued = 0;
@@ -434,21 +454,11 @@ pub fn plan_dirty_turn_rounds(vault: &Vault, now: u64) -> Result<usize> {
                 return Ok(None);
             }
             let turns = read_partition_turns_in_txn(vault, wtxn, scope, &ids)?;
-            let round: Vec<_> = match turns
-                .iter()
-                .find(|turn| turn.conversation.is_none())
-                .map(|turn| turn.learned_at)
-            {
-                Some(cut) => turns.iter().filter(|turn| turn.learned_at < cut).collect(),
-                None => turns.iter().collect(),
-            };
-            let Some(advance_to) = round.iter().map(|turn| turn.learned_at).max() else {
+            let Some(advance_to) = turns.iter().map(|turn| turn.learned_at).max() else {
                 return Ok(None);
             };
-            let round_ids: Vec<_> = round.iter().map(|turn| turn.turn_id).collect();
-            let outcomes = enqueue_partition_attempts_in_txn(
-                vault, wtxn, scope, &round_ids, &watermark, None, now,
-            )?;
+            let outcomes =
+                enqueue_partition_attempts_in_txn(vault, wtxn, scope, &ids, &watermark, None, now)?;
             super::watermark::advance_watermark_in_txn(vault, wtxn, scope, advance_to)?;
             Ok(Some((ids, outcomes.len())))
         })?;
@@ -498,18 +508,7 @@ pub(crate) fn read_partition_turns_in_txn(
             ));
         }
 
-        let conversation = vault
-            .store
-            .port_edges(
-                txn,
-                turn_id,
-                crate::ports::EdgeDirection::Out,
-                Some(crate::edge::EdgeKind::ChildOf),
-                None,
-            )?
-            .next()
-            .transpose()?
-            .map(|edge| edge.target);
+        let conversation = super::redirty::conversation_in_txn(vault, txn, turn_id)?;
         // The effective dirty key the scan ordered this TURN by, so a
         // re-dirtied TURN's round hashes to a new attempt identity.
         let carrier =

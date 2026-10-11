@@ -254,27 +254,33 @@ fn turn_imported_in_txn(vault: &Vault, txn: &heed::RwTxn<'_>, turn: &EntityId) -
 
 impl Vault {
     /// The turn producer (ARCH-0026 RD-26): a landed turn counts against the
-    /// wake grain, and a due turn queues the Micro rounds for every turn no
-    /// Micro round has read yet.
+    /// wake grain, and a due turn offers the Micro rounds for every turn no
+    /// Micro round has read yet to the projector.
     ///
-    /// A turn's ordinal is its place in that unread window, so the Nth new
-    /// turn closes an N-turn grain; turns that landed together are due when
-    /// any of their ordinals is. The window's round hash is the image a
-    /// due wake compares against the last one queued: a wake with nothing new
-    /// writes nothing. Enqueue, projection cursor and Micro watermark land in
-    /// one transaction, so a crash cannot queue a window twice or lose one.
+    /// The continuous sieve reads what landed first, in the same commit. A
+    /// turn's ordinal is its place in the unread window, so the Nth new turn
+    /// closes an N-turn grain; turns that landed together are due when any of
+    /// their ordinals is. A due window goes to the projector's surprise check
+    /// partition by partition: a partition whose material the projection
+    /// already holds writes nothing, and the rest are queued with their
+    /// material held. Either way the window is read: the watermark passes it.
+    /// Sieve, enqueue, held material and Micro watermark land in one
+    /// transaction, so a crash cannot queue a window twice or lose one.
     ///
     /// An imported TURN belongs to its import's one review (ARCH-0027): it is
-    /// never planned here and never counts. The watermark steps over imported
-    /// turns up to the first live turn left unplanned, so no later wake reads
-    /// them again. Returns whether a wake was queued.
+    /// never planned here and never counts. A TURN without its conversation
+    /// edge is never planned or counted either; the settlement parks it on
+    /// its carrier until the edge lands, so it stops no later turn. The
+    /// watermark steps over both up to the first live turn left unplanned.
+    /// Returns whether a wake was queued.
     pub fn wake_dreamer_on_turn(&self, subject: WakeTurnSubject, now: u64) -> Result<bool> {
         use crate::dreamer_consolidation::{
-            advance_watermark_in_txn, carried_round_hash, collect_dirty_turn_ids_in_txn,
-            enqueue_partition_attempts_in_txn, read_partition_turns_in_txn, read_watermark_in_txn,
+            advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
+            enqueue_partition_plans_in_txn, read_partition_turns_in_txn, read_watermark_in_txn,
         };
         let scope = DreamerConsolidationScope::Micro;
         let queued = self.with_write_txn(|txn| {
+            super::sieve::sieve_pass_in_txn(self, txn, now)?;
             let watermark = read_watermark_in_txn(self, txn, scope)?;
             let ids = collect_dirty_turn_ids_in_txn(
                 self,
@@ -284,52 +290,51 @@ impl Vault {
                 u64::MAX,
             )?;
             let mut window = Vec::with_capacity(ids.len());
-            let mut imported = Vec::new();
+            let mut stepped = Vec::new();
             for turn in read_partition_turns_in_txn(self, txn, scope, &ids)? {
-                if turn_imported_in_txn(self, txn, &turn.turn_id)? {
-                    imported.push(turn.learned_at);
+                if turn.conversation.is_none() || turn_imported_in_txn(self, txn, &turn.turn_id)? {
+                    stepped.push(turn.learned_at);
                 } else {
                     window.push(turn);
                 }
             }
+            let due = !window.is_empty()
+                && turn_wake_due_in_txn(self, txn, subject, 1..=window.len() as u64)?;
+            // The watermark settles every turn up to where it moves, so an
+            // undue wake stops it before the first live turn it leaves.
             let first_live = window.iter().map(|turn| turn.learned_at).min();
-            // Session close's cut rule: a turn without its conversation edge
-            // stops the window at its second, same-second ties with it.
-            let cut = window
-                .iter()
-                .find(|turn| turn.conversation.is_none())
-                .map(|turn| turn.learned_at);
-            if let Some(cut) = cut {
-                window.retain(|turn| turn.learned_at < cut);
-            }
-            let image = carried_round_hash(&window);
-            let queue = !window.is_empty()
-                && turn_wake_due_in_txn(self, txn, subject, 1..=window.len() as u64)?
-                && self.queued_wake_projection_in_txn(txn)? != Some(image);
-            // The watermark settles every turn up to where it moves, so it
-            // stops before the first live turn this wake leaves unplanned.
-            let unplanned = if queue { cut } else { first_live };
-            let passed = imported
-                .iter()
-                .copied()
-                .filter(|at| unplanned.is_none_or(|live| *at < live))
-                .max();
-            let through = if queue {
-                window.iter().map(|turn| turn.learned_at).max().max(passed)
+            let through = if due {
+                window
+                    .iter()
+                    .map(|turn| turn.learned_at)
+                    .chain(stepped.iter().copied())
+                    .max()
             } else {
-                passed
+                stepped
+                    .iter()
+                    .copied()
+                    .filter(|at| first_live.is_none_or(|live| *at < live))
+                    .max()
             };
-            if queue {
-                let ids: Vec<_> = window.iter().map(|turn| turn.turn_id).collect();
-                enqueue_partition_attempts_in_txn(self, txn, scope, &ids, &watermark, None, now)?;
+            let mut queued = false;
+            if due {
+                let plan = super::projector::plan_in_txn(self, txn, &window, &watermark)?;
+                let enqueued = enqueue_partition_plans_in_txn(
+                    self,
+                    txn,
+                    scope,
+                    &plan.turns,
+                    &watermark,
+                    None,
+                    now,
+                )?;
+                super::projector::hold_in_txn(self, txn, &plan, &enqueued)?;
+                queued = !enqueued.is_empty();
             }
             if let Some(through) = through {
                 advance_watermark_in_txn(self, txn, scope, through)?;
             }
-            if queue {
-                self.set_queued_wake_projection_in_txn(txn, &image)?;
-            }
-            Ok(queue)
+            Ok(queued)
         })?;
         if queued {
             self.store.notify_attempt_observers();

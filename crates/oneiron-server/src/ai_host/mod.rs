@@ -221,6 +221,29 @@ impl AiHandle {
         });
     }
 
+    /// The sieve reads a bounded batch with each turn wake; history it has
+    /// not read yet (a vault the Dreamer starts on for the first time) is
+    /// read here, a pass at a time, off the request path. A no-op without a
+    /// running Dreamer.
+    fn drain_sieve(&self, vault: &Arc<Vault>) {
+        if self.hints.is_none() {
+            return;
+        }
+        let vault = Arc::clone(vault);
+        tokio::task::spawn_blocking(move || {
+            loop {
+                match vault.sieve_pass(vault.now_recorded_at()) {
+                    Ok(pass) if pass.more => {}
+                    Ok(_) => break,
+                    Err(error) => {
+                        tracing::warn!(%error, "sieve backlog pass failed");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     /// A Dreamer attempt was queued outside the driver: the running Dreamer
     /// takes a pass for it now instead of at its next deadline.
     pub fn attempt_queued(&self) {
@@ -321,6 +344,7 @@ impl AiHost {
         // Turns that landed while no Dreamer ran, or just before a crash,
         // get their due wake now rather than waiting for the next turn.
         host.handle.turn_landed(&vault, WakeTurnSubject::Vault);
+        host.handle.drain_sieve(&vault);
         host
     }
 

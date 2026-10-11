@@ -102,6 +102,14 @@ side_tables! {
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
     DREAMER_PROACTIVITY_STATE: VaultMeta b"dreamer:proactivity:state:v1" LegacyJson;
+    /// The held statements one TURN gave the projector, for erasure. Key: id16(turn).
+    DREAMER_PROJECTION_GIVEN: VaultMeta b"dreamer:projection:given:v1:" Named;
+    /// A statement the wake projection holds, valued with the round that queued it. Key:
+    /// hash32(partition) + hash32(statement).
+    DREAMER_PROJECTION_HELD: VaultMeta b"dreamer:projection:held:v1:" Raw;
+    /// One projector round: its attempt kind and dedupe key, and whether it applied. Key:
+    /// hash32(round).
+    DREAMER_PROJECTION_ROUND: VaultMeta b"dreamer:projection:round:v1:" Named;
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson;
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
@@ -113,6 +121,14 @@ side_tables! {
     /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
     /// successors. Key: id16.
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
+    /// Where the continuous sieve stands on the TURN timeline. Key: ().
+    DREAMER_SIEVE_CURSOR: VaultMeta b"dreamer:sieve:cursor:v1" Named;
+    /// A TURN owed a new sieve read (changed words or saved tags). Key: id16(turn).
+    DREAMER_SIEVE_OWED: VaultMeta b"dreamer:sieve:owed:v1:" Raw;
+    /// The sieve's interest queue, one span per row. Key: u32be(inverted score) + hash32(span).
+    DREAMER_SIEVE_QUEUE: VaultMeta b"dreamer:sieve:queue:v1:" Named;
+    /// What the sieve last read of one TURN and the queue keys of its spans. Key: id16(turn).
+    DREAMER_SIEVE_TURN: VaultMeta b"dreamer:sieve:turn:v1:" Named;
     /// Dreamer step index rows, plus the 'i:' sub-index. Key: bytes.
     DREAMER_STEP_INDEX: VaultMeta b"dreamer:step_index:v1:" Raw;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:

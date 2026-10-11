@@ -565,25 +565,74 @@ fn number_word(token: &str) -> Option<u32> {
 /// opening a number, stays in it (`0.5`, `.5`, `1,000`), so a decimal never
 /// splits into a different count.
 fn temporal_query_tokens(value: &str) -> Vec<String> {
-    let chars: Vec<char> = value.chars().collect();
+    temporal_tokens(value).0
+}
+
+/// The query tokens of `value` with each one's byte range in `value`.
+fn temporal_tokens(value: &str) -> (Vec<String>, Vec<(usize, usize)>) {
+    let chars: Vec<(usize, char)> = value.char_indices().collect();
     let mut tokens = Vec::new();
+    let mut ranges = Vec::new();
     let mut current = String::new();
-    for (index, &ch) in chars.iter().enumerate() {
-        let before = index.checked_sub(1).map(|before| chars[before]);
+    let mut start = 0;
+    for (index, &(at, ch)) in chars.iter().enumerate() {
+        let before = index.checked_sub(1).map(|before| chars[before].1);
         let in_number = matches!(ch, '.' | ',')
-            && chars.get(index + 1).is_some_and(char::is_ascii_digit)
+            && chars
+                .get(index + 1)
+                .is_some_and(|(_, next)| next.is_ascii_digit())
             && (before.is_some_and(|before| before.is_ascii_digit())
                 || (ch == '.' && !before.is_some_and(char::is_alphanumeric)));
         if ch.is_ascii_alphanumeric() || in_number {
+            if current.is_empty() {
+                start = at;
+            }
             current.push(ch.to_ascii_lowercase());
         } else if !current.is_empty() {
             tokens.push(std::mem::take(&mut current));
+            ranges.push((start, at));
         }
     }
     if !current.is_empty() {
         tokens.push(current);
+        ranges.push((start, value.len()));
     }
-    tokens
+    (tokens, ranges)
+}
+
+/// One temporal phrase found in running text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TemporalPhraseSpan {
+    /// Byte offset of the phrase's first character.
+    pub start: usize,
+    /// Byte offset just past its last character.
+    pub end: usize,
+    /// `false` for a phrase that reads as a time the parser cannot resolve
+    /// (`last several weeks`).
+    pub resolved: bool,
+}
+
+/// Every temporal phrase [`temporal_hints_from_query`] would read in `text`,
+/// with its byte range in `text`, in reading order.
+#[must_use]
+pub fn temporal_phrase_spans(text: &str) -> Vec<TemporalPhraseSpan> {
+    let (tokens, ranges) = temporal_tokens(text);
+    let mut spans = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let Some((end, expression)) = hint_at(&tokens, index) else {
+            index =
+                quantity_at(&tokens, index).map_or(index + 1, |(_, after)| after.max(index + 1));
+            continue;
+        };
+        spans.push(TemporalPhraseSpan {
+            start: ranges[index].0,
+            end: ranges[end - 1].1,
+            resolved: expression.is_some(),
+        });
+        index = end;
+    }
+    spans
 }
 
 fn weekday_index(token: &str) -> Option<u8> {

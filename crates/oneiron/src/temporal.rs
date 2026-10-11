@@ -8,7 +8,8 @@
 pub use oneiron_contracts::temporal::{
     QueryTemporalHints, TEMPORAL_MAX_REFERENCE_SECS, TemporalExpression,
     TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus,
-    TemporalUnit, TimeRange, WeekdayRelation, parse_temporal_expression, temporal_hints_from_query,
+    TemporalPhraseSpan, TemporalUnit, TimeRange, WeekdayRelation, parse_temporal_expression,
+    temporal_hints_from_query, temporal_phrase_spans,
 };
 
 /// Temporal anchor intent for bitemporal scoring.
