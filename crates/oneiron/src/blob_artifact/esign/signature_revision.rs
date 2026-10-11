@@ -9,7 +9,7 @@
 //! objects it re-emits keep every value and type: a real is written as the
 //! shortest decimal that reads back as the same real, never rounded.
 
-use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
+use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId, StringFormat};
 use sha2::{Digest, Sha256};
 
 use super::render::PdfPreparationError;
@@ -376,9 +376,10 @@ fn write_object(object: &Object, out: &mut Vec<u8>) -> Result<()> {
         Object::Null => out.extend_from_slice(b"null"),
         Object::Boolean(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
         Object::Integer(value) => out.extend_from_slice(value.to_string().as_bytes()),
-        Object::Real(value) => write_real(*value, out),
+        Object::Real(value) => write_real(*value, out)?,
         Object::Name(name) => write_name(name, out),
-        Object::String(bytes, _) => write_hex_string(bytes, out),
+        Object::String(bytes, StringFormat::Literal) => write_literal_bytes(bytes, out),
+        Object::String(bytes, StringFormat::Hexadecimal) => write_hex_string(bytes, out),
         Object::Array(items) => {
             out.push(b'[');
             for (i, item) in items.iter().enumerate() {
@@ -408,13 +409,37 @@ fn write_object(object: &Object, out: &mut Vec<u8>) -> Result<()> {
 /// A real as the same real: the shortest decimal that reads back as the
 /// same value, with a decimal point so it reads back as a real, not an
 /// integer. Six places would turn 0.0000004 into 0, and `0` would turn 0.0
-/// into an integer.
-fn write_real(value: f32, out: &mut Vec<u8>) {
-    let text = value.to_string();
+/// into an integer. An infinity, which lopdf reads from a decimal past f32,
+/// is written as such a decimal again.
+fn write_real(value: f32, out: &mut Vec<u8>) -> Result<()> {
+    let text = if value.is_finite() {
+        value.to_string()
+    } else if value.is_infinite() {
+        let sign = if value.is_sign_negative() { "-" } else { "" };
+        format!("{sign}1{}", "0".repeat(39))
+    } else {
+        return Err(PdfPreparationError::MalformedPdf);
+    };
     out.extend_from_slice(text.as_bytes());
     if !text.contains('.') {
         out.extend_from_slice(b".0");
     }
+    Ok(())
+}
+
+/// A literal string as the same literal string: `(`, `)` and `\` escaped,
+/// and every byte outside printable ASCII as a three-digit octal escape, so
+/// no raw end of line is read back as another.
+fn write_literal_bytes(bytes: &[u8], out: &mut Vec<u8>) {
+    out.push(b'(');
+    for &byte in bytes {
+        match byte {
+            b'(' | b')' | b'\\' => out.extend_from_slice(&[b'\\', byte]),
+            b' '..=b'~' => out.push(byte),
+            _ => out.extend_from_slice(format!("\\{byte:03o}").as_bytes()),
+        }
+    }
+    out.push(b')');
 }
 
 fn write_name(name: &[u8], out: &mut Vec<u8>) {

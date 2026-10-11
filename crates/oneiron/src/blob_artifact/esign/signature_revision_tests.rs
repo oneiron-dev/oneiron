@@ -86,34 +86,40 @@ fn classic(objects: &[&str]) -> Vec<u8> {
     out
 }
 
-/// Sol R13 on #1379: `1` would read a real 1.0 back as an integer. A real
-/// the page holds reads back as the same real in every revision.
+/// Values of every kind a writer re-emits, in PDF syntax, at their edges:
+/// reals without a fraction, tiny, negative zero and past f32 (lopdf reads
+/// those as infinities), literal strings with escapes and raw bytes, an
+/// empty literal and a hex string, a name with an escaped byte, nested empty
+/// containers, and the i64 limits.
+const EDGES: &str = r"/One 1.0 /Tiny 0.0000004 /NegZero -0.0
+    /Big 1000000000000000000000000000000000000000000.0
+    /Small -1000000000000000000000000000000000000000000.0
+    /Label (a\(b\)\\c\r\n\t\003 \377) /Empty () /Hex <00FF> /Spaced /A#20b
+    /Nested [<< >> [] (x) <>] /Max 9223372036854775807 /Min -9223372036854775808";
+
+/// Sol R12-R14 on #1379: the page every revision re-emits reads back equal
+/// to the prepared PDF's, value and type, as the verifier compares objects.
+/// Reals were rounded to six places, then written without a point or as
+/// `inf`, and literal strings came back as hex strings.
 #[test]
-fn the_signature_revision_keeps_a_real_a_real() {
+fn the_signature_revision_re_emits_the_page_as_it_was() {
+    let page = format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200.0 200] {EDGES} >>");
     let pdf = classic(&[
         "<< /Type /Catalog /Pages 2 0 R >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200.0 200] /UserUnit 1.0 >>",
+        &page,
     ]);
+    let before = Document::load_mem(&pdf)
+        .expect("the PDF reads")
+        .get_dictionary((3, 0))
+        .expect("the page")
+        .clone();
     let input = EsignSealInput::new(pdf, "op", 0).expect("the revisions");
     for revision in &input.revisions {
         let bytes = [input.pdf.as_slice(), revision.suffix.as_slice()].concat();
         let doc = Document::load_mem(&bytes).expect("the revision reads");
-        let page = *doc.get_pages().values().next().expect("a page");
-        let dict = doc.get_dictionary(page).expect("the page");
-        assert!(dict.has(b"Annots"), "the revision's own page");
-        let unit = dict.get(b"UserUnit");
-        assert!(
-            matches!(unit, Ok(Object::Real(unit)) if unit.to_bits() == 1.0_f32.to_bits()),
-            "{unit:?}"
-        );
-        let media = dict
-            .get(b"MediaBox")
-            .and_then(Object::as_array)
-            .expect("a box");
-        assert!(
-            matches!(media[2], Object::Real(width) if width.to_bits() == 200.0_f32.to_bits()),
-            "{media:?}"
-        );
+        let mut after = doc.get_dictionary((3, 0)).expect("the page").clone();
+        assert!(after.remove(b"Annots").is_some(), "the revision's own page");
+        assert_eq!(after, before);
     }
 }

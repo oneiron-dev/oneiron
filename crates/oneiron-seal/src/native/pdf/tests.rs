@@ -478,14 +478,27 @@ fn classic(objects: &[&str]) -> Vec<u8> {
     out
 }
 
-/// Sol R13 on #1379: with an indirect AcroForm the signature leaves the
-/// catalog alone, so the DSS revision is the first to re-emit it. `0` would
-/// read its 0.0 back as an integer, and the verifier, comparing catalogs by
-/// value and type, would refuse the organ's own B-LT seal.
+/// Values of every kind a writer re-emits, in PDF syntax, at their edges:
+/// reals without a fraction, tiny, negative zero and past f32 (lopdf reads
+/// those as infinities), literal strings with escapes and raw bytes, an
+/// empty literal and a hex string, a name with an escaped byte, nested empty
+/// containers, and the i64 limits.
+const EDGES: &str = r"/One 1.0 /Tiny 0.0000004 /NegZero -0.0
+    /Big 1000000000000000000000000000000000000000000.0
+    /Small -1000000000000000000000000000000000000000000.0
+    /Label (a\(b\)\\c\r\n\t\003 \377) /Empty () /Hex <00FF> /Spaced /A#20b
+    /Nested [<< >> [] (x) <>] /Max 9223372036854775807 /Min -9223372036854775808";
+
+/// Sol R12-R14 on #1379: with an indirect AcroForm the signature leaves the
+/// catalog alone, so the DSS revision is the first to re-emit it. The
+/// verifier compares the catalogs, `/DSS` aside, by value and type, and
+/// refused the organ's own B-LT seal when a real was rounded, written
+/// without a point or as `inf`, or a literal string came back as hex.
 #[test]
-fn a_dss_revision_keeps_a_catalog_real_a_real() {
+fn a_dss_revision_re_emits_the_catalog_as_it_was() {
+    let catalog = format!("<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R {EDGES} >>");
     let pdf = classic(&[
-        "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R /Threshold 0.0 >>",
+        &catalog,
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
         "<< /Fields [] >>",
@@ -499,14 +512,18 @@ fn a_dss_revision_keeps_a_catalog_real_a_real() {
         dss_obj,
     };
     let dss = append_revision(&signed.bytes, &state, &kind, 0).expect("dss revision");
-    let doc = Document::load_mem(&dss.bytes).expect("reload");
-    let catalog = doc.catalog().expect("catalog");
-    assert!(catalog.has(b"DSS"), "the DSS revision's own catalog");
-    let threshold = catalog.get(b"Threshold");
+    let catalog_of = |bytes: &[u8]| {
+        let doc = Document::load_mem(bytes).expect("the PDF reads");
+        doc.catalog().expect("catalog").clone()
+    };
+    let before = catalog_of(&pdf);
+    assert_eq!(catalog_of(&signed.bytes), before);
+    let mut after = catalog_of(&dss.bytes);
     assert!(
-        matches!(threshold, Ok(Object::Real(zero)) if zero.to_bits() == 0.0_f32.to_bits()),
-        "{threshold:?}"
+        after.remove(b"DSS").is_some(),
+        "the DSS revision's own catalog"
     );
+    assert_eq!(after, before);
 }
 
 #[test]

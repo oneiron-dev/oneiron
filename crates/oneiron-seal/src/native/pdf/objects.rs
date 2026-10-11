@@ -1,6 +1,6 @@
 //! Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked allocation.
 
-use lopdf::Object;
+use lopdf::{Object, StringFormat};
 
 use super::parse::{RevisionState, fatal_pdf, input_invalid};
 use crate::error::{FatalCode, InputInvalidCode, SealError};
@@ -19,9 +19,10 @@ fn write_object(obj: &Object, out: &mut Vec<u8>) -> Result<(), SealError> {
         Object::Null => out.extend_from_slice(b"null"),
         Object::Boolean(b) => out.extend_from_slice(if *b { b"true" } else { b"false" }),
         Object::Integer(i) => out.extend_from_slice(i.to_string().as_bytes()),
-        Object::Real(r) => write_real(*r, out),
+        Object::Real(r) => write_real(*r, out)?,
         Object::Name(n) => write_name(n, out),
-        Object::String(s, _) => write_hex_string(s, out),
+        Object::String(s, StringFormat::Literal) => write_literal_bytes(s, out),
+        Object::String(s, StringFormat::Hexadecimal) => write_hex_string(s, out),
         Object::Array(a) => {
             out.push(b'[');
             for (i, item) in a.iter().enumerate() {
@@ -53,13 +54,38 @@ fn write_object(obj: &Object, out: &mut Vec<u8>) -> Result<(), SealError> {
 /// A real as the same real: the shortest decimal that reads back as the
 /// same value, with a decimal point so it reads back as a real, not an
 /// integer. The verifier compares catalogs by value and type: six places
-/// would turn 0.0000004 into 0, and `0` would turn 0.0 into an integer.
-fn write_real(value: f32, out: &mut Vec<u8>) {
-    let text = value.to_string();
+/// would turn 0.0000004 into 0, and `0` would turn 0.0 into an integer. An
+/// infinity, which lopdf reads from a decimal past f32, is written as such a
+/// decimal again.
+fn write_real(value: f32, out: &mut Vec<u8>) -> Result<(), SealError> {
+    let text = if value.is_finite() {
+        value.to_string()
+    } else if value.is_infinite() {
+        let sign = if value.is_sign_negative() { "-" } else { "" };
+        format!("{sign}1{}", "0".repeat(39))
+    } else {
+        return Err(fatal_pdf(FatalCode::PdfInvariantFailed));
+    };
     out.extend_from_slice(text.as_bytes());
     if !text.contains('.') {
         out.extend_from_slice(b".0");
     }
+    Ok(())
+}
+
+/// A literal string as the same literal string: `(`, `)` and `\` escaped,
+/// and every byte outside printable ASCII as a three-digit octal escape, so
+/// no raw end of line is read back as another.
+fn write_literal_bytes(data: &[u8], out: &mut Vec<u8>) {
+    out.push(b'(');
+    for &b in data {
+        match b {
+            b'(' | b')' | b'\\' => out.extend_from_slice(&[b'\\', b]),
+            b' '..=b'~' => out.push(b),
+            _ => out.extend_from_slice(format!("\\{b:03o}").as_bytes()),
+        }
+    }
+    out.push(b')');
 }
 
 fn write_name(name: &[u8], out: &mut Vec<u8>) {
