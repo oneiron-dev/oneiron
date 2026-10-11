@@ -59,7 +59,7 @@ fn owner(vault: &Vault, request: Builder) -> Builder {
     let slip = vault
         .ensure_host_root_slip(&issuer)
         .expect("host root slip");
-    let timestamp = vault.capability_slip_now().expect("authority clock");
+    let timestamp = vault.now_recorded_at();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature: String = issuer

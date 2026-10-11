@@ -3,7 +3,29 @@ use super::invalid_authority;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::{Vault, error::Result};
 
+/// How far, either way, a proof's signed timestamp may sit from the vault's
+/// request clock ([`request_now_in_txn`]).
 const WINDOW_SECS: u64 = 60;
+
+/// The clock a holder proof's freshness is judged on, read without moving
+/// it: the vault's recording clock, which is wall time held at or above the
+/// floor the vault has committed. A holder signs on its own wall clock, so
+/// the window compares wall time with wall time. The authority clock stays
+/// the clock of slip lifetimes and authority facts; it does not count time
+/// the vault was closed or its host asleep, so a window judged on it refused
+/// every proof once that time passed 60 s.
+pub(super) fn request_now_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
+    Ok(crate::ports::authorization_floor_in_txn(&vault.store, txn)?
+        .max(vault.store.clock.peek_recorded_at()))
+}
+
+/// [`request_now_in_txn`] for the transaction that admits a proof. The
+/// reading is committed as the vault's clock floor beside the nonce row, so
+/// a wall clock that later steps back cannot reopen a proof whose row this
+/// reading evicted.
+pub(super) fn admission_now_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<u64> {
+    crate::ports::observe_clock_floor_in_txn(&vault.store, txn)
+}
 
 /// Key of one admitted replay-nonce marker: the signed timestamp as 16 lowercase hex digits,
 /// then `:`, then the keyed digest of (binding key + nonce) as 64 lowercase hex digits — the
@@ -86,8 +108,9 @@ pub(super) fn record_nonce(
     now: u64,
 ) -> Result<()> {
     request_challenge(timestamp, nonce, now)?;
-    // An evicted proof already fails `request_challenge`, so eviction opens no
-    // replay.
+    // An evicted proof already fails `request_challenge`, and `now` never runs
+    // back (callers pass `admission_now_in_txn`, committed with this row), so
+    // eviction opens no replay.
     let floor = now.saturating_sub(WINDOW_SECS);
     let mut expired = Vec::new();
     for row in REPLAY_NONCE.iter_from(&vault.store, txn, &[])? {

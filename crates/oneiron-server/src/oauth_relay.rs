@@ -378,12 +378,9 @@ mod tests {
         uri: &str,
         body: Option<serde_json::Value>,
     ) -> axum::http::Request<axum::body::Body> {
-        let proof = oneiron::authority::holder_proof(
-            slip,
-            holder,
-            server.vault().capability_slip_now().unwrap(),
-        )
-        .unwrap();
+        let proof =
+            oneiron::authority::holder_proof(slip, holder, server.vault().now_recorded_at())
+                .unwrap();
         axum::http::Request::builder()
             .method(method)
             .uri(uri)
