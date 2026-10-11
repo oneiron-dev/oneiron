@@ -37,8 +37,8 @@ pub fn validate_ppr_vad_alpha(alpha: f32) -> crate::error::Result<()> {
 /// Default hard byte budget for one live off-record session overlay.
 pub const DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
-/// The LMDB reader slots every opener of a vault asks for: both presets and
-/// the read-only door. LMDB sizes a vault's reader table (in `lock.mdb`) when
+/// The LMDB reader slots every opener of a vault asks for: both presets, the
+/// read-only door and the history import's dry run. LMDB sizes a vault's reader table (in `lock.mdb`) when
 /// a process opens it with no other process holding it, and never shrinks
 /// it; a process that opens beside a holder gets the holder's table. So every
 /// opener asks for the same table, and whoever opens first builds it.
