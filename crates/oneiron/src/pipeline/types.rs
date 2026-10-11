@@ -497,6 +497,16 @@ impl WorldAuthoritySet {
         &self.worlds
     }
 
+    /// What both sets admit. It holds no more worlds than either, so it
+    /// stays inside the cap.
+    #[must_use]
+    pub(crate) fn meet(&self, other: &Self) -> Self {
+        Self {
+            include_base: self.include_base && other.include_base,
+            worlds: self.worlds.intersection(&other.worlds).copied().collect(),
+        }
+    }
+
     /// Membership of an ordinary claim world, or base reality for non-claims.
     pub(crate) fn admits(&self, world: Option<EntityId>) -> bool {
         world.map_or(self.include_base, |world| self.worlds.contains(&world))
