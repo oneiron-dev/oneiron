@@ -168,9 +168,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/conversation_rooms.rs` | test | s | — | — | Room, membership, addressing, thread and listing routes through the HTTP router |
 | `src/api/tests/core_memory_conversations.rs` | test | XL | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
 | `src/api/tests/depth_quality.rs` | test | s | — | — | — |
+| `src/api/tests/mcp_code_check.rs` | test | s | — | — | Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
 | `src/api/tests/mcp_paging_cursors.rs` | test | m | — | — | Setup page budgets/end-markers, one-time bound cursors, mutating-use refusal, concurrent continuations |
-| `src/api/tests/mcp_quickjs.rs` | test | L | — | — | Production execute_code uses real JS through the vault-owned host and wire |
+| `src/api/tests/mcp_quickjs.rs` | test | L | 2 crate-vis | — | Production execute_code uses real JS through the vault-owned host and wire |
 | `src/api/tests/mcp_quickjs/call_mode.rs` | test | s | — | — | Call mode through code mode's `self.memory.recall` (retrieval hub #call-mode) |
 | `src/api/tests/mcp_results_carrier.rs` | test | m | — | — | Negotiated result content, board omission/health axes, discover vocabulary, carrier drain, skills-pack onramp |
 | `src/api/tests/mcp_scoping.rs` | test | m | — | — | Legacy catalog retirement, actor-derived effective scopes, world/facet ceilings, board epoch monotonicity |
@@ -240,7 +241,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 2 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
 | `src/config/mod.rs` | src | s | 9 mod · 11 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 6 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
-| `src/config/models/mod.rs` | src | m | 5 struct · 1 fn · 2 re-export · 2 crate-vis | ChatSettings, CodeModeSettings, DreamerSettings, ModelsConfig, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
+| `src/config/models/mod.rs` | src | m | 6 struct · 1 fn · 2 re-export · 2 crate-vis | ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
 | `src/config/models/provider.rs` | src | s | 1 struct · 2 enum · 2 fn · 3 crate-vis | OutputLimitField, ProviderConfig, ProviderKind | One provider entry: how to reach a model server, as data |
 | `src/config/models/tests.rs` | test | s | — | — | — |
 | `src/config/oneironer.rs` | src | m | 3 struct · 2 enum · 8 fn · 2 crate-vis | OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity and label table |
@@ -347,7 +348,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/oauth_client/tests.rs` | test | s | — | — | — |
 | `src/mcp/paging.rs` | src | m | 2 struct · 3 enum · 19 fn · 1 const · 4 crate-vis | McpPageBudget, McpPageCursorError, McpPageSource, McpResultEnd, McpRetrievalHealth | MCP page budgets, cursors, snapshots, and canonical-JSON digests |
 | `src/mcp/qualification.rs` | src | s | 1 re-export | — | Public MCP qualification API, implemented at the vault boundary |
-| `src/mcp/quickjs_provider.rs` | src | s | 1 struct · 4 fn | McpQuickJsProvider | Production MCP provider over the hash-pinned engine QuickJS component |
+| `src/mcp/quickjs_provider.rs` | src | s | 1 struct · 5 fn | McpQuickJsProvider | Production MCP provider over the hash-pinned engine QuickJS component |
 | `src/mcp/registry.rs` | src | m | 1 struct · 21 fn · 3 crate-vis | McpConnectorActorRegistry | MCP connector actor registry: cursors, board epochs, and stream proxy |
 | `src/mcp/results.rs` | src | s | 3 struct · 1 enum · 9 fn | McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError | MCP result envelopes: metadata, board keyframes, and setup payloads |
 | `src/mcp/schema_parts.rs` | src | s | 7 crate-vis | — | Shared JSON-schema fragments: actors, scopes, consent, and envelope pieces |
