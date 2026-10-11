@@ -953,9 +953,10 @@ fn sse_events_decode_across_reads_and_every_line_end() {
 
 /// A vault-held key's rung refuses, before its permit starts, a call that
 /// could only fail before anything is sent: no broker socket at the
-/// configured path (nothing there, or a file that is not a socket), or a
-/// custody door that would not release the key to the broker. None reads
-/// the key, and none is charged.
+/// configured path (nothing there, or a file that is not a socket), a
+/// same-user child that exits before it listens, or a custody door that
+/// would not release the key to the broker. None reads the key, and none is
+/// charged.
 #[cfg(unix)]
 #[tokio::test]
 async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
@@ -983,11 +984,16 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
         "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{{ model = \"paid:teacher\" }}]\n[broker]\nsocket = \"{}\"\nuid = {uid}\n",
         socket.display()
     ));
+    // A same-user child that exits before it listens.
+    let child = config(
+        "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{ model = \"paid:teacher\" }]\n[broker]\nprogram = \"/bin/false\"\n",
+    );
     let mut listener = None;
     let cases = [
         ("no path", true),
         ("a plain file", true),
         ("a door that refuses", false),
+        ("a child that never listens", true),
     ];
     for (case, holds) in cases {
         match case {
@@ -1002,7 +1008,12 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
             holds,
             reads: AtomicUsize::new(0),
         });
-        let runtime = ModelRuntime::build_with_keys(Some(&config), Some(door.clone()));
+        let config = if case == "a child that never listens" {
+            &child
+        } else {
+            &config
+        };
+        let runtime = ModelRuntime::build_with_keys(Some(config), Some(door.clone()));
         let model = runtime
             .seat(ModelRole::Checker)
             .expect("seat")

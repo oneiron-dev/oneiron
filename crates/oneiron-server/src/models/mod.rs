@@ -155,8 +155,14 @@ impl ModelRuntime {
         };
         let mut status = ModelsStatus::default();
         let mut built = BTreeMap::new();
+        // One broker for every `key_secret` provider, made only if one exists.
+        let brokered = config
+            .providers
+            .values()
+            .any(|provider| provider.key_secret.is_some() && provider.kind.generates());
+        let site = brokered.then(|| broker::BrokerSite::new(config).map_err(|error| error.to_string()));
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config, keys.as_ref()) {
+            match build_provider(name, provider, config, site.as_ref(), keys.as_ref()) {
                 Ok(Some(backend)) => {
                     built.insert(name.clone(), backend);
                     status.providers.push(ProviderStatus::ready(name, provider));
@@ -285,6 +291,7 @@ fn build_provider(
     name: &str,
     provider: &ProviderConfig,
     config: &ModelsConfig,
+    site: Option<&Result<broker::BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
@@ -292,11 +299,15 @@ fn build_provider(
         .map(|model| catalog_entry(model, provider))
         .collect::<anyhow::Result<Vec<_>>>()?;
     if provider.key_secret.is_some() && provider.kind.generates() {
+        let site = site
+            .ok_or_else(|| anyhow::anyhow!("no credential broker was made"))?
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
         return Ok(Some(Arc::new(broker::broker_backend(
             provider,
             catalog,
             output_cap(provider),
-            config.broker.as_ref(),
+            site,
             keys,
         )?)));
     }

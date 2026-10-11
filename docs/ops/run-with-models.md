@@ -101,6 +101,20 @@ base_url = "https://api.example.com"         # https only
 key_secret = "provider-key"
 ```
 
+Where no separate user exists, as on macOS, leave out `socket` and `uid`: the
+server then starts the broker as its own child, under its own user, at the first
+`key_secret` call. The child makes itself non-dumpable (`PT_DENY_ATTACH` on
+macOS), so another process of that user cannot read or trace its memory, and it
+serves only the server that started it. Its calls' receipts say `same_user`, and
+the run shows the unproven badge. A separate user stays the first choice. The
+child is the `oneiron-broker` beside the server's binary, or:
+
+```toml
+[models.broker]
+program = "/opt/oneiron/bin/oneiron-broker"   # absolute
+extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
+```
+
 A declared run's paid keys must sit at T0, so its teacher calls go out this way.
 A `key_secret` provider answers whole replies only for now: a streamed call to it
 is refused before it starts.

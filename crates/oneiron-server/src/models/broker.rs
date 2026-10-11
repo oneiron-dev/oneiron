@@ -12,6 +12,7 @@
 //! A streamed call is refused before its permit starts: the broker buffers
 //! and strips whole replies only.
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,7 +23,8 @@ use oneiron::{
     RetryableLlmError, UnsupportedCapability, Vault,
 };
 use oneiron_broker::{
-    BrokerClient, BrokerError, CallHeader, Failure, Isolation, Outcome, Refusal, Shape,
+    BrokerClient, BrokerError, CallHeader, ChildBroker, Failure, Isolation, Outcome, Refusal,
+    Shape,
 };
 use oneiron_llm_anthropic::{
     AnthropicMessagesConfig, build_anthropic_messages_request, classify_anthropic_status,
@@ -36,7 +38,7 @@ use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
 use super::output_cap::OutputCap;
-use crate::config::models::{BrokerConfig, ProviderConfig, ProviderKind};
+use crate::config::models::{BrokerConfig, ModelsConfig, ProviderConfig, ProviderKind};
 
 /// The effector a `key_secret`'s custody binding names: the custody door
 /// hands the key to a model call's broker leg and to nothing else.
@@ -114,32 +116,94 @@ pub(super) struct BrokerBackend {
     keys: Arc<dyn KeyDoor>,
 }
 
-/// One `key_secret` provider's backend, over the broker `broker` names and
-/// the key door `keys`.
+/// Where this server's `key_secret` providers send: a broker the host runs
+/// as its own user, or this server's same-user child
+/// (`#broker-same-user-open`), one for every provider.
+pub(super) enum BrokerSite {
+    User { socket: PathBuf, uid: u32 },
+    Child(Arc<ChildBroker>),
+}
+
+impl BrokerSite {
+    /// The site `config` names. A child is not started here: its first call
+    /// starts it.
+    pub(super) fn new(config: &ModelsConfig) -> anyhow::Result<Self> {
+        match &config.broker {
+            BrokerConfig::SeparateUser { socket, uid } => Ok(Self::User {
+                socket: socket.clone(),
+                uid: *uid,
+            }),
+            BrokerConfig::SameUser {
+                program,
+                extra_roots,
+            } => {
+                let program = match program {
+                    Some(program) => program.clone(),
+                    None => std::env::current_exe()?.with_file_name("oneiron-broker"),
+                };
+                anyhow::ensure!(
+                    program.is_file(),
+                    "no credential broker at {}; set models.broker.program",
+                    program.display()
+                );
+                // The child sends every provider's calls, under the longest
+                // of their timeouts.
+                let timeout = config
+                    .providers
+                    .values()
+                    .filter(|provider| provider.key_secret.is_some())
+                    .map(|provider| provider.timeout_secs)
+                    .max()
+                    .unwrap_or(1);
+                tracing::warn!(
+                    program = %program.display(),
+                    "the credential broker runs as this server's own user (same_user): \
+                     no separate user is configured in [models.broker]"
+                );
+                Ok(Self::Child(Arc::new(ChildBroker::new(
+                    program,
+                    extra_roots,
+                    Duration::from_secs(timeout),
+                )?)))
+            }
+        }
+    }
+
+    fn client(&self, reply_timeout: Duration) -> anyhow::Result<BrokerClient> {
+        match self {
+            Self::User { socket, uid } => BrokerClient::new(
+                socket.clone(),
+                *uid,
+                Isolation::SeparateUser,
+                reply_timeout,
+            )
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "models.broker.uid is this server's own user; the broker runs as its own"
+                )
+            }),
+            Self::Child(child) => Ok(BrokerClient::child(Arc::clone(child), reply_timeout)),
+        }
+    }
+}
+
+/// One `key_secret` provider's backend, over the broker at `site` and the
+/// key door `keys`.
 pub(super) fn broker_backend(
     provider: &ProviderConfig,
     catalog: Vec<LlmCatalogEntry>,
     cap: OutputCap,
-    broker: Option<&BrokerConfig>,
+    site: &BrokerSite,
     keys: Option<&Arc<dyn KeyDoor>>,
 ) -> anyhow::Result<BrokerBackend> {
     let secret = provider
         .key_secret
         .clone()
         .ok_or_else(|| anyhow::anyhow!("the provider names no key_secret"))?;
-    let broker = broker.ok_or_else(|| anyhow::anyhow!("no [models.broker] is configured"))?;
     let keys = keys
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("this server has no vault custody door"))?;
-    let client = BrokerClient::new(
-        broker.socket.clone(),
-        broker.uid,
-        Isolation::SeparateUser,
-        Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN,
-    )
-    .map_err(|_| {
-        anyhow::anyhow!("models.broker.uid is this server's own user; the broker runs as its own")
-    })?;
+    let client = site.client(Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN)?;
     let url = reqwest::Url::parse(&provider.base_url)?;
     let prefix = url.path().trim_end_matches('/').to_owned();
     let catalog: BTreeMap<ModelId, LlmCatalogEntry> = catalog
@@ -329,16 +393,15 @@ fn broker_error(error: BrokerError) -> LlmError {
 /// redirect, so a run's gate may wrap this backend.
 impl SingleRouteBackend for BrokerBackend {
     /// Everything a call can fail on before anything is sent, short of the
-    /// broker's own answer: the request, the broker's socket, and the
-    /// custody binding. Each refuses the call before its permit starts.
+    /// broker's own answer: the request, the broker (a host's socket, or the
+    /// same-user child, started here at its first call, which can take a
+    /// moment), and the custody binding. Each refuses the call before its
+    /// permit starts.
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         self.build(request, stream, "")?;
-        // Only a socket can be a broker: a call to any other path, or to none,
-        // would fail before anything went out.
-        let socket = std::fs::metadata(self.client.socket())
-            .is_ok_and(|meta| std::os::unix::fs::FileTypeExt::is_socket(&meta.file_type()));
-        if !socket {
-            tracing::warn!(socket = %self.client.socket().display(), "no credential broker socket");
+        // A call to no broker would fail before anything went out.
+        if let Err(error) = self.client.ready() {
+            tracing::warn!(%error, "no credential broker to send through");
             return Err(RetryableLlmError::StreamCut.into());
         }
         self.keys.check(&self.secret).map_err(|error| {
