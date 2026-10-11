@@ -146,6 +146,8 @@ struct Equality {
     failed_in_a: usize,
     failed_in_b: usize,
     failed_in_both: usize,
+    /// Queries of this grade only one run asked.
+    asked_by_one: usize,
 }
 
 /// Golden rankings per grade between two runs over the same queries; every
@@ -167,6 +169,12 @@ fn ranking_equality(a: &Run, b: &Run) -> Result<BTreeMap<String, Equality>, Stri
             .collect::<BTreeSet<_>>();
         for grade in grades {
             let entry = out.entry(grade.clone()).or_default();
+            let asked =
+                |q: &GoldenQuery| q.rankings.contains_key(grade) || q.errors.contains_key(grade);
+            if !(asked(qa) && asked(qb)) {
+                entry.asked_by_one += 1;
+                continue;
+            }
             match (qa.rankings.get(grade), qb.rankings.get(grade)) {
                 (Some(x), Some(y)) if x == y => entry.equal += 1,
                 (Some(_), Some(_)) => entry.differ += 1,
@@ -237,8 +245,8 @@ fn compare_run(out: &mut String, a: &Run, b: &Run) {
                     &format!("golden {grade}: rankings"),
                     &format!("equal {}/{total}, differ {}", e.equal, e.differ),
                     &format!(
-                        "failed only in A {}, only in B {}, in both {}",
-                        e.failed_in_a, e.failed_in_b, e.failed_in_both
+                        "failed only in A {}, only in B {}, in both {}; asked by one run {}",
+                        e.failed_in_a, e.failed_in_b, e.failed_in_both, e.asked_by_one
                     ),
                 );
             }

@@ -399,48 +399,58 @@ impl Ctx<'_> {
 
 /// The server's warning when an embedding pass fails and it backs off.
 const PASS_FAILED: &str = "embedding reconciliation failed";
+/// The server's info line after an embedding pass that leased work, logged
+/// once its fills have committed. A pass that finds no work logs nothing.
+const PASS_DONE: &str = "embedding reconcile pass";
 
-/// Waits until the stub has answered a text carrying each of the `expected`
-/// records' tags and the server has then used under 0.1 CPU-second a second
-/// for 5 s; returns the seconds that took. An error when the server logs a
-/// failed embedding pass, sees no new record for 120 s, or `cap` runs out:
-/// the run's vector numbers would not be the filled vault's.
+/// Waits for evidence that every written record's vector is stored and
+/// published: the stub has answered a text carrying each of the `expected`
+/// records' tags, the server has since logged the pass that stored the last
+/// of them, and then `settle` has passed with no further pass (the worker's
+/// idle sleep, after which it publishes what it staged). Returns the seconds
+/// that took. An error when the server exits, logs a failed pass, or `cap`
+/// runs out: the run's vector numbers would not be the filled vault's.
 pub(super) fn drain(
     server: &Running,
     stub: &StubEmbedder,
     expected: usize,
+    settle: Duration,
     cap: Duration,
 ) -> Result<f64, String> {
     let started = Instant::now();
-    let (mut quiet, mut stalled) = (0, 0);
-    let (mut last_cpu, mut last_records) = (cpu_seconds(server.pid), stub.records());
+    // Passes are read before the stub each time: a pass logged after a
+    // reading of the stub that was short of `expected` is logged after the
+    // count taken just before that reading.
+    let mut passes = server.log_count(PASS_DONE);
+    let mut since_pass = Instant::now();
+    // Everything was embedded during ingest: any pass still storing it logs
+    // within `settle`.
+    let complete_at_start = stub.records() >= expected;
+    // The pass count read just before the stub was first seen complete.
+    let mut before_complete = None;
     while started.elapsed() < cap {
         std::thread::sleep(Duration::from_secs(1));
-        let (cpu, records) = (cpu_seconds(server.pid), stub.records());
-        let (Some(now), Some(before)) = (cpu, last_cpu) else {
-            return Err("drain: the server's CPU time is unreadable; it has exited".into());
-        };
+        if cpu_seconds(server.pid).is_none() {
+            return Err("drain: the server has exited".into());
+        }
         if server.logged(PASS_FAILED) {
             return Err(format!("drain: the server logged `{PASS_FAILED}`"));
         }
-        quiet = if now - before < 0.1 { quiet + 1 } else { 0 };
-        stalled = if records == last_records {
-            stalled + 1
-        } else {
-            0
-        };
-        (last_cpu, last_records) = (cpu, records);
-        if records >= expected && quiet >= 5 {
-            return Ok(started.elapsed().as_secs_f64());
+        let now = server.log_count(PASS_DONE);
+        if now != passes {
+            since_pass = Instant::now();
         }
-        if records < expected && stalled >= 120 {
-            return Err(format!(
-                "drain: {records} of {expected} records embedded, none new for 120 s"
-            ));
+        if !complete_at_start && before_complete.is_none() && stub.records() >= expected {
+            before_complete = Some(passes);
+        }
+        passes = now;
+        let stored = complete_at_start || before_complete.is_some_and(|before| passes > before);
+        if stored && since_pass.elapsed() >= settle {
+            return Ok(started.elapsed().as_secs_f64());
         }
     }
     Err(format!(
-        "drain: {} of {expected} records embedded within {} s",
+        "drain: {} of {expected} records embedded, {passes} passes, within {} s",
         stub.records(),
         cap.as_secs()
     ))

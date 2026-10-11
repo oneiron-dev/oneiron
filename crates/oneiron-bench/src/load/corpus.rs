@@ -155,7 +155,7 @@ pub(super) enum Record {
 }
 
 impl Record {
-    pub(super) fn index(&self) -> usize {
+    fn index(&self) -> usize {
         match self {
             Self::Turn { index, .. } | Self::Claim { index, .. } => *index,
         }

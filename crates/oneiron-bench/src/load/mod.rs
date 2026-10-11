@@ -59,6 +59,7 @@ struct Plan {
     grades: Vec<Grade>,
     cell_requests: usize,
     cell_seconds: f64,
+    drain_settle_seconds: u64,
     server_env: Vec<(String, String)>,
     signal_cells: Vec<(String, String)>,
     skip: Vec<String>,
@@ -68,7 +69,8 @@ const USAGE: &str = "usage: oneiron-bench load run --server <oneiron-server> --w
   [--label TEXT] [--records 1000,10000] [--vectors off|on|both] [--agents 1,8,32,128]\n\
   [--ingest-callers 32] [--single-writes 200] [--seed 7] [--hot-subject 0.2] [--queries 50]\n\
   [--dimensions 1024] [--grades call,light,medium] [--call-deadline-ms N] [--cell-requests 200]\n\
-  [--cell-seconds 60] [--server-env KEY=VALUE]... [--signal-cell CELL:SIGNAL]...\n\
+  [--cell-seconds 60] [--drain-settle-seconds 35] [--server-env KEY=VALUE]...\n\
+  [--signal-cell CELL:SIGNAL]...\n\
   [--skip mixed,fairness,agent-memory,restart]\n\
 or:    oneiron-bench load startup --server <oneiron-server> --work <dir> --out <file.json>\n\
   [--label TEXT] [--repeat 3] [--server-env KEY=VALUE]...\n\
@@ -103,6 +105,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
         grades: ["call", "light", "medium"].map(Grade::named).to_vec(),
         cell_requests: 200,
         cell_seconds: 60.0,
+        drain_settle_seconds: 35,
         server_env: Vec::new(),
         signal_cells: Vec::new(),
         skip: Vec::new(),
@@ -142,6 +145,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
             "--call-deadline-ms" => call_deadline = Some(num(value)? as u64),
             "--cell-requests" => plan.cell_requests = num(value)?,
             "--cell-seconds" => plan.cell_seconds = num(value)? as f64,
+            "--drain-settle-seconds" => plan.drain_settle_seconds = num(value)? as u64,
             "--server-env" => {
                 let (k, v) = value.split_once('=').ok_or("--server-env is KEY=VALUE")?;
                 plan.server_env.push((k.to_owned(), v.to_owned()));
@@ -225,7 +229,6 @@ fn host() -> Host {
 }
 
 fn execute(plan: &Plan) -> Result<(), String> {
-    server::stop_servers_on_cancel(plan.work.clone());
     let mut report = Report {
         bench: "oneiron-bench load v1".to_owned(),
         label: plan.label.clone(),
@@ -262,6 +265,7 @@ fn plan_echo(plan: &Plan) -> serde_json::Value {
         "dimensions": plan.dimensions,
         "grades": plan.grades.iter().map(|g| json!({"name": g.name, "effort": g.effort, "deadline_ms": g.deadline_ms, "limit": g.limit})).collect::<Vec<_>>(),
         "cell_requests": plan.cell_requests, "cell_seconds": plan.cell_seconds,
+        "drain_settle_seconds": plan.drain_settle_seconds,
         "server_env": plan.server_env, "signal_cells": plan.signal_cells, "skip": plan.skip,
     })
 }
@@ -409,6 +413,7 @@ fn measure(
             ctx.server,
             stub,
             expected,
+            Duration::from_secs(plan.drain_settle_seconds),
             Duration::from_secs(3600),
         )?);
         run.notes.push(format!(

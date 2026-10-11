@@ -30,10 +30,14 @@ vault:
    claim (`POST /v1/core/facade/claim_upsert`, about the turn's conversation,
    or about the vault owner with probability `--hot-subject`).
 4. With vectors: wait until the stub has answered a text carrying every
-   record's tag and the server has then gone quiet (`drain_seconds`). The run
-   fails instead when the server logs a failed embedding pass, no new record is
-   embedded for 120 s, or an hour passes. **steady** memory and **disk_mib**
-   follow.
+   record's tag, the server has since logged the embedding pass that stored
+   the last of them (`serve` runs with
+   `RUST_LOG=<level>,oneiron_server::server::embedding=info` for these lines),
+   and `--drain-settle-seconds` (35, beyond the worker's 15 s idle sleep and
+   its publication of what it staged) pass with no further pass
+   (`drain_seconds`). The run fails instead when the server exits, logs a
+   failed embedding pass, or an hour passes. **steady** memory and
+   **disk_mib** follow.
 5. **golden**: each golden query once per grade by one agent; the result keeps
    every query's ranking (as record indexes, read from a tag word every record
    carries) and the hit@10 of the record each targeted query was drawn from. A
@@ -96,9 +100,9 @@ On a shared host, book the whole box and repeat each run; the result records
 the load average before and after every cell, the host's CPU and the job's
 cgroup CPU quota.
 
-Each running server's pid sits in `serve.pid` beside its vault. On SIGINT or
-SIGTERM the bench stops those servers before it exits; a SIGKILL leaves them
-running, so stop them by that pid.
+The server runs in the bench's process group. Stop a run with Ctrl-C or a
+signal to the whole group (`kill -TERM -<pgid>`); a signal to the bench alone
+skips its cleanup and leaves the server running.
 
 ## Compare two commits
 

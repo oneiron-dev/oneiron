@@ -2,8 +2,9 @@
 //! `token agent` on the stopped vault, then `serve` on loopback with a
 //! sampler thread reading the child's `/proc` memory every 100 ms.
 //!
-//! A running server's pid sits in `serve.pid` beside its vault until it is
-//! stopped, so a cancelled bench stops it too ([`stop_servers_on_cancel`]).
+//! The server stays in the bench's process group: Ctrl-C, or a signal to the
+//! group, stops both. A signal to the bench alone skips its destructors and
+//! leaves the server running.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,6 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::signal::unix::{SignalKind, signal};
 
 use super::embedder::{MODEL_ID, MODEL_KEY};
 
@@ -226,12 +226,9 @@ pub(super) fn cpu_seconds(pid: u32) -> Option<f64> {
     Some(ticks / 100.0)
 }
 
-const PID_FILE: &str = "serve.pid";
-
 /// A running `serve`: its port, readiness time and memory peak.
 pub(super) struct Running {
     child: Child,
-    pid_file: PathBuf,
     log: PathBuf,
     pub(super) pid: u32,
     pub(super) base: String,
@@ -270,6 +267,11 @@ impl Running {
             .arg(&vault.path)
             .args(["--host", "127.0.0.1", "--port", &port.to_string()])
             .args(["--log-level", log_level])
+            // The embedding worker's pass lines are the drain's evidence.
+            .env(
+                "RUST_LOG",
+                format!("{log_level},oneiron_server::server::embedding=info"),
+            )
             .env("ONEIRON_AUTH_SECRET", &vault.secret)
             .env("NO_COLOR", "1")
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
@@ -279,8 +281,6 @@ impl Running {
             .spawn()
             .map_err(|e| format!("spawn serve: {e}"))?;
         let pid = child.id();
-        let pid_file = vault.dir.join(PID_FILE);
-        fs::write(&pid_file, pid.to_string()).map_err(|e| format!("{PID_FILE}: {e}"))?;
         let peak = Arc::new(Mutex::new(Memory::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let sampler = {
@@ -296,7 +296,6 @@ impl Running {
         };
         let mut running = Self {
             child,
-            pid_file,
             log: log_path,
             pid,
             base: format!("http://127.0.0.1:{port}"),
@@ -341,7 +340,14 @@ impl Running {
 
     /// Whether the server's log so far contains `text`.
     pub(super) fn logged(&self, text: &str) -> bool {
-        fs::read_to_string(&self.log).is_ok_and(|log| log.contains(text))
+        self.log_count(text) > 0
+    }
+
+    /// How many lines of the server's log so far contain `text`.
+    pub(super) fn log_count(&self, text: &str) -> usize {
+        fs::read_to_string(&self.log).map_or(0, |log| {
+            log.lines().filter(|line| line.contains(text)).count()
+        })
     }
 
     /// Sends `signal` (a `kill -s` name such as `USR2`) to the server.
@@ -373,7 +379,6 @@ impl Running {
                 }
             }
         };
-        let _ = fs::remove_file(&self.pid_file);
         self.stop.store(true, Ordering::Relaxed);
         if let Some(sampler) = self.sampler.take() {
             let _ = sampler.join();
@@ -389,59 +394,5 @@ impl Drop for Running {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
-        let _ = fs::remove_file(&self.pid_file);
     }
-}
-
-/// Whether `pid` is a process that has not yet exited (a zombie has).
-fn alive(pid: u32) -> bool {
-    fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-        stat.rsplit_once(')')
-            .is_some_and(|(_, rest)| !rest.trim_start().starts_with('Z'))
-    })
-}
-
-/// On SIGINT or SIGTERM, stops every server whose `serve.pid` sits one level
-/// under `work`, waits up to 120 s for them to exit, and exits 130 or 143.
-/// Destructors do not run on a signal, so without this a cancelled run would
-/// leave its server holding the vault.
-pub(super) fn stop_servers_on_cancel(work: PathBuf) {
-    std::thread::spawn(move || {
-        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        else {
-            return;
-        };
-        let code = runtime.block_on(async {
-            let (Ok(mut interrupt), Ok(mut terminate)) = (
-                signal(SignalKind::interrupt()),
-                signal(SignalKind::terminate()),
-            ) else {
-                return None;
-            };
-            tokio::select! {
-                _ = interrupt.recv() => Some(130),
-                _ = terminate.recv() => Some(143),
-            }
-        });
-        let Some(code) = code else { return };
-        let pids = fs::read_dir(&work)
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .filter_map(|entry| fs::read_to_string(entry.path().join(PID_FILE)).ok())
-            .filter_map(|text| text.trim().parse::<u32>().ok())
-            .collect::<Vec<_>>();
-        for pid in &pids {
-            let _ = Command::new("kill")
-                .args(["-s", "TERM", &pid.to_string()])
-                .status();
-        }
-        let deadline = Instant::now() + Duration::from_secs(120);
-        while Instant::now() < deadline && pids.iter().any(|&pid| alive(pid)) {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        std::process::exit(code);
-    });
 }
