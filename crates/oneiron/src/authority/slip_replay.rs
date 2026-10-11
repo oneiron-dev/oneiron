@@ -70,8 +70,11 @@ pub(super) fn request_now_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result
 /// [`request_now_in_txn`] for the transaction that admits a proof. The
 /// reading is committed as the proof clock's floor beside the nonce row, so
 /// a wall clock that later steps back cannot reopen a proof whose row this
-/// reading evicted.
+/// reading evicted. The vault's recording clock observes the admission as
+/// well, as it did before proofs had a clock of their own, so every reader
+/// of that clock sees the same floor after a reopen.
 pub(super) fn admission_now_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<ProofClock> {
+    crate::ports::observe_clock_floor_in_txn(&vault.store, txn)?;
     let clock = request_now_in_txn(vault, txn)?;
     if PROOF_CLOCK_FLOOR.get(&vault.store, txn, &())? != Some(clock.now) {
         PROOF_CLOCK_FLOOR.put(&vault.store, txn, &(), &clock.now)?;
@@ -239,7 +242,8 @@ impl SideKey for NonceKey {
     }
 }
 
-/// Admitted request nonce inside the replay window (empty marker). Key: u64hex16 ":" hex64.
+/// Admitted request nonce, kept until the proof clock is a day past its signed time (empty
+/// marker). Key: u64hex16 ":" hex64.
 const REPLAY_NONCE: SideTable<NonceKey, (), Raw> =
     SideTable::new(&side_table::AUTHORITY_SLIP_REPLAY_NONCE);
 

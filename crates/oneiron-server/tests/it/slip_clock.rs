@@ -172,6 +172,10 @@ fn an_owner_lets_agents_back_in_after_the_host_clock_ran_a_year_ahead() {
         logged.contains("proof clock") && logged.contains("oneiron recover-clock"),
         "the server log names the reason and the command: {logged}"
     );
+    assert!(
+        logged.contains("proof_clock") && logged.contains("wall_clock"),
+        "the server log gives both clocks: {logged}"
+    );
 
     let recovered: Value = serde_json::from_str(&stdout(oneiron(&["recover-clock"], &config)))
         .expect("recover-clock prints JSON");

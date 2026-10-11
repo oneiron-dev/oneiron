@@ -19,7 +19,7 @@ fn timed_replay_survives_reopen_and_rotation_never_reopens_an_old_proof() {
     assert!(record(&vault, 180, nonce, 240).is_err());
     assert!(request_challenge(180, nonce, ProofClock::at(240)).is_ok());
     assert!(request_challenge(180, nonce, ProofClock::at(241)).is_err());
-    // Bucket 6 reuses bucket 3's slot, but only after every bucket-3 proof expired.
+    // A later proof with the same nonce is its own row; the earlier one stays refused.
     record(&vault, 360, nonce, 300).unwrap();
     assert!(record(&vault, 180, nonce, 300).is_err());
     assert!(record(&vault, 360, nonce, 300).is_err());
@@ -27,7 +27,8 @@ fn timed_replay_survives_reopen_and_rotation_never_reopens_an_old_proof() {
 
 /// A wall clock that steps back across a reopen cannot readmit a proof whose
 /// row a later admission evicted, and the proof clock stays where that
-/// admission committed it.
+/// admission committed it. So does the vault's recording clock, which every
+/// admission observes.
 #[test]
 fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     use crate::authority::{HostSlipIssuer, pairing_binding_transcript};
@@ -82,6 +83,11 @@ fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     drop(vault);
     clock.set(start);
     let vault = open();
+    assert_eq!(
+        vault.now_recorded_at(),
+        later,
+        "the recording clock keeps the admission's reading"
+    );
     assert!(admit(&vault, start, first).is_err(), "the evicted proof");
     assert!(
         admit(&vault, start + 30, "55555555555555555555555555555555").is_err(),

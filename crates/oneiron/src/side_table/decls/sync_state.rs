@@ -48,8 +48,8 @@ side_tables! {
     /// The earliest signed time a holder proof may carry (u64be seconds): past every evicted
     /// replay nonce, and at least the wall time of the last owner clock recovery. Key: ().
     AUTHORITY_SLIP_PROOF_NOT_BEFORE: SyncState b"authority:slip-proof-not-before:v1" Raw;
-    /// Admitted request nonce (empty marker), evicted a day after its signed timestamp ages out
-    /// of the window. Key: u64hex16 ":" hex64.
+    /// Admitted request nonce (empty marker), evicted once the proof clock is a day past its
+    /// signed timestamp. Key: u64hex16 ":" hex64.
     AUTHORITY_SLIP_REPLAY_NONCE: SyncState b"authority:slip-replay:v2:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
