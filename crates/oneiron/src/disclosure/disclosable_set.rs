@@ -99,14 +99,14 @@ pub(crate) fn discloses_raw(
         scope,
         path: BTreeSet::new(),
         judged: BTreeSet::new(),
-        pending: 0,
+        held: 0,
     }
     .discloses(id, raw)
 }
 
-/// How many records one P7 decision may follow, and how many it may hold
-/// waiting: room for a summary's whole covers list and its messages, each
-/// bounded by `MAX_ANCESTOR_DEPTH`.
+/// How many records one P7 decision may follow, and how many source slots
+/// its stack may hold at once: room for a summary's whole covers list and
+/// its messages, each bounded by `MAX_ANCESTOR_DEPTH`.
 const MAX_WORD_CLOSURE: usize = 4 * MAX_ANCESTOR_DEPTH;
 
 /// One record a revision's words may have come from, and how its row reads.
@@ -138,8 +138,9 @@ struct WordClosure<'a> {
     /// Every record entered so far; each passed or is on the path, or the
     /// walk has stopped.
     judged: BTreeSet<EntityId>,
-    /// Sources gathered and not yet visited.
-    pending: usize,
+    /// Source slots the frames on the stack hold, visited or not, until
+    /// each frame is dropped.
+    held: usize,
 }
 
 impl WordClosure<'_> {
@@ -150,15 +151,16 @@ impl WordClosure<'_> {
         let Some(sources) = self.enter(id, raw)? else {
             return Ok(false);
         };
-        let mut stack = vec![(id, sources.into_iter())];
-        while let Some((node, sources)) = stack.last_mut() {
-            let Some(source) = sources.next() else {
-                let node = *node;
-                self.path.remove(&node);
-                stack.pop();
+        let mut stack = vec![(id, sources, 0)];
+        while let Some((_, sources, cursor)) = stack.last_mut() {
+            let Some(&source) = sources.get(*cursor) else {
+                if let Some((node, sources, _)) = stack.pop() {
+                    self.path.remove(&node);
+                    self.held -= sources.capacity();
+                }
                 continue;
             };
-            self.pending -= 1;
+            *cursor += 1;
             let id = source.id();
             if self.judged.contains(&id) && !self.path.contains(&id) {
                 continue;
@@ -176,10 +178,10 @@ impl WordClosure<'_> {
             if self.path.contains(&id) {
                 return Ok(false);
             }
-            let Some(next) = self.enter(id, &raw)? else {
+            let Some(gathered) = self.enter(id, &raw)? else {
                 return Ok(false);
             };
-            stack.push((id, next.into_iter()));
+            stack.push((id, gathered, 0));
         }
         Ok(true)
     }
@@ -215,16 +217,16 @@ impl WordClosure<'_> {
                 Some(EdgeKind::PartOf),
                 None,
             )? {
-                if self.pending + sources.len() >= MAX_WORD_CLOSURE {
+                if self.held + sources.len() >= MAX_WORD_CLOSURE {
                     return Ok(None);
                 }
                 sources.push(WordSource::Part(part?.target));
             }
         }
-        if self.pending + sources.len() > MAX_WORD_CLOSURE {
+        if self.held + sources.capacity() > MAX_WORD_CLOSURE {
             return Ok(None);
         }
-        self.pending += sources.len();
+        self.held += sources.capacity();
         self.path.insert(id);
         Ok(Some(sources))
     }

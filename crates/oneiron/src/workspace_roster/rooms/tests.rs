@@ -195,6 +195,9 @@ fn room_history_needs_the_readers_own_grant() -> Result<()> {
     // everything, so only grants decide what the room reads. Binding roots
     // the vault, so it follows the project's implicit birth.
     crate::test_util::clear_test_contact(&vault, agent);
+    vault
+        .ensure_host_root_slip(&crate::test_util::test_host_issuer())
+        .expect("host root");
     crate::test_util::bind_test_owner(&vault, leader);
     let room = EntityId::from_hex(&spec.home_room)?;
     let every_kind = [
