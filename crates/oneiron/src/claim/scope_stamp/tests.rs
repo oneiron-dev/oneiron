@@ -376,3 +376,26 @@ fn set_default_facet_refuses_a_caller_that_is_not_the_owner() -> Result<()> {
     );
     Ok(())
 }
+
+/// A user deleting a claim about themselves must not stop the next write: a
+/// deleted claim keeps its shell and its owner in-edge, and the default facet
+/// every unmasked write reads used to decode that empty shell and fail.
+#[test]
+fn default_facet_reads_past_a_deleted_claim_about_the_owner() -> Result<()> {
+    let (_dir, vault) = vault()?;
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    let claim = entity(45);
+    let about_owner = ClaimBody::new(
+        "test.scope",
+        ClaimSubject::Entity(owner),
+        Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )?;
+    vault.put_claim(&claim, &about_owner, AT, 10)?;
+    vault.delete_entity_with_reason(&claim, crate::DeleteReason::UserDelete)?;
+
+    assert_eq!(vault.default_facet()?, substrate_facet_id(owner)?);
+    Ok(())
+}
