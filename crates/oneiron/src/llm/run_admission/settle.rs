@@ -27,6 +27,8 @@ impl RunInner {
         permit: &RunPermit,
         outcome: CallOutcome<'_>,
     ) -> Result<BudgetSettlement, RunDenied> {
+        // A settled permit never starts, so its run stops holding it.
+        self.lock_paid().remove(permit.lease.id());
         let native = match outcome {
             CallOutcome::Answered(usage) => {
                 let floor = u64::try_from(permit.reserve_native).unwrap_or(u64::MAX);

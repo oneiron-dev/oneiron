@@ -157,7 +157,7 @@ impl RunInner {
             )?;
             let lease = self
                 .guard
-                .admit_reserve_bound(reserve, binding)
+                .admit_call_bound(reserve, &request.envelope.purpose, binding)
                 .map_err(|denied| RunDenied::Budget { denied })?
                 .lease;
             (lease, reserve)

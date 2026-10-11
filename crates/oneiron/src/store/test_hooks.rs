@@ -63,6 +63,9 @@ pub(crate) struct TestHooks {
     before_dreamer_person_mint: Mutex<Option<BeforeDreamerPersonMintHook>>,
     /// One-shot stage boundary for deadline tests; never shared across vaults.
     pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot: the next retrieval cancels its deadline once its text stage
+    /// has run, as if the answer fell due right there.
+    pub(crate) cancel_deadline_after_retrieval_text: AtomicBool,
     /// One vault-owned rendezvous after a graph ask's last read preflight,
     /// before it acquires the write transaction.
     after_graph_ask_preflight: Mutex<Option<GraphAskPreflightHook>>,

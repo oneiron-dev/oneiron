@@ -68,7 +68,7 @@ fn cleared_reader(server: &SyncServer, principal: oneiron::EntityId, identity: o
 /// Narrows `principal`'s reads to the `allowed` entity types with a policy
 /// manifest grant. Its credential stays live; rows of any other type stop
 /// being readable to it.
-fn restrict_principal_read_types(
+pub(super) fn restrict_principal_read_types(
     server: &SyncServer,
     principal: oneiron::EntityId,
     allowed: &[u8],
@@ -85,14 +85,25 @@ fn restrict_principal_read_types(
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    let id = server
+    // A project birth stores its depth contribution as a policy manifest
+    // row too; the vault policy is the one that carries rules.
+    let (id, mut entries) = server
         .vault
         .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-        .unwrap()[0];
-    let bytes = server.vault.get(&id).unwrap().unwrap();
-    let Mp::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
-        panic!("the policy manifest is a map");
-    };
+        .unwrap()
+        .into_iter()
+        .find_map(|id| {
+            let bytes = server.vault.get(&id).ok()??;
+            match rmpv::decode::read_value(&mut bytes.as_slice()).ok()? {
+                Mp::Map(entries)
+                    if entries.iter().any(|(key, _)| key.as_str() == Some("rules")) =>
+                {
+                    Some((id, entries))
+                }
+                _ => None,
+            }
+        })
+        .expect("the vault policy manifest");
     entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
     let mut scope = Scope::top();
     scope.verbs = ScopeAxis::Some(["read".to_owned()].into());
