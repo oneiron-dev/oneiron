@@ -927,7 +927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/memories_frame.rs` | src | s | 2 fn | — | Connects typed MEMORIES projections to the shared board frame and shed ladder |
 | `src/context_board/memories_projection.rs` | src | s | 2 fn · 4 crate-vis | — | MEMORIES projection with source labels, world fences, and one shared render budget |
 | `src/context_board/memory_pins.rs` | src | s | 2 fn | — | Explicit memory pins bypass query relevance and render shedding, never read authority |
-| `src/context_board/mod.rs` | src | s | 18 re-export · 7 crate-vis | — | Typed Context Board render projections |
+| `src/context_board/mod.rs` | src | s | 17 re-export · 7 crate-vis | — | Typed Context Board render projections |
 | `src/context_board/notifications.rs` | src | s | 3 fn · 2 crate-vis | — | Who a pending notification is delivered to: the recipient markers its stored body carries, read one way… |
 | `src/context_board/observations.rs` | src | s | 4 fn | — | Read-time lifecycle observations over the same scoped bytes served to a session |
 | `src/context_board/observations_tests.rs` | test | s | — | — | Real ledger lifecycle and skill-body observations for the session board |
@@ -951,14 +951,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/self_brief.rs` | src | s | 8 struct · 2 enum · 8 fn | BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief, SelfBrief, SelfBriefInput +2 | Typed turn-one self projection shared by the prefix and mid-run describe call |
 | `src/context_board/stream/events.rs` | src | s | 3 struct · 4 enum · 3 fn · 1 const | BoardEvent, DeliveryClass, DeliveryPolicy, RouteObservation, SubscriptionError, SubscriptionReceipt, SubscriptionScope | Board events and their subscription/delivery classification |
 | `src/context_board/stream/frames.rs` | src | s | 6 struct · 5 enum · 6 fn | AppliedStreamState, BoardRenderMode, BoardSnapshot, BoardStreamFrame, CarrierCoalesceBuffer, CoalesceOutcome, DeltaRow, FrameApplyOutcome +3 | Board stream frames, snapshots and carrier coalescing |
-| `src/context_board/stream/mod.rs` | src | s | 5 re-export | — | Board streaming frames and harness wake dispatch |
+| `src/context_board/stream/mod.rs` | src | s | 5 re-export | — | Board streaming frames, routing and the pending-wake queue |
 | `src/context_board/stream/provenance.rs` | src | s | 2 struct · 13 crate-vis | ChildEvent, VerifiedOwnTaskEvent | Verified own-task and child event minting for routed board events |
 | `src/context_board/stream/publish.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | CommittedTaskBoardState | The own-task producer: committed TASK writes become routed board events |
 | `src/context_board/stream/registry.rs` | src | s | 2 struct · 11 fn · 1 crate-vis | BoardStreamRegistry, StreamConnectionState | The board stream registry: connections, subscriptions and event routing |
 | `src/context_board/stream/routing_tests.rs` | test | s | — | — | Event classification, provenance minting and route_event admission tests |
 | `src/context_board/stream/tests.rs` | test | s | 1 crate-vis | — | Frame, snapshot, coalescing and subscription-lifecycle tests |
-| `src/context_board/stream/wake.rs` | src | s | 5 struct · 5 enum · 3 fn · 5 crate-vis | BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind, WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations +2 | Wake envelopes, harness instance keys and the adapter dispatch ladder |
-| `src/context_board/stream/wake_dispatch.rs` | src | s | 5 fn | — | The registry's wake half: binding, dispatch, reporting and fallback |
+| `src/context_board/stream/wake.rs` | src | s | 1 struct · 2 fn | WakeEnvelope | Wake envelopes and the host's drain |
 | `src/context_board/surfaces_tests.rs` | test | s | — | — | Acceptance fixtures for scope, read-set freshness, and capability shedding |
 | `src/context_board/tasks/authority_state.rs` | src | s | 6 crate-vis | — | The ack/cancel render-state door: reads the TASK authority facts and appends them inside a caller transaction |
 | `src/context_board/tasks/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | TASKS section projections — intent rows, realizing jobs, and the render-tier ack/cancel state helpers behind… |
@@ -1830,7 +1829,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/booking.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | EmergencyInstructionInput | Owner-authenticated booking operations on the existing Memory surface |
 | `src/memory/booking_publication.rs` | src | s | 1 fn · 5 crate-vis | — | Owner checks for the ordinary booking publication claim write/read seam |
 | `src/memory/campaign.rs` | src | s | 10 fn | — | Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`… |
-| `src/memory/caps.rs` | src | s | 9 fn · 11 const | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
+| `src/memory/caps.rs` | src | m | 11 fn · 12 const | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
 | `src/memory/caps/tests.rs` | test | s | — | — | — |
 | `src/memory/chat.rs` | src | m | 3 struct · 3 enum · 1 trait · 3 fn · 1 type | ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatOptions, ChatResponse, ChatScope, ComposedChatAnswer | The `.chat` answer verb (OF-228/OF-096): depth-as-cost tiers over [`Memory::recall`], answering only with… |
 | `src/memory/chat/tests.rs` | test | L | — | — | `.chat` acceptance tests: depth→effort mapping, composer call counts, the zero-model minimal tier, the typed… |
@@ -1863,11 +1862,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/outbound/types.rs` | src | s | 3 struct · 1 crate-vis | OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext | Outbound schedule DTOs: context, draft input, and intent receipt |
 | `src/memory/read_lane.rs` | src | s | 11 crate-vis | — | The bound actor's one read lane |
 | `src/memory/reads.rs` | src | m | 5 struct · 10 fn · 1 crate-vis | ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts | Entity/claim read surface plus BM25 and neighbor queries |
+| `src/memory/recall/call_mode.rs` | src | s | 1 enum · 5 fn · 1 const · 1 crate-vis | RecallEffort | Call mode (retrieval hub #call-mode): recall for live calls |
 | `src/memory/recall/items.rs` | src | s | 1 crate-vis | — | Builds typed recall items from actor-admitted rows at the selected revision |
-| `src/memory/recall/mod.rs` | src | L | 7 struct · 1 enum · 11 fn · 2 const · 3 crate-vis | CitedMessage, Effort, MemoryItem, MemoryPack, MemoryProvenance, RecallScope, RetrievalMeta, ScopeHonesty | Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing |
+| `src/memory/recall/mod.rs` | src | L | 7 struct · 1 enum · 11 fn · 2 const · 1 re-export · 3 crate-vis | CitedMessage, Effort, MemoryItem, MemoryPack, MemoryProvenance, RecallScope, RetrievalMeta, ScopeHonesty | Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing |
 | `src/memory/recall/presentation.rs` | src | s | 4 crate-vis | — | — |
 | `src/memory/recall/scope_honesty.rs` | src | s | 1 crate-vis | — | Scope-honesty world names come only from actor-admitted claim rows |
-| `src/memory/room_turn.rs` | src | s | 1 struct · 12 fn · 1 crate-vis | RoomTurnHandle | A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope |
+| `src/memory/room_turn.rs` | src | s | 1 struct · 13 fn · 1 crate-vis | RoomTurnHandle | A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope |
 | `src/memory/skill_authoring.rs` | src | m | 1 struct · 3 fn · 1 crate-vis | SkillAuthoringReceipt | Authored skill saves and forks over the existing skill lifecycle gate |
 | `src/memory/structural/affiliated.rs` | src | s | 3 fn | — | Attributed takes and imported-claim admission verbs |
 | `src/memory/structural/codec.rs` | src | s | 3 crate-vis | — | Edge weight and registry kind lookups for structural puts |
@@ -1895,6 +1895,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/tests_regressions/mod.rs` | src | s | — | — | Security-regression suite from a cross-cutting review batch: tests span witness, structural puts, actor… |
 | `src/memory/tests_regressions/outbound_actor_scope.rs` | src | s | — | — | ONE-1876 actor-scoped outbound dedupe index regressions |
 | `src/memory/tests_regressions/recall/bounds_execution.rs` | src | s | — | — | — |
+| `src/memory/tests_regressions/recall/call_mode.rs` | src | m | — | — | — |
 | `src/memory/tests_regressions/recall/clock_consistency.rs` | src | s | — | — | — |
 | `src/memory/tests_regressions/recall/control_kinds.rs` | src | m | — | — | — |
 | `src/memory/tests_regressions/recall/mod.rs` | src | s | — | — | BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits |
@@ -2124,7 +2125,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/builder/mod.rs` | src | m | 1 struct · 39 fn · 10 crate-vis | PipelineBuilder | — |
 | `src/pipeline/builder/terminal.rs` | src | s | 5 fn | — | — |
 | `src/pipeline/builder_capture.rs` | src | s | 5 fn · 4 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
-| `src/pipeline/builder_effort.rs` | src | s | 2 fn · 1 crate-vis | — | Shared five-level stage selection for the raw pipeline and memory facade |
+| `src/pipeline/builder_effort.rs` | src | s | 2 fn · 2 crate-vis | — | Shared five-level stage selection for the raw pipeline and memory facade |
 | `src/pipeline/capabilities.rs` | src | s | 9 crate-vis | — | Capability candidates have a separate turn budget, never the memory budget |
 | `src/pipeline/channels.rs` | src | m | 11 crate-vis | — | — |
 | `src/pipeline/corpus_filter.rs` | src | s | 7 crate-vis | — | — |
@@ -2406,9 +2407,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/rerank/affect.rs` | src | s | 3 struct · 5 fn | ArousalFloor, ArousalReranker, EmotionSimilarityReranker | Nonblocking affect scorers over host-resolved, authorized edge VAD |
 | `src/rerank/crossencoder.rs` | src | m | 2 struct · 4 fn | CrossEncoder, PreparedCrossEncoder | Local-service and HTTPS crossencoder adapters, with a nonblocking prepared pipeline rung |
 | `src/rerank/crossencoder/tests.rs` | test | s | — | — | — |
-| `src/retrieval_depth.rs` | src | m | 3 struct · 1 enum · 1 trait · 4 fn · 3 const · 3 re-export · 1 crate-vis | BackendSpend, DeepSearchBackend, DepthSearchRequest, DepthSearchResult, SearchProbe | ONE-207: the retrieval half of the effort dial |
+| `src/retrieval_depth.rs` | src | m | 3 struct · 1 enum · 1 trait · 4 fn · 3 const · 4 re-export · 1 crate-vis | BackendSpend, DeepSearchBackend, DepthSearchRequest, DepthSearchResult, SearchProbe | ONE-207: the retrieval half of the effort dial |
 | `src/retrieval_depth/accumulation.rs` | src | s | 16 crate-vis | — | — |
-| `src/retrieval_depth/controls.rs` | src | s | 2 struct · 4 fn · 1 crate-vis | RecallExecution, RetrievalDeadline | Per-request stage-boundary budgets |
+| `src/retrieval_depth/controls.rs` | src | s | 3 struct · 7 fn · 6 crate-vis | RecallExecution, RetrievalDeadline, SlowRetrievalStage | Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and the share of the budget the… |
 | `src/retrieval_depth/session_scope.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | SessionScope | — |
 | `src/retrieval_depth/spend.rs` | src | s | 1 struct · 1 fn · 1 type · 1 crate-vis | RetrievalError | Failure-side usage for the bounded deep retrieval and composition calls |
 | `src/retrieval_depth/tests.rs` | test | s | — | — | — |
@@ -2686,7 +2687,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_scan/tests.rs` | test | s | — | — | — |
 | `src/slim.rs` | src | m | 3 struct · 5 enum · 3 fn · 2 crate-vis | HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome, SlimResidue, VaultResidency | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
 | `src/slim/tests.rs` | test | m | — | — | — |
-| `src/speculative.rs` | src | s | 3 struct · 2 enum · 5 fn · 2 const | SpeculativeFinal, SpeculativeFireDecision, SpeculativePartial, SpeculativeSession, SpeculativeSessionConfig | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
+| `src/speculative.rs` | src | m | 3 struct · 2 enum · 5 fn · 2 const · 1 crate-vis | SpeculativeFinal, SpeculativeFireDecision, SpeculativePartial, SpeculativeSession, SpeculativeSessionConfig | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
 | `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
@@ -2923,7 +2924,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/ask_soft_confirm_types.rs` | src | s | 2 struct · 2 enum · 1 fn | TaskAskConfirmation, TaskAskConfirmationDecision, TaskAskSoftConfirmDelivery, TaskAskSoftConfirmNotice | Revision-bound soft-confirm reply, notice, and delivery state |
 | `src/task_verb/ask_tests.rs` | test | XL | — | — | — |
 | `src/task_verb/ask_types.rs` | src | L | 21 struct · 16 enum · 5 fn · 2 crate-vis | AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide, TaskAskDecision, TaskAskDefault +29 | Typed asks: response coverage, decision reducers, and policy-bound revisions |
-| `src/task_verb/board_task.rs` | src | s | 1 crate-vis | — | One committed TASK as the board STREAM publisher reads it |
+| `src/task_verb/board_task.rs` | src | s | 2 crate-vis | — | One committed TASK as the board STREAM publisher reads it |
 | `src/task_verb/consts.rs` | src | s | 1 const · 11 crate-vis | — | Module-level constants shared across the task-verb files |
 | `src/task_verb/consult_fanout_admission.rs` | src | m | 11 fn · 4 crate-vis | — | Meter and admit consult fan-outs before any TASK exists |
 | `src/task_verb/consult_fanout_facade.rs` | src | s | 1 fn | — | — |
@@ -2954,7 +2955,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 1 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
 | `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
-| `src/task_verb/sdk.rs` | src | m | 18 struct · 1 enum · 3 fn | BoardExpandRequest, BoardRefreshRequest, BoardSubscriptionRequest, DescribeRequest, EmptyRequest, RecallRequest, ReceiptsRequest, RoomClaimRequest +11 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/task_verb/sdk.rs` | src | m | 19 struct · 1 enum · 5 fn | BoardExpandRequest, BoardRefreshRequest, BoardSubscriptionRequest, DescribeRequest, EmptyRequest, RecallDoor, RecallRequest, ReceiptsRequest +12 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_generated.rs` | src | L | 37 fn | — | — |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
 | `src/task_verb/symbol_lease_tests.rs` | test | s | — | — | — |
