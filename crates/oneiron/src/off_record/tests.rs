@@ -1154,6 +1154,93 @@ fn a_room_retrieval_publishes_no_run_once_its_saver_left() -> Result<()> {
     Ok(())
 }
 
+/// ARCH-0052 D5 (drift E4): a retrieval in a room on record queues embed
+/// jobs for the base rows it surfaced only while its saver holds, as every
+/// other landing does. Capture is off (the default), so no run row checks
+/// the saver first: the enqueue's own transaction refuses.
+#[cfg(feature = "sync")]
+#[test]
+fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::conversation::{ConversationBody, HistoryChoice};
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    // A claim owes its vector from the write that put it.
+    let claim = EntityId::now();
+    let body = ClaimBody::new(
+        "test.status",
+        ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("subject id")),
+        rmpv::Value::from("v"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("claim body");
+    vault
+        .batch()
+        .put(
+            &claim,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::claim::encode_claim_body(&body)?,
+        )
+        .text(&claim, &[("body", "saverleftembedneedle")])
+        .commit()?;
+    let take_job = || {
+        vault.with_write_txn(|wtxn| {
+            crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, &claim)
+        })
+    };
+    // Outside any room, the search that surfaces it queues its job.
+    let surfaced = vault
+        .query()
+        .search_text("saverleftembedneedle", 10)
+        .run_with_pending_vectors()?;
+    assert_eq!(surfaced.pending_vector_ids, vec![claim]);
+    assert!(take_job()?);
+
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let room = EntityId::now();
+    vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
+    vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    let session = vault.off_record_session_vault().enter_in_room(
+        "lamp",
+        OffRecordBackendClass::Local,
+        room,
+        owner,
+    )?;
+    let proof =
+        vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
+    session.flip_on_record_as(&proof)?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+    vault.leave_member(room, owner, by, 50)?;
+
+    let error = vault
+        .query()
+        .search_text("saverleftembedneedle", 10)
+        .in_session(&door)
+        .run_with_pending_vectors()
+        .expect_err("a room whose saver left queues no embed job");
+    assert!(
+        matches!(
+            error,
+            Error::OffRecord(OffRecordError::OffRecordSavingStopped { .. })
+        ),
+        "{error:?}"
+    );
+    assert!(
+        !take_job()?,
+        "the room queued an embed job after its saver left"
+    );
+    drop(door);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    Ok(())
+}
+
 /// A facade and a session are independent borrows, so nothing in the types
 /// stops safe code from pairing a facade on vault A with a room on vault B.
 /// That pairing would read A while staging A's run row and `result_ids` into
