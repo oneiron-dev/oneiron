@@ -1201,6 +1201,13 @@ async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
             ),
         )
     };
+    // The agent's slip reads every record kind until a manifest grant names
+    // it, so a grant that reads only MESSAGEs is the narrow start.
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_MESSAGE],
+    );
     let (status, before) = agent_reads(server.clone()).await;
     assert_eq!(status, StatusCode::OK, "{before}");
     assert!(
