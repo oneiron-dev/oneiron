@@ -197,15 +197,37 @@ pub(crate) fn nested_past_decoder(data: &[u8]) -> Option<&'static str> {
 
 /// The release doors' text rules over strings a reader keeps apart (one
 /// array's items), read one per line: a phrase or key split over the items.
-pub(crate) fn release_joined_strings(items: &[&str]) -> bool {
+pub(crate) fn release_joined_strings<S: std::borrow::Borrow<str>>(items: &[S]) -> bool {
     joined_strings(items, Door::Release)
 }
 
 /// A secret split over an array's strings (a recovery phrase one word per
 /// item, a private key one line per item) is read whole, one item per line,
 /// before each item is read alone.
-fn joined_strings(items: &[&str], door: Door) -> bool {
+fn joined_strings<S: std::borrow::Borrow<str>>(items: &[S], door: Door) -> bool {
     items.len() > 1 && detect(&items.join("\n"), door).is_some()
+}
+
+/// [`release_joined_strings`] over a MessagePack array's items.
+pub(crate) fn release_joined_messagepack(items: &[rmpv::Value]) -> bool {
+    joined_messagepack(items, Door::Release)
+}
+
+/// The text items of a MessagePack array read joined. An item is read as text
+/// as it is read alone: a string, and binary or extension bytes, which carry
+/// words as well as a string does.
+fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
+    let texts: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            rmpv::Value::String(text) => Some(String::from_utf8_lossy(text.as_bytes())),
+            rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
+                Some(String::from_utf8_lossy(bytes))
+            }
+            _ => None,
+        })
+        .collect();
+    joined_strings(&texts, door)
 }
 
 /// The write door's text rules over text a stream scanner joined across a
@@ -368,12 +390,18 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
                 || joined_strings(&strings, door)
             {
                 *value = replacement();
-                true
-            } else {
-                values.iter_mut().fold(false, |changed, value| {
-                    sanitize_json(value, null, door) | changed
-                })
+                return true;
             }
+            let changed = values.iter_mut().fold(false, |changed, value| {
+                sanitize_json(value, null, door) | changed
+            });
+            // Read again once items are nulled: the strings left are the ones
+            // a second pass reads joined, so the array is its own fixed point.
+            let strings: Vec<&str> = values.iter().filter_map(Value::as_str).collect();
+            if changed && joined_strings(&strings, door) {
+                *value = replacement();
+            }
+            changed
         }
         Value::Object(fields) => {
             // A JSON key is text a reader shows; one shaped like a credential
@@ -424,19 +452,22 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
                 .iter()
                 .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
                 .collect();
-            let strings: Vec<&str> = values.iter().filter_map(Value::as_str).collect();
             if bytes
                 .as_ref()
                 .is_some_and(|bytes| detect_bytes(bytes, door))
-                || joined_strings(&strings, door)
+                || joined_messagepack(values, door)
             {
                 *value = replacement();
-                true
-            } else {
-                values.iter_mut().fold(false, |changed, value| {
-                    sanitize_messagepack(value, null, door) | changed
-                })
+                return true;
             }
+            let changed = values.iter_mut().fold(false, |changed, value| {
+                sanitize_messagepack(value, null, door) | changed
+            });
+            // Read again once items are nulled, as the JSON walk does.
+            if changed && joined_messagepack(values, door) {
+                *value = replacement();
+            }
+            changed
         }
         Value::Map(fields) => {
             // A key shaped like a credential goes with its member, as a JSON

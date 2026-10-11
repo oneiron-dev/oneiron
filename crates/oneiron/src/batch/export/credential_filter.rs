@@ -183,17 +183,16 @@ mod tests {
         let mut encoded = Vec::new();
         rmpv::encode::write_value(&mut encoded, &input).unwrap();
         let projection = redacted_memory_body(&encoded);
-        assert_eq!(projection["nested"][0], "[redacted]");
+        // Binary items are read joined, as strings are: an array whose items
+        // hold a secret leaves as one marker.
+        assert_eq!(projection["nested"], "[redacted]");
         let raw = redacted_memory_payload(encoded)?;
         let decoded = rmpv::decode::read_value(&mut raw.as_slice()).unwrap();
         assert_eq!(
             decoded,
             M::Map(vec![
                 (M::from("safe"), safe),
-                (
-                    M::from("nested"),
-                    M::Array(vec![M::from("[redacted]"), M::from("[redacted]")])
-                ),
+                (M::from("nested"), M::from("[redacted]")),
                 (M::from("password"), M::from("[redacted]")),
             ])
         );
@@ -292,6 +291,118 @@ mod tests {
                 rmpv::Value::from("kept")
             )])
         );
+        Ok(())
+    }
+
+    /// A vault whose owner switched the write scan off, as an owner may: serve
+    /// and export still redact in that mode.
+    fn vault_with_scan_off() -> Result<(tempfile::TempDir, Vault)> {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let id = crate::vault::embedded_owner_actor_id()?;
+        let owner = vault.authenticate_owner(
+            id,
+            &id.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        vault.set_secret_scan_mode(&owner, crate::batch::secret_scan::SecretScanMode::Off, 10)?;
+        Ok((dir, vault))
+    }
+
+    fn put_asset(vault: &Vault, body: &[u8]) -> Result<EntityId> {
+        let id = EntityId::now();
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_ASSET,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                body,
+            )
+            .commit()?;
+        Ok(id)
+    }
+
+    /// The public BIP39 test vector, as a recovery phrase's words.
+    const PHRASE: &str =
+        "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+    #[test]
+    fn typed_export_reads_json_text_through_every_member() -> Result<()> {
+        let (_dir, vault) = vault_with_scan_off()?;
+        // A token-shaped value whose `p` is a JSON escape: no text rule reads it.
+        let suffix = "0123456789abcdefghijklmnopqrstuvwxyz";
+        let escaped = format!(r"gh\u0070_{suffix}");
+        let scalar = format!(r#""{escaped}""#);
+        let repeated = format!(r#"{{"note":"{escaped}","note":"kept"}}"#);
+        for body in [scalar, repeated] {
+            put_asset(&vault, body.as_bytes())?;
+            let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+            let document = String::from_utf8_lossy(export.bytes()).into_owned();
+            assert!(!document.contains(suffix), "{body}: {document}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_phrase_one_binary_word_per_item_leaves_by_no_release_door() -> Result<()> {
+        let (_dir, vault) = vault_with_scan_off()?;
+        let words = rmpv::Value::Array(
+            PHRASE
+                .split(' ')
+                .map(|word| rmpv::Value::Binary(word.as_bytes().to_vec()))
+                .collect(),
+        );
+        let mut body = Vec::new();
+        rmpv::encode::write_value(&mut body, &words).unwrap();
+        let id = put_asset(&vault, &body)?;
+        let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
+        let served = redacted_memory_payload(stored)?;
+        assert!(
+            !String::from_utf8_lossy(&served).contains("sausage"),
+            "raw serving: {served:?}"
+        );
+        let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+        let document = String::from_utf8_lossy(export.bytes()).into_owned();
+        assert!(!document.contains("sausage"), "typed export: {document}");
+        Ok(())
+    }
+
+    #[test]
+    fn bundle_export_nulling_is_its_own_fixed_point() -> Result<()> {
+        let (_dir, vault) = vault_with_scan_off()?;
+        let words: Vec<&str> = PHRASE.split(' ').collect();
+        // Between the two halves: an assignment, and another phrase one word
+        // per line, which the whole run of 24 lines hides and which is read
+        // alone.
+        let other = format!("{}\nabout", ["abandon"; 11].join("\n"));
+        for middle in ["password=fixture-value-1", other.as_str()] {
+            let mut items = words.clone();
+            items.insert(6, middle);
+            let body = serde_json::to_vec(&serde_json::json!({ "words": items }))
+                .map_err(|_| Error::InvariantViolation("fixture JSON"))?;
+            let id = put_asset(&vault, &body)?;
+            let bundle: Value = serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)
+                .map_err(|_| Error::InvariantViolation("bundle JSON"))?;
+            let mut emitted = bundle["entities"][0]["body"].clone();
+            assert!(
+                !emitted.to_string().contains("sausage"),
+                "{middle}: {emitted}"
+            );
+            assert!(
+                !crate::batch::secret_scan::sanitize_credentials(&mut emitted, true),
+                "{middle}: a second pass changed {emitted}"
+            );
+            // The context writers' walk keeps the same fixed point.
+            let written = crate::serialize::null_credentials("", &serde_json::json!(items));
+            assert!(
+                !written.to_string().contains("sausage"),
+                "{middle}: {written}"
+            );
+            assert_eq!(crate::serialize::null_credentials("", &written), written);
+        }
         Ok(())
     }
 

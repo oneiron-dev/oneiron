@@ -83,12 +83,19 @@ fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Valu
         {
             Value::Null
         }
-        Value::Array(values) => Value::Array(
-            values
+        Value::Array(values) => {
+            let kept: Vec<Value> = values
                 .iter()
                 .map(|value| null_at_depth("", value, depth + 1, document))
-                .collect(),
-        ),
+                .collect();
+            // Read again once items are nulled: the strings left are the ones
+            // a second pass reads joined, so the array is its own fixed point.
+            if release_joined_strings(&kept.iter().filter_map(Value::as_str).collect::<Vec<_>>()) {
+                Value::Null
+            } else {
+                Value::Array(kept)
+            }
+        }
         Value::Object(fields) => Value::Object(
             fields
                 .iter()
