@@ -89,7 +89,8 @@ impl OffRecordSession<'_> {
             {
                 // In a room the receipt answers only someone who could save
                 // the turn now: their proof holds, they own this vault, and
-                // their membership shows every moment of it.
+                // their membership shows every moment of it. The room hears
+                // this save as it heard the first; nothing more is kept.
                 if let (Some(room), Some(owner)) = (room, owner) {
                     let times = state.kept_times(*turn);
                     let txn = self.vault.store.env.read_txn()?;
@@ -102,6 +103,15 @@ impl OffRecordSession<'_> {
                         owner.actor(),
                         &times,
                     )?;
+                    let hearing = Hearing::in_txn(self.vault, &txn, Some(room));
+                    drop(txn);
+                    post_notice(
+                        &mut state,
+                        super::types::OffRecordNoticeAct::SavedTurn,
+                        owner.actor(),
+                        hearing,
+                    );
+                    self.entry.publish_state(&state);
                 }
                 return Ok(receipt.outcome);
             }

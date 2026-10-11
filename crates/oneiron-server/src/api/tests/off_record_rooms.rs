@@ -391,8 +391,8 @@ async fn a_members_save_writes_only_their_own_vault() {
 }
 
 /// Every save and every export posts a notice to the room, naming who and
-/// what, even a save that finds nothing new to keep; the owner's own
-/// one-turn save and on-record flip count too. A copy holds the turns said on
+/// what, even a save that finds nothing new to keep or a turn saved again;
+/// the owner's own one-turn save and on-record flip count too. A copy holds the turns said on
 /// record. A 1:1 the owner entered alone posts none.
 #[tokio::test]
 async fn every_save_and_export_leaves_a_room_notice() {
@@ -431,6 +431,18 @@ async fn every_save_and_export_leaves_a_room_notice() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{promoted}");
+    // The same turn again: it is already kept, and the room hears this save
+    // too (Astra #1392, P2).
+    let (status, again) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/promote",
+        owner_door.clone(),
+        Some(&json!({ "session_ref": key, "turn": later.to_hex() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, promoted);
     let (status, flipped) = call(
         &server,
         "POST",
@@ -463,6 +475,7 @@ async fn every_save_and_export_leaves_a_room_notice() {
             ("exported".to_owned(), mina_hex),
             ("saved_talk".to_owned(), owner_hex.clone()),
             ("saved_talk".to_owned(), owner_hex.clone()),
+            ("saved_turn".to_owned(), owner_hex.clone()),
             ("saved_turn".to_owned(), owner_hex.clone()),
             ("saving_from_here".to_owned(), owner_hex.clone()),
             ("exported".to_owned(), owner_hex),
