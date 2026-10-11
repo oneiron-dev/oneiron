@@ -72,17 +72,17 @@ fn enter<'v>(vault: &'v Vault, session_ref: &str) -> Result<OffRecordSession<'v>
 #[test]
 fn a_vector_search_in_the_room_finds_base_rows_added_after_it_went_on_record() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let first = entity_id(0xA1);
+    let first = entity_id(0xB1);
     put_vector(&vault, first, [0.0, 1.0, 0.0, 0.0])?;
     let session = enter(&vault, "sess-room-hnsw")?;
-    let staged = entity_id(0xA2);
+    let staged = entity_id(0xB2);
     stage_in_room(
         &vault,
         &session,
         vec![room_put(staged), room_vector(staged, [0.8, 0.6, 0.0, 0.0])],
     )?;
     session.flip_on_record()?;
-    let later = entity_id(0xA3);
+    let later = entity_id(0xB3);
     put_vector(&vault, later, [1.0, 0.0, 0.0, 0.0])?;
 
     let view = session.read_view()?;
@@ -117,7 +117,7 @@ fn a_vector_search_in_the_room_finds_base_rows_added_after_it_went_on_record() -
 #[test]
 fn on_record_a_run_over_a_room_that_staged_only_a_vector_keeps_no_base_run() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let row = entity_id(0xA4);
+    let row = entity_id(0xB4);
     put_vector(&vault, row, [0.0, 1.0, 0.0, 0.0])?;
     let session = enter(&vault, "sess-room-vector-only")?;
     stage_in_room(
@@ -149,7 +149,6 @@ fn on_record_a_run_over_a_room_that_staged_only_a_vector_keeps_no_base_run() -> 
         "and keeps no run in base"
     );
     drop(view);
-    drop(door);
     session.close()?;
     Ok(())
 }
@@ -160,7 +159,7 @@ fn on_record_a_run_over_a_room_that_staged_only_a_vector_keeps_no_base_run() -> 
 #[test]
 fn a_run_in_the_room_reports_no_pending_vector_for_a_row_the_room_holds() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let claim = entity_id(0xA5);
+    let claim = entity_id(0xB5);
     put_status_claim(
         &vault,
         claim,
@@ -220,7 +219,7 @@ fn a_run_in_the_room_reports_no_pending_vector_for_a_row_the_room_holds() -> Res
 fn a_scoped_read_in_the_room_searches_the_room() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let session = enter(&vault, "sess-room-scoped-search")?;
-    let staged = entity_id(0xA6);
+    let staged = entity_id(0xB6);
     stage_in_room(
         &vault,
         &session,
