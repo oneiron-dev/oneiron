@@ -499,7 +499,7 @@ impl EngineNativeExecutor<'_> {
         self.gated_write
             .admit_run_call(crate::code_run::RunCall::Bridge(
                 crate::code_run::SelfEffect::Speak,
-            ))
+            ))?
             .map_err(|refusal| super::types::EngineExecutorError::HostRefused {
                 code: refusal.code,
             })?;

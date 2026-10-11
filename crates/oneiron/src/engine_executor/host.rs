@@ -110,7 +110,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         // The run's recorded outputs hold what its calls read: a bound door
         // rules on reading them back as on any other call the run serves.
         self.gated_write
-            .admit_run_call(RunCall::RecordedOutput)
+            .admit_run_call(RunCall::RecordedOutput)?
             .map_err(|refusal| {
                 Error::InvalidConfig(format!("recorded output read refused: {}", refusal.code))
             })?;

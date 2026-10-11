@@ -40,8 +40,12 @@ pub(crate) async fn execute_mcp_execute_code(
             run_id,
             verbs: Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(server, actor)),
         })
-        .await
-        .map_err(|error| mcp_code_execution_error(&error))?;
+        .await;
+    // Revocation takes effect at once: a credential that died while its run
+    // ran gets its own refusal, never the run's results or failure. The run's
+    // durable record stays for a re-entry its credential admits.
+    super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
+    let outcome = outcome.map_err(|error| mcp_code_execution_error(&error))?;
 
     let steps = outcome
         .replay_record

@@ -186,13 +186,29 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// Asks the bound door to admit one call the run serves itself. A run
     /// whose host binds no door admits it as its own.
+    ///
+    /// # Errors
+    ///
+    /// The door's refusal, or [`crate::Error::InvalidConfig`] for a refusal
+    /// spelled as a gate's outcome word: replay tells a door's refusal, which
+    /// the guest handles, from a gate's trap by that word alone.
     pub(crate) fn admit_run_call(
         &self,
         call: RunCall,
-    ) -> std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        self.agent_verbs
-            .as_ref()
-            .map_or(Ok(None), |door| door.admit_run_call(call))
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        let Some(door) = &self.agent_verbs else {
+            return Ok(Ok(None));
+        };
+        let admitted = door.admit_run_call(call);
+        if let Err(refusal) = &admitted
+            && crate::error::GateDenialOutcome::parse(&refusal.code).is_some()
+        {
+            return Err(crate::Error::InvalidConfig(format!(
+                "a host door refused with the gate outcome word {:?}",
+                refusal.code
+            )));
+        }
+        Ok(admitted)
     }
 
     /// Binds a host-authenticated owner proof to one agent action dispatch.
@@ -294,7 +310,7 @@ impl<'a> HostSelfDispatcher<'a> {
         let read_as = if matches!(call, SelfCall::Context(_) | SelfCall::AgentVerb(_)) {
             None
         } else {
-            match self.admit_run_call(RunCall::Bridge(call.effect())) {
+            match self.admit_run_call(RunCall::Bridge(call.effect()))? {
                 Ok(read_as) => read_as,
                 Err(refusal) => {
                     return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
