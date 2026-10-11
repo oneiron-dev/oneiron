@@ -4997,6 +4997,10 @@ fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<(
         !all.contains(&kept),
         "a device-only source keeps its summary home"
     );
+    assert!(
+        !all.contains(&placed),
+        "a summary born in a device-only world stays home, even out of an older window"
+    );
     assert!(all.contains(&person) && !all.contains(&claim));
     let after = sent(&packed()?, SyncSelectorWorld::All)?;
     assert!(

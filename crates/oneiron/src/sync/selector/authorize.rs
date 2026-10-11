@@ -324,20 +324,24 @@ fn authorized_base_edge_endpoints(
 /// The epoch fence at sync egress: an epoch summary's words leave only while
 /// this peer would receive every record they came from, each read from
 /// stored truth, since a source need not sit in this window. Never by
-/// sending those sources along.
+/// sending those sources along. A summary born in a device-only world stays
+/// on this device, even out of a window packed before the flag.
 fn epoch_carried(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     (id, blob): (&EntityId, &[u8]),
     selector: &SyncSelector,
-    egress: Option<(
-        &super::document_admission::DocumentGrant,
+    (admission, device_only): (
+        Option<&super::document_admission::DocumentGrant>,
         &BTreeSet<EntityId>,
-    )>,
+    ),
 ) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Ok(false);
     };
+    if crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)? {
+        return Ok(false);
+    }
     crate::compaction::epoch_exportable_in(
         &vault.store,
         rtxn,
@@ -345,7 +349,7 @@ fn epoch_carried(
         header.entity_type,
         &blob[ENTITY_METADATA_HEADER_LEN..],
         |source, _| {
-            let Some((admission, device_only)) = egress else {
+            let Some(admission) = admission else {
                 return Ok(false);
             };
             // A source this door would withhold as undecodable, or whose
@@ -530,10 +534,8 @@ pub(super) fn filter_window_doc(
                 )
                 .ok()
             });
-            let egress = admission
-                .as_ref()
-                .map(|admission| (admission, &device_only));
-            match epoch_carried(vault, &rtxn, (&id, blob), selector, egress) {
+            let fence = (admission.as_ref(), &device_only);
+            match epoch_carried(vault, &rtxn, (&id, blob), selector, fence) {
                 Ok(true) => {}
                 Ok(false) => return,
                 Err(error) => {

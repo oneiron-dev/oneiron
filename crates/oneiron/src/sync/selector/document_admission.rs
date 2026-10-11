@@ -361,10 +361,11 @@ impl StoredSelection<'_, '_> {
 }
 
 impl StoredSelection<'_, '_> {
-    /// The exporter's and the window packer's withholdings: an erased or
-    /// withdrawn row, a claim no sync door ships, custody that may not sync,
-    /// a row of a device-only world, an LFS chunk, a row its causal history
-    /// does not admit.
+    /// The exporter's and the window packer's withholdings: an erased row, a
+    /// claim no sync door ships, custody that may not sync, a row of a
+    /// device-only world, an LFS chunk, a row its causal history does not
+    /// admit. A stale row still ships and still selects; an epoch refuses a
+    /// stale source before asking.
     fn egress_carries(
         &self,
         id: EntityId,
@@ -377,7 +378,6 @@ impl StoredSelection<'_, '_> {
             &id,
         )?;
         if state.deleted
-            || state.stale
             || !crate::sync::local_claims::claim_sync_allowed(raw)
             || (raw.first().copied() == Some(crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
                 && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..]))
