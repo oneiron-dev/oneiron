@@ -9,8 +9,10 @@ const MEMORY_ROWS: [&str; 4] = ["search", "put_claim", "supersede_claim", "put_e
 
 /// The one declaration the executor prompt gives `name`.
 fn declaration<'a>(prompt: &'a str, name: &str) -> &'a str {
-    let needle = format!("function {name}(");
-    let mut lines = prompt.lines().filter(|line| line.contains(&needle));
+    let needle = format!("{name}(input: ");
+    let mut lines = prompt
+        .lines()
+        .filter(|line| line.trim_start().starts_with(&needle));
     let line = lines
         .next()
         .unwrap_or_else(|| panic!("{name} is not declared"));
