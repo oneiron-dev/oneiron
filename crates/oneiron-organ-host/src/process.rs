@@ -746,10 +746,15 @@ impl OrganProcess {
                         asks.unsent();
                         continue;
                     }
-                    // An answer after the deadline is dropped.
+                    // An answer after the deadline is dropped. A reply the
+                    // reader took meanwhile still stands; else the call is
+                    // cancelled, and a reply from now on is late.
                     if Instant::now() >= deadline {
                         asks.unsent();
-                        break;
+                        if self.inbox.in_flight(id) {
+                            break;
+                        }
+                        continue;
                     }
                     match step {
                         AskStep::Answer(answer, region) => {
@@ -966,9 +971,11 @@ fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: 
         spin::poll_readable(stream);
         match recv_frame_polled::<FromOrgan>(stream, limit) {
             Ok((FromOrgan::Reply(reply), fds)) => {
-                let waiter = lock(&inbox.pending).remove(&reply.id);
+                // Queued under the lock the call is taken under, so a call
+                // taken for its reply already has the reply waiting.
+                let mut pending = lock(&inbox.pending);
                 // A reply nobody waits for came after its deadline: drop it.
-                if let Some(waiter) = waiter {
+                if let Some(waiter) = pending.remove(&reply.id) {
                     let _ = waiter.deliver.try_send(Delivery::Reply(reply, fds));
                 }
             }

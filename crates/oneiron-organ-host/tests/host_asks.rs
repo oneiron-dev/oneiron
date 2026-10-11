@@ -827,6 +827,8 @@ fn an_answer_that_waits_for_room_never_follows_its_calls_reply() {
     };
     let outcome = host.call_with(&vault, full, Vec::new(), &asks);
     std::fs::write(signals.path().join("go"), b"").expect("signal");
+    // Before the fix the answer kept waiting behind the routed reply, to go
+    // at the first room, and the call ended at its deadline instead.
     let outcome = outcome.expect("the reply stands");
     assert_eq!(signal.1.load(Ordering::SeqCst), 1);
     assert_eq!(outcome.receipt.asks.len(), 1);

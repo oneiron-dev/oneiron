@@ -319,9 +319,11 @@ mod rogue {
         });
     }
 
-    /// Waits up to 10 s for the test to create `path`.
+    /// Waits for the test to create `path`, up to a minute: longer than
+    /// the deadline of the call it orders, so a slow host can fail that
+    /// call but never make the organ act before its signal.
     fn signalled(path: &Path) {
-        let until = Instant::now() + Duration::from_secs(10);
+        let until = Instant::now() + Duration::from_secs(60);
         while !path.exists() && Instant::now() < until {
             std::thread::sleep(Duration::from_millis(5));
         }

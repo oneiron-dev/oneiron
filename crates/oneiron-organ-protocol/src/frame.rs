@@ -350,6 +350,10 @@ fn send_frame_with<T: Serialize, G>(
             }
             drop(guard);
             first
+        } else if wait.passed() {
+            // Room can come after the deadline (poll rounds its wait up, or
+            // this thread runs late); the rest of the frame does not go then.
+            return Err(FrameError::TimedOut);
         } else {
             sendmsg(
                 stream,
