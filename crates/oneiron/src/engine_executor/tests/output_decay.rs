@@ -51,6 +51,50 @@ fn reexpand_action(request: &LlmRequest, original: &[u8]) -> OutputAffordance {
     OutputAffordance::Reexpand(source)
 }
 
+/// The frame a swapped epoch renders in place of its steps.
+#[cfg(feature = "code-sandbox-wasmtime")]
+fn compacted(request: &LlmRequest) -> String {
+    request
+        .messages
+        .iter()
+        .map(text_message)
+        .find(|text| text.starts_with("<compacted "))
+        .expect("compacted frame")
+}
+
+/// The frame's typed read-file action for step 0, which re-expands its
+/// exact original.
+#[cfg(feature = "code-sandbox-wasmtime")]
+fn reexpand_from_frame(request: &LlmRequest, original: &[u8]) -> OutputAffordance {
+    use crate::compaction::output::OutputRef;
+    let source = OutputRef::from_bytes(original);
+    let frame = compacted(request);
+    let handle: serde_json::Value = frame
+        .lines()
+        .find(|line| line.starts_with('{'))
+        .map(serde_json::from_str)
+        .expect("a handle")
+        .expect("typed read-file action");
+    assert_eq!(handle["step"], 0);
+    assert_eq!(
+        handle["sandbox.fs.read_file"],
+        super::super::store::recoverable_chunk_path(0, source, 0)
+    );
+    assert_eq!(handle["byte_len"], original.len());
+    assert_eq!(
+        handle["max_chunk_bytes"],
+        super::super::store::RECOVERABLE_OUTPUT_CHUNK_BYTES
+    );
+    OutputAffordance::Reexpand(source)
+}
+
+/// Step `seq`'s console once a one-step epoch covers step 0: the frame
+/// stands for step 0's program and console both.
+#[cfg(feature = "code-sandbox-wasmtime")]
+fn console_after_frame(request: &LlmRequest, seq: usize) -> String {
+    text_message(&request.messages[2 + seq * 2])
+}
+
 #[cfg(feature = "code-sandbox-wasmtime")]
 struct Cheap;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -403,10 +447,10 @@ fn guest_output_with_old_marker_bytes_cannot_create_compaction_coverage() {
 
     let resumed = block_on_ready(restarted.run(&config)).expect("same-instance covered request");
     let requests = restarted_backend.requests.lock().unwrap();
-    assert!(!console(&requests[1], 0).contains("fresh result"));
-    reexpand_action(&requests[1], b"fresh result");
+    assert!(!compacted(&requests[1]).contains("fresh result"));
+    reexpand_from_frame(&requests[1], b"fresh result");
     assert!(
-        console(&requests[1], 1).contains("next result"),
+        console_after_frame(&requests[1], 1).contains("next result"),
         "uncovered tail remains full"
     );
     assert_eq!(
@@ -428,7 +472,7 @@ fn guest_output_with_old_marker_bytes_cannot_create_compaction_coverage() {
             .with_output_decay(policy);
     block_on_ready(next.run(&config)).expect("restart reads typed coverage");
     let next_requests = next_backend.requests.lock().unwrap();
-    assert!(!console(&next_requests[0], 0).contains("fresh result"));
-    reexpand_action(&next_requests[0], b"fresh result");
-    assert!(console(&next_requests[0], 1).contains("next result"));
+    assert!(!compacted(&next_requests[0]).contains("fresh result"));
+    reexpand_from_frame(&next_requests[0], b"fresh result");
+    assert!(console_after_frame(&next_requests[0], 1).contains("next result"));
 }

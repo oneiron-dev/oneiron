@@ -409,7 +409,7 @@ fn a_window_the_compactor_cannot_take_whole_compacts_in_prefixes() {
     });
     let compact_at = run.base_tokens + run.step_tokens * 7 / 2;
     let mut seat = run.seat(compact_at, &compactor);
-    let (outcome, _) = run.call(&mut seat, 2..8, 8, 10);
+    let (outcome, _) = run.call(&mut seat, 2..8, 6, 10);
     assert_eq!(
         outcome.status,
         EngineExecutorStatus::Yielded { next_step_seq: 8 }

@@ -249,8 +249,13 @@ impl Vault {
             let (_, prior) = item?;
             last = last.max(Some((prior.epoch, prior.last)));
         }
-        let (epoch, first) = last.map_or((1, 0), |(epoch, end)| (epoch + 1, end + 1));
-        if row.epoch != epoch || row.first != first {
+        let continues = match last {
+            None => row.epoch == 1,
+            Some((epoch, end)) => {
+                epoch.checked_add(1) == Some(row.epoch) && end.checked_add(1) == Some(row.first)
+            }
+        };
+        if !continues {
             return Err(Error::InvariantViolation(
                 "executor coverage does not continue the run's last epoch",
             ));

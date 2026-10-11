@@ -3,17 +3,19 @@
 //! (agent-runtime-v1 §d7; Wave 9b compaction host done-means).
 //!
 //! `oneiron serve` runs `execute_code` for an agent that reaches it through
-//! `oneiron mcp`. Steps print fast, so the run's margin is past half its
-//! window and it compacts at half: its oldest steps are summarized
-//! by the compaction seat in the background, the summary passes the engine's
-//! gate, and the next step's request carries it in place of those steps; the
-//! run then finishes. `/api/health` says compaction is on.
+//! `oneiron mcp`. Each step's program carries a tenth of the run's window
+//! (programs, unlike consoles, never decay), so the run crosses its threshold
+//! within a few steps, or parks at its window with the pass in flight: its
+//! oldest steps are summarized by the compaction seat in the background, the
+//! summary passes the engine's gate, and the next step's request carries it in
+//! place of those steps; the run then finishes. `/api/health` says compaction
+//! is on.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
-use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -21,8 +23,10 @@ use serde_json::{Value, json};
 use crate::fake_llm::{FakeLlm, Reply};
 
 const SECRET: &str = "code-mode-compaction-issuer-key";
-/// The window a run parks at; it starts compacting at half of it.
+/// The window a run parks at; it starts compacting at half of it or later.
 const WINDOW_TOKENS: u64 = 80_000;
+/// What each step's program adds to the run's request.
+const STEP_TOKENS: u64 = WINDOW_TOKENS / 10;
 const SUMMARY_FACT: &str = "the deploy checklist has four items";
 const FILLER: &str = "alpha beta gamma delta ";
 const CONSOLE_FRAME: &str = "Console after durable step";
@@ -75,10 +79,9 @@ fn content(message: &Value) -> String {
 
 /// The fake model. A compaction call (the compaction prompt's system
 /// message) gets a summary of exactly its span with every pin kept. A step
-/// call gets a program printing a console sized so the run crosses half its
-/// window at its third step boundary; once a request carries a compacted
-/// epoch, the program finishes the run.
-fn answer(base: &OnceLock<u64>, body: &Value) -> String {
+/// call gets a program of [`STEP_TOKENS`] that prints its step; once a
+/// request carries a compacted epoch, the program finishes the run.
+fn answer(body: &Value) -> String {
     let messages = body["messages"].as_array().cloned().unwrap_or_default();
     let texts: Vec<String> = messages.iter().map(content).collect();
     if texts
@@ -101,12 +104,13 @@ fn answer(base: &OnceLock<u64>, body: &Value) -> String {
     if request.contains("<compacted") {
         return "finish('done');".to_owned();
     }
-    let tokens = |text: &str| oneiron::count_context_pack_tokens(text) as u64;
     let step = request.matches(CONSOLE_FRAME).count();
-    let base = *base.get_or_init(|| tokens(&request));
-    let console = (WINDOW_TOKENS / 2).saturating_sub(base) / 2 + 500;
-    let repeats = console / tokens(FILLER).max(1) + 1;
-    format!("console.log('step-console-{step}');\nconsole.log('{FILLER}'.repeat({repeats}));")
+    let filler = oneiron::count_context_pack_tokens(FILLER).max(1) as u64;
+    let repeats = usize::try_from(STEP_TOKENS / filler + 1).unwrap();
+    format!(
+        "// {}\nconsole.log('step-console-{step}');",
+        FILLER.repeat(repeats)
+    )
 }
 
 /// `oneiron mcp` on the code-mode surface, one JSON-RPC message per line.
@@ -210,7 +214,8 @@ fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>) {
          [models.dreamer]\nenabled = false\n[models.workflows]\nenabled = false\n\
          [models.code_mode]\nprompt_package = {prompts:?}\n\
          [models.code_mode.compaction]\nwindow_tokens = {WINDOW_TOKENS}\nhot_steps = 1\n\
-         [models.providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{model_url}\"\n",
+         [models.providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{model_url}\"\n\
+         context_tokens = 200000\n",
         prompts = prompts.canonicalize().unwrap().display().to_string(),
     );
     std::fs::OpenOptions::new()
@@ -302,15 +307,7 @@ fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_long_served_run_compacts_by_itself_and_finishes() {
-    let base = Arc::new(OnceLock::new());
-    let fake = FakeLlm::start(
-        Vec::new(),
-        Some(Reply::Computed(Arc::new({
-            let base = Arc::clone(&base);
-            move |body| answer(&base, body)
-        }))),
-    )
-    .await;
+    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(answer)))).await;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().to_owned();
     let url = fake.base_url.clone();
