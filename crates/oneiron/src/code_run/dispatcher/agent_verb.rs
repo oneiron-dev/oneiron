@@ -5,10 +5,10 @@ use serde_json::Value;
 use crate::EntityId;
 use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
-use crate::code_run::storage::derived_executor_id;
+use crate::code_run::storage::{ExecutorStorage, derived_executor_id};
 use crate::code_run::types::{
-    AGENT_VERB_DOOR_UNBOUND, AgentVerbRefusal, SelfAgentVerbCall, SelfCall, SelfDeniedResult,
-    SelfDispatchOutcome, SelfEffect,
+    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbRefusal, SelfAgentVerbCall,
+    SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
@@ -30,11 +30,21 @@ impl HostSelfDispatcher<'_> {
     /// committed but before its checkpoint gets the first receipt back when it
     /// makes the same call there; a changed call, or a write that may have
     /// committed without its receipt, fails closed, never repeats.
+    ///
+    /// A run bound to an off-record session forwards no verb, read or write:
+    /// the door runs on the canonical vault, outside the session's route and,
+    /// in a room on record, its saver, so none of the session's checks would
+    /// hold in the transactions it opens.
     pub(super) fn dispatch_agent_verb(
         &self,
         call: SelfAgentVerbCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
+        if matches!(self.storage, ExecutorStorage::Session(_)) {
+            return Ok(answered(Err(AgentVerbRefusal {
+                code: AGENT_VERB_SESSION_BOUND.to_owned(),
+            })));
+        }
         let Some(door) = &self.agent_verbs else {
             return Ok(answered(Err(AgentVerbRefusal {
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
