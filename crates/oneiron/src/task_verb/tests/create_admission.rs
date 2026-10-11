@@ -324,6 +324,12 @@ fn a_proposed_create_parks_one_proposal_per_birth_position() {
         (park(None, Some(facet)), None, Some(facet)),
     ];
 
+    assert_eq!(
+        park(Some(crate::claim::base_world_id()), None),
+        parked[2].0,
+        "base reality named outright is the same birth as no world"
+    );
+
     let refs: std::collections::BTreeSet<EntityId> = parked.iter().map(|row| row.0).collect();
     assert_eq!(
         refs.len(),
