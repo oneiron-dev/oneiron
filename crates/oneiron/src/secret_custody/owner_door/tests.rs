@@ -617,7 +617,8 @@ fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
 /// refuses, or reads apart from this parser, is refused too: a multi-line
 /// string reads, in TOML, as text what the line parser read as a binding, and
 /// an escape takes hex digits only. Valid TOML still registers: extensions,
-/// and a multi-line string closed on its own line, read or not.
+/// a multi-line string closed on its own line, read or not, and a comment
+/// after a header or a value.
 #[test]
 fn a_manifest_that_says_one_thing_twice_or_unlike_toml_is_refused() {
     let dir = tempfile::tempdir().expect("vault dir");
@@ -749,9 +750,10 @@ declared_paths = [".env.deploy"]
     // or an `=` in it is one key, apart from the dotted key it resembles. An
     // extension's one-line value of any type, a multi-line string that closes
     // on its line (as a read value too, a quote and a comma inside), a
-    // comment after it, a trailing comma and a `+` sign are TOML too.
+    // comment after a value or a header, a trailing comma and a `+` sign are
+    // TOML too.
     let extended = format!(
-        "{entry}\"extension.flag\" = 0\nextension.flag = 1\n\"vendor=left\" = 0\n\"vendor=right\" = 1\next_bool = true\next_inline = {{ a = 1 }}\next_array = [1, [2]]\next_text = \"a # b\" # a comment\next_long = \"\"\"a \"\" b\"\"\"\next_literal = '''it's'''\n\n[[secrets.bindings]]\neffector = \"\"\"deploy\"\"\"\ntier_ceiling = +1\nscopes = ['''read''', '''it's, too''',]\n"
+        "{entry}\"extension.flag\" = 0\nextension.flag = 1\n\"vendor=left\" = 0\n\"vendor=right\" = 1\next_bool = true\next_inline = {{ a = 1 }}\next_array = [1, [2]]\next_text = \"a # b\" # a comment\next_long = \"\"\"a \"\" b\"\"\"\next_literal = '''it's'''\n\n[[secrets.bindings]] # the deploy binding\neffector = \"\"\"deploy\"\"\" # \"a note\"\ntier_ceiling = +1 # one\nscopes = ['''read''', '''it's, too''',] # two\n"
     );
     publish_manifest(&vault, "extended", &extended);
     let registered = vault

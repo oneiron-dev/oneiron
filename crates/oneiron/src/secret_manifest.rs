@@ -107,6 +107,11 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                 "a manifest line holds a control character",
             ));
         }
+        // A comment after a header or a value is not part of it.
+        let line = match separators(line, b'#').first() {
+            Some(&at) => toml_trim(&line[..at]),
+            None => line,
+        };
         if line == "[[secrets]]" {
             secrets.push(ScratchEntry::default());
             scope = Scope::Secrets;
@@ -290,13 +295,8 @@ fn extension_value(value: &str) -> Result<()> {
     let bytes = value.as_bytes();
     let mut depth = 0_usize;
     let mut at = 0;
-    let mut end = bytes.len();
     while let Some(&c) = bytes.get(at) {
         match c {
-            b'#' => {
-                end = at;
-                break;
-            }
             b'"' | b'\'' => {
                 at = string_end(bytes, at, c)
                     .ok_or_else(|| invalid_manifest("a manifest value does not end on its line"))?;
@@ -312,7 +312,7 @@ fn extension_value(value: &str) -> Result<()> {
         }
         at += 1;
     }
-    if toml_trim(&value[..end]).is_empty() || depth != 0 {
+    if toml_trim(value).is_empty() || depth != 0 {
         return Err(invalid_manifest(
             "a manifest value does not end on its line",
         ));
