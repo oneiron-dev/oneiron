@@ -93,18 +93,10 @@ fn a_vector_search_in_the_room_finds_base_rows_added_after_it_went_on_record() -
         .run()?;
     let ids: Vec<_> = hits.iter().map(|hit| hit.id).collect();
     assert_eq!(
-        ids.first(),
-        Some(&later),
-        "the base row added on record is the nearest, got {hits:?}"
-    );
-    let room_row = hits
-        .iter()
-        .find(|hit| hit.id == staged)
-        .expect("the room's own row is found too");
-    assert!(
-        (room_row.score - 0.8).abs() < 1e-4,
-        "and scored on its own vector, got {}",
-        room_row.score
+        ids,
+        vec![later, staged, first],
+        "the base row added on record is the nearest, and the room's own row \
+         ranks by its own vector, got {hits:?}"
     );
     drop(view);
     session.close()?;
@@ -214,10 +206,14 @@ fn a_run_in_the_room_reports_no_pending_vector_for_a_row_the_room_holds() -> Res
 }
 
 /// A scoped read bound to a room searches the room, not only base: its text
-/// search returns a row only the room holds.
+/// search returns a row only the room holds. The owner's lane: a room's rows
+/// carry no record-scope stamp, which a grant-checked reader needs.
 #[test]
 fn a_scoped_read_in_the_room_searches_the_room() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let session = enter(&vault, "sess-room-scoped-search")?;
     let staged = entity_id(0xB6);
     stage_in_room(
@@ -231,7 +227,7 @@ fn a_scoped_read_in_the_room_searches_the_room() -> Result<()> {
             },
         ],
     )?;
-    let key = crate::claim::ScopedReadActorKey::new("agent:reader").expect("actor key");
+    let key = crate::claim::ScopedReadActorKey::vault_owner(owner);
     let outside = vault
         .scoped_read(key.clone())
         .search_text("roomscopedneedle", 10, None)?;
@@ -246,6 +242,165 @@ fn a_scoped_read_in_the_room_searches_the_room() -> Result<()> {
         inside.value.iter().any(|hit| hit.id == staged),
         "the room's read finds the room's row, got {:?}",
         inside.value
+    );
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// A room that staged only text over a base row finds that row by the room's
+/// words. A run over it queues base no embed job for the row: the job would
+/// keep, after the room closes, that the room's search chose it.
+#[cfg(feature = "sync")]
+#[test]
+fn a_run_over_a_room_that_staged_only_text_queues_no_base_embed_job() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let vault = std::sync::Arc::new(vault);
+    let claim = entity_id(0xB7);
+    put_status_claim(
+        &vault,
+        claim,
+        "basewordsonly",
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+        false,
+    )?;
+    vault.with_write_txn_grouped(|wtxn| {
+        crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, &claim)
+    })?;
+    let queue = crate::sync::SyncQueue::new(std::sync::Arc::clone(&vault))?;
+    let jobs_for_claim = || -> Result<usize> {
+        Ok(queue
+            .drain_embed_jobs()?
+            .iter()
+            .filter(|job| job.entity_id == claim)
+            .count())
+    };
+    assert_eq!(jobs_for_claim()?, 0, "base queues no job for the row yet");
+
+    let session = enter(&vault, "sess-room-text-only")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![BatchOp::Text {
+            id: claim,
+            fields: vec![("body".to_owned(), "roomtextonlyneedle".to_owned())],
+        }],
+    )?;
+    let view = session.read_view()?;
+    let in_room = vault
+        .query()
+        .search_text("roomtextonlyneedle", 10)
+        .reading(view.read())
+        .run_with_pending_vectors()?;
+    assert!(
+        in_room.value.iter().any(|hit| hit.id == claim),
+        "the room's words find the base row, got {:?}",
+        in_room.value
+    );
+    assert_eq!(jobs_for_claim()?, 0, "and base queues no embed job for it");
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// A room that replaced the vector of base's nearest row leaves a vacancy
+/// in base's hits. The search fills it from base's next rows before it
+/// answers: the room's replacement alone does not.
+#[test]
+fn a_vector_search_in_the_room_looks_past_a_row_whose_vector_it_replaced() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let replaced = entity_id(0xB8);
+    put_vector(&vault, replaced, [1.0, 0.0, 0.0, 0.0])?;
+    let next = entity_id(0xB9);
+    put_vector(&vault, next, [0.8, 0.6, 0.0, 0.0])?;
+    let session = enter(&vault, "sess-room-replaced-vector")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![room_vector(replaced, [0.0, 1.0, 0.0, 0.0])],
+    )?;
+
+    let view = session.read_view()?;
+    let hits = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .reading(view.read())
+        .run()?;
+    assert_eq!(
+        hits.first().map(|hit| hit.id),
+        Some(next),
+        "base's next row is the nearest in the room, got {hits:?}"
+    );
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// A vector the room staged for an id that names no row is no hit: it takes
+/// no place from a row the room reads.
+#[test]
+fn a_vector_search_in_the_room_skips_a_staged_vector_with_no_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let row = entity_id(0xBA);
+    put_vector(&vault, row, [0.8, 0.6, 0.0, 0.0])?;
+    let session = enter(&vault, "sess-room-rowless-vector")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![room_vector(entity_id(0xBB), [1.0, 0.0, 0.0, 0.0])],
+    )?;
+
+    let view = session.read_view()?;
+    let hits = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .reading(view.read())
+        .run()?;
+    assert_eq!(
+        hits.first().map(|hit| hit.id),
+        Some(row),
+        "the row the room reads is found, got {hits:?}"
+    );
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// A room stages its graph's count with its graph. Once it is on record base
+/// keeps growing, and a filtered search widens over every vector, base's new
+/// ones too: the one row the filter admits is found.
+#[test]
+fn a_filtered_vector_search_in_the_room_widens_over_base_rows_added_on_record() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    put_vector(&vault, entity_id(0xBC), [1.0, 0.0, 0.0, 0.0])?;
+    let session = enter(&vault, "sess-room-widening")?;
+    let staged = entity_id(0xBD);
+    stage_in_room(
+        &vault,
+        &session,
+        vec![room_put(staged), room_vector(staged, [0.0, 1.0, 0.0, 0.0])],
+    )?;
+    session.flip_on_record()?;
+    put_vector(&vault, entity_id(0xBE), [0.96, 0.28, 0.0, 0.0])?;
+    let wanted = entity_id(0xBF);
+    put_vector(&vault, wanted, [0.8, 0.6, 0.0, 0.0])?;
+
+    let view = session.read_view()?;
+    let only_wanted = |_: &crate::store::StoreRead<'_>,
+                       _: &heed::RoTxn<'_>,
+                       id: &EntityId|
+     -> Result<bool> { Ok(*id == wanted) };
+    let hits = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .filter_candidates(&only_wanted)
+        .reading(view.read())
+        .run()?;
+    assert_eq!(
+        hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![wanted],
+        "the filter's one row is found"
     );
     drop(view);
     session.close()?;

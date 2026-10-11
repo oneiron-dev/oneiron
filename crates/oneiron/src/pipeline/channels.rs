@@ -595,8 +595,15 @@ pub(super) fn scoped_text_channel_limit(
     if !text_scope_widening_active || requested == 0 {
         return Ok(requested);
     }
-    let indexed_docs = usize::try_from(crate::bm25::read_total_docs(store, rtxn)?)
-        .map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
+    let mut indexed_docs = crate::bm25::read_total_docs(store, rtxn)?;
+    if store.is_union() {
+        // A room stages the count it read when it indexed, and base keeps
+        // growing on record: base's own count bounds what base adds since.
+        indexed_docs =
+            indexed_docs.saturating_add(crate::bm25::read_total_docs(store.base(), rtxn)?);
+    }
+    let indexed_docs =
+        usize::try_from(indexed_docs).map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
     Ok(requested.max(indexed_docs))
 }
 
@@ -609,7 +616,15 @@ pub(super) fn scoped_vector_channel_limit(
     if !scope_widening_active || requested == 0 {
         return Ok(requested);
     }
-    Ok(requested.max(crate::hnsw::hnsw_entity_count(store, rtxn)?))
+    // A room stages its graph's count with its graph, and base keeps growing
+    // on record: the walk runs on base's graph and scores the room's vectors
+    // beside it, so both bound it.
+    let staged = store
+        .vectors
+        .staged_rows()
+        .map_or(0, |staged| staged.rows.len());
+    let indexed = crate::hnsw::hnsw_entity_count(store.base(), rtxn)?.saturating_add(staged);
+    Ok(requested.max(indexed))
 }
 
 pub(super) fn scoped_entity_channel_limit(

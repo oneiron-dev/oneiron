@@ -84,10 +84,14 @@ impl PipelineBuilder<'_> {
         // keyspace, so redirecting is not an option and skipping is the rule.
         // Absence of an overlay is not permission to persist: anonymous
         // routes discard all writes. Only an explicit Base route enqueues.
+        // A run that read a room staging anything of its own may have chosen
+        // its base rows by the room's postings or vectors, so base keeps no
+        // job of it, as it keeps no run row (`run_for_pack`).
         #[cfg(feature = "sync")]
         let enqueue = self
             .session
-            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base);
+            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
+            && !self.read.holds_room_rows();
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
         #[cfg(feature = "sync")]

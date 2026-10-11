@@ -35,7 +35,7 @@ impl Vault {
         let staged = store
             .vectors
             .staged_rows()
-            .map(|staged| self.staged_vectors(staged))
+            .map(|staged| self.staged_vectors(store, txn, query, skip_rescore, staged))
             .transpose()?;
         let base = store.base();
         let population = crate::hnsw::hnsw_entity_count(base, txn)?;
@@ -54,32 +54,37 @@ impl Vault {
                 )?,
             };
             if let Some(staged) = &staged {
-                rows.retain(|row| !staged.vectors.contains_key(&row.id));
-                for (id, vector) in &staged.vectors {
-                    if let Some(vector) = vector
-                        && !crate::vault_cleanup::is_archived_in_txn(store, txn, id)?
-                    {
-                        rows.push(ScoredEntity {
-                            id: *id,
-                            score: crate::hnsw::exact_score(
-                                &self.config,
-                                query,
-                                vector,
-                                skip_rescore,
-                            )?,
-                        });
+                // A base hit takes the room's vector, or none, and counts only
+                // for a row the room still reads.
+                let mut merged = Vec::with_capacity(rows.len() + staged.scored.len());
+                for row in rows {
+                    if !staged.ids.contains(&row.id) && live_in(store, txn, &row.id)? {
+                        merged.push(row);
                     }
                 }
-                rows.sort_unstable_by(|left, right| {
+                merged.extend_from_slice(&staged.scored);
+                merged.sort_unstable_by(|left, right| {
                     right
                         .score
                         .total_cmp(&left.score)
                         .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
                 });
+                rows = merged;
             }
             let mut visible = filter_results(store, txn, rows, private_note_ids)?;
+            // Every staged vector is scored each time, and base's later hits
+            // rank below all it returned: the result holds once `limit` of
+            // base's own survive, or base has no more.
+            let base_hits = staged.as_ref().map_or(visible.len(), |staged| {
+                visible
+                    .iter()
+                    .filter(|row| !staged.ids.contains(&row.id))
+                    .count()
+            });
+            let exhausted =
+                requested >= population || staged.as_ref().is_some_and(|staged| staged.clear_base);
             visible.truncate(limit);
-            if visible.len() >= limit || requested >= population {
+            if base_hits >= limit || exhausted {
                 return Ok(visible);
             }
             requested = requested.saturating_mul(2).max(1).min(population);
@@ -87,28 +92,51 @@ impl Vault {
     }
 }
 
-/// The vectors a room stages, by id: `None` where it removed base's.
+/// A hit, base's or the room's, names a row this read finds and has not
+/// archived, as base's walk admits only such rows (`hnsw_search`).
+fn live_in(store: &crate::store::StoreRead<'_>, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(store.entities.get(txn, id.as_bytes())?.is_some()
+        && !crate::vault_cleanup::is_archived_in_txn(store, txn, id)?)
+}
+
+/// The vectors a room stages: every id whose base vector it replaced or
+/// removed, and its live rows scored against the query.
 struct StagedVectors {
     clear_base: bool,
-    vectors: std::collections::HashMap<EntityId, Option<Vec<f32>>>,
+    ids: std::collections::HashSet<EntityId>,
+    scored: Vec<ScoredEntity>,
 }
 
 impl Vault {
-    fn staged_vectors(&self, staged: crate::session_overlay::StagedRows) -> Result<StagedVectors> {
-        let mut vectors = std::collections::HashMap::with_capacity(staged.rows.len());
+    fn staged_vectors(
+        &self,
+        store: &crate::store::StoreRead<'_>,
+        txn: &RoTxn<'_>,
+        query: &[f32],
+        skip_rescore: bool,
+        staged: crate::session_overlay::StagedRows,
+    ) -> Result<StagedVectors> {
+        let mut ids = std::collections::HashSet::with_capacity(staged.rows.len());
+        let mut scored = Vec::new();
         for (key, value) in staged.rows {
             let id = <[u8; ENTITY_ID_LEN]>::try_from(key.as_slice())
                 .ok()
                 .and_then(|bytes| EntityId::from_bytes(bytes).ok())
                 .ok_or(Error::CorruptedIndex("staged vector key"))?;
-            let vector = value
-                .map(|raw| crate::le_bytes_to_f32_vec(&raw, self.config.dimensions))
-                .transpose()?;
-            vectors.insert(id, vector);
+            ids.insert(id);
+            let Some(raw) = value else { continue };
+            let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+            if live_in(store, txn, &id)? {
+                scored.push(ScoredEntity {
+                    id,
+                    score: crate::hnsw::exact_score(&self.config, query, &vector, skip_rescore)?,
+                });
+            }
         }
         Ok(StagedVectors {
             clear_base: staged.clear_base,
-            vectors,
+            ids,
+            scored,
         })
     }
 
