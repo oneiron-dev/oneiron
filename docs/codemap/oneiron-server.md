@@ -183,6 +183,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
 | `src/api/tests/owner_healer.rs` | test | m | — | — | `/v1/owner` safety and repair: the owner rotates a secret (ARCH-0069 S6), reads the three signed healer… |
 | `src/api/tests/owner_routes.rs` | test | L | 4 crate-vis | — | `/v1/owner`: one owner door, receipted acts, whole-batch and whole-run consent |
+| `src/api/tests/owner_secrets.rs` | test | m | — | — | `/v1/owner/secrets/register`: the owner puts a secret into custody (ARCH-0069 S1–S3), with the repo… |
 | `src/api/tests/owner_surfaces.rs` | test | L | — | — | `/v1/owner` surfaces wired from built engine doors: cleanup review, persona export, off-record sessions, the… |
 | `src/api/tests/reactive.rs` | test | L | — | — | Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path |
 | `src/api/tests/relay_widen.rs` | test | m | — | — | Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it |
@@ -206,7 +207,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
 | `src/cli.rs` | src | m | 17 struct · 8 enum · 3 fn · 1 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DreamerCommand, DreamerGrantArgs, EmbedderCommand +17 | — |
-| `src/cli/owner_args.rs` | src | s | 14 struct · 3 enum | BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportNotesArgs, ImportSourceArgs +9 | Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan… |
+| `src/cli/owner_args.rs` | src | m | 16 struct · 5 enum | BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportNotesArgs, ImportSourceArgs +13 | Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan… |
 | `src/commands.rs` | src | L | 1 struct · 11 fn · 1 const · 8 re-export · 1 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | L | 1 fn · 22 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | s | 5 crate-vis | — | A file holding a credential, readable by its owner alone |
@@ -223,7 +224,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/init.rs` | src | m | 1 fn | — | First-run embedder and tagger choices, using the same config and providers as serve |
 | `src/commands/mcp_bridge.rs` | src | m | 1 fn | — | `oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's… |
 | `src/commands/msgpack_json.rs` | src | s | 2 crate-vis | — | JSON renderings of MessagePack claim values for command output |
-| `src/commands/owner.rs` | src | m | 9 fn · 1 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window recovery, export, the secret… |
+| `src/commands/owner.rs` | src | m | 10 fn · 1 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window recovery, export, the secret… |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
 | `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
 | `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
@@ -391,7 +392,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/persona.rs` | src | s | 6 crate-vis | — | Persona snapshot, mode A (OF-325): compile a shareable card about one person, let the owner strike rows at… |
 | `src/owner/runs.rs` | src | m | 11 crate-vis | — | Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act… |
 | `src/owner/schedule.rs` | src | s | 7 crate-vis | — | Scheduled backups for a running `serve` |
-| `src/owner/secrets.rs` | src | s | 7 crate-vis | — | The owner rotates a secret (ARCH-0069 S6) |
+| `src/owner/secrets.rs` | src | m | 12 crate-vis | — | The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6) |
 | `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
