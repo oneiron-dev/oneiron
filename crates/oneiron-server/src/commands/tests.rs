@@ -984,20 +984,24 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
     use tower::ServiceExt;
     const SECRET: &str = "trailing-clock-issuer-key";
     let dir = tempfile::tempdir().unwrap();
-    let wall = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let clock = oneiron::store::ports::ManualClock::new(wall);
+    let wall = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let closed_for = 40 * 24 * 60 * 60;
+    let clock = oneiron::store::ports::ManualClock::new(wall() - closed_for);
     let open = || {
         let mut config = oneiron::VaultConfig::server();
         config.store_clock = clock.bundle();
         oneiron::Vault::open_owned(dir.path(), config).unwrap()
     };
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
-    // The vault starts its authority clock, then stays closed for 40 days.
+    // The vault starts its authority clock 40 days ago and stays closed
+    // until now.
     open().ensure_host_root_slip(&issuer).unwrap();
-    clock.set(wall + 40 * 24 * 60 * 60);
+    clock.set(wall());
 
     let vault = open();
     let principal = vault
@@ -1018,6 +1022,9 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
     vault
         .grant_agent_principal(&owner, &principal, ceiling)
         .unwrap();
+    // Expired on the wall clock, live on the clock the vault judges it on.
+    assert!(minted.expires_at < wall(), "{}", minted.expires_at);
+    assert!(minted.expires_at > vault.capability_slip_now().unwrap());
     let server = Arc::new(
         SyncServer::new(
             Arc::new(vault),
