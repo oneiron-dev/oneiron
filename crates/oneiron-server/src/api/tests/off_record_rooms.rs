@@ -370,7 +370,7 @@ async fn a_members_save_writes_only_their_own_vault() {
         "a save wrote another vault"
     );
 
-    // A second save has nothing left to save and tells nobody.
+    // A second save has nothing left to save, and the room still hears it.
     let (status, again) = act(&server, "save", owner.clone(), room.id, "harbour").await;
     assert_eq!(status, StatusCode::OK, "{again}");
     assert_eq!(again["saved"], json!([]));
@@ -383,6 +383,7 @@ async fn a_members_save_writes_only_their_own_vault() {
     assert_eq!(
         notices(&server, mina, room.id, "harbour").await,
         [
+            ("saved_talk".to_owned(), room.owner.to_hex()),
             ("saved_talk".to_owned(), room.owner.to_hex()),
             ("exported".to_owned(), room.mina.to_hex()),
         ]
@@ -507,7 +508,8 @@ async fn every_save_and_export_leaves_a_room_notice() {
 /// The owner's 1:1 with their own companion has nobody else to tell, in a
 /// room as out of one: a room holding only the owner and this vault's own
 /// agent posts no notice. An agent that a contact is About acts for that
-/// contact's person, so once one joins, the room hears every act again.
+/// contact's person, so once a contact names it, it is someone else's agent
+/// and the room hears every act again.
 #[tokio::test]
 async fn a_room_with_only_the_owner_and_their_own_agent_posts_no_notice() {
     let (_dir, server) = auth_test_server();
@@ -533,22 +535,11 @@ async fn a_room_with_only_the_owner_and_their_own_agent_posts_no_notice() {
             .is_empty()
     );
 
-    let visitor = agent(&server, "visitor");
     let contact = EntityId::now();
     seed_counterparty_contact(&server, contact, EntityId::now(), "visitor@example.com");
     server
         .vault()
-        .put_edge(&contact, oneiron::EdgeKind::About, &visitor, 1.0)
-        .unwrap();
-    server
-        .vault()
-        .join_member(
-            room,
-            visitor,
-            WriteActor::new(owner_id, EdgeActorClass::Human),
-            200,
-            HistoryChoice::Share,
-        )
+        .put_edge(&contact, oneiron::EdgeKind::About, &companion_id, 1.0)
         .unwrap();
     let (status, file) = act(&server, "export", owner.clone(), room, "den").await;
     assert_eq!(status, StatusCode::OK, "{file}");

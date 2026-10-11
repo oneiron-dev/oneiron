@@ -1567,6 +1567,7 @@ fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
             .kind(),
         ErrorKind::OffRecordTalkOnly
     );
+    drop(telemetry);
     let outcome = session.close()?;
     assert_eq!(outcome.turns_deleted, 0);
     assert_eq!(outcome.context_receipts_deleted, 0);
@@ -1622,6 +1623,7 @@ fn anonymous_telemetry_never_falls_back_to_base_even_for_existing_run_ids() -> R
                 .all(|run| run.run_id != candidate.run_id)
         );
     }
+    drop(telemetry);
     let outcome = session.close()?;
     assert_eq!(outcome.context_receipts_deleted, 0);
     Ok(())
