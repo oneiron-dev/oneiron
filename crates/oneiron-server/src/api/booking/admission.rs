@@ -6,9 +6,9 @@ use oneiron::booking::anti_abuse::{
     BookingRequestFacts, EmailValidationEvidence, booking_email_hash, booking_ip_hash,
     booking_session_hash,
 };
-use oneiron::booking::lifecycle::{live_hold_event_type, token_event_type};
+use oneiron::booking::lifecycle::{confirm_event_type, token_event_type};
 use oneiron::booking::{
-    ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE,
+    ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE, BookingError,
     BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingSourcePageValue, BookingStatus,
     BookingStatusValue, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
 };
@@ -50,9 +50,10 @@ pub(super) fn admission_facts(
     let ip_hash = booking_ip_hash(&ip_material);
 
     // A confirm or an amendment does not carry its event type, so it is read
-    // from what the request names: the hold, or the booking its token is for.
-    // Without it, every control the owner scoped to one event type would
-    // skip these requests.
+    // from what the request names: the hold or the booking it already made,
+    // or the booking an action token is for. Without it, every control the
+    // owner scoped to one event type would skip these requests. A confirm
+    // that names neither is refused before the writer, after admission.
     let (event_type, session_ref, booker_email, selected_slot, intake) = match request {
         BookingOperationRequest::Availability(input) => (
             Some(input.event_type.clone()),
@@ -69,12 +70,16 @@ pub(super) fn admission_facts(
             None,
         ),
         BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => (
-            live_hold_event_type(
+            match confirm_event_type(
                 &server.vault,
                 &session_key(page_ref, &input.session_ref),
                 &OpaqueLifecycleToken(input.hold_token.clone()),
                 now,
-            )?,
+            ) {
+                Ok(event_type) => Some(event_type),
+                Err(BookingError::InvalidConstraint(_)) => None,
+                Err(error) => return Err(error.into()),
+            },
             Some(input.session_ref.as_str()),
             Some(input.booker_email.as_str()),
             None,

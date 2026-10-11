@@ -176,6 +176,33 @@ pub(in crate::booking) fn confirmed_booking_starts(
     Ok(found)
 }
 
+/// The event type one booking's live head names, read without the rest of
+/// its facts.
+pub(super) fn booking_event_type_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<EventTypeKey>, BookingError> {
+    for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
+        let Some(body) = vault
+            .get_claim_in_txn(rtxn, &claim_id)
+            .map_err(|error| engine_failure("booking claim read", error))?
+            .filter(crate::claim::claim_surfaceable)
+        else {
+            continue;
+        };
+        if body.predicate == BOOKING_EVENT_TYPE_REF_PREDICATE
+            && body.subject == ClaimSubject::Entity(*event_ref)
+        {
+            return Ok(Some(
+                decode_claim_value::<BookingEventTypeRefValue>(&body.value, "event type ref")?
+                    .event_type,
+            ));
+        }
+    }
+    Ok(None)
+}
+
 /// Whether `event_ref`'s surfaceable heads make it a confirmed booking of
 /// this page and event type. Order-independent: competing status heads
 /// never count as Confirmed.

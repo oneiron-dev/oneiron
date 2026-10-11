@@ -576,13 +576,30 @@ fn confirmed_tokens(response: BookingOperationResponse) -> (String, String) {
 }
 
 /// engine-crates-24: a control the owner scoped to one event type binds a
-/// confirm for that type. The confirm names its event type only through its
-/// hold, so admission reads it from there.
+/// confirm for that type. A confirm names its event type only through its
+/// hold, or once the hold is spent through the booking it made, so a retry
+/// of a confirm is bound too. A confirm naming no hold of its session is
+/// refused before anything is recorded for it.
 #[tokio::test]
 async fn an_event_scoped_required_intake_refuses_a_confirm_for_that_event() {
     let fixture = Fixture::new();
     let slots = fixture.slots().await;
-    assert!(!slots.is_empty());
+    assert!(slots.len() > 2);
+    let booked = held_token(&fixture, &slots[0], "booked").await;
+    let mut first = confirm(booked, "booked");
+    if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = &mut first {
+        input.intake = vec![oneiron::booking::agent_api::BookingIntakeAnswer {
+            field_key: "topic".to_owned(),
+            value: "short".to_owned(),
+        }];
+    }
+    confirmed_tokens(
+        fixture
+            .dispatch("booking.confirm", first.clone())
+            .await
+            .expect("confirm before the rule"),
+    );
+
     let scope = BookingRuleScope {
         page_ref: fixture.page,
         event_type: Some(EventTypeKey("intro".to_owned())),
@@ -606,13 +623,47 @@ async fn an_event_scoped_required_intake_refuses_a_confirm_for_that_event() {
     )
     .expect("event-scoped intake rule");
 
-    let held = held_token(&fixture, &slots[0], "empty-intake").await;
+    let held = held_token(&fixture, &slots[1], "empty-intake").await;
     assert_eq!(
         fixture
             .dispatch("booking.confirm", confirm(held, "empty-intake"))
             .await
             .expect_err("an empty intake is refused for the scoped event type"),
         StatusCode::BAD_REQUEST
+    );
+    // The retry is refused for its intake, not for its spent hold.
+    let retry = fixture
+        .route(
+            "POST",
+            &format!("/public/booking/{}/verbs/booking.confirm", fixture.token),
+            serde_json::to_value(first).expect("wire"),
+        )
+        .await;
+    assert_eq!(retry.status(), StatusCode::BAD_REQUEST);
+    let body = String::from_utf8(bytes(retry).await).expect("utf-8");
+    assert!(body.contains("intake"), "{body}");
+
+    let mut stranger = confirm("ab".repeat(32), "no-hold");
+    if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = &mut stranger {
+        "stranger@example.test".clone_into(&mut input.booker_email);
+    }
+    assert_eq!(
+        fixture
+            .dispatch("booking.confirm", stranger)
+            .await
+            .expect_err("a confirm naming no hold is refused"),
+        StatusCode::BAD_REQUEST
+    );
+    let contact = super::super::subject::booker_contact_ref("stranger@example.test")
+        .expect("contact ref");
+    assert!(
+        fixture
+            .server
+            .vault
+            .get(&contact)
+            .expect("contact read")
+            .is_none(),
+        "a refused confirm recorded a booker contact"
     );
 }
 
