@@ -4773,3 +4773,94 @@ fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() ->
     );
     Ok(())
 }
+
+/// ARCH-0067 §5: a TASK a world-narrowed writer creates is born in that world,
+/// and a world row travels only where a CLAIM in that world would — under its
+/// own world or `All`. A grant that would carry every world does not lift a
+/// base-only pact or selector, nor carry the row to another world's peer. A
+/// base TASK travels under every selector.
+#[test]
+fn a_world_born_task_travels_only_under_its_own_world() {
+    let member = entity_id(0x3E);
+    let world = local_world_id(0x53);
+    let other_world = local_world_id(0x54);
+    let window_key = WindowKey::new("2026-12");
+    for (name, selector_world, pact_worlds, born_travels) in [
+        ("base selector", SyncSelectorWorld::Base, None, false),
+        (
+            "base-only pact",
+            SyncSelectorWorld::Base,
+            Some(crate::federation::base_world_axis()),
+            false,
+        ),
+        (
+            "another world",
+            SyncSelectorWorld::World(other_world),
+            None,
+            false,
+        ),
+        ("its own world", SyncSelectorWorld::World(world), None, true),
+        ("every world", SyncSelectorWorld::All, None, true),
+    ] {
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        if let Some(worlds) = pact_worlds {
+            seed_scoped_pacts_for_grant(
+                &vault,
+                grant_id,
+                &[FederationDirectionScope {
+                    worlds,
+                    facets: ScopeAxis::All,
+                    bands: ScopeAxis::All,
+                }],
+            );
+        }
+        let writer = EntityId::now();
+        vault
+            .put_entity(
+                &writer,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"writer",
+            )
+            .unwrap();
+        let create = |position| {
+            vault
+                .memory(writer, EdgeActorClass::Human)
+                .with_birth_position(position)
+                .tasks_create(&crate::task_verb::TaskCreateSpec::new(
+                    Value::from("board work"),
+                    None,
+                    None,
+                    Some(100),
+                ))
+                .unwrap()
+                .task_ref
+                .unwrap()
+        };
+        let born = create(crate::federation::record_scope::BirthPosition {
+            world: Some(world.entity_id()),
+            facet: None,
+        });
+        let base = create(crate::federation::record_scope::BirthPosition::default());
+        let doc = create_window_doc("source", &window_key);
+        for task in [born, base] {
+            insert_blob(&doc, task, &vault.get_raw(&task).unwrap().unwrap());
+        }
+        doc.commit();
+        let selector = SyncSelector::new(grant_id, member, selector_world, vec![], vec![]);
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap_or_else(|err| panic!("{name}: the request authorizes: {err:?}"))
+                .export(ExportMode::all_updates())
+                .unwrap();
+
+        let exported = import_ids(&update);
+        assert!(exported.contains(&base), "{name}: a base TASK travels");
+        assert_eq!(
+            exported.contains(&born),
+            born_travels,
+            "{name}: a world-born TASK"
+        );
+    }
+}
