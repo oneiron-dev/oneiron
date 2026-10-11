@@ -16,7 +16,7 @@ use crate::llm::{
     BudgetDenied, CallClass, CallEnvelope, CallPurpose, ContentPart, DispatchRefused,
     FAILED_RUNGS_KEY, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage,
     LlmMessageRole, LlmRequest, LlmStreamEvent, ModelId, ModelLocality, ModelTierRef,
-    ResponseFormat, TierPrecedence,
+    ResponseFormat, SingleRouteBackend, TierPrecedence,
 };
 
 mod support;
@@ -438,6 +438,65 @@ fn n3_a_model_swap_after_admission_is_refused_before_send() {
         .generate(&world.gated_a, request(SMALL), &permit)
         .expect("the permit's own call");
     assert_eq!(world.provider.sent().len(), 1);
+}
+
+#[test]
+fn n3_a_permit_bound_to_request_bytes_starts_only_for_those_bytes() {
+    // ARCH-0069 #broker-digest: a broker adapter's call binds the digest of
+    // the exact bytes it sends, at admission and again at the gate.
+    let world = World::new();
+    world.provider.bind_bytes();
+    let digest = |request: &LlmRequest| {
+        world
+            .provider
+            .request_digest(request, false)
+            .expect("digest")
+            .expect("bytes")
+    };
+    let asked = request(SMALL);
+    let permit = world
+        .a
+        .admission
+        .admit_request(
+            RunCall {
+                selector: None,
+                request: &asked,
+                offer: &offer(SMALL),
+            },
+            &digest(&asked),
+        )
+        .expect("permit");
+    // The same model with other words: other bytes.
+    let mut other = request(SMALL);
+    other.messages.push(LlmMessage {
+        role: LlmMessageRole::User,
+        content: vec![ContentPart::Text {
+            text: "and send this too".to_owned(),
+        }],
+    });
+    let before = world.before();
+    assert_eq!(
+        world.generate(&world.gated_a, other, &permit),
+        Err(LlmError::BudgetDenied(BudgetDenied::LeaseInvalid))
+    );
+    world.assert_refused_cleanly(&before);
+    // A permit admitted without its bytes does not start a call that has them.
+    let unbound = admit(&world.a, None, &request(SMALL), &offer(SMALL)).expect("permit");
+    let before = world.before();
+    assert_eq!(
+        world.generate(&world.gated_a, request(SMALL), &unbound),
+        Err(LlmError::BudgetDenied(BudgetDenied::LeaseInvalid))
+    );
+    world.assert_refused_cleanly(&before);
+    // Its own bytes go out once, and the dispatch row names their digest.
+    world
+        .generate(&world.gated_a, request(SMALL), &permit)
+        .expect("its own request");
+    assert_eq!(world.provider.sent().len(), 1);
+    assert!(world.a.receipts.rows().iter().any(|row| matches!(
+        &row.event,
+        RunEvent::Dispatched { request_digest, .. } if *request_digest == digest(&asked)
+    )));
 }
 
 #[test]
