@@ -2,6 +2,11 @@
 //! [--timeout-secs <n>]`: the separate-user broker (OSH-2). The host runs it as
 //! its own OS user; the daemon's `[broker]` config names the socket and that
 //! user's uid. It reads no environment and takes no key on its command line.
+//!
+//! `oneiron-broker child --socket <path> [--extra-roots <pem>]… [--timeout-secs
+//! <n>]`: the same-user child (`#broker-same-user-open`). Only the daemon
+//! starts it ([`crate::ChildBroker`]). It serves its parent alone and exits
+//! when its stdin closes.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -14,6 +19,8 @@ use crate::SendPolicy;
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 const USAGE: &str = "usage: oneiron-broker serve --socket <path> --client-uid <uid> \
+                     [--extra-roots <pem file>]... [--timeout-secs <n>]\n       \
+                     oneiron-broker child --socket <path> \
                      [--extra-roots <pem file>]... [--timeout-secs <n>]";
 
 /// The binary's entry point.
@@ -30,7 +37,16 @@ pub fn main() -> ExitCode {
 
 #[cfg(unix)]
 fn run(args: Vec<OsString>) -> Result<(), String> {
+    let child = args.first().map(OsString::as_os_str) == Some(std::ffi::OsStr::new("child"));
+    if child {
+        // First, before anything is read.
+        crate::peer::confine_child()
+            .map_err(|error| format!("cannot confine the child: {error}"))?;
+    }
     let config = parse(args)?;
+    if child {
+        return run_child(config);
+    }
     if config.client_uid == crate::peer::own_uid() {
         return Err(
             "--client-uid is this process's own uid; a separate-user broker \
@@ -39,6 +55,37 @@ fn run(args: Vec<OsString>) -> Result<(), String> {
         );
     }
     crate::peer::harden().map_err(|error| format!("cannot close process memory: {error}"))?;
+    block_on(config)
+}
+
+/// The child serves the process that started it, under its own uid, until
+/// its stdin closes.
+#[cfg(unix)]
+fn run_child(config: crate::ServeConfig) -> Result<(), String> {
+    use std::io::Read as _;
+    if config.client_pid.is_none_or(|pid| pid <= 1) {
+        return Err("the child broker has no parent to serve".to_owned());
+    }
+    std::thread::Builder::new()
+        .name("lifeline".to_owned())
+        .spawn(|| {
+            let mut stdin = std::io::stdin();
+            let mut byte = [0; 1];
+            loop {
+                match stdin.read(&mut byte) {
+                    Ok(0) => break,
+                    Err(error) if error.kind() != std::io::ErrorKind::Interrupted => break,
+                    _ => {}
+                }
+            }
+            std::process::exit(0);
+        })
+        .map_err(|error| format!("lifeline: {error}"))?;
+    block_on(config)
+}
+
+#[cfg(unix)]
+fn block_on(config: crate::ServeConfig) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -56,9 +103,11 @@ fn run(_: Vec<OsString>) -> Result<(), String> {
 #[cfg(unix)]
 fn parse(args: Vec<OsString>) -> Result<crate::ServeConfig, String> {
     let mut args = args.into_iter();
-    if args.next().as_deref() != Some(std::ffi::OsStr::new("serve")) {
-        return Err(USAGE.to_owned());
-    }
+    let child = match args.next().as_deref().and_then(std::ffi::OsStr::to_str) {
+        Some("serve") => false,
+        Some("child") => true,
+        _ => return Err(USAGE.to_owned()),
+    };
     let mut socket = None;
     let mut client_uid = None;
     let mut extra_roots = Vec::new();
@@ -67,7 +116,7 @@ fn parse(args: Vec<OsString>) -> Result<crate::ServeConfig, String> {
         let value = args.next().ok_or_else(|| USAGE.to_owned())?;
         match flag.to_str() {
             Some("--socket") => socket = Some(PathBuf::from(value)),
-            Some("--client-uid") => {
+            Some("--client-uid") if !child => {
                 client_uid = Some(
                     value
                         .to_str()
@@ -92,9 +141,15 @@ fn parse(args: Vec<OsString>) -> Result<crate::ServeConfig, String> {
             _ => return Err(USAGE.to_owned()),
         }
     }
+    let (client_uid, client_pid) = if child {
+        (crate::peer::own_uid(), Some(crate::peer::parent_pid()))
+    } else {
+        (client_uid.ok_or_else(|| USAGE.to_owned())?, None)
+    };
     Ok(crate::ServeConfig {
         socket: socket.ok_or_else(|| USAGE.to_owned())?,
-        client_uid: client_uid.ok_or_else(|| USAGE.to_owned())?,
+        client_uid,
+        client_pid,
         policy: SendPolicy {
             timeout,
             extra_roots,

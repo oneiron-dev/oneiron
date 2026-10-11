@@ -36,12 +36,18 @@ impl Drop for Broker {
 
 /// Starts a broker that serves `client_uid` and trusts `roots`.
 async fn broker(client_uid: Option<u32>, roots: &[&[u8]]) -> Broker {
+    broker_for(client_uid, None, roots).await
+}
+
+/// [`broker`], serving only the process `client_pid` when one is named.
+async fn broker_for(client_uid: Option<u32>, client_pid: Option<u32>, roots: &[&[u8]]) -> Broker {
     let dir = tempfile::tempdir().expect("dir");
     let uid = std::fs::metadata(dir.path()).expect("meta").uid();
     let socket = dir.path().join("broker.sock");
     let task = tokio::spawn(serve(ServeConfig {
         socket: socket.clone(),
         client_uid: client_uid.unwrap_or(uid),
+        client_pid,
         policy: SendPolicy {
             timeout: Duration::from_secs(20),
             extra_roots: roots.iter().map(|pem| pem.to_vec()).collect(),
@@ -294,20 +300,42 @@ async fn only_the_named_peers_talk() {
     );
     assert_eq!(shared.err(), Some(BrokerError::Peer));
 
-    // The broker closes on a peer that is not the daemon's uid, unread.
+    // The broker closes on a peer that is not the daemon's uid, unread. A
+    // same-user child serves the daemon's pid only, so another process of the
+    // daemon's uid is closed on too.
     let elsewhere = broker(Some(ours.uid.wrapping_add(1)), &[fake.ca_pem()]).await;
-    let mut stream = UnixStream::connect(&elsewhere.socket)
-        .await
-        .expect("connect");
-    let _ = write_call(
-        &mut stream,
-        &chat(fake.origin(), BODY),
-        BODY,
-        SENTINEL.as_bytes(),
+    let other_process = broker_for(
+        None,
+        Some(std::process::id().wrapping_add(1)),
+        &[fake.ca_pem()],
     )
     .await;
-    assert!(read_reply(&mut stream).await.is_err());
+    for refused in [&elsewhere, &other_process] {
+        let mut stream = UnixStream::connect(&refused.socket)
+            .await
+            .expect("connect");
+        let _ = write_call(
+            &mut stream,
+            &chat(fake.origin(), BODY),
+            BODY,
+            SENTINEL.as_bytes(),
+        )
+        .await;
+        assert!(read_reply(&mut stream).await.is_err());
+    }
     assert!(fake.seen().is_empty());
+
+    // The daemon's own pid is served.
+    let daemon = broker_for(None, Some(std::process::id()), &[fake.ca_pem()]).await;
+    let reply = client(&daemon.socket, daemon.uid)
+        .connect()
+        .await
+        .expect("connect")
+        .call(&chat(fake.origin(), BODY), BODY, key())
+        .await
+        .expect("call");
+    assert!(matches!(reply.outcome, Outcome::Answered { status: 200, .. }));
+    assert_eq!(fake.seen().len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -387,6 +415,7 @@ async fn a_second_broker_never_takes_a_live_socket() {
         serve(ServeConfig {
             socket: live.socket.clone(),
             client_uid: live.uid,
+            client_pid: None,
             policy: SendPolicy {
                 timeout: Duration::from_secs(20),
                 extra_roots: vec![fake.ca_pem().to_vec()],
@@ -421,6 +450,7 @@ async fn a_second_broker_never_takes_a_live_socket() {
         serve(ServeConfig {
             socket: socket.clone(),
             client_uid: live.uid,
+            client_pid: None,
             policy: SendPolicy {
                 timeout: Duration::from_secs(20),
                 extra_roots: Vec::new(),
@@ -456,6 +486,7 @@ async fn a_live_socket_with_a_full_queue_is_refused_at_once() {
         serve(ServeConfig {
             socket: socket.clone(),
             client_uid: 0,
+            client_pid: None,
             policy: SendPolicy {
                 timeout: Duration::from_secs(20),
                 extra_roots: Vec::new(),

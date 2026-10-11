@@ -33,6 +33,9 @@ pub struct ServeConfig {
     pub socket: PathBuf,
     /// The daemon's uid, the only peer served.
     pub client_uid: u32,
+    /// The daemon's pid, for a same-user child: its uid is the daemon's, so
+    /// only the pid tells the daemon from another process of that user.
+    pub client_pid: Option<u32>,
     /// How calls are sent.
     pub policy: SendPolicy,
 }
@@ -92,7 +95,13 @@ pub async fn serve(config: ServeConfig) -> io::Result<()> {
         };
         // The kernel names the peer. Anyone but the daemon is closed on before
         // a byte is read.
-        if stream.peer_cred().ok().map(|cred| cred.uid()) != Some(config.client_uid) {
+        let daemon = stream.peer_cred().is_ok_and(|cred| {
+            cred.uid() == config.client_uid
+                && config.client_pid.is_none_or(|pid| {
+                    cred.pid().and_then(|peer| u32::try_from(peer).ok()) == Some(pid)
+                })
+        });
+        if !daemon {
             continue;
         }
         let permit = Arc::clone(&permits)

@@ -5,6 +5,7 @@
 //! or a broker that is not there, never costs a key read.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UnixStream;
@@ -12,15 +13,22 @@ use zeroize::Zeroizing;
 
 use crate::frame::{read_reply, write_call};
 use crate::peer::own_uid;
-use crate::{BrokerError, CallHeader, Isolation, Outcome, PROTOCOL_VERSION};
+use crate::{BrokerError, CallHeader, ChildBroker, Isolation, Outcome, PROTOCOL_VERSION};
 
 /// Where the daemon's broker listens, and who it must be.
 #[derive(Debug, Clone)]
 pub struct BrokerClient {
-    socket: PathBuf,
-    broker_uid: u32,
+    peer: Peer,
     isolation: Isolation,
     reply_timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+enum Peer {
+    /// A broker the host runs, at a socket, as `uid`.
+    User { socket: PathBuf, uid: u32 },
+    /// The daemon's own child.
+    Child(Arc<ChildBroker>),
 }
 
 impl BrokerClient {
@@ -39,17 +47,44 @@ impl BrokerClient {
             return Err(BrokerError::Peer);
         }
         Ok(Self {
-            socket,
-            broker_uid,
+            peer: Peer::User {
+                socket,
+                uid: broker_uid,
+            },
             isolation,
             reply_timeout,
         })
     }
 
-    /// The broker's socket path.
+    /// The same-user `child` (`#broker-same-user-open`): a peer on its
+    /// socket must be that child.
     #[must_use]
-    pub fn socket(&self) -> &std::path::Path {
-        &self.socket
+    pub fn child(child: Arc<ChildBroker>, reply_timeout: Duration) -> Self {
+        Self {
+            peer: Peer::Child(child),
+            isolation: Isolation::SameUser,
+            reply_timeout,
+        }
+    }
+
+    /// Whether a call could reach the broker now, checked before the call's
+    /// permit starts: a host's broker has a socket at its path, and the
+    /// child is running, or starts now.
+    pub fn ready(&self) -> std::io::Result<()> {
+        match &self.peer {
+            Peer::User { socket, .. } => {
+                let meta = std::fs::metadata(socket)?;
+                if std::os::unix::fs::FileTypeExt::is_socket(&meta.file_type()) {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "{} is not a socket",
+                        socket.display()
+                    )))
+                }
+            }
+            Peer::Child(child) => child.ensure().map(drop),
+        }
     }
 
     /// How this broker is isolated, for the call's receipt.
@@ -58,13 +93,22 @@ impl BrokerClient {
         self.isolation
     }
 
-    /// Connects and checks the peer's uid. Nothing is written yet.
+    /// Connects and checks the peer: the broker's uid, and for the child,
+    /// its pid too. Nothing is written yet.
     pub async fn connect(&self) -> Result<BrokerConnection, BrokerError> {
-        let stream = UnixStream::connect(&self.socket)
+        let (socket, uid, pid) = match &self.peer {
+            Peer::User { socket, uid } => (socket.as_path(), *uid, None),
+            Peer::Child(child) => {
+                let pid = child.ensure().map_err(|_| BrokerError::Unreachable)?;
+                (child.socket(), own_uid(), Some(pid))
+            }
+        };
+        let stream = UnixStream::connect(socket)
             .await
             .map_err(|_| BrokerError::Unreachable)?;
-        let uid = stream.peer_cred().map_err(|_| BrokerError::Peer)?.uid();
-        if uid != self.broker_uid {
+        let cred = stream.peer_cred().map_err(|_| BrokerError::Peer)?;
+        let peer_pid = cred.pid().and_then(|peer| u32::try_from(peer).ok());
+        if cred.uid() != uid || pid.is_some_and(|pid| peer_pid != Some(pid)) {
             return Err(BrokerError::Peer);
         }
         Ok(BrokerConnection {

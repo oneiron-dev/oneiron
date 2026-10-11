@@ -23,6 +23,8 @@ mod strip;
 pub mod testing;
 
 #[cfg(unix)]
+mod child;
+#[cfg(unix)]
 mod client;
 #[cfg(unix)]
 mod peer;
@@ -38,6 +40,8 @@ pub use shape::Shape;
 pub use strip::{MARKER, strip};
 
 #[cfg(unix)]
+pub use child::ChildBroker;
+#[cfg(unix)]
 pub use client::{BrokerClient, BrokerConnection, BrokerReply};
 #[cfg(unix)]
 pub use serve::{ServeConfig, serve};
@@ -45,15 +49,15 @@ pub use serve::{ServeConfig, serve};
 use serde::{Deserialize, Serialize};
 
 /// How the broker is kept apart from the runner, as receipts name it
-/// (`broker_isolation`). Only [`Isolation::SeparateUser`] is built; the same-user
-/// child of `#broker-same-user-open` is the fallback that comes next.
+/// (`broker_isolation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Isolation {
     /// Its own OS user (or container) on a peer-checked Unix socket (OSH-2).
     SeparateUser,
-    /// A child of the daemon under the daemon's uid, non-dumpable. Receipts
-    /// carry the unproven badge.
+    /// A child of the daemon under the daemon's uid, non-dumpable
+    /// ([`ChildBroker`], `#broker-same-user-open`). Receipts carry the
+    /// unproven badge.
     SameUser,
 }
 
