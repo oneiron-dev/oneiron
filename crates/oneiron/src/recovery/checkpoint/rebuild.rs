@@ -153,6 +153,14 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                 embeddings += 1;
             }
         }
+        // A worker attached later, to a vault restored under no model or by a
+        // build without the queue, requeues them at its cold attach.
+        if embeddings > 0 {
+            vault
+                .store
+                .hnsw_meta
+                .put(txn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
+        }
         let sources = INDEX_SOURCE_TEXT.scan(&vault.store, txn)?;
         let mut texts = 0;
         for (id, fields) in sources {

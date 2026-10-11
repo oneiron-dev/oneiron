@@ -217,12 +217,8 @@ fn a_restore_marks_only_the_vectors_it_embeds_again() {
     let source = Arc::new(Vault::open(dir.path().join("source"), config.clone()).unwrap());
     let id = entity_id(0xD1);
     put_claim(&source, id, TEXT).unwrap();
-    let reconciler = PendingEmbeddingReconciler::new(
-        Arc::clone(&source),
-        Arc::new(ModelEmbedder("test/model@v1", cpu())),
-    );
-    assert_eq!(reconciler.reconcile_once().unwrap().filled, 1);
-    drop(reconciler);
+    drain_on(&source, cpu());
+    assert_eq!(source.embedding_provenance(&id).unwrap(), Some(cpu()));
     let checkpoint = dir.path().join("checkpoint");
     source.snapshot_checkpoint(&checkpoint, 100).unwrap();
     drop(source);
@@ -238,17 +234,34 @@ fn a_restore_marks_only_the_vectors_it_embeds_again() {
     assert_eq!(restored.embedding_provenance(&id).unwrap(), None);
     assert!(restored.embedding_provenance_counts().unwrap().is_empty());
     let mut restored = Arc::new(restored);
-    let reconciler = PendingEmbeddingReconciler::new(
-        Arc::clone(&restored),
-        Arc::new(ModelEmbedder("test/model@v1", metal())),
-    );
-    assert_eq!(reconciler.reconcile_once().unwrap().filled, 1);
-    drop(reconciler);
+    drain_on(&restored, metal());
     assert_eq!(restored.embedding_provenance(&id).unwrap(), Some(metal()));
+    let counts = restored.embedding_provenance_counts().unwrap();
+    assert!(
+        counts
+            .iter()
+            .all(|count| count.device == EmbeddingDevice::Metal),
+        "{counts:?}"
+    );
 
     let restored = Arc::get_mut(&mut restored).expect("one handle");
     restored.refill_embedding_space().unwrap();
     assert!(restored.embedding_provenance_counts().unwrap().is_empty());
+}
+
+/// Runs a worker on `device` until it leases nothing, for a vault on the
+/// test config's model, whose seeding writes claims of its own.
+fn drain_on(vault: &Arc<Vault>, device: EmbeddingProvenance) {
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(vault),
+        Arc::new(ModelEmbedder("test/model@v1", device)),
+    );
+    for _ in 0..32 {
+        if reconciler.reconcile_once().unwrap().leased == 0 {
+            return;
+        }
+    }
+    panic!("the worker never drained");
 }
 
 /// [`DeviceEmbedder`] for a vault on another model.
