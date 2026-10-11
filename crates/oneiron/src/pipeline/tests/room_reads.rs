@@ -448,3 +448,76 @@ fn a_text_search_in_the_room_reads_base_rows_indexed_after_it_went_on_record() -
     session.close()?;
     Ok(())
 }
+
+/// A room that cleared base's only indexed row stages a document count of
+/// zero and hides base's field stats. Once it is on record base indexes
+/// again, and a text search in the room finds base's new row.
+#[test]
+fn a_text_search_in_the_room_finds_base_rows_indexed_after_it_cleared_base_text() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let cleared = entity_id(0xC5);
+    put_text(&vault, cleared, "unionneedle")?;
+    let session = enter(&vault, "sess-room-bm25-stats")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![BatchOp::Text {
+            id: cleared,
+            fields: Vec::new(),
+        }],
+    )?;
+    session.flip_on_record()?;
+    let later = entity_id(0xC6);
+    put_text(&vault, later, "unionneedle")?;
+
+    let view = session.read_view()?;
+    let hits = vault
+        .query()
+        .search_text("unionneedle", 10)
+        .reading(view.read())
+        .run()?;
+    assert_eq!(
+        hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![later],
+        "base's new row is found, and the row the room cleared is not"
+    );
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// A row the room re-indexed and base indexed again once the room was on
+/// record holds a posting of each in the union. A text search in the room
+/// answers, and counts the row once.
+#[test]
+fn a_text_search_in_the_room_counts_a_row_base_and_the_room_both_indexed_once() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let row = entity_id(0xC7);
+    put_text(&vault, row, "unionneedle")?;
+    let session = enter(&vault, "sess-room-bm25-twice")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![BatchOp::Text {
+            id: row,
+            fields: vec![("body".to_owned(), "unionneedle unionneedle roomword".to_owned())],
+        }],
+    )?;
+    session.flip_on_record()?;
+    put_text(&vault, row, "unionneedle unionneedle unionneedle")?;
+
+    let view = session.read_view()?;
+    let hits = vault
+        .query()
+        .search_text("unionneedle", 10)
+        .reading(view.read())
+        .run()?;
+    assert_eq!(
+        hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![row],
+        "the row is found once"
+    );
+    drop(view);
+    session.close()?;
+    Ok(())
+}

@@ -11,9 +11,13 @@ pub(super) fn score_query_terms(
 ) -> Result<Vec<(EntityId, f64)>> {
     let diagnostics = &store.diagnostics().bm25;
     let total_docs = read_total_docs(store, rtxn)?;
-    // A room stages the count it read when it indexed, and base keeps
-    // growing on record: a union's postings may outnumber that count. There
-    // a term's postings bound it from below, and the gap is no corruption.
+    // A room stages its index rows as it read base when it indexed, and
+    // base keeps indexing on record. So a union may hold base's posting and
+    // the room's for one row, more postings than the room's count, or a row
+    // whose lengths or field stats the room hid. None of that is corruption
+    // there: a term's postings floor the count, one posting per row counts,
+    // a row the union cannot measure is not scored, and a field with no
+    // stats takes no length normalization.
     let union = store.is_union();
     if total_docs == 0 && !union {
         return Ok(Vec::new());
@@ -44,6 +48,9 @@ pub(super) fn score_query_terms(
             let (_, dup) = item?;
             let entry = decode_posting_entry(diagnostics, &dup)?;
             if previous.is_some_and(|id: EntityId| id.as_bytes() >= entry.id.as_bytes()) {
+                if union && previous == Some(entry.id) {
+                    continue;
+                }
                 return Err(corrupted_with_diagnostic(
                     diagnostics,
                     "duplicate posting entries for one entity",
@@ -72,11 +79,12 @@ pub(super) fn score_query_terms(
         else {
             continue;
         };
-        for item in dups {
+        let mut previous = None;
+        'entries: for item in dups {
             let (_, dup) = item?;
             let entry = decode_posting_entry(diagnostics, &dup)?;
             let id = entry.id;
-            if !accept(&id)? {
+            if previous.replace(id) == Some(id) || !accept(&id)? {
                 continue;
             }
 
@@ -86,6 +94,9 @@ pub(super) fn score_query_terms(
             if let Entry::Vacant(v) = field_length_cache.entry(id) {
                 let raw = store.text_doc_field_lengths().get(rtxn, id.as_bytes())?;
                 let Some(bytes) = raw else {
+                    if union {
+                        continue 'entries;
+                    }
                     return Err(corrupted_with_diagnostic(
                         diagnostics,
                         "missing field lengths for scored doc",
@@ -118,6 +129,7 @@ pub(super) fn score_query_terms(
                 // defaulting would yield `norm = 1 - b = 0.25` for the
                 // default `b=0.75` — a 4× artificial boost.
                 let stored_len = match lens.get(fid).copied() {
+                    None if union => continue 'entries,
                     None => {
                         return Err(corrupted_with_diagnostic(
                             diagnostics,
@@ -131,6 +143,9 @@ pub(super) fn score_query_terms(
                     FieldLengthPolicy::NoNorm => 0.0,
                     FieldLengthPolicy::CountLengthIncrement => {
                         if stored_len == 0 {
+                            if union {
+                                continue 'entries;
+                            }
                             return Err(corrupted_with_diagnostic(
                                 diagnostics,
                                 "zero length for scored CountLengthIncrement field",
@@ -160,9 +175,13 @@ pub(super) fn score_query_terms(
                         // avgdl must be positive for any field that has
                         // postings — absence means stats corruption.
                         if avgdl <= 0.0 {
-                            return Err(corrupted("field stats missing for scored field"));
+                            if !union {
+                                return Err(corrupted("field stats missing for scored field"));
+                            }
+                            1.0
+                        } else {
+                            1.0 - cfg.b + cfg.b * (len_f / avgdl)
                         }
-                        1.0 - cfg.b + cfg.b * (len_f / avgdl)
                     }
                 };
 
