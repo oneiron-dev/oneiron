@@ -68,8 +68,11 @@ fn init_with_env(
                 crate::embedder::prepare_local(embedder)?.to_owned()
             }
             Some(embedder) => {
-                crate::embedder::build_slot(Some(embedder))?;
-                crate::embedder::build_remote_rung(embedder, Default::default())?;
+                // The probe's run rows go to the log, as serve's do.
+                let receipts = std::sync::Arc::new(crate::models::ServerReceipts::default());
+                crate::embedder::build_slot(Some(embedder), receipts.clone())?;
+                // Built to check the section only; it never sends here.
+                crate::embedder::build_remote_rung(embedder, Default::default(), receipts)?;
                 if let Some(remote) = &embedder.remote {
                     format!(
                         "{} endpoint with on-device fallback and queries",
@@ -601,7 +604,12 @@ provider = "local"
         );
         assert!(!remote.egress.as_ref().unwrap().allow_all);
         assert_eq!(config.endpoint.locality, EmbedderLocality::OnDevice);
-        crate::embedder::build_remote_rung(&config, Default::default()).unwrap();
+        crate::embedder::build_remote_rung(
+            &config,
+            Default::default(),
+            std::sync::Arc::new(crate::models::ServerReceipts::default()),
+        )
+        .unwrap();
         assert!(!path.exists());
         assert!(!args.path.exists());
     }
