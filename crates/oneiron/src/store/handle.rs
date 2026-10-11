@@ -234,6 +234,9 @@ pub struct StoreCore {
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
+    /// Policy manifest decodes kept between resolutions: the shipped
+    /// manifest's rows, and each stored manifest body by its hash.
+    pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
     /// Opt-in host root for signing scoped MACHINE history. Never populated
     /// from a transport key, peer assertion, or relay-mode vault.
     pub(crate) machine_history_issuer: Mutex<Option<crate::authority::HostSlipIssuer>>,
@@ -546,6 +549,9 @@ macro_rules! manifest_dbs {
             fn gate_key_root(&self) -> &std::path::Path { &self.base.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.base.core.manifest_memo
+            }
         }
 
         /// The manifest's named databases, addressed uniformly by write target
@@ -584,6 +590,8 @@ macro_rules! manifest_dbs {
             /// alone. A cache keyed and validated by base versions cannot
             /// answer for such a read: overlay writes bump none of them.
             fn is_union(&self) -> bool;
+            /// The vault's memo of policy manifest decodes.
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
 
         impl ManifestDbs for Store {
@@ -594,6 +602,9 @@ macro_rules! manifest_dbs {
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { false }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -604,6 +615,9 @@ macro_rules! manifest_dbs {
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
         }
     };
 }

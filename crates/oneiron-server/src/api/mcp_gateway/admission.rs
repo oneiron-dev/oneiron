@@ -1,8 +1,8 @@
 //! Scoped-call admission and actor resolution.
 
 use super::{
-    McpCallContext, McpGatewayError, McpToolCallParams, mcp_api_error, mcp_engine_error,
-    mcp_scoped_read, mcp_tool_validation_error,
+    McpCallContext, McpGatewayError, McpToolCallParams, mcp_actor_result, mcp_api_error,
+    mcp_engine_error, mcp_scoped_read, mcp_tool_validation_error,
 };
 use crate::api::parse_entity_id_param;
 use crate::mcp::McpResolvedActor;
@@ -54,6 +54,19 @@ pub(crate) fn mcp_admit_scoped_call(
         McpValidatedToolArgs::Verb(verb) => verb,
     };
     mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
+}
+
+/// Whether this credential may start a code run here: a bound code host,
+/// and everything an `execute_code` call meets before its program is read.
+/// `/mcp` lists `execute_code` to every credential alike, so the listing
+/// cannot say this; `initialize` does, and the stdio bridge picks its
+/// endpoint by it.
+pub(crate) fn mcp_execute_code_admitted(server: &Arc<SyncServer>, actor: &McpCallContext) -> bool {
+    let tool = crate::mcp::MCP_EXECUTE_CODE_TOOL;
+    server.code_execution_host().is_some()
+        && mcp_admit_bound_tool(actor, tool).is_ok()
+        && mcp_admit_unscoped_execution(actor, tool, "name").is_ok()
+        && super::actor_dispatch::mcp_execute_code_gate(server, actor).is_ok()
 }
 
 /// One generated verb call, whichever door it arrived at: a `tools/call` or a
@@ -310,6 +323,7 @@ pub(super) fn mcp_validated_call_args(
     mode: McpSurfaceMode,
     params: McpToolCallParams,
     raw_arguments: Option<&str>,
+    actor: &McpResolvedActor,
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
     let Some(tool) = server.mcp_surface(mode).resolve(&params.name) else {
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
@@ -332,7 +346,10 @@ pub(super) fn mcp_validated_call_args(
         || crate::mcp::McpToolArguments::from(params.arguments),
         crate::mcp::McpToolArguments::from_raw_json,
     );
-    crate::mcp::validate_mcp_endpoint_tool_args(tool, arguments).map_err(mcp_tool_validation_error)
+    // WHO is the credential's: a call that names no actor is the caller the
+    // credential resolved to (ARCH-0028 #surface).
+    crate::mcp::validate_mcp_endpoint_tool_args_as(tool, arguments, &mcp_actor_result(actor))
+        .map_err(mcp_tool_validation_error)
 }
 
 /// Refuse an unavailable interpreter before decoding arguments or creating a run.

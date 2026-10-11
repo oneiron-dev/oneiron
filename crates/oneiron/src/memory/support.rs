@@ -751,12 +751,11 @@ impl Memory<'_> {
     }
 
     pub(super) fn latest_decision_ref_for(&self, id: &EntityId) -> MemoryResult<Option<String>> {
-        let decisions = self.vault.gate_decisions(GATE_RECEIPT_SCAN_LIMIT)?;
-        let latest = decisions
-            .into_iter()
-            .filter(|record| record.claim_id.as_ref() == Some(id.as_bytes()))
-            .max_by_key(|record| record.decision_id.to_hex());
-        Ok(latest.map(|record| format!("gate:{}", record.decision_id.to_hex())))
+        let latest = self
+            .vault
+            .store
+            .latest_gate_decision_for_claim(id.as_bytes(), GATE_RECEIPT_SCAN_LIMIT)?;
+        Ok(latest.map(|decision_id| format!("gate:{}", decision_id.to_hex())))
     }
 }
 
