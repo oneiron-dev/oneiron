@@ -267,7 +267,7 @@ impl Vault {
         authority_fold_readonly_for_store_in_txn(&self.store, self.privacy_posture(), txn)
     }
 
-    pub(super) fn authority_view_readonly_in_txn(
+    pub(crate) fn authority_view_readonly_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<AuthorityView> {
