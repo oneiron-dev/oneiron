@@ -21,8 +21,10 @@
 //!
 //! Unless the operator names `--surface`, the bridge asks the server once,
 //! before the first request, which endpoint to use: `/mcp` (`setup_oneiron`
-//! and `execute_code`) when its `tools/list` holds `execute_code`, which the
-//! server lists only with a bound code host, and `/mcp/tool-first` otherwise.
+//! and `execute_code`) when `/mcp`'s `initialize` says this credential may
+//! run code there, which needs a bound code host and a credential
+//! `execute_code` admits, and `/mcp/tool-first` otherwise. The listing alone
+//! cannot say it: `/mcp` lists `execute_code` to every credential alike.
 
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -52,10 +54,10 @@ const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 /// The largest answer the bridge takes from the server for one request.
 const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
 
-/// The `tools/list` the bridge sends to `/mcp` for itself, to pick the
+/// The `initialize` the bridge sends to `/mcp` for itself, to pick the
 /// endpoint when the operator named none.
 const SURFACE_PROBE: &str =
-    r#"{"jsonrpc":"2.0","id":"oneiron-mcp-bridge","method":"tools/list","params":{}}"#;
+    r#"{"jsonrpc":"2.0","id":"oneiron-mcp-bridge","method":"initialize","params":{}}"#;
 const SURFACE_PROBE_ID: &str = "oneiron-mcp-bridge";
 
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
@@ -300,10 +302,10 @@ impl Bridge {
     }
 
     /// The endpoint this bridge forwards to. With no `--surface`, a request
-    /// asks `/mcp` for its tool list, within the request's own deadline, and
+    /// asks `/mcp` to `initialize`, within the request's own deadline, and
     /// the answer picks the endpoint for the bridge's life. Calls that arrive
     /// meanwhile wait for that one probe, each no longer than its own
-    /// deadline. A probe that gets no tool list picks nothing: the calls that
+    /// deadline. A probe that gets no result picks nothing: the calls that
     /// waited on it share its answer, and the next request asks again.
     fn endpoint(&self, until: Instant) -> Result<String, Refusal> {
         let primary = format!("{}{}", self.base, McpSurface::Primary.path());
@@ -353,23 +355,22 @@ impl Bridge {
         outcome
     }
 
-    /// `/mcp` when the server lists `execute_code`, which it does only with a
-    /// bound code host; `/mcp/tool-first` otherwise.
+    /// `/mcp` when its `initialize` says this credential may run code there;
+    /// `/mcp/tool-first` otherwise, as for a server too old to say.
     fn probe(&self, primary: &str, until: Instant) -> Result<McpSurface, Refusal> {
         let answer = self
             .post_to(primary, SURFACE_PROBE.as_bytes().to_vec(), until)?
             .answer_to(&json!(SURFACE_PROBE_ID))?;
-        let Some(tools) = answer.pointer("/result/tools").and_then(Value::as_array) else {
+        let Some(result) = answer.get("result").and_then(Value::as_object) else {
             return Err(Refusal::Refused(answer));
         };
-        let code_host = tools
-            .iter()
-            .any(|tool| tool.get("name").and_then(Value::as_str) == Some("execute_code"));
-        Ok(if code_host {
-            McpSurface::Primary
-        } else {
-            McpSurface::ToolFirst
-        })
+        Ok(
+            if result.get("executeCodeAdmitted") == Some(&Value::Bool(true)) {
+                McpSurface::Primary
+            } else {
+                McpSurface::ToolFirst
+            },
+        )
     }
 
     fn post(&self, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
@@ -489,8 +490,8 @@ enum Refusal {
     /// 403): revoked, expired or unproven, say. The server's error body rides
     /// along.
     Auth(Value),
-    /// The server answered the bridge's own `tools/list`, which picks the
-    /// endpoint, with no tool list.
+    /// The server answered the bridge's own `initialize`, which picks the
+    /// endpoint, with no result.
     Refused(Value),
     /// The server answered, but not with a JSON-RPC answer to this request:
     /// any other HTTP error, or a body that answers something else.
@@ -517,7 +518,7 @@ impl Refusal {
                     id,
                     -32000,
                     "server_error",
-                    "the server's /mcp tools/list held no tool list, so no endpoint was picked; pass --surface to name one",
+                    "the server's /mcp initialize held no result, so no endpoint was picked; pass --surface to name one",
                     Some(answer.clone()),
                 ),
             },

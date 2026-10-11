@@ -54,8 +54,9 @@ listens elsewhere. `--surface tool-first` is the endpoint that lists one tool
 per exported verb (`/mcp/tool-first`); `--surface primary` is the code-mode
 endpoint (`/mcp`: `setup_oneiron` and `execute_code`). Without `--surface`,
 `oneiron mcp` asks the server at its first request and takes `/mcp` when the
-server has a bound code host (`[models.code_mode]`), `/mcp/tool-first`
-otherwise. You choose it here; the agent cannot change it.
+server has a bound code host (`[models.code_mode]`) and the credential may run
+code (a full-access agent; a read-only or propose-only one may not),
+`/mcp/tool-first` otherwise. You choose it here; the agent cannot change it.
 
 **Claude Code** (`-s user` makes it available in every project):
 

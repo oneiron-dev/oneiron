@@ -423,8 +423,9 @@ pub struct McpArgs {
     pub url: String,
 
     /// Which MCP endpoint to forward to. Without it, the bridge asks the
-    /// server at the first request: `primary` when the server has a bound
-    /// code host (its `/mcp` lists `execute_code`), `tool-first` otherwise.
+    /// server at the first request: `primary` when this credential may run
+    /// code there (a bound code host, and a credential `execute_code`
+    /// admits), `tool-first` otherwise.
     #[arg(long, value_enum)]
     pub surface: Option<McpSurface>,
 

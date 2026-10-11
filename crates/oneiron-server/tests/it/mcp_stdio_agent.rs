@@ -872,20 +872,27 @@ type Seen = Arc<Mutex<Vec<(String, Value)>>>;
 /// One fake MCP endpoint per test: it records each request and answers by
 /// the request's JSON-RPC method, stalling or flooding where told to, and
 /// lists `listed` as its tools (a `null` list: it stalls on `tools/list`).
-fn fake_mcp_server(seen: Seen, listed: Value) -> u16 {
+/// `listed` is what `tools/list` answers; `admitted` is what `initialize`
+/// says of the caller running code (`None`: it never answers).
+fn fake_mcp_server(seen: Seen, listed: Value, admitted: Option<bool>) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let seen = Arc::clone(&seen);
             let listed = listed.clone();
-            std::thread::spawn(move || answer_fake(stream, &seen, &listed));
+            std::thread::spawn(move || answer_fake(stream, &seen, &listed, admitted));
         }
     });
     port
 }
 
-fn answer_fake(mut stream: TcpStream, seen: &Mutex<Vec<(String, Value)>>, listed: &Value) {
+fn answer_fake(
+    mut stream: TcpStream,
+    seen: &Mutex<Vec<(String, Value)>>,
+    listed: &Value,
+    admitted: Option<bool>,
+) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
@@ -933,6 +940,17 @@ fn answer_fake(mut stream: TcpStream, seen: &Mutex<Vec<(String, Value)>>, listed
             .to_string();
             format!("{}{answer}", head(answer.len()))
         }
+        Some("initialize") => match admitted {
+            None => head(64),
+            Some(admitted) => {
+                let answer = json!({
+                    "jsonrpc": "2.0", "id": request["id"],
+                    "result": { "executeCodeAdmitted": admitted },
+                })
+                .to_string();
+                format!("{}{answer}", head(answer.len()))
+            }
+        },
         Some("tools/list") if listed.is_null() => head(64),
         Some("tools/list") => {
             let answer = json!({
@@ -951,6 +969,7 @@ fn answer_fake(mut stream: TcpStream, seen: &Mutex<Vec<(String, Value)>>, listed
         .write_all(reply.as_bytes())
         .and_then(|()| stream.flush());
     let stalls = match request["method"].as_str() {
+        Some("initialize") => admitted.is_none(),
         Some("tools/list") => listed.is_null(),
         method => method.is_some_and(|method| method.starts_with("stall/")),
     };
@@ -992,7 +1011,7 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let origin = format!(
         "http://127.0.0.1:{}",
-        fake_mcp_server(Arc::clone(&seen), json!([]))
+        fake_mcp_server(Arc::clone(&seen), json!([]), Some(false))
     );
     let env_log = dir.path().join("curl-env.log");
     let curl_dir = recording_curl(
@@ -1695,14 +1714,15 @@ fn a_tool_call_runs_as_its_credential_and_one_naming_another_actor_is_refused() 
 }
 
 /// With no `--surface`, the bridge forwards to `/mcp`, the code-mode pair
-/// (`setup_oneiron`, `execute_code`), when the server lists `execute_code`,
-/// which it does only with a bound code host; to `/mcp/tool-first`
-/// otherwise; and a named `--surface` is used as named, with nothing asked
-/// (ARCH-0028; drift E4). Before, it was always `/mcp/tool-first`. A probe
+/// (`setup_oneiron`, `execute_code`), when `/mcp`'s `initialize` says this
+/// credential may run code; to `/mcp/tool-first` otherwise, even when `/mcp`
+/// lists `execute_code` (Astra: a read-only agent was pinned to a door it
+/// could not use); and a named `--surface` is used as named, with nothing
+/// asked (ARCH-0028; drift E4). Before, it was always `/mcp/tool-first`. A probe
 /// the server never answers ends each call that waited on it within that
 /// call's own deadline (Sol pre-review: they probed again in turn).
 #[test]
-fn the_bridge_takes_the_code_mode_pair_when_the_server_has_a_code_host() {
+fn the_bridge_takes_the_code_mode_pair_only_for_a_credential_that_may_run_code() {
     let dir = tempfile::tempdir().unwrap();
     let config = init_vault(dir.path());
     let printed: Value = serde_json::from_str(&stdout(oneiron(
@@ -1718,13 +1738,13 @@ fn the_bridge_takes_the_code_mode_pair_when_the_server_has_a_code_host() {
     let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
     let stderr = dir.path().join("mcp.stderr");
     // Each request the server saw, as "<path> <method>".
-    let forwarded = |code_host: bool, surface: &[&str]| -> Vec<String> {
+    let forwarded = |code_host: bool, admitted: bool, surface: &[&str]| -> Vec<String> {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let mut listed = vec![json!({ "name": "setup_oneiron" })];
         if code_host {
             listed.push(json!({ "name": "execute_code" }));
         }
-        let port = fake_mcp_server(Arc::clone(&seen), Value::Array(listed));
+        let port = fake_mcp_server(Arc::clone(&seen), Value::Array(listed), Some(admitted));
         let origin = format!("http://127.0.0.1:{port}");
         let args = [&["--url", origin.as_str()][..], surface].concat();
         let mut bridge = Bridge::spawn_bare(&args, &env, &curl_dir, &stderr);
@@ -1737,26 +1757,30 @@ fn the_bridge_takes_the_code_mode_pair_when_the_server_has_a_code_host() {
             .collect()
     };
     assert_eq!(
-        forwarded(true, &[]),
-        ["/mcp tools/list", "/mcp initialize", "/mcp tools/list"]
+        forwarded(true, true, &[]),
+        ["/mcp initialize", "/mcp initialize", "/mcp tools/list"]
     );
-    assert_eq!(
-        forwarded(false, &[]),
-        [
-            "/mcp tools/list",
-            "/mcp/tool-first initialize",
-            "/mcp/tool-first tools/list"
-        ]
-    );
+    // Listed, and still not this credential's: a read-only or propose-only
+    // agent keeps the tool-first verbs.
     for code_host in [true, false] {
         assert_eq!(
-            forwarded(code_host, &["--surface", "tool-first"]),
+            forwarded(code_host, false, &[]),
+            [
+                "/mcp initialize",
+                "/mcp/tool-first initialize",
+                "/mcp/tool-first tools/list"
+            ]
+        );
+    }
+    for code_host in [true, false] {
+        assert_eq!(
+            forwarded(code_host, code_host, &["--surface", "tool-first"]),
             ["/mcp/tool-first initialize", "/mcp/tool-first tools/list"]
         );
     }
 
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
-    let port = fake_mcp_server(Arc::clone(&seen), Value::Null);
+    let port = fake_mcp_server(Arc::clone(&seen), json!([]), None);
     let origin = format!("http://127.0.0.1:{port}");
     let args = ["--url", origin.as_str(), "--request-timeout-secs", "3"];
     let mut bridge = Bridge::spawn_bare(&args, &env, &curl_dir, &stderr);

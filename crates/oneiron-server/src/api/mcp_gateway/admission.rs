@@ -56,6 +56,19 @@ pub(crate) fn mcp_admit_scoped_call(
     mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
 }
 
+/// Whether this credential may start a code run here: a bound code host,
+/// and everything an `execute_code` call meets before its program is read.
+/// `/mcp` lists `execute_code` to every credential alike, so the listing
+/// cannot say this; `initialize` does, and the stdio bridge picks its
+/// endpoint by it.
+pub(crate) fn mcp_execute_code_admitted(server: &Arc<SyncServer>, actor: &McpCallContext) -> bool {
+    let tool = crate::mcp::MCP_EXECUTE_CODE_TOOL;
+    server.code_execution_host().is_some()
+        && mcp_admit_bound_tool(actor, tool).is_ok()
+        && mcp_admit_unscoped_execution(actor, tool, "name").is_ok()
+        && super::actor_dispatch::mcp_execute_code_gate(server, actor).is_ok()
+}
+
 /// One generated verb call, whichever door it arrived at: a `tools/call` or a
 /// code-mode `self.memory.<verb>`. Both meet exactly this admission.
 pub(crate) fn mcp_admit_scoped_verb(
