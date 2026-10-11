@@ -64,6 +64,8 @@ pub(crate) use self::deindex::{
 };
 pub(crate) use self::facet_validation::validate_facet_of_edge;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
+#[cfg(test)]
+pub(crate) use self::put_apply::wiped_rows;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
 // the historical `crate::batch::` paths resolvable in sync builds.
 pub(crate) use self::actor_content::apply_actor_ops;

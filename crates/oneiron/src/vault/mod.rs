@@ -20,6 +20,7 @@ mod places;
 
 #[cfg(feature = "test-support")]
 mod read_fixture;
+mod reader_table;
 mod search_retrieval;
 mod transactions;
 mod vector_evidence;
@@ -56,6 +57,7 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
+pub use self::reader_table::ReaderTableShortfall;
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
