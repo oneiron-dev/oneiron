@@ -45,6 +45,66 @@ pub struct OrganSpec {
     /// the call's booking, and stay counted until they drop: the host never
     /// allows more than `call_memory_bytes`.
     pub max_output_bytes: u64,
+    /// The asks the grant names (protocol 1.1), each with its cap per call.
+    /// An ask for any other verb is refused.
+    pub asks: Vec<AskGrant>,
+    /// Asks of every verb that one call may make.
+    pub max_asks: u32,
+    /// Answer bytes one call may be lent. They are host memory inside the
+    /// call's booking, so the host never lends more than
+    /// `call_memory_bytes`.
+    pub max_ask_bytes: u64,
+    /// Where a granted `net.fetch` may go.
+    pub fetch: FetchGrant,
+}
+
+/// One ask verb an install grant names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskGrant {
+    pub verb: String,
+    pub max_per_call: u32,
+}
+
+impl AskGrant {
+    #[must_use]
+    pub fn new(verb: impl Into<String>, max_per_call: u32) -> Self {
+        Self {
+            verb: verb.into(),
+            max_per_call,
+        }
+    }
+}
+
+/// The allowlist of a granted `net.fetch`: every hop's origin must be on
+/// it, and every address it reaches must be global unless a CIDR here names
+/// it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FetchGrant {
+    pub origins: Vec<FetchOrigin>,
+    /// Addresses a fetch may reach that are not global, such as an in-house
+    /// timestamp authority.
+    pub private_cidrs: Vec<ipnet::IpNet>,
+    /// The most body bytes one fetch may bring back.
+    pub max_bytes: u64,
+}
+
+/// An exact origin: scheme (`https` or `http`), host and port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchOrigin {
+    pub scheme: String,
+    pub host: String,
+    pub port: u16,
+}
+
+impl FetchOrigin {
+    #[must_use]
+    pub fn new(scheme: impl Into<String>, host: impl Into<String>, port: u16) -> Self {
+        Self {
+            scheme: scheme.into(),
+            host: host.into(),
+            port,
+        }
+    }
 }
 
 impl OrganSpec {
@@ -65,6 +125,13 @@ impl OrganSpec {
             max_call_frame: DEFAULT_FRAME_LIMIT,
             max_reply_frame: DEFAULT_FRAME_LIMIT,
             max_output_bytes: 128 * 1024 * 1024,
+            asks: Vec::new(),
+            max_asks: 32,
+            max_ask_bytes: 16 * 1024 * 1024,
+            fetch: FetchGrant {
+                max_bytes: 8 * 1024 * 1024,
+                ..FetchGrant::default()
+            },
         }
     }
 }
@@ -118,6 +185,15 @@ pub enum CallClass {
 pub struct OrganInput {
     pub artifact: EntityId,
     pub version: u64,
+}
+
+/// Bytes the caller holds and hands the organ for one call, such as a
+/// document the engine prepared in memory. They cross like a vault input,
+/// and the host hashes them itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LentInput {
+    pub media_type: String,
+    pub bytes: Vec<u8>,
 }
 
 /// One call, as an engine caller asks it.
