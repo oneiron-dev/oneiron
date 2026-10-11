@@ -4,7 +4,6 @@ use super::{
     MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, execute_mcp_execute_code,
     execute_mcp_generated_verb, execute_mcp_setup, mcp_actor_class_wire,
 };
-use crate::api::unix_seconds_now;
 use crate::mcp::McpActorMetadata;
 use crate::mcp::McpConnectorActorResolutionError;
 use crate::mcp::McpResolvedActor;
@@ -26,6 +25,14 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
+    // A paired record expires when its slip does, and a slip's lifetime runs
+    // on the vault's authority clock. Judge it on that clock, as the vault
+    // judges the slip: the wall clock runs ahead of it by all the time the
+    // vault was closed, enough in time to expire a credential minted today.
+    let now = server
+        .vault
+        .capability_slip_now()
+        .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
     let mut registry = server.mcp_registry.lock().await;
     let ceiling_exists = |actor_class: &str, actor_ref: &str| {
         server
@@ -37,7 +44,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     // HTTP. A live paired slip it has not seen gets its record now, by the
     // same rule, once the slip verifies — so a restart or a credential minted
     // on the stopped vault does not lock an agent out.
-    let mut actor = match registry.resolve(&credential, unix_seconds_now(), ceiling_exists) {
+    let mut actor = match registry.resolve(&credential, now, ceiling_exists) {
         Err(McpConnectorActorResolutionError::UnknownCredential)
             if crate::api::pairing::register_live_paired_mcp(
                 &mut registry,
@@ -46,7 +53,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
                 server,
             ) =>
         {
-            registry.resolve(&credential, unix_seconds_now(), ceiling_exists)
+            registry.resolve(&credential, now, ceiling_exists)
         }
         resolved => resolved,
     }
