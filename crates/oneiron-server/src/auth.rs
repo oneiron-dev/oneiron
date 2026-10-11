@@ -68,6 +68,12 @@ pub(crate) trait RevokedTokenJtis {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         Err(())
     }
+    /// The 401 for a proof dated `timestamp` that [`Self::verify_slip`]
+    /// refused only because the vault's proof clock sits ahead of this
+    /// host's clock, or `None` for any other refusal.
+    fn proof_clock_refusal(&self, _timestamp: u64) -> Option<ApiError> {
+        None
+    }
 }
 
 /// The server-local persistent registry: one `sync_state` row per revoked
@@ -82,6 +88,19 @@ impl RevokedTokenJtis for oneiron::Vault {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         self.verify_logged_capability_slip_request(slip, timestamp, signature, nonce)
             .map_err(drop)
+    }
+
+    fn proof_clock_refusal(&self, timestamp: u64) -> Option<ApiError> {
+        let ahead = self.proof_clock_ahead(timestamp).ok().flatten()?;
+        tracing::warn!(
+            proof_clock = ahead.floor,
+            wall_clock = ahead.wall,
+            ahead_secs = ahead.floor.saturating_sub(ahead.wall),
+            "refused a holder proof that is fresh on this host's clock: the vault's proof clock \
+             is ahead of it, as after a host clock that ran ahead and was set back; stop \
+             `oneiron serve` and run `oneiron recover-clock`"
+        );
+        Some(ApiError::proof_clock_ahead())
     }
 
     fn is_revoked(&self, jti: &str) -> Result<bool, ()> {

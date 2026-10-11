@@ -100,7 +100,10 @@ The next call that agent makes is refused with JSON-RPC error `-32001`
 - A request the server refuses before MCP because of the credential (HTTP 401
   or 403: a revoked or expired slip, a bad holder proof) comes back as
   JSON-RPC error `-32001` (`mcp_auth_required`), with the server's error body
-  in `error.data.server_error`. Any other HTTP error, or an answer that is not
+  in `error.data.server_error`. A body whose message says `proof_clock_ahead`
+  is not a bad credential: the host clock ran ahead and was set back, and
+  `oneiron recover-clock` lets the agent back in (see
+  [owner actions](owner-actions.md#agents-refused-after-the-host-clock-ran-ahead)). Any other HTTP error, or an answer that is not
   a JSON-RPC response to that request, comes back as `-32000`
   (`server_error`) with the status in the message. A server that cannot be
   reached, or gives no whole answer within the request's time, comes back as

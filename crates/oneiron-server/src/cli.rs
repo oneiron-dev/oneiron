@@ -8,8 +8,8 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs,
-    RunsCommand, SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
+    ImportNotesArgs, ImportSourceArgs, RecoverClockArgs, RecoverWindowArgs, RestoreArgs, RunArgs,
+    RunDecisionArgs, RunsCommand, SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -59,6 +59,10 @@ pub enum Command {
     /// of its CRDT state, repairing its rows. The snapshot stays in memory
     /// and never touches disk; only the window's manifest is kept.
     RecoverWindow(Box<RecoverWindowArgs>),
+    /// Let agents back in after the host clock ran ahead and was set back:
+    /// on a stopped vault, move the clock holder proofs are judged on back
+    /// to the host's clock, and refuse every proof signed before now.
+    RecoverClock(Box<RecoverClockArgs>),
     /// Export the whole vault in one of five formats.
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
@@ -643,6 +647,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Backup(args) => commands::backup(*args),
         Command::Restore(args) => commands::restore(*args),
         Command::RecoverWindow(args) => commands::recover_window(*args),
+        Command::RecoverClock(args) => commands::recover_clock(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
         Command::Import(command) => commands::import(command),

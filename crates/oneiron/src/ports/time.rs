@@ -93,6 +93,11 @@ impl StoreClock {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         (*floor).max(self.source.now_recorded_at())
     }
+    /// The source itself, held at no floor: the host's wall clock. Only a
+    /// clock that keeps its own committed floor may read it.
+    pub(crate) fn wall_now(&self) -> u64 {
+        self.source.now_recorded_at()
+    }
     /// Nondecreasing seconds, not one fictitious second for each write.
     /// Transactions persist this floor before commit.
     pub fn now_recorded_at(&self) -> u64 {

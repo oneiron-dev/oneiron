@@ -2,7 +2,9 @@
 use super::*;
 
 fn record(vault: &Vault, timestamp: u64, nonce: &[u8], now: u64) -> Result<()> {
-    vault.with_write_txn(|txn| record_nonce(vault, txn, &[7; 32], nonce, timestamp, now))
+    vault.with_write_txn(|txn| {
+        record_nonce(vault, txn, &[7; 32], nonce, timestamp, ProofClock::at(now))
+    })
 }
 
 #[test]
@@ -15,8 +17,8 @@ fn timed_replay_survives_reopen_and_rotation_never_reopens_an_old_proof() {
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     assert!(record(&vault, 180, nonce, 240).is_err());
-    assert!(request_challenge(180, nonce, 240).is_ok());
-    assert!(request_challenge(180, nonce, 241).is_err());
+    assert!(request_challenge(180, nonce, ProofClock::at(240)).is_ok());
+    assert!(request_challenge(180, nonce, ProofClock::at(241)).is_err());
     // Bucket 6 reuses bucket 3's slot, but only after every bucket-3 proof expired.
     record(&vault, 360, nonce, 300).unwrap();
     assert!(record(&vault, 180, nonce, 300).is_err());
@@ -24,8 +26,8 @@ fn timed_replay_survives_reopen_and_rotation_never_reopens_an_old_proof() {
 }
 
 /// A wall clock that steps back across a reopen cannot readmit a proof whose
-/// row a later admission evicted: that admission committed its clock reading
-/// beside the rows it kept.
+/// row a later admission evicted, and the proof clock stays where that
+/// admission committed it.
 #[test]
 fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     use crate::authority::{HostSlipIssuer, pairing_binding_transcript};
@@ -69,9 +71,10 @@ fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     };
     let first = "11111111111111111111111111111111";
     admit(&vault, start, first).unwrap();
-    // A later proof moves the window past the first one and evicts its row.
-    clock.set(start + 61);
-    admit(&vault, start + 61, "22222222222222222222222222222222").unwrap();
+    // A proof a day later moves the window past the first one and evicts its row.
+    let later = start + RETAIN_SECS + 61;
+    clock.set(later);
+    admit(&vault, later, "22222222222222222222222222222222").unwrap();
     assert!(
         admit(&vault, start, "44444444444444444444444444444444").is_err(),
         "the window has moved past the first proof's time"
@@ -79,6 +82,264 @@ fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     drop(vault);
     clock.set(start);
     let vault = open();
-    assert!(admit(&vault, start, first).is_err());
-    admit(&vault, start + 61, "33333333333333333333333333333333").unwrap();
+    assert!(admit(&vault, start, first).is_err(), "the evicted proof");
+    assert!(
+        admit(&vault, start + 30, "55555555555555555555555555555555").is_err(),
+        "a fresh proof on the stepped-back wall clock"
+    );
+    admit(&vault, later, "33333333333333333333333333333333").unwrap();
+}
+
+const YEAR: u64 = 365 * 24 * 60 * 60;
+
+/// One paired holder on an owned vault whose wall clock the test sets.
+struct Holder {
+    _dir: tempfile::TempDir,
+    clock: std::sync::Arc<crate::ports::ManualClock>,
+    vault: Vault,
+    key: ed25519_dalek::SigningKey,
+    slip: crate::authority::CapabilitySlip,
+}
+
+impl Holder {
+    fn paired(start: u64) -> Self {
+        use crate::authority::{HostSlipIssuer, pairing_binding_transcript};
+        use ed25519_dalek::Signer;
+        let dir = tempfile::tempdir().unwrap();
+        let clock = crate::ports::ManualClock::new(start);
+        let config = crate::VaultConfig {
+            store_clock: clock.bundle(),
+            ..crate::VaultConfig::default()
+        };
+        let vault = Vault::open_owned(dir.path(), config).unwrap();
+        let issuer = HostSlipIssuer::from_secret(b"clock-recovery-issuer").unwrap();
+        vault.ensure_host_root_slip(&issuer).unwrap();
+        let key = ed25519_dalek::SigningKey::from_bytes(&[95; 32]);
+        let binding_key = key.verifying_key().to_bytes();
+        let link = vault
+            .issue_pairing_link(&issuer, crate::federation::Scope::top(), 86_400)
+            .unwrap();
+        let receipt = key
+            .sign(&pairing_binding_transcript(&link.code, &binding_key, "recovery-holder").unwrap())
+            .to_bytes();
+        let slip = vault
+            .redeem_pairing_link(
+                &issuer,
+                &link.code,
+                "recovery-holder",
+                binding_key,
+                &receipt,
+            )
+            .unwrap();
+        Self {
+            _dir: dir,
+            clock,
+            vault,
+            key,
+            slip,
+        }
+    }
+
+    /// Sends the proof signed at `timestamp` with nonce `n`.
+    fn admit(&self, timestamp: u64, n: u32) -> Result<()> {
+        use ed25519_dalek::Signer;
+        let nonce = format!("{n:032x}");
+        let challenge = holder_proof_challenge(timestamp, &nonce);
+        let signature = self
+            .key
+            .sign(&self.slip.binding_transcript(&challenge).unwrap())
+            .to_bytes();
+        self.vault
+            .admit_capability_slip_request(&self.slip, timestamp, &signature, nonce.as_bytes())
+            .map(drop)
+    }
+
+    fn recover(&self) -> Result<ProofClockRecovery> {
+        let actor = self.vault.ensure_embedded_owner_actor().unwrap();
+        let owner = self
+            .vault
+            .authenticate_owner(
+                actor,
+                &actor.to_hex(),
+                true,
+                crate::store::GateDecisionId::now(),
+            )
+            .unwrap();
+        self.vault.recover_proof_clock(&owner)
+    }
+}
+
+/// The host clock runs a year ahead for a minute and is set back: every
+/// fresh proof is refused, for that reason, until the owner's clock
+/// recovery. After it, the holder's next fresh proof gets in, and neither a
+/// proof captured before the jump nor one signed then and held back unsent
+/// gets in, inside its own window.
+#[test]
+fn a_clock_recovery_admits_the_next_fresh_proof_and_no_proof_signed_before_it() {
+    let start = 1_900_000_000;
+    let holder = Holder::paired(start);
+    holder.admit(start, 1).unwrap();
+    let held_back = start + 20;
+    holder.clock.set(start + YEAR);
+    holder.admit(start + YEAR, 2).unwrap();
+    holder.clock.set(start + 40);
+    assert!(holder.admit(start + 40, 3).is_err(), "a fresh proof");
+    assert_eq!(
+        holder.vault.proof_clock_ahead(start + 40).unwrap(),
+        Some(ProofClockAhead {
+            floor: start + YEAR,
+            wall: start + 40,
+        })
+    );
+
+    assert_eq!(
+        holder.recover().unwrap(),
+        ProofClockRecovery::Recovered {
+            old_floor: start + YEAR,
+            new_floor: start + 40,
+            not_before: start + 40,
+        }
+    );
+    assert!(
+        holder.admit(start, 1).is_err(),
+        "the proof captured before the jump"
+    );
+    assert!(
+        holder.admit(held_back, 4).is_err(),
+        "the proof held back unsent"
+    );
+    holder.admit(start + 40, 5).unwrap();
+    assert_eq!(holder.vault.proof_clock_ahead(start + 40).unwrap(), None);
+    assert!(
+        matches!(holder.recover(), Ok(ProofClockRecovery::NotAhead { .. })),
+        "nothing left to recover"
+    );
+
+    let first = Holder::paired(start);
+    first.clock.set(start + YEAR);
+    first.admit(start + YEAR, 1).unwrap();
+    first.clock.set(start + 40);
+    assert_eq!(
+        first.recover().unwrap(),
+        ProofClockRecovery::Recovered {
+            old_floor: start + YEAR,
+            new_floor: start + 40,
+            not_before: start + 40,
+        },
+        "the holder's first proof came during the jump"
+    );
+    first.admit(start + 40, 2).unwrap();
+}
+
+/// Proofs whose rows the jump evicted stay refused after a recovery, even
+/// when signed after its wall time: one signed a minute ahead before the
+/// jump, and one admitted during the jump and followed by a later proof.
+/// A jump that stays ahead for over a day forgets proofs a recovery would
+/// reopen, so the recovery refuses and changes nothing.
+#[test]
+fn a_clock_recovery_reopens_no_proof_the_jump_evicted() {
+    let start = 1_900_000_000;
+    let holder = Holder::paired(start);
+    holder.admit(start + 60, 1).unwrap();
+    holder.clock.set(start + YEAR + 60);
+    holder.admit(start + YEAR, 2).unwrap();
+    holder.clock.set(start + YEAR + 61);
+    holder.admit(start + YEAR + 61, 3).unwrap();
+    holder.clock.set(start + 40);
+    assert_eq!(
+        holder.recover().unwrap(),
+        ProofClockRecovery::Recovered {
+            old_floor: start + YEAR + 61,
+            new_floor: start + 40,
+            not_before: start + 61,
+        }
+    );
+    assert!(
+        holder.admit(start + 60, 1).is_err(),
+        "signed ahead before the jump"
+    );
+    holder.admit(start + 61, 4).unwrap();
+    holder.clock.set(start + YEAR);
+    assert!(
+        holder.admit(start + YEAR, 2).is_err(),
+        "admitted during the jump"
+    );
+    holder.admit(start + YEAR, 5).unwrap();
+
+    let held = Holder::paired(start);
+    held.admit(start, 1).unwrap();
+    held.clock.set(start + YEAR);
+    held.admit(start + YEAR, 2).unwrap();
+    held.clock.set(start + YEAR + RETAIN_SECS + 1);
+    held.admit(start + YEAR + RETAIN_SECS + 1, 3).unwrap();
+    held.clock.set(start + 40);
+    assert_eq!(
+        held.recover().unwrap(),
+        ProofClockRecovery::Forgotten {
+            floor: start + YEAR + RETAIN_SECS + 1,
+            forgotten_before: start + YEAR + 1,
+            wall: start + 40,
+        }
+    );
+    assert!(
+        held.admit(start + 40, 4).is_err(),
+        "the clock stays where it was"
+    );
+}
+
+/// A vault whose admissions kept neither the proof clock nor the mark, as
+/// before them: its recording floor stands in for the proof clock, and the
+/// oldest nonce row left bounds what those admissions evicted. A jump that
+/// only moved the recording clock recovers. One whose admissions evicted
+/// rows cannot say how far ahead the evicted proofs were signed, so the
+/// recovery refuses.
+#[test]
+fn a_vault_without_the_mark_recovers_unless_a_proof_admitted_in_the_jump_evicted_rows() {
+    let start = 1_900_000_000;
+    let unmark = |holder: &Holder| {
+        let store = &holder.vault.store;
+        let mut txn = store.env.write_txn().unwrap();
+        PROOF_CLOCK_FLOOR.delete(store, &mut txn, &()).unwrap();
+        PROOF_NOT_BEFORE.delete(store, &mut txn, &()).unwrap();
+        txn.commit().unwrap();
+    };
+    let moved = Holder::paired(start);
+    moved.admit(start, 1).unwrap();
+    unmark(&moved);
+    moved.clock.set(start + YEAR);
+    moved.vault.store.authorization_now().unwrap();
+    moved.clock.set(start + 40);
+    assert!(
+        moved.admit(start + 40, 2).is_err(),
+        "the recording floor stands in"
+    );
+    assert_eq!(
+        moved.recover().unwrap(),
+        ProofClockRecovery::Recovered {
+            old_floor: start + YEAR,
+            new_floor: start + 40,
+            not_before: start + 40,
+        }
+    );
+    assert!(
+        moved.admit(start, 1).is_err(),
+        "the proof captured before the jump"
+    );
+    moved.admit(start + 40, 3).unwrap();
+
+    let jumped = Holder::paired(start);
+    jumped.admit(start, 1).unwrap();
+    jumped.clock.set(start + YEAR);
+    jumped.admit(start + YEAR, 2).unwrap();
+    jumped.vault.store.authorization_now().unwrap();
+    unmark(&jumped);
+    jumped.clock.set(start + 40);
+    assert_eq!(
+        jumped.recover().unwrap(),
+        ProofClockRecovery::Forgotten {
+            floor: start + YEAR,
+            forgotten_before: start + YEAR - 60,
+            wall: start + 40,
+        }
+    );
 }

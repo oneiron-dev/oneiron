@@ -84,6 +84,115 @@ fn the_shipped_server_accepts_an_agents_proof_after_a_stop_longer_than_the_windo
     assert_eq!(read(&at(now + 120)), 401, "a proof dated past the window");
 }
 
+/// The host clock ran a year ahead while an agent called, then was set
+/// back. The shipped server refuses the agent's fresh proofs, and its 401
+/// and its log say why and name the command. `oneiron recover-clock` refuses
+/// while the server runs; with it stopped, the command lowers the clock, and
+/// the same agent's next fresh proof is accepted. Run again, it finds
+/// nothing to recover.
+#[test]
+fn an_owner_lets_agents_back_in_after_the_host_clock_ran_a_year_ahead() {
+    const YEAR: u64 = 365 * 24 * 60 * 60;
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    let config = dir.path().join("oneiron.toml");
+    stdout(oneiron(
+        &["init", vault.to_str().unwrap(), "--embedder", "none"],
+        &config,
+    ));
+    let minted: Value = serde_json::from_str(&stdout(oneiron(
+        &["token", "agent", "--name", "clock-recovery"],
+        &config,
+    )))
+    .expect("token agent prints its credential as JSON");
+    let token = minted["token"].as_str().expect("token").to_owned();
+    let slip = CapabilitySlip::from_token(&token).expect("v2 slip");
+    let key = signing_key(minted["binding_key"].as_str().expect("binding key"));
+
+    // The agent calls while the host clock reads a year ahead.
+    {
+        let ahead = unix_seconds_now() + YEAR;
+        let clock = ManualClock::new(ahead);
+        let mut vault_config = oneiron::VaultConfig::server();
+        vault_config.store_clock = clock.bundle();
+        let jumped = oneiron::Vault::open_owned(&vault, vault_config).unwrap();
+        let nonce = format!("{:032x}", 1);
+        let challenge = oneiron::authority::holder_proof_challenge(ahead, &nonce);
+        let signature = key
+            .sign(&slip.binding_transcript(&challenge).unwrap())
+            .to_bytes();
+        jumped
+            .admit_capability_slip_request(&slip, ahead, &signature, nonce.as_bytes())
+            .expect("admitted while the clock read a year ahead");
+    }
+
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let read = || {
+        let proof = holder_proof(&slip, &key, unix_seconds_now()).unwrap();
+        let response = reqwest::blocking::Client::new()
+            .get(format!("http://127.0.0.1:{port}/v1/core/conversations"))
+            .bearer_auth(&token)
+            .header("x-oneiron-binding", proof.to_string())
+            .send()
+            .expect("read conversations");
+        let status = response.status().as_u16();
+        (status, response.text().expect("response body"))
+    };
+    let recover = || {
+        oneiron(&["recover-clock"], &config)
+            .output()
+            .expect("run oneiron")
+    };
+
+    let log = dir.path().join("serve-1.log");
+    let first = serve(&config, port, &log);
+    let (status, body) = read();
+    assert_eq!(status, 401, "a fresh proof under the year-ahead clock");
+    assert!(
+        body.contains("proof_clock_ahead") && body.contains("oneiron recover-clock"),
+        "the 401 names its reason and the command: {body}"
+    );
+    let refused = recover();
+    assert!(
+        !refused.status.success(),
+        "recover-clock beside a running serve"
+    );
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("running `oneiron serve`"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    sigterm(first);
+    let logged = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        logged.contains("proof clock") && logged.contains("oneiron recover-clock"),
+        "the server log names the reason and the command: {logged}"
+    );
+
+    let recovered: Value = serde_json::from_str(&stdout(oneiron(&["recover-clock"], &config)))
+        .expect("recover-clock prints JSON");
+    let gap = recovered["gap_secs"].as_u64().expect("gap_secs");
+    assert!(
+        (YEAR - 600..=YEAR).contains(&gap),
+        "a year ahead: {recovered}"
+    );
+
+    let second = serve(&config, port, &dir.path().join("serve-2.log"));
+    assert_eq!(read().0, 200, "the same agent's next fresh proof");
+    sigterm(second);
+    let again = recover();
+    assert!(!again.status.success(), "nothing left to recover");
+    assert!(
+        String::from_utf8_lossy(&again.stderr).contains("nothing to recover"),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+}
+
 /// 200 agents minted one process each, as `token agent` mints them, then a
 /// serve: every agent's proof is accepted. The injected clock stands for the
 /// wall clock: it moves on by at least a second between processes, which

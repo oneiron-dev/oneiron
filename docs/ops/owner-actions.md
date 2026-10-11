@@ -156,6 +156,48 @@ A restore refuses, and changes nothing, when:
 
 The restore runs from the CLI only, because the server cannot swap out the vault it is serving.
 
+## Agents refused after the host clock ran ahead
+
+Each agent request carries a holder proof signed with the agent's clock time, and the vault
+takes it only within 60 seconds of its proof clock. That clock follows this host's clock but
+never runs back, so a replayed proof cannot get in. If the host clock jumps ahead while an
+agent calls (a bad NTP answer, a VM restored with the wrong time) and is then set back, the
+proof clock stays ahead. Every agent then gets 401 until the host clock catches up, and a
+restart does not help. You can tell this 401 from a bad credential: its message says
+`proof_clock_ahead` and names the command below, and the server log gives both clocks.
+
+```sh
+# stop `oneiron serve` first
+oneiron recover-clock
+```
+
+It moves the proof clock back to this host's clock and prints where it stood, where it stands
+now, and the gap in seconds:
+
+```json
+{
+  "old_floor": "2027-10-11T07:02:11.000Z",
+  "new_floor": "2026-10-11T07:05:40.000Z",
+  "gap_secs": 31535791,
+  "not_before": "2026-10-11T07:05:40.000Z"
+}
+```
+
+No proof signed before `not_before` gets in again. The vault also keeps the nonce of every
+proof it admitted while the clock was ahead, so none of those can be replayed either. Start
+`oneiron serve` again, and agents get in with their next request. Only the proof clock moves.
+The clock that stamps what the vault records stays where the jump left it until the host clock
+catches up, so anything recorded meanwhile carries that later time.
+
+It refuses, and changes nothing, when:
+
+- the vault is in use (stop `serve`);
+- the proof clock is not ahead of this host's clock: there is nothing to recover;
+- the host clock stayed ahead for more than a day while agents connected. The vault keeps a
+  proof's nonce for a day, so it no longer remembers every proof from that time, and lowering
+  its clock would let those be replayed. Agents get in again once the host clock reaches the
+  time the refusal names.
+
 ## Export
 
 ```sh

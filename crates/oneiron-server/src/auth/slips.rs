@@ -56,7 +56,11 @@ impl CoreAuth {
                 proof.nonce.as_bytes(),
                 &proof.signature()?,
             )
-            .map_err(|_| ApiError::unauthorized())?;
+            .map_err(|()| {
+                vault
+                    .proof_clock_refusal(proof.timestamp)
+                    .unwrap_or_else(ApiError::unauthorized)
+            })?;
         // These transports can call auth more than once per request; they must
         // not perform one-shot effects. The atomic consuming door owns those.
         if verified.claims().single_use {
