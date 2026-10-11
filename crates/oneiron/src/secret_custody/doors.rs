@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
@@ -253,13 +253,15 @@ pub(crate) fn decode_secret_custody_admission_body(bytes: &[u8]) -> Result<Secre
 }
 
 /// Reads the admission projection under either txn kind — the doors of
-/// SECRET-02 resolve this instead of the full record (SOL-1920-04).
+/// SECRET-02 resolve this instead of the full record (SOL-1920-04). It
+/// decodes the record where the transaction holds it, so the value bytes are
+/// never copied out.
 pub(crate) fn read_secret_custody_admission_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyAdmission>> {
-    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
+    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
