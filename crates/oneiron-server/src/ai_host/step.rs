@@ -5,12 +5,12 @@
 //! (briefing, then each earlier step's output) as user messages. A first step
 //! with no context is asked its definition's own `desc`. No text is invented
 //! here; the output's raw bytes become the step's durable result.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use oneiron::agent_dispatch::{AgentDispatchStatus, agent_dispatch_actor};
-use oneiron::attempt_queue::AttemptQueue;
+use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::{
@@ -33,6 +33,10 @@ pub(super) struct StepRunner {
     pub(super) budget_units: u64,
     /// How long a failed step waits before its next try, times the tries.
     pub(super) retry_backoff_secs: u64,
+    /// What each step's tries spent in all, by the failed try a retry
+    /// follows: the next try replays exactly that. Held only while a retry
+    /// may follow, and only in this process.
+    pub(super) spent: Mutex<HashMap<AttemptId, u64>>,
 }
 
 /// Why a step did not produce its output, and whether a later try of the
@@ -60,6 +64,14 @@ fn message(role: LlmMessageRole, text: String) -> LlmMessage {
 }
 
 impl StepRunner {
+    /// Drops what a failed try spent once no retry follows it.
+    pub(super) fn forget(&self, attempt: AttemptId) {
+        self.spent
+            .lock()
+            .expect("step spend mutex poisoned")
+            .remove(&attempt);
+    }
+
     /// Runs on the pump thread, which owns `runtime`: blocking on the model
     /// call here never stalls a request worker.
     pub(super) fn run(
@@ -128,19 +140,29 @@ impl StepRunner {
             .map_err(|refusal| Error::InvalidConfig(format!("workflow step refused: {refusal}")))?;
         let request = call.request;
         // The agent pays: its live budget policy rows, its own meter. Every
-        // earlier try of this step failed its model call and was charged its
-        // reservation, the same fixed amount for every try whatever the
-        // config did between them. Those charges are replayed into this
-        // try's meter, so the step's budget and every policy row it matches
-        // (the agent's cap, the purpose's) see them: retries share one
-        // budget, never renew it.
+        // earlier try of this step failed its model call, and each rung it
+        // sent was charged its reservation. Those charges are replayed into
+        // this try's meter, so the step's budget and every policy row it
+        // matches (the agent's cap, the purpose's) see them: retries share
+        // one budget, never renew it. The try this one follows left what the
+        // chain spent. After a restart nothing is left, and each earlier try
+        // is replayed at one reservation per rung of the ladder it has now:
+        // an estimate, exact only when every earlier rung went out metered on
+        // the same ladder and routes.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
+        let carried = step.attempt.retry_of.and_then(|parent| {
+            self.spent
+                .lock()
+                .expect("step spend mutex poisoned")
+                .remove(&parent)
+        });
+        let run_id = format!(
+            "workflow-step:{}",
+            oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())?.to_hex()
+        );
         let guard = vault.policy_budget_guard(
-            format!(
-                "workflow-step:{}",
-                oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())?.to_hex()
-            ),
+            run_id.clone(),
             self.budget_units,
             reserve,
             BudgetExhaustionPolicy::Suspend,
@@ -149,28 +171,39 @@ impl StepRunner {
         let budget = |denied: oneiron::llm::BudgetDenied| {
             Error::InvalidConfig(format!("workflow step budget: {denied:?}"))
         };
-        for _ in 0..earlier {
+        let charged = match carried {
+            Some(units) => units.div_ceil(reserve),
+            None => u64::from(earlier).saturating_mul(call.ladder.rungs() as u64),
+        };
+        for _ in 0..charged {
             let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
             guard.settle_reserved(&spent).map_err(budget)?;
         }
-        let lease = guard.admit_for_request(&request).map_err(budget)?.lease;
-        let response = match runtime.block_on(call.backend.generate(request, &lease)) {
+        // The step is a run on that meter: each rung its call reaches is
+        // admitted on its own permit, sent through the run's gate and
+        // settled. An answer pays its tokens, or the reservation when it
+        // reports none; a rung that went out and failed pays its reservation.
+        let run = self.models.undeclared_run(run_id, guard);
+        let response = match runtime.block_on(call.ladder.generate(&run, request, None)) {
             Ok(response) => response,
+            Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied).into()),
             Err(error) => {
-                let _ = guard.settle_reserved(&lease);
+                let retryable = matches!(error, oneiron::llm::LlmError::Retryable(_));
+                if retryable {
+                    let chain = run.read().used_units;
+                    self.spent
+                        .lock()
+                        .expect("step spend mutex poisoned")
+                        .insert(step.attempt.id, chain);
+                }
                 return Err(StepFault {
-                    retryable: matches!(error, oneiron::llm::LlmError::Retryable(_)),
+                    retryable,
                     error: Error::InvalidConfig(format!(
                         "workflow step model call failed: {error}"
                     )),
                 });
             }
         };
-        // An answer pays its tokens, or the reservation when it reports none,
-        // plus the reservation for each rung that failed before it.
-        crate::models::settle_answered(&guard, &lease, &response.usage, reserve).map_err(
-            |denied| Error::InvalidConfig(format!("workflow step settlement: {denied:?}")),
-        )?;
         let text: String = response
             .message
             .content

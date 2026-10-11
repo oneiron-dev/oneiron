@@ -887,6 +887,205 @@ fn an_answer_that_waits_for_the_writer_never_follows_a_revoked_cancel() {
     assert_eq!(host.status("probe").expect("installed").recent_crashes, 0);
 }
 
+/// Answers at once, and tells the organ so through a file.
+#[cfg(target_os = "linux")]
+struct Signal(std::path::PathBuf, AtomicUsize);
+
+#[cfg(target_os = "linux")]
+impl AskHandler for Signal {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        self.1.fetch_add(1, Ordering::SeqCst);
+        std::fs::write(self.0.join("handled"), b"").expect("signal");
+        Ok(Answered::default())
+    }
+}
+
+/// Linux: a Unix socket stops polling writable once more than a quarter
+/// of its send buffer waits unread, while a send blocks only at the whole
+/// buffer. So a call of half the buffer goes whole yet leaves the next
+/// frame waiting for room before its first byte.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_answer_that_waits_for_room_never_follows_its_calls_reply() {
+    // Astra (#1378) P2: the call was checked in flight under the writer,
+    // but its answer could then wait for room in the socket while the
+    // reader took the call's reply, and go after it. The organ leaves this
+    // call unread in the socket, asks, and replies once the handler has
+    // run; it reads again only once the call has returned. The answer must
+    // not go (the organ exits if it is answered), and the reply stands.
+    let send_buffer: usize = std::fs::read_to_string("/proc/sys/net/core/wmem_default")
+        .expect("wmem_default")
+        .trim()
+        .parse()
+        .expect("a byte count");
+    let (_dir, vault) = vault();
+    let signals = tempfile::tempdir().expect("signals");
+    let mut full_spec = spec(vec![AskGrant::new(ANSWER, 4)]);
+    full_spec.args = vec![
+        "--reply-while-full".into(),
+        signals.path().as_os_str().to_owned(),
+    ];
+    full_spec.verbs = vec!["organ.echo".into()];
+    let host = host(full_spec);
+    host.warm("probe").expect("warm");
+    let signal = Signal(signals.path().to_owned(), AtomicUsize::new(0));
+    let asks = AskHandlers::none().with(ANSWER, &signal);
+    let full = OrganCall {
+        args: "x".repeat(send_buffer / 2).into(),
+        ..echo(Duration::from_secs(20))
+    };
+    let outcome = host.call_with(&vault, full, Vec::new(), &asks);
+    std::fs::write(signals.path().join("go"), b"").expect("signal");
+    // Before the fix the answer kept waiting behind the routed reply, to go
+    // at the first room, and the call ended at its deadline instead.
+    let outcome = outcome.expect("the reply stands");
+    assert_eq!(signal.1.load(Ordering::SeqCst), 1);
+    assert_eq!(outcome.receipt.asks.len(), 1);
+    assert_eq!(
+        outcome.receipt.asks[0].unanswered,
+        Some(Unanswered::NotSent)
+    );
+    // An answer would reach the organ before this call.
+    host.call(&vault, echo(Duration::from_secs(10)))
+        .expect("the organ was never answered");
+    let status = host.status("probe").expect("installed");
+    assert_eq!(status.spawns, 1);
+    assert_eq!(status.recent_crashes, 0);
+}
+
+/// Polls `done` for up to a minute.
+#[cfg(target_os = "linux")]
+fn wait_until(done: impl Fn() -> bool) {
+    let until = Instant::now() + Duration::from_secs(60);
+    while !done() && Instant::now() < until {
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Linux, as above.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_answer_that_waits_for_room_never_goes_once_its_grant_is_revoked() {
+    // Astra (#1395) P2: an answer waiting for room checked only that its
+    // call was in flight, so it went at the first room though its grant was
+    // revoked meanwhile (the revocation's cancel waited for the writer the
+    // answer held). The organ leaves the call unread in the socket and
+    // asks; the grant is revoked once the answer waits for room, and the
+    // organ reads again only once the revocation is on record. It notes any
+    // answer it is sent.
+    let send_buffer: usize = std::fs::read_to_string("/proc/sys/net/core/wmem_default")
+        .expect("wmem_default")
+        .trim()
+        .parse()
+        .expect("a byte count");
+    let (_dir, vault) = vault();
+    let signals = tempfile::tempdir().expect("signals");
+    let mut full_spec = spec(vec![AskGrant::new(ANSWER, 4)]);
+    full_spec.args = vec![
+        "--revoked-while-full".into(),
+        signals.path().as_os_str().to_owned(),
+    ];
+    full_spec.verbs = vec!["organ.echo".into()];
+    // The revocation's cancel waits for the writer up to the grace.
+    let host = OrganHost::new(HostConfig {
+        cancel_grace: Duration::from_secs(3),
+        ..HostConfig::default()
+    });
+    host.install(full_spec);
+    host.warm("probe").expect("warm");
+    let signal = Signal(signals.path().to_owned(), AtomicUsize::new(0));
+    let asks = AskHandlers::none().with(ANSWER, &signal);
+    let full = OrganCall {
+        args: "x".repeat(send_buffer / 2).into(),
+        grant: "a".into(),
+        ..echo(Duration::from_secs(20))
+    };
+    let (host, vault, signals) = (&host, &vault, signals.path());
+    let result = thread::scope(|scope| {
+        scope.spawn(move || {
+            // The handler has run, and its answer has had 200 ms to start
+            // waiting for room.
+            wait_until(|| signals.join("handled").exists());
+            thread::sleep(Duration::from_millis(200));
+            host.revoke_grant("a");
+        });
+        scope.spawn(move || {
+            // A call under a revoked grant is refused before its organ is
+            // looked up; until then this one names no organ.
+            let refused = OrganCall {
+                organ: "none".into(),
+                grant: "a".into(),
+                ..echo(Duration::from_secs(1))
+            };
+            wait_until(|| matches!(host.call(vault, refused.clone()), Err(HostError::Revoked)));
+            std::fs::write(signals.join("revoked"), b"").expect("signal");
+        });
+        host.call_with(vault, full, Vec::new(), &asks)
+    });
+    assert!(matches!(result, Err(HostError::Revoked)), "{result:?}");
+    // Before the fix the answer went once the organ read again.
+    assert!(
+        !signals.join("answered").exists(),
+        "an answer reached the organ after its grant was revoked"
+    );
+    assert_eq!(signal.1.load(Ordering::SeqCst), 1);
+    let asked = asks.asked();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].unanswered, Some(Unanswered::NotSent));
+}
+
+/// Tells the organ through a file that it has started, then outlasts the
+/// call's deadline.
+struct Overstays(std::path::PathBuf, Duration);
+
+impl AskHandler for Overstays {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        std::fs::write(self.0.join("handled"), b"").expect("signal");
+        thread::sleep(self.1);
+        Ok(Answered::default())
+    }
+}
+
+#[test]
+fn a_reply_before_the_deadline_stands_while_its_handler_overruns() {
+    // Astra (#1395) P2: at the deadline the handler's watchdog cancelled the
+    // call before it looked for the call's reply, and the call failed on its
+    // deadline though the reader had queued the reply in time. The organ
+    // replies once the handler has started; the handler outlasts the
+    // deadline. The organ notes any cancel, and exits if it is answered.
+    let (_dir, vault) = vault();
+    let signals = tempfile::tempdir().expect("signals");
+    let mut replying = spec(vec![AskGrant::new(ANSWER, 4)]);
+    replying.args = vec![
+        "--reply-while-handled".into(),
+        signals.path().as_os_str().to_owned(),
+    ];
+    replying.verbs = vec!["organ.echo".into()];
+    let host = host(replying);
+    host.warm("probe").expect("warm");
+    let handler = Overstays(signals.path().to_owned(), Duration::from_secs(3));
+    let asks = AskHandlers::none().with(ANSWER, &handler);
+    // Before the fix the call ended DeadlineExceeded, its reply dropped.
+    let outcome = host
+        .call_with(&vault, echo(Duration::from_secs(2)), Vec::new(), &asks)
+        .expect("the reply stands");
+    assert_eq!(outcome.receipt.asks.len(), 1);
+    assert_eq!(
+        outcome.receipt.asks[0].unanswered,
+        Some(Unanswered::NotSent)
+    );
+    // A cancel would reach the organ before this call.
+    host.call(&vault, echo(Duration::from_secs(10)))
+        .expect("the next call runs");
+    assert!(
+        !signals.path().join("cancelled").exists(),
+        "a call that had its reply was cancelled"
+    );
+    let status = host.status("probe").expect("installed");
+    assert_eq!(status.spawns, 1);
+    assert_eq!(status.recent_crashes, 0);
+}
+
 #[test]
 fn a_failed_call_keeps_its_ask_lines() {
     // Astra (#1378) P2: an organ that asked, was answered, then failed

@@ -1909,7 +1909,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 24,
       "struct": 1
      }
@@ -7780,7 +7780,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ScopedReadActorKey"
@@ -7788,7 +7788,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 23,
       "fn": 6,
       "struct": 1
      }
@@ -7800,8 +7800,8 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19,
-      "fn": 5
+      "crate-vis": 18,
+      "fn": 7
      }
     },
     {
@@ -7925,7 +7925,7 @@
      "purpose": "Reactions riding along with the conversation records a scoped read admits",
      "surface": {
       "crate-vis": 1,
-      "fn": 3
+      "fn": 5
      }
     },
     {
@@ -11806,19 +11806,21 @@
       "RoomMode",
       "RoomPosture",
       "RoomPresence",
-      "RoomSection"
+      "RoomSection",
+      "RosterParty"
      ],
      "path": "src/context_board/room.rs",
      "purpose": "Stateless ROOM projection and the one roster-to-Scope function",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 3,
-      "struct": 3
+      "struct": 3,
+      "trait": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/room/tests.rs",
@@ -11832,8 +11834,8 @@
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "crate-vis": 8,
-      "fn": 3
+      "crate-vis": 10,
+      "fn": 4
      }
     },
     {
@@ -12610,7 +12612,7 @@
      "path": "src/conversation/visibility.rs",
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -13509,7 +13511,9 @@
      "path": "src/disclosure/disclosable_set.rs",
      "purpose": "The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all…",
      "surface": {
+      "crate-vis": 2,
       "fn": 4,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -13520,8 +13524,22 @@
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 4
+      "crate-vis": 3,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomParty"
+     ],
+     "path": "src/disclosure/room_party.rs",
+     "purpose": "The term one room member brings to the room's meet (ARCH-0067 §8: \"the grants behind the people and agents…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -22254,9 +22272,10 @@
      "path": "src/llm/run_admission/admission.rs",
      "purpose": "One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's…",
      "surface": {
-      "crate-vis": 7,
+      "const": 1,
+      "crate-vis": 8,
       "enum": 2,
-      "fn": 13,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -23369,7 +23388,7 @@
      "path": "src/memory/room_turn.rs",
      "purpose": "A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 13,
       "struct": 1
      }
@@ -26731,7 +26750,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 33,
+      "crate-vis": 34,
       "enum": 5,
       "fn": 12,
       "re-export": 1,
@@ -27494,7 +27513,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 6
      }
     },
@@ -27557,7 +27576,7 @@
      "path": "src/ports/regeneration.rs",
      "purpose": "Generation-fenced completion of derived artifacts",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -28351,7 +28370,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/reaction/tests/recall.rs",
@@ -29999,7 +30018,7 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 3
      }
     },
@@ -30027,6 +30046,16 @@
      "path": "src/scope_summary/tests.rs",
      "purpose": "Exact covers, gated merge atomicity and revision-bound late results",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/word_sources.rs",
+     "purpose": "Where the words of one stored revision came from",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -36450,7 +36479,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -39616,7 +39645,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40190,7 +40219,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scope_summary": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40521,7 +40550,7 @@
    },
    "over_bar": 34,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2460,
+   "source_files": 2462,
    "test_files": 781
   },
   "oneiron-android": {
@@ -45547,7 +45576,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -45561,7 +45590,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -46344,7 +46373,7 @@
      "path": "src/bin/oneiron-organ-probe.rs",
      "purpose": "A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -46420,7 +46449,7 @@
      "path": "src/process.rs",
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
@@ -46670,7 +46699,7 @@
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
      "surface": {
       "enum": 1,
-      "fn": 5
+      "fn": 7
      }
     },
     {
@@ -48210,7 +48239,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer.rs",
@@ -48229,8 +48258,8 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 17,
+      "crate-vis": 8,
+      "fn": 18,
       "re-export": 1,
       "struct": 2
      }
@@ -48270,7 +48299,7 @@
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -48776,13 +48805,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_pack/interlocutor.rs",
      "purpose": "Interlocutor-set resolution and third-party party inputs for context-pack requests",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -49643,7 +49672,9 @@
      "notable": [],
      "path": "src/api/tests/context_board_history.rs",
      "purpose": "Board history on the board's own surface (ARCH-0067 §3): hydrations that name their TURN record its board…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -49892,6 +49923,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/run_gate.rs",
+     "purpose": "A chat turn and the raw `/v1/llm` routes admit each model call through a run's gate: every provider call…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -49942,7 +49981,7 @@
      "path": "src/api/tests/support_mcp_credentials.rs",
      "purpose": "Paired MCP fixture credentials and the host-signed owner binding",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -51699,6 +51738,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
+      "crate-vis": 2,
       "fn": 5,
       "struct": 1
      }
@@ -51832,6 +51872,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DeclaredRun"
+     ],
+     "path": "src/models/declared.rs",
+     "purpose": "A declared run on this server's models (ARCH-0053 `#run-declaration`): the host that states a run's…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/driven.rs",
+     "purpose": "A stream whose items an async producer pushes, polled in place",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
@@ -51840,17 +51904,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "OfferLadder"
+     ],
      "path": "src/models/ladder.rs",
-     "purpose": "One role's ladder as one backend: the engine sees a single seat model; the ladder hands each call to its…",
+     "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ModelRuntime",
@@ -51859,10 +51927,23 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 1,
-      "fn": 5,
-      "re-export": 3,
+      "crate-vis": 2,
+      "fn": 9,
+      "re-export": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServedOffer"
+     ],
+     "path": "src/models/offer.rs",
+     "purpose": "What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -51888,6 +51969,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/models/raw.rs",
+     "purpose": "The raw `/v1/llm` routes' models and their own meter",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LoggedReceipts"
+     ],
+     "path": "src/models/receipts.rs",
+     "purpose": "Where the server's run receipts go by default: one structured log line per row",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RoleCall",
       "RoleRefusal",
@@ -51908,9 +52013,22 @@
       "ModelRouter"
      ],
      "path": "src/models/router.rs",
-     "purpose": "A backend over every configured model and seat, chosen by the request's own model id: the raw `/v1/llm`…",
+     "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunBackend"
+     ],
+     "path": "src/models/run_backend.rs",
+     "purpose": "A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer)",
+     "surface": {
       "fn": 1,
       "struct": 1
      }
@@ -51920,9 +52038,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/served.rs",
-     "purpose": "Which model actually answered: the receipt field a ladder fills in, and what an answered call is charged",
+     "purpose": "Which model actually answered: the receipt field a ladder fills in",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -51954,7 +52072,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/models/tests.rs",
@@ -52335,8 +52453,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 12,
-      "fn": 7,
+      "crate-vis": 13,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -52928,7 +53046,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 176,
+     "files": 177,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53040,9 +53158,9 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 13,
+     "files": 19,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out"
     },
@@ -53133,8 +53251,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 319,
-   "test_files": 134
+   "source_files": 325,
+   "test_files": 135
   },
   "oneiron-uniffi": {
    "files": [

@@ -177,6 +177,7 @@ fn pump_once(
                         match settle(vault, *root, step, LEASE_OWNER, backoff, now_secs()) {
                             Ok(FailureLadderOutcome::Retried { .. }) => {}
                             Ok(_) => {
+                                runner.forget(step.leaf);
                                 tracing::warn!(?root, "a workflow step ended; its workflow stops");
                             }
                             Err(settlement) => {
