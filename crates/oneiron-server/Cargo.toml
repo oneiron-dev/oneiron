@@ -20,6 +20,13 @@ name = "oneiron"
 path = "src/bin/oneiron.rs"
 doc = false
 
+# The credential broker (ARCH-0069 #broker-design). It ships beside the server
+# and calls only the `oneiron-broker` library: no model, no vault.
+[[bin]]
+name = "oneiron-broker"
+path = "src/bin/oneiron-broker.rs"
+doc = false
+
 [lib]
 # No doc-comment code fences in this crate (audited 2026-08-19); skip the
 # doctest compile pass entirely.
@@ -34,6 +41,8 @@ oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 # a framing bug cannot diverge between supervisor and engine. No wire reshape
 # and no CONTRACT_VERSION bump belongs on this side of the seam.
 oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
+# The credential broker's frames, checks and binary entry point.
+oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
 # The Dreamer's starter motor: the server owns the wake supervisor and the
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).
