@@ -73,24 +73,8 @@ fn room_render_reads_return_their_receipt() -> Result<()> {
     }
     // Each member's contact clears everything, so only each member's own
     // read decides which rule the room renders (ILDF2 holds the rest).
-    for (member, counterparty) in [(alice, "alice@example.com"), (bob, "bob@example.com")] {
-        let contact = EntityId::now();
-        let record = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
-            EntityId::now(),
-            counterparty,
-            1,
-        )
-        .expect("contact record");
-        vault.create_counterparty_contact(&contact, &record)?;
-        vault.put_edge(&contact, EdgeKind::About, &member, 1.0)?;
-        vault.set_counterparty_disclosure_scope(
-            &contact,
-            &crate::disclosure::DisclosureScope::new(
-                crate::federation::Scope::top(),
-                "room member",
-                1,
-            )?,
-        )?;
+    for member in [alice, bob] {
+        crate::test_util::clear_test_contact(&vault, member);
     }
     let room = EntityId::now();
     vault.create_conversation(

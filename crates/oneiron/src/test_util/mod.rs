@@ -357,13 +357,51 @@ pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
 }
 
 /// Roots the vault under the test host and binds `agent` as one of the
-/// vault's own agents (an active `agent` binding).
+/// vault's own agents (an active `agent` binding). The host key holds one
+/// live binding, so this is the vault's only bound actor.
 pub(crate) fn bind_test_agent(vault: &Vault, agent: EntityId) {
     let issuer = test_host_issuer();
     vault.ensure_host_root_slip(&issuer).expect("host root");
     vault
         .bind_host_actor_for_test(&issuer, agent, "agent")
         .expect("agent binding");
+    assert!(
+        crate::authority::actor_binding_is_active(
+            &vault.authority_fold().expect("authority fold"),
+            &agent,
+            "agent"
+        ),
+        "the host key already binds another actor"
+    );
+}
+
+/// Gives `member` an Active contact that clears everything, so in a room
+/// the member takes the top clearance (ILDF2).
+pub(crate) fn clear_test_contact(vault: &Vault, member: EntityId) {
+    let contact = EntityId::now();
+    let record = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        EntityId::now(),
+        &format!("{}@example.test", member.to_hex()),
+        1,
+    )
+    .expect("contact record");
+    vault
+        .create_counterparty_contact(&contact, &record)
+        .expect("contact");
+    vault
+        .put_edge(&contact, crate::EdgeKind::About, &member, 1.0)
+        .expect("contact names the member");
+    vault
+        .set_counterparty_disclosure_scope(
+            &contact,
+            &crate::disclosure::DisclosureScope::new(
+                crate::federation::Scope::top(),
+                "room member",
+                1,
+            )
+            .expect("clearance"),
+        )
+        .expect("contact clearance");
 }
 
 /// First open seeds the bootstrap skills, whose activation edits wait for

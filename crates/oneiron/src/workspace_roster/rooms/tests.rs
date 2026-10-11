@@ -191,10 +191,10 @@ fn room_history_needs_the_readers_own_grant() -> Result<()> {
     let mut spec = ProjectRecord::new(project, Some(root), root, leader)?;
     spec.roster.push(agent.to_hex());
     vault.put_project(project, &spec, 1)?;
-    // Binding roots the vault, so it follows the projects' implicit births.
-    // The leader is the vault's owner and the agent its own agent: neither
-    // adds a clearance term, so only grants decide what the room reads.
-    crate::test_util::bind_test_agent(&vault, agent);
+    // The leader is the vault's owner and the agent's contact clears
+    // everything, so only grants decide what the room reads. Binding roots
+    // the vault, so it follows the project's implicit birth.
+    crate::test_util::clear_test_contact(&vault, agent);
     crate::test_util::bind_test_owner(&vault, leader);
     let room = EntityId::from_hex(&spec.home_room)?;
     let every_kind = [

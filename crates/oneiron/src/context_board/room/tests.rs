@@ -144,10 +144,9 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
     let room = EntityId::from_hex(&record.home_room)?;
     let elsewhere = EntityId::from_hex(&project_room(&vault, owner, &[])?.1.home_room)?;
-    // Binding roots the vault, so it follows the projects' implicit births.
-    // The agent is the vault's own: it adds no clearance term.
+    // The agent is the vault's own: it adds no clearance term. Binding
+    // roots the vault, so it follows the projects' implicit births.
     crate::test_util::bind_test_agent(&vault, agent);
-    crate::test_util::bind_test_owner(&vault, owner);
     let host = vault.memory(owner, EdgeActorClass::Human);
     let hex_of = |input: ClaimInput| {
         let receipt = host.claim_upsert(&input).expect("note");
@@ -301,10 +300,8 @@ fn a_member_who_joins_mid_read_binds_the_rows_it_serves() -> Result<()> {
     )?;
     crate::test_util::authorize_readers(&vault, &[&agent.to_hex(), &stranger.to_hex()]);
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
-    // Binding roots the vault, so it follows the projects' implicit births.
-    // The agent is the vault's own: it adds no clearance term.
-    crate::test_util::bind_test_agent(&vault, agent);
-    crate::test_util::bind_test_owner(&vault, owner);
+    // The agent's contact clears everything: only worlds and reads decide.
+    crate::test_util::clear_test_contact(&vault, agent);
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let receipt = host
@@ -355,11 +352,9 @@ fn a_member_who_leaves_mid_read_still_binds_the_rows_it_serves() -> Result<()> {
         b"agent",
     )?;
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
-    // Binding roots the vault, so it follows the projects' implicit births.
-    // The agent is the vault's own, so it adds no clearance term, and it
-    // holds no read grant, so its own read withholds the note.
-    crate::test_util::bind_test_agent(&vault, agent);
-    crate::test_util::bind_test_owner(&vault, owner);
+    // The agent's contact clears everything, but it holds no read grant,
+    // so its own read withholds the note.
+    crate::test_util::clear_test_contact(&vault, agent);
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let receipt = host
@@ -421,12 +416,10 @@ fn a_room_lane_rebuilds_its_ceiling_only_for_a_new_member() -> Result<()> {
         )?;
     }
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
-    // Binding roots the vault, so it follows the projects' implicit births.
-    // Both are the vault's own agents: neither adds a clearance term, so
-    // only the ceiling's rebuild is under test.
-    crate::test_util::bind_test_agent(&vault, agent);
-    crate::test_util::bind_test_agent(&vault, joiner);
-    crate::test_util::bind_test_owner(&vault, owner);
+    // Both contacts clear everything, so only the ceiling's rebuild is
+    // under test.
+    crate::test_util::clear_test_contact(&vault, agent);
+    crate::test_util::clear_test_contact(&vault, joiner);
     let room = EntityId::from_hex(&record.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let mut notes = Vec::new();

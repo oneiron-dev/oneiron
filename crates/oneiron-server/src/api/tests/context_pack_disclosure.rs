@@ -1001,20 +1001,54 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     let (_dir, server) = interlocutor_test_server();
     let owner = seeded_test_entity_id(0x2094_0301);
     let agent = seeded_test_entity_id(0x2094_0302);
-    for person in [owner, agent] {
-        server
-            .vault
-            .put_entity(
-                &person,
-                oneiron::registry::ENTITY_TYPE_PERSON,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                b"room member",
-            )
-            .expect("onboard person");
-    }
+    server
+        .vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"room member",
+        )
+        .expect("onboard person");
     bind_room_owner(&server, owner);
-    bind_room_actor(&server, agent, "agent");
+    // The host key holds the owner's binding, so the vault's own agent here
+    // is one of its live agent definitions.
+    let definition = oneiron::agent_def::AgentDefinition::new(
+        "oneiron.agent.room",
+        "Room member fixture",
+        "1.0.0",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        oneiron::agent_def::AgentScope::All,
+        oneiron::agent_def::AgentCeiling::Proposed,
+        None,
+        oneiron::ClaimApprovalStatus::Approved,
+        oneiron::ClaimLifecycleStatus::Active,
+        oneiron::ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("test"),
+        )]),
+        None,
+        true,
+        None,
+    );
+    server
+        .vault
+        .put_agent_definition(
+            &agent,
+            &definition,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .expect("agent definition");
     let root = server.vault.root_project().expect("root project");
     let project = seeded_test_entity_id(0x2094_0303);
     let mut roster =
