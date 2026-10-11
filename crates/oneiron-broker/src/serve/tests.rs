@@ -309,3 +309,103 @@ async fn only_the_named_peers_talk() {
     assert!(read_reply(&mut stream).await.is_err());
     assert!(fake.seen().is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_coding_in_any_value_of_either_header_returns_nothing() {
+    let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
+    let broker = broker(None, &[fake.ca_pem()]).await;
+    let codings: [&[(&str, &str)]; 3] = [
+        // The first value alone says nothing is encoded.
+        &[("content-encoding", "identity"), ("content-encoding", "gzip")],
+        &[("content-encoding", "identity, br")],
+        // A transfer coding the HTTP stack leaves on the bytes.
+        &[("transfer-encoding", "gzip, chunked")],
+    ];
+    for headers in codings {
+        let named: Vec<(String, String)> = headers
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        let sent = named.clone();
+        fake.respond_with(move |_| FakeReply {
+            status: 200,
+            headers: sent.clone(),
+            body: SENTINEL.as_bytes().to_vec(),
+        });
+        let reply = client(&broker.socket, broker.uid)
+            .connect()
+            .await
+            .expect("connect")
+            .call(&chat(fake.origin(), BODY), BODY, key())
+            .await
+            .expect("call");
+        assert_eq!(
+            reply.outcome,
+            Outcome::Failed {
+                reason: Failure::ReplyEncoded
+            },
+            "{named:?}"
+        );
+        assert!(reply.body.is_empty(), "{named:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_key_with_a_byte_outside_visible_ascii_is_never_sent() {
+    // The strip forms are read over visible ASCII, so a key they could not
+    // find in a reply is refused before the send.
+    let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
+    let broker = broker(None, &[fake.ca_pem()]).await;
+    for key in [&b"sk-test-\xe9t\xe9"[..], b"sk-test sentinel"] {
+        let reply = client(&broker.socket, broker.uid)
+            .connect()
+            .await
+            .expect("connect")
+            .call(
+                &chat(fake.origin(), BODY),
+                BODY,
+                Zeroizing::new(key.to_vec()),
+            )
+            .await
+            .expect("call");
+        assert_eq!(
+            reply.outcome,
+            Outcome::Refused {
+                reason: Refusal::Secret
+            }
+        );
+    }
+    assert!(fake.seen().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_broker_never_takes_a_live_socket() {
+    let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
+    let live = broker(None, &[fake.ca_pem()]).await;
+    let second = tokio::time::timeout(
+        Duration::from_secs(5),
+        serve(ServeConfig {
+            socket: live.socket.clone(),
+            client_uid: live.uid,
+            policy: SendPolicy {
+                timeout: Duration::from_secs(20),
+                extra_roots: vec![fake.ca_pem().to_vec()],
+            },
+        }),
+    )
+    .await
+    .expect("refused at once, not served");
+    assert_eq!(
+        second.err().map(|error| error.kind()),
+        Some(std::io::ErrorKind::AddrInUse)
+    );
+    // The first broker still holds its socket and answers.
+    let reply = client(&live.socket, live.uid)
+        .connect()
+        .await
+        .expect("connect")
+        .call(&chat(fake.origin(), BODY), BODY, key())
+        .await
+        .expect("call");
+    assert!(matches!(reply.outcome, Outcome::Answered { status: 200, .. }));
+}

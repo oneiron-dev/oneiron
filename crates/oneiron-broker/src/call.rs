@@ -4,8 +4,8 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use crate::digest::{is_auth_header, request_digest};
-use crate::frame::PROTOCOL_VERSION;
-use crate::{Failure, Refusal, Shape};
+use crate::frame::{MAX_HEADER, PROTOCOL_VERSION};
+use crate::{Failure, MAX_BODY, Refusal, Shape};
 
 /// Request headers a call may not carry: the HTTP stack writes the framing and
 /// connection ones itself, the broker sets the encoding (so the reply stays
@@ -83,10 +83,17 @@ impl CallHeader {
 
     /// Every check on the request, with no I/O: the daemon runs it before it
     /// reads the key, and the broker again before it sends. Returns the URL the
-    /// request goes to.
+    /// request goes to. A call too large to frame is refused here too, so the
+    /// daemon never reads a key for a frame the broker would not read.
     pub fn check(&self, body: &[u8]) -> Result<Url, Refusal> {
         if self.version != PROTOCOL_VERSION {
             return Err(Refusal::Version);
+        }
+        if body.len() > MAX_BODY {
+            return Err(Refusal::Body);
+        }
+        if !serde_json::to_vec(self).is_ok_and(|header| header.len() <= MAX_HEADER) {
+            return Err(Refusal::Frame);
         }
         if self.method != self.shape.method() {
             return Err(Refusal::Method);

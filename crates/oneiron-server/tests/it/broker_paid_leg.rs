@@ -19,9 +19,11 @@
 //! more denial row. No receipt row ever holds the key.
 //!
 //! The broker runs as the first uid of this user's `/etc/subuid` range, in a
-//! user namespace that maps that uid and this one to themselves. Where that
-//! is not available each case says why and passes, unless
-//! `ONEIRON_BROKER_FIXTURE=require`, which makes it fail instead.
+//! user namespace that maps that uid and this one to themselves. A host that
+//! cannot make such a namespace (no `unshare` or `newuidmap`, no range, or a
+//! kernel that refuses) has each case say why and pass, unless
+//! `ONEIRON_BROKER_FIXTURE=require`, which makes it fail instead. A broker
+//! that does not start on a host that can always fails.
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -90,6 +92,77 @@ fn subordinate(file: &str, user: &str, id: u32) -> Result<u32, String> {
         .ok_or_else(|| format!("{file} grants {user} no range"))
 }
 
+/// This user and the subordinate one the broker runs as, on a host that can
+/// run a process as the second in a user namespace.
+struct SecondUser {
+    uid: u32,
+    gid: u32,
+    broker_uid: u32,
+    broker_gid: u32,
+}
+
+impl SecondUser {
+    /// The ids, once a trivial process ran as the second user; or why this
+    /// host cannot.
+    fn probe() -> Result<Self, String> {
+        // A file this process makes carries its own uid and gid.
+        let dir = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let meta = std::fs::metadata(dir.path()).map_err(|error| error.to_string())?;
+        let (uid, gid) = (meta.uid(), meta.gid());
+        let user = Command::new("id")
+            .arg("-un")
+            .output()
+            .map_err(|error| format!("id -un: {error}"))?;
+        let user = String::from_utf8_lossy(&user.stdout).trim().to_owned();
+        let second = Self {
+            uid,
+            gid,
+            broker_uid: subordinate("/etc/subuid", &user, uid)?,
+            broker_gid: subordinate("/etc/subgid", &user, gid)?,
+        };
+        let ran = second
+            .command("true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|error| format!("unshare: {error}"))?;
+        if !ran.status.success() {
+            return Err(format!(
+                "unshare as uid {} failed ({}): {}",
+                second.broker_uid,
+                ran.status,
+                String::from_utf8_lossy(&ran.stderr).trim()
+            ));
+        }
+        Ok(second)
+    }
+
+    /// `program` to run as the second user, with a bare environment.
+    fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
+        let Self {
+            uid,
+            gid,
+            broker_uid,
+            broker_gid,
+        } = self;
+        let mut command = Command::new("unshare");
+        command
+            .env_clear()
+            .env("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+            .arg("--user")
+            .arg(format!("--map-users={uid}:{uid}:1"))
+            .arg(format!("--map-users={broker_uid}:{broker_uid}:1"))
+            .arg(format!("--map-groups={gid}:{gid}:1"))
+            .arg(format!("--map-groups={broker_gid}:{broker_gid}:1"))
+            .arg(format!("--setuid={broker_uid}"))
+            .arg(format!("--setgid={broker_gid}"))
+            .arg("--")
+            .arg(program);
+        command
+    }
+}
+
 /// The broker binary, run as a uid of its own.
 struct Broker {
     child: Child,
@@ -106,20 +179,11 @@ impl Drop for Broker {
 }
 
 impl Broker {
-    /// Starts the broker as this user's first subordinate uid, serving this
+    /// Starts the broker as `second`'s subordinate uid, serving this
     /// process's uid and trusting `ca_pem`.
-    fn start(ca_pem: &[u8]) -> Result<Self, String> {
+    fn start(second: &SecondUser, ca_pem: &[u8]) -> Result<Self, String> {
         let dir = tempfile::tempdir().map_err(|error| error.to_string())?;
         set_mode(dir.path(), 0o755);
-        let meta = std::fs::metadata(dir.path()).map_err(|error| error.to_string())?;
-        let (uid, gid) = (meta.uid(), meta.gid());
-        let user = Command::new("id")
-            .arg("-un")
-            .output()
-            .map_err(|error| format!("id -un: {error}"))?;
-        let user = String::from_utf8_lossy(&user.stdout).trim().to_owned();
-        let broker_uid = subordinate("/etc/subuid", &user, uid)?;
-        let broker_gid = subordinate("/etc/subgid", &user, gid)?;
         // The broker's user reads the binary and the CA from here, and makes
         // its socket in a directory it may write.
         let binary = dir.path().join("oneiron-broker");
@@ -133,23 +197,13 @@ impl Broker {
         std::fs::create_dir(&sockets).map_err(|error| error.to_string())?;
         set_mode(&sockets, 0o777);
         let socket = sockets.join("broker.sock");
-        let mut child = Command::new("unshare")
-            .env_clear()
-            .env("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
-            .arg("--user")
-            .arg(format!("--map-users={uid}:{uid}:1"))
-            .arg(format!("--map-users={broker_uid}:{broker_uid}:1"))
-            .arg(format!("--map-groups={gid}:{gid}:1"))
-            .arg(format!("--map-groups={broker_gid}:{broker_gid}:1"))
-            .arg(format!("--setuid={broker_uid}"))
-            .arg(format!("--setgid={broker_gid}"))
-            .arg("--")
-            .arg(&binary)
+        let mut child = second
+            .command(&binary)
             .arg("serve")
             .arg("--socket")
             .arg(&socket)
             .arg("--client-uid")
-            .arg(uid.to_string())
+            .arg(second.uid.to_string())
             .arg("--extra-roots")
             .arg(&ca)
             .arg("--timeout-secs")
@@ -177,7 +231,7 @@ impl Broker {
         Ok(Self {
             child,
             socket,
-            uid: broker_uid,
+            uid: second.broker_uid,
             _dir: dir,
         })
     }
@@ -194,6 +248,10 @@ struct CountingDoor {
 }
 
 impl KeyDoor for CountingDoor {
+    fn check(&self, name: &str) -> anyhow::Result<()> {
+        self.door.check(name)
+    }
+
     fn read(&self, name: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         self.door.read(name)
@@ -211,15 +269,12 @@ struct Fixture {
 }
 
 /// The fixture, or `None` (with the reason printed) where this host cannot
-/// run the broker as a second user.
+/// run a process as a second user.
 fn fixture() -> Option<Fixture> {
-    let key = sentinel();
-    let fake = FakeProvider::start(FakeReply::json(401, &json!({})));
-    answer_with_key(&fake, &key, "an answer");
-    let broker = match Broker::start(fake.ca_pem()) {
-        Ok(broker) => broker,
+    let second = match SecondUser::probe() {
+        Ok(second) => second,
         Err(reason) => {
-            let reason = format!("the broker cannot run as a second user here: {reason}");
+            let reason = format!("this host cannot run a second user: {reason}");
             assert!(
                 std::env::var("ONEIRON_BROKER_FIXTURE").as_deref() != Ok("require"),
                 "{reason}"
@@ -228,6 +283,11 @@ fn fixture() -> Option<Fixture> {
             return None;
         }
     };
+    let key = sentinel();
+    let fake = FakeProvider::start(FakeReply::json(401, &json!({})));
+    answer_with_key(&fake, &key, "an answer");
+    let broker = Broker::start(&second, fake.ca_pem())
+        .unwrap_or_else(|reason| panic!("the broker did not start as a second user: {reason}"));
     let vault_dir = tempfile::tempdir().expect("vault dir");
     let vault = Arc::new(Vault::open(vault_dir.path(), VaultConfig::default()).expect("vault"));
     vault
@@ -759,13 +819,14 @@ fn n4b_runner() {
         task.next().expect("broker pid"),
     );
     // The broker is another user: its environment and memory are closed.
+    // Reading `mem` needs a mapped address, so a `mem` that opens is open.
     for (what, path) in [("ENVIRON", "environ"), ("MEM", "mem")] {
-        let open = std::fs::File::open(format!("/proc/{broker}/{path}"))
-            .and_then(|mut file| file.read(&mut [0; 1]));
-        println!(
-            "BROKER {what} {}",
-            if open.is_err() { "DENIED" } else { "OPEN" }
-        );
+        let open = match std::fs::File::open(format!("/proc/{broker}/{path}")) {
+            Err(_) => false,
+            Ok(_) if path == "mem" => true,
+            Ok(mut file) => file.read(&mut [0; 1]).is_ok(),
+        };
+        println!("BROKER {what} {}", if open { "OPEN" } else { "DENIED" });
     }
     // A direct call with what the runner holds: the handle, not the key.
     let client = reqwest::blocking::Client::builder()

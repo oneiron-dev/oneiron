@@ -86,3 +86,17 @@ fn the_origin_is_one_exact_https_origin() {
         assert_eq!(call(origin).check(BODY), Err(Refusal::Origin), "{origin}");
     }
 }
+
+#[test]
+fn a_call_too_large_to_frame_is_refused_by_the_check() {
+    // The broker's frame reader would refuse these; the check both sides run
+    // refuses them first, by name.
+    let call = call("https://api.example.test");
+    assert_eq!(
+        call.check(&vec![b' '; crate::MAX_BODY + 1]),
+        Err(Refusal::Body)
+    );
+    let mut long = call;
+    long.path = format!("/v1/{}", "a".repeat(crate::frame::MAX_HEADER));
+    assert_eq!(long.check(BODY), Err(Refusal::Frame));
+}

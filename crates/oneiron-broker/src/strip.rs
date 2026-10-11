@@ -9,13 +9,16 @@
 //! <key>` encoded whole) shifts by its offset in that text, so the part of the
 //! encoding that the key alone fixes is stripped at all three byte offsets.
 //! And percent-encoding may spell any byte as `%XX`, so a URL-like run that
-//! decodes to text holding the key is stripped whole. A JSON body's strings
-//! are checked once decoded too, since JSON may spell any character `\uXXXX`.
-//! The whole reply is buffered first, so a form cannot split across reads.
+//! decodes to text holding the key is stripped whole. JSON may spell any
+//! character `\uXXXX`, so text holding an escape is also read unescaped. The
+//! whole reply is buffered first, so a form cannot split across reads.
+//!
+//! The rule works on bytes, never through a parsed JSON tree: each decoded
+//! reading sits in a buffer wiped on drop.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
 
 /// What every stripped form becomes.
 pub const MARKER: &[u8] = b"[redacted]";
@@ -25,27 +28,20 @@ pub const MARKER: &[u8] = b"[redacted]";
 /// it. Every intermediate copy is wiped when dropped.
 #[must_use]
 pub fn strip(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
+    let forms = forms(key);
     let mut out = Zeroizing::new(bytes.to_vec());
-    for form in &forms(key) {
+    for form in &forms {
         if memchr::memmem::find(&out, form).is_some() {
             out = replace_all(&out, form);
         }
+    }
+    if memchr::memchr(b'\\', &out).is_some() {
+        out = strip_escaped(key, &forms, &out);
     }
     if memchr::memchr(b'%', &out).is_some() {
         out = strip_percent_runs(key, &out);
     }
     out
-}
-
-/// [`strip`] for a reply body: when the body is JSON, each string and object
-/// key is checked in its decoded form first, and the body is written back out
-/// only if one of them held the key.
-#[must_use]
-pub(crate) fn strip_body(key: &[u8], body: &[u8]) -> Zeroizing<Vec<u8>> {
-    match strip_json_strings(key, body) {
-        Some(rewritten) => strip(key, &rewritten),
-        None => strip(key, body),
-    }
 }
 
 /// Whether `bytes` holds any form of `key`.
@@ -188,45 +184,152 @@ fn percent_decoded(run: &[u8]) -> Zeroizing<Vec<u8>> {
     out
 }
 
-/// The body with each JSON string and object key stripped in decoded form,
-/// or `None` when the body is not JSON or no string held the key.
-fn strip_json_strings(key: &[u8], body: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
-    let mut value: serde_json::Value = serde_json::from_slice(body).ok()?;
-    if !strip_value(key, &mut value) {
+/// Replaces each span whose JSON-unescaped reading holds a form of the key.
+/// JSON may spell any character `\uXXXX`, and a provider may escape some
+/// characters of an echo and not others, in a JSON body or not, and in a
+/// header value. So each run of bytes that could spell a form and holds an
+/// escape is read unescaped, into a buffer wiped on drop, wherever its quotes
+/// fall; only the source bytes of each match become [`MARKER`].
+fn strip_escaped(key: &[u8], forms: &[Zeroizing<Vec<u8>>], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
+    let mut out = Zeroizing::new(Vec::with_capacity(bytes.len()));
+    let mut at = 0;
+    while at < bytes.len() {
+        let end = run_end(key, bytes, at);
+        if end == at {
+            out.push(bytes[at]);
+            at += 1;
+            continue;
+        }
+        let run = &bytes[at..end];
+        if run.contains(&b'\\') {
+            strip_run(key, forms, run, &mut out);
+        } else {
+            out.extend_from_slice(run);
+        }
+        at = end;
+    }
+    out
+}
+
+/// Where the run starting at `at` ends: it takes bytes that can spell a form
+/// of the key, and each escape whole.
+fn run_end(key: &[u8], bytes: &[u8], mut at: usize) -> usize {
+    while let Some(&byte) = bytes.get(at) {
+        if byte == b'\\' {
+            at += escape_len(&bytes[at..]);
+        } else if byte.is_ascii_alphanumeric() || b"+/=-_%".contains(&byte) || key.contains(&byte) {
+            at += 1;
+        } else {
+            break;
+        }
+    }
+    at
+}
+
+/// The length of the escape `rest` starts with, or 1 for a lone backslash.
+fn escape_len(rest: &[u8]) -> usize {
+    match rest.get(1) {
+        Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => 2,
+        Some(b'u') if hex4(rest.get(2..6)).is_some() => 6,
+        _ => 1,
+    }
+}
+
+fn hex4(digits: Option<&[u8]>) -> Option<u32> {
+    let digits = digits?;
+    if digits.len() != 4 || !digits.iter().all(u8::is_ascii_hexdigit) {
         return None;
     }
-    serde_json::to_vec(&value).ok().map(Zeroizing::new)
+    u32::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()
 }
 
-fn strip_value(key: &[u8], value: &mut serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::String(text) => strip_text(key, text),
-        serde_json::Value::Array(items) => items
-            .iter_mut()
-            .fold(false, |changed, item| strip_value(key, item) | changed),
-        serde_json::Value::Object(map) => {
-            let mut changed = false;
-            *map = std::mem::take(map)
-                .into_iter()
-                .map(|(mut name, mut item)| {
-                    changed |= strip_text(key, &mut name);
-                    changed |= strip_value(key, &mut item);
-                    (name, item)
-                })
-                .collect();
-            changed
+/// Writes `run` to `out` with each match of a form in its unescaped reading
+/// replaced, at the match's source bytes. A run whose unescaped reading
+/// percent-decodes to the key is replaced whole.
+fn strip_run(key: &[u8], forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec<u8>) {
+    let mut text = Zeroizing::new(Vec::with_capacity(run.len()));
+    // The source bytes each unescaped byte came from.
+    let mut sources = Vec::with_capacity(run.len());
+    let mut at = 0;
+    while at < run.len() {
+        let len = unescape_one(&run[at..], &mut text);
+        sources.resize(text.len(), (at, at + len));
+        at += len;
+    }
+    if memchr::memchr(b'%', &text).is_some()
+        && memchr::memmem::find(&percent_decoded(&text), key).is_some()
+    {
+        out.extend_from_slice(MARKER);
+        return;
+    }
+    let mut spans: Vec<(usize, usize)> = forms
+        .iter()
+        .flat_map(|form| {
+            memchr::memmem::find_iter(&text, form.as_slice())
+                .map(|found| (sources[found].0, sources[found + form.len() - 1].1))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    spans.sort_unstable();
+    let mut rest = 0;
+    for (start, end) in spans {
+        if end <= rest {
+            continue;
         }
-        _ => false,
+        if start >= rest {
+            out.extend_from_slice(&run[rest..start]);
+            out.extend_from_slice(MARKER);
+        }
+        rest = end;
     }
+    out.extend_from_slice(&run[rest..]);
 }
 
-fn strip_text(key: &[u8], text: &mut String) -> bool {
-    let stripped = strip(key, text.as_bytes());
-    if stripped.as_slice() == text.as_bytes() {
-        return false;
+/// Reads the escape or the byte `rest` starts with, pushes what it spells
+/// onto `text`, and returns its length.
+fn unescape_one(rest: &[u8], text: &mut Vec<u8>) -> usize {
+    let simple = match rest.get(..2) {
+        Some([b'\\', b'"']) => Some(b'"'),
+        Some([b'\\', b'\\']) => Some(b'\\'),
+        Some([b'\\', b'/']) => Some(b'/'),
+        Some([b'\\', b'b']) => Some(8),
+        Some([b'\\', b'f']) => Some(12),
+        Some([b'\\', b'n']) => Some(b'\n'),
+        Some([b'\\', b'r']) => Some(b'\r'),
+        Some([b'\\', b't']) => Some(b'\t'),
+        _ => None,
+    };
+    if let Some(byte) = simple {
+        text.push(byte);
+        return 2;
     }
-    *text = String::from_utf8_lossy(&stripped).into_owned();
-    true
+    let unit = |from: usize| match rest.get(from..from + 2) {
+        Some(b"\\u") => hex4(rest.get(from + 2..from + 6)),
+        _ => None,
+    };
+    let (point, len) = match (unit(0), unit(6)) {
+        (Some(high @ 0xD800..=0xDBFF), Some(low @ 0xDC00..=0xDFFF)) => {
+            (0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00), 12)
+        }
+        (Some(point), _) => (point, 6),
+        (None, _) => {
+            text.push(rest[0]);
+            return 1;
+        }
+    };
+    match char::from_u32(point) {
+        Some(c) => {
+            let mut utf8 = [0; 4];
+            text.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
+            utf8.zeroize();
+            len
+        }
+        // A lone surrogate spells no character: read the backslash as itself.
+        None => {
+            text.push(rest[0]);
+            1
+        }
+    }
 }
 
 #[cfg(test)]

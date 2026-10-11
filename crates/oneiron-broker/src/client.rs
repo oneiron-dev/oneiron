@@ -46,6 +46,12 @@ impl BrokerClient {
         })
     }
 
+    /// The broker's socket path.
+    #[must_use]
+    pub fn socket(&self) -> &std::path::Path {
+        &self.socket
+    }
+
     /// How this broker is isolated, for the call's receipt.
     #[must_use]
     pub const fn isolation(&self) -> Isolation {

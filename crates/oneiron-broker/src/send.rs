@@ -3,11 +3,11 @@
 
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_ENCODING, HeaderValue};
+use reqwest::header::{ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue, TRANSFER_ENCODING};
 use reqwest::{Certificate, Client, Method, Url};
 use zeroize::Zeroizing;
 
-use crate::strip::{contains_key, strip, strip_body};
+use crate::strip::{contains_key, strip};
 use crate::{CallHeader, Failure, MAX_BODY, MAX_SECRET, Outcome, Refusal};
 
 /// The shortest key the broker injects. Stripping a shorter one would redact
@@ -86,11 +86,7 @@ impl Sender {
             }
             Err(error) => return (failed(&error), empty),
         };
-        if response
-            .headers()
-            .get(CONTENT_ENCODING)
-            .is_some_and(|encoding| !encoding.as_bytes().eq_ignore_ascii_case(b"identity"))
-        {
+        if encoded(response.headers()) {
             return (
                 Outcome::Failed {
                     reason: Failure::ReplyEncoded,
@@ -117,7 +113,7 @@ impl Sender {
             }
         }
         let headers = reply_headers(response.headers(), secret);
-        let body = strip_body(secret, &raw);
+        let body = strip(secret, &raw);
         let status = response.status().as_u16();
         (Outcome::Answered { status, headers }, body)
     }
@@ -129,7 +125,12 @@ impl Sender {
         body: &[u8],
         secret: &[u8],
     ) -> Result<reqwest::Request, Refusal> {
-        if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET {
+        // Visible ASCII only: every form the strip rule matches is then
+        // spelled in ASCII, and no key byte hides inside a multibyte one.
+        if secret.len() < MIN_SECRET
+            || secret.len() > MAX_SECRET
+            || !secret.iter().all(u8::is_ascii_graphic)
+        {
             return Err(Refusal::Secret);
         }
         let mut auth = Zeroizing::new(call.shape.auth_prefix().as_bytes().to_vec());
@@ -150,6 +151,24 @@ impl Sender {
             .build()
             .map_err(|_| Refusal::Header)
     }
+}
+
+/// Whether the body arrives under a coding the HTTP stack did not undo, so
+/// the strip would read encoded bytes: any content coding but `identity`, or
+/// any transfer coding but `chunked`, in any value of either header.
+fn encoded(headers: &HeaderMap) -> bool {
+    let other = |name: reqwest::header::HeaderName, plain: &[&str]| {
+        headers.get_all(name).iter().any(|value| {
+            !value.to_str().is_ok_and(|codings| {
+                codings.split(',').all(|coding| {
+                    plain
+                        .iter()
+                        .any(|plain| coding.trim().eq_ignore_ascii_case(plain))
+                })
+            })
+        })
+    };
+    other(CONTENT_ENCODING, &["identity"]) || other(TRANSFER_ENCODING, &["chunked"])
 }
 
 fn failed(error: &reqwest::Error) -> Outcome {

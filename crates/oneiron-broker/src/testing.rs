@@ -243,10 +243,24 @@ async fn read_request(stream: &mut (impl tokio::io::AsyncRead + Unpin)) -> Optio
     })
 }
 
+/// A reply that names a transfer coding is framed in chunks, as its last
+/// coding must be; any other carries its length.
 fn encode(reply: &FakeReply) -> Vec<u8> {
     let mut out = format!("HTTP/1.1 {} Fake\r\n", reply.status).into_bytes();
+    let mut chunked = false;
     for (name, value) in &reply.headers {
+        chunked |= name.eq_ignore_ascii_case("transfer-encoding");
         out.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
+    }
+    if chunked {
+        out.extend_from_slice(b"connection: close\r\n\r\n");
+        if !reply.body.is_empty() {
+            out.extend_from_slice(format!("{:x}\r\n", reply.body.len()).as_bytes());
+            out.extend_from_slice(&reply.body);
+            out.extend_from_slice(b"\r\n");
+        }
+        out.extend_from_slice(b"0\r\n\r\n");
+        return out;
     }
     out.extend_from_slice(
         format!(

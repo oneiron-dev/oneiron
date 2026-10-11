@@ -34,12 +34,20 @@ pub struct ServeConfig {
 }
 
 /// Listens on the socket and serves calls until the listener fails. A socket
-/// file left at the path by an earlier run is replaced; any other file there
-/// is an error.
+/// file left at the path by an earlier run, with no listener behind it, is
+/// replaced; a live one, or any other file there, is an error.
 pub async fn serve(config: ServeConfig) -> io::Result<()> {
     let sender = Arc::new(Sender::new(&config.policy).map_err(io::Error::other)?);
     match std::fs::symlink_metadata(&config.socket) {
-        Ok(meta) if meta.file_type().is_socket() => std::fs::remove_file(&config.socket)?,
+        Ok(meta) if meta.file_type().is_socket() => {
+            match std::os::unix::net::UnixStream::connect(&config.socket) {
+                Ok(_) => return Err(io::ErrorKind::AddrInUse.into()),
+                Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {
+                    std::fs::remove_file(&config.socket)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
         Ok(_) => return Err(io::ErrorKind::AlreadyExists.into()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),

@@ -22,7 +22,7 @@ pub const MAX_BODY: usize = 16 << 20;
 pub const MAX_SECRET: usize = 4096;
 
 /// The largest JSON header segment.
-const MAX_HEADER: usize = 64 << 10;
+pub(crate) const MAX_HEADER: usize = 64 << 10;
 
 async fn write_segment<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
     let len =

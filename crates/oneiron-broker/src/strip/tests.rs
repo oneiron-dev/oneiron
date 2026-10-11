@@ -7,7 +7,7 @@ use base64::engine::general_purpose::{
     GeneralPurpose, GeneralPurposeConfig, STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD,
 };
 
-use super::{MARKER, strip, strip_body};
+use super::{MARKER, strip};
 
 /// A synthetic key whose JSON, percent and URL-safe base64 forms all differ
 /// from its raw and standard ones.
@@ -81,15 +81,50 @@ fn leaks(text: &[u8], key: &str) -> bool {
         .any(|decoded| contains(&decoded))
 }
 
-/// `text` with JSON's two-character escapes read back.
+/// `text` with JSON's escapes read back: `\uXXXX`, a surrogate pair as one
+/// character, and the two-character ones.
 fn json_unescaped(text: &[u8]) -> Vec<u8> {
+    let unit = |at: usize| {
+        text.get(at..at + 4)
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+    };
     let mut out = Vec::new();
-    let mut bytes = text.iter();
-    while let Some(&byte) = bytes.next() {
-        if byte == b'\\' {
-            out.push(*bytes.next().unwrap_or(&byte));
-        } else {
-            out.push(byte);
+    let mut at = 0;
+    while at < text.len() {
+        let decoded = match (text[at], text.get(at + 1)) {
+            (b'\\', Some(b'u')) => match unit(at + 2) {
+                Some(high @ 0xD800..=0xDBFF) => unit(at + 8)
+                    .filter(|low| (0xDC00..=0xDFFF).contains(low))
+                    .filter(|_| text.get(at + 6..at + 8) == Some(b"\\u".as_slice()))
+                    .and_then(|low| char::from_u32(0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)))
+                    .map(|character| (character, 12)),
+                Some(code) => char::from_u32(code).map(|character| (character, 6)),
+                None => None,
+            },
+            (b'\\', Some(&escaped)) if escaped.is_ascii() => {
+                let byte = match escaped {
+                    b'n' => b'\n',
+                    b't' => b'\t',
+                    b'r' => b'\r',
+                    b'b' => 8,
+                    b'f' => 12,
+                    other => other,
+                };
+                Some((char::from(byte), 2))
+            }
+            _ => None,
+        };
+        match decoded {
+            Some((character, width)) => {
+                let mut utf8 = [0; 4];
+                out.extend_from_slice(character.encode_utf8(&mut utf8).as_bytes());
+                at += width;
+            }
+            None => {
+                out.push(text[at]);
+                at += 1;
+            }
         }
     }
     out
@@ -166,10 +201,38 @@ fn a_json_body_is_checked_in_its_decoded_strings() {
         parsed["error"].as_str(),
         Some(format!("bad key {KEY}").as_str())
     );
-    let stripped = strip_body(KEY.as_bytes(), body.as_bytes());
+    let stripped = strip(KEY.as_bytes(), body.as_bytes());
     let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
     assert_eq!(parsed["error"], "bad key [redacted]");
     assert_eq!(parsed["[redacted]"], 1, "{parsed}");
     assert_eq!(parsed["usage"]["input_tokens"], 3);
     assert!(!leaks(&stripped, KEY));
+}
+
+#[test]
+fn a_key_partly_spelled_in_escapes_is_redacted_outside_json_too() {
+    // Some characters escaped and some not, as a provider's own serializer
+    // may write them, in a header value and in a plain-text body.
+    let partial: String = KEY
+        .chars()
+        .enumerate()
+        .map(|(index, c)| match c {
+            '"' => "\\\"".to_owned(),
+            '/' => "\\/".to_owned(),
+            c if index % 3 == 0 => format!("\\u{:04X}", u32::from(c)),
+            c => c.to_string(),
+        })
+        .collect();
+    for text in [
+        format!("invalid api key: {partial}"),
+        format!("Bearer realm=\"api\", error_description=\"{partial}\""),
+    ] {
+        assert!(leaks(text.as_bytes(), KEY), "the oracle must see {text}");
+        let stripped = strip(KEY.as_bytes(), text.as_bytes());
+        assert!(
+            !leaks(&stripped, KEY),
+            "{text} survived as {}",
+            String::from_utf8_lossy(&stripped)
+        );
+    }
 }

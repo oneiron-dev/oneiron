@@ -287,13 +287,19 @@ impl RunAdmission {
     }
 
     /// Admits, sends through `gated` and settles one model call. A call
-    /// dropped before it ends settles as failed.
+    /// dropped before it ends settles as failed. A backend that names the
+    /// digest of its request bytes gets a permit bound to them.
     pub async fn call(
         &self,
         gated: &GatedBackend,
         call: RunCall<'_>,
     ) -> Result<LlmResponse, RunCallError> {
-        let permit = self.admit(call)?;
+        // A request the backend cannot build is admitted unbound: the gate's
+        // preflight then refuses it with a denial row.
+        let permit = match gated.request_digest(call.request) {
+            Some(digest) => self.admit_request(call, &digest)?,
+            None => self.admit(call)?,
+        };
         match gated.generate(call.request.clone(), permit.lease()).await {
             Ok(response) => {
                 permit.settle(CallOutcome::Answered(&response.usage))?;

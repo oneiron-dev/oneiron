@@ -500,6 +500,25 @@ fn n3_a_permit_bound_to_request_bytes_starts_only_for_those_bytes() {
 }
 
 #[test]
+fn a_call_through_the_admission_binds_the_bytes_its_backend_builds() {
+    // `RunAdmission::call` admits with the digest of the bytes the gate's
+    // backend will send, so a broker rung's call through it starts, once.
+    let world = World::new();
+    world.provider.bind_bytes();
+    let asked = request(SMALL);
+    let answered = block_on(world.a.admission.call(
+        &world.gated_a,
+        RunCall {
+            selector: None,
+            request: &asked,
+            offer: &offer(SMALL),
+        },
+    ));
+    assert!(answered.is_ok(), "{answered:?}");
+    assert_eq!(world.provider.sent().len(), 1);
+}
+
+#[test]
 fn n4a_a_paid_call_without_this_runs_admission_sends_nothing() {
     let world = World::new();
     let other_run = admit(&world.b, None, &request(SMALL), &offer(SMALL)).expect("run B permit");

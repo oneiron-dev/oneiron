@@ -45,6 +45,13 @@ impl GatedBackend {
         Self { run, inner, offer }
     }
 
+    /// The digest of the exact bytes the wrapped backend would send for
+    /// `request`, when it builds them first; `None` when it does not, or
+    /// cannot build them.
+    pub(super) fn request_digest(&self, request: &LlmRequest) -> Option<String> {
+        self.inner.request_digest(request, false).ok().flatten()
+    }
+
     /// Checks and starts the call's permit; returns the digest of the request
     /// that is about to leave. A backend that builds its request bytes first
     /// names their digest, and the permit must have been admitted for exactly
