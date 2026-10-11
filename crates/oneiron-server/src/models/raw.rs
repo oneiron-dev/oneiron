@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{
-    KeyCustody, OfferBinding, OfferRoute, Payer, RunAdmission, RunDenied, RunReceiptSink,
+    BudgetLine, KeyCustody, LeaseUnit, OfferBinding, OfferRoute, Payer, RunAdmission,
+    RunDeclaration, RunDenied, RunReceiptSink,
 };
 use oneiron::{
     BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture,
@@ -69,14 +70,21 @@ impl RawInference {
     }
 
     /// Records a raw call refused before admission under the run it would
-    /// have been admitted in: one `Denied` row, nothing reserved.
+    /// have been admitted in: one `Denied` row, nothing reserved. It needs no
+    /// model backend, so a server with none still writes the row.
     pub(crate) fn refuse(
-        &self,
         request: &LlmRequest,
         reason: RunDenied,
         receipts: Arc<dyn RunReceiptSink>,
     ) {
-        undeclared_run(RAW_RUN, self.meter.clone(), receipts).refuse(
+        // The row names the run, its revision and the denial, and reads no
+        // line: the run's own line is empty and reserves nothing.
+        let line = BudgetLine {
+            limit_units: 0,
+            reserve_units: 0,
+            unit: LeaseUnit::tokens(),
+        };
+        RunAdmission::new(RAW_RUN, RunDeclaration::undeclared(line), None, receipts).refuse(
             None,
             request.model.as_str(),
             reason,

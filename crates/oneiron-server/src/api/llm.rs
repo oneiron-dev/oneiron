@@ -1,5 +1,5 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
-use crate::models::OfferLadder;
+use crate::models::{OfferLadder, RawInference};
 use crate::{auth::CoreAuth, server::SyncServer};
 use axum::{
     Json, Router,
@@ -112,10 +112,8 @@ fn admit(
     // The request's model id picks the model and its route; a body field that
     // names another is refused before anything is reserved, with its row.
     if let Some(key) = request.route_selector_override() {
-        if let Some(raw) = &server.llm {
-            let reason = RunDenied::RouteOverride { key: key.clone() };
-            raw.refuse(request, reason, server.run_receipts());
-        }
+        let reason = RunDenied::RouteOverride { key: key.clone() };
+        RawInference::refuse(request, reason, server.run_receipts());
         return Err(Box::new(route_selector_refusal(&key)));
     }
     let Some(raw) = &server.llm else {
