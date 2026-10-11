@@ -34,8 +34,10 @@ fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     let start = 1_900_000_000;
     let clock = crate::ports::ManualClock::new(start);
     let open = || {
-        let mut config = crate::VaultConfig::default();
-        config.store_clock = clock.bundle();
+        let config = crate::VaultConfig {
+            store_clock: clock.bundle(),
+            ..crate::VaultConfig::default()
+        };
         Vault::open(dir.path(), config).unwrap()
     };
     let vault = open();
