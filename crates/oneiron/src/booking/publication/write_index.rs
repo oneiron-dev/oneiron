@@ -25,7 +25,7 @@ pub(crate) fn guard_publication_put(
 ) -> Result<()> {
     let new_publication =
         incoming_claim.is_some_and(|body| body.predicate == BOOKING_PUBLIC_PAGE_PREDICATE);
-    let old_publication = match store.port_entity_record(txn, &id)?.map(|row| row.encode()) {
+    let old_publication = match store.port_entity_raw_wiped(txn, &id)? {
         Some(raw) => {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

@@ -12,6 +12,16 @@ pub trait EntityStoreRead: Transactions {
     /// Unvalidated entity envelope for repair and corruption diagnostics only.
     /// This is not a text hydration door; malformed bytes remain observable.
     fn port_entity_raw(&self, txn: &Self::Read<'_>, id: &EntityId) -> Result<Option<Vec<u8>>>;
+    /// [`port_entity_raw`](Self::port_entity_raw) for a reader that may meet a
+    /// custody record, whose body carries its value (ARCH-0069 S1): the copy
+    /// is wiped when it drops.
+    fn port_entity_raw_wiped(
+        &self,
+        txn: &Self::Read<'_>,
+        id: &EntityId,
+    ) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+        Ok(self.port_entity_raw(txn, id)?.map(zeroize::Zeroizing::new))
+    }
     fn port_entity_record(
         &self,
         txn: &Self::Read<'_>,

@@ -22,6 +22,11 @@ pub fn identity_fields_for_kind(kind: u8) -> &'static [&'static str] {
 }
 
 fn hints(kind: u8, bytes: &[u8]) -> BTreeSet<String> {
+    // Checked before the decode: a kind without identity fields, a custody
+    // record among them, is never decoded into an unwiped copy.
+    if identity_fields_for_kind(kind).is_empty() {
+        return BTreeSet::new();
+    }
     let mut cursor = std::io::Cursor::new(bytes);
     let value = if let Ok(value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == bytes.len() as u64
@@ -78,7 +83,7 @@ pub(crate) fn reindex_identity_hints(
     id: &EntityId,
     replacement: Option<(u8, &[u8])>,
 ) -> Result<()> {
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
     {
         for hint in hints(

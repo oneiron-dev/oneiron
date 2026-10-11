@@ -319,3 +319,7 @@ pub const SECRET_CUSTODY_SCHEMA_VERSION: u16 = 1;
 /// The `vault_meta` name-index key prefix mapping a live secret name to its
 /// `EntityId` (`"vault_meta: name -> EntityId"`).
 pub const SECRET_NAME_INDEX_PREFIX: &str = "secret_custody:name:v1:";
+
+/// The longest secret name, in bytes. The name is the tail of its name-index
+/// key, and an LMDB key stops at 511 bytes.
+pub const SECRET_NAME_MAX_BYTES: usize = 255;

@@ -18,7 +18,7 @@ fn invalid() -> Error {
 }
 
 fn entity_type(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: EntityId) -> Result<Option<u8>> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &id)? else {
         return Ok(None);
     };
     let header = EntityMetadataHeader::parse(&raw)

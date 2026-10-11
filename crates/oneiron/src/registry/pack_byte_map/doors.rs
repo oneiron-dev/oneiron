@@ -177,7 +177,7 @@ impl Store {
         entity_type: u8,
         data: &[u8],
     ) -> Result<()> {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(self, txn, id)? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(self, txn, id)? else {
             return Ok(());
         };
         let header = EntityMetadataHeader::parse(&raw)

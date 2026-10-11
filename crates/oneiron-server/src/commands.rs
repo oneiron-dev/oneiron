@@ -79,7 +79,7 @@ mod embedder_serve;
 pub use self::embedder_serve::embedder_serve;
 mod owner;
 pub use owner::{
-    backup, doctor, export, import, recover_window, restore, runs, secret_scan, whoami,
+    backup, doctor, export, import, recover_window, restore, runs, secret_scan, secrets, whoami,
 };
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
