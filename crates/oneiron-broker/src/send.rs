@@ -9,7 +9,7 @@ use reqwest::header::{
 use reqwest::{Certificate, Client, Method, Url};
 use zeroize::Zeroizing;
 
-use crate::strip::{contains_key, strip};
+use crate::strip::{admits, contains_key, strip};
 use crate::{CallHeader, Failure, MAX_BODY, MAX_SECRET, Outcome, Refusal};
 
 /// The shortest key the broker injects. Stripping a shorter one would redact
@@ -127,17 +127,9 @@ impl Sender {
         body: &[u8],
         secret: &[u8],
     ) -> Result<reqwest::Request, Refusal> {
-        // Visible ASCII only: every form the strip rule matches is then
-        // spelled in ASCII, and no key byte hides inside a multibyte one. And
-        // no quote, backslash or percent sign: no provider issues a key with
-        // one, and without them no byte of a reply's own JSON or escapes can
-        // complete a key the strip rule reads.
-        if secret.len() < MIN_SECRET
-            || secret.len() > MAX_SECRET
-            || !secret
-                .iter()
-                .all(|byte| byte.is_ascii_graphic() && !b"\"\\%".contains(byte))
-        {
+        // Only a key the strip rule is sure to find in a reply: ASCII, so no
+        // key byte hides inside a multibyte one, in the rule's own alphabet.
+        if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
             return Err(Refusal::Secret);
         }
         let mut auth = Zeroizing::new(call.shape.auth_prefix().as_bytes().to_vec());
