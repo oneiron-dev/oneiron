@@ -171,3 +171,36 @@ fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Re
     );
     Ok(())
 }
+
+#[test]
+fn seat_packs_at_the_pinned_hub_commit_parse() -> Result<()> {
+    use crate::skill_hub::{
+        HubFile,
+        pack_catalog::{PackKind, PackSource},
+    };
+    // tests/fixtures/hub-pin is a byte copy of oneiron-hub's seat packs at
+    // HUB_COMMIT. Moving the pin means refreshing that copy.
+    assert_eq!(
+        include_str!("../../../tests/fixtures/hub-pin/COMMIT").trim(),
+        HUB_COMMIT
+    );
+    for (name, manifest) in [
+        (
+            "oneiron.claude-seat",
+            &include_bytes!("../../../tests/fixtures/hub-pin/packs/claude-seat/PACK.md")[..],
+        ),
+        (
+            "oneiron.codex-seat",
+            &include_bytes!("../../../tests/fixtures/hub-pin/packs/codex-seat/PACK.md")[..],
+        ),
+    ] {
+        let source = PackSource::from_files(vec![HubFile::new("PACK.md", manifest.to_vec())])?;
+        assert_eq!(source.manifest().name, name);
+        assert_eq!(source.manifest().kind, PackKind::Capability);
+        assert_eq!(
+            source.manifest().contact.as_deref(),
+            Some("legal@oneiron.dev for removal requests, contact@oneiron.dev for everything else")
+        );
+    }
+    Ok(())
+}

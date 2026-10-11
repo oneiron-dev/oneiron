@@ -272,6 +272,19 @@ async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
     let identity_ref = seeded_test_entity_id(0x1517_0011);
     let contact_id = seeded_test_entity_id(0x1517_0012);
     seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
+    // Owner presence never widens a guest's clearance; this one admits tier B.
+    server
+        .vault
+        .set_counterparty_disclosure_scope(
+            &contact_id,
+            &oneiron::disclosure::DisclosureScope::new(
+                oneiron::federation::Scope::top(),
+                "supervised tier b",
+                101,
+            )
+            .expect("clearance"),
+        )
+        .expect("clear the contact");
     let diary = seed_text_turn(&server, "tier b memory needle18");
 
     let request = json!({
@@ -308,7 +321,7 @@ async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
         .iter()
         .filter_map(|entity| entity["id"].as_str())
         .any(|id| id == diary_id);
-    assert!(found, "supervised mode keeps Tier B present");
+    assert!(found, "supervised mode keeps cleared Tier B present");
 }
 
 #[tokio::test]

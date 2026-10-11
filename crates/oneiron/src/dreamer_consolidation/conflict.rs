@@ -24,6 +24,8 @@ use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProv
 
 /// Phase-2 semantic bucket key. Facet stays in the key BY CANON (ARCH-0022:
 /// same Person + different Facets must NOT merge behavioral profiles).
+/// Project stays in it because a consolidated claim inherits its sources'
+/// exposure and never mixes scopes (ONE-1592 P3).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ConsolidationBucketKey {
     pub subject: EntityId,
@@ -31,11 +33,13 @@ pub struct ConsolidationBucketKey {
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
     pub rel: Option<EntityId>,
+    /// The claim's `scopeProjectId`; the vault default project when unstamped.
+    pub project: EntityId,
 }
 
 impl ConsolidationBucketKey {
     /// Domain-separated BLAKE3 over the bucket key (pinned domain
-    /// `oneiron:dreamer-bucket:v1`, design D6).
+    /// `oneiron:dreamer-bucket:v2`, design D6).
     #[must_use]
     pub fn bucket_hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
@@ -47,6 +51,7 @@ impl ConsolidationBucketKey {
         hash_optional_entity(&mut hasher, self.world.as_ref());
         hash_optional_entity(&mut hasher, self.facet.as_ref());
         hash_optional_entity(&mut hasher, self.rel.as_ref());
+        hasher.update(self.project.as_bytes());
         *hasher.finalize().as_bytes()
     }
 }
@@ -67,6 +72,7 @@ pub(super) struct CandidateFacts {
     pub(super) world: Option<EntityId>,
     pub(super) facet: Option<EntityId>,
     pub(super) rel: Option<EntityId>,
+    pub(super) project: EntityId,
     pub(super) topic: Option<Vec<u8>>,
 }
 
@@ -96,6 +102,7 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
         world: body.world,
         facet: facet_from_scope(body.scope.as_ref()),
         rel: body.rel,
+        project: body.scope_project,
     })
 }
 
@@ -130,7 +137,7 @@ fn facet_from_scope(scope: Option<&Value>) -> Option<EntityId> {
 }
 
 /// Groups candidates into semantic buckets on
-/// `(subject, predicate_root, world, facet)`.
+/// `(subject, predicate_root, world, facet, rel, project)`.
 pub fn plan_candidate_buckets(
     candidates: &[PromotionCandidate],
 ) -> Result<Vec<ConsolidationBucketPlan>> {
@@ -143,6 +150,7 @@ pub fn plan_candidate_buckets(
             world: facts.world,
             facet: facts.facet,
             rel: facts.rel,
+            project: facts.project,
         };
         buckets.entry(key).or_default().push(index);
     }
@@ -303,6 +311,7 @@ pub struct ConflictIdentity {
     pub world: Option<EntityId>,
     pub facet: Option<EntityId>,
     pub rel: Option<EntityId>,
+    pub project: EntityId,
     /// Canonical question key supplied by the per-predicate extractor.
     pub topic: Option<Vec<u8>>,
 }
@@ -319,10 +328,10 @@ pub struct ConflictSet {
 }
 
 /// Deterministic conflict trigger (DESIGN-PIN A4):
-/// `CONFLICT(a,b) ⇔ same (subject, FULL predicate, world, facet) AND
-/// canonical_value(a) != canonical_value(b)`. `b` ranges over sibling
-/// candidates AND the prior head admitted via `claim_consolidatable`.
-/// By key construction: facet-local, null-shadow, world-local.
+/// `CONFLICT(a,b) ⇔ same (subject, FULL predicate, world, facet, rel,
+/// project) AND canonical_value(a) != canonical_value(b)`. `b` ranges over
+/// sibling candidates AND the prior head admitted via `claim_consolidatable`.
+/// By key construction: facet-local, null-shadow, world-local, project-local.
 pub fn detect_conflicts(
     candidates: &[PromotionCandidate],
     prior_heads: &[PriorHead],
@@ -336,6 +345,7 @@ pub fn detect_conflicts(
             world: facts.world,
             facet: facts.facet,
             rel: facts.rel,
+            project: facts.project,
             topic: facts.topic,
         };
         groups
@@ -399,6 +409,7 @@ pub fn conflict_open_marker_id(
         conflict.identity.world,
         conflict.identity.facet,
         conflict.identity.rel,
+        conflict.identity.project,
         conflict.identity.topic.as_deref(),
     )
 }
@@ -411,6 +422,7 @@ fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> Resu
         && body.predicate == identity.predicate
         && body.world == identity.world
         && body.rel == identity.rel
+        && body.scope_project == identity.project
         && facet_from_scope(body.scope.as_ref()) == identity.facet
         && topic_key(body.scope.as_ref())? == identity.topic)
 }
@@ -421,17 +433,18 @@ pub(super) fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
 
 /// Derives a [`PromotionCandidate`]'s write-once claim id DETERMINISTICALLY
 /// from its identity (owning attempt, subject, predicate, canonical value, world,
-/// facet, question topic).
+/// facet, relationship, project, question topic).
 ///
 /// `EntityId::now()` mints a fresh id on every call, so under the wake
 /// driver's at-least-once re-execution (a crash after `sink.accept` but before
 /// the attempt completes) a memoized step re-run would hand the promotion writer
 /// NEW ids for the same beliefs — DUPLICATE claims. A content-addressed id is
 /// stable across re-runs (and independent of `now`), so promotion stays
-/// idempotent (#485-3).
+/// idempotent (#485-3). The default project adds no bytes, so ids minted
+/// before the project axis joined the identity stay stable across re-runs.
 #[expect(
     clippy::too_many_arguments,
-    reason = "claim identity includes both relationship and extractor topic axes"
+    reason = "claim identity includes the relationship, project and extractor topic axes"
 )]
 pub(super) fn deterministic_claim_id(
     attempt_id: crate::attempt_queue::AttemptId,
@@ -441,6 +454,7 @@ pub(super) fn deterministic_claim_id(
     world: Option<EntityId>,
     facet: Option<EntityId>,
     rel: Option<EntityId>,
+    project: EntityId,
     topic: Option<&[u8]>,
 ) -> Result<EntityId> {
     let value_bytes = canonical_value_bytes(value)?;
@@ -449,19 +463,20 @@ pub(super) fn deterministic_claim_id(
     let facet = optional(facet.as_ref().map(|id| &id.as_bytes()[..]));
     let rel = optional(rel.as_ref().map(|id| &id.as_bytes()[..]));
     let topic = optional(topic);
-    EntityId::derive(
-        DREAMER_CLAIM,
-        &[
-            attempt_id.as_bytes(),
-            subject.as_bytes(),
-            predicate.as_bytes(),
-            &value_bytes,
-            world.as_deref().unwrap_or_default(),
-            facet.as_deref().unwrap_or_default(),
-            rel.as_deref().unwrap_or_default(),
-            topic.as_deref().unwrap_or_default(),
-        ],
-    )
+    let mut parts: Vec<&[u8]> = vec![
+        attempt_id.as_bytes(),
+        subject.as_bytes(),
+        predicate.as_bytes(),
+        &value_bytes,
+        world.as_deref().unwrap_or_default(),
+        facet.as_deref().unwrap_or_default(),
+        rel.as_deref().unwrap_or_default(),
+        topic.as_deref().unwrap_or_default(),
+    ];
+    if project != crate::claim::default_project_id() {
+        parts.push(project.as_bytes());
+    }
+    EntityId::derive(DREAMER_CLAIM, &parts)
 }
 
 /// Recursively sorts every `Value::Map`'s entries by their MessagePack-encoded
