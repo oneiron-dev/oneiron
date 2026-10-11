@@ -49,16 +49,13 @@ impl CoreAuth {
         vault: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
+        let signature = proof.signature()?;
+        let nonce = proof.nonce.as_bytes();
         let verified = vault
-            .verify_slip(
-                &slip,
-                proof.timestamp,
-                proof.nonce.as_bytes(),
-                &proof.signature()?,
-            )
+            .verify_slip(&slip, proof.timestamp, nonce, &signature)
             .map_err(|()| {
                 vault
-                    .proof_clock_refusal(proof.timestamp)
+                    .proof_clock_refusal(&slip, proof.timestamp, nonce, &signature)
                     .unwrap_or_else(ApiError::unauthorized)
             })?;
         // These transports can call auth more than once per request; they must

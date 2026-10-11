@@ -140,18 +140,29 @@ impl Holder {
         }
     }
 
-    /// Sends the proof signed at `timestamp` with nonce `n`.
-    fn admit(&self, timestamp: u64, n: u32) -> Result<()> {
+    /// The nonce `n` and `key`'s signature over the proof at `timestamp`.
+    fn sign(&self, key: &ed25519_dalek::SigningKey, timestamp: u64, n: u32) -> (String, [u8; 64]) {
         use ed25519_dalek::Signer;
         let nonce = format!("{n:032x}");
         let challenge = holder_proof_challenge(timestamp, &nonce);
-        let signature = self
-            .key
-            .sign(&self.slip.binding_transcript(&challenge).unwrap())
-            .to_bytes();
+        let signature = key.sign(&self.slip.binding_transcript(&challenge).unwrap());
+        (nonce, signature.to_bytes())
+    }
+
+    /// Sends the proof signed at `timestamp` with nonce `n`.
+    fn admit(&self, timestamp: u64, n: u32) -> Result<()> {
+        let (nonce, signature) = self.sign(&self.key, timestamp, n);
         self.vault
             .admit_capability_slip_request(&self.slip, timestamp, &signature, nonce.as_bytes())
             .map(drop)
+    }
+
+    /// What the 401 diagnosis finds for the proof `key` signed at `timestamp`.
+    fn ahead(&self, key: &ed25519_dalek::SigningKey, timestamp: u64) -> Option<ProofClockAhead> {
+        let (nonce, signature) = self.sign(key, timestamp, 99);
+        self.vault
+            .proof_clock_ahead(&self.slip, timestamp, &signature, nonce.as_bytes())
+            .unwrap()
     }
 
     fn recover(&self) -> Result<ProofClockRecovery> {
@@ -185,11 +196,17 @@ fn a_clock_recovery_admits_the_next_fresh_proof_and_no_proof_signed_before_it() 
     holder.clock.set(start + 40);
     assert!(holder.admit(start + 40, 3).is_err(), "a fresh proof");
     assert_eq!(
-        holder.vault.proof_clock_ahead(start + 40).unwrap(),
+        holder.ahead(&holder.key, start + 40),
         Some(ProofClockAhead {
             floor: start + YEAR,
             wall: start + 40,
         })
+    );
+    let stranger = ed25519_dalek::SigningKey::from_bytes(&[96; 32]);
+    assert_eq!(
+        holder.ahead(&stranger, start + 40),
+        None,
+        "a proof the holder did not sign"
     );
 
     assert_eq!(
@@ -209,7 +226,7 @@ fn a_clock_recovery_admits_the_next_fresh_proof_and_no_proof_signed_before_it() 
         "the proof held back unsent"
     );
     holder.admit(start + 40, 5).unwrap();
-    assert_eq!(holder.vault.proof_clock_ahead(start + 40).unwrap(), None);
+    assert_eq!(holder.ahead(&holder.key, start + 40), None);
     assert!(
         matches!(holder.recover(), Ok(ProofClockRecovery::NotAhead { .. })),
         "nothing left to recover"

@@ -170,19 +170,40 @@ impl Vault {
         })
     }
 
-    /// `Some` when the window refuses a proof dated `timestamp` only because
-    /// the proof clock sits ahead of the host's wall clock: the lockout
-    /// [`Self::recover_proof_clock`] lifts. Names no credential and reads no
-    /// proof beyond its signed time.
-    pub fn proof_clock_ahead(&self, timestamp: u64) -> Result<Option<ProofClockAhead>> {
+    /// `Some` when the window refuses this request only because the proof
+    /// clock sits ahead of the host's wall clock: the lockout
+    /// [`Self::recover_proof_clock`] lifts. The request must verify in full
+    /// on the wall clock, as [`Self::verify_logged_capability_slip_request`]
+    /// checks it, so a forged or stale one learns nothing of the clock.
+    pub fn proof_clock_ahead(
+        &self,
+        slip: &super::CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<Option<ProofClockAhead>> {
         let txn = self.store.env.read_txn()?;
         let clock = request_now_in_txn(self, &txn)?;
         let wall = self.store.clock.wall_now();
-        let held = clock.now > wall
-            && timestamp >= clock.not_before
-            && clock.now.abs_diff(timestamp) > WINDOW_SECS
-            && wall.abs_diff(timestamp) <= WINDOW_SECS;
-        Ok(held.then_some(ProofClockAhead {
+        if clock.now <= wall || clock.now.abs_diff(timestamp) <= WINDOW_SECS {
+            return Ok(None);
+        }
+        let on_wall = ProofClock { now: wall, ..clock };
+        let Ok(challenge) = request_challenge(timestamp, nonce, on_wall) else {
+            return Ok(None);
+        };
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let Some(mint) = fold.slips.mints.get(&slip.claims.slip_id) else {
+            return Ok(None);
+        };
+        let now = self.instant_in_txn(&txn)?.secs();
+        if slip
+            .verify(&mint.signer, &fold, now, &challenge, signature)
+            .is_err()
+        {
+            return Ok(None);
+        }
+        Ok(Some(ProofClockAhead {
             floor: clock.now,
             wall,
         }))

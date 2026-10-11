@@ -68,10 +68,16 @@ pub(crate) trait RevokedTokenJtis {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         Err(())
     }
-    /// The 401 for a proof dated `timestamp` that [`Self::verify_slip`]
-    /// refused only because the vault's proof clock sits ahead of this
-    /// host's clock, or `None` for any other refusal.
-    fn proof_clock_refusal(&self, _timestamp: u64) -> Option<ApiError> {
+    /// The 401 for a request [`Self::verify_slip`] refused only because the
+    /// vault's proof clock sits ahead of this host's clock, or `None` for any
+    /// other refusal.
+    fn proof_clock_refusal(
+        &self,
+        _slip: &oneiron::authority::CapabilitySlip,
+        _timestamp: u64,
+        _nonce: &[u8],
+        _signature: &[u8],
+    ) -> Option<ApiError> {
         None
     }
 }
@@ -90,8 +96,17 @@ impl RevokedTokenJtis for oneiron::Vault {
             .map_err(drop)
     }
 
-    fn proof_clock_refusal(&self, timestamp: u64) -> Option<ApiError> {
-        let ahead = self.proof_clock_ahead(timestamp).ok().flatten()?;
+    fn proof_clock_refusal(
+        &self,
+        slip: &oneiron::authority::CapabilitySlip,
+        timestamp: u64,
+        nonce: &[u8],
+        signature: &[u8],
+    ) -> Option<ApiError> {
+        let ahead = self
+            .proof_clock_ahead(slip, timestamp, signature, nonce)
+            .ok()
+            .flatten()?;
         tracing::warn!(
             proof_clock = ahead.floor,
             wall_clock = ahead.wall,
