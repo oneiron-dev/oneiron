@@ -92,8 +92,8 @@ export type CommitReceipt = {
   receiptRef: string
 }
 
-/** Retrieval effort dial. `high`, `xhigh` and `max` need a budget lease and return `LEASE_REQUIRED` without one. */
-export type Effort = "light" | "medium" | "high" | "xhigh" | "max"
+/** Retrieval effort dial. `high`, `xhigh` and `max` need a budget lease and return `LEASE_REQUIRED` without one. `call` is call mode for live calls: light effort under a hard deadline. */
+export type Effort = "light" | "medium" | "high" | "xhigh" | "max" | "call"
 
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
@@ -118,6 +118,8 @@ export type RecallOptions = {
   format?: PackFormat
   /** Unix seconds the query's time words resolve against; omitted is now. */
   asOf?: number
+  /** A hard deadline in milliseconds, 1 to 60000: recall answers with the best results ready, marked `partial`. Omitted, recall runs to the end, except `call`, which takes the vault's call-mode deadline. */
+  deadlineMs?: number
 }
 
 /** Where one recalled item came from. */
