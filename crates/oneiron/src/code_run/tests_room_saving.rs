@@ -197,3 +197,72 @@ fn a_message_said_while_a_save_waits_stays_for_the_next_save() {
     session.close().expect("close");
     assert!(vault.get(&second).expect("read").is_some(), "kept");
 }
+
+/// Sol on engine-prs-30: the owner deleted a turn this stretch had saved,
+/// and the run had said more into it. A deleted turn keeps its header and
+/// edges as a shell, and the next save took the shell for the turn and
+/// copied the new message under it. A save copies nothing into a deleted
+/// turn; the message stays in the room, unsaved.
+#[test]
+fn a_save_copies_nothing_into_a_saved_turn_since_deleted() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    run.dispatch(said(1, "and the boat is moored at the north pier"))
+        .expect("the run speaks on into its turn");
+    assert!(vault.delete_entity(&turn).expect("delete the saved turn"));
+
+    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    assert!(saved.is_empty(), "copied into a deleted turn: {saved:?}");
+    assert!(vault.get_raw(&message(1)).expect("read").is_none());
+    assert!(session.overlay().contains_entity(&message(1)).expect("probe"));
+}
+
+/// Sol on engine-prs-30: a save read a saved turn's time when it cut its
+/// plan, and checked the saver's sight against that time where it commits.
+/// While the save waited for the writer, another write moved the turn to
+/// before the saver joined the room, and the save still copied into it. The
+/// save reads the turn's time again in its own transaction, so it keeps
+/// nothing of a turn the saver's membership does not show whole.
+#[test]
+fn a_save_keeps_nothing_of_a_saved_turn_moved_out_of_sight_while_it_waits() {
+    use std::sync::mpsc::sync_channel;
+
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    run.dispatch(said(1, "and the boat is moored at the north pier"))
+        .expect("the run speaks on into its turn");
+
+    let (planned, save_planned) = sync_channel(0);
+    let (let_save, save_go) = sync_channel::<()>(0);
+    *vault.test_hooks().after_save_plan.lock().expect("hook") = Some(Box::new(move || {
+        planned.send(()).expect("signal the save");
+        save_go.recv().expect("release the save");
+    }));
+    let refused = std::thread::scope(|scope| {
+        let save = scope.spawn(|| session.save_talk_by(room.owner, None));
+        save_planned.recv().expect("the save cuts its plan");
+        // The owner joined the room at 2; the turn now says it began at 1.
+        let body = vault.get(&turn).expect("read").expect("the saved turn");
+        vault
+            .put_entity(
+                &turn,
+                crate::registry::ENTITY_TYPE_TURN,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .expect("move the turn");
+        let_save.send(()).expect("let the save commit");
+        save.join().expect("the save must not panic").err()
+    });
+    assert!(refused.is_some(), "the save kept a turn its saver cannot see whole");
+    assert!(vault.get_raw(&message(1)).expect("read").is_none());
+}

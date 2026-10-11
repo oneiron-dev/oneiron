@@ -204,10 +204,18 @@ impl Vault {
     }
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
-        let rtxn = self.store.env.read_txn()?;
+        self.read_entity_header_in_txn(&self.store.env.read_txn()?, id)
+    }
+
+    /// [`Self::read_entity_header`] in the caller's transaction.
+    pub(crate) fn read_entity_header_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityMetadataHeader>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);

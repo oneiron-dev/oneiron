@@ -38,7 +38,7 @@ impl OffRecordSession<'_> {
         let saved = {
             let mut state = self.recording_state()?;
             let snapshot = self.entry.overlay.snapshot()?;
-            let (mut plans, mut times) = (Vec::new(), Vec::new());
+            let (mut plans, mut times, mut appended) = (Vec::new(), Vec::new(), Vec::new());
             for (turn, minted_here) in pending_turns(&snapshot) {
                 let saved_before = state.record.promoted_turns.contains(turn.as_bytes());
                 // A message said into a turn this stretch never saved (one
@@ -70,6 +70,9 @@ impl OffRecordSession<'_> {
                 if let Some(plan) = plan {
                     plans.push(plan);
                     times.extend(turn_times);
+                    if saved_before {
+                        appended.push(turn);
+                    }
                 }
             }
             drop(snapshot);
@@ -87,6 +90,15 @@ impl OffRecordSession<'_> {
             let check = |txn: &heed::RoTxn<'_>| {
                 authority(self.vault, txn)?;
                 if let Some(room) = room {
+                    // A saved turn's time as base holds it in this
+                    // transaction: another writer may have moved it since
+                    // the plan read it (Sol on engine-prs-30).
+                    let mut times = times.clone();
+                    for turn in &appended {
+                        if let Some(header) = self.vault.read_entity_header_in_txn(txn, turn)? {
+                            times.push(header.occurred_start);
+                        }
+                    }
                     require_sight_in_txn(self.vault, txn, &self.session_ref, room, by, &times)?;
                 }
                 Ok(Hearing::in_txn(self.vault, txn, room))

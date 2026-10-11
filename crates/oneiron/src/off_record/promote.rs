@@ -356,9 +356,13 @@ impl FloorWrites<'_> {
         let saved = PROMOTE_RECEIPTS
             .get(self.store, wtxn, &turn)?
             .filter(|receipt| receipt.session_ref == session_ref);
-        let live = vault.get_entity_type_in_txn(wtxn, &turn)?
-            == Some(crate::registry::ENTITY_TYPE_TURN)
-            && crate::ports::EdgeStoreRead::port_edge_get(
+        // A deleted turn keeps its header and edges as a shell: only a live
+        // row is the turn this stretch saved (Sol on engine-prs-30).
+        let live = matches!(
+            crate::vault::live_entity_row_in_txn(self.store, wtxn, &turn)?,
+            crate::vault::LiveEntityRow::Live { entity_type, .. }
+                if entity_type == crate::registry::ENTITY_TYPE_TURN
+        ) && crate::ports::EdgeStoreRead::port_edge_get(
                 self.store,
                 wtxn,
                 &turn,
@@ -407,15 +411,15 @@ impl FloorWrites<'_> {
                 held,
             });
         }
-        let ops: Vec<BatchOp> = plan
-            .ops
-            .iter()
-            .filter(|op| {
+        // Every check reads the plan's own ops, which wipe with it; the copy
+        // the replay takes is cloned last, straight into the builder that
+        // wipes it (Sol on engine-prs-30).
+        let fresh_ops = || {
+            plan.ops.iter().filter(|op| {
                 crate::session_overlay::replayed_subject(op).is_some_and(|id| fresh.contains(&id))
             })
-            .cloned()
-            .collect();
-        for op in &ops {
+        };
+        for op in fresh_ops() {
             if let BatchOp::PublicEdgeWithCreatedAt {
                 kind: EdgeKind::AuthoredBy,
                 tgt,
@@ -433,15 +437,15 @@ impl FloorWrites<'_> {
         }
         // The copied messages' own windows, never the save's clock.
         #[cfg(feature = "sync")]
-        let source_learned_at: Vec<u64> = ops
-            .iter()
+        let source_learned_at: Vec<u64> = fresh_ops()
             .filter_map(|op| match op {
                 BatchOp::Put { learned_at, .. } => Some(*learned_at),
                 _ => None,
             })
             .collect();
         let grant = PromoteReplayGrant::mint_for(fresh.clone());
-        BatchBuilder::promotion_replay(vault, ops, &grant).apply_recording_gate_decisions(wtxn)?;
+        BatchBuilder::promotion_replay(vault, fresh_ops().cloned().collect(), &grant)
+            .apply_recording_gate_decisions(wtxn)?;
         crate::tagging::mark_turn_in_txn(vault, wtxn, turn)?;
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
 
