@@ -2,10 +2,10 @@
 //! the way a provider could echo it, built here independently of the rule.
 
 use base64::Engine as _;
+use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{
     GeneralPurpose, GeneralPurposeConfig, STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD,
 };
-use base64::engine::DecodePaddingMode;
 
 use super::{MARKER, strip, strip_body};
 
@@ -66,11 +66,18 @@ fn leaks(text: &[u8], key: &str) -> bool {
                 .with_decode_padding_mode(DecodePaddingMode::Indifferent),
         )
     };
-    let engines = [lenient(&base64::alphabet::STANDARD), lenient(&base64::alphabet::URL_SAFE)];
+    let engines = [
+        lenient(&base64::alphabet::STANDARD),
+        lenient(&base64::alphabet::URL_SAFE),
+    ];
     text.split(|byte| !(byte.is_ascii_alphanumeric() || b"+/-_".contains(byte)))
         .flat_map(|run| (0..4).flat_map(move |skip| (0..4).map(move |cut| (run, skip, cut))))
         .filter_map(|(run, skip, cut)| run.get(skip..run.len().checked_sub(cut)?))
-        .flat_map(|window| engines.iter().map(move |engine| engine.decode(window).unwrap_or_default()))
+        .flat_map(|window| {
+            engines
+                .iter()
+                .map(move |engine| engine.decode(window).unwrap_or_default())
+        })
         .any(|decoded| contains(&decoded))
 }
 
