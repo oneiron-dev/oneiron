@@ -302,23 +302,38 @@ fn rogue(mode: &str, config: HostConfig) -> OrganHost {
 fn an_organ_that_stops_reading_cannot_hold_a_call_past_its_deadline() {
     // The call frame is far larger than the socket buffer, so the send
     // itself blocks: the deadline must bound the write, not just the reply.
+    // On macOS, MSG_DONTWAIT does not stop a send that waits for room, so
+    // this call hung there until the socket was made nonblocking.
     let (_dir, vault) = vault();
-    let host = rogue("--deaf", HostConfig::default());
-    let mut stuck = call(
-        "organ.echo",
-        "x".repeat(8 * 1024 * 1024).into(),
-        Vec::new(),
-        "g",
-    );
-    stuck.deadline = Duration::from_millis(500);
-    let started = Instant::now();
-    let err = host.call(&vault, stuck).expect_err("deadline");
-    assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "{:?}",
-        started.elapsed()
-    );
+    let config = HostConfig::default();
+    let grace = config.cancel_grace;
+    let host = rogue("--deaf", config);
+    host.warm("probe").expect("warm");
+    // A call cut off part way stops the organ. One late before its first
+    // byte (a host too loaded to send for a whole second) leaves it warm
+    // and in step, which is right too: call again.
+    for _ in 0..3 {
+        let mut stuck = call(
+            "organ.echo",
+            "x".repeat(8 * 1024 * 1024).into(),
+            Vec::new(),
+            "g",
+        );
+        stuck.deadline = Duration::from_secs(1);
+        let bound = stuck.deadline + grace;
+        let started = Instant::now();
+        let err = host.call(&vault, stuck).expect_err("deadline");
+        let took = started.elapsed();
+        assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
+        // Within its deadline and the grace, and a margin for a loaded host.
+        assert!(took < bound + Duration::from_secs(1), "{took:?}");
+        let status = host.status("probe").expect("installed");
+        assert_eq!(status.recent_crashes, 0);
+        if !matches!(status.state, OrganState::Warm) {
+            assert!(matches!(status.state, OrganState::Cold), "{status:?}");
+            break;
+        }
+    }
 }
 
 #[test]

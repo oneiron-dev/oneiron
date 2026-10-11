@@ -157,9 +157,10 @@ mod probe {
 #[cfg(unix)]
 mod rogue {
     use std::io::Write;
-    use std::os::fd::FromRawFd;
+    use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::net::UnixStream;
-    use std::time::Duration;
+    use std::path::Path;
+    use std::time::{Duration, Instant};
 
     use oneiron_organ_protocol::{
         Ask, DEFAULT_FRAME_LIMIT, FromOrgan, HelloAck, Notes, OrganIdentity, Outcome, PROTOCOL,
@@ -318,6 +319,122 @@ mod rogue {
         });
     }
 
+    /// Waits for the test to create `path`, up to a minute: longer than
+    /// the deadline of the call it orders, so a slow host can fail that
+    /// call but never make the organ act before its signal.
+    fn signalled(path: &Path) {
+        let until = Instant::now() + Duration::from_secs(60);
+        while !path.exists() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Answers the handshake, then asks for its first call without reading
+    /// it, once the call has landed and fills the socket (the call is the
+    /// first on the socket, so its id is 1).
+    fn ask_while_full() -> Option<UnixStream> {
+        let stream = socket();
+        let organ = hello_organ(&stream)?;
+        send_frame(&stream, &ack_for(organ), &[], DEFAULT_FRAME_LIMIT).ok()?;
+        let mut landed = [libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        // SAFETY: poll(2) over one live pollfd, with no timeout.
+        if unsafe { libc::poll(landed.as_mut_ptr(), 1, -1) } < 1 {
+            return None;
+        }
+        // The call went in one write; let all of it land.
+        std::thread::sleep(Duration::from_millis(200));
+        send_frame(&stream, &ask(1, 1), &[], DEFAULT_FRAME_LIMIT).ok()?;
+        Some(stream)
+    }
+
+    /// Asks while its first call fills the socket. Once the test's handler
+    /// has run (`signals/handled`) and its answer has had 200 ms to start
+    /// waiting for room, it replies, while the call still fills the socket;
+    /// it reads again only once the test has its reply (`signals/go`).
+    /// Later calls get a reply at once. It exits if it is ever sent an
+    /// answer.
+    pub(super) fn reply_while_full(signals: &Path) {
+        let Some(stream) = ask_while_full() else {
+            return;
+        };
+        signalled(&signals.join("handled"));
+        std::thread::sleep(Duration::from_millis(200));
+        if send_frame(&stream, &reply(1), &[], DEFAULT_FRAME_LIMIT).is_err() {
+            return;
+        }
+        signalled(&signals.join("go"));
+        let mut first = true;
+        while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
+            match message {
+                // Replied to already.
+                ToOrgan::Call(_) if first => first = false,
+                ToOrgan::Call(call) => {
+                    if send_frame(&stream, &reply(call.id), &[], DEFAULT_FRAME_LIMIT).is_err() {
+                        return;
+                    }
+                }
+                ToOrgan::Answer(_) => return,
+                _ => {}
+            }
+        }
+    }
+
+    /// Asks while its first call fills the socket, and never replies. It
+    /// reads again only once the test has seen the call's grant revoked
+    /// (`signals/revoked`), and notes any answer it is sent
+    /// (`signals/answered`).
+    pub(super) fn revoked_while_full(signals: &Path) {
+        let Some(stream) = ask_while_full() else {
+            return;
+        };
+        signalled(&signals.join("revoked"));
+        while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
+            if let ToOrgan::Answer(_) = message {
+                let _ = std::fs::write(signals.join("answered"), b"");
+            }
+        }
+    }
+
+    /// Asks on its first call, and replies to it once the test's handler
+    /// has started (`signals/handled`), so the reply comes while the handler
+    /// runs; later calls get a reply at once. It notes any cancel it is
+    /// sent (`signals/cancelled`), and exits if it is ever sent an answer.
+    pub(super) fn reply_while_handled(signals: &Path) {
+        let stream = socket();
+        let Some(organ) = hello_organ(&stream) else {
+            return;
+        };
+        if send_frame(&stream, &ack_for(organ), &[], DEFAULT_FRAME_LIMIT).is_err() {
+            return;
+        }
+        let mut first = true;
+        while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
+            let call = match message {
+                ToOrgan::Call(call) => call,
+                ToOrgan::Cancel { .. } => {
+                    let _ = std::fs::write(signals.join("cancelled"), b"");
+                    continue;
+                }
+                ToOrgan::Answer(_) => return,
+                _ => continue,
+            };
+            if first {
+                first = false;
+                if send_frame(&stream, &ask(call.id, 1), &[], DEFAULT_FRAME_LIMIT).is_err() {
+                    return;
+                }
+                signalled(&signals.join("handled"));
+            }
+            if send_frame(&stream, &reply(call.id), &[], DEFAULT_FRAME_LIMIT).is_err() {
+                return;
+            }
+        }
+    }
+
     /// An organ built against protocol 1.0: it acks 1.0, echoes each call's
     /// args, and exits on any message 1.0 does not have.
     pub(super) fn v1_0() {
@@ -397,6 +514,21 @@ fn main() -> std::process::ExitCode {
         }
         Some("--ask-then-reply") => {
             rogue::ask_then_reply();
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--reply-while-full") => {
+            let signals = std::env::args().nth(2).unwrap_or_default();
+            rogue::reply_while_full(std::path::Path::new(&signals));
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--revoked-while-full") => {
+            let signals = std::env::args().nth(2).unwrap_or_default();
+            rogue::revoked_while_full(std::path::Path::new(&signals));
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--reply-while-handled") => {
+            let signals = std::env::args().nth(2).unwrap_or_default();
+            rogue::reply_while_handled(std::path::Path::new(&signals));
             std::process::ExitCode::SUCCESS
         }
         Some("--ask-then-nap") => {

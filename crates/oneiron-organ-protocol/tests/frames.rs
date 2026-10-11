@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, MAX_FRAME_VALUES, Notes, Outcome, Proposal, Reply,
-    recv_frame, recv_frame_until, send_frame, send_frame_until,
+    recv_frame, recv_frame_polled, recv_frame_until, send_frame, send_frame_until,
 };
 
 /// A valid reply whose report is an array of `count` nils: one byte each on
@@ -81,7 +81,10 @@ fn a_compact_frame_that_unfolds_into_millions_of_values_is_refused() {
 fn a_timed_frame_leaves_no_timeout_behind() {
     let (ours, theirs) = UnixStream::pair().expect("pair");
     let soon = Some(Instant::now() + Duration::from_millis(50));
+    // A timed send needs a nonblocking socket; the caller sets its mode.
+    ours.set_nonblocking(true).expect("nonblocking");
     send_frame_until(&ours, &1u8, &[], DEFAULT_FRAME_LIMIT, soon).expect("timed send");
+    ours.set_nonblocking(false).expect("blocking");
     let (one, _) = recv_frame_until::<u8>(&theirs, DEFAULT_FRAME_LIMIT, soon).expect("timed recv");
     assert_eq!(one, 1);
     // Untimed frames afterwards wait as long as their peer needs, on the
@@ -137,4 +140,53 @@ fn an_untimed_frame_ends_where_the_callers_socket_says() {
         matches!(&got, Err(FrameError::Io(err)) if err.kind() == std::io::ErrorKind::WouldBlock),
         "{got:?}"
     );
+}
+
+#[test]
+fn a_deadline_weeks_away_still_moves_its_frame() {
+    // macOS has no ppoll: its poll(2) takes an i32 of milliseconds (about
+    // 24.8 days), and every wait past that failed with EINVAL (vel repro).
+    let (ours, theirs) = UnixStream::pair().expect("pair");
+    ours.set_nonblocking(true).expect("nonblocking");
+    let far = Some(Instant::now() + Duration::from_secs(30 * 24 * 3600));
+    send_frame_until(&ours, &7u8, &[], DEFAULT_FRAME_LIMIT, far).expect("a far deadline sends");
+    let (seven, _) = recv_frame_until::<u8>(&theirs, DEFAULT_FRAME_LIMIT, far).expect("receives");
+    assert_eq!(seven, 7);
+    // Receives that wait for their frame: one by the far deadline, and one
+    // polled with none.
+    let late = thread::spawn(move || {
+        for n in [8u8, 9] {
+            thread::sleep(Duration::from_millis(100));
+            send_frame(&theirs, &n, &[], DEFAULT_FRAME_LIMIT)?;
+        }
+        Ok::<_, FrameError>(())
+    });
+    let (eight, _) = recv_frame_until::<u8>(&ours, DEFAULT_FRAME_LIMIT, far).expect("waits");
+    let (nine, _) = recv_frame_polled::<u8>(&ours, DEFAULT_FRAME_LIMIT).expect("waits in poll");
+    assert_eq!((eight, nine), (8, 9));
+    late.join().expect("sender").expect("sent");
+}
+
+#[test]
+fn a_timed_send_to_a_peer_that_stops_reading_ends_by_its_deadline() {
+    // Far larger than the socket buffer. macOS ignores MSG_DONTWAIT while a
+    // send waits for room, so a timed send on a blocking socket hung there
+    // past its deadline (vel repro). It is refused before its first byte.
+    let (ours, _deaf) = UnixStream::pair().expect("pair");
+    let big = "x".repeat(8 * 1024 * 1024);
+    let deadline = Duration::from_secs(1);
+    let started = Instant::now();
+    let soon = Some(started + deadline);
+    let refused = send_frame_until(&ours, &big, &[], DEFAULT_FRAME_LIMIT, soon);
+    assert!(matches!(refused, Err(FrameError::Blocking)), "{refused:?}");
+    ours.set_nonblocking(true).expect("nonblocking");
+    // Cut off part way, or, on a host too loaded to send a byte in time,
+    // late before the first.
+    let cut = send_frame_until(&ours, &big, &[], DEFAULT_FRAME_LIMIT, soon);
+    assert!(
+        matches!(cut, Err(FrameError::TimedOut | FrameError::Late)),
+        "{cut:?}"
+    );
+    let took = started.elapsed();
+    assert!(took < deadline + Duration::from_secs(2), "{took:?}");
 }
