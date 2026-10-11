@@ -882,8 +882,9 @@ mod hostile {
     /// The organ seals for real, then rebuilds the CMS in the hole in a shape
     /// the native assembler never emits: SignedData v0, SignerInfo v3 beside
     /// an issuer-and-serial signer (RFC 5652 §5.1, §5.3), an empty revocation
-    /// set, a non-X.509 certificate beside the leaf, or NULL ECDSA parameters
-    /// (RFC 5754 §3.3). The signature, its attributes and the leaf are the
+    /// set, a non-X.509 certificate beside the leaf, NULL ECDSA parameters
+    /// (RFC 5754 §3.3), or one more X.509 certificate than the key handed
+    /// over, which can poison a verifier's path. The signature, its attributes and the leaf are the
     /// ones issued, and the DER types accept each, so only admission can
     /// refuse them (Astra and Sol on #1379).
     #[test]
@@ -895,6 +896,7 @@ mod hostile {
             "crls-empty",
             "other-cert",
             "sig-alg-null",
+            "extra-cert",
         ] {
             let (keys, cert) = synthetic_keys()?;
             let host = rogue_host(mode);

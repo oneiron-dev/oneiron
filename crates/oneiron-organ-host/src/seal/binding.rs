@@ -5,6 +5,7 @@
 //! byte for byte outside its hole, and the hole holds the CMS of a signature
 //! this call issued for it. Byte and DER checks only: no PDF is parsed here.
 
+use std::collections::BTreeSet;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
@@ -374,9 +375,9 @@ fn expected_attributes(content: &[u8; 32], signer: &Signer) -> Vec<u8> {
 
 /// Whether a hole's hex holds one canonical CMS ContentInfo, then zero
 /// padding, in the one shape the native assembler emits: SignedData v1,
-/// detached id-data under SHA-256, X.509 certificates only (the key's and
-/// every one of its chain among them), no revocation set, and one SignerInfo
-/// v1: that certificate's
+/// detached id-data under SHA-256, exactly the X.509 certificates the key
+/// handed over (its leaf and chain, once each), no revocation set, and one
+/// SignerInfo v1: that certificate's
 /// issuer and serial, the issued signature, over the issued attributes.
 /// Each algorithm is checked with its parameters (RFC 5754). The DER types
 /// accept any version, choice and parameter, so the shape is checked here
@@ -419,9 +420,10 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
         }
         SignerIdentifier::SubjectKeyIdentifier(_) => false,
     };
-    // signingCertificateV2 names the leaf, and the chain the key gave is
-    // what a verifier builds its path from: both must be here, among X.509
-    // certificates only.
+    // signingCertificateV2 names the leaf, and a verifier builds its path
+    // from the chain the key gave. The set is exactly those, as the
+    // assembler writes them (sorted, each once): a missing one breaks the
+    // path, and an added one can poison it.
     let carries_identity = signed.certificates.as_ref().is_some_and(|set| {
         let held: Option<Vec<Vec<u8>>> = set
             .0
@@ -431,10 +433,13 @@ fn holds_issued(hex: &[u8], issued: &Issued, signer: &Signer) -> bool {
                 CertificateChoices::Other(_) => None,
             })
             .collect();
+        let issued: BTreeSet<&[u8]> = std::iter::once(&signer.identity.signer_certificate)
+            .chain(&signer.identity.chain)
+            .map(Vec::as_slice)
+            .collect();
         held.is_some_and(|held| {
-            std::iter::once(&signer.identity.signer_certificate)
-                .chain(&signer.identity.chain)
-                .all(|der| held.contains(der))
+            let distinct: BTreeSet<&[u8]> = held.iter().map(Vec::as_slice).collect();
+            distinct.len() == held.len() && distinct == issued
         })
     });
     matches!((signed.to_der(), info.content.to_der()), (Ok(ours), Ok(theirs)) if ours == theirs)

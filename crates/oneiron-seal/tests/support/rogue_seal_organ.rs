@@ -18,9 +18,10 @@
 //! - `drop-certs`: seals for real, then rebuilds the CMS in the hole
 //!   without its certificates;
 //! - `signed-data-v0`, `signer-info-v3`, `crls-empty`, `other-cert`,
-//!   `sig-alg-null`, `leaf-only`: seals for real, then rebuilds the CMS in
-//!   the hole with that one part of the envelope changed (`leaf-only` keeps
-//!   the signer's certificate and drops its chain).
+//!   `sig-alg-null`, `leaf-only`, `extra-cert`: seals for real, then
+//!   rebuilds the CMS in the hole with that one part of the envelope changed
+//!   (`leaf-only` keeps the signer's certificate and drops its chain;
+//!   `extra-cert` adds a copy of a certificate under another serial).
 //!
 //! Its `seal.verify` always passes.
 
@@ -62,6 +63,7 @@ mod rogue {
         OtherCert,
         SignatureAlgorithmNull,
         LeafOnly,
+        ExtraCert,
     }
 
     impl Mode {
@@ -78,6 +80,7 @@ mod rogue {
                 "other-cert" => Some(Self::OtherCert),
                 "sig-alg-null" => Some(Self::SignatureAlgorithmNull),
                 "leaf-only" => Some(Self::LeafOnly),
+                "extra-cert" => Some(Self::ExtraCert),
                 _ => None,
             }
         }
@@ -242,7 +245,8 @@ mod rogue {
                 | Mode::CrlsEmpty
                 | Mode::OtherCert
                 | Mode::SignatureAlgorithmNull
-                | Mode::LeafOnly => {
+                | Mode::LeafOnly
+                | Mode::ExtraCert => {
                     let backend = Backend {
                         asker: call.asker(),
                         identity: Mutex::new(None),
@@ -540,6 +544,26 @@ mod rogue {
                     });
                 signed.certificates =
                     Some(cms::signed_data::CertificateSet(SetOfVec::from_iter(leaf)?));
+            }
+            Mode::ExtraCert => {
+                let mut certificates = signed
+                    .certificates
+                    .take()
+                    .map(|set| set.0.into_vec())
+                    .unwrap_or_default();
+                let extra = certificates.iter().find_map(|choice| match choice {
+                    cms::cert::CertificateChoices::Certificate(cert) => {
+                        let mut cert = cert.clone();
+                        cert.tbs_certificate.serial_number =
+                            x509_cert::serial_number::SerialNumber::new(&[0x7f]).ok()?;
+                        Some(cms::cert::CertificateChoices::Certificate(cert))
+                    }
+                    cms::cert::CertificateChoices::Other(_) => None,
+                });
+                certificates.extend(extra);
+                signed.certificates = Some(cms::signed_data::CertificateSet(SetOfVec::from_iter(
+                    certificates,
+                )?));
             }
             Mode::ForgeSigns | Mode::Unsigned | Mode::AlterPrefix | Mode::AppendUpdate => {}
         }
