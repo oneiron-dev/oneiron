@@ -121,17 +121,20 @@ fn carries_device_only(
     if key.world().is_some_and(|world| flagged.contains(&world)) {
         return Ok(true);
     }
+    // The body decides first; the stored row decides too, so a carrier whose
+    // body names another world cannot ship a stored private claim's id.
     let mut carried = false;
-    let mut endpoints = BTreeSet::new();
-    map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
+    let mut ids = BTreeSet::new();
+    map_for_each_value_bytes(&doc.get_map("entities"), |key, blob| {
         carried |= blob.is_some_and(|raw| claim_in(raw, flagged));
+        ids.extend(EntityId::from_hex(key).ok());
     });
     map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
         if let Some((src, _, tgt)) = parse_edge_key(key) {
-            endpoints.extend([src, tgt]);
+            ids.extend([src, tgt]);
         }
     });
-    Ok(carried || stored_claim_among(vault, flagged, endpoints)?)
+    Ok(carried || stored_claim_among(vault, flagged, ids)?)
 }
 
 /// Read from `history` (taken before any read transaction opens: taking it
@@ -143,7 +146,7 @@ fn history_inserts_device_only(
 ) -> Result<bool> {
     let entities = ContainerID::new_root("entities", ContainerType::Map);
     let edges = ContainerID::new_root("edges", ContainerType::Map);
-    let mut endpoints = BTreeSet::new();
+    let mut ids = BTreeSet::new();
     for op in history.changes.iter().flat_map(|change| &change.ops) {
         let JsonOpContent::Map(MapOp::Insert { key, value }) = &op.content else {
             continue;
@@ -154,13 +157,14 @@ fn history_inserts_device_only(
             {
                 return Ok(true);
             }
+            ids.extend(EntityId::from_hex(key).ok());
         } else if op.container == edges
             && let Some((src, _, tgt)) = parse_edge_key(key)
         {
-            endpoints.extend([src, tgt]);
+            ids.extend([src, tgt]);
         }
     }
-    stored_claim_among(vault, flagged, endpoints)
+    stored_claim_among(vault, flagged, ids)
 }
 
 /// Whether any of `ids` is stored as a CLAIM of a flagged world.
