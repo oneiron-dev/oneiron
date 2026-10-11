@@ -1052,7 +1052,7 @@ async fn a_propose_only_narrowed_create_is_refused() {
     }
     let owner = server.vault().ensure_embedded_owner_actor().unwrap();
     oneiron::conversation_dag::test_support::put_test_policy_manifest(
-        &server.vault(),
+        server.vault(),
         oneiron::write_envelope::WriteActor::new(owner, oneiron::edge::EdgeActorClass::Human),
         seeded_test_entity_id(0x1704_00e3),
         &json!({
