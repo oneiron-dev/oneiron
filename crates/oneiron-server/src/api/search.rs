@@ -20,14 +20,22 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use oneiron::Effort;
 use oneiron::claim::ScopedRead;
-use oneiron::retrieval_depth::{DepthSearchRequest, DepthSearchResult, SearchProbe};
+use oneiron::retrieval_depth::{
+    DepthSearchRequest, DepthSearchResult, RetrievalDeadline, SearchProbe,
+};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Instant;
 use utoipa::IntoParams;
 use utoipa::ToSchema;
+
+mod deadline;
+use deadline::{
+    SearchPage, read_by_deadline, search_deadline, search_page, search_page_by_deadline,
+};
 
 /// Search responses always preserve each executed read receipt.
 #[derive(Serialize)]
@@ -84,6 +92,13 @@ pub(crate) struct VectorSearchQuery {
     #[schema(example = "project kickoff notes")]
     #[param(example = "project kickoff notes")]
     pub(crate) query_text: Option<String>,
+    /// A hard deadline in milliseconds, 1 to 60000: the search answers with
+    /// the hits ready when it comes due, and `meta.partial` says so.
+    /// Omitted, the search runs to the end.
+    #[serde(default, rename = "deadlineMs")]
+    #[schema(example = 100)]
+    #[param(example = 100)]
+    pub(crate) deadline_ms: Option<u64>,
 }
 
 /// Search hit returned by vector and text search endpoints.
@@ -158,12 +173,13 @@ pub(crate) async fn search_vector(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
+    let arrived = Instant::now();
     check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
+    let deadline = search_deadline(params.deadline_ms)?;
     let view = params.view.unwrap_or(View::Summary);
 
     let count_mode = params.count_mode.for_search_response();
-    let fetch_limit = search_fetch_limit(count_mode, params.limit);
     let query: Result<Vec<f32>, _> = params
         .query
         .split(',')
@@ -187,30 +203,19 @@ pub(crate) async fn search_vector(
             Some("queryText"),
         ));
     }
-    let admission = admit_deep_retrieval(&server, params.depth)?;
-
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
-    let results = run_depth_search(
-        &scoped_read,
-        SearchProbe::Vector {
+    let page = SearchPage {
+        probe: SearchProbe::Vector {
             embedding: query,
             query_text: probe_text(params.query_text.as_deref()).map(str::to_owned),
         },
-        params.depth,
-        fetch_limit,
-        admission.as_ref(),
-    )?;
-
-    let total = results.hits.len();
-    let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
-    let response = search_depth_response(&scoped_read, &results, view, params.limit)?;
-
-    let mut narrowing = results.narrowing;
-    narrowing.push(response.receipt);
-    Ok(Json(ScopedSearchResponse {
-        response: PaginatedResponse::new(response.value, None, meta),
-        narrowing,
-    }))
+        depth: params.depth,
+        view,
+        count_mode,
+        page_limit: params.limit,
+    };
+    search_page_by_deadline(server, arrived, deadline, page)
+        .await
+        .map(Json)
 }
 
 /// Query parameters for BM25 text search.
@@ -247,6 +252,13 @@ pub(crate) struct TextSearchQuery {
     #[schema(value_type = String, default = "light", example = "medium")]
     #[param(value_type = String, default = "light", example = "medium")]
     pub(crate) depth: Effort,
+    /// A hard deadline in milliseconds, 1 to 60000: the search answers with
+    /// the hits ready when it comes due, and `meta.partial` says so.
+    /// Omitted, the search runs to the end.
+    #[serde(default, rename = "deadlineMs")]
+    #[schema(example = 100)]
+    #[param(example = 100)]
+    pub(crate) deadline_ms: Option<u64>,
 }
 
 /// BM25 text search.
@@ -304,34 +316,22 @@ pub(crate) async fn search_text(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
+    let arrived = Instant::now();
     check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
-    let view = params.view.unwrap_or(View::Summary);
-
-    let count_mode = params.count_mode.for_search_response();
-    let fetch_limit = search_fetch_limit(count_mode, params.limit);
-    let admission = admit_deep_retrieval(&server, params.depth)?;
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
-    let results = run_depth_search(
-        &scoped_read,
-        SearchProbe::Text {
+    let deadline = search_deadline(params.deadline_ms)?;
+    let page = SearchPage {
+        probe: SearchProbe::Text {
             query: params.query,
         },
-        params.depth,
-        fetch_limit,
-        admission.as_ref(),
-    )?;
-
-    let total = results.hits.len();
-    let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
-    let response = search_depth_response(&scoped_read, &results, view, params.limit)?;
-
-    let mut narrowing = results.narrowing;
-    narrowing.push(response.receipt);
-    Ok(Json(ScopedSearchResponse {
-        response: PaginatedResponse::new(response.value, None, meta),
-        narrowing,
-    }))
+        depth: params.depth,
+        view: params.view.unwrap_or(View::Summary),
+        count_mode: params.count_mode.for_search_response(),
+        page_limit: params.limit,
+    };
+    search_page_by_deadline(server, arrived, deadline, page)
+        .await
+        .map(Json)
 }
 
 /// A blank `queryText` is an ABSENT one.
@@ -356,6 +356,7 @@ fn run_depth_search(
     effort: Effort,
     limit: usize,
     admission: Option<&DeepAdmission>,
+    deadline: Option<&RetrievalDeadline>,
 ) -> Result<DepthSearchResult, ApiError> {
     // A zero-limit page was an empty 200 on this endpoint before the dial
     // existed, and the dial is not the place to turn it into a refusal.
@@ -370,7 +371,7 @@ fn run_depth_search(
         });
     }
     let request = DepthSearchRequest {
-        deadline: None,
+        deadline,
         probe,
         effort,
         limit,
@@ -555,6 +556,12 @@ pub(crate) struct SemanticSearchRequest {
     #[serde(default = "minimal_effort")]
     #[schema(value_type = String, default = "light", example = "medium")]
     pub(crate) depth: Effort,
+    /// A hard deadline in milliseconds from arrival, 1 to 60000, the query's
+    /// embedding included: the search answers with the hits ready when it
+    /// comes due, and `meta.partial` says so. Omitted, it runs to the end.
+    #[serde(default)]
+    #[schema(example = 100)]
+    pub(crate) deadline_ms: Option<u64>,
 }
 
 /// Semantic search: the server embeds the query text itself.
@@ -629,10 +636,12 @@ pub(crate) async fn search_semantic(
     State(server): State<Arc<SyncServer>>,
     body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
+    let arrived = Instant::now();
     check_api_auth(&headers, &server)?;
     let Json(params) = body.map_err(|rejection| {
         ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
     })?;
+    let deadline = search_deadline(params.deadline_ms)?;
     let text = params.text.trim();
     if text.is_empty() {
         return Err(ApiError::bad_request(
@@ -650,40 +659,60 @@ pub(crate) async fn search_semantic(
     let descriptor = server
         .embedder_descriptor()
         .ok_or_else(ApiError::embedder_unavailable)?;
-    let embedding = server
-        .embed_query_off_runtime(text.to_owned())
-        .await
-        .map_err(embed_query_error)?;
-
-    let view = params.view.unwrap_or(View::Summary);
     let count_mode = params.count_mode.for_search_response();
-    let fetch_limit = search_fetch_limit(count_mode, params.limit);
-    let admission = admit_deep_retrieval(&server, params.depth)?;
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
-    let results = run_depth_search(
-        &scoped_read,
-        SearchProbe::Vector {
+    let (depth, view, page_limit) = (
+        params.depth,
+        params.view.unwrap_or(View::Summary),
+        params.limit,
+    );
+    let page = move |embedding, question| SearchPage {
+        probe: SearchProbe::Vector {
             embedding,
             // Semantic search HAS the question, so a deep read over it needs no
             // second argument from the caller: the text that produced the
             // probe is the text the decomposition reads.
-            query_text: Some(text.to_owned()),
+            query_text: Some(question),
         },
-        params.depth,
-        fetch_limit,
-        admission.as_ref(),
-    )?;
-
-    let total = results.hits.len();
-    let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
-    let items = search_depth_response(&scoped_read, &results, view, params.limit)?;
-    let mut narrowing = results.narrowing;
-    narrowing.push(items.receipt);
-    let mut response = serde_json::to_value(ScopedSearchResponse {
-        response: PaginatedResponse::new(items.value, None, meta),
-        narrowing,
-    })
-    .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
+        depth,
+        view,
+        count_mode,
+        page_limit,
+    };
+    let question = text.to_owned();
+    let page = match deadline {
+        None => {
+            let embedding = server
+                .embed_query_off_runtime(question.clone())
+                .await
+                .map_err(embed_query_error)?;
+            let admission = admit_deep_retrieval(&server, depth)?;
+            search_page(&server, page(embedding, question), admission.as_ref(), None)?
+        }
+        // Under a deadline the embedding spends the same budget: it runs
+        // inside the read, so one still running when the deadline comes due
+        // leaves the page empty and partial. The request is admitted first.
+        Some(budget) => {
+            let admission = admit_deep_retrieval(&server, depth)?;
+            read_by_deadline(
+                Arc::clone(&server),
+                arrived,
+                budget,
+                count_mode,
+                move |server, deadline| {
+                    let embedding = server.embed_query(&question).map_err(embed_query_error)?;
+                    search_page(
+                        server,
+                        page(embedding, question),
+                        admission.as_ref(),
+                        Some(deadline),
+                    )
+                },
+            )
+            .await?
+        }
+    };
+    let mut response = serde_json::to_value(page)
+        .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
     if let Value::Object(object) = &mut response {
         object.insert(
             "embedder".to_owned(),

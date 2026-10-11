@@ -49,13 +49,13 @@ mod remote;
 use std::fmt;
 use std::path::Path;
 
-use oneiron::memory::{Effort, MemoryError};
+use oneiron::memory::{MemoryError, RecallEffort};
 
 pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
     MAX_DIMENSIONS, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_REMOTE_REQUEST_BYTES,
-    MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_dimensions, check_limit,
-    check_payload_bytes, check_query, check_unix_seconds,
+    MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number,
+    check_dimensions, check_limit, check_payload_bytes, check_query, check_unix_seconds,
 };
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
@@ -106,12 +106,13 @@ pub fn stamp_occurred_at(supplied: Option<f64>) -> Result<u64, MemoryError> {
     }
 }
 
-/// Parses the `effort` token, which is the engine's own vocabulary.
-pub fn parse_effort(value: &str) -> Result<Effort, MemoryError> {
-    Effort::parse(value).ok_or_else(|| {
+/// Parses the `effort` token, which is the engine's own vocabulary: the five
+/// levels, or `call` for call mode.
+pub fn parse_effort(value: &str) -> Result<RecallEffort, MemoryError> {
+    RecallEffort::parse(value).ok_or_else(|| {
         crate::error::bad_request(
             format!("unknown recall effort {value:?}"),
-            &["Use one of: light, medium, high, xhigh, max."],
+            &["Use one of: light, medium, high, xhigh, max, call."],
         )
     })
 }
