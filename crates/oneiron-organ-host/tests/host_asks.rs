@@ -249,6 +249,8 @@ impl AskHandler for Outlasts<'_> {
 fn a_deadline_stops_an_organ_deaf_to_its_cancel_while_the_handler_runs() {
     let (_dir, vault) = vault();
     let host = rogue("--ask-once");
+    // Started first: on a slow host a cold start alone can spend 200 ms.
+    host.warm("probe").expect("warm");
     let handler = Outlasts {
         host: &host,
         sleep: Duration::from_millis(1500),
