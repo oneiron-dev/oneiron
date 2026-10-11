@@ -68,6 +68,20 @@ pub struct AskReceipt {
     pub data_len: u64,
     pub fetch: Option<FetchTarget>,
     pub handler_us: u64,
+    /// Set when the organ got no answer because its call ended first.
+    #[serde(default)]
+    pub unanswered: Option<Unanswered>,
+}
+
+/// Why an ask got no answer: its call ended (cancelled, revoked, replied,
+/// past its caps or its organ gone) before one was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Unanswered {
+    /// No handler ran.
+    NotRun,
+    /// A handler ran; what it gave was not sent.
+    NotSent,
 }
 
 /// Where a `net.fetch` went. The full URL is kept only as a digest.

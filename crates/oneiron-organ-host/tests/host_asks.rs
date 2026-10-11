@@ -4,19 +4,22 @@
 //! refusal leaves the call to the organ, an ask runs inside its call's
 //! deadline, a flooding organ is cut off, a handler cannot nest a call, a
 //! fetch reaches only its allowlist, and an organ built for 1.0 still runs.
+//! An answer goes only to a call still in flight under a live grant, counts
+//! its value against the call's answer bytes, and every ask stays on record
+//! however the call ends.
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiron::{Vault, VaultConfig};
 use oneiron_organ_host::{
     Answered, AskGrant, AskHandler, AskHandlers, AskRequest, CallClass, FetchOrigin, GuardedFetch,
-    HostConfig, HostError, OrganCall, OrganHost, OrganSpec,
+    HostConfig, HostError, OrganCall, OrganHost, OrganSpec, Unanswered,
 };
 use oneiron_organ_protocol::{
     ASK_NET_FETCH, AskCode, AskRefusal, FetchAsk, FetchMethod, Hash32, PROTOCOL, ProtocolVersion,
@@ -456,8 +459,9 @@ fn a_handler_may_not_call_an_organ() {
     assert!(seen.contains("Reentrant"), "{seen}");
 }
 
-/// A one-thread HTTP server on loopback: `/ok` answers, `/hop` redirects to
-/// `to`. Returns its port and the paths it was asked for.
+/// A one-thread HTTP server on loopback: `/hop` redirects to `to`, `/drip`
+/// drips its body, any other path answers `hello`. Returns its port and the
+/// paths it was asked for.
 fn serve(to: Option<String>) -> (u16, std::sync::Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().expect("addr").port();
@@ -485,6 +489,21 @@ fn serve(to: Option<String>) -> (u16, std::sync::Arc<Mutex<Vec<String>>>) {
                 .unwrap_or_default()
                 .to_owned();
             log.lock().expect("log").push(path.clone());
+            if path == "/drip" {
+                // A hundred bytes, one every 100 ms: each read makes progress.
+                let head = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n";
+                if stream.write_all(head.as_bytes()).is_err() {
+                    continue;
+                }
+                for _ in 0..100 {
+                    thread::sleep(Duration::from_millis(100));
+                    if stream.write_all(b"x").is_err() {
+                        log.lock().expect("log").push("/drip:closed".into());
+                        break;
+                    }
+                }
+                continue;
+            }
             let response = match (path.as_str(), &to) {
                 ("/hop", Some(to)) => format!(
                     "HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -568,4 +587,211 @@ fn a_granted_fetch_reaches_only_its_allowlist() {
         .expect("the organ goes on");
     assert_eq!(refused(&lines(&outcome.report)[0]), Some("not_granted"));
     assert_eq!(asked.lock().expect("log").len(), 2);
+}
+
+fn fetching(port: u16) -> OrganHost {
+    let mut granted = spec(vec![AskGrant::new(ASK_NET_FETCH, 8)]);
+    granted.fetch.origins = vec![FetchOrigin::new("http", "127.0.0.1", port)];
+    granted.fetch.private_cidrs = vec!["127.0.0.1/32".parse().expect("cidr")];
+    host(granted)
+}
+
+#[test]
+fn a_fetch_that_drips_its_body_ends_at_the_deadline() {
+    // Astra (#1378) P1: reqwest's blocking timeout restarts at every read,
+    // so a body dripped a byte at a time held the call for ten seconds.
+    let (_dir, vault) = vault();
+    let (port, served) = serve(None);
+    let host = fetching(port);
+    let asks = AskHandlers::none().with(ASK_NET_FETCH, &GuardedFetch);
+    let started = Instant::now();
+    let result = host.call_with(
+        &vault,
+        ask_call(
+            ASK_NET_FETCH,
+            fetch(&format!("http://127.0.0.1:{port}/drip")),
+            1,
+            Duration::from_secs(1),
+        ),
+        Vec::new(),
+        &asks,
+    );
+    assert!(
+        matches!(result, Err(HostError::DeadlineExceeded)),
+        "{result:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    let asked = asks.asked();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].unanswered, Some(Unanswered::NotSent));
+    // The fetch was dropped with its connection: the server's next writes
+    // fail, so nothing of the host's is left reading.
+    let closed = (0..40).any(|_| {
+        thread::sleep(Duration::from_millis(50));
+        served
+            .lock()
+            .expect("log")
+            .iter()
+            .any(|path| path == "/drip:closed")
+    });
+    assert!(closed, "{:?}", served.lock().expect("log"));
+}
+
+#[test]
+fn an_answer_value_counts_against_the_answer_bytes() {
+    // Astra (#1378) P2: only an answer's data was charged, so a fetch's 4 KiB
+    // final URL crossed under a 1 KiB cap.
+    let (_dir, vault) = vault();
+    let (port, asked) = serve(None);
+    let mut granted = spec(vec![
+        AskGrant::new(ASK_NET_FETCH, 4),
+        AskGrant::new(ANSWER, 4),
+    ]);
+    granted.fetch.origins = vec![FetchOrigin::new("http", "127.0.0.1", port)];
+    granted.fetch.private_cidrs = vec!["127.0.0.1/32".parse().expect("cidr")];
+    granted.max_ask_bytes = 1024;
+    let host = host(granted);
+    let echoes = bytes(0);
+    let asks = AskHandlers::none()
+        .with(ASK_NET_FETCH, &GuardedFetch)
+        .with(ANSWER, &echoes);
+    let long = format!("http://127.0.0.1:{port}/{}", "a".repeat(4096));
+    let calls = [
+        ask_call(ASK_NET_FETCH, fetch(&long), 1, Duration::from_secs(10)),
+        ask_call(ANSWER, "x".repeat(4096).into(), 1, Duration::from_secs(10)),
+    ];
+    for call in calls {
+        let outcome = host
+            .call_with(&vault, call, Vec::new(), &asks)
+            .expect("the organ goes on");
+        assert_eq!(refused(&lines(&outcome.report)[0]), Some("too_large"));
+        assert_eq!(outcome.receipt.asks[0].refused, Some(AskCode::TooLarge));
+    }
+    // The fetch itself ran; only its answer was over the cap.
+    assert_eq!(asked.lock().expect("log").len(), 1);
+    assert_eq!(echoes.runs.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn an_ask_queued_behind_its_calls_reply_is_never_answered() {
+    // Astra (#1378) P2: the organ asks and replies back to back; the host
+    // ran the queued ask and sent its answer after the reply. This organ
+    // exits if it is ever answered.
+    let (_dir, vault) = vault();
+    let host = rogue("--ask-then-reply");
+    let slow = Slow(Duration::from_millis(200), AtomicUsize::new(0));
+    let asks = AskHandlers::none().with(ANSWER, &slow);
+    for _ in 0..2 {
+        let outcome = host
+            .call_with(&vault, echo(Duration::from_secs(10)), Vec::new(), &asks)
+            .expect("the reply stands");
+        assert_eq!(outcome.receipt.asks.len(), 1);
+        assert!(outcome.receipt.asks[0].unanswered.is_some());
+    }
+    // Whether a handler started depends on which thread won the reply; its
+    // answer never went, so the organ is the one it started as.
+    assert!(slow.1.load(Ordering::SeqCst) <= 2);
+    let status = host.status("probe").expect("installed");
+    assert_eq!(status.spawns, 1);
+    assert_eq!(status.recent_crashes, 0);
+    assert!(status.pid.is_some());
+}
+
+/// On its run, lets a large call take the writer, then has the grant
+/// revoked while this call's answer waits for that writer.
+struct Racer {
+    take_writer: Mutex<mpsc::Sender<()>>,
+    revoke: Mutex<mpsc::Sender<()>>,
+}
+
+impl AskHandler for Racer {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        let _ = self.take_writer.lock().expect("sender").send(());
+        thread::sleep(Duration::from_millis(300));
+        let _ = self.revoke.lock().expect("sender").send(());
+        Ok(Answered::default())
+    }
+}
+
+#[test]
+fn an_answer_that_waits_for_the_writer_never_follows_a_revoked_cancel() {
+    // Astra (#1378) P2, as it wrote the race. The organ asks under grant `a`
+    // and stops reading for 1.5 s. A large call under grant `b` takes the
+    // writer; the answer waits for it; `a` is revoked, and its cancel waits
+    // too. When the organ reads again, the answer must not go, whichever
+    // thread takes the writer first. The organ exits if it is answered.
+    let (_dir, vault) = vault();
+    let mut racing = spec(vec![AskGrant::new(ANSWER, 4)]);
+    racing.args = vec!["--ask-then-nap".into()];
+    racing.verbs = vec!["organ.echo".into()];
+    racing.threads = 2;
+    let host = OrganHost::new(HostConfig {
+        cancel_grace: Duration::from_secs(3),
+        ..HostConfig::default()
+    });
+    host.install(racing);
+    let (take_writer, writer_taken) = mpsc::channel();
+    let (revoke, revoked) = mpsc::channel();
+    let racer = Racer {
+        take_writer: Mutex::new(take_writer),
+        revoke: Mutex::new(revoke),
+    };
+    let asks = AskHandlers::none().with(ANSWER, &racer);
+    let (host, vault) = (&host, &vault);
+    let result = thread::scope(|scope| {
+        scope.spawn(move || {
+            if writer_taken.recv_timeout(Duration::from_secs(30)).is_ok() {
+                let large = OrganCall {
+                    args: "x".repeat(8 * 1024 * 1024).into(),
+                    grant: "b".into(),
+                    ..echo(Duration::from_secs(20))
+                };
+                let _ = host.call(vault, large);
+            }
+        });
+        scope.spawn(move || {
+            if revoked.recv_timeout(Duration::from_secs(30)).is_ok() {
+                thread::sleep(Duration::from_millis(300));
+                host.revoke_grant("a");
+            }
+        });
+        let call = OrganCall {
+            grant: "a".into(),
+            ..echo(Duration::from_secs(20))
+        };
+        host.call_with(vault, call, Vec::new(), &asks)
+    });
+    assert!(matches!(result, Err(HostError::Revoked)), "{result:?}");
+    let asked = asks.asked();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].unanswered, Some(Unanswered::NotSent));
+    // The host stopped the organ for the revocation; it never exited on an
+    // answer, which would count as a crash.
+    assert_eq!(host.status("probe").expect("installed").recent_crashes, 0);
+}
+
+#[test]
+fn a_failed_call_keeps_its_ask_lines() {
+    // Astra (#1378) P2: an organ that asked, was answered, then failed
+    // erased the record of what the handler did.
+    let (_dir, vault) = vault();
+    let host = host(spec(vec![AskGrant::new(ANSWER, 4)]));
+    let handler = bytes(16);
+    let asks = AskHandlers::none().with(ANSWER, &handler);
+    let mut call = ask_call(ANSWER, "hi".into(), 1, Duration::from_secs(10));
+    if let rmpv::Value::Map(args) = &mut call.args {
+        args.push(("fail".into(), true.into()));
+    }
+    let result = host.call_with(&vault, call, Vec::new(), &asks);
+    assert!(matches!(result, Err(HostError::Organ(_))), "{result:?}");
+    let asked = asks.asked();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].verb, ANSWER);
+    assert!(asked[0].answer_digest.is_some());
+    assert_eq!(asked[0].data_hash, Some(Hash32::of(&handler.bytes)));
+    assert_eq!(asked[0].unanswered, None);
 }

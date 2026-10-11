@@ -265,7 +265,9 @@ impl OrganHost {
     /// and the handlers that answer the organ's asks (protocol 1.1). An ask
     /// is answered only when the install grant names its verb and `asks`
     /// holds a handler for it; handlers run on this thread, inside the
-    /// call's deadline, and may not call an organ themselves.
+    /// call's deadline, and may not call an organ themselves. Every ask's
+    /// receipt line is also kept in `asks` ([`AskHandlers::asked`]), so a
+    /// call that fails still leaves a record of what its handlers did.
     ///
     /// # Errors
     /// As [`Self::call`], plus [`HostError::Reentrant`] from inside a
@@ -336,7 +338,8 @@ impl OrganHost {
         );
         let (reply, fds) = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline)?;
         let lent = asked.lent_bytes();
-        let asks = asked.receipts;
+        // The lines also reach `asks` when `asked` drops, on every path.
+        let asks = asked.receipts.clone();
         // A grant withdrawn while the organ worked voids its answer too.
         if self.grant_revoked(&call.grant) {
             return Err(HostError::Revoked);
