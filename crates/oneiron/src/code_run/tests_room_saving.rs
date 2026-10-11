@@ -218,7 +218,12 @@ fn a_save_copies_nothing_into_a_saved_turn_since_deleted() {
     let saved = session.save_talk_by(room.owner, None).expect("save again");
     assert!(saved.is_empty(), "copied into a deleted turn: {saved:?}");
     assert!(vault.get_raw(&message(1)).expect("read").is_none());
-    assert!(session.overlay().contains_entity(&message(1)).expect("probe"));
+    assert!(
+        session
+            .overlay()
+            .contains_entity(&message(1))
+            .expect("probe")
+    );
 }
 
 /// Sol on engine-prs-30: a save read a saved turn's time when it cut its
@@ -263,6 +268,9 @@ fn a_save_keeps_nothing_of_a_saved_turn_moved_out_of_sight_while_it_waits() {
         let_save.send(()).expect("let the save commit");
         save.join().expect("the save must not panic").err()
     });
-    assert!(refused.is_some(), "the save kept a turn its saver cannot see whole");
+    assert!(
+        refused.is_some(),
+        "the save kept a turn its saver cannot see whole"
+    );
     assert!(vault.get_raw(&message(1)).expect("read").is_none());
 }

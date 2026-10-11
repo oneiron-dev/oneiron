@@ -363,13 +363,13 @@ impl FloorWrites<'_> {
             crate::vault::LiveEntityRow::Live { entity_type, .. }
                 if entity_type == crate::registry::ENTITY_TYPE_TURN
         ) && crate::ports::EdgeStoreRead::port_edge_get(
-                self.store,
-                wtxn,
-                &turn,
-                EdgeKind::ChildOf,
-                &plan.conversation(),
-            )?
-            .is_some();
+            self.store,
+            wtxn,
+            &turn,
+            EdgeKind::ChildOf,
+            &plan.conversation(),
+        )?
+        .is_some();
         let Some(saved) = saved.filter(|_| live) else {
             tracing::debug!(
                 turn = %turn.to_hex(),

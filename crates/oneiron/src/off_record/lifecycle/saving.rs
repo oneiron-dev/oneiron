@@ -95,7 +95,7 @@ impl OffRecordSession<'_> {
                     // the plan read it (Sol on engine-prs-30).
                     let mut times = times.clone();
                     for turn in &appended {
-                        if let Some(header) = self.vault.read_entity_header_in_txn(txn, turn)? {
+                        if let Some(header) = self.vault.entity_header_in_txn(txn, turn)? {
                             times.push(header.occurred_start);
                         }
                     }
