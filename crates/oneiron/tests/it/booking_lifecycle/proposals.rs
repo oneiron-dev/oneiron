@@ -85,3 +85,31 @@ fn a_future_dated_proposal_does_not_block_a_cancel() {
             .expect("cancel"),
     );
 }
+
+/// A pending proposal the store can close is closed by the cancel, as before:
+/// only one dated in the future is left to its review.
+#[test]
+fn a_cancel_still_closes_a_proposal_it_can_close() {
+    let fixture = Fixture::open();
+    let slots = fixture.offered_slots();
+    let booked = book(&fixture, session(b"proposal"), slot_of(&slots[0]));
+    propose_cancelled(&fixture, booked.calendar.event_ref, NOW);
+
+    expect_revision(
+        fixture
+            .run(
+                BookingVerbRequest::Cancel(CancelSpec {
+                    token: booked.cancel_token,
+                    idempotency_key: None,
+                }),
+                NOW + 60,
+            )
+            .expect("cancel"),
+    );
+    let proposal = fixture
+        .vault
+        .get_claim(&test_id(0xF0))
+        .expect("claim read")
+        .expect("the proposal row stays in history");
+    assert_eq!(proposal.lifecycle, ClaimLifecycleStatus::Superseded);
+}

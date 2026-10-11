@@ -406,7 +406,7 @@ pub(super) fn supersede_exact_claim(
     value: rmpv::Value,
     now_utc: u64,
 ) -> Result<(), BookingError> {
-    let prior = live_claims_with_predicate(vault, &*wtxn, subject, predicate)?;
+    let prior = live_claims_with_predicate(vault, &*wtxn, subject, predicate, now_utc)?;
     let new_id = put_claim(vault, wtxn, subject, predicate, value, now_utc)?;
     for old_id in prior {
         vault
@@ -416,26 +416,37 @@ pub(super) fn supersede_exact_claim(
     Ok(())
 }
 
-/// Every surfaceable claim about `subject` carrying exactly `predicate`: the
-/// heads the readers take as the record. A pending proposal is left to its
-/// review; closing it must never stand in the way of the transition.
+/// Every live claim about `subject` carrying exactly `predicate`, except a
+/// pending one dated after `now_utc`: the store cannot close that yet, and a
+/// proposal must never block the transition. It is left to its review.
 fn live_claims_with_predicate(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     subject: &EntityId,
     predicate: &str,
+    now_utc: u64,
 ) -> Result<Vec<EntityId>, BookingError> {
     let mut out = Vec::new();
     for claim_id in claims_for_subject(vault, rtxn, subject)? {
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
         };
-        if body.predicate == predicate
-            && crate::claim::claim_surfaceable(&body)
-            && body.subject == ClaimSubject::Entity(*subject)
+        if body.predicate != predicate
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.subject != ClaimSubject::Entity(*subject)
         {
-            out.push(claim_id);
+            continue;
         }
+        if !crate::claim::claim_surfaceable(&body)
+            && vault
+                .store
+                .port_entity_record(rtxn, &claim_id)
+                .map_err(|error| engine_failure("booking claim header read", error))?
+                .is_some_and(|row| row.occurred.start > now_utc)
+        {
+            continue;
+        }
+        out.push(claim_id);
     }
     Ok(out)
 }
