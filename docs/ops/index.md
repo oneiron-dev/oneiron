@@ -25,5 +25,8 @@ surfaces. They do not replace counsel review for jurisdiction-specific calls.
   the running `serve` for import (`[import] queue`, `oneiron import claude-code <log> --queue`).
 - [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
   (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
+- [Load bench](load-bench.md) — `oneiron-bench load` runs the shipped server under synthetic
+  load (facade ingest, recall per grade and agent count, fairness, memory) and compares two
+  commits' JSON results.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
   per-crate file tables in [`../codemap/`](../codemap/).
