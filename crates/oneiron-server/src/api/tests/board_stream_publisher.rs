@@ -256,7 +256,7 @@ async fn publisher_passed(
     let asked = ask(server, witness, seed)
         .task_refs
         .iter()
-        .map(|task| task.to_hex())
+        .map(oneiron::EntityId::to_hex)
         .collect::<Vec<_>>();
     eventually(server, |streams| {
         streams
