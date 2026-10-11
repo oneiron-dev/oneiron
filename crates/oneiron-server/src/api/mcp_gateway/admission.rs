@@ -1,5 +1,6 @@
 //! Scoped-call admission and actor resolution.
 
+use super::board_setup::mcp_scope_admits_row;
 use super::{
     McpCallContext, McpGatewayError, McpToolCallParams, mcp_actor_result, mcp_api_error,
     mcp_engine_error, mcp_scoped_read, mcp_tool_validation_error,
@@ -312,6 +313,87 @@ fn mcp_task_in_scope(
         })
     };
     Ok(inside(&position.worlds, scope.world_ref) && inside(&position.facets, scope.facet_ref))
+}
+
+/// Narrows the TASKS rows to the credential's registered world/facet and its
+/// verified slip, then renders what is left.
+///
+/// The narrowing runs BEFORE the render cap, so the window and its overflow
+/// footer count only rows this credential may see. The returned count is the
+/// scope omission: rows proven inside the credential's world and facet that
+/// another of its bounds withholds. A row in a world or facet the credential
+/// cannot read, or one that cannot prove where it sits, adds to no count
+/// (ARCH-0067 §5, DEC-0005).
+pub(super) fn mcp_scoped_tasks_section(
+    server: &Arc<SyncServer>,
+    actor: &McpResolvedActor,
+    rows: oneiron::context_board::TasksSectionRows,
+) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
+    let scoped_read = mcp_scoped_read(&server.vault, actor)?;
+    let mut omitted = 0_usize;
+    let mut admits = |row_id: &str| -> Result<bool, McpGatewayError> {
+        if mcp_scope_admits_row(&server.vault, actor, &scoped_read, row_id)? {
+            return Ok(true);
+        }
+        if mcp_row_position_inside(&server.vault, actor, &scoped_read, row_id)? {
+            omitted += 1;
+        }
+        Ok(false)
+    };
+    let mut intents = Vec::with_capacity(rows.intents.len());
+    for intent in rows.intents {
+        if admits(&intent.id)? {
+            intents.push(intent);
+        }
+    }
+    let mut bare_jobs = Vec::with_capacity(rows.bare_jobs.len());
+    for job in rows.bare_jobs {
+        if admits(&job.id)? {
+            bare_jobs.push(job);
+        }
+    }
+    let section = oneiron::context_board::TasksSectionRows {
+        intents,
+        bare_jobs,
+        source_exhausted: rows.source_exhausted,
+    }
+    .render();
+    Ok((section, omitted))
+}
+
+/// Whether the TASK this board id names sits, by its birth stamp, inside both
+/// the registered world/facet ceiling and the verified slip's worlds and
+/// facets: only such a withheld row may be counted. Any other row cannot
+/// prove it, so it is not.
+fn mcp_row_position_inside(
+    vault: &oneiron::Vault,
+    actor: &McpResolvedActor,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    row_id: &str,
+) -> Result<bool, McpGatewayError> {
+    let Ok(id) = oneiron::EntityId::from_hex(row_id) else {
+        return Ok(false);
+    };
+    let kind = vault
+        .get_entity_type(&id)
+        .map_err(|error| mcp_engine_error("mcp board row type read failed", error))?;
+    if kind != Some(oneiron::registry::ENTITY_TYPE_TASK)
+        || !mcp_scope_covers_entity(scoped_read, &actor.scope, &id)?
+    {
+        return Ok(false);
+    }
+    let Some(position) = vault
+        .record_scope(&id)
+        .map_err(|error| mcp_engine_error("mcp board row scope read failed", error))?
+    else {
+        return Ok(false);
+    };
+    let Some(proof) = actor.auth.as_ref().and_then(|auth| auth.verified_slip()) else {
+        return Ok(true);
+    };
+    let granted = proof.scope();
+    Ok(position.worlds.is_narrowing_of(&granted.worlds)
+        && position.facets.is_narrowing_of(&granted.facets))
 }
 
 /// Resolves one `tools/call` name against THIS endpoint's registration.
