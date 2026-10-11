@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, HashMap};
 
 use heed::RoTxn;
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -38,14 +37,15 @@ pub(super) fn resolve_edge_short_ids(
 }
 
 /// ARCH-0004 / ARCH-0022 world partitioning for an `All`-scope pack: reorders
-/// `results` so claims are grouped by world — the base section (claims with no
-/// `world` key plus every non-claim entity) first, then one section per
-/// non-base world (sections ordered by their highest-scoring claim; score
-/// order preserved within a section). A per-non-base-world cap drops the
-/// lowest-scoring fiction so non-base worlds occupy at most `non_base_fraction`
-/// of the claim budget (every CLAIM in the pack), keeping all base claims.
+/// `results` so rows are grouped by world — the base section (claims with no
+/// `world` key plus every other base-reality record) first, then one section
+/// per non-base world, which also holds a TASK born there (sections ordered
+/// by their highest-scoring row; score order preserved within a section). A
+/// per-non-base-world cap drops the lowest-scoring fiction claims so non-base
+/// worlds occupy at most `non_base_fraction` of the claim budget (every CLAIM
+/// in the pack), keeping all base claims.
 ///
-/// When no non-base claim survives, `results` are left flat in score order.
+/// When no non-base row survives, `results` are left flat in score order.
 pub(super) fn partition_results_by_world(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -63,26 +63,32 @@ pub(super) fn partition_results_by_world(
         }
     }
 
-    // No fictional / dream claim survived — leave the pack flat (score order).
+    // No fictional / dream row survived — leave the pack flat (score order).
     if non_base.is_empty() {
         *results = base;
         return Ok(());
     }
 
     // Claim budget = every CLAIM in the pack (base claims + non-base claims);
-    // non-claim base entities do not count. Non-base worlds share at most
+    // other records do not count. Non-base worlds share at most
     // `non_base_fraction` of it.
-    let base_claim_count = base
-        .iter()
-        .filter(|entity| entity.entity_type == ENTITY_TYPE_CLAIM)
-        .count();
-    let claim_budget = base_claim_count + non_base.len();
+    let is_claim = |entity: &ContextEntity| entity.entity_type == ENTITY_TYPE_CLAIM;
+    let base_claim_count = base.iter().filter(|entity| is_claim(entity)).count();
+    let non_base_claims = non_base.iter().filter(|(_, entity)| is_claim(entity)).count();
+    let claim_budget = base_claim_count + non_base_claims;
     let non_base_cap = ((claim_budget as f32) * non_base_fraction).floor().max(0.0) as usize;
 
     // `non_base` is in score order (results arrive score-sorted). Keep the top
-    // `non_base_cap` by score and drop the rest so fiction cannot crowd base
-    // reality out.
-    non_base.truncate(non_base_cap);
+    // `non_base_cap` claims by score and drop the rest so fiction cannot crowd
+    // base reality out.
+    let mut kept_claims = 0_usize;
+    non_base.retain(|(_, entity)| {
+        if !is_claim(entity) {
+            return true;
+        }
+        kept_claims += 1;
+        kept_claims <= non_base_cap
+    });
 
     // Group survivors by world; sections ordered by first (highest-score)
     // appearance, score order preserved within each section.
@@ -154,9 +160,9 @@ pub(super) fn annotate_stale_federated_worlds(
 }
 
 /// Reads a hydrated result's world for partitioning: `None` for base reality
-/// (a non-claim entity, or a claim with no `world` key) and `Some(world_id)`
-/// for a world-scoped claim. The `world` key was structurally validated to a
-/// 16-byte id at write time.
+/// and `Some(world_id)` for a world-scoped claim or a TASK born in that world
+/// (see [`record_world_by_id`]). The `world` key was structurally validated
+/// to a 16-byte id at write time.
 ///
 /// Every result CLAIM passed the pipeline D19 gate, so its body is already in
 /// `claim_bodies`: reuse that decode instead of a second MessagePack pass,
@@ -169,22 +175,25 @@ fn entity_world(
     entity: &ContextEntity,
     claim_bodies: &HashMap<EntityId, ClaimBody>,
 ) -> Result<Option<EntityId>> {
-    if entity.entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(None);
-    }
-    if let Some(body) = claim_bodies.get(&entity.id) {
+    if entity.entity_type == ENTITY_TYPE_CLAIM
+        && let Some(body) = claim_bodies.get(&entity.id)
+    {
         return Ok(body.world);
     }
-    claim_world_by_id(store, rtxn, &entity.id)
+    record_world_by_id(store, rtxn, &entity.id)
 }
 
-/// Reads a claim's world straight off the stored row, by id.
+/// Reads a row's world straight off the stored row, by id, by the rule every
+/// world check reads (`record_scope::record_world_in`).
 ///
 /// The door for paths holding neither a hydrated row nor a decoded body: edge
-/// expansion sees bare targets. Non-claims, absent rows, and bodies with no
-/// `world` key are base reality (`None`); a claim body that fails to decode
-/// fails closed, exactly as the pipeline's world filter does.
-pub(super) fn claim_world_by_id(
+/// expansion sees bare targets. A claim names its own world and a TASK or its
+/// authority fact the world it was born in. Every other record, an absent
+/// row, a claim body with no `world` key, and a TASK that cannot prove its
+/// world are base reality (`None`): no check here limits a pack to a world,
+/// so an unknown world is never a stale one. A claim body that fails to
+/// decode fails closed, exactly as the pipeline's world filter does.
+pub(super) fn record_world_by_id(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
@@ -192,10 +201,17 @@ pub(super) fn claim_world_by_id(
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
-
-    if raw.entity_type != ENTITY_TYPE_CLAIM
-        || (raw.body.len() + crate::batch::ENTITY_METADATA_HEADER_LEN) <= ENTITY_METADATA_HEADER_LEN
-    {
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(crate::federation::record_scope::record_world_in(
+            store,
+            rtxn,
+            *id,
+            raw.entity_type,
+            &raw.body,
+        )?
+        .flatten());
+    }
+    if raw.body.is_empty() {
         return Ok(None);
     }
     crate::claim::decode_claim_body(&raw.body, true).map(|body| body.world)
