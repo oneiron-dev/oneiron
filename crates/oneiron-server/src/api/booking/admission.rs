@@ -6,10 +6,11 @@ use oneiron::booking::anti_abuse::{
     BookingRequestFacts, EmailValidationEvidence, booking_email_hash, booking_ip_hash,
     booking_session_hash,
 };
+use oneiron::booking::lifecycle::{live_hold_event_type, token_event_type};
 use oneiron::booking::{
     ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE,
     BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingSourcePageValue, BookingStatus,
-    BookingStatusValue, SessionKey, VaultActiveHoldSource,
+    BookingStatusValue, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
 };
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::{CalendarReadRequest, ClaimLifecycleStatus, EntityId, TimeRange, Vault};
@@ -48,6 +49,10 @@ pub(super) fn admission_facts(
     }
     let ip_hash = booking_ip_hash(&ip_material);
 
+    // A confirm or an amendment does not carry its event type, so it is read
+    // from what the request names: the hold, or the booking its token is for.
+    // Without it, every control the owner scoped to one event type would
+    // skip these requests.
     let (event_type, session_ref, booker_email, selected_slot, intake) = match request {
         BookingOperationRequest::Availability(input) => (
             Some(input.event_type.clone()),
@@ -64,16 +69,37 @@ pub(super) fn admission_facts(
             None,
         ),
         BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => (
-            None,
+            live_hold_event_type(
+                &server.vault,
+                &session_key(page_ref, &input.session_ref),
+                &OpaqueLifecycleToken(input.hold_token.clone()),
+                now,
+            )?,
             Some(input.session_ref.as_str()),
             Some(input.booker_email.as_str()),
             None,
             Some(input.intake.as_slice()),
         ),
-        BookingOperationRequest::Reschedule(input) => {
-            (None, None, None, Some(input.selected_slot), None)
-        }
-        BookingOperationRequest::Cancel(_) => (None, None, None, None, None),
+        BookingOperationRequest::Reschedule(input) => (
+            token_event_type(
+                &server.vault,
+                &OpaqueLifecycleToken(input.reschedule_token.clone()),
+            )?,
+            None,
+            None,
+            Some(input.selected_slot),
+            None,
+        ),
+        BookingOperationRequest::Cancel(input) => (
+            token_event_type(
+                &server.vault,
+                &OpaqueLifecycleToken(input.cancel_token.clone()),
+            )?,
+            None,
+            None,
+            None,
+            None,
+        ),
     };
 
     let session_hash = session_ref.map(booking_session_hash);

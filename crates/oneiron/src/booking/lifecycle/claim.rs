@@ -116,6 +116,119 @@ pub(in crate::booking) fn confirmed_start_for_reminder(
     Ok(Some(facts.slot.start))
 }
 
+/// Current starts of one page's live confirmed bookings of one event type that
+/// start inside `starts` (inclusive), read from one committed snapshot.
+///
+/// The daily and weekly caps charge these. A booking counts while its EVENT is
+/// live, a booking status head says Confirmed, and no status head says
+/// Cancelled — neither the booking's own nor the calendar's, since an inbound
+/// cancellation need not change the booking's. It counts at its current
+/// start, so a moved booking charges the day it sits on now. `excluding` is a
+/// booking being moved, which never charges against its own move.
+///
+/// No index keys bookings by page, so this walks the EVENT type index, the
+/// walk the calendar busy read already makes, and reads claims only for the
+/// EVENTs that start inside `starts`.
+pub(in crate::booking) fn confirmed_booking_starts(
+    vault: &Vault,
+    page_ref: EntityId,
+    event_type: &EventTypeKey,
+    starts: TimeRange,
+    excluding: Option<EntityId>,
+) -> Result<Vec<u64>, BookingError> {
+    let rtxn = read_txn(vault)?;
+    let mut found = Vec::new();
+    for id in vault
+        .store
+        .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_EVENT, None)
+        .map_err(|error| engine_failure("booking EVENT scan", error))?
+    {
+        let id = id.map_err(|error| engine_failure("booking EVENT scan", error))?;
+        if excluding == Some(id) {
+            continue;
+        }
+        let Some(record) = vault
+            .store
+            .port_entity_record(&rtxn, &id)
+            .map_err(|error| engine_failure("booking EVENT header read", error))?
+        else {
+            continue;
+        };
+        let start = record.occurred.start.min(record.occurred.end);
+        // Both bounds zero is an undated row, not 1970.
+        if record.entity_type != ENTITY_TYPE_EVENT
+            || (record.occurred.start == 0 && record.occurred.end == 0)
+            || start < starts.start
+            || start > starts.end
+        {
+            continue;
+        }
+        let visibility =
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &rtxn, &id)
+                .map_err(|error| engine_failure("booking EVENT liveness", error))?;
+        if visibility.deleted || visibility.stale {
+            continue;
+        }
+        if is_confirmed_booking_in(vault, &rtxn, &id, page_ref, event_type)? {
+            found.push(start);
+        }
+    }
+    Ok(found)
+}
+
+/// Whether `event_ref`'s surfaceable heads make it a confirmed booking of
+/// this page and event type. Order-independent: competing status heads
+/// never count as Confirmed.
+fn is_confirmed_booking_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+    page_ref: EntityId,
+    event_type: &EventTypeKey,
+) -> Result<bool, BookingError> {
+    let (mut on_page, mut of_type, mut confirmed, mut cancelled) = (false, false, false, false);
+    for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
+        let Some(body) = vault
+            .get_claim_in_txn(rtxn, &claim_id)
+            .map_err(|error| engine_failure("booking claim read", error))?
+            .filter(crate::claim::claim_surfaceable)
+        else {
+            continue;
+        };
+        if body.subject != ClaimSubject::Entity(*event_ref) {
+            continue;
+        }
+        match body.predicate.as_str() {
+            BOOKING_SOURCE_PAGE_PREDICATE => {
+                on_page |=
+                    decode_claim_value::<BookingSourcePageValue>(&body.value, "source page")?
+                        .page_ref
+                        == page_ref;
+            }
+            BOOKING_EVENT_TYPE_REF_PREDICATE => {
+                of_type |=
+                    decode_claim_value::<BookingEventTypeRefValue>(&body.value, "event type ref")?
+                        .event_type
+                        == *event_type;
+            }
+            BOOKING_STATUS_PREDICATE => {
+                match decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status {
+                    BookingStatus::Confirmed => confirmed = true,
+                    BookingStatus::Cancelled => cancelled = true,
+                }
+            }
+            PREDICATE_CALENDAR_STATUS => {
+                cancelled |= decode_status_value(&body.value)
+                    .map_err(|error| engine_failure("calendar status decode", error))?
+                    .status
+                    == CalendarStatus::Cancelled;
+            }
+            _ => {}
+        }
+    }
+    Ok(on_page && of_type && confirmed && !cancelled)
+}
+
 /// Creates the EVENT and its four exact booking claims.
 pub(super) fn write_booking_event(
     vault: &Vault,

@@ -9,12 +9,13 @@
 //!
 //! A public verb entry point only validates, encodes, and enqueues
 //! [`BOOKING_LIFECYCLE_ATTEMPT_KIND`] on the generic attempt queue
-//! ([`enqueue_booking_verb`]). Execution happens in exactly one place:
-//! [`run_booking_lifecycle_once`], the home-node consumer that claims that
-//! attempt kind ([`AttemptQueue::claim_kind`](crate::attempt_queue::AttemptQueue::claim_kind), mirroring `task_verb.rs`'s
-//! realization consumer) and runs the transition. There is no public door onto
-//! any `execute_*` function, so a caller cannot confirm a booking outside the
-//! writer.
+//! ([`enqueue_booking_verb`]). Execution happens in exactly one place: the
+//! home-node consumer, which claims that attempt kind
+//! ([`run_booking_lifecycle_once`], mirroring `task_verb.rs`'s realization
+//! consumer) or one enqueued attempt by id ([`run_booking_lifecycle_attempt`],
+//! for the caller that answers that request) and runs the transition. There
+//! is no public door onto any `execute_*` function, so a caller cannot confirm
+//! a booking outside the writer.
 //!
 //! # Mutual exclusion (r9)
 //!
@@ -65,20 +66,21 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-pub(in crate::booking) use self::claim::confirmed_start_for_reminder;
 pub use self::claim::{
     BookingConfirmationContext, booking_claim_class_descriptors, booking_confirmation_context,
     claim_class_descriptors, is_booking_family_claim_predicate,
     is_booking_lifecycle_claim_predicate, validate_booking_family_claim,
 };
+pub(in crate::booking) use self::claim::{confirmed_booking_starts, confirmed_start_for_reminder};
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     enqueue_booking_verb, enqueue_booking_verb_with_publication, issue_checkout_lease,
-    run_booking_lifecycle_once,
+    run_booking_lifecycle_attempt, run_booking_lifecycle_once,
 };
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{
-    HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, token_page_ref,
+    HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey,
+    live_hold_event_type, token_event_type, token_page_ref,
 };
 pub use self::types::{
     BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,

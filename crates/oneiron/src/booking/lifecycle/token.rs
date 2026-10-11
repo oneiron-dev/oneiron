@@ -8,7 +8,7 @@ use super::claim::read_booking_facts;
 use super::storage::{HOLD, engine_failure, read_txn, refused};
 use super::types::{LifecycleTokenScope, SoftHoldRow};
 use super::{LifecycleTokenRow, TOKEN};
-use crate::booking::BookingError;
+use crate::booking::{BookingError, EventTypeKey};
 use crate::{EntityId, Vault};
 
 /// Raw opaque-token width, and therefore the bearer secret's entropy.
@@ -232,4 +232,50 @@ pub fn token_page_ref(
     Ok(read_booking_facts(vault, &rtxn, &row.event_ref)
         .ok()
         .map(|facts| facts.page_ref))
+}
+
+/// The event type a confirm is for: its session's live hold's, when
+/// `hold_token` is that hold's token.
+///
+/// Read-only, like [`token_page_ref`]. Admission runs before the writer, and
+/// a control the owner scoped to one event type binds a confirm only once
+/// the confirm names that type; the hold is where it is recorded. A missing,
+/// expired or foreign hold yields `None`; the writer gives the typed refusal.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] when committed state cannot be read.
+pub fn live_hold_event_type(
+    vault: &Vault,
+    session_key: &SessionKey,
+    hold_token: &OpaqueLifecycleToken,
+    now_utc: u64,
+) -> Result<Option<EventTypeKey>, BookingError> {
+    Ok(read_hold_row(vault, session_key)?
+        .filter(|hold| hold.is_live_at(now_utc) && hold.token_hash == token_digest(hold_token))
+        .map(|hold| hold.event_type))
+}
+
+/// The event type of the booking a reschedule or cancel token belongs to.
+///
+/// Read-only and shaped like [`token_page_ref`], for the same admission
+/// reason as [`live_hold_event_type`]. A token that resolves to no booking
+/// yields `None`.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] when committed state cannot be read;
+/// [`BookingError::InvalidConstraint`] when the stored token row does not
+/// decode.
+pub fn token_event_type(
+    vault: &Vault,
+    token: &OpaqueLifecycleToken,
+) -> Result<Option<EventTypeKey>, BookingError> {
+    let rtxn = read_txn(vault)?;
+    let Some(row) = read_token_row(vault, &rtxn, token)? else {
+        return Ok(None);
+    };
+    Ok(read_booking_facts(vault, &rtxn, &row.event_ref)
+        .ok()
+        .map(|facts| facts.event_type))
 }
