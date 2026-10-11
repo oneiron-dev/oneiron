@@ -8,8 +8,10 @@
 //! spelling alone. A key echoed inside a longer base64 text (say, `Bearer
 //! <key>` encoded whole) shifts by its offset in that text, so the part of the
 //! encoding that the key alone fixes is stripped at all three byte offsets.
-//! And percent-encoding may spell any byte as `%XX`, so a URL-like run that
-//! decodes to text holding the key is stripped whole. JSON may spell any
+//! And percent-encoding may spell any byte as `%XX`, so a URL-like run is
+//! also read decoded, and the source bytes of each key in it are stripped.
+//! The broker sends only a key in the alphabet such a run holds ([`admits`]),
+//! so a part-encoded echo never splits across runs. JSON may spell any
 //! character `\uXXXX`, so text holding an escape is also read unescaped. The
 //! whole reply is buffered first, so a form cannot split across reads.
 //!
@@ -42,6 +44,15 @@ pub fn strip(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
         out = strip_percent_runs(key, &out);
     }
     out
+}
+
+/// Whether the rule can be trusted with `key`: each byte is one a URL-like
+/// run holds, so an echo spelled in any mix of forms stays in one run the
+/// rule reads, and none is a quote, backslash or percent sign, which a
+/// reply's own JSON, escapes or percent-encoding could supply to complete a
+/// match. No provider issues a key outside this alphabet.
+pub(crate) fn admits(key: &[u8]) -> bool {
+    key.iter().all(|&byte| is_url_byte(byte) && byte != b'%')
 }
 
 /// Whether `bytes` holds any form of `key`.
@@ -135,7 +146,8 @@ fn is_url_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"%-._~!$&'()*+,;=:@/?#".contains(&byte)
 }
 
-/// Replaces each URL-like run holding a `%` whose decoding holds the key.
+/// Replaces, in each URL-like run holding a `%`, the source bytes of each
+/// key its decoding holds.
 fn strip_percent_runs(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(Vec::with_capacity(bytes.len()));
     let mut at = 0;
@@ -150,19 +162,18 @@ fn strip_percent_runs(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
             continue;
         }
         let run = &bytes[at..at + len];
-        let decoded = percent_decoded(run);
-        if run.contains(&b'%') && memchr::memmem::find(&decoded, key).is_some() {
-            out.extend_from_slice(MARKER);
+        if run.contains(&b'%') {
+            let (decoded, from) = percent_decoded_from(run);
+            let spans = memchr::memmem::find_iter(&decoded, key)
+                .map(|found| (from[found].0, from[found + key.len() - 1].1))
+                .collect();
+            replace_spans(run, spans, &mut out);
         } else {
             out.extend_from_slice(run);
         }
         at += len;
     }
     out
-}
-
-fn percent_decoded(run: &[u8]) -> Zeroizing<Vec<u8>> {
-    percent_decoded_from(run).0
 }
 
 /// `run` percent-decoded, and for each decoded byte the span of `run` it
@@ -280,6 +291,12 @@ fn strip_run(key: &[u8], forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec
             (sources[first].0, sources[last - 1].1)
         }));
     }
+    replace_spans(run, spans, out);
+}
+
+/// Writes `run` to `out` with each of the source `spans` (overlapping or
+/// not, in any order) replaced by [`MARKER`], once per joined stretch.
+fn replace_spans(run: &[u8], mut spans: Vec<(usize, usize)>, out: &mut Vec<u8>) {
     spans.sort_unstable();
     let mut rest = 0;
     for (start, end) in spans {

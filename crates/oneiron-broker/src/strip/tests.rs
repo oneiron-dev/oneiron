@@ -246,6 +246,22 @@ fn a_key_partly_spelled_in_escapes_is_redacted_outside_json_too() {
 }
 
 #[test]
+fn only_the_key_goes_from_a_url_run_that_percent_decodes_to_it() {
+    // Words joined to a part-encoded key in one URL-like run stay.
+    let key = "sk-test-sentinel-0000";
+    let body = format!(
+        "{{\"content\":\"prefix-%{:02X}{}-suffix\"}}",
+        key.as_bytes()[0],
+        &key[1..]
+    );
+    assert!(leaks(body.as_bytes(), key));
+    let stripped = strip(key.as_bytes(), body.as_bytes());
+    assert!(!leaks(&stripped, key));
+    let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
+    assert_eq!(parsed["content"], "prefix-[redacted]-suffix");
+}
+
+#[test]
 fn only_the_key_goes_from_an_escaped_run_that_percent_decodes_to_it() {
     // Escaped spaces join the words around a percent-spelled key into one
     // run; the words stay, and only the key's own bytes are redacted.

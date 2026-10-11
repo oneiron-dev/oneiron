@@ -357,7 +357,8 @@ async fn a_coding_in_any_value_of_either_header_returns_nothing() {
 async fn a_key_with_a_byte_outside_visible_ascii_is_never_sent() {
     // The strip forms are read over visible ASCII, so a key they could not
     // find in a reply is refused before the send. So is a key with a byte a
-    // reply's JSON or escapes could supply: a quote, a backslash, a percent.
+    // reply's JSON or escapes could supply (a quote, a backslash, a percent),
+    // or one that ends a URL-like run, which a part-encoded echo would split.
     let fake = FakeProvider::start(FakeReply::json(200, &serde_json::json!({})));
     let broker = broker(None, &[fake.ca_pem()]).await;
     for key in [
@@ -366,6 +367,7 @@ async fn a_key_with_a_byte_outside_visible_ascii_is_never_sent() {
         b"sk-test-sentinel\"",
         b"sk-test\\sentinel",
         b"sk-test%41sentinel",
+        b"sk-test[sentinel",
     ] {
         let reply = client(&broker.socket, broker.uid)
             .connect()
