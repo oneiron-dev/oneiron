@@ -4774,6 +4774,33 @@ fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() ->
     Ok(())
 }
 
+/// A TASK a writer creates through the host-bound `Memory` door, born in
+/// `world` when one is bound.
+fn mint_board_task(vault: &Vault, world: Option<EntityId>) -> EntityId {
+    let writer = EntityId::now();
+    vault
+        .put_entity(
+            &writer,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"writer",
+        )
+        .unwrap();
+    vault
+        .memory(writer, EdgeActorClass::Human)
+        .with_birth_position(crate::federation::record_scope::BirthPosition { world, facet: None })
+        .tasks_create(&crate::task_verb::TaskCreateSpec::new(
+            Value::from("board work"),
+            None,
+            None,
+            Some(100),
+        ))
+        .unwrap()
+        .task_ref
+        .unwrap()
+}
+
 /// ARCH-0067 §5: a TASK a world-narrowed writer creates is born in that world,
 /// and a world row travels only where a CLAIM in that world would — under its
 /// own world or `All`, and its authority facts with it. A grant that would
@@ -4814,35 +4841,8 @@ fn a_world_born_task_travels_only_under_its_own_world() {
                 }],
             );
         }
-        let writer = EntityId::now();
-        vault
-            .put_entity(
-                &writer,
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"writer",
-            )
-            .unwrap();
-        let create = |position| {
-            vault
-                .memory(writer, EdgeActorClass::Human)
-                .with_birth_position(position)
-                .tasks_create(&crate::task_verb::TaskCreateSpec::new(
-                    Value::from("board work"),
-                    None,
-                    None,
-                    Some(100),
-                ))
-                .unwrap()
-                .task_ref
-                .unwrap()
-        };
-        let born = create(crate::federation::record_scope::BirthPosition {
-            world: Some(world.entity_id()),
-            facet: None,
-        });
-        let base = create(crate::federation::record_scope::BirthPosition::default());
+        let born = mint_board_task(&vault, Some(world.entity_id()));
+        let base = mint_board_task(&vault, None);
         // Each TASK with the authority facts it was minted with.
         let rows = |task: EntityId| {
             let mut rows = vec![task];
@@ -4883,6 +4883,53 @@ fn a_world_born_task_travels_only_under_its_own_world() {
                 born_travels,
                 "{name}: a world-born TASK row"
             );
+        }
+    }
+}
+
+/// The stored-selection door a peer's edit passes reads the same world rule:
+/// a world-born TASK is reachable through its own world's selector or `All`,
+/// never through a base-only one.
+#[test]
+fn a_peer_edit_reaches_a_world_born_task_only_through_its_own_world() {
+    let member = entity_id(0x3F);
+    let world = local_world_id(0x55);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let grant = FederationGrant::new(
+        test_selector_scope(),
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let born = mint_board_task(&vault, Some(world.entity_id()));
+    let base = mint_board_task(&vault, None);
+    for (name, selector_world, born_admitted) in [
+        ("base selector", SyncSelectorWorld::Base, false),
+        ("its own world", SyncSelectorWorld::World(world), true),
+        ("every world", SyncSelectorWorld::All, true),
+    ] {
+        let selector = SyncSelector::new(grant_id, member, selector_world, vec![], vec![]);
+        let txn = vault.store.env.read_txn().unwrap();
+        for (task, admitted) in [(base, true), (born, born_admitted)] {
+            let result = super::document_admission::admit_document_write_in_txn(
+                &vault,
+                &txn,
+                task,
+                test_selector_scope(),
+                &selector,
+            );
+            assert_eq!(result.is_ok(), admitted, "{name}: {result:?}");
         }
     }
 }
