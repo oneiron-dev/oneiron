@@ -789,8 +789,6 @@ impl Memory<'_> {
                 )
             }
             None => {
-                // Recall answers with the pack's memory results; it never
-                // reads its skill and agent capabilities.
                 let mut builder = self
                     .vault
                     .context_pack()

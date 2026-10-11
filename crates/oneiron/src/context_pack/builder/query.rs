@@ -333,7 +333,9 @@ impl<'a> ContextPackBuilder<'a> {
 
     /// Builds the pack's memory results alone. Skill and agent discovery
     /// runs a full retrieval each; a caller that reads only `results`, never
-    /// `capabilities`, skips that work.
+    /// `capabilities`, skips that work. Such a pack is empty when it holds no
+    /// memory: its `empty` marker and the run's empty reason say so, where a
+    /// skill or agent hit the caller never shows used to hide it.
     pub(crate) fn memory_results_only(mut self) -> Self {
         self.pipeline = self.pipeline.memory_lane_only();
         self
