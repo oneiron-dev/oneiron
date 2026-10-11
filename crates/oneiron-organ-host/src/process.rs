@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
-    PROTOCOL, Reply, ToOrgan, recv_frame, recv_frame_until, send_frame_until, spin,
+    PROTOCOL, Reply, ToOrgan, prepare_timed, recv_frame_polled, recv_frame_until, send_frame_until,
+    spin,
 };
 
 use crate::error::HostError;
@@ -217,6 +218,10 @@ impl OrganProcess {
         let own = started + config.handshake_timeout;
         let handshake_by = deadline.map_or(own, |deadline| deadline.min(own));
         let (ours, theirs) = UnixStream::pair()?;
+        // Nonblocking for its whole life, and so for its clones: a timed
+        // send needs it (macOS ignores MSG_DONTWAIT while a send waits for
+        // room), and the reader waits in poll(2) instead.
+        prepare_timed(&ours)?;
         let reader = ours.try_clone()?;
         let shutdown = ours.try_clone()?;
         let mut command = Command::new(&spec.program);
@@ -550,7 +555,8 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
 fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: u32) {
     loop {
         spin::poll_readable(stream);
-        let Ok((FromOrgan::Reply(reply), fds)) = recv_frame::<FromOrgan>(stream, limit) else {
+        let Ok((FromOrgan::Reply(reply), fds)) = recv_frame_polled::<FromOrgan>(stream, limit)
+        else {
             break;
         };
         let waiter = lock(&inbox.pending).remove(&reply.id);

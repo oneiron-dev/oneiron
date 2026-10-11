@@ -302,8 +302,13 @@ fn rogue(mode: &str, config: HostConfig) -> OrganHost {
 fn an_organ_that_stops_reading_cannot_hold_a_call_past_its_deadline() {
     // The call frame is far larger than the socket buffer, so the send
     // itself blocks: the deadline must bound the write, not just the reply.
+    // On macOS, MSG_DONTWAIT does not stop a send that waits for room, so
+    // this call hung there until the socket was made nonblocking.
     let (_dir, vault) = vault();
-    let host = rogue("--deaf", HostConfig::default());
+    let config = HostConfig::default();
+    let grace = config.cancel_grace;
+    let host = rogue("--deaf", config);
+    host.warm("probe").expect("warm");
     let mut stuck = call(
         "organ.echo",
         "x".repeat(8 * 1024 * 1024).into(),
@@ -311,14 +316,17 @@ fn an_organ_that_stops_reading_cannot_hold_a_call_past_its_deadline() {
         "g",
     );
     stuck.deadline = Duration::from_millis(500);
+    let bound = stuck.deadline + grace;
     let started = Instant::now();
     let err = host.call(&vault, stuck).expect_err("deadline");
+    let took = started.elapsed();
     assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "{:?}",
-        started.elapsed()
-    );
+    // Stopped within its deadline and the grace (and a margin for a
+    // loaded host), and not charged a crash.
+    assert!(took < bound + Duration::from_secs(1), "{took:?}");
+    let status = host.status("probe").expect("installed");
+    assert!(matches!(status.state, OrganState::Cold), "{status:?}");
+    assert_eq!(status.recent_crashes, 0);
 }
 
 #[test]
