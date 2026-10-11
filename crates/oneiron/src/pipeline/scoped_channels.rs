@@ -89,7 +89,14 @@ impl PipelineBuilder<'_> {
                 || self.memory_category,
         )?;
         // Widen before the temporal collector's scan caps and score truncation.
-        let mut scores = execute_temporal(&self.read, rtxn, &scoped_config, now, metadata_cache)?;
+        let mut scores = execute_temporal(
+            &self.read,
+            rtxn,
+            &scoped_config,
+            now,
+            metadata_cache,
+            filters.deadline,
+        )?;
         self.truncate_corpus_channel(
             &mut scores,
             rtxn,

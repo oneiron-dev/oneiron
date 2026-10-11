@@ -664,6 +664,19 @@ impl Memory<'_> {
                 lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
             };
 
+        // A door that stops waiting at the deadline answers then with the
+        // last pack this recall published and drops what the recall returns
+        // after it. So past the deadline the recall stops and returns the
+        // pack that door published before retrieval, instead of reading and
+        // hydrating items no one will read.
+        let door_answered = || {
+            execution.door_fallback.filter(|_| {
+                execution
+                    .deadline
+                    .is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
+            })
+        };
+
         let seeds = if effective != Effort::Light
             && !execution
                 .deadline
@@ -763,6 +776,9 @@ impl Memory<'_> {
                 receipt.restrict_with(&scoped.receipt);
                 let mut items = Vec::new();
                 for hit in scoped.value.into_iter().take(limit) {
+                    if let Some(fallback) = door_answered() {
+                        return Ok(fallback.clone());
+                    }
                     let Some(revision) = retrieval.revisions.get(&hit.id) else {
                         continue;
                     };
@@ -857,6 +873,9 @@ impl Memory<'_> {
                 }
                 let (scoped, status) = builder.run_scoped_with_run_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
+                if let Some(fallback) = door_answered() {
+                    return Ok(fallback.clone());
+                }
                 let mut pack = scoped.value;
                 lane.attach_reactions_quoting(&mut pack, &status.cited_messages)?;
 
@@ -880,6 +899,9 @@ impl Memory<'_> {
                 });
                 let mut items = Vec::new();
                 for entity in pack.results.iter().take(limit) {
+                    if let Some(fallback) = door_answered() {
+                        return Ok(fallback.clone());
+                    }
                     let mode = entity.source_revision_ref.map_or(
                         crate::vault::ReadMode::Indexed,
                         |revision| {

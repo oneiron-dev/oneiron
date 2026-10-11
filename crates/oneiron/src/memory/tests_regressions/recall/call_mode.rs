@@ -363,3 +363,63 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
     assert!(before.items.is_empty());
     assert_eq!(assembled.items, pack.items);
 }
+
+/// A door that stops waiting at the deadline has answered by then with the
+/// last pack recall published. A recall still running past it stops before
+/// it reads its items: it returns the pack published before retrieval, and
+/// publishes no other. The answer falls due right after the text stage, by a
+/// cancel there, not by a sleep. The 30 s budget assumes the host runs the
+/// text stage within its share (about 11 s); one that stalls longer skips the
+/// hook, and the test fails on that, never passing without the cancel.
+#[test]
+fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
+    use crate::memory::{MemoryPack, RecallEffort};
+    use crate::task_verb::sdk::{RecallDoor, RecallRequest, recall_at_door};
+    use std::sync::Mutex;
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x8d);
+    let facade = facade_for(&vault, actor);
+    witness_said(&facade, 0x8e, "the lighthouse keeper rang twice", 2);
+    let published: Mutex<Vec<MemoryPack>> = Mutex::default();
+    let publish = |pack| published.lock().expect("published packs").push(pack);
+    let recall = |deadline_ms| {
+        recall_at_door(
+            &facade,
+            RecallRequest {
+                query: "lighthouse keeper".to_owned(),
+                effort: Some(RecallEffort::Call),
+                scope: None,
+                limit: Some(10),
+                format: None,
+                as_of: None,
+                deadline_ms: Some(deadline_ms),
+            },
+            |_| None,
+            &RecallDoor {
+                arrived: std::time::Instant::now(),
+                on_cut: Some(&publish),
+            },
+        )
+        .expect("call-mode recall")
+    };
+    // In time, the text stage finds the turn.
+    assert!(pack_gives(&recall(30_000), "lighthouse keeper"));
+    published.lock().expect("published packs").clear();
+    // Past the deadline once the text stage has found it.
+    let cancel = &vault.test_hooks().cancel_deadline_after_retrieval_text;
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    let pack = recall(30_000);
+    assert!(
+        !cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "the text stage ran and the answer fell due after it"
+    );
+    let published = std::mem::take(&mut *published.lock().expect("published packs"));
+    let [before] = published.as_slice() else {
+        panic!("only the pack before retrieval: {published:?}");
+    };
+    assert_eq!(before, &pack);
+    assert!(pack.items.is_empty(), "{pack:?}");
+    assert!(pack.retrieval_meta.partial);
+    assert!(pack.scope_honesty.census_capped);
+}
