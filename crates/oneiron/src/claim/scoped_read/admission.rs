@@ -116,7 +116,10 @@ impl<'a> ScopedRead<'a> {
         if self.actor_key.room_turn.is_none() && self.actor_key.worlds.is_none() {
             return self.audience_conjunct_in(txn, id, raw);
         }
-        let Some(world) = revision_world(raw)? else {
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let data = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        let Some(world) = self.record_world_in(txn, id, header.entity_type, data)? else {
             return Ok(false);
         };
         if self
@@ -367,7 +370,7 @@ impl ScopedRead<'_> {
         // A row outside the worlds the read asked for is not withheld by
         // policy; scope honesty names its world instead.
         if self.actor_key.room_turn.is_none()
-            && !self.outside_asked_worlds(&row)
+            && !self.outside_asked_worlds_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
         {
             Ok(ReadAdmission::Suppressed)
@@ -376,19 +379,35 @@ impl ScopedRead<'_> {
         }
     }
 
-    fn outside_asked_worlds(&self, row: &EntityRecord) -> bool {
+    fn outside_asked_worlds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &EntityRecord,
+    ) -> Result<bool> {
         let Some(worlds) = &self.actor_key.worlds else {
-            return false;
+            return Ok(false);
         };
-        let world = if row.entity_type == ENTITY_TYPE_CLAIM {
-            match crate::claim::decode_claim_body(&row.body, true) {
-                Ok(body) => body.world,
-                Err(_) => return true,
-            }
-        } else {
-            None
-        };
-        !worlds.admits(world)
+        Ok(self
+            .record_world_in(txn, id, row.entity_type, &row.body)?
+            .is_none_or(|world| !worlds.admits(world)))
+    }
+
+    /// The world the stored row `id` sits in, read in `txn` over this read's
+    /// own store (`record_scope::record_world_in`). `None` where the row
+    /// cannot prove one.
+    fn record_world_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+        data: &[u8],
+    ) -> Result<Option<Option<EntityId>>> {
+        use crate::federation::record_scope::record_world_in;
+        match self.session_view {
+            Some(view) => record_world_in(view, txn, *id, kind, data),
+            None => record_world_in(&self.vault.store, txn, *id, kind, data),
+        }
     }
 
     pub(super) fn admit_entity_in(
@@ -405,16 +424,3 @@ impl ScopedRead<'_> {
     }
 }
 
-/// The world of the revision `raw`: a claim's own, `None` for base reality,
-/// which also holds every record that is not a claim. An erased claim cannot
-/// prove its world, so it has none (`Ok(None)`).
-fn revision_world(raw: &[u8]) -> Result<Option<Option<EntityId>>> {
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-        return Ok(Some(None));
-    }
-    Ok(raw
-        .get(ENTITY_METADATA_HEADER_LEN..)
-        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-        .map(|body| body.world))
-}

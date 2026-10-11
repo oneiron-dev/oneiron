@@ -403,13 +403,9 @@ pub(super) fn apply_world_filter(
 
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        let keep = match claim_world(store, rtxn, &scored.id)? {
-            // Base is an explicit member, never implicit in a named world.
-            None => target.is_none(),
-            // A world-scoped claim passes only for its own world.
-            Some(world) => target == Some(world),
-        };
-        if keep {
+        // Base is an explicit member, never implicit in a named world; a
+        // world-scoped row passes only for its own world.
+        if record_world(store, rtxn, &scored.id)?.is_some_and(|world| world == target) {
             kept.push(scored);
         }
     }
@@ -441,8 +437,9 @@ fn drop_stale_federated_claims(
 
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        let stale_world =
-            claim_world(store, rtxn, &scored.id)?.is_some_and(|world| stale.contains_key(&world));
+        let stale_world = record_world(store, rtxn, &scored.id)?
+            .flatten()
+            .is_some_and(|world| stale.contains_key(&world));
         if !stale_world {
             kept.push(scored);
         }
@@ -453,37 +450,41 @@ fn drop_stale_federated_claims(
 }
 
 /// Reads a candidate's world for the post-fusion world filter (ARCH-0004 /
-/// ARCH-0022). Returns `None` for base reality — a non-claim entity, a claim
-/// with no `world` key, or an entity with no parseable envelope — and
-/// `Some(world_id)` for a world-scoped claim. The claim body is decoded once
-/// through the pinned claim validator (the world key was structurally
-/// validated to 16 bytes at write time).
-fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+/// ARCH-0022) by the rule every world check reads
+/// (`record_scope::record_world_in`): `Some(None)` for base reality, which
+/// also holds an absent row; a claim's own world, or the world a TASK and
+/// its authority facts were born in; `None` for a TASK that cannot prove
+/// one, which no world selection admits. The claim body is decoded once
+/// through the pinned claim validator, and one that fails to decode fails
+/// the run.
+fn record_world(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Option<EntityId>>> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
-        return Ok(None);
+        return Ok(Some(None));
     };
-
-    if raw.entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(None);
+    if raw.entity_type == ENTITY_TYPE_CLAIM {
+        return Ok(Some(crate::claim::decode_claim_body(&raw.body, true)?.world));
     }
-    let body = crate::claim::decode_claim_body(&raw.body, true)?;
-    Ok(body.world)
+    crate::federation::record_scope::record_world_in(store, rtxn, *id, raw.entity_type, &raw.body)
 }
 
 /// Whether one candidate survives a resolved per-turn ActiveSet (ONE-1420).
 ///
-/// Base handling is EXPLICIT: base-reality claims and non-claim entities — the
-/// two things [`claim_world`] reports as `None` — survive only when the active
-/// set includes base. A world-scoped claim survives only when its own world is
-/// a selected member; no other world is reachable, and nothing here consults
-/// the codebase scope key.
+/// Base handling is EXPLICIT: base-reality rows — what [`record_world`]
+/// reports as `Some(None)` — survive only when the active set includes base.
+/// A world-scoped row survives only when its own world is a selected member;
+/// no other world is reachable, and nothing here consults the codebase scope
+/// key.
 fn active_set_admits(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     active_set: &WorldAuthoritySet,
 ) -> Result<bool> {
-    Ok(active_set.admits(claim_world(store, rtxn, id)?))
+    Ok(record_world(store, rtxn, id)?.is_some_and(|world| active_set.admits(world)))
 }
 
 pub(super) fn apply_filters(
@@ -799,8 +800,5 @@ fn pipeline_candidate_matches_world_filter(
         }
     };
 
-    Ok(match claim_world(store, rtxn, id)? {
-        None => target.is_none(),
-        Some(world) => target == Some(world),
-    })
+    Ok(record_world(store, rtxn, id)?.is_some_and(|world| world == target))
 }

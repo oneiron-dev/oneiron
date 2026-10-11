@@ -418,6 +418,35 @@ fn stored_scope(
     }
     Ok(Some(stamp.scope))
 }
+/// The world the stored row `id` of `kind`, with body `data`, sits in: what
+/// every read that checks a world asks. A CLAIM names its own; a TASK and its
+/// authority facts sit where `stamp_task_birth` settled them; every other
+/// record is base reality (`Some(None)`). `None` where the row cannot prove
+/// its world (an erased CLAIM, a TASK whose stamp is gone or was never
+/// settled), which a read narrowed on worlds keeps out.
+pub(crate) fn record_world_in(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<Option<EntityId>>> {
+    if kind == crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(crate::claim::decode_claim_body(data, true)
+            .ok()
+            .map(|body| body.world));
+    }
+    if kind != crate::registry::ENTITY_TYPE_TASK {
+        return Ok(Some(None));
+    }
+    let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
+    Ok(match worlds {
+        Some(ScopeAxis::Some(worlds)) if worlds.len() == 1 => worlds
+            .first()
+            .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
+        _ => None,
+    })
+}
 /// A promoted edit may change content but cannot re-position the same id.
 /// Read this in the author admission snapshot, before importing peer ops.
 #[cfg(feature = "sync")]
