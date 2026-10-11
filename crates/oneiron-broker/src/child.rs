@@ -17,7 +17,10 @@
 //! What this mode cannot close: a process of the same uid that opens the
 //! child's memory in the moment between its start and its first act keeps
 //! that handle. The child starts once and is kept warm, so that moment comes
-//! once per start, not once per call.
+//! once per start, not once per call. Such a process can also stop or kill
+//! the child, or reach the daemon's own descriptors (its end of the start
+//! pipe among them), and so make a call fail after its permit started, which
+//! is charged as a started call. None of that hands it the key.
 
 use std::ffi::OsString;
 use std::hash::{BuildHasher, Hasher};

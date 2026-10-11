@@ -287,6 +287,19 @@ struct Fixture {
     runtime: ModelRuntime,
     _vault_dir: tempfile::TempDir,
     _files: tempfile::TempDir,
+    /// A same-user fixture's hold on [`ONE_CHILD`].
+    _one_child: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+/// Held while a same-user child of this process may live, so that, even with
+/// every case in one process, a scan finds only the child of the case that
+/// holds it.
+static ONE_CHILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn one_child() -> std::sync::MutexGuard<'static, ()> {
+    ONE_CHILD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The fixture, or `None` (with the reason printed) where this host cannot
@@ -313,6 +326,7 @@ fn fixture_in(mode: Mode) -> Option<Fixture> {
         },
         Mode::SameUser => None,
     };
+    let one = (mode == Mode::SameUser).then(one_child);
     let key = sentinel();
     let fake = FakeProvider::start(FakeReply::json(401, &json!({})));
     answer_with_key(&fake, &key, "an answer");
@@ -361,6 +375,7 @@ fn fixture_in(mode: Mode) -> Option<Fixture> {
         runtime,
         _vault_dir: vault_dir,
         _files: files,
+        _one_child: one,
     })
 }
 
@@ -867,6 +882,7 @@ async fn n4b(mode: Mode) {
         "the runner read the broker: {report:?}"
     );
     // It was the live broker that refused.
+    assert!(alive(broker), "the broker is gone");
     assert_eq!(f.broker_pid(), broker);
     // The second user here lives in a user namespace this uid made, and a
     // namespace's maker may trace inside it, so only the same-user child's
@@ -1056,6 +1072,7 @@ async fn same_user_the_child_is_closed_to_the_daemon_that_started_it() {
     }
     assert_eq!(closing(seize(pid)), "DENIED", "a trace of the child");
     // It was the live broker child that refused.
+    assert!(alive(pid), "the child is gone");
     assert_eq!(child_broker_pid(), Some(pid));
 }
 
@@ -1068,11 +1085,11 @@ fn closing(probe: std::io::Result<()>) -> &'static str {
     }
 }
 
-/// The pid of this process's one `oneiron-broker` child, the runtime's. Each
-/// case runs in its own process (nextest), so a second one is an error, not
-/// a choice.
+/// The pid of this process's one live `oneiron-broker` child under its own
+/// uid: the runtime's same-user child, while [`ONE_CHILD`] is held.
 fn child_broker_pid() -> Option<u32> {
     let parent = std::process::id().to_string();
+    let uid = std::fs::metadata("/proc/self").ok()?.uid().to_string();
     let mut children: Vec<u32> = std::fs::read_dir("/proc")
         .ok()?
         .filter_map(Result::ok)
@@ -1081,12 +1098,33 @@ fn child_broker_pid() -> Option<u32> {
             let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
             // `pid (comm) state ppid …`: comm may hold spaces and parentheses.
             let (head, rest) = stat.rsplit_once(')')?;
-            let ppid = rest.split_whitespace().nth(1)?;
-            (head.ends_with("(oneiron-broker") && ppid == parent).then_some(pid)
+            let mut fields = rest.split_whitespace();
+            let (state, ppid) = (fields.next()?, fields.next()?);
+            let status = std::fs::read_to_string(entry.path().join("status")).ok()?;
+            let owner = status
+                .lines()
+                .find_map(|line| line.strip_prefix("Uid:"))?
+                .split_whitespace()
+                .next()?;
+            (head.ends_with("(oneiron-broker")
+                && ppid == parent
+                && owner == uid
+                && !matches!(state, "Z" | "X"))
+            .then_some(pid)
         })
         .collect();
     assert!(children.len() <= 1, "broker children {children:?}");
     children.pop()
+}
+
+/// Whether `pid` is a process that has not exited: a zombie's memory files
+/// refuse like a closed process's do.
+fn alive(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .is_some_and(|state| !matches!(state, "Z" | "X"))
+    })
 }
 
 /// Traces `pid`, or why not. A seize stops nothing, and a seized process is
@@ -1114,6 +1152,7 @@ fn seize(pid: u32) -> std::io::Result<()> {
 /// never passes for the child, which says it listens on its own pipe.
 #[test]
 fn same_user_a_socket_at_the_childs_path_is_not_the_child() {
+    let _one = one_child();
     let child = oneiron_broker::ChildBroker::new(
         env!("CARGO_BIN_EXE_oneiron-broker").into(),
         &[],
