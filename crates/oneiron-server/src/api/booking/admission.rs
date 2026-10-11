@@ -8,9 +8,9 @@ use oneiron::booking::anti_abuse::{
 };
 use oneiron::booking::lifecycle::{confirm_event_type, token_event_type};
 use oneiron::booking::{
-    ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE, BookingError,
-    BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingSourcePageValue, BookingStatus,
-    BookingStatusValue, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
+    ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE,
+    BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingError, BookingSourcePageValue,
+    BookingStatus, BookingStatusValue, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
 };
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::{CalendarReadRequest, ClaimLifecycleStatus, EntityId, TimeRange, Vault};

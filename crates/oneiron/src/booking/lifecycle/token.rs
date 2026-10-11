@@ -5,9 +5,7 @@ use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use super::claim::{booking_event_type_in, read_booking_facts};
-use super::storage::{
-    HOLD, confirm_receipt_key, engine_failure, read_receipt, read_txn, refused,
-};
+use super::storage::{HOLD, confirm_receipt_key, engine_failure, read_receipt, read_txn, refused};
 use super::types::{LifecycleTokenScope, SoftHoldRow};
 use super::{LifecycleTokenRow, TOKEN};
 use crate::booking::{BookingError, EventTypeKey};

@@ -654,8 +654,8 @@ async fn an_event_scoped_required_intake_refuses_a_confirm_for_that_event() {
             .expect_err("a confirm naming no hold is refused"),
         StatusCode::BAD_REQUEST
     );
-    let contact = super::super::subject::booker_contact_ref("stranger@example.test")
-        .expect("contact ref");
+    let contact =
+        super::super::subject::booker_contact_ref("stranger@example.test").expect("contact ref");
     assert!(
         fixture
             .server
