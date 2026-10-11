@@ -245,6 +245,16 @@ mod tests {
             crate::serialize::ExportBody::from_bytes(&deep, asset),
             crate::serialize::ExportBody::Nulled
         );
+        // Brackets in text that is no JSON are text.
+        let source = format!("[{}]", ["'['"; 127].join(","));
+        assert_eq!(
+            redacted_memory_payload(source.clone().into_bytes())?,
+            source.as_bytes()
+        );
+        assert_eq!(
+            crate::serialize::ExportBody::from_bytes(source.as_bytes(), asset),
+            crate::serialize::ExportBody::Utf8(source)
+        );
         Ok(())
     }
 

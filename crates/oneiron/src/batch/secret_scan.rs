@@ -22,10 +22,6 @@ const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
 const REASON_JSON_TOO_DEEP: &str = "gate.secret_scan.json_depth_over_127";
 const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_over_1024";
 
-/// The containers `serde_json` holds open at once before it stops: it
-/// refuses the 128th.
-const JSON_DECODER_DEPTH: usize = 128;
-
 /// The vault's `secrets` setting: whether the write door scans what a host
 /// writes into this vault for credential shapes. On by default; only the
 /// vault owner switches it, and every switch writes a receipt
@@ -178,9 +174,15 @@ fn read_members(data: &[u8]) -> Result<Option<rmpv::Value>> {
 
 /// JSON or MessagePack nested past what its decoder reads (127 open JSON
 /// containers, 1024 MessagePack levels). Its decode fails, so no scan read
-/// its members, and no door takes it as clean.
+/// its members, and no door takes it as clean. Text that is no JSON before
+/// that depth is text: only the decoder's own depth stop counts.
 pub(crate) fn nested_past_decoder(data: &[u8]) -> Option<&'static str> {
-    if json_nesting_reaches(data, JSON_DECODER_DEPTH) {
+    let first = data.iter().find(|byte| !byte.is_ascii_whitespace());
+    // serde_json names this stop in its message only.
+    let json = matches!(first, Some(b'{' | b'['))
+        && serde_json::from_slice::<serde::de::IgnoredAny>(data)
+            .is_err_and(|error| error.to_string().starts_with("recursion limit exceeded"));
+    if json {
         return Some(REASON_JSON_TOO_DEEP);
     }
     let container = matches!(data.first(), Some(0x80..=0x9f | 0xdc..=0xdf));
@@ -190,39 +192,6 @@ pub(crate) fn nested_past_decoder(data: &[u8]) -> Option<&'static str> {
             Err(rmpv::decode::Error::DepthLimitExceeded)
         );
     too_deep.then_some(REASON_MESSAGEPACK_TOO_DEEP)
-}
-
-/// Whether text that opens like JSON (`{` or `[`) holds `limit` containers
-/// open at once, its strings skipped.
-fn json_nesting_reaches(data: &[u8], limit: usize) -> bool {
-    let first = data.iter().find(|byte| !byte.is_ascii_whitespace());
-    if !matches!(first, Some(b'{' | b'[')) {
-        return false;
-    }
-    let (mut depth, mut string, mut escaped) = (0usize, false, false);
-    for &byte in data {
-        if string {
-            match byte {
-                _ if escaped => escaped = false,
-                b'\\' => escaped = true,
-                b'"' => string = false,
-                _ => {}
-            }
-            continue;
-        }
-        match byte {
-            b'"' => string = true,
-            b'{' | b'[' => {
-                depth += 1;
-                if depth >= limit {
-                    return true;
-                }
-            }
-            b'}' | b']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    false
 }
 
 /// The release doors' text rules over strings a reader keeps apart (one

@@ -491,29 +491,41 @@ fn a_framed_receipt_is_read_through_its_frame() {
 
 #[test]
 fn a_body_nested_past_its_decoder_is_refused_by_name() {
-    let member = r#"{"pass\u0077ord":"private fixture"}"#;
-    let json = format!("{}{member}{}", "[".repeat(129), "]".repeat(129));
-    let mut messagepack = vec![0x91; 1100];
-    rmpv::encode::write_value(
-        &mut messagepack,
-        &rmpv::Value::Map(vec![(
-            rmpv::Value::from("password"),
-            rmpv::Value::from("private fixture"),
-        )]),
-    )
-    .unwrap();
-    for (payload, reason) in [
-        (json.as_bytes(), REASON_JSON_TOO_DEEP),
-        (&messagepack[..], REASON_MESSAGEPACK_TOO_DEEP),
-    ] {
-        let error = scan_payload(payload).expect_err(reason);
-        assert!(
-            matches!(&error, Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
-                if reason_codes.contains(&reason)),
-            "{error:?}"
-        );
-    }
-    // As deep as the decoder reads, a body is read member by member.
-    let readable = format!("{}{}", "[".repeat(127), "]".repeat(127));
-    assert!(scan_payload(readable.as_bytes()).is_ok());
+    // rmpv recurses once per level up to its 1024 cap; a debug build's frames
+    // need a deeper stack than a test thread's to get there.
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(|| {
+            let member = r#"{"pass\u0077ord":"private fixture"}"#;
+            let json = format!("{}{member}{}", "[".repeat(129), "]".repeat(129));
+            let mut messagepack = vec![0x91; 1100];
+            rmpv::encode::write_value(
+                &mut messagepack,
+                &rmpv::Value::Map(vec![(
+                    rmpv::Value::from("password"),
+                    rmpv::Value::from("private fixture"),
+                )]),
+            )
+            .unwrap();
+            for (payload, reason) in [
+                (json.as_bytes(), REASON_JSON_TOO_DEEP),
+                (&messagepack[..], REASON_MESSAGEPACK_TOO_DEEP),
+            ] {
+                let error = scan_payload(payload).expect_err(reason);
+                assert!(
+                    matches!(&error, Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
+                    if reason_codes.contains(&reason)),
+                    "{error:?}"
+                );
+            }
+            // As deep as the decoder reads, a body is read member by member,
+            // and brackets in text that is no JSON are text.
+            let readable = format!("{}{}", "[".repeat(127), "]".repeat(127));
+            assert!(scan_payload(readable.as_bytes()).is_ok());
+            let source = format!("[{}]", ["'['"; 127].join(","));
+            assert!(scan_payload(source.as_bytes()).is_ok());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

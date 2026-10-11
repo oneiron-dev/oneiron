@@ -4,7 +4,7 @@ use super::chunks::{self, LFS_CHUNK_AVG, LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsChunkR
 use super::lifecycle::{DELETED, GC, JOURNAL, REVERSE};
 use super::store::{LfsObjectRecord, OBJECTS};
 use super::{LfsOid, LfsPutOutcome, VaultLfsObject};
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::HexId;
 use crate::{EntityId, TimeRange, Vault};
@@ -132,7 +132,7 @@ impl Vault {
     /// The supplier must return every ordered chunk (including repeats), so it
     /// can be a sequential file reader. Sync ingress uses the same admission.
     /// With the write scan on, an object up to [`LFS_WHOLE_SCAN_MAX`] is held
-    /// whole and read by the batch door's scan before its first chunk lands.
+    /// whole and read by the batch door's scan before it is published.
     pub(crate) fn install_lfs_manifest<F>(
         &self,
         oid: LfsOid,
@@ -181,23 +181,33 @@ impl Vault {
             Ok(())
         })?;
         // Each chunk passes the batch door alone. Within the bound the object
-        // is read whole too, before any chunk lands; above it, the seam reads
-        // what each chunk edge splits. Both follow the batch door's switch.
+        // is read whole too, before it is published; above it, the seam reads
+        // what each chunk edge splits. Each write reads the owner's switch in
+        // its own transaction, as the batch door does.
         let scan = {
             let txn = self.store.env.read_txn()?;
-            crate::batch::secret_scan::secret_scan_mode_in_txn(&self.store, &txn)?
-                == crate::batch::secret_scan::SecretScanMode::On
+            scan_on_in_txn(self, &txn)?
         };
-        let whole_scan = scan && manifest.size_bytes <= whole_scan_max;
+        let bounded = manifest.size_bytes <= whole_scan_max;
         let outcome = (|| {
             let mut seen = BTreeSet::new();
             let mut sha = Sha256::new();
-            let mut scanner =
-                super::scanner::CredentialStream::with_write_seam(scan && !whole_scan);
+            let mut scanner = super::scanner::CredentialStream::with_write_seam(scan && !bounded);
             let mut whole = Vec::new();
-            let mut install = |chunk: &LfsChunkRef, bytes: &[u8]| -> Result<()> {
+            for chunk in &manifest.chunks {
+                let bytes = supply(chunk)?;
+                if bytes.len() != chunk.size as usize
+                    || blake3::hash(&bytes).as_bytes() != &chunk.hash
+                {
+                    return Err(chunks::invalid("lfs chunk does not match manifest"));
+                }
+                scanner.feed(&bytes)?;
+                sha.update(&bytes);
+                if bounded {
+                    whole.extend_from_slice(&bytes);
+                }
                 if !seen.insert(chunk.hash) {
-                    return Ok(());
+                    continue;
                 }
                 let id = chunks::chunk_id(&chunk.hash)?;
                 self.with_write_txn_grouped(|txn| {
@@ -217,12 +227,12 @@ impl Vault {
                         }
                         // A stored chunk may have landed with the switch off:
                         // reusing it is a write, and the batch door reads it.
-                        if scan {
-                            crate::batch::secret_scan::scan_write_payload(bytes)?;
+                        if scan_on_in_txn(self, txn)? {
+                            crate::batch::secret_scan::scan_write_payload(&bytes)?;
                         }
                     } else {
                         self.batch_in()
-                            .put(&id, ENTITY_TYPE_ASSET, occurred, learned_at, bytes)
+                            .put(&id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
                             .apply(txn)?;
                     }
                     chunks::CHUNK_MARKS.put(&self.store, txn, &id, &chunk.hash)?;
@@ -230,35 +240,16 @@ impl Vault {
                     chunks::OWNER_REFS.put(&self.store, txn, &(owner, chunk.hash), &())?;
                     JOURNAL.put(&self.store, txn, &owner, &journal_heartbeat(oid))?;
                     Ok(())
-                })
-            };
-            for chunk in &manifest.chunks {
-                let bytes = supply(chunk)?;
-                if bytes.len() != chunk.size as usize
-                    || blake3::hash(&bytes).as_bytes() != &chunk.hash
-                {
-                    return Err(chunks::invalid("lfs chunk does not match manifest"));
-                }
-                scanner.feed(&bytes)?;
-                sha.update(&bytes);
-                if whole_scan {
-                    whole.extend_from_slice(&bytes);
-                } else {
-                    install(chunk, &bytes)?;
-                }
+                })?;
             }
             let actual: [u8; 32] = sha.finalize().into();
             if actual != *oid.as_bytes() {
                 return Err(chunks::invalid("lfs manifest pointer mismatch"));
             }
-            if whole_scan {
+            // The chunks are the journal's until the object is published; a
+            // refusal leaves them to GC.
+            if scan && bounded {
                 crate::batch::secret_scan::scan_write_payload(&whole)?;
-                let mut start = 0;
-                for chunk in &manifest.chunks {
-                    let end = start + chunk.size as usize;
-                    install(chunk, &whole[start..end])?;
-                    start = end;
-                }
             }
             self.with_write_txn_grouped(|txn| {
                 if !JOURNAL.contains(&self.store, txn, &owner)?
@@ -271,6 +262,17 @@ impl Vault {
                         object: record.with_oid(oid),
                         deduplicated: true,
                     });
+                }
+                // Switched on since the object was first read: read it now, or,
+                // past the bound, where its edges went unread, refuse it.
+                if !scan && scan_on_in_txn(self, txn)? {
+                    if !bounded {
+                        return Err(Error::Gate(GateError::GateWriteRejected {
+                            outcome: "deny",
+                            reason_codes: vec!["gate.secret_scan.switched_on_mid_object"],
+                        }));
+                    }
+                    crate::batch::secret_scan::scan_write_payload(&whole)?;
                 }
                 self.batch_in()
                     .put(&asset_id, ENTITY_TYPE_ASSET, occurred, learned_at, &encoded)
@@ -307,6 +309,14 @@ impl Vault {
         }
         outcome
     }
+}
+
+/// The owner's write-scan switch as a write transaction reads it.
+fn scan_on_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(
+        crate::batch::secret_scan::secret_scan_mode_in_txn(&vault.store, txn)?
+            == crate::batch::secret_scan::SecretScanMode::On,
+    )
 }
 
 /// `oid(32) ++ now u64 LE(8)`, unchanged — a fresh heartbeat stamp every time it is written.
