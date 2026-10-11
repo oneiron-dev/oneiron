@@ -455,8 +455,9 @@ impl SyncConnection {
 
     /// A home acknowledgment is sent only after persistence. A missing ACK
     /// leaves every unconfirmed queue row intact for the next reconnect. The
-    /// wait ends once no row of `sent` is queued; a row never sent is never
-    /// acknowledged.
+    /// wait ends once every row of `sent` is acknowledged or cleared; a row
+    /// never sent is never acknowledged, and one queued before them keeps
+    /// them queued for a later clear.
     async fn wait_residence_acks(
         &self,
         write: &mut WsSink,
@@ -479,7 +480,9 @@ impl SyncConnection {
                 .drain_updates()
                 .map_err(|e| e.to_string())?
                 .iter()
-                .any(|update| sent.contains(&update.seq))
+                .any(|update| {
+                    sent.contains(&update.seq) && !client.residence_acks.contains_key(&update.seq)
+                })
             {
                 let message = read
                     .next()

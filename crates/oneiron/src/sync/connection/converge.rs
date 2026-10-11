@@ -122,7 +122,16 @@ impl SyncConnection {
                 "opened-item queue cannot use full-window re-bootstrap",
             ));
         }
-        self.queue.clear_all()?;
+        // A row a device-only verdict could not judge was never sent: it and
+        // every row behind it stay queued for a later replay to judge again.
+        let unjudged = self.queue.drain_updates()?.into_iter().find(|update| {
+            client.update_verdict(&update.window_key, &update.encoded)
+                == crate::sync::window::UpdateVerdict::Uninspectable
+        });
+        match unjudged {
+            Some(update) => self.queue.clear_through(update.seq.saturating_sub(1))?,
+            None => self.queue.clear_all()?,
+        }
         client
             .generate_re_bootstrap_sync_for_windows(force_resync.iter().cloned())
             .map_err(|e| {
