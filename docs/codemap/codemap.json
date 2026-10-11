@@ -1594,6 +1594,7 @@
      "path": "src/authority/engine_machine.rs",
      "purpose": "Host-provisioned software identities for the engine's own MACHINE writers",
      "surface": {
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -1659,7 +1660,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultRecoveryRequest"
@@ -1667,9 +1668,24 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostReRoot",
+      "RetiredSlip"
+     ],
+     "path": "src/authority/host_re_root.rs",
+     "purpose": "A self-host root move to a new host secret, in-chain (OF-455)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -1688,14 +1704,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_enroll.rs",
+     "purpose": "Host-landed MACHINE enrollment: one EnrollDevice and its BindActor",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/machine_write.rs",
-     "purpose": "MACHINE software-key enrollment and origin signatures for claim writes",
+     "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 8,
-      "fn": 5
+      "crate-vis": 9,
+      "fn": 4
      }
     },
     {
@@ -1731,7 +1758,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 7,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -1882,7 +1909,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 24,
       "struct": 1
      }
@@ -1983,6 +2010,14 @@
      "notable": [],
      "path": "src/authority/tests/history_transfer.rs",
      "purpose": "Full signed-history portability, account auth and independent recovery composition",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/host_re_root.rs",
+     "purpose": "A self-host root move keeps the vault's own writing (OF-455)",
      "surface": {}
     },
     {
@@ -3396,7 +3431,7 @@
      "path": "src/blob_artifact/esign/ledger.rs",
      "purpose": "Claims are the document state machine",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3
      }
     },
@@ -3422,9 +3457,9 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 2,
-      "re-export": 9
+      "re-export": 11
      }
     },
     {
@@ -3666,7 +3701,7 @@
       "SealedItem"
      ],
      "path": "src/blob_artifact/esign/seal.rs",
-     "purpose": "Lease-fenced native seal job",
+     "purpose": "Lease-fenced seal job",
      "surface": {
       "crate-vis": 1,
       "enum": 1,
@@ -3675,12 +3710,28 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/blob_artifact/esign/seal_tests.rs",
-     "purpose": "The real native PAdES engine, not a simulated successful sealer",
-     "surface": {}
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignSealInput",
+      "EsignSealRequest",
+      "EsignSealed",
+      "EsignSealer",
+      "EsignSealerError",
+      "EsignSignatureRevision",
+      "EsignVerdict",
+      "SealDegrade",
+      "SealProfile",
+      "SealVerdict"
+     ],
+     "path": "src/blob_artifact/esign/sealer.rs",
+     "purpose": "The seal port: how the engine reaches a PAdES sealer it does not link",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "struct": 6,
+      "trait": 1
+     }
     },
     {
      "bucket": "s",
@@ -3692,6 +3743,25 @@
       "crate-vis": 2,
       "fn": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/signature_revision.rs",
+     "purpose": "The ordinary signature revision, written on the engine's side of the seal (ARCH-0075…",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/blob_artifact/esign/signature_revision_tests.rs",
+     "purpose": "The engine's signature revision re-emits the first page, the catalog and the AcroForm; what it re-emits must…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -7522,7 +7592,7 @@
      "path": "src/claim/history_projection.rs",
      "purpose": "Verified MACHINE history residence: exact birth + transition closure at a trusted pin",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 4,
       "struct": 1
      }
@@ -18258,6 +18328,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/manifest_memo.rs",
+     "purpose": "Decodes a store keeps between policy resolutions",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -18274,7 +18354,7 @@
      "path": "src/gate/resolution/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -21277,7 +21357,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 18,
-      "mod": 172,
+      "mod": 173,
       "re-export": 72
      }
     },
@@ -33022,7 +33102,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 31,
       "fn": 1
      }
     },
@@ -33033,7 +33113,7 @@
      "path": "src/store/gate_decision/lookup.rs",
      "purpose": "First-match reads on the caller's gate-decision ledger transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -33043,7 +33123,7 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 1
      }
     },
@@ -33597,6 +33677,14 @@
      "notable": [],
      "path": "src/store/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/store/tests/gate_claim_lookup.rs",
+     "purpose": "The lookup behind a claim write's receipt: the newest decision about a claim among the newest ledger rows…",
      "surface": {}
     },
     {
@@ -36338,6 +36426,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_support.rs",
+     "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_util/channel_identity.rs",
      "purpose": "Self-held ChannelIdentity fixtures: a row in a chosen state, reached by walking its machine",
      "surface": {
@@ -36351,7 +36450,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 19
      }
     },
     {
@@ -39139,7 +39238,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 58,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39160,7 +39259,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 41,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39699,7 +39798,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 116,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40245,7 +40344,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40306,6 +40405,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
+    },
+    "test_support": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…"
     },
     "test_util": {
      "files": 4,
@@ -40415,8 +40521,8 @@
    },
    "over_bar": 34,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2454,
-   "test_files": 779
+   "source_files": 2460,
+   "test_files": 781
   },
   "oneiron-android": {
    "files": [
@@ -46226,7 +46332,7 @@
      "purpose": "Protocol 1.1 asks, the engine side: who answers, within which caps, and what the receipt records",
      "surface": {
       "crate-vis": 8,
-      "fn": 3,
+      "fn": 4,
       "struct": 3,
       "trait": 1
      }
@@ -46292,7 +46398,7 @@
      "path": "src/host.rs",
      "purpose": "The organ host: install, call, unload, revoke",
      "surface": {
-      "fn": 11,
+      "fn": 12,
       "struct": 3
      }
     },
@@ -46303,6 +46409,7 @@
      "path": "src/lib.rs",
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
+      "mod": 1,
       "re-export": 8
      }
     },
@@ -46313,7 +46420,7 @@
      "path": "src/process.rs",
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -46325,6 +46432,7 @@
       "FetchTarget",
       "ReceiptInput",
       "ReceiptOutput",
+      "SignedReceipt",
       "Unanswered"
      ],
      "path": "src/receipt.rs",
@@ -46332,7 +46440,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -46356,7 +46464,40 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HostedSealer",
+      "SealAlgorithm",
+      "SealIdentity",
+      "SealKeyError",
+      "SealKeys",
+      "SealLimits",
+      "SealSettings",
+      "SealTsa"
+     ],
+     "path": "src/seal.rs",
+     "purpose": "The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]…",
+     "surface": {
+      "const": 7,
+      "enum": 1,
+      "fn": 4,
+      "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/seal/binding.rs",
+     "purpose": "The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OrganState",
@@ -46365,7 +46506,7 @@
      "path": "src/slot.rs",
      "purpose": "One installed organ: its process, its crash history, its condition",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "struct": 1
      }
@@ -46490,10 +46631,17 @@
      "layout": "file",
      "purpose": "What the host does to an organ process between fork and exec"
     },
+    "seal": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]…"
+    },
     "slot": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "One installed organ: its process, its crash history, its condition"
     },
@@ -46507,7 +46655,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 13,
+   "source_files": 15,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -47410,6 +47558,7 @@
       "OfflineFetcher",
       "PadesProfile",
       "PdfSealEngine",
+      "PreparedRevision",
       "ProfileDegradeReason",
       "SealBackend",
       "SealClock",
@@ -47420,6 +47569,7 @@
       "SealWarning",
       "SealedPdf",
       "SignDigestRequest",
+      "SignRevisionRequest",
       "SignatureAlgorithm",
       "SigningIdentity",
       "TsaEndpoint"
@@ -47432,7 +47582,7 @@
       "fn": 1,
       "mod": 1,
       "re-export": 2,
-      "struct": 11,
+      "struct": 13,
       "trait": 4,
       "type": 1
      }
@@ -47469,6 +47619,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-seal-organ.rs",
+     "purpose": "The seal organ's process: serves the host on the socket it passes",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FatalCode",
       "InputInvalidCode",
@@ -47490,7 +47648,7 @@
      "path": "src/lib.rs",
      "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
      "surface": {
-      "mod": 1,
+      "mod": 2,
       "re-export": 5
      }
     },
@@ -47571,7 +47729,7 @@
      "path": "src/native/engine.rs",
      "purpose": "`NativeSealEngine`: composition of config, backend, fetcher, and clock",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -47911,6 +48069,27 @@
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealOrgan"
+     ],
+     "path": "src/organ.rs",
+     "purpose": "The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run as its own process behind the organ…",
+     "surface": {
+      "const": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/esign_host_e2e.rs",
+     "purpose": "The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/fetch_policy.rs",
@@ -47958,6 +48137,16 @@
      "surface": {
       "crate-vis": 39
      }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/support/rogue_seal_organ.rs",
+     "purpose": "A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped)",
+     "surface": {
+      "crate-vis": 4
+     }
     }
    ],
    "modules": {
@@ -47981,12 +48170,19 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Native implementation modules (feature `native`)"
+    },
+    "organ": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run as its own process behind the organ…"
     }
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 42,
-   "test_files": 10
+   "source_files": 44,
+   "test_files": 12
   },
   "oneiron-server": {
    "files": [
@@ -49862,6 +50058,7 @@
       "EmbedderServeArgs",
       "HostCommand",
       "HostInitArgs",
+      "HostReRootArgs",
       "InitArgs",
       "McpArgs",
       "McpSurface",
@@ -49883,7 +50080,7 @@
       "enum": 8,
       "fn": 3,
       "re-export": 1,
-      "struct": 17
+      "struct": 18
      }
     },
     {
@@ -49931,7 +50128,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 11,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 1
      }
     },
@@ -50048,6 +50245,16 @@
      "notable": [],
      "path": "src/commands/host_init.rs",
      "purpose": "Reference deployment scaffolding and explicit encryption provisioning",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/host_re_root.rs",
+     "purpose": "`oneiron host re-root`: moves a stopped self-host vault's root to a new host secret, in-chain (OF-455)",
      "surface": {
       "fn": 1
      }
@@ -52568,6 +52775,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/it/host_re_root.rs",
+     "purpose": "A self-host owner moves the vault's root off a leaked host secret (OF-455; ARCH-0028 #host-key-warning)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/import_claims.rs",
      "purpose": "Claims from imported history wait for the owner's review (ARCH-0027 trust tier: \"imported material never…",
      "surface": {}
@@ -52741,7 +52956,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -52918,8 +53133,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 318,
-   "test_files": 133
+   "source_files": 319,
+   "test_files": 134
   },
   "oneiron-uniffi": {
    "files": [
