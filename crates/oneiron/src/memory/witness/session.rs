@@ -91,7 +91,11 @@ impl Memory<'_> {
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
-            WitnessTarget::Session { session, summary },
+            WitnessTarget::Session {
+                session,
+                summary,
+                rostered: None,
+            },
             WitnessDoor::Guest,
             || {},
             |_| Ok(()),
@@ -132,7 +136,11 @@ impl Memory<'_> {
         let room = session.room()?;
         self.run_witness(
             turn,
-            WitnessTarget::Session { session, summary },
+            WitnessTarget::Session {
+                session,
+                summary,
+                rostered: None,
+            },
             WitnessDoor::Guest,
             || {},
             |_| Ok(()),
@@ -182,7 +190,11 @@ impl Memory<'_> {
         let room = session.require_in_room(self.actor).map_err(|_| refused())?;
         self.run_witness(
             turn,
-            WitnessTarget::Session { session, summary },
+            WitnessTarget::Session {
+                session,
+                summary,
+                rostered: Some(room),
+            },
             WitnessDoor::Guest,
             || {},
             |_| Ok(()),
@@ -220,15 +232,69 @@ impl Memory<'_> {
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
-            WitnessTarget::Session { session, summary },
+            WitnessTarget::Session {
+                session,
+                summary,
+                rostered: None,
+            },
             host_turn_ref.map_or(WitnessDoor::Guest, WitnessDoor::HostTurn),
-            || {},
+            || {
+                #[cfg(test)]
+                if let Some(hook) = self
+                    .vault
+                    .test_hooks()
+                    .before_run_speech_writer
+                    .lock()
+                    .expect("run speech hook poisoned")
+                    .take()
+                {
+                    hook();
+                }
+            },
             |_| Ok(()),
             admit,
         )
     }
 
     // ── the overlay landing ─────────────────────────────────────────────
+
+    /// The writer a witness lands in. Speech by a participant of a stretch's
+    /// room into its overlay (`rostered`) is the room's to admit (ARCH-0052
+    /// D5): the actor's identity, and in a shared vault their current
+    /// binding, are checked as for any write, then the room's roster, in the
+    /// same transaction (the caller's effect checks their credential there
+    /// too). A shared vault's content grant does not decide it, because
+    /// nothing staged in the overlay reaches the shared vault; only a save
+    /// does, through every base check. So a rostered Viewer speaks off record
+    /// and still writes nothing durable. Every other witness, in base or in
+    /// an overlay, runs the full check of any actor write.
+    pub(super) fn with_witness_write_txn_as<T>(
+        &self,
+        callback: crate::store::Callback,
+        rostered: Option<(&OffRecordSession<'_>, EntityId)>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        let Some((session, room)) = rostered else {
+            return self.with_verified_actor_write_txn_as(callback, write);
+        };
+        self.vault.write_txn_door(callback, |wtxn| {
+            verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+            if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
+                self.vault.verify_write_actor_in_txn(
+                    wtxn,
+                    &crate::WriteActor::new(self.actor, self.actor_class),
+                )?;
+            }
+            if !session.is_member_in_txn(wtxn, room, self.actor)? {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "the speaker is not in this stretch's room".to_owned(),
+                    &["Join the room before speaking in it."],
+                ));
+            }
+            write(wtxn)
+        })
+    }
 
     pub(super) fn overlay_sink<'a, 'v>(
         &self,

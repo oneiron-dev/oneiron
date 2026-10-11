@@ -1,0 +1,199 @@
+//! ARCH-0052 D4, D5: saving the talk of a room off record while a run keeps
+//! speaking into one turn. A save keeps what was said up to it; what the run
+//! says after, or while the save waits for the writer, stays in the room for
+//! the next save, which keeps it once (Codex burn engine-prs-30, -31).
+
+use super::*;
+use crate::conversation::{ConversationBody, HistoryChoice};
+use crate::edge::EdgeKind;
+use crate::off_record::{OffRecordBackendClass, OffRecordNoticeAct, OffRecordSession};
+
+struct Room {
+    owner: EntityId,
+    agent: EntityId,
+}
+
+/// A room off record holding the vault's owner, an agent, and another
+/// person, who hears its notices.
+fn room_off_record(vault: &Vault) -> (Room, OffRecordSession<'_>) {
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let agent = seed_first_party_actor(vault);
+    let listener = seed_person(vault, 0x51);
+    let by = WriteActor::new(owner, EdgeActorClass::Human);
+    let id = EntityId::now();
+    vault
+        .create_conversation(id, &ConversationBody::default(), by, 1)
+        .expect("room");
+    for (at, member) in [(2, owner), (3, agent), (4, listener)] {
+        vault
+            .join_member(id, member, by, at, HistoryChoice::Share)
+            .expect("join the room");
+    }
+    install_self_memory_allow_policy(vault, agent).expect("policy");
+    let session = vault
+        .off_record_session_vault()
+        .enter_in_room("deck", OffRecordBackendClass::Local, id, owner)
+        .expect("start off record");
+    (Room { owner, agent }, session)
+}
+
+/// Every run bound as `room-run` speaks into the same turn.
+fn bind_run<'a>(session: &'a OffRecordSession<'a>, room: &Room) -> HostSelfDispatcher<'a> {
+    HostSelfDispatcher::for_off_record_session(
+        session,
+        WriteActor::new(room.agent, EdgeActorClass::Agent),
+        "room-run",
+    )
+    .expect("bind the run")
+}
+
+fn said(order: u64, text: &str) -> SelfCall {
+    SelfCall::Speak(SelfSpeechCall::new(text)).with_bridge_stamp(order, 60_000 + order)
+}
+
+fn message(order: u32) -> EntityId {
+    crate::code_run::executor_speech_message_id("room-run", order).expect("message id")
+}
+
+/// The messages of the owner's copy of the talk, by order, each as often as
+/// the copy holds it.
+fn exported(session: &OffRecordSession<'_>, room: &Room) -> Vec<u64> {
+    let mut orders: Vec<u64> = session
+        .export_talk_by(room.owner, None)
+        .expect("export the talk")
+        .turns
+        .iter()
+        .flat_map(|turn| turn.messages.iter().map(|message| message.order))
+        .collect();
+    orders.sort_unstable();
+    orders
+}
+
+/// Codex burn engine-prs-30: a run spoke into a turn, the owner saved the
+/// talk, and the run spoke on into the same turn. The next save found the
+/// turn saved and kept nothing, so the new message evaporated at close. A
+/// later save now copies what was said into a saved turn since, once: a save
+/// after that adds nothing, and the room hears every save.
+#[test]
+fn a_later_save_keeps_once_what_a_run_said_into_a_saved_turn() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    let (first, second) = (message(0), message(1));
+
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let saved = session.save_talk_by(room.owner, None).expect("save");
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    let turn = saved[0].0;
+    assert!(saved[0].1.replayed.contains(&first), "{saved:?}");
+
+    run.dispatch(said(1, "and the boat is moored at the north pier"))
+        .expect("the run speaks on into its turn");
+    assert_eq!(exported(&session, &room), vec![0, 1]);
+    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].0, turn);
+    assert_eq!(saved[0].1.replayed, vec![second]);
+
+    let saved = session
+        .save_talk_by(room.owner, None)
+        .expect("save once more");
+    assert!(saved.is_empty(), "nothing new to keep: {saved:?}");
+    let notices = session
+        .record_for(room.owner)
+        .expect("the record")
+        .notices
+        .iter()
+        .filter(|notice| notice.act == OffRecordNoticeAct::SavedTalk)
+        .count();
+    assert_eq!(notices, 3, "the room hears every save");
+    assert_eq!(exported(&session, &room), vec![0, 1]);
+
+    session.close().expect("close");
+    for id in [first, second] {
+        assert!(vault.get(&id).expect("read").is_some(), "kept in the vault");
+        assert_eq!(
+            vault
+                .targets(&id, EdgeKind::PartOf, None)
+                .expect("its turn"),
+            vec![turn]
+        );
+    }
+}
+
+/// Codex burn engine-prs-31: a save cut its plan from the room's journal, and
+/// while it waited for the writer the run's next message landed in the same
+/// turn. The save then retired every journal entry of the turn, the new
+/// message's too, so the copy of the talk lost it and no later save could
+/// find it. A save retires only the entries it was cut from: the message
+/// stays in the room, and the next save keeps it.
+#[test]
+fn a_message_said_while_a_save_waits_stays_for_the_next_save() {
+    use std::sync::mpsc::sync_channel;
+
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let (first, second) = (message(0), message(1));
+    bind_run(&session, &room)
+        .dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+
+    let (at_writer, speech_at_writer) = sync_channel(0);
+    let (let_speak, speech_go) = sync_channel::<()>(0);
+    *vault
+        .test_hooks()
+        .before_run_speech_writer
+        .lock()
+        .expect("hook") = Some(Box::new(move || {
+        at_writer.send(()).expect("signal the speech");
+        speech_go.recv().expect("release the speech");
+    }));
+    let (planned, save_planned) = sync_channel(0);
+    let (let_save, save_go) = sync_channel::<()>(0);
+    *vault.test_hooks().after_save_plan.lock().expect("hook") = Some(Box::new(move || {
+        planned.send(()).expect("signal the save");
+        save_go.recv().expect("release the save");
+    }));
+
+    let (saved, spoke) = std::thread::scope(|scope| {
+        let speech = scope.spawn(|| {
+            bind_run(&session, &room).dispatch(said(1, "and the boat is moored at the north pier"))
+        });
+        // The run has made every check it makes outside its transaction.
+        speech_at_writer
+            .recv()
+            .expect("the speech reaches the writer");
+        let save = scope.spawn(|| session.save_talk_by(room.owner, None));
+        // The save has cut its plan from a journal without the second
+        // message, and holds the session.
+        save_planned.recv().expect("the save cuts its plan");
+        let_speak.send(()).expect("let the run speak");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !session.overlay().contains_entity(&second).expect("probe") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the speech never landed"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let_save.send(()).expect("let the save commit");
+        (
+            save.join().expect("the save must not panic"),
+            speech.join().expect("the speech must not panic"),
+        )
+    });
+    spoke.expect("the run speaks while the save waits");
+    let saved = saved.expect("save");
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert!(saved[0].1.replayed.contains(&first), "{saved:?}");
+    assert!(!saved[0].1.replayed.contains(&second), "{saved:?}");
+    assert!(vault.get(&second).expect("read").is_none());
+    assert_eq!(exported(&session, &room), vec![0, 1], "the copy keeps it");
+
+    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].1.replayed, vec![second]);
+    session.close().expect("close");
+    assert!(vault.get(&second).expect("read").is_some(), "kept");
+}

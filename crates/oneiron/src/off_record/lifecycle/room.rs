@@ -16,7 +16,7 @@
 //! [`room_session_key`], so a name taken in one room says nothing about
 //! another room, nor about the owner's own 1:1s.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::Vault;
 use crate::authority::VerifiedSlip;
@@ -27,7 +27,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::promote::PromoteOutcome;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
-use crate::session_overlay::{JournalEntry, JournalRole, OverlaySnapshot, PromotePlan};
+use crate::session_overlay::{JournalEntry, JournalRole};
 
 use super::registry::{KeptMessage, OffRecordSessionEntryState, session_entry_state};
 use super::session::{OffRecordSession, OffRecordSessionVault};
@@ -322,61 +322,6 @@ impl OffRecordSession<'_> {
         self.save_talk(owner.actor(), room, authority)
     }
 
-    fn save_talk(
-        &self,
-        by: EntityId,
-        room: Option<EntityId>,
-        authority: impl FnOnce(&Vault, &heed::RoTxn<'_>) -> Result<()>,
-    ) -> Result<SavedTurns> {
-        let windows = room.map(|room| self.vault.windows(room, by)).transpose()?;
-        let saved = {
-            let mut state = self.recording_state()?;
-            let promoted: BTreeSet<[u8; 16]> =
-                state.record.promoted_turns.iter().copied().collect();
-            let snapshot = self.entry.overlay.snapshot()?;
-            // A turn is saved whole, so only a turn whose every moment the
-            // saver's membership shows is theirs to save.
-            let turns: Vec<(EntityId, Vec<u64>)> = snapshot
-                .journal_entries()
-                .iter()
-                .filter_map(turn_put)
-                .filter(|(turn, _)| !promoted.contains(turn.as_bytes()))
-                .map(|(turn, _)| (turn, turn_times(&snapshot, turn)))
-                .filter(|(_, times)| times.iter().all(|at| visible(windows.as_deref(), *at)))
-                .collect();
-            // The copy holds what the room showed, as an export does: a turn
-            // that showed nothing is not saved at all.
-            let (mut plans, mut times) = (Vec::new(), Vec::new());
-            for (turn, turn_times) in turns {
-                if let Some(plan) = copy_plan(&snapshot, turn)? {
-                    plans.push(plan);
-                    times.extend(turn_times);
-                }
-            }
-            drop(snapshot);
-            let check = |txn: &heed::RoTxn<'_>| {
-                authority(self.vault, txn)?;
-                if let Some(room) = room {
-                    require_sight_in_txn(self.vault, txn, &self.session_ref, room, by, &times)?;
-                }
-                Ok(Hearing::in_txn(self.vault, txn, room))
-            };
-            // A save that finds nothing new keeps nothing, and the room still
-            // hears it, on the same checks a save that keeps something runs.
-            let (saved, hearing) = if plans.is_empty() {
-                (Vec::new(), check(&self.vault.store.env.read_txn()?)?)
-            } else {
-                self.promote_plans(&mut state, plans, |wtxn| check(wtxn))?
-            };
-            post_notice(&mut state, OffRecordNoticeAct::SavedTalk, by, hearing);
-            self.entry.publish_state(&state);
-            saved
-        };
-        let turns: Vec<EntityId> = saved.iter().map(|(turn, _)| *turn).collect();
-        self.refresh_promoted_turns(&turns);
-        Ok(saved)
-    }
-
     /// The talk so far, gathered: the messages of this stretch already in
     /// this vault (saved, or said while the room was on record) read back
     /// from the vault, and the turns and messages still in the room read from
@@ -388,7 +333,11 @@ impl OffRecordSession<'_> {
             self.read_kept_message(&mut talk, *message, kept)?;
         }
         let snapshot = self.entry.overlay.snapshot()?;
-        for (turn, at) in snapshot.journal_entries().iter().filter_map(turn_put) {
+        for (turn, at) in snapshot
+            .journal_entries()
+            .iter()
+            .filter_map(|entry| turn_put(entry))
+        {
             talk.turn(turn, at, false);
         }
         for entry in snapshot.journal_entries() {
@@ -606,80 +555,6 @@ pub(super) fn unbound_in_room(session_ref: &str) -> Error {
     })
 }
 
-/// Every moment a turn still in the room holds: when it was said, and when
-/// each of its messages was.
-pub(super) fn turn_times(snapshot: &OverlaySnapshot, turn: EntityId) -> Vec<u64> {
-    snapshot
-        .journal_entries()
-        .iter()
-        .filter(|entry| {
-            entry.scope.turn() == turn
-                && matches!(entry.op, BatchOp::Put { .. })
-                && matches!(
-                    entry.role,
-                    JournalRole::TurnPut | JournalRole::MessagePartOf
-                )
-        })
-        .map(|entry| entry.occurred.start)
-        .collect()
-}
-
-/// What a saved copy of `turn` holds (ARCH-0052 D5): what the room showed
-/// of it, as an export does. That is the room's shell, the TURN and its own
-/// edge, and each visible message with its edges and text. A hidden message
-/// (an agent's own reasoning), a summary and anything else of the turn stay
-/// out. `None` when the turn showed nothing.
-pub(super) fn copy_plan(snapshot: &OverlaySnapshot, turn: EntityId) -> Result<Option<PromotePlan>> {
-    let mut shown = BTreeSet::new();
-    for entry in snapshot.journal_entries() {
-        if let (
-            JournalRole::MessagePartOf,
-            BatchOp::Put {
-                id,
-                entity_type,
-                data,
-                ..
-            },
-        ) = (&entry.role, &entry.op)
-            && *entity_type == ENTITY_TYPE_MESSAGE
-            && entry.scope.turn() == turn
-            && visible_message(data)?.is_some()
-        {
-            shown.insert(*id);
-        }
-    }
-    if shown.is_empty() {
-        return Ok(None);
-    }
-    snapshot
-        .plan_promotion_where(turn, |entry| match entry.role {
-            JournalRole::ConversationShell | JournalRole::TurnPut => true,
-            JournalRole::SummaryDerivedFrom => false,
-            JournalRole::MessagePartOf | JournalRole::AttributionEdge => {
-                subject(&entry.op).is_some_and(|id| shown.contains(&id))
-            }
-            // The TURN's own edge to the room, and a shown message's text.
-            JournalRole::TurnOwnedArtifact => match &entry.op {
-                BatchOp::Edge { src, .. } => *src == turn,
-                op => subject(op).is_some_and(|id| shown.contains(&id)),
-            },
-        })
-        .map(Some)
-}
-
-/// The row a journaled op writes, or the source of the edge it writes.
-fn subject(op: &BatchOp) -> Option<EntityId> {
-    match op {
-        BatchOp::Put { id, .. } | BatchOp::Text { id, .. } | BatchOp::Vector { id, .. } => {
-            Some(*id)
-        }
-        BatchOp::Edge { src, .. }
-        | BatchOp::PublicEdgeWithCreatedAt { src, .. }
-        | BatchOp::EdgeWithCreatedAt { src, .. } => Some(*src),
-        _ => None,
-    }
-}
-
 /// Refuses unless, in `txn`, `actor` is on `room`'s roster and their
 /// membership shows every one of `times`.
 pub(super) fn require_sight_in_txn(
@@ -704,7 +579,7 @@ pub(super) fn require_sight_in_txn(
 }
 
 /// A witnessed TURN's own put: its id and when it was said.
-fn turn_put(entry: &JournalEntry) -> Option<(EntityId, u64)> {
+pub(super) fn turn_put(entry: &JournalEntry) -> Option<(EntityId, u64)> {
     match &entry.op {
         BatchOp::Put { id, .. }
             if entry.role == JournalRole::TurnPut && *id == entry.scope.turn() =>
@@ -738,7 +613,7 @@ fn authored_by(op: &BatchOp) -> Option<EntityId> {
     }
 }
 
-fn visible(windows: Option<&[MembershipWindow]>, at: u64) -> bool {
+pub(super) fn visible(windows: Option<&[MembershipWindow]>, at: u64) -> bool {
     windows.is_none_or(|windows| windows.iter().any(|window| window.contains(at)))
 }
 
@@ -763,7 +638,7 @@ pub(super) fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
 
 /// Decodes a MESSAGE body (the witness door's canonical encoding) and keeps
 /// it only when it is part of the visible transcript.
-fn visible_message(body: &[u8]) -> Result<Option<OffRecordTalkMessage>> {
+pub(super) fn visible_message(body: &[u8]) -> Result<Option<OffRecordTalkMessage>> {
     let malformed = || Error::InvariantViolation("an off-record MESSAGE body does not decode");
     let mut cursor = body;
     let rmpv::Value::Map(entries) =

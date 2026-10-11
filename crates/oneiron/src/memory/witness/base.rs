@@ -17,6 +17,16 @@ use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::session_overlay::SessionWriteRoute;
 
+/// Tags an importer holds for the turn it lands, and the cell the program
+/// leaves what they did to the turn's tagging marker in. They are settled in
+/// the turn's own write, after its marker is committed (ARCH-0036: an import
+/// that already holds tags completes its marker without a tagger call).
+#[derive(Clone, Copy)]
+pub(super) struct HeldTags<'a> {
+    pub(super) tags: &'a crate::memory::extraction::EncoderOutput,
+    pub(super) outcome: &'a std::cell::Cell<Option<crate::tagging::HeldTagsOutcome>>,
+}
+
 /// What the base guards proved inside the write transaction.
 pub(super) enum BaseGuards {
     /// An id this call creates carries a local hard-delete marker.
@@ -92,7 +102,7 @@ impl Memory<'_> {
         let receipt = self.run_witness(
             turn,
             WitnessTarget::Held {
-                held: super::program::HeldTags {
+                held: HeldTags {
                     tags,
                     outcome: &outcome,
                 },

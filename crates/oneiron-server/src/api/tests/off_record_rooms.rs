@@ -1018,3 +1018,86 @@ async fn a_fresh_flip_restarts_saving_after_its_credential_lapsed() {
     let kept = say(&server, mina, room.id, "garage", 100, "kept on record").await;
     assert!(server.vault().get(&kept).unwrap().is_some());
 }
+
+/// Codex burn engine-prs-29, the Engine lane's reading of ARCH-0052 D5 (the
+/// owner may veto it): in a shared vault, a person on the room's roster whose
+/// grant there is Viewer could start a stretch but not speak in it, because
+/// the overlay landing asked for the shared vault's content grant. Speech off
+/// record writes nothing durable, so the room's roster admits it. On record a
+/// turn lands in the shared vault, and the Viewer is still refused there.
+#[tokio::test]
+async fn a_rostered_viewer_speaks_off_record_and_not_on_record() {
+    use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+
+    let (dir, server) = auth_test_server();
+    let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
+    let gil = person(&server, "Gil");
+    crate::test_credentials::bind_actor(server.vault(), "secret", gil, "human");
+    let room = conversation(&server, owner_id, &[owner_id, gil]);
+    let proof = server
+        .vault()
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault()
+        .initialize_shared_vault(
+            &proof,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner_id,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: gil,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            10,
+        )
+        .unwrap();
+    let viewer = slip("gil", gil, "human");
+
+    let (status, started) = start(&server, viewer.clone(), room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let said = say(&server, viewer.clone(), room, "porch", 100, SECRET_WORDS).await;
+    let (status, file) = act(&server, "export", viewer.clone(), room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{file}");
+    assert_eq!(words(&file), [SECRET_WORDS]);
+    assert!(server.vault().get(&said).unwrap().is_none());
+    assert!(
+        !stored(&dir, SECRET_WORDS),
+        "a Viewer's speech off record wrote the vault"
+    );
+
+    let (status, flipped) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/mode",
+        owner_recipe(&server),
+        Some(&json!({ "session_ref": owner_key(room, "porch"), "mode": "on_record" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{flipped}");
+    let (status, refused) = call(
+        &server,
+        "POST",
+        "/v1/core/off-record/witness",
+        viewer,
+        Some(&turn(room, "porch", 101, "a viewer word on record")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    // Refused by the shared vault's grant, with the saver still in the room.
+    assert!(
+        refused.to_string().contains("shared-vault role"),
+        "{refused}"
+    );
+    assert!(!stored(&dir, "a viewer word on record"));
+}

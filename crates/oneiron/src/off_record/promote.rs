@@ -80,6 +80,13 @@ const OFF_RECORD_PROMOTE_RECEIPT_VERSION: u8 = 0;
 const PROMOTE_RECEIPTS: SideTable<EntityId, OffRecordPromoteReceipt, Named> =
     SideTable::new(&side_table::OFF_RECORD_PROMOTE_RECEIPT);
 
+const OFF_RECORD_COPY_RECEIPT_VERSION: u8 = 0;
+
+/// One message a later save copied into a turn its stretch had saved before:
+/// keyed by message id.
+const COPY_RECEIPTS: SideTable<EntityId, OffRecordCopyReceipt, Named> =
+    SideTable::new(&side_table::OFF_RECORD_COPY_RECEIPT);
+
 /// One `pm:{window}:{turn}` pickup marker: a one-byte presence flag, keyed
 /// by `{window}:{turn_hex}` after the declared `pm:` prefix.
 #[cfg(feature = "sync")]
@@ -147,6 +154,27 @@ pub struct OffRecordPromoteReceipt {
     pub outcome: PromoteOutcome,
 }
 
+/// Durable receipt that ONE message of a stretch was copied into base, into a
+/// turn the stretch had already saved, by a later save of its talk. The
+/// turn's [`OffRecordPromoteReceipt`] stays the answer to a retry of its
+/// promotion; this one answers a save that runs again, so the message is
+/// never copied twice. It carries opaque ids only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct OffRecordCopyReceipt {
+    pub(crate) version: u8,
+    pub(crate) session_ref: String,
+    pub(crate) turn: [u8; 16],
+    pub(crate) copied_at: u64,
+}
+
+/// What one copy into a saved turn did: the outcome of the messages it
+/// copied now, and every message of the plan base holds by this stretch's
+/// saves, now or earlier.
+pub(crate) struct Appended {
+    pub(crate) outcome: PromoteOutcome,
+    pub(crate) held: BTreeSet<EntityId>,
+}
+
 /// The promote transaction's session-membership exemption (ARCH-0052 D2, K4).
 ///
 /// This is a CAPABILITY, not a hint: the `members` field and `mint` are
@@ -167,6 +195,10 @@ impl PromoteReplayGrant {
         Self {
             members: plan.replayed.iter().copied().collect(),
         }
+    }
+
+    fn mint_for(members: BTreeSet<EntityId>) -> Self {
+        Self { members }
     }
 
     /// Readable crate-wide so both membership doors can ASK a grant they were
@@ -285,8 +317,175 @@ impl FloorWrites<'_> {
         // the markers exist only on a sync build, so the non-sync build has
         // no no-op stub to keep honest.
         #[cfg(feature = "sync")]
-        self.write_promote_pickup_markers(wtxn, plan, &turn)?;
+        self.write_promote_pickup_markers(wtxn, &plan.source_learned_at, &turn)?;
         Ok(outcome)
+    }
+
+    /// Floor operation 3/3, its second form (ARCH-0052 D4, D5): the promote
+    /// commit's copy into a turn this stretch already saved, of the messages
+    /// said into it since (an agent's run keeps speaking into one turn). A
+    /// later save of the whole talk keeps them; it lands in the caller's
+    /// `wtxn` with the rest of that save.
+    ///
+    /// The turn's promote receipt is not touched: it answers a retry of the
+    /// promotion, and a retry saves nothing new. Each message copied here
+    /// gets an [`OffRecordCopyReceipt`] in the same transaction instead, and
+    /// a message base holds by an earlier save, under either receipt, is
+    /// skipped rather than written again. The replay is the ordinary one
+    /// promote runs: author check, the narrow replay grant, the ordinary
+    /// batch, the turn's tagging and embedding markers, and the `pm:`
+    /// markers of the messages' own windows.
+    ///
+    /// Nothing is copied into a turn base no longer holds as this stretch
+    /// saved it (deleted, or promoted by another stretch): its messages stay
+    /// in the room, unsaved. A message id base already holds without a
+    /// receipt is refused, never written over.
+    pub(crate) fn copy_append(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        session_ref: &str,
+        plan: &PromotePlan,
+        copied_at: u64,
+    ) -> Result<Appended> {
+        if let Some(record) = self.store.off_record_sessions.record(session_ref) {
+            record.mode.write_target().require_recording(session_ref)?;
+        }
+        let turn = plan.turn();
+        let mut held = BTreeSet::new();
+        let saved = PROMOTE_RECEIPTS
+            .get(self.store, wtxn, &turn)?
+            .filter(|receipt| receipt.session_ref == session_ref);
+        let live = vault.get_entity_type_in_txn(wtxn, &turn)?
+            == Some(crate::registry::ENTITY_TYPE_TURN)
+            && crate::ports::EdgeStoreRead::port_edge_get(
+                self.store,
+                wtxn,
+                &turn,
+                EdgeKind::ChildOf,
+                &plan.conversation(),
+            )?
+            .is_some();
+        let Some(saved) = saved.filter(|_| live) else {
+            tracing::debug!(
+                turn = %turn.to_hex(),
+                "off-record copy skipped a turn base does not hold as this stretch saved it"
+            );
+            return Ok(Appended {
+                outcome: PromoteOutcome {
+                    replayed: Vec::new(),
+                    short_id_mapping: Vec::new(),
+                },
+                held,
+            });
+        };
+
+        let mut fresh = BTreeSet::new();
+        for id in &plan.replayed {
+            if saved.outcome.replayed.contains(id)
+                || COPY_RECEIPTS
+                    .get(self.store, wtxn, id)?
+                    .is_some_and(|receipt| receipt.session_ref == session_ref)
+            {
+                held.insert(*id);
+            } else if crate::ports::EntityStoreRead::port_entity_raw(self.store, wtxn, id)?
+                .is_some()
+            {
+                return Err(Error::InvariantViolation(
+                    "an off-record message to copy already names a row base holds",
+                ));
+            } else {
+                fresh.insert(*id);
+            }
+        }
+        if fresh.is_empty() {
+            return Ok(Appended {
+                outcome: PromoteOutcome {
+                    replayed: Vec::new(),
+                    short_id_mapping: Vec::new(),
+                },
+                held,
+            });
+        }
+        let ops: Vec<BatchOp> = plan
+            .ops
+            .iter()
+            .filter(|op| {
+                crate::session_overlay::replayed_subject(op).is_some_and(|id| fresh.contains(&id))
+            })
+            .cloned()
+            .collect();
+        for op in &ops {
+            if let BatchOp::PublicEdgeWithCreatedAt {
+                kind: EdgeKind::AuthoredBy,
+                tgt,
+                ..
+            } = op
+                && crate::ports::EntityStoreRead::port_entity_raw(self.store, wtxn, tgt)?.is_none()
+            {
+                return Err(Error::OffRecord(
+                    OffRecordError::OffRecordPromoteAuthorMissing {
+                        turn_ref: turn.to_hex(),
+                        actor_ref: tgt.to_hex(),
+                    },
+                ));
+            }
+        }
+        // The copied messages' own windows, never the save's clock.
+        #[cfg(feature = "sync")]
+        let source_learned_at: Vec<u64> = ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::Put { learned_at, .. } => Some(*learned_at),
+                _ => None,
+            })
+            .collect();
+        let grant = PromoteReplayGrant::mint_for(fresh.clone());
+        BatchBuilder::promotion_replay(vault, ops, &grant).apply_recording_gate_decisions(wtxn)?;
+        crate::tagging::mark_turn_in_txn(vault, wtxn, turn)?;
+        crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
+
+        let replayed: Vec<EntityId> = plan
+            .replayed
+            .iter()
+            .filter(|id| fresh.contains(id))
+            .copied()
+            .collect();
+        let mut short_id_mapping = Vec::new();
+        for (id, temporary) in &plan.temporary_short_ids {
+            if !fresh.contains(id) {
+                continue;
+            }
+            let (canonical, _content_hash) =
+                crate::ports::ShortIdStoreRead::port_short_id_reference(self.store, wtxn, id)?
+                    .ok_or(Error::InvariantViolation(
+                        "an off-record copy left a message without a canonical short id",
+                    ))?;
+            short_id_mapping.push((temporary.clone(), canonical.to_owned()));
+        }
+        for id in &replayed {
+            COPY_RECEIPTS.put(
+                self.store,
+                wtxn,
+                id,
+                &OffRecordCopyReceipt {
+                    version: OFF_RECORD_COPY_RECEIPT_VERSION,
+                    session_ref: session_ref.to_owned(),
+                    turn: *turn.as_bytes(),
+                    copied_at,
+                },
+            )?;
+            held.insert(*id);
+        }
+        #[cfg(feature = "sync")]
+        self.write_promote_pickup_markers(wtxn, &source_learned_at, &turn)?;
+        Ok(Appended {
+            outcome: PromoteOutcome {
+                replayed,
+                short_id_mapping,
+            },
+            held,
+        })
     }
 
     /// One `pm:{window}:{turn}` pickup marker per DISTINCT source window the
@@ -301,13 +500,12 @@ impl FloorWrites<'_> {
     fn write_promote_pickup_markers(
         &self,
         wtxn: &mut RwTxn<'_>,
-        plan: &PromotePlan,
+        source_learned_at: &[u64],
         turn: &EntityId,
     ) -> Result<()> {
         // Deduplicated on the marker key itself, which carries the window
         // label: two journal stamps in the same month produce one marker.
-        let marker_keys: BTreeSet<String> = plan
-            .source_learned_at
+        let marker_keys: BTreeSet<String> = source_learned_at
             .iter()
             .map(|learned_at| {
                 let window = crate::sync::WindowKey::from_timestamp(*learned_at);

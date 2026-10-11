@@ -3,7 +3,7 @@
 
 use super::super::support::*;
 use super::super::*;
-use super::base::{BaseGuards, BaseSink};
+use super::base::{BaseGuards, BaseSink, HeldTags};
 use super::codec::{
     ImportStamp, encode_imported_turn_body, encode_witness_turn_body, import_stamp,
     incoming_turn_speaker, session_short_ref_string,
@@ -48,21 +48,14 @@ pub(super) enum WitnessTarget<'a, 'v> {
     Session {
         session: &'a OffRecordSession<'v>,
         summary: Option<&'a str>,
+        /// The room whose roster admits a participant's speech into its
+        /// overlay ([`Memory::with_witness_write_txn_as`]).
+        rostered: Option<EntityId>,
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
     Imported { stamp: &'a ImportedTurnStamp },
     /// Durable base, for a turn whose tags its importer already holds.
     Held { held: HeldTags<'a> },
-}
-
-/// Tags an importer holds for the turn it lands, and the cell the program
-/// leaves what they did to the turn's tagging marker in. They are settled in
-/// the turn's own write, after its marker is committed (ARCH-0036: an import
-/// that already holds tags completes its marker without a tagger call).
-#[derive(Clone, Copy)]
-pub(super) struct HeldTags<'a> {
-    pub(super) tags: &'a crate::memory::extraction::EncoderOutput,
-    pub(super) outcome: &'a std::cell::Cell<Option<crate::tagging::HeldTagsOutcome>>,
 }
 
 /// What an imported transcript turn carries that a witnessed one does not: the
@@ -281,6 +274,7 @@ impl Memory<'_> {
         let mut on_record_session = None;
         // A room on record's saver, checked again where the turn lands.
         let mut saver = None;
+        let mut room_speech = None;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {
                 route,
@@ -318,7 +312,11 @@ impl Memory<'_> {
                     held: None,
                 }
             }
-            WitnessTarget::Session { session, summary } => {
+            WitnessTarget::Session {
+                session,
+                summary,
+                rostered,
+            } => {
                 on_record_session = Some(session);
                 (session_route, saver) = session.landing_route()?;
                 // WitnessReceipt promises materialized turns and messages.
@@ -341,6 +339,7 @@ impl Memory<'_> {
                         held: None,
                     }
                 } else {
+                    room_speech = rostered.map(|room| (session, room));
                     Landing::Overlay {
                         session,
                         route: &session_route,
@@ -365,7 +364,7 @@ impl Memory<'_> {
         };
         before_txn();
 
-        let landed = self.with_verified_actor_write_txn_as(callback, |wtxn| {
+        let landed = self.with_witness_write_txn_as(callback, room_speech, |wtxn| {
             let mut mint_conversation = false;
             let mut leader_project = None;
             let admission = match &sink {
