@@ -343,15 +343,14 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
     assert_eq!(epochs.len(), 1);
     assert_eq!(run.summaries(), 1);
     let summary = epochs[0].0.summary_id();
-    let sources = run
-        .vault
-        .edges_out(&summary)
-        .expect("edges")
-        .into_iter()
-        .filter(|edge| edge.kind == EdgeKind::DerivedFrom)
-        .map(|edge| edge.target)
-        .collect::<Vec<_>>();
-    assert!(sources.contains(&run.note), "the served note is a source");
+    assert!(
+        run.vault
+            .edges_out(&summary)
+            .expect("edges")
+            .into_iter()
+            .any(|edge| edge.kind == EdgeKind::DerivedFrom && edge.target == run.note),
+        "the served note is a source"
+    );
 
     // Erasing a record the summary was written from withdraws its words.
     assert!(run.vault.delete_entity(&run.note).expect("delete the note"));
