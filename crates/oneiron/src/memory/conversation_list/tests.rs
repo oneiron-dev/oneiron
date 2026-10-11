@@ -76,22 +76,24 @@ fn list(vault: &Vault, reader: EntityId, limit: usize) -> Listed {
     }
 }
 
-/// A rooted vault whose owner witnessed two conversations. The first has a
-/// turn whose message is in a space the reader holds a Messages grant on, a
-/// later turn whose message is outside it, and a last turn in it again; the
-/// second has one turn in the space. The reader's read ceiling takes in the
-/// first conversation, its turns and its messages, and not the second.
-struct ScopedVault {
+/// One witnessed turn: its conversation, its id, when it occurred and its
+/// one message.
+type Witnessed = (EntityId, EntityId, u64, WitnessMessage);
+
+/// The space the reader holds a Messages grant on.
+const SPACE: u8 = 0x68;
+
+/// A rooted vault whose owner witnessed `witnessed`, and a reader who holds
+/// a Messages grant on the space. Its read ceiling takes in the `readable`
+/// conversations and turns, and each readable turn's messages.
+struct ReaderVault {
     _dir: tempfile::TempDir,
     vault: Vault,
     owner: EntityId,
     reader: EntityId,
-    kept: EntityId,
-    other: EntityId,
-    last_turn: EntityId,
 }
 
-fn scoped_vault() -> ScopedVault {
+fn reader_vault(witnessed: &[Witnessed], readable: &[EntityId]) -> ReaderVault {
     use ed25519_dalek::{Signer, SigningKey};
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -107,37 +109,8 @@ fn scoped_vault() -> ScopedVault {
             b"scoped reader",
         )
         .expect("put the reader");
-    let space = entity(0x68);
-    let (kept, other) = (entity(0xD8), entity(0xD9));
-    let turns = [entity(0xD4), entity(0xD5), entity(0xD6)];
-    let (user, companion) = (WitnessAuthor::User, WitnessAuthor::Companion);
-    for (room, turn, at, message) in [
-        (
-            kept,
-            turns[0],
-            AT,
-            said(user, "a table for two by the window", Some(space)),
-        ),
-        (
-            kept,
-            turns[1],
-            AT + 10,
-            said(user, "the locker code is 4471", None),
-        ),
-        (
-            kept,
-            turns[2],
-            AT + 20,
-            said(companion, "booked for friday at eight", Some(space)),
-        ),
-        (
-            other,
-            entity(0xD7),
-            AT + 30,
-            said(user, "the spare key is under the mat", Some(space)),
-        ),
-    ] {
-        witness(&vault, owner, room, turn, at, message);
+    for (room, turn, at, message) in witnessed {
+        witness(&vault, owner, *room, *turn, *at, message.clone());
     }
 
     // In a vault with no authority root every human PERSON reads as its
@@ -169,7 +142,9 @@ fn scoped_vault() -> ScopedVault {
             &AccessGrant {
                 authority_scope: read_preset(),
                 principal_ref: reader,
-                scope: AccessGrantScope::Messages { space_ref: space },
+                scope: AccessGrantScope::Messages {
+                    space_ref: entity(SPACE),
+                },
                 capability: AccessGrantCapability::MessagesRead,
                 status: AccessGrantStatus::Active,
                 created_at: crate::unix_seconds_now(),
@@ -181,10 +156,10 @@ fn scoped_vault() -> ScopedVault {
     let mut ceiling = read_preset();
     let mut facets = std::collections::BTreeSet::new();
     let txn = vault.store.env.read_txn().expect("read txn");
-    let mut rows = vec![kept];
-    for turn in turns {
-        rows.push(turn);
-        rows.extend(vault.turn_message_ids_in(&txn, &turn).expect("messages"));
+    let mut rows = Vec::new();
+    for id in readable {
+        rows.push(*id);
+        rows.extend(vault.turn_message_ids_in(&txn, id).expect("messages"));
     }
     drop(txn);
     for row in rows {
@@ -214,8 +189,69 @@ fn scoped_vault() -> ScopedVault {
         }),
     )
     .expect("the reader's read ceiling");
-    ScopedVault {
+    ReaderVault {
         _dir: dir,
+        vault,
+        owner,
+        reader,
+    }
+}
+
+/// Two conversations. The first has a turn whose message is in the space, a
+/// later turn whose message is outside it, and a last turn in it again; the
+/// second has one turn in the space. The reader's read ceiling takes in the
+/// first conversation, its turns and its messages, and not the second.
+struct ScopedVault {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    owner: EntityId,
+    reader: EntityId,
+    kept: EntityId,
+    other: EntityId,
+    last_turn: EntityId,
+}
+
+fn scoped_vault() -> ScopedVault {
+    let space = Some(entity(SPACE));
+    let (kept, other) = (entity(0xD8), entity(0xD9));
+    let turns = [entity(0xD4), entity(0xD5), entity(0xD6)];
+    let (user, companion) = (WitnessAuthor::User, WitnessAuthor::Companion);
+    let ReaderVault {
+        _dir,
+        vault,
+        owner,
+        reader,
+    } = reader_vault(
+        &[
+            (
+                kept,
+                turns[0],
+                AT,
+                said(user, "a table for two by the window", space),
+            ),
+            (
+                kept,
+                turns[1],
+                AT + 10,
+                said(user, "the locker code is 4471", None),
+            ),
+            (
+                kept,
+                turns[2],
+                AT + 20,
+                said(companion, "booked for friday at eight", space),
+            ),
+            (
+                other,
+                entity(0xD7),
+                AT + 30,
+                said(user, "the spare key is under the mat", space),
+            ),
+        ],
+        &[kept, turns[0], turns[1], turns[2]],
+    );
+    ScopedVault {
+        _dir,
         vault,
         owner,
         reader,
@@ -331,4 +367,50 @@ fn a_reader_lists_only_what_it_may_read() {
         read.rows,
         [(kept, Some("a table for two by the window".to_owned()))]
     );
+}
+
+/// Two vaults the reader reads alike: one conversation with one turn it may
+/// read among four it may not. They differ only in whether one hidden turn
+/// was learned before or after the readable one. The list, its preview and
+/// its receipt are the same in both: what a read withholds never says where
+/// a hidden turn falls.
+#[test]
+fn where_a_hidden_turn_falls_never_shows() {
+    let (room, shown) = (entity(0xE0), entity(0xE1));
+    let space = Some(entity(SPACE));
+    let listed = [AT - 10, AT + 40].map(|last| {
+        let mut witnessed = vec![(
+            room,
+            shown,
+            AT,
+            said(WitnessAuthor::User, "the turn it may read", space),
+        )];
+        for (hidden, at) in [
+            (0xE2, AT + 30),
+            (0xE3, AT + 20),
+            (0xE4, AT + 10),
+            (0xE5, last),
+        ] {
+            witnessed.push((
+                room,
+                entity(hidden),
+                at,
+                said(WitnessAuthor::User, "a turn it may not read", space),
+            ));
+        }
+        let ReaderVault {
+            _dir,
+            vault,
+            reader,
+            ..
+        } = reader_vault(&witnessed, &[room, shown]);
+        let listed = list(&vault, reader, 50);
+        (listed.rows, listed.next, listed.total, listed.withheld)
+    });
+    assert_eq!(
+        listed[0].0,
+        [(room, Some("the turn it may read".to_owned()))]
+    );
+    assert_eq!(listed[0].3, 4, "each hidden turn, wherever it falls");
+    assert_eq!(listed[0], listed[1]);
 }

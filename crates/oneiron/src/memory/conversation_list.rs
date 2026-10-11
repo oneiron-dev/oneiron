@@ -12,7 +12,9 @@ use super::*;
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
-use crate::conversation::{ConversationBody, ConversationKind, LatestMessage, snippet, turn_text};
+use crate::conversation::{
+    ConversationBody, ConversationKind, LatestMessage, PreviewTurns, snippet, turn_text,
+};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::{EntityStoreRead, TombstoneStore};
@@ -26,8 +28,9 @@ const COUNT_CHUNK: usize = 256;
 /// chunk, never one each.
 const PAGE_CHUNK: usize = 64;
 
-/// Turns a preview reads through the lane at a time, the preferred first.
-const PREVIEW_TURNS_PER_READ: usize = 4;
+/// Turns a preview reads through the lane at a time. It reads every turn it
+/// looks at before it orders any.
+const PREVIEW_TURNS_PER_READ: usize = 64;
 
 /// Messages of one turn a preview reads through the lane at a time; only the
 /// latest one's text is kept between reads.
@@ -243,47 +246,63 @@ impl Memory<'_> {
             .collect())
     }
 
-    /// `conversation`'s preview as the reader may read it. The turns a
-    /// preview looks at are listed, then read through the lane a few at a
-    /// time, the preferred first, each readable one's messages after it in
-    /// bounded reads, until one has text. A turn the reader may not read
-    /// shows none of its messages.
+    /// `conversation`'s preview as the reader may read it. Every turn the
+    /// preview looks at is read through the lane before any is ordered, so
+    /// what the receipt withholds says nothing about where a turn the reader
+    /// may not read falls. Then the readable ones are taken in the order the
+    /// preview prefers, each one's messages read in bounded reads, until one
+    /// has text. A turn the reader may not read shows none of its messages.
     fn preview(
         &self,
         lane: &ScopedRead<'_>,
         conversation: &EntityId,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Option<String>> {
-        let turns = {
+        let (turns, latest_learned_first) = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-            self.vault.preview_turns_in(&txn, conversation)?
+            match self.vault.preview_turns_in(&txn, conversation)? {
+                PreviewTurns::Path(turns) => (turns, false),
+                // A turn the reader may not read is never ordered: only the
+                // learned time of a turn the lane admits is looked at.
+                PreviewTurns::Learned(turns) => {
+                    (turns.into_iter().map(|(_, id)| id).collect(), true)
+                }
+            }
         };
+        // Each readable turn: its learned time, id and own text's snippet.
+        let mut readable: Vec<(u64, EntityId, Option<String>)> = Vec::new();
         for chunk in turns.chunks(PREVIEW_TURNS_PER_READ) {
             let reads: Vec<_> = chunk.iter().copied().map(PointRead::id).collect();
             let read = lane.read(&reads, None)?;
             fold_receipt(receipt, read.receipt);
-            for (turn, row) in chunk.iter().zip(read.value) {
-                let Some(body) = row.and_then(|row| row.body) else {
-                    continue;
-                };
-                let messages = {
-                    let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-                    self.vault.turn_message_ids_in(&txn, turn)?
-                };
-                let mut latest = LatestMessage::default();
-                for ids in messages.chunks(PREVIEW_MESSAGES_PER_READ) {
-                    let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
-                    let read = lane.read(&reads, None)?;
-                    fold_receipt(receipt, read.receipt);
-                    for row in read.value.into_iter().flatten() {
-                        if let Some(body) = row.body.as_deref() {
-                            latest.offer(row.id, body);
-                        }
+            for row in read.value.into_iter().flatten() {
+                if let Some(body) = row.body.as_deref() {
+                    let own = turn_text(body).map(|text| snippet(&text));
+                    readable.push((row.learned_at, row.id, own));
+                }
+            }
+        }
+        if latest_learned_first {
+            readable.sort_by_key(|(learned_at, id, _)| std::cmp::Reverse((*learned_at, *id)));
+        }
+        for (_, turn, own) in readable {
+            let messages = {
+                let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+                self.vault.turn_message_ids_in(&txn, &turn)?
+            };
+            let mut latest = LatestMessage::default();
+            for ids in messages.chunks(PREVIEW_MESSAGES_PER_READ) {
+                let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+                let read = lane.read(&reads, None)?;
+                fold_receipt(receipt, read.receipt);
+                for row in read.value.into_iter().flatten() {
+                    if let Some(body) = row.body.as_deref() {
+                        latest.offer(row.id, body);
                     }
                 }
-                if let Some(text) = latest.text().or_else(|| turn_text(&body)) {
-                    return Ok(Some(snippet(&text)));
-                }
+            }
+            if let Some(text) = latest.text().map(|text| snippet(&text)).or(own) {
+                return Ok(Some(text));
             }
         }
         Ok(None)

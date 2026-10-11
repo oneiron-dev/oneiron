@@ -20,7 +20,14 @@ impl Vault {
         conversation: &EntityId,
     ) -> Result<Option<String>> {
         let txn = self.store.env.read_txn()?;
-        for turn in self.preview_turns_in(&txn, conversation)? {
+        let turns = match self.preview_turns_in(&txn, conversation)? {
+            PreviewTurns::Path(turns) => turns,
+            PreviewTurns::Learned(mut turns) => {
+                turns.sort_by(|left, right| right.cmp(left));
+                turns.into_iter().map(|(_, id)| id).collect()
+            }
+        };
+        for turn in turns {
             let turn = RetainedTurn {
                 row: retained_row(&self.store, &txn, &turn, ENTITY_TYPE_TURN)?,
                 id: turn,
@@ -32,21 +39,22 @@ impl Vault {
         Ok(None)
     }
 
-    /// The turns a preview looks at, the one it prefers first: the selected
-    /// path from its HEAD back, or with no selected DAG state the live
-    /// ChildOf turns from the latest learned. Only ids: a caller reads each
-    /// turn's body when it gets to it.
+    /// The turns a preview looks at: the selected path, or with no selected
+    /// DAG state the live ChildOf turns. Only ids and learned times: a caller
+    /// reads each turn's body when it gets to it.
     pub(crate) fn preview_turns_in(
         &self,
         txn: &RoTxn<'_>,
         conversation: &EntityId,
-    ) -> Result<Vec<EntityId>> {
+    ) -> Result<PreviewTurns> {
         match SelectedPathSnapshot::read(self, txn, conversation)? {
             PreviewTopology::Selected(path) => {
-                return Ok(path.turns.into_iter().rev().map(|turn| turn.id).collect());
+                return Ok(PreviewTurns::Path(
+                    path.turns.into_iter().rev().map(|turn| turn.id).collect(),
+                ));
             }
             PreviewTopology::ChildOfOnly => {}
-            PreviewTopology::ProvenEmpty => return Ok(Vec::new()),
+            PreviewTopology::ProvenEmpty => return Ok(PreviewTurns::Path(Vec::new())),
         }
         let mut turns = Vec::new();
         for edge in self.store.port_edges(
@@ -71,8 +79,7 @@ impl Vault {
                 turns.push((learned_at, id));
             }
         }
-        turns.sort_by(|left, right| right.cmp(left));
-        Ok(turns.into_iter().map(|(_, id)| id).collect())
+        Ok(PreviewTurns::Learned(turns))
     }
 
     /// The MESSAGE rows that are part of `turn`.
@@ -128,6 +135,15 @@ impl Vault {
         let body = resolved.as_slice();
         Ok(turn_text(body))
     }
+}
+
+/// The turns a preview looks at, and the order it prefers them in.
+pub(crate) enum PreviewTurns {
+    /// The selected path from its HEAD back, the order preferred.
+    Path(Vec<EntityId>),
+    /// The live ChildOf turns in index order, each with its learned time; the
+    /// latest learned is preferred.
+    Learned(Vec<(u64, EntityId)>),
 }
 
 /// The latest visible message of one turn, kept as its messages are offered
