@@ -10,7 +10,9 @@
 use super::slip_vault::require_host;
 use super::*;
 use crate::claim::HandoffKind;
-use crate::claim::history_projection::{PIN_PREFIX, trusted_machine_handoff, verified_handoff_chain};
+use crate::claim::history_projection::{
+    PIN_PREFIX, trusted_machine_handoff, verified_handoff_chain,
+};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::{EntityId, Vault};

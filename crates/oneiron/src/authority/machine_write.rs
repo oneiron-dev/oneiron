@@ -4,7 +4,7 @@
 //! its entity id and the genesis-bound vault id. The log fold, not a transport
 //! credential or a row in MACHINE, grants the signer authority.
 
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::Signature;
 use rmpv::Value;
 
 use crate::batch::EntityMetadataHeader;

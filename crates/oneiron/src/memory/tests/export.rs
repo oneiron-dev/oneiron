@@ -502,7 +502,9 @@ fn a_live_full_slip_without_the_owner_role_does_not_export_the_vault() {
             &issuer.public_key(),
             &slip,
             b"export-non-owner-test",
-            &issuer.binding_proof(&slip, b"export-non-owner-test").unwrap(),
+            &issuer
+                .binding_proof(&slip, b"export-non-owner-test")
+                .unwrap(),
         )
         .unwrap();
     assert!(proof.is_full_vault_owner_grade());

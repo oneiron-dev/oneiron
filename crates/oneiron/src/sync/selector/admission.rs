@@ -426,9 +426,12 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
             )))?,
     };
     let local = vault.authority_fold()?;
-    let local_vault_id = local.vault_id.ok_or(Error::Record(
-        RecordError::InvalidAuthorityLogBody("missing local authority root"),
-    ))?;
+    let local_vault_id =
+        local
+            .vault_id
+            .ok_or(Error::Record(RecordError::InvalidAuthorityLogBody(
+                "missing local authority root",
+            )))?;
     if entry_vault_id != local_vault_id {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "foreign authority log vault id",

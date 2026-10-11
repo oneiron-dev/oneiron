@@ -30,7 +30,10 @@ fn a_forged_signature_under_a_small_order_key_never_verifies() {
     };
     assert!(signature.public_key.validate().is_err());
     assert!(!verify_authority_signature(&signature, b"any transcript"));
-    assert!(!verify_authority_signature(&signature, b"another transcript"));
+    assert!(!verify_authority_signature(
+        &signature,
+        b"another transcript"
+    ));
 }
 
 #[test]
@@ -40,7 +43,13 @@ fn a_host_refuses_to_enroll_a_small_order_machine_key() {
     let machine = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };
     vault
-        .put_entity(&machine, crate::registry::ENTITY_TYPE_MACHINE, at, 1, b"machine")
+        .put_entity(
+            &machine,
+            crate::registry::ENTITY_TYPE_MACHINE,
+            at,
+            1,
+            b"machine",
+        )
         .unwrap();
     let issuer = HostSlipIssuer::from_secret(b"weak key host root").unwrap();
     vault.ensure_host_root_slip(&issuer).unwrap();

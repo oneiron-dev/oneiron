@@ -310,7 +310,8 @@ pub fn verify_lease_pop(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -
         return false;
     };
     let msg = lease_pop_transcript(client_id, pubkey);
-    key.verify_strict(&msg, &Signature::from_bytes(pop_sig)).is_ok()
+    key.verify_strict(&msg, &Signature::from_bytes(pop_sig))
+        .is_ok()
 }
 
 fn parse_hex_component(component: &str) -> Result<u64> {

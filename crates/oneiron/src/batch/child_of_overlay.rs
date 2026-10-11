@@ -648,7 +648,8 @@ pub(super) fn validate_immutable_task_record(
     // task's owner) are immutable: only an exact echo, local or replicated,
     // may land at their id. A same-type put can neither rewrite the fact's
     // owner nor replace the fact with an ordinary TASK body.
-    let immutable = |role: TaskRole| matches!(role, TaskRole::HabitCheckin | TaskRole::AuthorityFact);
+    let immutable =
+        |role: TaskRole| matches!(role, TaskRole::HabitCheckin | TaskRole::AuthorityFact);
     if !immutable(old_role) && !immutable(new_role) {
         return Ok(());
     }

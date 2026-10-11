@@ -75,7 +75,12 @@ pub(super) fn reject_retired_signer_forks(
         // ancestry had already retired stays with the handoff that did.
         let mut live = BTreeMap::<&AuthorityKey, bool>::new();
         for parent in &entries[handoff].parent_hashes {
-            for (key, device) in states.get(parent).map(|state| &state.roster).into_iter().flatten() {
+            for (key, device) in states
+                .get(parent)
+                .map(|state| &state.roster)
+                .into_iter()
+                .flatten()
+            {
                 *live.entry(key).or_insert(true) &= !device.revoked;
             }
         }
@@ -111,7 +116,8 @@ pub(super) fn reject_retired_signer_forks(
 
 /// The primary signer and every co-signer of `entry`.
 pub(super) fn entry_signer_keys(entry: &AuthorityLogEntry) -> impl Iterator<Item = &AuthorityKey> {
-    std::iter::once(&entry.signer.public_key).chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
+    std::iter::once(&entry.signer.public_key)
+        .chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
 }
 
 impl AuthorityFold {

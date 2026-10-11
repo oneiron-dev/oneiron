@@ -184,7 +184,10 @@ fn a_replica_reads_a_history_the_move_carried() {
     let old = crate::test_util::provision_engine_machines(&vault);
     let target = dreamer_writes(&vault, 0x58);
     let next = HostSlipIssuer::from_secret(b"successor self-host root").unwrap();
-    assert_eq!(vault.re_root_host(&old, &next).unwrap().histories_carried, 1);
+    assert_eq!(
+        vault.re_root_host(&old, &next).unwrap().histories_carried,
+        1
+    );
     assert!(readable(&vault, target));
 
     let replica_dir = tempfile::tempdir().unwrap();
@@ -195,7 +198,13 @@ fn a_replica_reads_a_history_the_move_carried() {
     let dreamer = vault.dreamer_authority().unwrap().entity_ref();
     let at = TimeRange { start: 1, end: 1 };
     replica
-        .put_entity(&dreamer, crate::registry::ENTITY_TYPE_MACHINE, at, 1, b"machine")
+        .put_entity(
+            &dreamer,
+            crate::registry::ENTITY_TYPE_MACHINE,
+            at,
+            1,
+            b"machine",
+        )
         .unwrap();
     let txn = vault.store.env.read_txn().unwrap();
     let controls =
