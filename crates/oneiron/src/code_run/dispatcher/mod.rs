@@ -136,14 +136,18 @@ impl<'a> HostSelfDispatcher<'a> {
     /// # Errors
     ///
     /// Propagates the session's own typed refusals when the room is closing
-    /// or gone, plus [`crate::Error::InvalidClaimBody`] for a blank
-    /// `run_ref`.
+    /// or gone, or `actor` is not in the stretch's room, plus
+    /// [`crate::Error::InvalidClaimBody`] for a blank `run_ref`.
     pub fn for_off_record_session(
         session: &'a OffRecordSession<'a>,
         actor: WriteActor,
         run_ref: impl Into<String>,
     ) -> Result<Self> {
-        Self::bound(ExecutorStorage::for_session(session)?, actor, run_ref)
+        Self::bound(
+            ExecutorStorage::for_session(session, actor.entity_ref())?,
+            actor,
+            run_ref,
+        )
     }
 
     fn bound(
@@ -214,6 +218,12 @@ impl<'a> HostSelfDispatcher<'a> {
     /// Identity of the vault this dispatcher writes into.
     pub(crate) fn vault_id(&self) -> VaultId {
         self.storage.vault_id()
+    }
+
+    /// The participant a session-bound dispatcher acts as, or `None` for a
+    /// canonical run.
+    pub(crate) fn participant(&self) -> Option<EntityId> {
+        self.storage.participant()
     }
 
     /// The session-owned conversation container for K-EXEC turns, created by

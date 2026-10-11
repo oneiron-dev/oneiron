@@ -203,25 +203,28 @@ impl Memory<'_> {
         )
     }
 
-    /// Host-bound variant for executor speech. `host_turn_ref` is derived from
-    /// the run identity behind a crate-private capability; it is deliberately a
+    /// Executor speech: a bound run's turn. `admit` is the run's own check,
+    /// run in the transaction that lands the turn, so a refusal there keeps
+    /// nothing of it. `host_turn_ref`, when present, is derived from the run
+    /// identity behind a crate-private capability; it is deliberately a
     /// separate parameter from guest [`WitnessTurn::turn_ref`], so preserving a
     /// deterministic retry target cannot weaken the guest `Some(turn_ref)`
     /// refusal on [`crate::off_record::OffRecordSession::witness_executor_turn`].
-    pub(crate) fn witness_into_session_with_host_turn(
+    pub(crate) fn witness_into_session_for_run(
         &self,
         session: &OffRecordSession<'_>,
         turn: &WitnessTurn,
         summary: Option<&str>,
-        host_turn_ref: EntityId,
+        host_turn_ref: Option<EntityId>,
+        admit: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
             WitnessTarget::Session { session, summary },
-            WitnessDoor::HostTurn(host_turn_ref),
+            host_turn_ref.map_or(WitnessDoor::Guest, WitnessDoor::HostTurn),
             || {},
             |_| Ok(()),
-            |_| Ok(()),
+            admit,
         )
     }
 

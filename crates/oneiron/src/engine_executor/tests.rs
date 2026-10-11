@@ -1286,7 +1286,7 @@ const mustNotRun = true;
         0,
         "refusal must not increment the durable base contribution"
     );
-    let session_storage = ExecutorStorage::for_session(&session).expect("session storage");
+    let session_storage = ExecutorStorage::for_session(&session, actor).expect("session storage");
     assert_eq!(
         session_storage
             .code_run_model_heal_count(&model())
@@ -1766,7 +1766,7 @@ fn trailing_implicit_speech_is_checkpoint_bound_across_conflict_and_retry() {
     );
     assert_eq!(
         load_utf8_output(
-            &ExecutorStorage::for_session(&session).expect("session storage"),
+            &ExecutorStorage::for_session(&session, actor).expect("session storage"),
             &record,
             &implicit_speak_output_path(1),
         )
@@ -1897,7 +1897,7 @@ fn terminal_retry_recovers_post_commit_implicit_speech_without_duplicates() {
         .expect("terminal replay committed before emit failure");
     assert!(matches!(
         load_terminal_status(
-            &ExecutorStorage::for_session(&session).expect("storage"),
+            &ExecutorStorage::for_session(&session, actor).expect("storage"),
             &stored,
         )
         .expect("terminal marker"),

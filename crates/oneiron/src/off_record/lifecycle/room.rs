@@ -83,11 +83,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
             self.vault.config.off_record_overlay_budget_bytes,
             Some((room, by)),
         )?;
-        Ok(OffRecordSession {
-            vault: self.vault,
-            session_ref: key,
-            entry,
-        })
+        Ok(self.handle(key, entry))
     }
 
     /// Binds the stretch `session_ref` in `room` for `actor`, who must be on
@@ -758,7 +754,7 @@ pub(super) fn is_member_in_txn(
     Ok(vault.members_in_txn(txn, room)?.contains(&actor))
 }
 
-fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
+pub(super) fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
     Error::OffRecord(OffRecordError::OffRecordNotInRoom {
         session_ref: session_ref.to_owned(),
         actor_ref: actor.to_hex(),

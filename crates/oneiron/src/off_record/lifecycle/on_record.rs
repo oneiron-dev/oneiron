@@ -76,9 +76,11 @@ impl Drop for SaverCheck<'_, '_> {
 }
 
 /// A base write's first step in its transaction: the route it was taken on
-/// still stands and, in a room on record, its saver still holds.
+/// still stands, in a room on record its saver still holds, and a run's
+/// write comes from a participant still in the room.
 pub(super) struct Landing<'r, 's, 'vault> {
     pub(super) route: &'r SessionWriteRoute,
+    session: &'s OffRecordSession<'vault>,
     saver: Option<SaverCheck<'s, 'vault>>,
 }
 
@@ -87,9 +89,17 @@ impl Landing<'_, '_, '_> {
         if let Some(saver) = &self.saver {
             saver.in_txn(txn)?;
         }
+        self.session.participant_in_txn(txn)?;
         // The route is checked again here, not only before the writer: a
         // room that went off record, or whose saving stopped, while this
         // write waited for the writer keeps nothing of it.
+        self.route.revalidate()
+    }
+
+    /// An overlay write's first step in its transaction: the route still
+    /// stands and a run's write comes from a participant still in the room.
+    pub(super) fn in_overlay_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        self.session.participant_in_txn(txn)?;
         self.route.revalidate()
     }
 }
@@ -190,6 +200,7 @@ impl<'vault> OffRecordSession<'vault> {
     ) -> Result<Landing<'r, '_, 'vault>> {
         Ok(Landing {
             route,
+            session: self,
             saver: self.saver_check_for(route)?,
         })
     }
@@ -256,7 +267,8 @@ impl<'vault> OffRecordSession<'vault> {
     }
 
     /// One write transaction for this stretch, in which `check` runs before
-    /// `write`: a room on record writes into base only while its saver holds.
+    /// `write`: a room on record writes into base only while its saver holds,
+    /// and a run's handle writes only while its participant is in the room.
     pub(crate) fn with_saver_write_txn<T>(
         &self,
         check: Option<SaverCheck<'_, '_>>,
@@ -266,6 +278,7 @@ impl<'vault> OffRecordSession<'vault> {
             if let Some(check) = &check {
                 check.in_txn(wtxn)?;
             }
+            self.participant_in_txn(wtxn)?;
             write(wtxn)
         })
     }

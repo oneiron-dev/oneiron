@@ -29,8 +29,12 @@ use crate::Error;
 /// RUN ENTRY and never re-minted (owner ruling R-20260807-02 rider 2). Route
 /// and handle live in the same value because "one route per run" has to be a
 /// type fact: a per-dispatch mint is not something this shape can express.
+///
+/// The handle is the run's own, bound to the participant the run acts as:
+/// every transaction it reads or writes the stretch in checks they are still
+/// in its room (Codex burn engine-prs-01).
 pub(crate) struct SessionBinding<'a> {
-    pub(crate) session: &'a OffRecordSession<'a>,
+    pub(crate) session: OffRecordSession<'a>,
     pub(crate) route: SessionWriteRoute,
     pub(crate) container: EntityId,
 }
@@ -56,6 +60,11 @@ impl SessionBinding<'_> {
         turn_id: EntityId,
         actor: WriteActor,
     ) -> Result<WitnessReceipt> {
+        if self.session.participant() != Some(actor.entity_ref()) {
+            return Err(crate::Error::InvalidConfig(
+                "executor storage/dispatcher binding mismatch".to_owned(),
+            ));
+        }
         self.session.witness_host_executor_turn(
             &self.container,
             kind,
@@ -193,8 +202,13 @@ pub(crate) enum ExecutorStorage<'a> {
 }
 
 impl<'a> ExecutorStorage<'a> {
-    /// Binds a run to a live session, capturing its route and shell ONCE.
-    pub(crate) fn for_session(session: &'a OffRecordSession<'a>) -> Result<Self> {
+    /// Binds a run acting as `participant` to a live session, capturing its
+    /// route and shell ONCE. In a room `participant` must be on its roster.
+    pub(crate) fn for_session(
+        session: &OffRecordSession<'a>,
+        participant: EntityId,
+    ) -> Result<Self> {
+        let session = session.for_participant(participant)?;
         let route = session.write_route()?;
         let container = session.routed_conversation_shell(&route)?;
         Ok(Self::Session(SessionBinding {
@@ -208,6 +222,15 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(_) => None,
             Self::Session(binding) => Some(binding.session.session_ref()),
+        }
+    }
+
+    /// The participant a session-bound run acts as; `None` for a canonical
+    /// run.
+    pub(crate) fn participant(&self) -> Option<EntityId> {
+        match self {
+            Self::Canonical(_) => None,
+            Self::Session(binding) => binding.session.participant(),
         }
     }
 
