@@ -332,6 +332,7 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
         .integrate_with_coverage(
             &vault,
             actor,
+            crate::compaction::EpochPlacement::default(),
             crate::compaction::GatedCompaction::ungated_for_test(&request, product.clone()),
             &[],
             &span.fail_after_write_for_test(),
@@ -353,6 +354,7 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
         .integrate_with_coverage(
             &vault,
             actor,
+            crate::compaction::EpochPlacement::default(),
             crate::compaction::GatedCompaction::ungated_for_test(&request, product.clone()),
             &[],
             &span.wrong_range_for_test(),
@@ -373,6 +375,7 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
         .integrate_with_coverage(
             &vault,
             actor,
+            crate::compaction::EpochPlacement::default(),
             crate::compaction::GatedCompaction::ungated_for_test(&request, product.clone()),
             &[],
             &wrong,
@@ -384,6 +387,7 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
     let plan = driver.integrate_with_coverage(
         &vault,
         actor,
+        crate::compaction::EpochPlacement::default(),
         crate::compaction::GatedCompaction::ungated_for_test(&request, product),
         &[],
         &span,

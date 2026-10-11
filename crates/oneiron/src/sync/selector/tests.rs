@@ -4773,3 +4773,124 @@ fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() ->
     );
     Ok(())
 }
+
+/// Astra #1384 P1-2: an epoch summary leaves only with every record it was
+/// written from. A run read a CLAIM in private world W and summarized it: a
+/// peer whose grant takes base-world SUMMARY rows but not W gets neither the
+/// summary nor its words, and no source is sent along. A summary of base
+/// records still leaves. The scoped record export door judges the same way.
+#[test]
+fn an_epoch_summary_leaves_only_with_every_record_it_was_written_from() -> crate::Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5e);
+    let person = entity_id(0x62);
+    let (claim, private, plain) = (entity_id(0x63), entity_id(0x64), entity_id(0x65));
+    let base_key = WindowKey::new("2026-03");
+    let at = base_key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.private_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the private world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    let epoch = |epoch: u64, text: &str| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: entity_id(0x66).to_hex(),
+            epoch,
+            turn_start: epoch * 3,
+            turn_end: epoch * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: text.into(),
+            actor: entity_id(0x67).to_hex(),
+        })
+    };
+    vault
+        .batch()
+        .put(
+            &private,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(1, "the run learned the private world fact")?,
+        )
+        .edge(&private, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &plain,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(2, "the run met the person")?,
+        )
+        .edge(&plain, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    let base_doc = create_window_doc("source", &base_key);
+    crate::sync::window::reverse_rematerialize(&vault, &base_doc, &base_key)?;
+    let sent = |world_axis| -> crate::Result<Vec<EntityId>> {
+        let selector = SyncSelector::new(grant_id, member, world_axis, vec![], vec![]);
+        let filtered = filtered_window_doc(
+            &vault,
+            &base_doc,
+            &base_key,
+            test_selector_scope(),
+            &selector,
+        )?;
+        Ok(import_ids(
+            &filtered.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let base = sent(SyncSelectorWorld::Base)?;
+    assert!(base.contains(&person) && base.contains(&plain));
+    assert!(!base.contains(&private), "the summary stays with its CLAIM");
+    assert!(!base.contains(&claim), "no source is sent along");
+    let all = sent(SyncSelectorWorld::All)?;
+    assert!(
+        all.contains(&private),
+        "a peer that receives the CLAIM receives its summary"
+    );
+
+    let mut base_only = Scope::top();
+    base_only.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(
+        crate::claim::base_world_id(),
+    )]));
+    let top = Scope::top();
+    let exported = vault
+        .export_records_in_scope(&base_only, &top, &top)?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<Vec<_>>();
+    assert!(exported.contains(&plain));
+    assert!(!exported.contains(&private) && !exported.contains(&claim));
+    let read = vault
+        .records_in_scope(
+            &base_only,
+            &top,
+            &top,
+            crate::federation::record_scope::ScopeView::Normal,
+        )?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<Vec<_>>();
+    assert!(read.contains(&plain) && !read.contains(&private));
+    Ok(())
+}

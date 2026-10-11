@@ -241,6 +241,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         let active = Arc::clone(&self.active);
         let seats = Arc::clone(&self.seats);
         let write_actor = request.actor.write_actor();
+        let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
         let verbs = Arc::clone(&request.verbs);
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
@@ -266,6 +267,10 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
                 .take(run_id)
                 .or_else(|| provider.compaction(write_actor));
+            if let Some(seat) = seat.as_mut() {
+                // Its summaries are born where the run's credential writes.
+                seat.place(placement.0, placement.1);
+            }
             let (sender, receiver) = tokio::sync::oneshot::channel();
             // The engine REPL driver holds `&mut dyn JsCodeModeRuntime` across
             // its own awaits, so its future is deliberately not `Send`. It runs

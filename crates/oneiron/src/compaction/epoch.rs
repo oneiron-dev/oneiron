@@ -231,10 +231,10 @@ pub fn decode_epoch_summary_body(bytes: &[u8]) -> Result<EpochSummaryBody> {
 /// Walks every record an epoch summary's words came from: its `DerivedFrom`
 /// targets, and theirs through any nested epoch summary, each record once.
 ///
-/// A summary's own birth scope is generic and cannot stand for what it was
-/// written from, so a reader that is not the owner takes an epoch summary
-/// only while `admit` takes each record reached here (nested summaries
-/// included). The walk refuses as soon as one is refused or a source no
+/// A summary's own birth scope is its run's position and cannot stand for
+/// what it was written from, so a reader that is not the owner takes an
+/// epoch summary only while `admit` takes each record reached here (nested
+/// summaries included). The walk refuses as soon as one is refused or a source no
 /// longer resolves. `Ok(None)` when `body` is not an epoch summary.
 pub(crate) fn epoch_sources_admitted_in(
     dbs: &impl ManifestDbs,
@@ -274,6 +274,63 @@ pub(crate) fn epoch_sources_admitted_in(
         }
     }
     Ok(Some(true))
+}
+
+/// Where a run's epoch summary is born: the run credential's world and
+/// facet, as the run's other records are. `None` is a vault-wide run's:
+/// base reality, and the vault's default facet (ARCH-0022: with no active
+/// mask, the vault's default facet stamps a record).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct EpochPlacement {
+    pub(crate) world: Option<EntityId>,
+    pub(crate) facet: Option<EntityId>,
+}
+
+impl EpochPlacement {
+    /// Settles the minted summary's birth stamp in its mint transaction.
+    pub(crate) fn settle_in(
+        self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        summary: EntityId,
+    ) -> Result<()> {
+        let world = self.world.unwrap_or_else(crate::claim::base_world_id);
+        let facet = match self.facet {
+            Some(facet) => facet,
+            None => crate::claim::default_facet_in(store, txn)?,
+        };
+        crate::federation::record_scope::settle_epoch_birth(store, txn, summary, world, facet)
+    }
+}
+
+/// Whether row `id` may leave through an export door, as the epoch fence
+/// judges it: an epoch summary leaves only while it is not withdrawn and the
+/// door would carry every record its words came from, through nested epochs
+/// (`carries` judges one source's row; an erased or withdrawn source carries
+/// nothing). The fence never exports those sources along with it. Every
+/// other row passes.
+pub(crate) fn epoch_exportable_in(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+    mut carries: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
+) -> Result<bool> {
+    if entity_type != ENTITY_TYPE_SUMMARY {
+        return Ok(true);
+    }
+    let withdrawn = |id: &EntityId| -> Result<bool> {
+        let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
+        Ok(state.deleted || state.stale)
+    };
+    match epoch_sources_admitted_in(store, rtxn, id, body, |source, row| {
+        Ok(!withdrawn(source)? && carries(source, row)?)
+    })? {
+        None => Ok(true),
+        Some(false) => Ok(false),
+        Some(true) => Ok(!withdrawn(id)?),
+    }
 }
 
 /// A 32-hex entity ref, validated as one rather than accepted as any string.

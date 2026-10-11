@@ -46,7 +46,7 @@ pub use self::replay::{
 pub use self::storage::CodeRunModelHealCount;
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
-    executor_speech_turn_id_for_run,
+    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
 };
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way

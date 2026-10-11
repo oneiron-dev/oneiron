@@ -200,3 +200,13 @@ pub(crate) fn executor_compaction_session_id(run_ref: &str, run_id: EntityId) ->
 pub(crate) fn executor_speech_turn_id_for_run(run_ref: &str, run_id: EntityId) -> Result<EntityId> {
     executor_speech_turn_id(run_ref, Some(run_id))
 }
+
+/// The MESSAGE id a canonical durable run's speech takes at bridge position
+/// `order`, whether or not it spoke there.
+pub(crate) fn executor_speech_message_id_in_run(
+    run_ref: &str,
+    run_id: EntityId,
+    order: u32,
+) -> Result<EntityId> {
+    executor_speech_message_id_for_run(run_ref, Some(run_id), order)
+}

@@ -14,5 +14,6 @@ pub(in crate::code_run) use self::speech_identity::derived_executor_id;
 #[cfg(test)]
 pub(crate) use self::speech_identity::executor_speech_message_id;
 pub(crate) use self::speech_identity::{
-    executor_compaction_session_id, executor_speech_turn_id_for_run,
+    executor_compaction_session_id, executor_speech_message_id_in_run,
+    executor_speech_turn_id_for_run,
 };

@@ -18,7 +18,7 @@ use crate::compaction::{
     CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionWatermark, CompactionWindowMessage,
-    GatedCompaction, gate_compaction,
+    EpochPlacement, GatedCompaction, gate_compaction,
 };
 use crate::entity_id::EntityId;
 use crate::tokenizer::count_context_pack_tokens;
@@ -46,6 +46,7 @@ struct LiveSeat {
     driver: CompactionDriver,
     policy: CompactionGatePolicy,
     byline: WriteActor,
+    placement: EpochPlacement,
     hot_steps: u64,
     spawn: Arc<dyn CompactionSpawn>,
     flight: Option<Receiver<PassOutcome>>,
@@ -123,6 +124,7 @@ impl RunCompaction {
                 driver,
                 policy,
                 byline,
+                placement: EpochPlacement::default(),
                 hot_steps,
                 spawn,
                 flight: None,
@@ -136,6 +138,15 @@ impl RunCompaction {
     #[must_use]
     pub const fn report(&self) -> &CompactionReport {
         &self.report
+    }
+
+    /// The run credential's world and facet: its epoch summaries are born
+    /// there, as its other records are. `None` (a vault-wide run) is base
+    /// reality and the vault's default facet.
+    pub fn place(&mut self, world: Option<EntityId>, facet: Option<EntityId>) {
+        if let Seat::Live(seat) = &mut self.seat {
+            seat.placement = EpochPlacement { world, facet };
+        }
     }
 
     /// A new `run` call is a new turn: a turn-scoped hold ends. A run with
@@ -205,10 +216,12 @@ impl RunCompaction {
         self.report.suppressed = None;
     }
 
-    /// The live driver and byline, for the swap.
-    pub(super) fn driver_and_byline(&mut self) -> Option<(&mut CompactionDriver, WriteActor)> {
+    /// The live driver, byline and placement, for the swap.
+    pub(super) fn swap_seat(
+        &mut self,
+    ) -> Option<(&mut CompactionDriver, WriteActor, EpochPlacement)> {
         match &mut self.seat {
-            Seat::Live(seat) => Some((&mut seat.driver, seat.byline)),
+            Seat::Live(seat) => Some((&mut seat.driver, seat.byline, seat.placement)),
             Seat::Off => None,
         }
     }
@@ -351,16 +364,20 @@ pub(super) fn window_message(
     }
 }
 
-/// Every entity a run's calls returned so far: a superset of what any step
-/// could have printed, because the guest keeps state across steps and no
-/// step boundary is stored with its calls. A deleted record's shell stays a
-/// source, so a summary written after the deletion is born withdrawn; a
-/// purged one leaves nothing to derive from, so the window is refused.
+/// Every record whose words can reach a sealed window: each entity a run's
+/// calls returned so far, and `host`, the records the host itself put into
+/// the run's words (its speech, the epochs its requests rendered). A
+/// superset of what any step could have printed, because the guest keeps
+/// state across steps and no step boundary is stored with its calls. An id
+/// that never existed is no source. A deleted record's shell stays a source,
+/// so a summary written after the deletion is born withdrawn; a purged one
+/// leaves nothing to derive from, so the window is refused.
 pub(super) fn served_sources(
     vault: &crate::Vault,
     record: &CodeRunReplayRecord,
+    host: impl IntoIterator<Item = EntityId>,
 ) -> crate::Result<Vec<EntityId>> {
-    let mut found = std::collections::BTreeSet::new();
+    let mut found: std::collections::BTreeSet<EntityId> = host.into_iter().collect();
     for call in &record.bridge_calls {
         collect_ids(&call.outcome, &mut found);
     }
@@ -449,22 +466,25 @@ pub(super) const FAILED_STEP_PREFIXES: [&str; 3] = [
     "Runtime output recording failed after host bridge calls: ",
 ];
 
-/// Longest pin, in bytes: a failure's first line, cut at a char boundary.
-const PIN_MAX_BYTES: usize = 240;
-
-/// A failed step's first console line, verbatim from `content`: failures
-/// are never compacted away (agent-runtime-v1 §d7).
+/// A failed step's first console line, whole and verbatim from `content`:
+/// failures are never compacted away (agent-runtime-v1 §d7). A pin is never
+/// shortened; a window whose pins do not fit the summary is cut instead.
 pub(super) fn failure_pin(content: &str) -> Option<String> {
-    let line = content.lines().find(|line| {
-        FAILED_STEP_PREFIXES
-            .iter()
-            .any(|prefix| line.starts_with(prefix))
-    })?;
-    let mut end = line.len().min(PIN_MAX_BYTES);
-    while !line.is_char_boundary(end) {
-        end -= 1;
-    }
-    Some(line[..end].to_owned())
+    content
+        .lines()
+        .find(|line| {
+            FAILED_STEP_PREFIXES
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+        })
+        .map(str::to_owned)
+}
+
+/// Bridge positions a run's speech can take: every call's position (an
+/// explicit utterance takes its own) and the next one, where the trailing
+/// fallback speaks.
+pub(super) fn speech_orders(record: &CodeRunReplayRecord) -> std::ops::RangeInclusive<u32> {
+    0..=u32::try_from(record.bridge_calls.len()).unwrap_or(u32::MAX)
 }
 
 /// Frame marks a summary may not forge: the record marks and this frame.

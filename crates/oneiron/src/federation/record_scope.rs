@@ -180,7 +180,7 @@ pub(crate) fn stamp_put(
         if prior.version != 2
             || prior.kind != kind
             || prior.birth_facet != *facet.as_bytes()
-            || (prior.scope != scope && !leader_settled(kind, &prior.scope, &scope))
+            || (prior.scope != scope && !settled_at_birth(kind, &prior.scope, &scope))
         {
             return Err(Error::InvalidClaimBody("record scope restamp refused"));
         }
@@ -205,16 +205,68 @@ pub(crate) fn stamp_put(
     Ok(())
 }
 /// A TURN/MESSAGE body never proposes an audience: only
-/// `stamp_leader_project` settles a non-default one, at the record's birth. A
-/// later content put recomputes the default and keeps that settled position.
-fn leader_settled(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
-    matches!(
-        kind,
-        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
-    ) && Scope {
-        audience: proposed.audience.clone(),
-        ..prior.clone()
-    } == *proposed
+/// `stamp_leader_project` settles a non-default one, at the record's birth.
+/// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
+/// settles them. A later content put recomputes the default and keeps that
+/// settled position.
+fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
+    match kind {
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
+            Scope {
+                audience: proposed.audience.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
+        crate::registry::ENTITY_TYPE_SUMMARY => {
+            Scope {
+                worlds: proposed.worlds.clone(),
+                facets: proposed.facets.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
+        _ => false,
+    }
+}
+/// Settles an epoch SUMMARY's birth position in its mint transaction: born
+/// in `world` under `facet`, where its run's records are born, never the
+/// generic SUMMARY position. Only the default stamp `stamp_put` just wrote
+/// may be settled; its structural anchor and every other axis stay.
+pub(crate) fn settle_epoch_birth(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    world: EntityId,
+    facet: EntityId,
+) -> Result<()> {
+    let kind = crate::registry::ENTITY_TYPE_SUMMARY;
+    let anchor = crate::claim::substrate_facet_id(id)?;
+    let birth = default_stamp(kind, anchor);
+    let prior = SCOPE_RECORD
+        .get(store, txn, &id)?
+        .ok_or(Error::InvalidClaimBody("unstamped epoch summary"))?;
+    if prior.version != 2
+        || prior.kind != kind
+        || prior.birth_facet != *anchor.as_bytes()
+        || prior.scope != birth
+    {
+        return Err(Error::InvalidClaimBody("record scope restamp refused"));
+    }
+    let mut scope = birth;
+    scope.worlds = singleton(ScopeId(world));
+    scope.facets = singleton(ScopeId(facet));
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *anchor.as_bytes(),
+            scope,
+        },
+    )?;
+    Ok(())
 }
 /// Restamp a locally authenticated leader-chat TURN/MESSAGE at the ordinary
 /// record-position scope door, after the typed write's full batch succeeds.
@@ -541,7 +593,8 @@ impl Vault {
             let allowed = scope
                 .as_ref()
                 .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
-                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?;
+                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
+                && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "read")?;
             if allowed || view == ScopeView::Debug {
                 out.push(ScopedRecord {
                     id,
@@ -574,6 +627,7 @@ impl Vault {
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )? && admits(&scope, selector, slip, channel, "export")
                 && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
+                && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "export")?
             {
                 out.push(ScopedRecord {
                     id,
@@ -584,6 +638,37 @@ impl Vault {
             }
         }
         Ok(out)
+    }
+    /// The epoch fence at a scoped door: an epoch summary passes only while
+    /// this door, under `door` (selector, slip, channel) and `verb`, passes
+    /// every record its words came from.
+    fn epoch_fence_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        [selector, slip, channel]: [&Scope; 3],
+        verb: &str,
+    ) -> Result<bool> {
+        let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
+        crate::compaction::epoch_exportable_in(
+            &self.store,
+            txn,
+            &id,
+            h.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            |source, row| {
+                Ok(disclosure_scope_for_stored_row(
+                    &self.store,
+                    txn,
+                    *source,
+                    row.entity_type,
+                    &row.body,
+                )?
+                .is_some_and(|scope| admits(&scope, selector, slip, channel, verb))
+                    && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
+            },
+        )
     }
     /// Selection and delete share one write transaction; no row can change between them.
     pub fn delete_records_in_scope(

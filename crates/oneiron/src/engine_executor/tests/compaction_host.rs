@@ -8,17 +8,16 @@ use std::time::Duration;
 
 use super::*;
 use crate::agent_def::{CompactionOwnership, MemoryProfile};
-use crate::code_run::SelfMemorySearchCall;
+use crate::code_run::{SelfMemorySearchCall, SelfSpeechCall};
 use crate::compaction::output::OutputDecayPolicy;
 use crate::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
     CompactionGatePolicy, CompactionProduct, CompactionRefusal, CompactionRequest,
     CompactionSuppression, CompactionTierClass,
 };
-use crate::registry::ENTITY_TYPE_SUMMARY;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
 
 const RUN_REF: &str = "run-compaction-host";
-const FAILED_LINE: &str = "Host bridge call failed: fixture quota exceeded";
 const SUMMARY_FACT: &str = "the project status is green";
 const NOTE_WORD: &str = "fixturenote";
 
@@ -100,9 +99,24 @@ impl CompactionBackend for CompactorSeat {
     }
 }
 
+/// Step 1's failure line: 376 bytes, its diagnostic at the end, past where
+/// a pin cut at 240 bytes would stop.
+fn failed_line() -> String {
+    let dirs = (0..66)
+        .map(|index| format!("d{index:02}"))
+        .collect::<Vec<_>>()
+        .join("/");
+    let line = format!(
+        "Host bridge call failed: fixture quota exceeded while writing /srv/fixtures/{dirs}: \
+         the last diagnostic names the quota"
+    );
+    assert_eq!(line.len(), 376);
+    line
+}
+
 fn console(seq: usize) -> String {
     let lead = if seq == 1 {
-        FAILED_LINE.to_owned()
+        failed_line()
     } else {
         format!("console-marker-{seq}")
     };
@@ -118,6 +132,12 @@ fn no_decay() -> OutputDecayPolicy {
         overview_after_turns: u64::MAX,
         stub_after_turns: u64::MAX,
     }
+}
+
+fn one(id: EntityId) -> crate::federation::ScopeAxis<crate::federation::ScopeId> {
+    crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        crate::federation::ScopeId(id),
+    ]))
 }
 
 fn transcript(request: &LlmRequest) -> String {
@@ -230,6 +250,18 @@ impl LongRun {
         soft_steps: u32,
         hard_steps: u32,
     ) -> (EngineExecutorOutcome, Vec<String>) {
+        self.call_with(seat, steps, soft_steps, hard_steps, Vec::new())
+    }
+
+    /// [`Self::call`], each of its first steps making `calls`.
+    fn call_with(
+        &self,
+        seat: &mut RunCompaction,
+        steps: std::ops::Range<usize>,
+        soft_steps: u32,
+        hard_steps: u32,
+        calls: Vec<Vec<SelfCall>>,
+    ) -> (EngineExecutorOutcome, Vec<String>) {
         let gated_write = GatedActorWrite::new(
             &self.vault,
             WriteActor::new(entity(0xA0), EdgeActorClass::Agent),
@@ -244,7 +276,8 @@ impl LongRun {
             } else {
                 JsCodeModeStepOutcome::pending(console(seq))
             }
-        }));
+        }))
+        .with_calls(calls);
         let config = executor_config(
             self.run_id,
             EngineExecutorLimits {
@@ -319,8 +352,8 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
     assert!(swapped.contains("<compacted epoch=\"1\" steps=\"0-2\">"));
     assert!(swapped.contains(SUMMARY_FACT));
     assert!(
-        swapped.contains(FAILED_LINE),
-        "a failure is never compacted away"
+        swapped.contains(&failed_line()),
+        "a failure is never compacted away, nor cut"
     );
     for covered in ["console-marker-0", "console-marker-2"] {
         assert!(!swapped.contains(covered), "{covered} left the window");
@@ -351,6 +384,15 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
             .any(|edge| edge.kind == EdgeKind::DerivedFrom && edge.target == run.note),
         "the served note is a source"
     );
+    // A vault-wide run's summary is born where its other records are: base
+    // reality, the vault's default facet.
+    let born = run
+        .vault
+        .record_scope(&summary)
+        .expect("scope")
+        .expect("stamped");
+    assert_eq!(born.worlds, one(crate::claim::base_world_id()));
+    assert_eq!(born.facets, one(run.vault.default_facet().expect("facet")));
 
     // Erasing a record the summary was written from withdraws its words.
     assert!(run.vault.delete_entity(&run.note).expect("delete the note"));
@@ -396,6 +438,73 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
     );
 }
 
+/// An epoch holds words the host itself fed the run, not only what its calls
+/// returned: the epochs its requests rendered and the run's speech. Each is
+/// a source, so erasing one alone withdraws the epoch: S1 takes S2 with it,
+/// and the speech MESSAGE M takes every epoch whose window could quote it.
+#[test]
+fn an_epoch_goes_with_the_host_words_it_holds() {
+    for erased in ["the first epoch", "the speech message"] {
+        let run = LongRun::start(12);
+        let compactor = Arc::new(Compactor::default());
+        let compact_at = run.base_tokens + run.step_tokens * 7 / 2;
+        let mut seat = run.seat(compact_at, &compactor);
+        // Step 2 speaks; steps 0-2 become epoch 1 at step 5's boundary.
+        run.call_with(
+            &mut seat,
+            2..6,
+            4,
+            12,
+            vec![vec![SelfCall::Speak(SelfSpeechCall::new(
+                "fixture words said aloud",
+            ))]],
+        );
+        // Steps 3-5, written while epoch 1 was rendered, become epoch 2.
+        run.call(&mut seat, 6..8, 2, 12);
+        // The run stays open: a completed run also speaks its trailing line.
+        let (outcome, _) = run.call(&mut seat, 8..10, 2, 12);
+        assert_eq!(
+            outcome.status,
+            EngineExecutorStatus::Yielded { next_step_seq: 10 }
+        );
+        let epochs = run
+            .vault
+            .code_run_compaction_epochs(run.run_id)
+            .expect("epochs");
+        assert_eq!(
+            epochs
+                .iter()
+                .map(|(row, text)| (row.epoch(), text.is_some()))
+                .collect::<Vec<_>>(),
+            vec![(1, true), (2, true)],
+            "{erased}: both epochs are live"
+        );
+        let first = epochs[0].0.summary_id();
+        let messages = run
+            .vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("messages");
+        let [message] = messages.as_slice() else {
+            panic!("{erased}: one speech MESSAGE, got {messages:?}");
+        };
+        let target = if erased == "the first epoch" {
+            first
+        } else {
+            *message
+        };
+        assert!(run.vault.delete_entity(&target).expect("erase"), "{erased}");
+        let epochs = run
+            .vault
+            .code_run_compaction_epochs(run.run_id)
+            .expect("epochs");
+        assert_eq!(epochs.len(), 2, "{erased}: the steps stay covered");
+        assert!(
+            epochs.iter().all(|(_, text)| text.is_none()),
+            "{erased}: every epoch holding its words is withdrawn"
+        );
+    }
+}
+
 /// The compactor's input bounds what one pass seals, not the run's decayed
 /// request: a window longer than the backend takes whole compacts as the
 /// contiguous prefixes it can take, each its own epoch.
@@ -408,6 +517,9 @@ fn a_window_the_compactor_cannot_take_whole_compacts_in_prefixes() {
     });
     let compact_at = run.base_tokens + run.step_tokens * 7 / 2;
     let mut seat = run.seat(compact_at, &compactor);
+    // A narrowed run's summaries are born in its world and facet.
+    let (world, facet) = (entity(0xB1), entity(0xB2));
+    seat.place(Some(world), Some(facet));
     let (outcome, _) = run.call(&mut seat, 2..8, 6, 10);
     assert_eq!(
         outcome.status,
@@ -426,6 +538,18 @@ fn a_window_the_compactor_cannot_take_whole_compacts_in_prefixes() {
     for (index, span) in spans.iter().enumerate() {
         let step = index as u64;
         assert_eq!(*span, (step + 1, step, step), "one step per pass");
+    }
+    for row in run
+        .vault
+        .code_run_compaction_coverage(run.run_id)
+        .expect("coverage")
+    {
+        let born = run
+            .vault
+            .record_scope(&row.summary_id())
+            .expect("scope")
+            .expect("stamped");
+        assert_eq!((born.worlds, born.facets), (one(world), one(facet)));
     }
 }
 
@@ -478,7 +602,7 @@ fn each_failed_check_stops_the_swap_and_leaves_the_run_whole() {
                 );
             }
         }
-        assert!(last.contains(FAILED_LINE));
+        assert!(last.contains(&failed_line()));
     }
 }
 

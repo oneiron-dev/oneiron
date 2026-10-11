@@ -163,6 +163,29 @@ impl<'a> EngineNativeExecutor<'a> {
         gated: crate::compaction::GatedCompaction,
         accumulated: &[crate::compaction::CompactionWindowMessage],
     ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
+        let placement = crate::compaction::EpochPlacement::default();
+        self.integrate_in(driver, byline, placement, gated, accumulated)
+    }
+
+    /// The run seat's swap: its summary is born at the run's `placement`.
+    pub(super) fn integrate_placed(
+        &mut self,
+        driver: &mut crate::compaction::CompactionDriver,
+        byline: crate::WriteActor,
+        placement: crate::compaction::EpochPlacement,
+        gated: crate::compaction::GatedCompaction,
+    ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
+        self.integrate_in(driver, byline, placement, gated, &[])
+    }
+
+    fn integrate_in(
+        &mut self,
+        driver: &mut crate::compaction::CompactionDriver,
+        byline: crate::WriteActor,
+        placement: crate::compaction::EpochPlacement,
+        gated: crate::compaction::GatedCompaction,
+        accumulated: &[crate::compaction::CompactionWindowMessage],
+    ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
         self.verify_storage_dispatcher_binding()?;
         let run_id = self.output_run.ok_or(crate::Error::InvalidConfig(
             "executor output context has not assembled".into(),
@@ -192,7 +215,8 @@ impl<'a> EngineNativeExecutor<'a> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             unreachable!("canonical storage checked before sync")
         };
-        let plan = driver.integrate_with_coverage(vault, byline, gated, accumulated, &span)?;
+        let plan =
+            driver.integrate_with_coverage(vault, byline, placement, gated, accumulated, &span)?;
         // This is only an in-memory cache; the next assembly re-derives it
         // from the typed row joined to the committed SUMMARY.
         let last = request

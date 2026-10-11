@@ -33,12 +33,14 @@ impl CompactionDriver {
         Ok(plan)
     }
 
-    /// Commit executor run/span coverage with the actual minted SUMMARY.
+    /// Commit executor run/span coverage with the actual minted SUMMARY,
+    /// born at the run's `placement` in the same transaction.
     /// Read-time views project this record; the driver advances only on commit.
     pub(crate) fn integrate_with_coverage(
         &mut self,
         vault: &Vault,
         byline: WriteActor,
+        placement: crate::compaction::EpochPlacement,
         gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
         span: &crate::code_run::ExecutorOutputSpan,
@@ -50,7 +52,10 @@ impl CompactionDriver {
             byline,
             gated,
             accumulated,
-            |txn, mint| vault.put_code_run_compaction_coverage_in_txn(txn, span, mint),
+            |txn, mint| {
+                vault.put_code_run_compaction_coverage_in_txn(txn, span, mint)?;
+                placement.settle_in(&vault.store, txn, mint.summary_id())
+            },
         )
     }
 

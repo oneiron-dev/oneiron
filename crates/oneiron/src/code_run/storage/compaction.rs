@@ -96,7 +96,6 @@ impl CodeRunCompactionCoverage {
         self.run_id == run_id && (self.first..=self.last).contains(&step)
     }
 
-    #[cfg(test)]
     pub(crate) fn summary_id(&self) -> EntityId {
         self.summary_id
     }

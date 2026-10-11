@@ -91,6 +91,7 @@ struct CodeModeFile {
     budget_units: Option<u64>,
     #[serde(default)]
     compaction: compaction::CompactionFile,
+    #[serde(default)]
     check: CodeCheckFile,
 }
 

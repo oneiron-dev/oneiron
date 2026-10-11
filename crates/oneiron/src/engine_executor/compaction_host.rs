@@ -7,6 +7,7 @@ use super::store::{load_utf8_output, observation_output_path, script_output_path
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::LlmRequest;
 use crate::code_run::CodeRunReplayRecord;
+use crate::tokenizer::count_context_pack_tokens;
 
 impl EngineNativeExecutor<'_> {
     /// Lands a finished background pass: an accepted summary swaps in as
@@ -29,12 +30,12 @@ impl EngineNativeExecutor<'_> {
                     .window
                     .last()
                     .map_or(first, |message| message.turn);
-                match seat.driver_and_byline() {
+                match seat.swap_seat() {
                     None => Ok(()),
                     // The tail is re-derived from typed coverage at the next
                     // assembly, so no host-side splice is carried here.
-                    Some((driver, byline)) => {
-                        match self.integrate_compaction(driver, byline, gated, &[]) {
+                    Some((driver, byline, placement)) => {
+                        match self.integrate_placed(driver, byline, placement, gated) {
                             Ok(plan) => {
                                 seat.swapped(plan.epoch, first, last);
                                 Ok(())
@@ -76,9 +77,10 @@ impl EngineNativeExecutor<'_> {
     }
 
     /// Steps from the first uncovered one through `watermark`, with their
-    /// failure pins and every record the run was served. A window longer
-    /// than the backend takes whole stops at the last step that fits; the
-    /// next crossing seals the rest.
+    /// failure pins and every record whose words reached them. A window
+    /// longer than the backend takes whole, or whose pins the summary could
+    /// not hold, stops at the last step that fits; the next crossing seals
+    /// the rest.
     fn seal_compaction_window(
         &self,
         driver: &mut crate::compaction::CompactionDriver,
@@ -93,22 +95,18 @@ impl EngineNativeExecutor<'_> {
         let run_ref = self.gated_write.run_ref();
         // The run's position is its coverage rows, withdrawn summaries
         // included: erasing a summary never moves where the next one starts.
-        let prior = vault
-            .code_run_compaction_coverage(run_id)?
-            .iter()
-            .map(|row| (row.epoch(), row.last()))
-            .max();
+        let coverage = vault.code_run_compaction_coverage(run_id)?;
+        let prior = coverage.iter().map(|row| (row.epoch(), row.last())).max();
         let start = prior.map_or(0, |(_, last)| last.saturating_add(1));
         if start > watermark {
             return Ok(None);
         }
         let session = crate::code_run::executor_compaction_session_id(run_ref, run_id)?;
         let turn_id = crate::code_run::executor_speech_turn_id_for_run(run_ref, run_id)?;
-        let limit = driver
-            .backend()
-            .window_token_limit(driver.summary_token_budget());
+        let budget = driver.summary_token_budget();
+        let limit = driver.backend().window_token_limit(budget);
         let mut window = Vec::new();
-        let mut pins = Vec::new();
+        let mut pins: Vec<String> = Vec::new();
         let mut sealed = 0_u64;
         for seq in start..=watermark {
             let message = super::compaction::window_message(
@@ -119,22 +117,40 @@ impl EngineNativeExecutor<'_> {
                 load_utf8_output(&self.storage, record, &observation_output_path(seq))?,
             );
             sealed = sealed.saturating_add(message.tokens);
-            if limit.is_some_and(|limit| sealed > limit) {
+            let pin = super::compaction::failure_pin(&message.content);
+            // The summary holds every pin whole, inside its budget.
+            let unpinnable = pin.is_some() && {
+                let held = pins.iter().chain(&pin).map(String::as_str);
+                count_context_pack_tokens(&held.collect::<Vec<_>>().join("\n")) as u64 > budget
+            };
+            if limit.is_some_and(|limit| sealed > limit) || unpinnable {
                 if window.is_empty() {
-                    return Err(crate::Error::InvalidConfig(
-                        "the compaction backend cannot take the next step's output whole".into(),
-                    )
+                    return Err(crate::Error::InvalidConfig(if unpinnable {
+                        "the next step's failure line does not fit a summary".into()
+                    } else {
+                        "the compaction backend cannot take the next step's output whole".into()
+                    })
                     .into());
                 }
                 break;
             }
-            pins.extend(super::compaction::failure_pin(&message.content));
+            pins.extend(pin);
             window.push(message);
         }
-        let mut sources = super::compaction::served_sources(vault, record)?;
-        if vault.entity_exists(&turn_id)? {
-            sources.push(turn_id);
+        // The host's own words: the run's speech, and every epoch its
+        // requests rendered (each prior epoch of the run).
+        let mut host = vec![turn_id];
+        for order in super::compaction::speech_orders(record) {
+            host.push(crate::code_run::executor_speech_message_id_in_run(
+                run_ref, run_id, order,
+            )?);
         }
+        host.extend(
+            coverage
+                .iter()
+                .map(crate::code_run::CodeRunCompactionCoverage::summary_id),
+        );
+        let sources = super::compaction::served_sources(vault, record, host)?;
         let prior = prior.map(|(epoch, last)| crate::compaction::PriorEpoch::new(epoch, last));
         Ok(Some(driver.request_for_log(
             vault, &session, window, pins, sources, prior,

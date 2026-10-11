@@ -321,6 +321,49 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
+/// The epoch fence at sync egress: an epoch summary's words leave only while
+/// this peer would receive every record they came from, each read from
+/// stored truth, since a source need not sit in this window. Never by
+/// sending those sources along.
+fn epoch_carried(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    (id, blob): (&EntityId, &[u8]),
+    selector: &SyncSelector,
+    admission: Option<&super::document_admission::DocumentGrant>,
+) -> Result<bool> {
+    let Some(header) = EntityMetadataHeader::parse(blob) else {
+        return Ok(false);
+    };
+    crate::compaction::epoch_exportable_in(
+        &vault.store,
+        rtxn,
+        id,
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+        |source, row| {
+            let Some(admission) = admission else {
+                return Ok(false);
+            };
+            // A source this door would withhold as undecodable, or whose
+            // selection outgrows its budget, carries nothing.
+            let withheld = |result: Result<bool>| match result {
+                Ok(carried) => Ok(carried),
+                Err(Error::InvalidClaimBody(_) | Error::IndexOverflow(_)) => Ok(false),
+                Err(error) => Err(error),
+            };
+            Ok(withheld(crate::authority::row_causal_admitted(
+                vault,
+                rtxn,
+                source,
+                &row.encode(),
+            ))? && withheld(super::document_admission::selected_in_txn(
+                vault, rtxn, *source, selector, admission,
+            ))?)
+        },
+    )
+}
+
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -404,6 +447,9 @@ pub(super) fn filter_window_doc(
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
+    // The stored selection the epoch fence reads sources through, built at
+    // the first epoch summary; a grant it cannot authorize carries none.
+    let mut epoch_admission = None;
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -468,6 +514,29 @@ pub(super) fn filter_window_doc(
         ) else {
             return;
         };
+        if !is_tombstoned
+            && let Some(header) = EntityMetadataHeader::parse(blob)
+            && header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        {
+            let admission = &*epoch_admission.get_or_insert_with(|| {
+                super::document_admission::authorize_in_txn(
+                    vault,
+                    &rtxn,
+                    grant.scope,
+                    selector,
+                    None,
+                )
+                .ok()
+            });
+            match epoch_carried(vault, &rtxn, (&id, blob), selector, admission.as_ref()) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
+            }
+        }
         candidates.insert(id);
         if facets.is_some() {
             if decision.facet_visible {

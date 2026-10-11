@@ -143,8 +143,8 @@ pub(in crate::sync) fn admit_document_write_in_txn(
     admit_selected_in_txn(vault, txn, id, selector, &admission)
 }
 
-/// Whether `id` sits in the closed subgraph `admission` resolved, read from
-/// stored rows in this writer.
+/// Admits `id` only when it sits in the closed subgraph `admission`
+/// resolved, read from stored rows in this writer.
 pub(super) fn admit_selected_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -152,6 +152,22 @@ pub(super) fn admit_selected_in_txn(
     selector: &SyncSelector,
     admission: &DocumentGrant,
 ) -> Result<()> {
+    if selected_in_txn(vault, txn, id, selector, admission)? {
+        Ok(())
+    } else {
+        Err(denied())
+    }
+}
+
+/// Whether `id` sits in the closed subgraph `admission` resolved, read from
+/// stored rows in this writer.
+pub(super) fn selected_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    selector: &SyncSelector,
+    admission: &DocumentGrant,
+) -> Result<bool> {
     let selection = StoredSelection {
         vault,
         txn,
@@ -160,10 +176,10 @@ pub(super) fn admit_selected_in_txn(
     };
     let mut budget = crate::vault::MAX_EDGE_QUERY_RESULTS;
     let Some((visible, seed)) = selection.candidate(id, &mut budget)? else {
-        return Err(denied());
+        return Ok(false);
     };
     if facet_filter(admission.position.as_scope()).is_none() || visible || seed {
-        return Ok(());
+        return Ok(true);
     }
     // The export's facet closure is ONE hop from a selected seed, never a
     // transitive walk. Re-read both endpoint rows and every live facet stamp
@@ -195,10 +211,10 @@ pub(super) fn admit_selected_in_txn(
             .candidate(edge.target, &mut budget)?
             .is_some_and(|(_, seed)| seed)
         {
-            return Ok(());
+            return Ok(true);
         }
     }
-    Err(denied())
+    Ok(false)
 }
 
 struct StoredSelection<'a, 'env> {
