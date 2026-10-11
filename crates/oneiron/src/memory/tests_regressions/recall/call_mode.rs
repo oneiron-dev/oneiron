@@ -368,7 +368,9 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
 /// last pack recall published. A recall still running past it stops before
 /// it reads its items: it returns the pack published before retrieval, and
 /// publishes no other. The answer falls due right after the text stage, by a
-/// cancel there under a budget no host misses, not by a sleep.
+/// cancel there, not by a sleep. The 30 s budget assumes the host runs the
+/// text stage within its share (about 11 s); one that stalls longer skips the
+/// hook, and the test fails on that, never passing without the cancel.
 #[test]
 fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
     use crate::memory::{MemoryPack, RecallEffort};
