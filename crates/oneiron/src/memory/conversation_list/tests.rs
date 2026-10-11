@@ -1,7 +1,9 @@
 //! The conversation list is what its reader may read of the vault
 //! (ARCH-0006a, DEC-0005): only the conversations it may read, each previewed
 //! by a message it may read and never an erased one, with a receipt that
-//! counts what was withheld. The owner's list is the one it always was.
+//! counts the conversations withheld. Nothing a reader may not read, nor
+//! where it falls, changes the list or its receipt. The owner's list is the
+//! one it always was.
 
 use super::*;
 use crate::access_grant::{
@@ -306,8 +308,7 @@ fn a_reader_lists_only_what_it_may_read() {
         [(kept, Some("booked for friday at eight".to_owned()))]
     );
     assert_eq!(read.total, Some(1));
-    // Every other conversation. The preview stops at the latest turn with a
-    // message it may read, so it never reads the one outside its grant.
+    // Every other conversation; a preview adds no count.
     assert_eq!(read.withheld, all.rows.len() - 1);
 
     // A filter sees only rows the reader may read: the receipt withholds
@@ -367,10 +368,9 @@ fn a_reader_lists_only_what_it_may_read() {
         read.rows,
         [(kept, Some("a table for two by the window".to_owned()))]
     );
-    // Now the preview passes over the message outside the reader's grant: it
-    // withholds that beside every other conversation, and whatever the
-    // owner's own read of the erased message counts.
-    assert_eq!(read.withheld, all.withheld + all.rows.len() - 1 + 1);
+    // The preview now passes over the message outside the reader's grant,
+    // and still counts nothing of it.
+    assert_eq!(read.withheld, all.rows.len() - 1);
 }
 
 /// How many conversations the owner lists beside `shown`, each one the
@@ -428,11 +428,7 @@ fn where_a_hidden_turn_falls_never_shows() {
         listed[0].0,
         [(room, Some("the turn it may read".to_owned()))]
     );
-    assert_eq!(
-        listed[0].3,
-        listed[0].4 + 4,
-        "each hidden turn, wherever it falls"
-    );
+    assert_eq!(listed[0].3, listed[0].4, "only the other conversations");
     assert_eq!(listed[0], listed[1]);
 }
 
@@ -556,10 +552,10 @@ fn a_hidden_turns_topology_never_decides_a_preview() {
 /// Two vaults the reader reads alike: one conversation whose two turns it may
 /// read, neither with text it may read. A message outside its grant is part
 /// of the earlier turn, and in one vault part of the later one as well. The
-/// list withholds that message once in both: what it withholds never says
-/// which turns a hidden message belongs to.
+/// list and its receipt are the same in both: nothing says which turns a
+/// hidden message belongs to.
 #[test]
-fn a_hidden_message_in_two_turns_is_withheld_once() {
+fn a_hidden_message_in_two_turns_changes_nothing() {
     let (room, earlier, later) = (entity(0xF4), entity(0xF5), entity(0xF6));
     let space = Some(entity(SPACE));
     let listed = [false, true].map(|twice| {
@@ -610,6 +606,6 @@ fn a_hidden_message_in_two_turns_is_withheld_once() {
         )
     });
     assert_eq!(listed[0].0, [(room, None)]);
-    assert_eq!(listed[0].3, listed[0].4 + 1, "the hidden message, once");
+    assert_eq!(listed[0].3, listed[0].4, "only the other conversations");
     assert_eq!(listed[0], listed[1]);
 }

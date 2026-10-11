@@ -76,13 +76,33 @@ impl Vault {
         Ok(turns)
     }
 
-    /// The order a reader's preview takes the turns it may read, each given
-    /// as its learned time and id: the selected path from its HEAD back, or
-    /// with no selected DAG state the latest learned first. The ChildOf-only
-    /// proof looks at those turns alone, so a turn the reader may not read
-    /// never decides it. `None` when the topology is unresolved: the preview
-    /// shows nothing rather than a turn off the selected path.
-    pub(crate) fn readable_preview_order(
+    /// The turns a reader's preview may look at, before the lane admits any.
+    pub(crate) fn preview_candidates_in(
+        &self,
+        txn: &RoTxn<'_>,
+        conversation: &EntityId,
+    ) -> Result<PreviewCandidates> {
+        match SelectedPathSnapshot::selected(self, txn, conversation) {
+            Ok(Some(path)) => Ok(PreviewCandidates::Path(
+                path.turns.into_iter().rev().map(|turn| turn.id).collect(),
+            )),
+            Ok(None) => Ok(PreviewCandidates::ChildOf(
+                self.childof_turns_in(txn, conversation)?
+                    .into_iter()
+                    .map(|(_, id)| id)
+                    .collect(),
+            )),
+            Err(error) => unresolved(conversation, error).map(|()| PreviewCandidates::Unresolved),
+        }
+    }
+
+    /// The order a reader's preview takes the ChildOf turns it may read, each
+    /// given as its learned time and id, when the conversation has no
+    /// selected HEAD: the latest learned first. The ChildOf-only proof looks
+    /// at those turns alone, so a turn the reader may not read never decides
+    /// it. `None` when the topology is unresolved: the preview shows nothing
+    /// rather than a turn off a selected path.
+    pub(crate) fn readable_childof_order(
         &self,
         conversation: &EntityId,
         mut readable: Vec<(u64, EntityId)>,
@@ -93,6 +113,7 @@ impl Vault {
                 |id: &EntityId| readable.binary_search_by_key(id, |(_, turn)| *turn).is_ok();
             let txn = self.store.env.read_txn()?;
             match SelectedPathSnapshot::read_admitting(self, &txn, conversation, &admits) {
+                // A HEAD selected since the turns were listed.
                 Ok(PreviewTopology::Selected(path)) => Some(
                     path.turns
                         .into_iter()
@@ -103,15 +124,7 @@ impl Vault {
                 ),
                 Ok(PreviewTopology::ChildOfOnly) => None,
                 Ok(PreviewTopology::ProvenEmpty) => Some(Vec::new()),
-                Err(Error::Record(RecordError::InvalidConversationDag(reason))) => {
-                    tracing::debug!(
-                        conversation = %conversation.to_hex(),
-                        reason,
-                        "a conversation preview's topology is unresolved"
-                    );
-                    return Ok(None);
-                }
-                Err(error) => return Err(error),
+                Err(error) => return unresolved(conversation, error).map(|()| None),
             }
         };
         Ok(Some(path.unwrap_or_else(|| {
@@ -172,6 +185,31 @@ impl Vault {
         #[cfg(feature = "sync")]
         let body = resolved.as_slice();
         Ok(turn_text(body))
+    }
+}
+
+/// The turns a reader's preview may look at, before the lane admits any.
+pub(crate) enum PreviewCandidates {
+    /// The checked selected path from its HEAD back, the order preferred.
+    Path(Vec<EntityId>),
+    /// With no selected HEAD, the live ChildOf turns in index order.
+    ChildOf(Vec<EntityId>),
+    /// The selected path is unresolved: no preview.
+    Unresolved,
+}
+
+/// An unresolved topology gives no preview; any other error stands.
+fn unresolved(conversation: &EntityId, error: Error) -> Result<()> {
+    match error {
+        Error::Record(RecordError::InvalidConversationDag(reason)) => {
+            tracing::debug!(
+                conversation = %conversation.to_hex(),
+                reason,
+                "a conversation preview's topology is unresolved"
+            );
+            Ok(())
+        }
+        error => Err(error),
     }
 }
 

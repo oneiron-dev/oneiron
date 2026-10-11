@@ -210,6 +210,19 @@ impl SelectedPathSnapshot {
         conversation: &EntityId,
         admits: &dyn Fn(&EntityId) -> bool,
     ) -> Result<PreviewTopology> {
+        match Self::selected(vault, txn, conversation)? {
+            Some(path) => Ok(PreviewTopology::Selected(path)),
+            None => prove_childof_only(vault, txn, conversation, admits),
+        }
+    }
+
+    /// The checked selected path of `conversation`, or `None` when it has no
+    /// selected HEAD.
+    pub(crate) fn selected(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        conversation: &EntityId,
+    ) -> Result<Option<Self>> {
         let store = &vault.store;
         let head = graph::read_id(store, txn, HEAD, conversation)?;
         if !matches!(
@@ -219,7 +232,7 @@ impl SelectedPathSnapshot {
             return Err(graph::invalid("selected conversation is not live"));
         }
         let Some(head) = head else {
-            return prove_childof_only(vault, txn, conversation, admits);
+            return Ok(None);
         };
         let mut seen = HashSet::new();
         let mut reversed = Vec::new();
@@ -275,6 +288,6 @@ impl SelectedPathSnapshot {
                 return Err(Error::CorruptedIndex("conversation canonical mark"));
             }
         }
-        Ok(PreviewTopology::Selected(Self { turns: reversed }))
+        Ok(Some(Self { turns: reversed }))
     }
 }
