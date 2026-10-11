@@ -4,10 +4,14 @@
 //! types (ARCH-0064 section 7, ARCH-0075 organ-host). A host adapter
 //! implements [`EsignSealer`] by calling that organ, which asks the engine
 //! back for the signing identity, each signature and any granted fetch; the
-//! signing key never leaves the engine. These mirror types carry what the
-//! seal task needs: the sealed bytes, the SHA-256 evidence hash, the profile
-//! reached and the verdict. The evidence hash is SHA-256 because PAdES
-//! demands it; the vault addresses blobs by blake3. They never mix.
+//! signing key never leaves the engine. The engine writes the signature
+//! revision itself ([`EsignSealInput`], ARCH-0075
+//! `#organ-host-design-seal-binding`): the organ builds only the CMS for it,
+//! and the adapter signs only attributes bound to that revision and admits
+//! only output that carries a signature it issued. These mirror types carry
+//! what the seal task needs: the sealed bytes, the SHA-256 evidence hash, the
+//! profile reached and the verdict. The evidence hash is SHA-256 because
+//! PAdES demands it; the vault addresses blobs by blake3. They never mix.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +23,24 @@ pub enum SealProfile {
     BaselineT,
     BaselineLt,
     BaselineLta,
+}
+
+/// A prepared PDF and the signature revisions the engine wrote for it, one
+/// per contents capacity, smallest first. Revision `i` is `pdf` followed by
+/// `revisions[i].suffix`; its `/Contents` hole holds ASCII zeros, and its
+/// ByteRange leaves out exactly that hole, delimiters included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EsignSealInput {
+    pub pdf: Vec<u8>,
+    pub revisions: Vec<EsignSignatureRevision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EsignSignatureRevision {
+    /// The appended signature revision, through its `%%EOF`.
+    pub suffix: Vec<u8>,
+    /// `[0, hole start, hole end, rest]`, offsets in the whole revision.
+    pub byte_range: [u64; 4],
 }
 
 /// One item to seal.
@@ -116,14 +138,22 @@ impl EsignSealerError {
 /// A PAdES sealer the engine reaches through a port. It blocks: the seal
 /// task runs it, never a request.
 pub trait EsignSealer: Send + Sync {
-    /// Seals one prepared PDF.
+    /// Seals one prepared PDF in one of the signature revisions the engine
+    /// wrote for it. A sealer returns only bytes that begin with one of
+    /// them, byte for byte outside its hole, with a signature it had issued
+    /// for that revision in the hole.
     ///
     /// # Errors
     /// See [`EsignSealerError`].
-    fn seal(&self, pdf: &[u8], request: &EsignSealRequest)
-    -> Result<EsignSealed, EsignSealerError>;
+    fn seal(
+        &self,
+        input: &EsignSealInput,
+        request: &EsignSealRequest,
+    ) -> Result<EsignSealed, EsignSealerError>;
 
-    /// Verifies a sealed PDF.
+    /// Verifies a sealed PDF, in a process that never sealed: a second
+    /// opinion on what the sealer cannot check itself (the timestamp, the
+    /// validation data). Its verdict alone never admits a seal.
     ///
     /// # Errors
     /// See [`EsignSealerError`]; a PDF whose signature fails is a verdict,

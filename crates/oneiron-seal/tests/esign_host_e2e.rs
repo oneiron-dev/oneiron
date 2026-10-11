@@ -5,23 +5,29 @@
 //! deletion and reopen. The engine never links this crate; it reaches the
 //! seal through its port, `EsignSealer`, and the host adapter, which keeps
 //! the key. Keys and certificates are synthetic, made fresh by rcgen.
+//!
+//! With `hostile-organ-tests`, a hostile seal organ stands in for one a
+//! hostile PDF has compromised (ARCH-0075 `#organ-host-design-seal-binding`):
+//! the key signs nothing it did not bind, and nothing it did not sign
+//! commits, whatever the organ's verdicts say.
 #![cfg(unix)]
 
+use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
-use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
+use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
 use oneiron::blob_artifact::esign::{
     DocumentKind, DocumentStatus, ESIGN_NOTICE_ATTEMPT_KIND, ESIGN_SEAL_ATTEMPT_KIND,
-    EsignAuditActor, EsignDocument, EsignItem, EsignNotice, EsignRecipient, EsignSealError,
-    EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict, RecipientRole,
-    SealProfile, SealVerdict, SigningAction, SigningOutcome,
+    EsignAuditActor, EsignCapability, EsignDocument, EsignItem, EsignNotice, EsignRecipient,
+    EsignSealError, EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
+    EsignVerdict, RecipientRole, SealProfile, SealVerdict, SigningAction, SigningOutcome,
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_organ_host::seal::{
-    HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa,
-    seal_spec,
+    ASK_SIGN, HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings,
+    SealTsa, seal_spec,
 };
-use oneiron_organ_host::{FetchGrant, HostConfig, OrganHost};
+use oneiron_organ_host::{FetchGrant, HostConfig, OrganHost, OrganState};
 use oneiron_seal::organ::MAX_REPORT_JSON_BYTES;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::pkcs8::DecodePrivateKey;
@@ -33,9 +39,20 @@ const ORIGINAL: &[u8] = include_bytes!(concat!(
 ));
 
 /// A synthetic P-256 key and its self-signed certificate, held engine-side.
+/// It keeps every prehash it signs: the key boundary's own record.
 struct Keys {
     key: p256::ecdsa::SigningKey,
     cert: Vec<u8>,
+    signed: Mutex<Vec<[u8; 32]>>,
+}
+
+impl Keys {
+    fn signed(&self) -> Vec<[u8; 32]> {
+        self.signed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
 }
 
 impl SealKeys for Keys {
@@ -58,6 +75,10 @@ impl SealKeys for Keys {
                 detail: err.to_string(),
                 retryable: false,
             })?;
+        self.signed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(*digest);
         Ok(signature.to_der().as_bytes().to_vec())
     }
 }
@@ -68,10 +89,10 @@ struct RejectVerify<'a>(&'a dyn EsignSealer);
 impl EsignSealer for RejectVerify<'_> {
     fn seal(
         &self,
-        pdf: &[u8],
+        input: &EsignSealInput,
         request: &EsignSealRequest,
     ) -> Result<EsignSealed, EsignSealerError> {
-        self.0.seal(pdf, request)
+        self.0.seal(input, request)
     }
 
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
@@ -92,6 +113,7 @@ fn synthetic_keys() -> std::result::Result<(Keys, Vec<u8>), Box<dyn std::error::
     let keys = Keys {
         key: p256::ecdsa::SigningKey::from_pkcs8_der(&key.serialize_der())?,
         cert: cert.clone(),
+        signed: Mutex::new(Vec::new()),
     };
     Ok((keys, cert))
 }
@@ -102,19 +124,25 @@ fn unix_seconds_now() -> u64 {
         .map_or(0, |since| since.as_secs())
 }
 
-#[test]
-fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (keys, cert) = synthetic_keys()?;
-    let host = OrganHost::new(HostConfig::default());
-    host.install(seal_spec(ORGAN, FetchGrant::default()));
-    let dir = tempfile::tempdir()?;
+type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// One document its one recipient has completed, awaiting its seal: the
+/// real ceremony, not a fabricated ready flag.
+struct Ready {
+    vault: Vault,
+    owner: EntityId,
+    id: EntityId,
+    capability: EsignCapability,
+    url: String,
+    now: u64,
+}
+
+fn ready(dir: &std::path::Path) -> TestResult<Ready> {
     let now = unix_seconds_now();
     let clock = oneiron::store::ports::ManualClock::new(now);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
-    let vault = Vault::open(dir.path(), config)?;
-    let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
+    let vault = Vault::open(dir, config)?;
     let at = TimeRange {
         start: now,
         end: now,
@@ -189,9 +217,10 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     );
     oneiron::test_support::mark_esign_sent(&vault, id, actor, now)?;
     assert!(!vault.esign_document(id)?.ready_to_seal());
+    let capability = capabilities.into_iter().next().ok_or("no capability")?.1;
     assert_eq!(
         vault.execute_signing_action(
-            &capabilities[0].1,
+            &capability,
             &SigningAction::Complete {
                 consent: true,
                 next: None
@@ -201,17 +230,46 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
         )?,
         SigningOutcome::AwaitingSeal
     );
-    let queue = AttemptQueue::new(&vault);
-    let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
+    Ok(Ready {
+        vault,
+        owner,
+        id,
+        capability,
+        url: canonical_url,
+        now,
+    })
+}
+
+fn claim(vault: &Vault, lease_owner: &str) -> TestResult<AttemptRecord> {
+    match AttemptQueue::new(vault).claim_kind(
         ESIGN_SEAL_ATTEMPT_KIND,
         ClaimAttempt {
-            lease_owner: "seal-test".into(),
+            lease_owner: lease_owner.into(),
             now: unix_seconds_now(),
         },
-    )?
-    else {
-        panic!("seal job missing")
-    };
+    )? {
+        ClaimOutcome::Claimed(attempt) => Ok(attempt),
+        _ => Err("no seal job to claim".into()),
+    }
+}
+
+#[test]
+fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original() -> TestResult {
+    let (keys, cert) = synthetic_keys()?;
+    let host = OrganHost::new(HostConfig::default());
+    host.install(seal_spec(ORGAN, FetchGrant::default()));
+    let dir = tempfile::tempdir()?;
+    let Ready {
+        vault,
+        owner,
+        id,
+        capability,
+        url: canonical_url,
+        now,
+    } = ready(dir.path())?;
+    let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
+    let queue = AttemptQueue::new(&vault);
+    let attempt = claim(&vault, "seal-test")?;
     let url = canonical_url.as_str();
     assert!(matches!(
         vault.seal_esign_attempt(
@@ -228,13 +286,35 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     // delayed/retried seal still owns the derived completion outcome.
     assert_eq!(vault.sweep_esign_expiry(&[id], now + 3600)?, 0);
     assert!(vault.esign_document(id)?.ready_to_seal());
+    let signed_before = keys.signed().len();
     let sealed = vault.seal_esign_attempt(&attempt, &sealer, SealProfile::BaselineB, url)?;
     assert_eq!(
         EntityId::from_hex(&sealed.items[0].sealed_artifact)?.as_bytes()[0],
         0x71
     );
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Completed);
+    // The key signed once, and the receipt names that prehash in the host's
+    // own words, with what it bound.
+    let signed = &keys.signed()[signed_before..];
+    let lines: Vec<_> = sealer
+        .asked()
+        .into_iter()
+        .filter(|line| line.verb == ASK_SIGN)
+        .collect();
+    assert_eq!(signed.len(), 1);
+    assert_eq!(lines.len(), 1);
+    let receipt = lines[0].signed.as_ref().ok_or("no signed receipt")?;
+    assert_eq!(receipt.prehash, signed[0]);
+    assert_eq!(receipt.revision, Some(0));
+    assert!(lines[0].refused.is_none() && lines[0].unanswered.is_none());
+    // Each verification runs in a process of its own: the warm seal
+    // process stays as it was, and one more process starts and ends.
+    let warm = host.status("seal").ok_or("not installed")?;
+    assert_eq!(warm.state, OrganState::Warm);
     assert!(vault.verify_esign_item(id, 0, &sealer)?.valid());
+    let after = host.status("seal").ok_or("not installed")?;
+    assert_eq!(after.spawns, warm.spawns + 1);
+    assert_eq!((after.state, after.pid), (OrganState::Warm, warm.pid));
     let notices = AttemptQueue::new(&vault).list()?;
     let completion = notices
         .iter()
@@ -260,7 +340,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     assert!(lopdf::Document::load_mem(&sealed_bytes)?.get_pages().len() > 1);
     assert_eq!(
         vault.esign_pdf_for_capability(
-            &capabilities[0].1,
+            &capability,
             0,
             Some("127.0.0.1".into()),
             Some("test".into())
@@ -418,7 +498,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
         Some(ORIGINAL)
     );
     let audit = vault.esign_audit(id)?;
-    let canonical = vault.esign_pdf_for_capability(&capabilities[0].1, 0, None, None)?;
+    let canonical = vault.esign_pdf_for_capability(&capability, 0, None, None)?;
     assert!(
         vault.delete_entity_with_options(
             &id,
@@ -436,12 +516,12 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     );
     assert!(
         vault
-            .esign_pdf_for_capability(&capabilities[0].1, 0, None, None)
+            .esign_pdf_for_capability(&capability, 0, None, None)
             .is_err()
     );
     assert!(
         vault
-            .execute_signing_action(&capabilities[0].1, &SigningAction::Load, None, None)
+            .execute_signing_action(&capability, &SigningAction::Load, None, None)
             .is_err()
     );
     assert_eq!(vault.esign_audit(id)?, audit);
@@ -450,7 +530,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
     assert!(
         reopened
-            .esign_pdf_for_capability(&capabilities[0].1, 0, None, None)
+            .esign_pdf_for_capability(&capability, 0, None, None)
             .is_err()
     );
     assert_eq!(reopened.esign_audit(id)?, audit);
@@ -476,7 +556,7 @@ fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
         operation_id: "op".to_owned(),
         profile: SealProfile::BaselineT,
     };
-    let refused = sealer.seal(ORIGINAL, &request);
+    let refused = sealer.seal(&EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?, &request);
     assert!(
         matches!(&refused, Err(EsignSealerError::Fatal { code, .. }) if code == "invalid_configuration"),
         "{refused:?}"
@@ -532,4 +612,131 @@ fn a_verdict_whose_report_is_too_large_still_crosses()
     let report: serde_json::Value = serde_json::from_slice(&verdict.report_json)?;
     assert_eq!(report["omitted_over_bytes"], MAX_REPORT_JSON_BYTES);
     Ok(())
+}
+
+/// A seal organ compromised by a hostile PDF (ARCH-0075
+/// `#organ-host-design-seal-binding`), played by `oneiron-seal-rogue`.
+#[cfg(feature = "hostile-organ-tests")]
+mod hostile {
+    use oneiron_organ_protocol::AskCode;
+
+    use super::*;
+
+    const ROGUE: &str = env!("CARGO_BIN_EXE_oneiron-seal-rogue");
+
+    /// The hostile organ installed as the seal, in one of its modes.
+    fn rogue_host(mode: &str) -> OrganHost {
+        let host = OrganHost::new(HostConfig::default());
+        let mut spec = seal_spec(ROGUE, FetchGrant::default());
+        spec.args = vec![mode.into()];
+        host.install(spec);
+        host
+    }
+
+    fn request() -> EsignSealRequest {
+        EsignSealRequest {
+            operation_id: "op".to_owned(),
+            profile: SealProfile::BaselineB,
+        }
+    }
+
+    fn unbound(result: &Result<EsignSealed, EsignSealerError>) -> bool {
+        matches!(result, Err(EsignSealerError::Fatal { code, .. }) if code == "unbound_output")
+    }
+
+    /// Astra's witness on #1379: the organ asks the key to sign an
+    /// unrelated prehash under its call's operation, then asks for its
+    /// revision with that unrelated messageDigest, then with a second
+    /// PDF's signed attributes. Each is refused before the key signs.
+    #[test]
+    fn a_compromised_organ_gets_no_signature_over_anything_the_engine_did_not_bind() -> TestResult {
+        let (keys, cert) = synthetic_keys()?;
+        let host = rogue_host("forge-signs");
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
+        let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+        assert!(sealer.seal(&input, &request()).is_err());
+        assert!(keys.signed().is_empty());
+        let signs: Vec<_> = sealer
+            .asked()
+            .into_iter()
+            .filter(|line| line.verb == ASK_SIGN)
+            .collect();
+        assert_eq!(signs.len(), 3);
+        for line in &signs {
+            assert_eq!(line.refused, Some(AskCode::BadRequest));
+            assert!(line.signed.is_none() && line.answer_digest.is_none());
+        }
+        Ok(())
+    }
+
+    /// The organ signs nothing and returns the prepared PDF unsigned, with
+    /// its true SHA-256 and a forged pass; its verifier, in a process of
+    /// its own, passes it too. Nothing commits: no sealed manifest, no
+    /// audit event, no notice or completed job, the original as it was.
+    #[test]
+    fn an_unsigned_pdf_with_forged_verdicts_never_commits() -> TestResult {
+        let (keys, cert) = synthetic_keys()?;
+        let host = rogue_host("unsigned");
+        let dir = tempfile::tempdir()?;
+        let ready = ready(dir.path())?;
+        let vault = &ready.vault;
+        let sealer = HostedSealer::new(&host, vault, &keys, SealSettings::new(vec![cert], "seal"));
+        let attempt = claim(vault, "seal-test")?;
+        let audit = vault.esign_audit(ready.id)?;
+        let jobs = AttemptQueue::new(vault).list()?;
+        let refused =
+            vault.seal_esign_attempt(&attempt, &sealer, SealProfile::BaselineB, &ready.url);
+        assert!(
+            matches!(
+                &refused,
+                Err(EsignSealError::Sealer(EsignSealerError::Fatal { code, .. }))
+                    if code == "unbound_output"
+            ),
+            "{refused:?}"
+        );
+        assert!(keys.signed().is_empty());
+        assert!(vault.sealed_esign_document(ready.id)?.is_none());
+        assert_eq!(
+            vault.esign_document(ready.id)?.status,
+            DocumentStatus::Pending
+        );
+        assert_eq!(vault.esign_audit(ready.id)?, audit);
+        assert_eq!(AttemptQueue::new(vault).list()?, jobs);
+        assert_eq!(
+            vault.read_blob_artifact_version(&ready.id, 1)?.as_deref(),
+            Some(ORIGINAL)
+        );
+        Ok(())
+    }
+
+    /// The organ seals for real, then changes one byte of the prepared
+    /// PDF, or appends an update after the signed revision and still calls
+    /// it B-B. The key signed, and its receipt says so, but the output is
+    /// not admitted.
+    #[test]
+    fn a_signed_revision_changed_outside_its_hole_is_not_admitted() -> TestResult {
+        let (keys, cert) = synthetic_keys()?;
+        for mode in ["alter-prefix", "append-update"] {
+            let host = rogue_host(mode);
+            let dir = tempfile::tempdir()?;
+            let vault = Vault::open(dir.path(), VaultConfig::device())?;
+            let settings = SealSettings::new(vec![cert.clone()], "seal");
+            let sealer = HostedSealer::new(&host, &vault, &keys, settings);
+            let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+            let before = keys.signed().len();
+            let refused = sealer.seal(&input, &request());
+            assert!(unbound(&refused), "{mode}: {refused:?}");
+            let signed = keys.signed()[before..].to_vec();
+            assert_eq!(signed.len(), 1, "{mode}");
+            let line = sealer
+                .asked()
+                .into_iter()
+                .find(|line| line.verb == ASK_SIGN)
+                .ok_or("no signature ask")?;
+            assert_eq!(line.signed.map(|signed| signed.prehash), Some(signed[0]));
+        }
+        Ok(())
+    }
 }

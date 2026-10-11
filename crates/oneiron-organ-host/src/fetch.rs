@@ -282,6 +282,7 @@ async fn fetch(
             value,
             data: Some(body),
             fetch: Some(target),
+            signed: None,
         });
     }
 }

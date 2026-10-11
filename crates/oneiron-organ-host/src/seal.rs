@@ -1,42 +1,59 @@
 //! The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`]
 //! implements the engine's [`EsignSealer`] by calling the seal organ.
 //!
-//! Each seal is one `seal.pdf` call. The prepared PDF is lent, and the
-//! call's handlers are built for that call alone: the signing identity
-//! once, at most three signatures, each under the call's own operation,
-//! and fetches only inside the install grant's allowlist, each bounded by
-//! the fetch timeout. The key stays here, behind [`SealKeys`]; the organ
-//! sends prehashes and gets signatures back. Each verification is one
-//! `seal.verify` call, with no handlers.
+//! Each seal is one `seal.pdf` call, schema 2 (ARCH-0075
+//! `#organ-host-design-seal-binding`). The engine has already written the
+//! ordinary signature revision for each contents capacity
+//! ([`EsignSealInput`]); the prepared PDF and those revisions' suffixes are
+//! lent, and the organ builds only the CMS. The call's handlers are built
+//! for that call alone: the signing identity once, at most one signature a
+//! revision, and fetches only inside the install grant's allowlist, each
+//! bounded by the fetch timeout. The key stays here, behind [`SealKeys`],
+//! and signs only attributes bound to one of the engine's revisions, by a
+//! hash this side computed. The sealed PDF is admitted only when it carries
+//! a signature this call issued, in a revision the engine wrote. Each
+//! verification is one `seal.verify` call in a process of its own, with no
+//! handlers: a second opinion, never the admission.
 //!
 //! Calls block, as every host call does: run them off any async runtime.
 
+mod binding;
+
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron::blob_artifact::esign::{
-    EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict, SealDegrade,
-    SealProfile, SealVerdict,
+    EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
+    SealDegrade, SealProfile, SealVerdict,
 };
 use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
+use self::binding::{RevisionArgs, SealCall};
 use crate::asks::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::error::{HostError, Unavailable};
 use crate::fetch::GuardedFetch;
 use crate::host::OrganHost;
+use crate::receipt::AskReceipt;
 use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSpec};
 
 /// The name the seal organ is installed under.
 pub const SEAL_ORGAN: &str = "seal";
 pub const VERB_SEAL: &str = "seal.pdf";
 pub const VERB_VERIFY: &str = "seal.verify";
+/// `seal.pdf`'s schema: the engine's revisions, lent beside the PDF.
+pub const SEAL_SCHEMA: u32 = 2;
 /// Ask: the signing identity.
 pub const ASK_IDENTITY: &str = "seal.identity";
-/// Ask: one signature over a SHA-256 prehash.
+/// Ask: one signature over the signed attributes of one of the engine's
+/// revisions.
 pub const ASK_SIGN: &str = "seal.sign";
+/// The media type of the lent revision suffixes.
+pub const REVISIONS: &str = "application/octet-stream";
 
 const SEALED_OUTPUT: &str = "sealed.pdf";
 const PDF: &str = "application/pdf";
@@ -53,7 +70,8 @@ const MAX_SEALED_BYTES: u64 = 96 * MIB;
 /// The signing key's custody, a local signer or a KMS. The key never
 /// crosses the socket. Both run on the caller's thread inside its call, so
 /// each must return by `deadline`, the call's: a KMS bounds its whole
-/// request by it.
+/// request by it. Within one call both name the same key: a store that
+/// rotates keys pins one for the call.
 pub trait SealKeys: Send + Sync {
     /// The key's certificate and chain.
     ///
@@ -165,14 +183,14 @@ impl SealSettings {
     }
 }
 
-/// The seal organ's install grant: both verbs over PDFs, the identity
-/// once, at most three signatures and 32 fetches a call, fetches only
-/// inside `fetch`, and room for the sealed PDF.
+/// The seal organ's install grant: both verbs over PDFs and the engine's
+/// revisions, the identity once, at most three signatures and 32 fetches a
+/// call, fetches only inside `fetch`, and room for the sealed PDF.
 #[must_use]
 pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     let mut spec = OrganSpec::first_party(SEAL_ORGAN, program);
     spec.verbs = vec![VERB_SEAL.to_owned(), VERB_VERIFY.to_owned()];
-    spec.media_types = vec![PDF.to_owned()];
+    spec.media_types = vec![PDF.to_owned(), REVISIONS.to_owned()];
     spec.asks = vec![
         AskGrant::new(ASK_IDENTITY, 1),
         AskGrant::new(ASK_SIGN, MAX_SIGNS),
@@ -200,6 +218,8 @@ pub struct HostedSealer<'a> {
     vault: &'a Vault,
     keys: &'a dyn SealKeys,
     settings: SealSettings,
+    /// The ask lines of the latest seal call, however it ended.
+    asked: Mutex<Vec<AskReceipt>>,
 }
 
 impl<'a> HostedSealer<'a> {
@@ -215,7 +235,19 @@ impl<'a> HostedSealer<'a> {
             vault,
             keys,
             settings,
+            asked: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The receipt line of every ask the latest seal call made, in order,
+    /// whether it sealed or not; a signature's line names what the key
+    /// signed.
+    #[must_use]
+    pub fn asked(&self) -> Vec<AskReceipt> {
+        self.asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -233,6 +265,7 @@ struct SealArgs {
     profile: SealProfile,
     now_ms: u64,
     config: ConfigArgs,
+    signature_revisions: Vec<RevisionArgs>,
 }
 
 #[derive(Serialize)]
@@ -376,11 +409,11 @@ impl HostedSealer<'_> {
         })
     }
 
-    fn call(&self, verb: &str, args: rmpv::Value) -> OrganCall {
+    fn call(&self, verb: &str, schema: u32, args: rmpv::Value) -> OrganCall {
         OrganCall {
             organ: self.settings.organ.clone(),
             verb: verb.to_owned(),
-            schema: 1,
+            schema,
             args,
             body: None,
             inputs: Vec::new(),
@@ -394,14 +427,12 @@ impl HostedSealer<'_> {
 impl EsignSealer for HostedSealer<'_> {
     fn seal(
         &self,
-        pdf: &[u8],
+        input: &EsignSealInput,
         request: &EsignSealRequest,
     ) -> Result<EsignSealed, EsignSealerError> {
-        let identity = Identity { keys: self.keys };
-        let sign = Sign {
-            keys: self.keys,
-            operation: format!("{}:", request.operation_id),
-        };
+        let call = SealCall::new(self.keys, &request.operation_id, input)?;
+        let identity = Identity { call: &call };
+        let sign = Sign { call: &call };
         let fetch = TimedFetch {
             timeout: self.settings.fetch_timeout,
         };
@@ -414,16 +445,27 @@ impl EsignSealer for HostedSealer<'_> {
             profile: request.profile,
             now_ms: self.now_ms(),
             config: self.config(true)?,
+            signature_revisions: call.revision_args(),
         })
         .map_err(|_| reply_invalid())?;
-        let lent = vec![LentInput {
-            media_type: PDF.to_owned(),
-            bytes: pdf.to_vec(),
-        }];
-        let outcome = self
-            .host
-            .call_with(self.vault, self.call(VERB_SEAL, args), lent, &handlers)
-            .map_err(host_failure)?;
+        let lent = vec![
+            LentInput {
+                media_type: PDF.to_owned(),
+                bytes: input.pdf.clone(),
+            },
+            LentInput {
+                media_type: REVISIONS.to_owned(),
+                bytes: call.suffixes(),
+            },
+        ];
+        let outcome = self.host.call_with(
+            self.vault,
+            self.call(VERB_SEAL, SEAL_SCHEMA, args),
+            lent,
+            &handlers,
+        );
+        *self.asked.lock().unwrap_or_else(PoisonError::into_inner) = handlers.asked();
+        let outcome = outcome.map_err(host_failure)?;
         let (evidence_sha256, requested, achieved, degraded, self_verify) =
             match from_value(&outcome.report)? {
                 SealReply::Failed(failure) => return Err(failure.into_error()),
@@ -440,12 +482,18 @@ impl EsignSealer for HostedSealer<'_> {
             .iter()
             .find(|output| output.name == SEALED_OUTPUT && output.media_type == PDF)
             .ok_or_else(reply_invalid)?;
+        // Validation data and a document timestamp come after the signed
+        // revision, and only for a profile that has them.
+        let suffix =
+            request.profile >= SealProfile::BaselineLt && achieved >= SealProfile::BaselineLt;
+        call.admit(sealed, suffix, &self.settings.limits)?;
+        let evidence: [u8; 32] = Sha256::digest(&sealed[..]).into();
+        if evidence_sha256.as_slice() != evidence {
+            return Err(reply_invalid());
+        }
         Ok(EsignSealed {
             bytes: sealed.to_vec(),
-            evidence_sha256: evidence_sha256
-                .as_slice()
-                .try_into()
-                .map_err(|_| reply_invalid())?,
+            evidence_sha256: evidence,
             requested,
             achieved,
             degraded,
@@ -463,11 +511,12 @@ impl EsignSealer for HostedSealer<'_> {
             media_type: PDF.to_owned(),
             bytes: pdf.to_vec(),
         }];
+        // A process of its own: never the one that sealed.
         let outcome = self
             .host
-            .call_with(
+            .call_fresh_with(
                 self.vault,
-                self.call(VERB_VERIFY, args),
+                self.call(VERB_VERIFY, 1, args),
                 lent,
                 &AskHandlers::none(),
             )
@@ -480,8 +529,8 @@ impl EsignSealer for HostedSealer<'_> {
 }
 
 /// `seal.identity`: the key's certificate and chain.
-struct Identity<'k> {
-    keys: &'k dyn SealKeys,
+struct Identity<'c> {
+    call: &'c SealCall<'c>,
 }
 
 #[derive(Serialize)]
@@ -493,7 +542,7 @@ struct IdentityAnswer {
 
 impl AskHandler for Identity<'_> {
     fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
-        let identity = self.keys.identity(ask.deadline).map_err(key_refusal)?;
+        let identity = self.call.identity(ask.deadline)?;
         let value = to_value(&IdentityAnswer {
             algorithm: identity.algorithm,
             signer_certificate: ByteBuf::from(identity.signer_certificate),
@@ -506,19 +555,10 @@ impl AskHandler for Identity<'_> {
     }
 }
 
-/// `seal.sign`: one signature, only under this call's operation.
-struct Sign<'k> {
-    keys: &'k dyn SealKeys,
-    /// The call's operation id and a colon: every signature's operation
-    /// starts with it.
-    operation: String,
-}
-
-#[derive(Deserialize)]
-struct SignAsk {
-    operation_id: String,
-    digest_algorithm: String,
-    digest: ByteBuf,
+/// `seal.sign`: one signature over a revision's signed attributes, bound
+/// by this call ([`SealCall::sign`]).
+struct Sign<'c> {
+    call: &'c SealCall<'c>,
 }
 
 #[derive(Serialize)]
@@ -528,30 +568,12 @@ struct SignAnswer {
 
 impl AskHandler for Sign<'_> {
     fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
-        let request: SignAsk = from_value(ask.value)
-            .map_err(|_| AskRefusal::new(AskCode::BadRequest, "not a signature ask"))?;
-        if request.digest_algorithm != "sha256" {
-            return Err(AskRefusal::new(AskCode::BadRequest, "only sha256"));
-        }
-        let digest: [u8; 32] = request
-            .digest
-            .as_slice()
-            .try_into()
-            .map_err(|_| AskRefusal::new(AskCode::BadRequest, "a digest is 32 bytes"))?;
-        if !request.operation_id.starts_with(&self.operation) {
-            return Err(AskRefusal::new(
-                AskCode::BadRequest,
-                "the operation is not this call's",
-            ));
-        }
-        let signature = self
-            .keys
-            .sign_prehash(&request.operation_id, &digest, ask.deadline)
-            .map_err(key_refusal)?;
+        let (signature, signed) = self.call.sign(ask.value, ask.deadline)?;
         Ok(Answered {
             value: to_value(&SignAnswer {
                 signature: ByteBuf::from(signature),
             })?,
+            signed: Some(signed),
             ..Answered::default()
         })
     }
@@ -590,15 +612,6 @@ impl AskHandler for TimedFetch {
             max_bytes: ask.max_bytes.min(cap),
             ..*ask
         })
-    }
-}
-
-fn key_refusal(err: SealKeyError) -> AskRefusal {
-    let refusal = AskRefusal::new(AskCode::Failed, err.detail);
-    if err.retryable {
-        refusal.retryable()
-    } else {
-        refusal
     }
 }
 

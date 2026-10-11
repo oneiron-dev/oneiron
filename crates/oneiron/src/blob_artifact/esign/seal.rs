@@ -1,10 +1,14 @@
 //! Lease-fenced seal job. No terminal claim precedes self-verification. The
-//! sealer is a port ([`EsignSealer`]); the seal itself runs in its own organ.
+//! sealer is a port ([`EsignSealer`]); the seal itself runs in its own organ,
+//! over the signature revisions the engine wrote ([`EsignSealInput`]).
 use super::{
     ledger::{append, events_in, state_in},
     model::*,
     render::{PdfPreparation, PdfPreparationError, SignatureRaster, prepare_esign_pdf},
-    sealer::{EsignSealRequest, EsignSealer, EsignSealerError, EsignVerdict, SealProfile},
+    sealer::{
+        EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
+        SealProfile, SealVerdict,
+    },
 };
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, CompleteAttempt, SetAttemptResult,
@@ -52,6 +56,21 @@ pub struct SealedDocument {
 fn snapshot_hash(rows: &[EsignEventRow]) -> Result<[u8; 32]> {
     let bytes = serde_json::to_vec(rows).map_err(|_| invalid("seal snapshot encoding"))?;
     Ok(Sha256::digest(bytes).into())
+}
+/// The verifier's word against the sealer's, field by field: the profile
+/// asked for, the one reached, and why it is lower. A seal may fall short of
+/// its profile, never pass it, and each shortfall names the profiles it
+/// fell between.
+fn coherent(sealed: &EsignSealed, checked: &EsignVerdict, profile: SealProfile) -> bool {
+    sealed.requested == profile
+        && sealed.achieved <= profile
+        && checked.verdict == SealVerdict::Passed
+        && checked.achieved == Some(sealed.achieved)
+        && sealed.degraded.is_empty() == (sealed.achieved == profile)
+        && sealed
+            .degraded
+            .iter()
+            .all(|degrade| degrade.requested == profile && degrade.achieved == sealed.achieved)
 }
 fn live_attempt(vault: &Vault, txn: &heed::RoTxn<'_>, attempt: &AttemptRecord) -> Result<()> {
     let current = AttemptQueue::new(vault)
@@ -175,19 +194,28 @@ impl Vault {
                     signature_images: &images,
                 },
             )?;
+            let operation_id = format!(
+                "esign:{}:{}:{index}",
+                document.to_hex(),
+                crate::entity_id::bytes_to_hex_lower(&fingerprint)
+            );
+            let input = EsignSealInput::new(
+                prepared.bytes,
+                &operation_id,
+                self.now_recorded_at().saturating_mul(1000),
+            )?;
             let sealed = sealer.seal(
-                &prepared.bytes,
+                &input,
                 &EsignSealRequest {
-                    operation_id: format!(
-                        "esign:{}:{}:{index}",
-                        document.to_hex(),
-                        crate::entity_id::bytes_to_hex_lower(&fingerprint)
-                    ),
+                    operation_id,
                     profile,
                 },
             )?;
             let checked = sealer.verify(&sealed.bytes)?;
-            if !sealed.self_verify.self_verify_ok || !checked.self_verify_ok {
+            if !sealed.self_verify.self_verify_ok
+                || !checked.self_verify_ok
+                || !coherent(&sealed, &checked, profile)
+            {
                 return Err(EsignSealError::Verification);
             }
             let hash: [u8; 32] = Sha256::digest(&sealed.bytes).into();

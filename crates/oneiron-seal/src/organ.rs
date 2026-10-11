@@ -1,17 +1,23 @@
-//! The seal organ: `seal.pdf` and `seal.verify`, schema 1, run as its own
-//! process behind the organ host (ARCH-0064 section 7, ARCH-0075
-//! `#organ-host-design-seal-move`).
+//! The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run
+//! as its own process behind the organ host (ARCH-0064 section 7, ARCH-0075
+//! `#organ-host-design-seal-move` and `#organ-host-design-seal-binding`).
 //!
-//! The engine prepares the PDF and lends it; it keeps the signing key. The
-//! organ asks it back, protocol 1.1, for the signing identity
-//! (`seal.identity`), for each signature over a SHA-256 prehash
-//! (`seal.sign`), and for every timestamp and CRL fetch (`net.fetch`, inside
-//! the allowlist the install grant names). Its clock is the engine's
-//! `now_ms` plus the time since the call began.
+//! The engine prepares the PDF, writes its ordinary signature revision for
+//! each contents capacity, and lends both; it keeps the signing key. The
+//! organ builds only the CMS for one of those revisions, then any validation
+//! data and document timestamp after it. It asks the engine back, protocol
+//! 1.1, for the signing identity (`seal.identity`), for the signature over
+//! the revision's signed attributes (`seal.sign`), and for every timestamp
+//! and CRL fetch (`net.fetch`, inside the allowlist the install grant
+//! names). Its clock is the engine's `now_ms` plus the time since the call
+//! began.
 //!
 //! Args, MessagePack with named fields:
-//! - `seal.pdf`: `{operation_id, profile, now_ms, config}`, one
-//!   `application/pdf` input.
+//! - `seal.pdf`: `{operation_id, profile, now_ms, config,
+//!   signature_revisions: [{id, suffix_offset, suffix_len, byte_range}]}`,
+//!   two inputs: the `application/pdf` prepared PDF, then the revisions'
+//!   suffixes one after another as `application/octet-stream`. Revision
+//!   `id` is the PDF followed by its suffix.
 //! - `seal.verify`: `{now_ms, config}`, one `application/pdf` input. It
 //!   never asks.
 //! - `config`: `{trust_anchors: [bin], timestamp_authorities: [{url,
@@ -40,23 +46,28 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::api::{
-    BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod,
-    FetchPolicy, FetchPurpose, FetchRequest, FetchResponse, PadesProfile, PdfSealEngine,
+    BackendError, BackendRejectCode, BackendSignature, FetchError, FetchMethod, FetchPolicy,
+    FetchPurpose, FetchRequest, FetchResponse, PadesProfile, PdfSealEngine, PreparedRevision,
     ProfileDegradeReason, SealBackend, SealClock, SealConfig, SealFetcher, SealRequest,
-    SealResourceLimits, SealWarning, SignDigestRequest, SignatureAlgorithm, SigningIdentity,
-    TsaEndpoint, VerifyFindingCode, VerifyReport, VerifyVerdict,
+    SealResourceLimits, SealWarning, SignDigestRequest, SignRevisionRequest, SignatureAlgorithm,
+    SigningIdentity, TsaEndpoint, VerifyFindingCode, VerifyReport, VerifyVerdict,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 use crate::native::NativeSealEngine;
 
 pub const VERB_SEAL: &str = "seal.pdf";
 pub const VERB_VERIFY: &str = "seal.verify";
+/// `seal.pdf`'s schema: the engine's revisions, lent beside the PDF.
+pub const SEAL_SCHEMA: u32 = 2;
 /// Ask: the signing identity, `{}` → `{algorithm, signer_certificate,
 /// chain}`.
 pub const ASK_IDENTITY: &str = "seal.identity";
-/// Ask: one signature, `{operation_id, digest_algorithm, digest}` →
-/// `{signature}`.
+/// Ask: one signature, `{operation_id, revision_id, byte_range,
+/// signed_attributes_der}` → `{signature}`. The engine hashes the
+/// revision's ByteRange and the attributes itself.
 pub const ASK_SIGN: &str = "seal.sign";
+/// The media type of the lent revision suffixes.
+pub const REVISIONS: &str = "application/octet-stream";
 /// The name of the sealed output.
 pub const SEALED_OUTPUT: &str = "sealed.pdf";
 /// The most report JSON a verdict carries. A larger report is left out,
@@ -79,11 +90,11 @@ impl Organ for SealOrgan {
     }
 
     fn verbs(&self) -> Vec<VerbSpec> {
-        [VERB_SEAL, VERB_VERIFY]
+        [(VERB_SEAL, SEAL_SCHEMA), (VERB_VERIFY, 1)]
             .into_iter()
-            .map(|name| VerbSpec {
+            .map(|(name, schema)| VerbSpec {
                 name: name.to_owned(),
-                schema: 1,
+                schema,
                 kinds: Vec::new(),
             })
             .collect()
@@ -108,6 +119,16 @@ struct SealArgs {
     profile: PadesProfile,
     now_ms: u64,
     config: ConfigArgs,
+    signature_revisions: Vec<RevisionArgs>,
+}
+
+/// One of the engine's revisions: its suffix in the second input.
+#[derive(Deserialize)]
+struct RevisionArgs {
+    id: u32,
+    suffix_offset: u64,
+    suffix_len: u64,
+    byte_range: [u64; 4],
 }
 
 #[derive(Deserialize)]
@@ -273,8 +294,32 @@ impl Failure {
 }
 
 fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
+    if call.schema != SEAL_SCHEMA {
+        return Err(bad("seal.pdf is schema 2"));
+    }
     let args: SealArgs = from_value(call.args, "seal args")?;
-    let pdf = the_pdf(call)?;
+    let (pdf, suffixes) = match call.inputs {
+        [pdf, suffixes] if pdf.media_type == PDF && suffixes.media_type == REVISIONS => {
+            (&pdf[..], &suffixes[..])
+        }
+        _ => return Err(bad("an application/pdf input, then the revisions")),
+    };
+    let revisions = (0u32..)
+        .zip(&args.signature_revisions)
+        .map(|(id, revision)| {
+            let start = usize::try_from(revision.suffix_offset).ok();
+            let len = usize::try_from(revision.suffix_len).ok();
+            let suffix = start
+                .zip(len)
+                .and_then(|(start, len)| suffixes.get(start..start.checked_add(len)?))
+                .filter(|_| revision.id == id)
+                .ok_or_else(|| bad("a revision outside its input"))?;
+            Ok(PreparedRevision {
+                suffix,
+                byte_range: revision.byte_range,
+            })
+        })
+        .collect::<Result<Vec<_>, OrganError>>()?;
     let engine = match engine(args.config, args.now_ms, began, call.asker())? {
         Ok(engine) => engine,
         Err(err) => return report(&SealReport::Failed(Failure::of(err)?)),
@@ -283,7 +328,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
         operation_id: args.operation_id,
         target_profile: args.profile,
     };
-    let sealed = match block_on(engine.seal_pdf(pdf, &request)) {
+    let sealed = match block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions)) {
         Ok(sealed) => sealed,
         Err(err) => return report(&SealReport::Failed(Failure::of(err)?)),
     };
@@ -439,8 +484,9 @@ struct IdentityAnswer {
 #[derive(Serialize)]
 struct SignAsk {
     operation_id: String,
-    digest_algorithm: DigestAlgorithm,
-    digest: ByteBuf,
+    revision_id: u32,
+    byte_range: [u64; 4],
+    signed_attributes_der: ByteBuf,
 }
 
 #[derive(Deserialize)]
@@ -483,15 +529,29 @@ impl SealBackend for AskedBackend {
         Ok(identity)
     }
 
+    /// The engine signs no bare prehash: only a revision it wrote.
     async fn sign_digest(
         &self,
-        request: SignDigestRequest,
+        _request: SignDigestRequest,
+    ) -> Result<BackendSignature, BackendError> {
+        Err(BackendError::Rejected {
+            code: BackendRejectCode::Unauthorized,
+        })
+    }
+
+    async fn sign_revision(
+        &self,
+        request: SignRevisionRequest,
     ) -> Result<BackendSignature, BackendError> {
         let algorithm = self.signing_identity()?.algorithm;
+        let revision_id = request.revision_id.ok_or(BackendError::Rejected {
+            code: BackendRejectCode::Unauthorized,
+        })?;
         let ask = SignAsk {
             operation_id: request.operation_id,
-            digest_algorithm: request.digest_algorithm,
-            digest: ByteBuf::from(request.digest.to_vec()),
+            revision_id,
+            byte_range: request.byte_range,
+            signed_attributes_der: ByteBuf::from(request.signed_attributes_der),
         };
         let value = to_value(&ask).map_err(|_| BackendError::Rejected {
             code: BackendRejectCode::InvalidResponse,

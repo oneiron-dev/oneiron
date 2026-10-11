@@ -38,7 +38,9 @@ pub use budget::BudgetConfig;
 pub use error::{HostError, Unavailable};
 pub use fetch::GuardedFetch;
 pub use host::{OrganHost, OrganOutcome, OrganOutput};
-pub use receipt::{AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, Unanswered};
+pub use receipt::{
+    AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
+};
 pub use slot::{OrganState, OrganStatus};
 pub use spec::{
     AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput,

@@ -47,6 +47,9 @@ network-fetch = [
   "dep:tokio",
 ]
 seal-oracle = ["native"]
+# The hostile seal organ and the binding checks that run it
+# (tests/esign_host_e2e.rs). Off by default; never shipped.
+hostile-organ-tests = ["native"]
 
 [lib]
 # No doc-comment code fences in this crate (audited 2026-08-19); skip the
@@ -58,6 +61,14 @@ doctest = false
 name = "oneiron-seal-organ"
 path = "src/bin/oneiron-seal-organ.rs"
 required-features = ["native"]
+
+# A hostile seal organ for the seal binding's checks: never shipped.
+[[bin]]
+name = "oneiron-seal-rogue"
+path = "tests/support/rogue_seal_organ.rs"
+required-features = ["hostile-organ-tests"]
+test = false
+doc = false
 
 [dependencies]
 async-trait = "0.1"

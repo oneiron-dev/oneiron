@@ -50,6 +50,9 @@ struct SlotState {
     /// thread's drop, out of a revocation's sight. Each process's reader
     /// thread forgets it once it has been reaped.
     generations: Vec<Arc<OrganProcess>>,
+    /// Processes started for one call each ([`Slot::fresh_process`]): never
+    /// `process`, and stopped when that call ends.
+    one_call: Vec<Arc<OrganProcess>>,
     crashes: VecDeque<Instant>,
     not_before: Option<Instant>,
     unavailable: Option<Unavailable>,
@@ -106,6 +109,35 @@ impl Slot {
                 return Err(self.unavailable(reason.clone()));
             }
         }
+        let process = self.start(&mut state, config, deadline)?;
+        state.process = Some(Arc::clone(&process));
+        Ok(process)
+    }
+
+    /// A new process for one call, beside the live one, under the same
+    /// condition, backoff and crash history. The caller stops it when the
+    /// call ends ([`Slot::stopped`]); until then a revocation finds it.
+    pub(crate) fn fresh_process(
+        self: &Arc<Self>,
+        config: &HostConfig,
+        deadline: Option<Instant>,
+    ) -> Result<Arc<OrganProcess>, HostError> {
+        let mut state = self.lock();
+        if let Some(reason) = &state.unavailable {
+            return Err(self.unavailable(reason.clone()));
+        }
+        let process = self.start(&mut state, config, deadline)?;
+        state.one_call.push(Arc::clone(&process));
+        Ok(process)
+    }
+
+    /// Starts a process, once the backoff has passed, and tracks it.
+    fn start(
+        self: &Arc<Self>,
+        state: &mut SlotState,
+        config: &HostConfig,
+        deadline: Option<Instant>,
+    ) -> Result<Arc<OrganProcess>, HostError> {
         if let Some(not_before) = state.not_before {
             let now = Instant::now();
             if now < not_before {
@@ -131,7 +163,6 @@ impl Slot {
                 state.spawns += 1;
                 state.last_spawn = Some(process.spawn_time);
                 state.not_before = None;
-                state.process = Some(Arc::clone(&process));
                 Ok(process)
             }
             Err(HostError::Handshake(reason)) => {
@@ -141,39 +172,41 @@ impl Slot {
             // The caller ran out of time; the organ is not at fault.
             Err(HostError::DeadlineExceeded) => Err(HostError::DeadlineExceeded),
             Err(err) => {
-                record_crash(&mut state);
+                record_crash(state);
                 Err(err)
             }
         }
+    }
+
+    /// Forgets `process` as the live one or a one-call one. Whether it was.
+    fn forget(state: &mut SlotState, process: &Arc<OrganProcess>) -> bool {
+        if state
+            .process
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, process))
+        {
+            state.process = None;
+            return true;
+        }
+        let before = state.one_call.len();
+        state.one_call.retain(|one| !Arc::ptr_eq(one, process));
+        state.one_call.len() < before
     }
 
     /// The process died under a call: forget it, and count the crash unless
     /// the host itself stopped it.
     pub(crate) fn crashed(&self, process: &Arc<OrganProcess>) {
         let mut state = self.lock();
-        if state
-            .process
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, process))
-        {
-            state.process = None;
-            if !process.stopped_by_host() {
-                record_crash(&mut state);
-            }
+        if Self::forget(&mut state, process) && !process.stopped_by_host() {
+            record_crash(&mut state);
         }
     }
 
-    /// The host stopped the process on purpose (deadline, unload, revoke):
-    /// forget it without counting a crash.
+    /// The host stopped the process on purpose (deadline, unload, revoke,
+    /// the end of its one call): forget it without counting a crash.
     pub(crate) fn stopped(&self, process: &Arc<OrganProcess>) {
         let mut state = self.lock();
-        if state
-            .process
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, process))
-        {
-            state.process = None;
-        }
+        Self::forget(&mut state, process);
         state.generations.retain(|old| !old.has_ended());
     }
 
@@ -218,6 +251,7 @@ impl Slot {
         let mut state = self.lock();
         state.unavailable = Some(reason);
         state.process = None;
+        state.one_call.clear();
         state.generations.retain(|old| old.is_running());
         state.generations.clone()
     }

@@ -71,6 +71,27 @@ pub struct AskReceipt {
     /// Set when the organ got no answer because its call ended first.
     #[serde(default)]
     pub unanswered: Option<Unanswered>,
+    /// What the handler's key signed, in the host's own words: set even
+    /// when the signature was never delivered.
+    #[serde(default)]
+    pub signed: Option<SignedReceipt>,
+}
+
+/// One signature a handler's key made for an ask. The organ supplied none
+/// of these values: the host computed each one before the key signed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedReceipt {
+    pub operation_id: String,
+    /// The SHA-256 prehash the key signed.
+    pub prehash: [u8; 32],
+    /// SHA-256 of the content the prehash commits to: for a seal, the
+    /// revision's ByteRange.
+    pub content_sha256: [u8; 32],
+    /// Which of the call's prepared revisions it signed, if the call has
+    /// several.
+    pub revision: Option<u32>,
+    /// SHA-256 of the signature value.
+    pub signature_sha256: [u8; 32],
 }
 
 /// Why an ask got no answer: its call ended (cancelled, revoked, replied,

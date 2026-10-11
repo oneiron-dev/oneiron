@@ -40,9 +40,11 @@ mod seal;
 pub use seal::{EsignSealError, SealedDocument, SealedItem};
 mod sealer;
 pub use sealer::{
-    EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict, SealDegrade,
-    SealProfile, SealVerdict,
+    EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
+    EsignSignatureRevision, EsignVerdict, SealDegrade, SealProfile, SealVerdict,
 };
+mod signature_revision;
+pub use signature_revision::SEAL_CONTENTS_LADDER;
 
 mod reseal;
 

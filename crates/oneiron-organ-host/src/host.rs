@@ -280,6 +280,35 @@ impl OrganHost {
         lent: Vec<LentInput>,
         asks: &AskHandlers<'_>,
     ) -> Result<OrganOutcome, HostError> {
+        self.run(vault, call, lent, asks, false)
+    }
+
+    /// [`Self::call_with`], in a process started for this call alone: it
+    /// never served another call, never serves a later one, and is stopped
+    /// when this call ends, however it ends. The organ's warm process, if
+    /// any, is left as it was. A second opinion runs this way, so nothing an
+    /// earlier call left in a process can decide it.
+    ///
+    /// # Errors
+    /// As [`Self::call_with`].
+    pub fn call_fresh_with(
+        &self,
+        vault: &Vault,
+        call: OrganCall,
+        lent: Vec<LentInput>,
+        asks: &AskHandlers<'_>,
+    ) -> Result<OrganOutcome, HostError> {
+        self.run(vault, call, lent, asks, true)
+    }
+
+    fn run(
+        &self,
+        vault: &Vault,
+        call: OrganCall,
+        lent: Vec<LentInput>,
+        asks: &AskHandlers<'_>,
+        fresh: bool,
+    ) -> Result<OrganOutcome, HostError> {
         if in_handler() {
             return Err(HostError::Reentrant);
         }
@@ -316,7 +345,15 @@ impl OrganHost {
         for input in lent {
             inputs.push(self.lend(&slot.spec, input)?);
         }
-        let process = slot.process(&self.config, Some(deadline))?;
+        let process = if fresh {
+            slot.fresh_process(&self.config, Some(deadline))?
+        } else {
+            slot.process(&self.config, Some(deadline))?
+        };
+        let _one_call = fresh.then(|| OneCall {
+            slot: slot.as_ref(),
+            process: Arc::clone(&process),
+        });
         let offered = process
             .hello
             .verbs
@@ -512,6 +549,20 @@ impl OrganHost {
             len,
             held,
         })
+    }
+}
+
+/// Stops a one-call process when its call ends.
+struct OneCall<'a> {
+    slot: &'a Slot,
+    process: Arc<OrganProcess>,
+}
+
+impl Drop for OneCall<'_> {
+    fn drop(&mut self) {
+        self.slot.stopped(&self.process);
+        self.process.stop();
+        self.slot.prune();
     }
 }
 

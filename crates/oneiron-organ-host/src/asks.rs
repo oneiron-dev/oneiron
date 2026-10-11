@@ -21,7 +21,7 @@ use oneiron_organ_protocol::{
 
 use crate::error::HostError;
 use crate::fetch;
-use crate::receipt::{AskReceipt, FetchTarget, Unanswered, bound_text, digest};
+use crate::receipt::{AskReceipt, FetchTarget, SignedReceipt, Unanswered, bound_text, digest};
 use crate::spec::{FetchGrant, OrganSpec};
 
 const MAX_DETAIL_BYTES: usize = 512;
@@ -60,6 +60,8 @@ pub struct Answered {
     pub data: Option<Vec<u8>>,
     /// For a fetch, where it went, for the receipt.
     pub fetch: Option<FetchTarget>,
+    /// For a signature, what the key signed, for the receipt.
+    pub signed: Option<SignedReceipt>,
 }
 
 impl Default for Answered {
@@ -69,6 +71,7 @@ impl Default for Answered {
             value: rmpv::Value::Nil,
             data: None,
             fetch: None,
+            signed: None,
         }
     }
 }
@@ -312,10 +315,17 @@ impl<'a> CallAsks<'a> {
     }
 
     fn answer(&mut self, ask: &Ask, mut line: AskReceipt, answered: Answered) -> AskStep {
-        let Answered { value, data, fetch } = answered;
+        let Answered {
+            value,
+            data,
+            fetch,
+            signed,
+        } = answered;
         if fetch.is_some() {
             line.fetch = fetch;
         }
+        // A signature is on record whether or not it is delivered.
+        line.signed = signed;
         // The value is answer bytes too: a fetch's final URL, or anything a
         // handler puts there, crosses inline and lands in the organ's heap.
         let value_len =
@@ -410,5 +420,6 @@ fn line(ask: &Ask) -> AskReceipt {
         fetch: None,
         handler_us: 0,
         unanswered: None,
+        signed: None,
     }
 }
