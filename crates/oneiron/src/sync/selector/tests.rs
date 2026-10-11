@@ -4778,7 +4778,10 @@ fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() ->
 /// written from. A run read a CLAIM in private world W and summarized it: a
 /// peer whose grant takes base-world SUMMARY rows but not W gets neither the
 /// summary nor its words, and no source is sent along. A summary of base
-/// records still leaves. The scoped record export door judges the same way.
+/// records still leaves beside them. A source only another window carries
+/// cannot be proven from this export (Sol round 10 on #1384), so even a peer
+/// that takes W gets the CLAIM and not its summary. The scoped record export
+/// door judges the same way.
 #[test]
 fn an_epoch_summary_leaves_only_with_every_record_it_was_written_from() -> crate::Result<()> {
     use crate::compaction::{
@@ -4865,8 +4868,8 @@ fn an_epoch_summary_leaves_only_with_every_record_it_was_written_from() -> crate
     assert!(!base.contains(&claim), "no source is sent along");
     let all = sent(SyncSelectorWorld::All)?;
     assert!(
-        all.contains(&private),
-        "a peer that receives the CLAIM receives its summary"
+        all.contains(&plain) && !all.contains(&private),
+        "a summary leaves only beside its sources, and the CLAIM travels in W's window"
     );
 
     let mut base_only = Scope::top();
@@ -4989,7 +4992,11 @@ fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<(
         "a summary born in W is not base-world disclosure"
     );
     let all = sent(&before, SyncSelectorWorld::All)?;
-    assert!(all.contains(&placed) && all.contains(&kept));
+    assert!(all.contains(&placed), "a summary born in W leaves with W");
+    assert!(
+        !all.contains(&kept),
+        "a summary of W's CLAIM stays home: the CLAIM travels in W's window"
+    );
 
     vault.set_world_device_only(world.entity_id(), true)?;
     let all = sent(&before, SyncSelectorWorld::All)?;
@@ -5259,6 +5266,76 @@ fn an_epoch_summary_stays_home_when_its_source_history_spans_windows() -> crate:
     assert!(
         !sent.contains(&summary),
         "the summary stays home with a source whose history no window carries"
+    );
+    Ok(())
+}
+
+/// Sol round 10 on #1384: an epoch is judged by its stored lineage whatever
+/// bytes its window carries. A peer's rejected CLAIM wins nested epoch E's
+/// carrier; E still derives from a CLAIM in private world W, so the summary
+/// written from E stays out of a Base export.
+#[test]
+fn an_epoch_summary_stays_home_when_a_nested_epoch_is_retyped() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5d);
+    let (person, claim) = (entity_id(0xd1), entity_id(0xd2));
+    let (nested, outer) = (entity_id(0xd3), entity_id(0xd4));
+    let key = WindowKey::new("2026-03");
+    let at = key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.private_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the private world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    vault
+        .batch()
+        .put(
+            &nested,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(1, "the run learned the private world fact")?,
+        )
+        .edge(&nested, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &outer,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(2, "the run repeated what it learned")?,
+        )
+        .edge(&outer, EdgeKind::DerivedFrom, &nested, 1.0)
+        .commit()?;
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    insert_blob(&doc, nested, &claim_blob(None));
+    doc.commit();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let sent = import_ids(
+        &filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?
+            .export(ExportMode::all_updates())
+            .unwrap(),
+    );
+    assert!(sent.contains(&person), "the selector exports");
+    assert!(
+        !sent.contains(&outer),
+        "the outer summary stays home with its nested epoch's private source"
     );
     Ok(())
 }

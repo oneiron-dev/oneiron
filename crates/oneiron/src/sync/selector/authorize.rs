@@ -9,7 +9,7 @@ use crate::authority::{AuthorityFold, FederationGrantActivation, federation_gran
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
+use crate::error::{Error, Result, SyncError, SyncSelectorValidation as SelectorError};
 use crate::federation::{
     Ceiling, FederationDirectionScope, FederationGrantScope, Position, ScopeAxis, ScopeId,
     base_world_axis, decode_federation_grant_body,
@@ -22,9 +22,12 @@ use crate::sync::loro_support::{
 };
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
+use crate::sync::window::{
+    apply_pending_window_updates, load_window_from_state, reverse_rematerialize,
+};
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
-use super::epoch_egress::{rematerialized_window, unbacked_epochs};
+use super::epoch_egress::unbacked_epochs;
 use super::scope::{
     band_filter, coreference_export_context, entity_selector_decision, facet_filter,
     facet_scope_by_source,
@@ -267,7 +270,6 @@ fn authorized_base_edge_endpoints(
     kept: &BTreeSet<EntityId>,
     selector: &SyncSelector,
     position: &Position,
-    elsewhere: bool,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -296,9 +298,17 @@ fn authorized_base_edge_endpoints(
         }
         let base_key = WindowKey::from_timestamp(header.learned_at);
         if !selected_by_month.contains_key(base_key.as_str()) {
-            let base = rematerialized_window(vault, "selector-base", &base_key)?;
-            let selected =
-                filter_window_doc_in(vault, &base, &base_key, selector, position, elsewhere)?;
+            let base = match load_window_from_state(vault, "selector-base", &base_key) {
+                Ok(doc) => doc,
+                Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                    let doc = create_window_doc("selector-base", &base_key);
+                    apply_pending_window_updates(vault, &doc, &base_key)?;
+                    doc
+                }
+                Err(error) => return Err(error),
+            };
+            reverse_rematerialize(vault, &base, &base_key)?;
+            let selected = filter_window_doc(vault, &base, &base_key, selector, position)?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -387,20 +397,6 @@ pub(super) fn filter_window_doc(
     key: &WindowKey,
     selector: &SyncSelector,
     position: &Position,
-) -> Result<LoroDoc> {
-    filter_window_doc_in(vault, source, key, selector, position, true)
-}
-
-/// [`filter_window_doc`]. `elsewhere` lets an epoch summary's source be
-/// proven in the export of the window that packs it; inside that proof it
-/// is false, so no proof reaches a third window.
-pub(super) fn filter_window_doc_in(
-    vault: &Vault,
-    source: &LoroDoc,
-    key: &WindowKey,
-    selector: &SyncSelector,
-    position: &Position,
-    elsewhere: bool,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -647,16 +643,16 @@ pub(super) fn filter_window_doc_in(
             incomplete.insert(id);
         }
     }
-    drop(rtxn);
-    // An epoch summary leaves only beside every record it was written from;
-    // the pass reads what this export ships, so it runs after every other
-    // withholding and before anything is written.
+    // An epoch summary leaves only beside every record it was written from:
+    // the pass reads what this export ships, in its snapshot, so it runs
+    // after every other withholding and before anything is written.
     let mut shipped = kept
         .iter()
         .filter(|id| !tombstoned.contains(id) && !incomplete.contains(id))
         .copied()
         .collect::<BTreeSet<_>>();
-    let withheld = unbacked_epochs(vault, (source, key), &shipped, selector, position, elsewhere)?;
+    let withheld = unbacked_epochs(vault, &rtxn, source, &shipped)?;
+    drop(rtxn);
     kept.retain(|id| !withheld.contains(id));
     shipped.retain(|id| !withheld.contains(id));
 
@@ -673,7 +669,7 @@ pub(super) fn filter_window_doc_in(
     });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position, elsewhere)?
+        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position)?
     } else {
         BTreeSet::new()
     };
