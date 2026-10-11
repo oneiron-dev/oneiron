@@ -4,7 +4,7 @@
 //! under the reference it had before the stop.
 use std::fs::File;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
@@ -54,9 +54,11 @@ pub(super) fn stdout(mut command: Command) -> String {
 pub(super) fn serve(config: &Path, port: u16, log: &Path) -> Server {
     let port = port.to_string();
     let mut command = oneiron(&["serve", "--host", "127.0.0.1", "--port", &port], config);
+    // The server logs to stdout; its log file takes both streams.
+    let file = File::create(log).expect("server log file");
     command
-        .stdout(Stdio::null())
-        .stderr(File::create(log).expect("server log file"));
+        .stdout(file.try_clone().expect("server log file"))
+        .stderr(file);
     let mut server = Server(command.spawn().expect("spawn oneiron serve"));
     let probe = reqwest::blocking::Client::new();
     let url = format!("http://127.0.0.1:{port}/v1/core/facade/receipts");

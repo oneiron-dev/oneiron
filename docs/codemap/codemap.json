@@ -1757,7 +1757,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 18
      }
     },
@@ -1859,18 +1859,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ProofClockAhead",
+      "ProofClockRecovery"
+     ],
      "path": "src/authority/slip_replay.rs",
      "purpose": "Bounded, timestamp-bound replay windows for authenticated slip requests",
      "surface": {
-      "crate-vis": 4,
-      "fn": 2
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/slip_replay/tests.rs",
@@ -27705,7 +27710,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -50176,6 +50181,7 @@
       "ImportDecisionArgs",
       "ImportNotesArgs",
       "ImportSourceArgs",
+      "RecoverClockArgs",
       "RecoverWindowArgs",
       "RestoreArgs",
       "RunArgs",
@@ -50194,7 +50200,7 @@
      "purpose": "Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan…",
      "surface": {
       "enum": 5,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -50375,10 +50381,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner.rs",
-     "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window recovery, export, the secret…",
+     "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 1,
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -51014,7 +51020,7 @@
       "const": 1,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 26,
+      "fn": 27,
       "re-export": 1,
       "struct": 4
      }
@@ -53024,7 +53030,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/slip_clock.rs",
