@@ -491,13 +491,17 @@ impl Vault {
     ///
     /// Scans at most `scan_limit` rows from the `temporal_learned` index in
     /// newest-first order and reads matching entity bodies from the same LMDB
-    /// snapshot, returning `(id, learned_at, body)` tuples.
+    /// snapshot, returning `(id, learned_at, body)` tuples. SECRET_CUSTODY is
+    /// refused as [`Vault::get_raw`] refuses it: its body carries the value.
     pub fn latest_entity_bodies_by_type(
         &self,
         entity_type: u8,
         limit: usize,
         scan_limit: usize,
     ) -> Result<Vec<(EntityId, u64, Vec<u8>)>> {
+        if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
         if limit == 0 || scan_limit == 0 {
             return Ok(Vec::new());
         }

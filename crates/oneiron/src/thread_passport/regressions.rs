@@ -690,3 +690,28 @@ fn thread_evidence_cannot_change_subject_predicate_or_mask_on_overwrite() {
         assert_eq!(vault.get_claim(&id).unwrap(), Some(body.clone()));
     }
 }
+
+#[test]
+fn a_thread_claim_about_a_custody_row_copies_none_of_it_unwiped() {
+    const VALUE: &[u8] = b"Zq8-custody-fixture-value";
+    let (_dir, vault) = test_vault();
+    let custody = entity(0x6c);
+    let mut raw = vec![crate::registry::ENTITY_TYPE_SECRET_CUSTODY];
+    raw.extend_from_slice(&[0; 24]);
+    raw.extend_from_slice(VALUE);
+    let mut txn = vault.store.env.write_txn().unwrap();
+    vault.store.entities.put(&mut txn, custody.as_bytes(), &raw).unwrap();
+    crate::ports::row_copies::watch(VALUE);
+    let body = alias_body(custody, "thread-a", "thread-b");
+    for replicated in [false, true] {
+        assert!(matches!(
+            validate_thread_claim_owner_in_txn(&vault.store, &txn, &body, replicated),
+            Err(Error::InvalidClaimBody(_))
+        ));
+    }
+    assert!(matches!(
+        require_channel_identity(&vault, &txn, custody),
+        Err(Error::InvalidEntityType(_))
+    ));
+    assert_eq!(crate::ports::row_copies::sites(), Vec::<String>::new());
+}
