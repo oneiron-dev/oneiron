@@ -14,10 +14,21 @@ impl<T: ManifestDbs> Transactions for T {
 }
 impl<T: ManifestDbs> EntityStoreRead for T {
     fn port_entity_raw(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        Ok(self.entities().get(txn, id.as_bytes())?.map(|bytes| {
+            #[cfg(test)]
+            super::row_copies::saw(&bytes);
+            bytes.to_vec()
+        }))
+    }
+    fn port_entity_raw_wiped(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
         Ok(self
             .entities()
             .get(txn, id.as_bytes())?
-            .map(|bytes| bytes.to_vec()))
+            .map(|bytes| zeroize::Zeroizing::new(bytes.to_vec())))
     }
     fn port_entity_raw_records<'a>(
         &self,
@@ -30,6 +41,8 @@ impl<T: ManifestDbs> EntityStoreRead for T {
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("entity key"))?,
             )?;
+            #[cfg(test)]
+            super::row_copies::saw(&value);
             Ok((id, value.to_vec()))
         })))
     }
@@ -164,6 +177,13 @@ impl EntityStoreRead for Vault {
     fn port_entity_raw(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
         self.store.port_entity_raw(txn, id)
     }
+    fn port_entity_raw_wiped(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+        self.store.port_entity_raw_wiped(txn, id)
+    }
     fn port_entity_raw_records<'a>(
         &self,
         txn: &'a RoTxn<'_>,
@@ -216,18 +236,10 @@ impl EntityStoreRead for Vault {
         self.store.port_entity_ids_by_type(txn, kind, after)
     }
 }
-#[cfg(test)]
-thread_local! {
-    /// The entity type of each record this thread copied out of a
-    /// transaction, for tests that prove a read borrows instead.
-    pub(crate) static RECORD_COPIES: std::cell::RefCell<Vec<u8>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
 pub(super) fn decode_record(raw: &[u8]) -> Result<EntityRecord> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     #[cfg(test)]
-    RECORD_COPIES.with(|copies| copies.borrow_mut().push(header.entity_type));
+    super::row_copies::saw(raw);
     Ok(EntityRecord {
         entity_type: header.entity_type,
         occurred: crate::TimeRange {

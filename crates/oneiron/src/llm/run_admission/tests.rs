@@ -335,7 +335,7 @@ fn n2_alias_drift_is_refused_and_the_run_keeps_its_frozen_aliases() {
     assert_eq!(
         world.a.admission.resolve("fake/teacher-small"),
         Err(RunDenied::UnknownSelector {
-            selector: "fake/teacher-small".to_owned()
+            len: "fake/teacher-small".len()
         })
     );
     for drifted in ["fake/teacher-small@v2", "Fake/Teacher-Small@v1"] {

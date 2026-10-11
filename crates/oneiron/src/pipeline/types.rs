@@ -213,6 +213,9 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// `AnyOf` fails the run closed before the first candidate is scanned and
     /// the candidate-scan twin stays a pure predicate.
     pub(super) corpus_scope: &'a CorpusScope,
+    /// The run's deadline. While a channel stage is open every candidate the
+    /// scope gate reads is one of its checkpoints.
+    pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
 }
 
 #[derive(Default)]
@@ -488,6 +491,16 @@ impl WorldAuthoritySet {
     #[must_use]
     pub fn worlds(&self) -> &BTreeSet<EntityId> {
         &self.worlds
+    }
+
+    /// What both sets admit. It holds no more worlds than either, so it
+    /// stays inside the cap.
+    #[must_use]
+    pub(crate) fn meet(&self, other: &Self) -> Self {
+        Self {
+            include_base: self.include_base && other.include_base,
+            worlds: self.worlds.intersection(&other.worlds).copied().collect(),
+        }
     }
 
     /// Membership of an ordinary claim world, or base reality for non-claims.

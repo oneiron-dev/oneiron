@@ -14,24 +14,28 @@
 //! limit, so a stalled or oversized exchange costs the agent one typed error
 //! for that request, not the session.
 //!
-//! The bridge states one thing the agent cannot know: who is calling. The
-//! server resolves that from the credential, and still asks every tool call to
-//! restate it in an `actor` block that it then checks. The bridge takes that
-//! block from the server's own `initialize` answer for this credential, drops
-//! it from each advertised input schema, and appends it to each call's
-//! arguments. The server's check is unchanged, so the block can only ever
-//! name the identity the credential already has.
+//! Every line goes to the server as the client wrote it. Who is calling is
+//! the credential's to say, not the agent's: a tool call that names no actor
+//! runs as the credential's own, and one that names another is refused
+//! (ARCH-0028 #surface).
+//!
+//! Unless the operator names `--surface`, the bridge asks the server once,
+//! before the first request, which endpoint to use: `/mcp` (`setup_oneiron`
+//! and `execute_code`) when `/mcp`'s `initialize` says this credential may
+//! run code there, which needs a bound code host and a credential
+//! `execute_code` admits, and `/mcp/tool-first` otherwise. The listing alone
+//! cannot say it: `/mcp` lists `execute_code` to every credential alike.
 
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use super::api;
-use crate::cli::McpArgs;
+use crate::cli::{McpArgs, McpSurface};
 
 /// The one-string form a paired client stores: `v2.cred.{slip}.{seed}`, as
 /// `token agent` and `token read` print it and the SDK's `pair` returns it.
@@ -50,19 +54,11 @@ const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 /// The largest answer the bridge takes from the server for one request.
 const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
 
-/// Credential variables curl never inherits from this process, beside the
-/// two the operator named: the defaults, and the host's issuer key.
-const WITHHELD_ENV: [&str; 3] = [
-    "ONEIRON_SECRET",
-    "ONEIRON_BINDING_KEY",
-    "ONEIRON_AUTH_SECRET",
-];
-
-/// The `initialize` the bridge sends for itself when a tool call arrives
-/// before it has seen the client's own.
-const BRIDGE_INITIALIZE: &str =
+/// The `initialize` the bridge sends to `/mcp` for itself, to pick the
+/// endpoint when the operator named none.
+const SURFACE_PROBE: &str =
     r#"{"jsonrpc":"2.0","id":"oneiron-mcp-bridge","method":"initialize","params":{}}"#;
-const BRIDGE_INITIALIZE_ID: &str = "oneiron-mcp-bridge";
+const SURFACE_PROBE_ID: &str = "oneiron-mcp-bridge";
 
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     let bridge = Arc::new(Bridge::new(&args)?);
@@ -212,16 +208,21 @@ fn leading_id(head: &[u8]) -> Value {
 }
 
 struct Bridge {
-    endpoint: String,
+    /// The server's origin, normalized.
+    base: String,
+    /// The endpoint every request goes to: the operator's `--surface`, or the
+    /// one a probe picked. Unset until then.
+    pick: Mutex<Pick>,
+    /// Signalled when a probe ends.
+    probed: Condvar,
     token: String,
     seed: String,
     /// How long one request may take, and how long its answer may stall.
     deadline: Duration,
     idle: Duration,
-    /// Variables curl does not inherit: every name a credential may be in.
-    withheld_env: Vec<String>,
-    /// The `actor` block the server returned at `initialize`, as JSON text.
-    actor: Mutex<Option<String>>,
+    /// The two variables the operator named for the credential, which curl
+    /// does not inherit (nor any default credential variable).
+    named_env: Vec<String>,
 }
 
 impl Bridge {
@@ -241,8 +242,18 @@ impl Bridge {
         // Sign once now, so a slip and seed that do not belong together fail
         // at spawn, on the stderr the operator reads, and not on every call.
         api::signed_binding_for_seed(&token, &seed)?;
+        let endpoint = args
+            .surface
+            .map(|surface| format!("{base}{}", surface.path()));
         Ok(Self {
-            endpoint: format!("{base}{}", args.surface.path()),
+            pick: Mutex::new(Pick {
+                chosen: endpoint,
+                probing: false,
+                failures: 0,
+                last_failure: None,
+            }),
+            probed: Condvar::new(),
+            base,
             token,
             seed,
             deadline: Duration::from_secs(args.request_timeout_secs),
@@ -250,12 +261,7 @@ impl Bridge {
             // The slip and seed stay in this process: curl gets the slip and
             // a signed proof on its config stdin, and no variable either may
             // be in.
-            withheld_env: [&args.secret_env, &args.binding_key_env]
-                .into_iter()
-                .cloned()
-                .chain(WITHHELD_ENV.map(str::to_owned))
-                .collect(),
-            actor: Mutex::new(None),
+            named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
         })
     }
 
@@ -285,92 +291,114 @@ impl Bridge {
                 None,
             ));
         }
-        let id = message.get("id").cloned();
-        let method = message.get("method").and_then(Value::as_str);
-        let body = match method {
-            Some("tools/call") => match self.with_actor(line, &message) {
-                Ok(body) => body,
-                Err(refusal) => return id.map(|id| refusal.rpc_error(&id)),
-            },
-            _ => line.to_owned(),
-        };
-        let reply = self.post(body.into_bytes());
-        let id = id?;
+        // One deadline for the whole request, the endpoint probe included.
+        let until = Instant::now() + self.deadline;
+        let reply = self.post(line.as_bytes().to_vec(), until);
+        let id = message.get("id").cloned()?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
-            Ok(mut answer) => {
-                match method {
-                    Some("initialize") => self.remember_actor(&answer),
-                    Some("tools/list") => drop_actor_from_schemas(&mut answer),
-                    _ => {}
-                }
-                answer.to_string()
-            }
+            Ok(answer) => answer.to_string(),
             Err(refusal) => refusal.rpc_error(&id),
         })
     }
 
-    /// The call's own text with the credential's `actor` appended as the last
-    /// member of its arguments. Splicing the text, not re-serializing it,
-    /// keeps every other number spelled as the agent wrote it, and the last
-    /// member is the live one when a key repeats (`serde_json` and the
-    /// gateway's raw scan agree), so an agent-typed `actor` cannot outvote
-    /// the credential's. Arguments that are not an object go as sent, for the
-    /// server to answer.
-    fn with_actor(&self, line: &str, message: &Value) -> Result<String, Refusal> {
-        let Some(Value::Object(fields)) = message.pointer("/params/arguments") else {
-            return Ok(line.to_owned());
-        };
-        let Some(span) = crate::mcp::mcp_raw_call_arguments_span(line) else {
-            return Ok(line.to_owned());
-        };
-        let close = span.end.saturating_sub(1);
-        if line.as_bytes().get(close) != Some(&b'}') {
-            return Ok(line.to_owned());
+    /// The endpoint this bridge forwards to. With no `--surface`, a request
+    /// asks `/mcp` to `initialize`, within the request's own deadline, and
+    /// the answer picks the endpoint for the bridge's life. Calls that arrive
+    /// meanwhile wait for that one probe, each no longer than its own
+    /// deadline. A probe that gets no result picks nothing: the calls that
+    /// waited on it share its answer, and the next request asks again.
+    fn endpoint(&self, until: Instant) -> Result<String, Refusal> {
+        let primary = format!("{}{}", self.base, McpSurface::Primary.path());
+        let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
+        let joined = pick.failures;
+        loop {
+            if let Some(chosen) = pick.chosen.as_ref() {
+                return Ok(chosen.clone());
+            }
+            if pick.failures != joined
+                && let Some(failure) = pick.last_failure.clone()
+            {
+                return Err(failure);
+            }
+            if !pick.probing {
+                break;
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(self.refusal_for(&primary, api::CaptureCut::Deadline));
+            }
+            pick = self
+                .probed
+                .wait_timeout(pick, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
         }
-        let actor = self.actor()?;
-        let separator = if fields.is_empty() { "" } else { "," };
-        Ok(format!(
-            "{}{separator}\"actor\":{actor}{}",
-            &line[..close],
-            &line[close..]
-        ))
+        // No lock is held while the probe runs.
+        pick.probing = true;
+        drop(pick);
+        let probed = self.probe(&primary, until);
+        let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
+        pick.probing = false;
+        let outcome = match probed {
+            Ok(surface) => {
+                let chosen = format!("{}{}", self.base, surface.path());
+                pick.chosen = Some(chosen.clone());
+                Ok(chosen)
+            }
+            Err(failure) => {
+                pick.failures += 1;
+                pick.last_failure = Some(failure.clone());
+                Err(failure)
+            }
+        };
+        self.probed.notify_all();
+        outcome
     }
 
-    /// The credential's `actor` block, asking the server once if the client's
-    /// own `initialize` has not been seen.
-    fn actor(&self) -> Result<String, Refusal> {
-        let mut actor = self.actor.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(actor) = actor.as_ref() {
-            return Ok(actor.clone());
-        }
+    /// `/mcp` when its `initialize` says this credential may run code there;
+    /// `/mcp/tool-first` otherwise, as for a server too old to say.
+    fn probe(&self, primary: &str, until: Instant) -> Result<McpSurface, Refusal> {
         let answer = self
-            .post(BRIDGE_INITIALIZE.as_bytes().to_vec())?
-            .answer_to(&json!(BRIDGE_INITIALIZE_ID))?;
-        let found = actor_block(&answer).ok_or_else(|| Refusal::Refused(answer.clone()))?;
-        *actor = Some(found.clone());
-        Ok(found)
+            .post_to(primary, SURFACE_PROBE.as_bytes().to_vec(), until)?
+            .answer_to(&json!(SURFACE_PROBE_ID))?;
+        let Some(result) = answer.get("result").and_then(Value::as_object) else {
+            return Err(Refusal::Refused(answer));
+        };
+        Ok(
+            if result.get("executeCodeAdmitted") == Some(&Value::Bool(true)) {
+                McpSurface::Primary
+            } else {
+                McpSurface::ToolFirst
+            },
+        )
     }
 
-    fn remember_actor(&self, answer: &Value) {
-        if let Some(found) = actor_block(answer) {
-            *self.actor.lock().unwrap_or_else(PoisonError::into_inner) = Some(found);
+    fn post(&self, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
+        let endpoint = self.endpoint(until)?;
+        self.post_to(&endpoint, body, until)
+    }
+
+    /// One POST to `endpoint`, signed for this request alone, that ends by
+    /// `until` whatever the server does.
+    fn post_to(&self, endpoint: &str, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(self.refusal_for(endpoint, api::CaptureCut::Deadline));
         }
-    }
-
-    /// One POST to the endpoint, signed for this request alone, that ends
-    /// within its deadline whatever the server does.
-    fn post(&self, body: Vec<u8>) -> Result<Reply, Refusal> {
         let binding = api::signed_binding_for_seed(&self.token, &self.seed)
             .map_err(|error| Refusal::Unreachable(error.to_string()))?;
         let bounds = api::CaptureBounds {
-            deadline: self.deadline,
+            deadline: left,
             idle: self.idle,
             max_reply_bytes: MAX_REPLY_BYTES,
-            withheld_env: &self.withheld_env,
         };
-        let (output, status) =
-            api::post_json_captured(&self.endpoint, &self.token, &binding, body, &bounds)
-                .map_err(|cut| self.refusal_for(cut))?;
+        let credential = api::CurlCredential {
+            secret: Some(&self.token),
+            binding: Some(&binding),
+            env: &self.named_env,
+        };
+        let (output, status) = api::post_json_captured(endpoint, credential, body, &bounds)
+            .map_err(|cut| self.refusal_for(endpoint, cut))?;
         match output.status.code() {
             // `--fail-with-body`: an HTTP error status, with the server's body.
             Some(0 | api::CURL_HTTP_ERROR_EXIT) => Ok(Reply {
@@ -378,25 +406,22 @@ impl Bridge {
                 body: output.stdout,
             }),
             _ => Err(Refusal::Unreachable(format!(
-                "could not reach {}: {}",
-                self.endpoint,
+                "could not reach {endpoint}: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             ))),
         }
     }
 
     /// The request's error when its exchange was cut short.
-    fn refusal_for(&self, cut: api::CaptureCut) -> Refusal {
+    fn refusal_for(&self, endpoint: &str, cut: api::CaptureCut) -> Refusal {
         match cut {
             api::CaptureCut::Curl(error) => Refusal::Unreachable(error.to_string()),
             api::CaptureCut::Deadline => Refusal::Unreachable(format!(
-                "{} gave no whole answer within {}s (--request-timeout-secs)",
-                self.endpoint,
+                "{endpoint} gave no whole answer within {}s (--request-timeout-secs)",
                 self.deadline.as_secs()
             )),
             api::CaptureCut::Idle => Refusal::Unreachable(format!(
-                "{}'s answer stalled for {}s (--idle-timeout-secs)",
-                self.endpoint,
+                "{endpoint}'s answer stalled for {}s (--idle-timeout-secs)",
                 self.idle.as_secs()
             )),
             api::CaptureCut::TooLarge => Refusal::TooLarge,
@@ -448,13 +473,25 @@ impl Reply {
     }
 }
 
+/// The endpoint the bridge picked, and how its probes stand.
+struct Pick {
+    chosen: Option<String>,
+    /// A probe is running.
+    probing: bool,
+    /// How many probes ended with no pick, and the last one's failure.
+    failures: u64,
+    last_failure: Option<Refusal>,
+}
+
 /// Why a request got no MCP answer from the server.
+#[derive(Clone)]
 enum Refusal {
     /// The HTTP door refused the credential before MCP saw the request (401 or
     /// 403): revoked, expired or unproven, say. The server's error body rides
     /// along.
     Auth(Value),
-    /// The server's `initialize` carried no actor for this credential.
+    /// The server answered the bridge's own `initialize`, which picks the
+    /// endpoint, with no result.
     Refused(Value),
     /// The server answered, but not with a JSON-RPC answer to this request:
     /// any other HTTP error, or a body that answers something else.
@@ -479,10 +516,10 @@ impl Refusal {
                 Some(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }).to_string(),
                 None => rpc_error(
                     id,
-                    -32001,
-                    "mcp_auth_required",
-                    "the server named no actor for this credential",
-                    None,
+                    -32000,
+                    "server_error",
+                    "the server's /mcp initialize held no result, so no endpoint was picked; pass --surface to name one",
+                    Some(answer.clone()),
                 ),
             },
             Self::Server(message, body) => {
@@ -523,37 +560,6 @@ fn rpc_error(
     .to_string()
 }
 
-/// The `actor` block of an `initialize` answer, with absent scope members
-/// left out rather than sent as `null`.
-fn actor_block(answer: &Value) -> Option<String> {
-    let mut actor = answer.pointer("/result/actor")?.as_object()?.clone();
-    if let Some(Value::Object(scope)) = actor.get_mut("scope") {
-        scope.retain(|_, value| !value.is_null());
-    }
-    Some(Value::Object(actor).to_string())
-}
-
-/// The agent never types an identity, so it is never asked for one.
-fn drop_actor_from_schemas(answer: &mut Value) {
-    let Some(tools) = answer
-        .pointer_mut("/result/tools")
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-    for schema in tools
-        .iter_mut()
-        .filter_map(|tool| tool.get_mut("inputSchema"))
-    {
-        if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
-            properties.remove("actor");
-        }
-        if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
-            required.retain(|field| field != "actor");
-        }
-    }
-}
-
 fn credential_env(name: &str) -> anyhow::Result<String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
@@ -566,22 +572,12 @@ fn credential_env(name: &str) -> anyhow::Result<String> {
 }
 
 /// The credential file holds the one-string form and nothing else, and only
-/// its owner may read it: a file the agent's other users can read is a
-/// credential they hold too.
+/// its owner may read it, by its mode and by any ACL: a file the agent's
+/// other users can read is a credential they hold too.
 fn read_credential_file(path: &Path) -> anyhow::Result<(String, String)> {
     let mut file = std::fs::File::open(path)
         .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = file.metadata()?.permissions().mode();
-        anyhow::ensure!(
-            mode & 0o077 == 0,
-            "{} can be read by other users (mode {:o}); run `chmod 600` on it",
-            path.display(),
-            mode & 0o777
-        );
-    }
+    super::credential_file::admit(path, &file)?;
     let mut text = String::new();
     file.read_to_string(&mut text)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;

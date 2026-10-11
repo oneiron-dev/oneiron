@@ -22,8 +22,10 @@ pub use read_set::{
     ProposalReason, ServedLifecycle, SessionReadSet,
 };
 pub(crate) use room::scope_worlds;
-pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
-pub(crate) use room_verbs::{room_ceiling_in, room_roster_in};
+pub use room::{
+    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
+};
+pub(crate) use room_verbs::{room_ceiling_in, room_clearance_in, room_roster_in};
 pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
 mod history;
@@ -53,11 +55,6 @@ pub use stream::{
     DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
     RouteObservation, StreamConnectionId, StreamConnectionState, SubscriptionError,
     SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
-};
-pub use stream::{
-    BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind,
-    WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations,
-    WakeReportDisposition,
 };
 #[cfg(test)]
 mod surfaces_tests;

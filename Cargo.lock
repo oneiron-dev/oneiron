@@ -7823,7 +7823,6 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm 0.10.3",
  "arc-swap",
- "async-trait",
  "base64 0.22.1",
  "blake3",
  "chrono",
@@ -7850,13 +7849,13 @@ dependencies = [
  "ocrs",
  "oneiron",
  "oneiron-authority",
+ "oneiron-code-check",
  "oneiron-contracts",
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-model",
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
- "oneiron-seal",
  "oneiron-vault-contract",
  "oneiron-xlsx-formula",
  "p256",
@@ -7867,7 +7866,6 @@ dependencies = [
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rand_distr 0.4.3",
- "rcgen",
  "regex",
  "reqwest 0.12.28",
  "rmp-serde",
@@ -7972,6 +7970,20 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-code-check"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "wasmtime",
 ]
 
 [[package]]
@@ -8260,15 +8272,23 @@ name = "oneiron-organ-host"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "cms",
+ "const-oid 0.9.6",
+ "der 0.7.10",
+ "ipnet",
  "libc",
  "oneiron",
  "oneiron-organ-protocol",
+ "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
  "serde",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
  "toml 0.8.2",
+ "x509-cert",
 ]
 
 [[package]]
@@ -8353,11 +8373,16 @@ dependencies = [
  "futures-util",
  "ipnet",
  "lopdf",
+ "oneiron",
+ "oneiron-organ-host",
+ "oneiron-organ-protocol",
  "p256",
  "pkix-chain",
  "proptest",
  "rcgen",
  "reqwest 0.12.28",
+ "rmp-serde",
+ "rmpv",
  "rsa",
  "rustls-pki-types",
  "serde",
@@ -8397,6 +8422,7 @@ dependencies = [
  "loro",
  "oneiron",
  "oneiron-broker",
+ "oneiron-code-check",
  "oneiron-driver",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",

@@ -100,6 +100,17 @@ pub(super) fn state_in(
 ) -> Result<EsignState> {
     fold(&events_in(vault, txn, document)?)?.ok_or_else(|| invalid("unknown signing document"))
 }
+/// Appends `Sent` in its own write, for a test that drives the ceremony
+/// from another crate (`crate::test_support`).
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn mark_sent_for_test(
+    vault: &Vault,
+    document: EntityId,
+    actor: EsignAuditActor,
+    now: u64,
+) -> Result<()> {
+    vault.with_write_txn(|txn| append(vault, txn, document, EsignEvent::Sent, actor, now).map(drop))
+}
 pub(super) fn append(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -232,7 +243,9 @@ pub(crate) fn reject_event_delete(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+    // A put reaches this on any prior row, a custody record among them, whose
+    // body carries its value (ARCH-0069 S1): the copy is wiped.
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
         && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
         && let Ok(body) =

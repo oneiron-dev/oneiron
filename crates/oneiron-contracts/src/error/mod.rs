@@ -178,6 +178,7 @@ pub enum ErrorKind {
     AnalyzerAssetMissing,
     AnalyzerError,
     UpstreamToolFailure,
+    RetrievalStageCut,
     #[cfg(feature = "sync")]
     CrdtDecodeError,
     #[cfg(feature = "sync")]
@@ -232,6 +233,8 @@ pub enum ErrorKind {
     SecretTierDenied,
     SecretDoorPolicyRefused,
     SecretRefNotFound,
+    SecretWiderThanManifest,
+    SecretManifestNotFound,
     SecretLeaseNotFound,
     SecretLeaseNotActive,
     SecretLeasePathNotDeclared,
@@ -393,6 +396,11 @@ pub enum Error {
     /// validation. The code is caller-safe and pre-sanitized by the adapter.
     #[error("upstream tool failure: tool={tool}, code={code}")]
     UpstreamToolFailure { tool: &'static str, code: String },
+    /// A retrieval stage reached its share of the retrieval's deadline at
+    /// a checkpoint. The stage that raised it catches it and drops its own
+    /// partial work, so it never leaves the retrieval it was raised in.
+    #[error("retrieval stage cut at its deadline")]
+    RetrievalStageCut,
     /// Artifact-domain failure, see [`ArtifactError`].
     /// Transparent, so Display and `source()` are the leaf's.
     #[error(transparent)]
@@ -543,6 +551,7 @@ impl Error {
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
+            Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
             Self::Artifact(inner) => inner.kind(),
             Self::Claim(inner) => inner.kind(),
             Self::Code(inner) => inner.kind(),

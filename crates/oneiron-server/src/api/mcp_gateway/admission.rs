@@ -1,8 +1,8 @@
 //! Scoped-call admission and actor resolution.
 
 use super::{
-    McpCallContext, McpGatewayError, McpToolCallParams, mcp_api_error, mcp_engine_error,
-    mcp_scoped_read, mcp_tool_validation_error,
+    McpCallContext, McpGatewayError, McpToolCallParams, mcp_actor_result, mcp_api_error,
+    mcp_engine_error, mcp_scoped_read, mcp_tool_validation_error,
 };
 use crate::api::parse_entity_id_param;
 use crate::mcp::McpResolvedActor;
@@ -54,6 +54,19 @@ pub(crate) fn mcp_admit_scoped_call(
         McpValidatedToolArgs::Verb(verb) => verb,
     };
     mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
+}
+
+/// Whether this credential may start a code run here: a bound code host,
+/// and everything an `execute_code` call meets before its program is read.
+/// `/mcp` lists `execute_code` to every credential alike, so the listing
+/// cannot say this; `initialize` does, and the stdio bridge picks its
+/// endpoint by it.
+pub(crate) fn mcp_execute_code_admitted(server: &Arc<SyncServer>, actor: &McpCallContext) -> bool {
+    let tool = crate::mcp::MCP_EXECUTE_CODE_TOOL;
+    server.code_execution_host().is_some()
+        && mcp_admit_bound_tool(actor, tool).is_ok()
+        && mcp_admit_unscoped_execution(actor, tool, "name").is_ok()
+        && super::actor_dispatch::mcp_execute_code_gate(server, actor).is_ok()
 }
 
 /// One generated verb call, whichever door it arrived at: a `tools/call` or a
@@ -214,24 +227,31 @@ pub(super) fn mcp_credential_reads(
 /// only rows that actually carry the `FacetOf` edge to that facet.
 ///
 /// ONE-1704 B5: the world axis is now symmetric with that facet axis, and it
-/// applies to EVERY addressed row rather than to CLAIMs alone. Only a CLAIM
-/// carries a `world` key, so a task/entity row that carries none cannot be
-/// PROVEN in this credential's world and is refused; a CLAIM is covered exactly
-/// when its own `world` key is this credential's world. No world projection is
-/// invented for non-claim rows here — a projection is engine scope, and until
-/// one exists the fail-closed answer is the only true one. Prerelease law: the
-/// admission is narrowed outright, with no compatibility carve-out for the rows
-/// the old CLAIM-only check let through.
+/// applies to EVERY addressed row rather than to CLAIMs alone. A CLAIM is
+/// covered exactly when its own `world` key is this credential's world. A TASK
+/// carries neither a `world` key nor a `FacetOf` edge, so it is projected
+/// through the engine's record-scope stamp instead (`mcp_task_in_scope`):
+/// the board's TASK rows, a call addressing a TASK and the STREAM events about
+/// one all take that one projection (ARCH-0067 §5). Any other row that carries
+/// no `world` key cannot be PROVEN in this credential's world and is refused.
+/// Prerelease law: the admission is narrowed outright, with no compatibility
+/// carve-out for the rows the old CLAIM-only check let through.
 pub(super) fn mcp_scope_covers_entity(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     scope: &crate::mcp::McpConnectorScope,
     id: &oneiron::EntityId,
 ) -> Result<bool, McpGatewayError> {
+    if !scope.is_narrow() {
+        return Ok(true);
+    }
+    let entity_type = scoped_read
+        .vault()
+        .get_entity_type(id)
+        .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
+    if entity_type == Some(oneiron::registry::ENTITY_TYPE_TASK) {
+        return mcp_task_in_scope(scoped_read.vault(), scope, id);
+    }
     if let Some(world_ref) = scope.world_ref {
-        let entity_type = scoped_read
-            .vault()
-            .get_entity_type(id)
-            .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
         if entity_type != Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
             return Ok(false);
         }
@@ -264,6 +284,33 @@ pub(super) fn mcp_scope_covers_entity(
     Ok(true)
 }
 
+/// A TASK is inside a narrowed ceiling when the world and facet the engine
+/// stamped it with at birth are inside it. A locally written TASK is born in
+/// base reality under its own substrate facet, so a credential narrowed to
+/// base reality reads its TASKs and one narrowed to any other world or to a
+/// facet reads none. A TASK with no stamp (an opaque replicated row) is
+/// outside every narrowed ceiling.
+fn mcp_task_in_scope(
+    vault: &oneiron::Vault,
+    scope: &crate::mcp::McpConnectorScope,
+    id: &oneiron::EntityId,
+) -> Result<bool, McpGatewayError> {
+    use oneiron::federation::{ScopeAxis, ScopeId};
+    let Some(position) = vault
+        .record_scope(id)
+        .map_err(|error| mcp_engine_error("mcp scope record read failed", error))?
+    else {
+        return Ok(false);
+    };
+    let inside = |stamped: &ScopeAxis<ScopeId>, ceiling: Option<oneiron::EntityId>| {
+        ceiling.is_none_or(|ceiling| {
+            !stamped.is_bottom()
+                && stamped.is_narrowing_of(&ScopeAxis::Some([ScopeId(ceiling)].into()))
+        })
+    };
+    Ok(inside(&position.worlds, scope.world_ref) && inside(&position.facets, scope.facet_ref))
+}
+
 /// Resolves one `tools/call` name against THIS endpoint's registration.
 ///
 /// The registered surface is the WHOLE callable surface (ONE-1704 M1). There is
@@ -276,6 +323,7 @@ pub(super) fn mcp_validated_call_args(
     mode: McpSurfaceMode,
     params: McpToolCallParams,
     raw_arguments: Option<&str>,
+    actor: &McpResolvedActor,
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
     let Some(tool) = server.mcp_surface(mode).resolve(&params.name) else {
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
@@ -298,7 +346,10 @@ pub(super) fn mcp_validated_call_args(
         || crate::mcp::McpToolArguments::from(params.arguments),
         crate::mcp::McpToolArguments::from_raw_json,
     );
-    crate::mcp::validate_mcp_endpoint_tool_args(tool, arguments).map_err(mcp_tool_validation_error)
+    // WHO is the credential's: a call that names no actor is the caller the
+    // credential resolved to (ARCH-0028 #surface).
+    crate::mcp::validate_mcp_endpoint_tool_args_as(tool, arguments, &mcp_actor_result(actor))
+        .map_err(mcp_tool_validation_error)
 }
 
 /// Refuse an unavailable interpreter before decoding arguments or creating a run.

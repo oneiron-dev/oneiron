@@ -17,8 +17,6 @@ mod maintenance;
 pub(crate) use maintenance::*;
 mod lmdb_phonetic;
 mod lmdb_query;
-#[cfg(test)]
-pub(crate) use lmdb_query::RECORD_COPIES;
 mod lmdb_staging;
 mod lmdb_timeline;
 mod lmdb_visibility;
@@ -45,15 +43,18 @@ pub use safe_read::{safe_read_asset_text, safe_read_text};
 #[cfg(test)]
 mod memory;
 #[cfg(test)]
+pub(crate) mod row_copies;
+#[cfg(test)]
 mod tests;
 pub use contracts::*;
 pub(crate) use integrity::{
     invalidate_source_in_txn, record_dependency_in_txn, record_derived_edge_in_txn, stale_in_txn,
 };
 pub use records::*;
+pub(crate) use regeneration::dependency_sources_in;
 pub(crate) use time::{
-    CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, persist_id_floor_in_txn,
-    recorded_at_in_txn,
+    CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, observe_clock_floor_in_txn,
+    persist_id_floor_in_txn, recorded_at_in_txn,
 };
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;

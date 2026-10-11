@@ -1,5 +1,6 @@
 //! Durable REPL loop: run(), persistence helpers, and LLM request building.
 
+use super::code_check::ShadowStep;
 use super::driver::EngineNativeExecutor;
 use super::host::{
     RecordingJsHost, executor_boundary_contract, executor_system_prompt, executor_turn_instruction,
@@ -139,6 +140,12 @@ impl EngineNativeExecutor<'_> {
                 script_output_path(completed_steps),
                 &script,
             )?;
+            // Shadow mode type-checks the program before it runs and acts on
+            // nothing it finds. The report is appended once the step's own
+            // state is durable.
+            let mut shadow = self
+                .code_check
+                .map(|shadow| ShadowStep::check(shadow, config.run_id, completed_steps, &script));
 
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
@@ -184,6 +191,9 @@ impl EngineNativeExecutor<'_> {
                             config,
                         )?
                     {
+                        if let Some(shadow) = &mut shadow {
+                            shadow.ended(Some(&status));
+                        }
                         return Ok(EngineExecutorOutcome {
                             status,
                             steps_run: steps_run + 1,
@@ -213,6 +223,9 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed(),
                     config,
                 )? {
+                    if let Some(shadow) = &mut shadow {
+                        shadow.ended(Some(&status));
+                    }
                     return Ok(EngineExecutorOutcome {
                         status,
                         steps_run: steps_run + 1,
@@ -245,6 +258,9 @@ impl EngineNativeExecutor<'_> {
                                 config,
                             )?
                         {
+                            if let Some(shadow) = &mut shadow {
+                                shadow.ended(Some(&status));
+                            }
                             return Ok(EngineExecutorOutcome {
                                 status,
                                 steps_run: steps_run + 1,
@@ -329,7 +345,7 @@ impl EngineNativeExecutor<'_> {
             // Replay persistence and its one-per-healed-turn signal are one
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
-            let next_generation = self
+            let mut next_generation = self
                 .storage
                 .put_code_run_replay_record_if_generation_with_heal(
                     &record,
@@ -344,6 +360,14 @@ impl EngineNativeExecutor<'_> {
                 self.emit_trailing_speak_fallback(&record, completed_steps, text, config)?;
             }
             steps_run += 1;
+            if let Some(shadow) = &mut shadow {
+                shadow.ended(terminal_status.as_ref());
+                if let Some(generation) =
+                    shadow.append_report(&self.storage, &mut record, next_generation)
+                {
+                    next_generation = generation;
+                }
+            }
 
             if let Some(status) = terminal_status {
                 return Ok(EngineExecutorOutcome {

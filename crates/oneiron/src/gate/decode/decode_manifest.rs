@@ -90,6 +90,7 @@ pub(in crate::gate) enum ConnectorClassRole {
     Holder,
 }
 
+#[derive(Clone)]
 pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pack: PolicyPack,
     pub(in crate::gate) policy_values: Vec<PolicyValueRow>,
@@ -194,7 +195,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 /// local-only trusted marker or its unrelated gate defaults.
 #[expect(
     clippy::large_enum_variant,
-    reason = "transient per-row decode value, matched once by the manifest fold"
+    reason = "per-row decode value, kept once per body by the store's manifest memo"
 )]
 pub(in crate::gate) enum DecodedManifestCarrier {
     Pack(DecodedPolicyManifest),

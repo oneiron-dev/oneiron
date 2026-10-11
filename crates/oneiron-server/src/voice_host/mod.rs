@@ -76,6 +76,9 @@ pub struct VoiceHost {
     state: Mutex<SessionState>,
     extractor: TinyExtractor,
     shutdown: ManagedShutdown,
+    /// The vault's call-mode deadline: every speculative fire and finalize
+    /// of a live call runs under it (ARCH-0061 §6 #recall-in-call).
+    call_deadline: std::time::Duration,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -130,7 +133,9 @@ impl VoiceHost {
             bindings.budget,
             bindings.extraction_prompt,
         )?;
+        let call_deadline = vault.call_mode_deadline();
         Ok(Self {
+            call_deadline,
             state: Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,
                 open: None,
@@ -179,6 +184,7 @@ impl VoiceHost {
                 max_fires: 4,
                 fire_limit: 8,
                 final_limit: 32,
+                deadline: Some(self.call_deadline),
             },
         )?;
         // Connection-local, monotonically unique correlation. Not authentication.

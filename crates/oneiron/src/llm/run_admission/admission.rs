@@ -18,6 +18,10 @@ use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
 
+/// The subject of the `Denied` row for a selector the run could not resolve:
+/// the row keeps none of the selector's bytes.
+pub const UNRESOLVED_SELECTOR: &str = "unresolved-selector";
+
 /// Why the run admission refused a call or an edit. Every refusal comes
 /// before any byte leaves and leaves no reservation behind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
@@ -25,10 +29,14 @@ use super::settle::CallOutcome;
 pub enum RunDenied {
     #[error("the run did not declare teacher {model}")]
     UndeclaredTeacher { model: ModelId },
-    #[error("the run knows no model or alias named {selector}")]
-    UnknownSelector { selector: String },
+    /// The selector names no model id and no alias the run froze. A caller
+    /// may pass any text there, so the denial keeps only its length.
+    #[error("the run knows no model or alias by the {len}-byte selector given")]
+    UnknownSelector { len: usize },
     #[error("the offer binds another model than the call names")]
     OfferMismatch,
+    #[error("no offer on this host serves {model}")]
+    NoOffer { model: ModelId },
     #[error("the call's locality differs from its route's")]
     LocalityMismatch,
     #[error("the call picks its model or route through {key}")]
@@ -209,8 +217,25 @@ impl RunAdmission {
             return Ok(model.clone());
         }
         ModelId::new(selector).map_err(|_| RunDenied::UnknownSelector {
-            selector: selector.to_owned(),
+            len: selector.len(),
         })
+    }
+
+    /// Records a call the host refused before admission, such as one whose
+    /// body picks its own route or one naming a model no offer serves: one
+    /// `Denied` row, nothing reserved. Returns `reason`.
+    pub fn refuse(&self, selector: Option<&str>, subject: &str, reason: RunDenied) -> RunDenied {
+        let revision = self.revision();
+        self.inner.record(
+            revision,
+            RunEvent::Denied {
+                selector: selector.map(str::to_owned),
+                subject: Some(subject.to_owned()),
+                lease: None,
+                reason: reason.clone(),
+            },
+        );
+        reason
     }
 
     /// Admits one model call: the declared teachers, the host's offer, the

@@ -20,6 +20,15 @@
 //! full-dim-rescored results — see [`SpeculativeFinal`]. A host can set
 //! `fire_limit == final_limit` to erase the count half.
 //!
+//! Call mode (retrieval hub #call-mode, ARCH-0061 §6): with
+//! [`SpeculativeSessionConfig::deadline`] set, every fire and the finalize
+//! pass run under that hard deadline, on a thread of their own, so the voice
+//! loop never waits past it. A fire that misses it changes nothing but its
+//! budget ([`SpeculativeFireDecision::MissedDeadline`]); a finalize that
+//! misses it answers with the warm pack, the best results ready. A vault
+//! runs such passes on at most a quarter of its reader slots at once; a pass
+//! past that misses its deadline without starting.
+//!
 //! Snapshot posture (recorded deviation from E7's literal "one
 //! read-snapshot" wording, designer-resolved): per-fire LMDB snapshot
 //! isolation + a session-owned warm pack, NOT one read txn held across the
@@ -30,9 +39,13 @@
 //! warm pack verbatim.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::{RetrievalAction, RetrievalRunId};
 
 /// Max speculative fires per utterance (E7: cap ~4 fires/utterance).
@@ -47,6 +60,10 @@ pub struct SpeculativeSessionConfig {
     pub fire_limit: usize,
     /// `result_limit` for the end-of-utterance full-quality pass.
     pub final_limit: usize,
+    /// The hard deadline of each fire and of the finalize pass, from when it
+    /// is asked for; `None` waits for them to finish. A voice host sets the
+    /// vault's call-mode deadline ([`crate::Vault::call_mode_deadline`]).
+    pub deadline: Option<Duration>,
 }
 
 impl Default for SpeculativeSessionConfig {
@@ -55,6 +72,7 @@ impl Default for SpeculativeSessionConfig {
             max_fires: SPECULATIVE_FIRE_CAP_DEFAULT,
             fire_limit: SPECULATIVE_FIRE_LIMIT_DEFAULT,
             final_limit: crate::pipeline::DEFAULT_RESULT_LIMIT,
+            deadline: None,
         }
     }
 }
@@ -74,7 +92,15 @@ pub struct SpeculativePartial<'a> {
 pub enum SpeculativeFireDecision {
     Fired {
         run_id: Option<RetrievalRunId>,
+        /// The fire's deadline cut retrieval short: the warm pack holds the
+        /// stages that finished.
+        partial: bool,
     },
+    /// The fire was not done by its deadline, or did not start because the
+    /// vault already ran as many passes as it lets run. The warm pack and
+    /// signature stay those of the last fire that landed; the fire still
+    /// counts against `max_fires`.
+    MissedDeadline,
     /// Signature identical to the last fired signature.
     SkippedUnchanged,
     /// No entities/terms spotted yet — nothing meaningful.
@@ -98,6 +124,8 @@ pub enum SpeculativeFinal {
     Promoted {
         scores: Vec<ScoredEntity>,
         run_id: Option<RetrievalRunId>,
+        /// The promoted fire's deadline cut it short.
+        partial: bool,
     },
     /// Diff non-empty: one full-quality pass ran; warm candidates absent
     /// from the fresh results were appended (in warm order) up to
@@ -111,12 +139,16 @@ pub enum SpeculativeFinal {
         scores: Vec<ScoredEntity>,
         run_id: Option<RetrievalRunId>,
         warm_appended: usize,
+        /// The pass's deadline cut it short, or it was not done by then and
+        /// only warm candidates came back (`run_id` is then `None`).
+        partial: bool,
     },
 }
 
 struct WarmPack {
     scores: Vec<ScoredEntity>,
     run_id: Option<RetrievalRunId>,
+    partial: bool,
 }
 
 /// Per-utterance speculative-retrieval session (see the module docs).
@@ -167,32 +199,60 @@ impl SpeculativeSession {
                 "speculative limits must be greater than zero".to_owned(),
             ));
         }
-        let mut builder = self
-            .vault
-            .query()
-            .search_text(partial.text, self.config.fire_limit);
-        if let Some(vector) = partial.query_vector {
-            // EMB-2 voice hot lane: prefix-only, no full-dim rescore.
-            builder = builder
-                .search_vector(vector, self.config.fire_limit)
-                .skip_vector_rescore(true);
-        }
-        let fired = builder
-            .limit(self.config.fire_limit)
-            .telemetry_action(RetrievalAction::Speculative)
-            // Deliberately this run variant: surfaced-pending claims get the
-            // EMB-1 priority-0 hot bump.
-            .run_with_pending_vectors()?;
+        let pass = SpeculativePass {
+            text: partial.text.to_owned(),
+            query_vector: partial.query_vector.map(<[f32]>::to_vec),
+            limit: self.config.fire_limit,
+            fire: true,
+        };
+        let Some(fired) = self.run(pass)? else {
+            self.fires_used += 1;
+            return Ok(SpeculativeFireDecision::MissedDeadline);
+        };
 
         self.warm = Some(WarmPack {
-            scores: fired.value,
+            scores: fired.scores,
             run_id: fired.run_id,
+            partial: fired.partial,
         });
         self.last_signature = signature;
         self.fires_used += 1;
         Ok(SpeculativeFireDecision::Fired {
-            run_id: self.warm.as_ref().and_then(|warm| warm.run_id),
+            run_id: fired.run_id,
+            partial: fired.partial,
         })
+    }
+
+    /// Runs one pass, under the session's deadline when it has one. `None`
+    /// when the pass was not done by then: it ran on a thread of its own,
+    /// which stops at its next checkpoint, and its result is dropped. Also
+    /// `None`, at once, while the vault already runs as many passes as it
+    /// lets run.
+    fn run(&self, pass: SpeculativePass) -> Result<Option<PassOutput>> {
+        let Some(budget) = self.config.deadline else {
+            return pass.run(&self.vault, None).map(Some);
+        };
+        let started = Instant::now();
+        let Some(running) = RunningPass::admit(&self.vault) else {
+            return Ok(None);
+        };
+        let vault = Arc::clone(&self.vault);
+        let (sender, answer) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("oneiron-speculative".to_owned())
+            .spawn(move || {
+                let _running = running;
+                let deadline = RetrievalDeadline::hard(started, budget);
+                // The caller may have stopped waiting; a closed slot is moot.
+                let _ = sender.send(pass.run(&vault, Some(&deadline)));
+            })?;
+        match answer.recv_timeout(budget.saturating_sub(started.elapsed())) {
+            Ok(output) => output.map(Some),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(Error::InvariantViolation(
+                "speculative pass ended without an answer",
+            )),
+        }
     }
 
     /// The last fired warm pack (empty before the first fire).
@@ -220,6 +280,7 @@ impl SpeculativeSession {
             return Ok(SpeculativeFinal::Promoted {
                 scores: warm.scores,
                 run_id: warm.run_id,
+                partial: warm.partial,
             });
         }
 
@@ -228,19 +289,21 @@ impl SpeculativeSession {
                 "speculative limits must be greater than zero".to_owned(),
             ));
         }
-        let mut builder = self
-            .vault
-            .query()
-            .search_text(final_partial.text, self.config.final_limit);
-        if let Some(vector) = final_partial.query_vector {
-            builder = builder.search_vector(vector, self.config.final_limit);
-        }
-        let fresh = builder
-            .limit(self.config.final_limit)
-            .telemetry_action(RetrievalAction::Pipeline)
-            .run_with_pending_vectors()?;
+        let pass = SpeculativePass {
+            text: final_partial.text.to_owned(),
+            query_vector: final_partial.query_vector.map(<[f32]>::to_vec),
+            limit: self.config.final_limit,
+            fire: false,
+        };
+        // A pass not done by its deadline leaves only the warm candidates:
+        // the best results ready.
+        let fresh = self.run(pass)?.unwrap_or(PassOutput {
+            scores: Vec::new(),
+            run_id: None,
+            partial: true,
+        });
 
-        let mut scores = fresh.value;
+        let mut scores = fresh.scores;
         // Dedupe against fresh results AND already-appended warm entries:
         // a warm-internal repeat must not double-append.
         let mut seen: BTreeSet<crate::entity_id::EntityId> =
@@ -263,6 +326,91 @@ impl SpeculativeSession {
             scores,
             run_id: fresh.run_id,
             warm_appended,
+            partial: fresh.partial,
+        })
+    }
+}
+
+/// The share of a vault's LMDB reader slots its speculative passes may hold
+/// at once: one in this many.
+const READER_SLOT_SHARE: u32 = 4;
+
+/// The speculative passes running on threads of their own in one vault. A
+/// pass past its deadline keeps its read snapshot, and with it a reader
+/// slot, until its next checkpoint, so fires that keep missing a stalled
+/// stage would otherwise take every slot the vault has.
+#[derive(Default)]
+pub(crate) struct SpeculativePasses(AtomicUsize);
+
+/// One admitted pass; the vault counts it until its thread lets it go.
+struct RunningPass(Arc<crate::Vault>);
+
+impl RunningPass {
+    fn admit(vault: &Arc<crate::Vault>) -> Option<Self> {
+        // The table LMDB gave, which another process may have kept smaller
+        // than the config asked for.
+        let cap = usize::try_from((vault.reader_slots() / READER_SLOT_SHARE).max(1))
+            .unwrap_or(usize::MAX);
+        vault
+            .speculative_passes
+            .0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |running| {
+                (running < cap).then_some(running + 1)
+            })
+            .ok()?;
+        Some(Self(Arc::clone(vault)))
+    }
+}
+
+impl Drop for RunningPass {
+    fn drop(&mut self) {
+        self.0.speculative_passes.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// One fire or finalize pass, owned so it can run on a thread of its own.
+struct SpeculativePass {
+    text: String,
+    query_vector: Option<Vec<f32>>,
+    limit: usize,
+    /// A fire (prefix-only hot lane, logged `Speculative`) or the finalize
+    /// pass (full-dim, logged `Pipeline`).
+    fire: bool,
+}
+
+struct PassOutput {
+    scores: Vec<ScoredEntity>,
+    run_id: Option<RetrievalRunId>,
+    partial: bool,
+}
+
+impl SpeculativePass {
+    fn run(self, vault: &crate::Vault, deadline: Option<&RetrievalDeadline>) -> Result<PassOutput> {
+        let mut builder = vault.query().search_text(&self.text, self.limit);
+        if let Some(vector) = self.query_vector.as_deref() {
+            builder = builder.search_vector(vector, self.limit);
+            if self.fire {
+                // EMB-2 voice hot lane: prefix-only, no full-dim rescore.
+                builder = builder.skip_vector_rescore(true);
+            }
+        }
+        if let Some(deadline) = deadline {
+            builder = builder.deadline(deadline);
+        }
+        let ran = builder
+            .limit(self.limit)
+            .telemetry_action(if self.fire {
+                RetrievalAction::Speculative
+            } else {
+                RetrievalAction::Pipeline
+            })
+            // Deliberately this run variant: surfaced-pending claims get the
+            // EMB-1 priority-0 hot bump.
+            .run_with_pending_vectors()?;
+        Ok(PassOutput {
+            scores: ran.value,
+            run_id: ran.run_id,
+            partial: deadline.is_some_and(RetrievalDeadline::was_cut_short),
         })
     }
 }

@@ -85,6 +85,17 @@ impl<'v> RoomTurnHandle<'v> {
         crate::task_verb::sdk::recall_with_vector(&self.memory, input, embed)
     }
 
+    /// [`Self::recall_with_vector`] whose deadline counts from the door's
+    /// arrival; see [`crate::task_verb::sdk::recall_at_door`].
+    pub fn recall_at_door(
+        &self,
+        input: crate::task_verb::sdk::RecallRequest,
+        embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+        door: &crate::task_verb::sdk::RecallDoor<'_>,
+    ) -> MemoryResult<MemoryPack> {
+        crate::task_verb::sdk::recall_at_door(&self.memory, input, embed, door)
+    }
+
     pub fn get_entity(
         &self,
         entity_ref: &str,
@@ -119,5 +130,25 @@ impl<'v> RoomTurnHandle<'v> {
     /// The bound facade, for engine doors that already read through the lane.
     pub(crate) fn memory(&self) -> &Memory<'v> {
         &self.memory
+    }
+}
+
+impl<'v> Memory<'v> {
+    /// The room's own reads for this actor: its turn when this handle is
+    /// bound to one, else the member's own read of the room. That keeps a
+    /// turn's world, audience and peer gates and holds no row to P7, which
+    /// binds a turn: outside one the read stays the member's own.
+    pub(crate) fn for_room_projection(&self, room: EntityId) -> MemoryResult<RoomTurnHandle<'v>> {
+        let mut handle = self.for_room_turn(room)?;
+        if self.room_turn.is_none()
+            && let Some(turn) = handle.memory.room_turn.as_mut()
+        {
+            turn.terms = crate::claim::TurnTerms::new(crate::claim::RoomTerms {
+                worlds: turn.terms.get().worlds,
+                clearance: None,
+                p7: false,
+            });
+        }
+        Ok(handle)
     }
 }

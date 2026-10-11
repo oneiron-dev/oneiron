@@ -20,6 +20,7 @@ mod places;
 
 #[cfg(feature = "test-support")]
 mod read_fixture;
+mod reader_table;
 mod search_retrieval;
 mod transactions;
 mod vector_evidence;
@@ -55,6 +56,7 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
+pub use self::reader_table::ReaderTableShortfall;
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
@@ -113,6 +115,13 @@ pub struct Vault {
     /// sweep safety and must defer.
     #[cfg(feature = "sync")]
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
+    /// The speculative passes running on threads of their own (call mode on
+    /// ASR partials), capped against the reader slots.
+    pub(crate) speculative_passes: crate::speculative::SpeculativePasses,
+    /// The deadline tests' slow retrieval stage, armed per vault.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) slow_retrieval_stage:
+        std::sync::Mutex<Option<crate::retrieval_depth::SlowRetrievalStage>>,
 }
 
 #[cfg(test)]

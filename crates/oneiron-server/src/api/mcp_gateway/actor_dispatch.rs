@@ -4,7 +4,6 @@ use super::{
     MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, execute_mcp_execute_code,
     execute_mcp_generated_verb, execute_mcp_setup, mcp_actor_class_wire,
 };
-use crate::api::unix_seconds_now;
 use crate::mcp::McpActorMetadata;
 use crate::mcp::McpConnectorActorResolutionError;
 use crate::mcp::McpResolvedActor;
@@ -26,6 +25,14 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
+    // A paired record expires when its slip does, and a slip's lifetime runs
+    // on the vault's authority clock. Judge it on that clock, as the vault
+    // judges the slip: the wall clock runs ahead of it by all the time the
+    // vault was closed, enough in time to expire a credential minted today.
+    let now = server
+        .vault
+        .capability_slip_now()
+        .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
     let mut registry = server.mcp_registry.lock().await;
     let ceiling_exists = |actor_class: &str, actor_ref: &str| {
         server
@@ -37,7 +44,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     // HTTP. A live paired slip it has not seen gets its record now, by the
     // same rule, once the slip verifies — so a restart or a credential minted
     // on the stopped vault does not lock an agent out.
-    let mut actor = match registry.resolve(&credential, unix_seconds_now(), ceiling_exists) {
+    let mut actor = match registry.resolve(&credential, now, ceiling_exists) {
         Err(McpConnectorActorResolutionError::UnknownCredential)
             if crate::api::pairing::register_live_paired_mcp(
                 &mut registry,
@@ -46,7 +53,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
                 server,
             ) =>
         {
-            registry.resolve(&credential, unix_seconds_now(), ceiling_exists)
+            registry.resolve(&credential, now, ceiling_exists)
         }
         resolved => resolved,
     }
@@ -108,30 +115,71 @@ fn mcp_proof_error() -> McpGatewayError {
     )
 }
 
-/// The verb a call needs on this door: Read, or for a write, Write — or
-/// Propose when the actor's live ceiling holds what it writes for review.
-/// Every write here is bound to its actor and lands at that ceiling, so a
-/// propose-only credential (ARCH-0028: write capability at `proposed`) writes
-/// here, and on no unbound door: those all require Write.
+/// What one call does to the vault, as its credential check sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum McpCallEffect {
+    Reads,
+    /// A write bound to its actor that lands at the actor's ceiling: under
+    /// `proposed` it waits for review.
+    Proposes,
+    /// A write that takes effect at once.
+    Commits,
+}
+
+impl McpCallEffect {
+    /// A generated verb's effect. `claim_upsert` proposes a new claim, or a
+    /// replacement that supersedes its head only once approved; one that names
+    /// its `id` rewrites that claim in place, so the old value leaves at once.
+    /// The `id` is read the way dispatch reads the input, as a typed
+    /// `ClaimInput` in whatever form serde takes (a positional array too); a
+    /// spec that does not decode is refused at dispatch and writes nothing.
+    fn of(
+        tool: crate::mcp::McpGeneratedVerbTool,
+        arguments: &crate::mcp::McpVerbArguments,
+    ) -> Self {
+        let names_claim = || {
+            tool.name == oneiron::task_verb::sdk::AgentVerb::ClaimUpsert.as_str()
+                && arguments.spec.clone().is_some_and(|spec| {
+                    serde_json::from_value::<oneiron::memory::ClaimInput>(spec)
+                        .is_ok_and(|input| input.id.is_some())
+                })
+        };
+        if !tool.writes() {
+            Self::Reads
+        } else if tool.proposes() && !names_claim() {
+            Self::Proposes
+        } else {
+            Self::Commits
+        }
+    }
+}
+
+/// The verb a call needs on this door: Read; for a write, Write — or Propose
+/// when the write waits for review: it proposes and the actor's live ceiling
+/// is `proposed`. So a propose-only credential (ARCH-0028: write capability
+/// at `proposed`) drafts here and nowhere else, and nothing it does here takes
+/// effect without review: acknowledging a task, claiming a room turn, speech,
+/// a key-value write, an ask, a wait or an answer all need Write, as every
+/// unbound door does.
 fn mcp_call_scope(
     server: &SyncServer,
     actor: &McpResolvedActor,
     auth: &crate::auth::CoreAuth,
-    writes: bool,
+    effect: McpCallEffect,
 ) -> crate::auth::CoreScope {
     use crate::auth::CoreScope;
-    if !writes {
-        return CoreScope::Read;
-    }
-    let held_for_review = !auth.has_scope(CoreScope::Write)
-        && server
-            .vault
-            .gate_actor_ceiling_is_proposed(actor.gate_actor_class, &actor.gate_actor_ref)
-            .unwrap_or(false);
-    if held_for_review {
-        CoreScope::Propose
-    } else {
-        CoreScope::Write
+    match effect {
+        McpCallEffect::Reads => CoreScope::Read,
+        McpCallEffect::Proposes
+            if !auth.has_scope(CoreScope::Write)
+                && server
+                    .vault
+                    .gate_actor_ceiling_is_proposed(actor.gate_actor_class, &actor.gate_actor_ref)
+                    .unwrap_or(false) =>
+        {
+            CoreScope::Propose
+        }
+        McpCallEffect::Proposes | McpCallEffect::Commits => CoreScope::Write,
     }
 }
 
@@ -316,9 +364,12 @@ pub(crate) async fn execute_mcp_tool(
         McpValidatedToolArgs::Verb(verb) => {
             mcp_verb_gate(server, verb.tool, &verb.payload.arguments, actor)?;
         }
-        // Setup renders filtered board rows; execute_code may write.
-        McpValidatedToolArgs::Setup(_) => mcp_credential_gate(server, actor, true, false)?,
-        McpValidatedToolArgs::ExecuteCode(_) => mcp_credential_gate(server, actor, false, true)?,
+        // Setup renders filtered board rows; execute_code persists its run
+        // at once, whatever the program does.
+        McpValidatedToolArgs::Setup(_) => {
+            mcp_credential_gate(server, actor, true, McpCallEffect::Reads)?;
+        }
+        McpValidatedToolArgs::ExecuteCode(_) => mcp_execute_code_gate(server, actor)?,
     }
     match args {
         McpValidatedToolArgs::Setup(args) => execute_mcp_setup(server, *args, actor).await,
@@ -327,6 +378,15 @@ pub(crate) async fn execute_mcp_tool(
         }
         McpValidatedToolArgs::Verb(args) => execute_mcp_generated_verb(server, *args, actor).await,
     }
+}
+
+/// `execute_code`'s credential gate: a run commits at once, so it needs the
+/// whole record scope and Write.
+pub(super) fn mcp_execute_code_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_credential_gate(server, actor, false, McpCallEffect::Commits)
 }
 
 /// One generated verb's credential gate, whichever door the call arrived at.
@@ -344,16 +404,21 @@ pub(crate) fn mcp_verb_gate(
 ) -> Result<(), McpGatewayError> {
     let filtered_read =
         tool.filtered_read() && arguments.task_ref.is_none() && arguments.self_target != Some(true);
-    mcp_credential_gate(server, actor, filtered_read, tool.writes())
+    mcp_credential_gate(
+        server,
+        actor,
+        filtered_read,
+        McpCallEffect::of(tool, arguments),
+    )
 }
 
 /// The connector credential is live, inside its record bounds unless the call
-/// is a filtered list, and holds Read or Write for what the call does.
+/// is a filtered list, and holds the verb for what the call does.
 fn mcp_credential_gate(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     filtered_read: bool,
-    writes: bool,
+    effect: McpCallEffect,
 ) -> Result<(), McpGatewayError> {
     let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
     if !auth.credential_is_live(server.vault().as_ref()) {
@@ -368,6 +433,6 @@ fn mcp_credential_gate(
             )
         })?;
     }
-    auth.require(mcp_call_scope(server, actor, auth, writes))
+    auth.require(mcp_call_scope(server, actor, auth, effect))
         .map_err(|_| mcp_proof_error())
 }
