@@ -399,9 +399,10 @@ pub(crate) async fn execute_mcp_tool(
 /// record scope instead of dropping caveats. A filtered read that names one
 /// task reads that task's card, which is task detail too. `describe(self)`
 /// renders the whole run brief, not filtered rows, so it takes the same guard.
-/// A `born` write (`tasks.create`) carries the connector's world and facet
-/// into the records it mints, so only those two axes may be narrowed, and it
-/// needs a Write grant.
+/// A `born` write (`tasks.create`) from a narrowed connector carries its world
+/// and facet into the records it mints, so only those two axes may be
+/// narrowed, and it needs a Write grant. From a vault-wide connector it is
+/// unrestricted, as before.
 pub(crate) fn mcp_verb_gate(
     server: &Arc<SyncServer>,
     tool: crate::mcp::McpGeneratedVerbTool,
@@ -413,7 +414,7 @@ pub(crate) fn mcp_verb_gate(
         && arguments.self_target != Some(true)
     {
         McpRecordBounds::Filtered
-    } else if tool.born_in_scope() {
+    } else if tool.born_in_scope() && actor.scope.is_narrow() {
         McpRecordBounds::Born
     } else {
         McpRecordBounds::Unrestricted

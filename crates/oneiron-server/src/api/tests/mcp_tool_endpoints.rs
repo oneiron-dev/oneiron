@@ -994,14 +994,12 @@ async fn mcp_malformed_call_returns_stable_json_rpc_error() {
 
 /// A narrowed `tasks.create` takes Write. A Propose-only slip's create would
 /// rest on a ceiling read outside the transaction that commits the TASK, so it
-/// is refused before the engine: it neither parks a proposal nor mints.
+/// is refused before the engine: it neither parks a proposal nor mints. A
+/// vault-wide Propose-only create still parks its proposal, as before.
 #[tokio::test]
 async fn a_propose_only_narrowed_create_is_refused() {
     let (_dir, server) = auth_test_server();
     let proposer = seeded_test_entity_id(0x1704_00e1);
-    let scope =
-        crate::mcp::McpConnectorScope::scoped(Some(seeded_test_entity_id(0x1704_00e2)), None);
-    let label = "narrowed-propose-only";
     server
         .vault()
         .put_entity(
@@ -1012,38 +1010,46 @@ async fn a_propose_only_narrowed_create_is_refused() {
             b"propose-only actor",
         )
         .unwrap();
-    pair_mcp_credential(
-        &server,
-        label,
-        proposer,
-        oneiron::EdgeActorClass::Human,
-        &scope,
-    );
-    let mut verbs = oneiron::federation::Scope::top();
-    verbs.verbs = oneiron::federation::ScopeAxis::Some(
-        ["core:read".to_owned(), "core:propose".to_owned()].into(),
-    );
-    let token = attenuate_mcp_credential(
-        &server,
-        label,
-        oneiron::authority::SlipCaveat {
-            scope: Some(verbs),
-            ..Default::default()
-        },
-    );
-    server
-        .mcp_registry
-        .lock()
-        .await
-        .register(
-            &token,
-            crate::mcp::McpConnectorActorRecord::new(
-                proposer,
-                oneiron::EdgeActorClass::Human,
-                scope.clone(),
-            ),
-        )
-        .unwrap();
+    let narrowed =
+        crate::mcp::McpConnectorScope::scoped(Some(seeded_test_entity_id(0x1704_00e2)), None);
+    let vault_wide = crate::mcp::McpConnectorScope::vault_wide();
+    for (label, scope) in [
+        ("narrowed-propose-only", &narrowed),
+        ("vault-wide-propose-only", &vault_wide),
+    ] {
+        pair_mcp_credential(
+            &server,
+            label,
+            proposer,
+            oneiron::EdgeActorClass::Human,
+            scope,
+        );
+        let mut verbs = oneiron::federation::Scope::top();
+        verbs.verbs = oneiron::federation::ScopeAxis::Some(
+            ["core:read".to_owned(), "core:propose".to_owned()].into(),
+        );
+        let token = attenuate_mcp_credential(
+            &server,
+            label,
+            oneiron::authority::SlipCaveat {
+                scope: Some(verbs),
+                ..Default::default()
+            },
+        );
+        server
+            .mcp_registry
+            .lock()
+            .await
+            .register(
+                &token,
+                crate::mcp::McpConnectorActorRecord::new(
+                    proposer,
+                    oneiron::EdgeActorClass::Human,
+                    scope.clone(),
+                ),
+            )
+            .unwrap();
+    }
     let owner = server.vault().ensure_embedded_owner_actor().unwrap();
     oneiron::conversation_dag::test_support::put_test_policy_manifest(
         &server.vault(),
@@ -1066,32 +1072,43 @@ async fn a_propose_only_narrowed_create_is_refused() {
             .unwrap(),
         "fixture check: the proposer's live ceiling is `proposed`"
     );
-
-    let body = mcp_refusal(
-        &server,
+    let create = |label: &'static str, scope: &crate::mcp::McpConnectorScope| {
         mcp_endpoint_call_request(
             MCP_TOOL_FIRST_PATH,
             label,
-            "propose-only-create",
+            label,
             "tasks.create",
             mcp_merge_args(
-                mcp_scoped_envelope(proposer, "write_tasks", &scope),
+                mcp_scoped_envelope(proposer, "write_tasks", scope),
                 json!({ "arguments": { "spec": { "kind": "review" } } }),
             ),
-        ),
-    )
-    .await;
+        )
+    };
+    let parked = || {
+        server
+            .vault()
+            .claims_for_subject(&proposer)
+            .unwrap()
+            .into_iter()
+            .filter_map(|claim| server.vault().get_claim(&claim).unwrap())
+            .filter(|body| body.predicate == "tasks.create")
+            .count()
+    };
+
+    let body = mcp_refusal(&server, create("narrowed-propose-only", &narrowed)).await;
     assert_eq!(
         body["error"]["data"]["error_code"], "mcp_auth_required",
         "{body}"
     );
-    let parked = server
-        .vault()
-        .claims_for_subject(&proposer)
-        .unwrap()
-        .into_iter()
-        .filter_map(|claim| server.vault().get_claim(&claim).unwrap())
-        .filter(|body| body.predicate == "tasks.create")
-        .count();
-    assert_eq!(parked, 0, "a refused create parks nothing");
+    assert_eq!(parked(), 0, "a refused create parks nothing");
+
+    let (_, wide) = route_json(
+        server.clone(),
+        create("vault-wide-propose-only", &vault_wide),
+    )
+    .await;
+    let output = &wide["result"]["structuredContent"]["output"];
+    assert!(output["proposal_ref"].is_string(), "{wide}");
+    assert_eq!(output["effected"], Value::from(false), "{wide}");
+    assert_eq!(parked(), 1, "the vault-wide create parks its proposal");
 }
