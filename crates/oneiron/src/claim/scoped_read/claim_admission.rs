@@ -127,7 +127,7 @@ impl ScopedRead<'_> {
                 None => crate::authority::claim_causal_admitted(
                     &self.vault.store,
                     rtxn,
-                    &self.vault.authority_view_readonly_in_txn(rtxn)?,
+                    &*self.vault.authority_view_readonly_in_txn(rtxn)?,
                     id,
                     body,
                 )?,
