@@ -367,7 +367,8 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
 /// A door that stops waiting at the deadline has answered by then with the
 /// last pack recall published. A recall still running past it stops before
 /// it reads its items: it returns the pack published before retrieval, and
-/// publishes no other.
+/// publishes no other. The answer falls due right after the text stage, by a
+/// cancel there under a budget no host misses, not by a sleep.
 #[test]
 fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
     use crate::memory::{MemoryPack, RecallEffort};
@@ -404,9 +405,13 @@ fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
     assert!(pack_gives(&recall(30_000), "lighthouse keeper"));
     published.lock().expect("published packs").clear();
     // Past the deadline once the text stage has found it.
-    *vault.test_hooks().after_retrieval_text.lock().expect("text hook") =
-        Some(Box::new(|| std::thread::sleep(std::time::Duration::from_millis(150))));
-    let pack = recall(100);
+    let cancel = &vault.test_hooks().cancel_deadline_after_retrieval_text;
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    let pack = recall(30_000);
+    assert!(
+        !cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "the text stage ran and the answer fell due after it"
+    );
     let published = std::mem::take(&mut *published.lock().expect("published packs"));
     let [before] = published.as_slice() else {
         panic!("only the pack before retrieval: {published:?}");
