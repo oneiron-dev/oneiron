@@ -37,7 +37,7 @@ pub(in crate::sync) use self::admission::validate_window_update_with_staged_worl
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };
-pub use self::device_only::{UpdateVerdict, export_withheld, raw_update_verdict, window_withheld};
+pub use self::device_only::{UpdateVerdict, export_withheld, raw_update_verdict};
 pub(in crate::sync) use self::device_only::{
     device_only_ids, window_is_device_only, window_withheld,
 };

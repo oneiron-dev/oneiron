@@ -638,7 +638,7 @@ pub(crate) fn device_only_withholds(
         .ok_or(Error::CorruptedIndex("entity header"))?;
     match header.entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {
-            claim_in_flagged_world(store, txn, flagged, id, Some(&raw))
+            claim_in_flagged_world(store, txn, flagged, id, Some(raw.as_slice()))
         }
         crate::registry::ENTITY_TYPE_NOTE => {
             for edge in store.port_edges(
