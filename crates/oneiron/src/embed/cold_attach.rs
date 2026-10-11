@@ -93,7 +93,9 @@ fn remark_pending_in_txn(
         let mut owed = Vec::with_capacity(embeddable.len());
         for (id, body) in embeddable {
             if vault.store.vectors.get(wtxn, id.as_bytes())?.is_none()
-                || vault.store.has_current_pending_embedding_in_txn(wtxn, &id)?
+                || vault
+                    .store
+                    .has_current_pending_embedding_in_txn(wtxn, &id)?
             {
                 owed.push((id, body));
             }
