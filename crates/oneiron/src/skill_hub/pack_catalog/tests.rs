@@ -429,7 +429,7 @@ fn hub_pack_contact_line_loads_and_is_carried() -> Result<()> {
 }
 
 #[test]
-fn escaped_credential_in_any_pack_md_value_is_refused() -> Result<()> {
+fn escaped_credential_in_any_pack_md_value_is_refused() {
     // The source scans read the raw file, where a JSON escape hides a
     // credential, so every value class is read decoded. Each pair differs only
     // in what one escape decodes to.
@@ -509,5 +509,4 @@ fn escaped_credential_in_any_pack_md_value_is_refused() -> Result<()> {
         format!("{err:?}").contains("gate.secret_scan.mnemonic"),
         "{err:?}"
     );
-    Ok(())
 }
