@@ -173,6 +173,8 @@ pub(crate) struct CallAsks<'a> {
     bytes_left: u64,
     /// Answer bytes lent so far, values and data.
     lent: u64,
+    /// What the last ask's answer lent, given back if it is not sent.
+    lent_last: u64,
     refused_past_cap: bool,
     pub(crate) receipts: Vec<AskReceipt>,
 }
@@ -197,6 +199,7 @@ impl<'a> CallAsks<'a> {
             per_verb: HashMap::new(),
             bytes_left: spec.max_ask_bytes.min(spec.call_memory_bytes),
             lent: 0,
+            lent_last: 0,
             refused_past_cap: false,
             receipts: Vec::new(),
         }
@@ -214,6 +217,7 @@ impl<'a> CallAsks<'a> {
     /// none the handler is not run and the ask is refused, retryable.
     pub(crate) fn take(&mut self, ask: Ask, watched: bool) -> AskStep {
         let started = Instant::now();
+        self.lent_last = 0;
         let mut line = line(&ask);
         // One budget refusal, of either kind; any ask after it ends the call.
         if self.refused_past_cap {
@@ -299,16 +303,21 @@ impl<'a> CallAsks<'a> {
 
     /// An ask the host took but did not run: its call was ending.
     pub(crate) fn skipped(&mut self, ask: &Ask) {
+        self.lent_last = 0;
         let mut line = line(ask);
         line.unanswered = Some(Unanswered::NotRun);
         self.receipts.push(line);
     }
 
-    /// The last ask's handler ran, but its answer was not sent.
+    /// The last ask's handler ran, but its answer was not sent: the organ
+    /// was lent none of its bytes.
     pub(crate) fn unsent(&mut self) {
         if let Some(line) = self.receipts.last_mut() {
             line.unanswered.get_or_insert(Unanswered::NotSent);
         }
+        self.lent -= self.lent_last;
+        self.bytes_left += self.lent_last;
+        self.lent_last = 0;
     }
 
     fn answer(&mut self, ask: &Ask, mut line: AskReceipt, answered: Answered) -> AskStep {
@@ -363,6 +372,7 @@ impl<'a> CallAsks<'a> {
         };
         self.bytes_left -= charged;
         self.lent += charged;
+        self.lent_last = charged;
         line.answer_digest = Some(digest(&value));
         self.receipts.push(line);
         let answer = AskAnswer {

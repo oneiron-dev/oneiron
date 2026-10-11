@@ -112,15 +112,6 @@ impl Inbox {
         call.deliver.try_send(Delivery::Ask(ask)).is_ok()
     }
 
-    /// The call's ask is being answered; its next one may come. `false`,
-    /// and nothing changes, once the call is no longer in flight.
-    fn answered(&self, id: u64) -> bool {
-        lock(&self.pending).get_mut(&id).is_some_and(|call| {
-            call.asking = false;
-            true
-        })
-    }
-
     /// Whether call `id` still waits for its reply: the reader takes its
     /// entry when the reply comes or the process ends.
     fn in_flight(&self, id: u64) -> bool {
@@ -128,7 +119,7 @@ impl Inbox {
     }
 
     /// Holds the calls in flight while call `id` is one of them: no reply
-    /// is routed until the guard drops.
+    /// or ask is routed until the guard drops.
     fn holding_in_flight(&self, id: u64) -> Option<MutexGuard<'_, HashMap<u64, Pending>>> {
         let pending = lock(&self.pending);
         pending.contains_key(&id).then_some(pending)
@@ -559,18 +550,18 @@ impl OrganProcess {
     /// revoked or the call is no longer in flight. A revocation records
     /// itself before its cancel takes the writer, so an answer that waited
     /// for the writer never follows its call's revoked cancel. The answer's
-    /// first byte goes under the lock the reader routes replies under, with
-    /// the call checked in flight again, so an answer that then waits for
-    /// room in the socket never goes after the reply the reader has taken.
-    /// (A reply the organ sends once the answer has started crosses it, as
-    /// an ask crosses a cancel.)
+    /// first byte goes under the lock the reader routes replies and asks
+    /// under, with the call checked in flight again, so an answer never
+    /// goes after the reply the reader has taken; one that waits for room
+    /// meanwhile is dropped when the reply comes. (A reply the organ sends
+    /// once the answer has started crosses it, as an ask crosses a cancel.)
     ///
-    /// The call may ask again only once this holds the writer, so a second
-    /// ask that comes while the answer waits for the writer still breaks the
-    /// protocol. It may ask again from the moment the answer starts out, not
+    /// The call may ask again from the moment that first byte leaves, not
     /// when the write returns: the organ can read the whole answer and ask
     /// again before this thread sees its write finish, so a check there
-    /// would end an organ that kept the rule.
+    /// would end an organ that kept the rule. An ask that comes before it,
+    /// while the answer waits for the writer or for room, still breaks the
+    /// protocol.
     fn send_answer(
         &self,
         id: u64,
@@ -580,11 +571,17 @@ impl OrganProcess {
         revoked: &dyn Fn() -> bool,
     ) -> Result<bool, FrameError> {
         let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
-        if revoked() || !self.inbox.answered(id) {
+        if revoked() || !self.inbox.in_flight(id) {
             return Ok(false);
         }
         let still = || self.inbox.holding_in_flight(id);
-        match send_frame_if(&writer, answer, fds, self.max_call_frame, deadline, still) {
+        let started = |pending: &mut MutexGuard<'_, HashMap<u64, Pending>>| {
+            if let Some(call) = pending.get_mut(&id) {
+                call.asking = false;
+            }
+        };
+        let limit = self.max_call_frame;
+        match send_frame_if(&writer, answer, fds, limit, deadline, still, started) {
             Ok(()) => Ok(true),
             Err(FrameError::Withdrawn) => Ok(false),
             Err(err) => Err(err),

@@ -37,6 +37,10 @@ const HEADER: usize = 4;
 /// one with EINVAL. A later deadline polls again.
 const LONGEST_POLL: Duration = Duration::from_millis(i32::MAX as u64);
 
+/// How often a gated frame waiting for room before its first byte asks
+/// again whether it is still wanted ([`send_frame_if`]).
+const RECHECK: Duration = Duration::from_millis(20);
+
 /// Why a frame could not be sent or read. Any of them ends the connection,
 /// except a refusal [`FrameError::is_local`] reports.
 #[derive(Debug, thiserror::Error)]
@@ -119,6 +123,15 @@ impl Wait {
         matches!(self, Self::Poll(Some(deadline)) if Instant::now() >= deadline)
     }
 
+    /// The same wait, ending `span` from now if that is sooner.
+    fn within(self, span: Duration) -> Self {
+        let soon = Instant::now() + span;
+        match self {
+            Self::Syscall => Self::Syscall,
+            Self::Poll(deadline) => Self::Poll(Some(deadline.map_or(soon, |at| at.min(soon)))),
+        }
+    }
+
     /// Whether a failed syscall is tried again. An interrupt always is.
     /// EAGAIN is only where [`ready`] waits first; a frame that waits in
     /// its syscall returns it, so a caller's own nonblocking mode or socket
@@ -182,7 +195,7 @@ pub fn send_frame<T: Serialize>(
     fds: &[BorrowedFd<'_>],
     limit: u32,
 ) -> Result<(), FrameError> {
-    send_frame_with(stream, msg, fds, limit, Wait::Syscall, || Some(()))
+    send_frame_with(stream, msg, fds, limit, Wait::Syscall, Gate::open())
 }
 
 /// [`send_frame`], with the whole frame bounded by `deadline`, on a socket
@@ -201,17 +214,20 @@ pub fn send_frame_until<T: Serialize>(
     limit: u32,
     deadline: Option<Instant>,
 ) -> Result<(), FrameError> {
-    send_frame_with(stream, msg, fds, limit, Wait::until(deadline), || Some(()))
+    send_frame_with(stream, msg, fds, limit, Wait::until(deadline), Gate::open())
 }
 
 /// [`send_frame_until`], sent only while `still` says so. Before each try
-/// at the frame's first byte, after any wait for room, `still` is asked
-/// again, and the guard it returns is held across that try. So whatever
-/// `still` locks orders the frame's start against the lock's other holders:
-/// once they have withdrawn the frame, no byte of it leaves. A frame that
-/// has started is finished. The deadline is checked again once `still`
-/// returns, but not while it waits: it should take only a lock its holders
-/// keep briefly.
+/// at the frame's first byte, `still` is asked again and the guard it
+/// returns is held across that try; `started` runs with that guard as the
+/// first byte leaves. So whatever `still` locks orders the frame's start
+/// against the lock's other holders: once they have withdrawn the frame,
+/// no byte of it leaves, and once a byte has left they see what `started`
+/// did. While the frame waits for room before its first byte, `still` is
+/// asked every 20 ms, so a frame withdrawn then ends at once, not at its
+/// deadline. A frame that has started is finished. The deadline is checked
+/// again once `still` returns, but not while it waits: it should take only
+/// a lock its holders keep briefly.
 ///
 /// # Errors
 /// As [`send_frame_until`], plus [`FrameError::Withdrawn`] when `still`
@@ -223,9 +239,33 @@ pub fn send_frame_if<T: Serialize, G>(
     limit: u32,
     deadline: Instant,
     still: impl FnMut() -> Option<G>,
+    started: impl FnMut(&mut G),
 ) -> Result<(), FrameError> {
-    let wait = Wait::Poll(Some(deadline));
-    send_frame_with(stream, msg, fds, limit, wait, still)
+    let gate = Gate {
+        still,
+        started,
+        recheck: Some(RECHECK),
+    };
+    send_frame_with(stream, msg, fds, limit, Wait::Poll(Some(deadline)), gate)
+}
+
+/// What a frame's first byte waits for besides room ([`send_frame_if`]).
+struct Gate<S, F> {
+    still: S,
+    started: F,
+    /// How often a wait for room before the first byte asks `still` again.
+    recheck: Option<Duration>,
+}
+
+impl Gate<fn() -> Option<()>, fn(&mut ())> {
+    /// A frame no one can withdraw.
+    fn open() -> Self {
+        Self {
+            still: || Some(()),
+            started: |_| {},
+            recheck: None,
+        }
+    }
 }
 
 fn send_frame_with<T: Serialize, G>(
@@ -234,7 +274,7 @@ fn send_frame_with<T: Serialize, G>(
     fds: &[BorrowedFd<'_>],
     limit: u32,
     wait: Wait,
-    mut still: impl FnMut() -> Option<G>,
+    mut gate: Gate<impl FnMut() -> Option<G>, impl FnMut(&mut G)>,
 ) -> Result<(), FrameError> {
     if wait.polls() && !fcntl_getfl(stream).is_ok_and(|mode| mode.contains(OFlags::NONBLOCK)) {
         return Err(FrameError::Blocking);
@@ -270,7 +310,18 @@ fn send_frame_with<T: Serialize, G>(
         }
     };
     while sent < total {
-        match ready(stream, wait, true) {
+        let room = match gate.recheck {
+            Some(every) if sent == 0 => wait.within(every),
+            _ => wait,
+        };
+        match ready(stream, room, true) {
+            // Still no room before the first byte: is the frame wanted?
+            Err(FrameError::TimedOut) if !wait.passed() => {
+                if (gate.still)().is_none() {
+                    return Err(FrameError::Withdrawn);
+                }
+                continue;
+            }
             Err(FrameError::TimedOut) => return Err(late(sent)),
             waited => waited?,
         }
@@ -282,13 +333,16 @@ fn send_frame_with<T: Serialize, G>(
         // The descriptors ride on the first send only, which goes only
         // while `still` holds.
         let result = if sent == 0 {
-            let Some(guard) = still() else {
+            let Some(mut guard) = (gate.still)() else {
                 return Err(FrameError::Withdrawn);
             };
             if wait.passed() {
                 return Err(FrameError::Late);
             }
             let first = sendmsg(stream, &iov, &mut control, SEND_FLAGS);
+            if matches!(first, Ok(written) if written > 0) {
+                (gate.started)(&mut guard);
+            }
             drop(guard);
             first
         } else {

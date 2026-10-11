@@ -309,23 +309,31 @@ fn an_organ_that_stops_reading_cannot_hold_a_call_past_its_deadline() {
     let grace = config.cancel_grace;
     let host = rogue("--deaf", config);
     host.warm("probe").expect("warm");
-    let mut stuck = call(
-        "organ.echo",
-        "x".repeat(8 * 1024 * 1024).into(),
-        Vec::new(),
-        "g",
-    );
-    // Long enough for the frame's first byte to leave even on a loaded
-    // host: a frame cut off part way is what stops the organ.
-    stuck.deadline = Duration::from_secs(1);
-    let bound = stuck.deadline + grace;
-    let started = Instant::now();
-    let err = host.call(&vault, stuck).expect_err("deadline");
-    let took = started.elapsed();
-    assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
-    // Stopped within its deadline and the grace (and a margin for a
-    // loaded host), and not charged a crash.
-    assert!(took < bound + Duration::from_secs(1), "{took:?}");
+    // A call cut off part way stops the organ. One late before its first
+    // byte (a host too loaded to send for a whole second) leaves it warm
+    // and in step: call again.
+    for _ in 0..3 {
+        let mut stuck = call(
+            "organ.echo",
+            "x".repeat(8 * 1024 * 1024).into(),
+            Vec::new(),
+            "g",
+        );
+        stuck.deadline = Duration::from_secs(1);
+        let bound = stuck.deadline + grace;
+        let started = Instant::now();
+        let err = host.call(&vault, stuck).expect_err("deadline");
+        let took = started.elapsed();
+        assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
+        // Within its deadline and the grace, and a margin for a loaded host.
+        assert!(took < bound + Duration::from_secs(1), "{took:?}");
+        if !matches!(
+            host.status("probe").expect("installed").state,
+            OrganState::Warm
+        ) {
+            break;
+        }
+    }
     let status = host.status("probe").expect("installed");
     assert!(matches!(status.state, OrganState::Cold), "{status:?}");
     assert_eq!(status.recent_crashes, 0);

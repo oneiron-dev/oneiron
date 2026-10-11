@@ -157,7 +157,7 @@ mod probe {
 #[cfg(unix)]
 mod rogue {
     use std::io::Write;
-    use std::os::fd::FromRawFd;
+    use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
 
@@ -270,10 +270,10 @@ mod rogue {
     }
 
     /// Answers the handshake, then meets the `n`th call with the frames
-    /// `meet` returns, each followed by its nap without reading. It exits at
-    /// once if it is ever sent an answer: these modes never wait for one, so
-    /// an answer is the host's mistake.
-    fn never_answered(meet: impl Fn(u64, usize) -> Vec<(FromOrgan, Duration)>) {
+    /// `meet` returns and a nap without reading. It exits at once if it is
+    /// ever sent an answer: these modes never wait for one, so an answer is
+    /// the host's mistake.
+    fn never_answered(meet: impl Fn(u64, usize) -> (Vec<FromOrgan>, Duration)) {
         let stream = socket();
         let Some(organ) = hello_organ(&stream) else {
             return;
@@ -285,14 +285,14 @@ mod rogue {
         while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
             match message {
                 ToOrgan::Call(call) => {
-                    let steps = meet(call.id, calls);
+                    let (frames, nap) = meet(call.id, calls);
                     calls += 1;
-                    for (frame, nap) in steps {
+                    for frame in frames {
                         if send_frame(&stream, &frame, &[], DEFAULT_FRAME_LIMIT).is_err() {
                             return;
                         }
-                        std::thread::sleep(nap);
                     }
+                    std::thread::sleep(nap);
                 }
                 ToOrgan::Answer(_) => return,
                 _ => {}
@@ -303,12 +303,7 @@ mod rogue {
     /// Asks, and replies right behind the ask, so the ask waits in the
     /// host's queue after the call is over.
     pub(super) fn ask_then_reply() {
-        never_answered(|call, _| {
-            vec![
-                (ask(call, 1), Duration::ZERO),
-                (reply(call), Duration::ZERO),
-            ]
-        });
+        never_answered(|call, _| (vec![ask(call, 1), reply(call)], Duration::ZERO));
     }
 
     /// Asks on its first call, then stops reading for 1.5 s, so a large
@@ -316,27 +311,58 @@ mod rogue {
     pub(super) fn ask_then_nap() {
         never_answered(|call, n| {
             if n == 0 {
-                vec![(ask(call, 1), Duration::from_millis(1500))]
+                (vec![ask(call, 1)], Duration::from_millis(1500))
             } else {
-                vec![(reply(call), Duration::ZERO)]
+                (vec![reply(call)], Duration::ZERO)
             }
         });
     }
 
-    /// Asks on its first call and stops reading for 1 s, so the host's
-    /// next frames fill the socket; then replies to that call and reads
-    /// again 300 ms later. Later calls get a reply at once.
-    pub(super) fn ask_nap_reply() {
-        never_answered(|call, n| {
-            if n == 0 {
-                vec![
-                    (ask(call, 1), Duration::from_millis(1000)),
-                    (reply(call), Duration::from_millis(300)),
-                ]
-            } else {
-                vec![(reply(call), Duration::ZERO)]
+    /// Asks for its first call without reading it, once the call has
+    /// landed and fills the socket (the call is the first on the socket, so
+    /// its id is 1); replies to it 500 ms later, while the call still fills
+    /// the socket; and reads again 500 ms after that. The host's answer
+    /// waits for room while the reply is routed. Later calls get a reply at
+    /// once. It exits if it is ever sent an answer.
+    pub(super) fn reply_while_full() {
+        let stream = socket();
+        let Some(organ) = hello_organ(&stream) else {
+            return;
+        };
+        if send_frame(&stream, &ack_for(organ), &[], DEFAULT_FRAME_LIMIT).is_err() {
+            return;
+        }
+        let mut landed = [libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        // SAFETY: poll(2) over one live pollfd, with no timeout.
+        if unsafe { libc::poll(landed.as_mut_ptr(), 1, -1) } < 1 {
+            return;
+        }
+        // The call went in one write; let all of it land.
+        std::thread::sleep(Duration::from_millis(200));
+        for frame in [ask(1, 1), reply(1)] {
+            if send_frame(&stream, &frame, &[], DEFAULT_FRAME_LIMIT).is_err() {
+                return;
             }
-        });
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        let mut first = true;
+        while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
+            match message {
+                // Replied to already.
+                ToOrgan::Call(_) if first => first = false,
+                ToOrgan::Call(call) => {
+                    if send_frame(&stream, &reply(call.id), &[], DEFAULT_FRAME_LIMIT).is_err() {
+                        return;
+                    }
+                }
+                ToOrgan::Answer(_) => return,
+                _ => {}
+            }
+        }
     }
 
     /// An organ built against protocol 1.0: it acks 1.0, echoes each call's
@@ -420,8 +446,8 @@ fn main() -> std::process::ExitCode {
             rogue::ask_then_reply();
             std::process::ExitCode::SUCCESS
         }
-        Some("--ask-nap-reply") => {
-            rogue::ask_nap_reply();
+        Some("--reply-while-full") => {
+            rogue::reply_while_full();
             std::process::ExitCode::SUCCESS
         }
         Some("--ask-then-nap") => {
