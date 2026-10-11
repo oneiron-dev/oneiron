@@ -115,71 +115,88 @@ struct WordClosure<'a> {
     /// The records on the way to the current one: meeting one again is a
     /// cycle.
     path: BTreeSet<EntityId>,
-    /// Every record judged so far; each passed, or the walk has stopped.
+    /// Every record entered so far; each passed or is on the path, or the
+    /// walk has stopped.
     judged: BTreeSet<EntityId>,
 }
 
 impl WordClosure<'_> {
+    /// Walks the closure depth first on a heap stack, never the call stack:
+    /// a closure as deep as its budget must deny, not overflow.
     fn discloses(&mut self, id: EntityId, raw: &[u8]) -> Result<bool> {
-        if self.path.contains(&id) {
+        let Some(sources) = self.enter(id, raw)? else {
             return Ok(false);
+        };
+        let mut stack = vec![(id, sources.into_iter())];
+        while let Some((node, sources)) = stack.last_mut() {
+            let Some((source, raw)) = sources.next() else {
+                let node = *node;
+                self.path.remove(&node);
+                stack.pop();
+                continue;
+            };
+            if self.path.contains(&source) {
+                return Ok(false);
+            }
+            if self.judged.contains(&source) {
+                continue;
+            }
+            let Some(next) = self.enter(source, &raw)? else {
+                return Ok(false);
+            };
+            stack.push((source, next.into_iter()));
         }
-        if !self.judged.insert(id) {
-            return Ok(true);
-        }
-        if self.judged.len() > MAX_WORD_CLOSURE {
-            return Ok(false);
-        }
-        self.path.insert(id);
-        let disclosed = self.discloses_with_sources(id, raw);
-        self.path.remove(&id);
-        disclosed
+        Ok(true)
     }
 
-    fn discloses_with_sources(&mut self, id: EntityId, raw: &[u8]) -> Result<bool> {
+    /// Judges `id`'s own stamp and gathers each record its words came from,
+    /// with its row, putting `id` on the path. `None` when `id` is not
+    /// disclosed: its stamp, a source that no longer resolves, or the budget.
+    fn enter(&mut self, id: EntityId, raw: &[u8]) -> Result<Option<Vec<(EntityId, Vec<u8>)>>> {
+        self.judged.insert(id);
+        if self.judged.len() > MAX_WORD_CLOSURE {
+            return Ok(None);
+        }
         let store = &self.vault.store;
         if !crate::federation::record_scope::scope_for_blob(store, self.txn, id, raw)?
             .is_some_and(|record| admits(self.scope, &record))
         {
-            return Ok(false);
+            return Ok(None);
         }
-        let sources = match crate::scope_summary::word_sources_in(self.vault, self.txn, &id, raw)? {
-            WordSources::Own => Vec::new(),
-            WordSources::From(sources) => sources,
-            WordSources::Unresolved => return Ok(false),
-        };
-        for source in sources {
-            let Some(row) = store.port_entity_record(self.txn, &source)? else {
-                return Ok(false);
-            };
-            if !self.discloses(source, &row.encode())? {
-                return Ok(false);
+        let mut sources = Vec::new();
+        match crate::scope_summary::word_sources_in(self.vault, self.txn, &id, raw)? {
+            WordSources::Own => {}
+            WordSources::From(ids) => {
+                for source in ids {
+                    let Some(row) = store.port_entity_record(self.txn, &source)? else {
+                        return Ok(None);
+                    };
+                    sources.push((source, row.encode()));
+                }
             }
+            WordSources::Unresolved => return Ok(None),
         }
         if EntityMetadataHeader::parse(raw)
-            .is_none_or(|header| header.entity_type != ENTITY_TYPE_TURN)
+            .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
         {
-            return Ok(true);
-        }
-        for part in store.port_edges(
-            self.txn,
-            &id,
-            EdgeDirection::In,
-            Some(EdgeKind::PartOf),
-            None,
-        )? {
-            let message = part?.target;
-            let Some(row) = store.port_entity_record(self.txn, &message)? else {
-                continue;
-            };
-            if row.entity_type != ENTITY_TYPE_MESSAGE || row.body.is_empty() {
-                continue;
-            }
-            if !self.discloses(message, &row.encode())? {
-                return Ok(false);
+            for part in store.port_edges(
+                self.txn,
+                &id,
+                EdgeDirection::In,
+                Some(EdgeKind::PartOf),
+                None,
+            )? {
+                let message = part?.target;
+                let Some(row) = store.port_entity_record(self.txn, &message)? else {
+                    continue;
+                };
+                if row.entity_type == ENTITY_TYPE_MESSAGE && !row.body.is_empty() {
+                    sources.push((message, row.encode()));
+                }
             }
         }
-        Ok(true)
+        self.path.insert(id);
+        Ok(Some(sources))
     }
 }
 

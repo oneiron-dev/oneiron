@@ -894,3 +894,66 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
     assert!(!discloses(copy, &both)?, "a cycle discloses nothing");
     Ok(())
 }
+
+/// A summary of summaries carries every level's words. P7 walks the whole
+/// closure on a heap stack, so the first turn's message still binds the
+/// last copy, and records the levels share are judged once.
+#[test]
+fn p7_walks_a_summary_of_summaries_to_its_first_words() -> Result<()> {
+    use crate::ports::EntityStoreRead;
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, record) = project_room(&vault, owner, &[])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let turn = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .rooms_speak(&spoken(room, turn, 2))
+        .expect("speak");
+    let scope = crate::conversation_dag::ScopeSelector {
+        conversation: room,
+        session: None,
+        path: crate::conversation_dag::ScopePath::Canonical,
+        include_forks: false,
+    };
+    let mut head = turn;
+    for level in 0..8 {
+        let (_, landed) = vault.mint_and_land_scope_summary(
+            &scope,
+            &format!("lantern summary {level}"),
+            crate::WriteActor::new(owner, EdgeActorClass::Human),
+            Some(head),
+            true,
+        )?;
+        head = landed.and_then(|landed| landed.record).expect("TURN copy");
+    }
+    let clearance = |bands: &[u8]| Scope {
+        bands: ScopeAxis::Some(bands.iter().copied().collect()),
+        ..Scope::top()
+    };
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .port_entity_record(&txn, &head)?
+        .expect("row")
+        .encode();
+    assert!(crate::disclosure::discloses_raw(
+        &vault,
+        &txn,
+        &clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE]),
+        head,
+        &raw
+    )?);
+    assert!(
+        !crate::disclosure::discloses_raw(
+            &vault,
+            &txn,
+            &clearance(&[ENTITY_TYPE_TURN]),
+            head,
+            &raw
+        )?,
+        "the last copy carries the first turn's message"
+    );
+    Ok(())
+}
