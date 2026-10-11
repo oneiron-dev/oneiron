@@ -195,17 +195,9 @@ fn a_replica_reads_a_history_the_move_carried() {
     replica
         .import_signed_authority_history(&vault.export_signed_authority_history().unwrap())
         .unwrap();
+    // The Dreamer's MACHINE id is shared across replicas of one vault.
     let dreamer = vault.dreamer_authority().unwrap().entity_ref();
-    let at = TimeRange { start: 1, end: 1 };
-    replica
-        .put_entity(
-            &dreamer,
-            crate::registry::ENTITY_TYPE_MACHINE,
-            at,
-            1,
-            b"machine",
-        )
-        .unwrap();
+    assert_eq!(replica.dreamer_authority().unwrap().entity_ref(), dreamer);
     let txn = vault.store.env.read_txn().unwrap();
     let controls =
         crate::claim::history_store::machine_history_ids_for_target(&vault.store, &txn, target)
