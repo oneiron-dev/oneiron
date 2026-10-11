@@ -468,14 +468,9 @@ fn stage_config(path: &Path, text: &str) -> anyhow::Result<PathBuf> {
         ".oneiron-init-{}.toml",
         oneiron::EntityId::now().to_hex()
     ));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&staged)?;
+    // The config may carry the issuer secret: owner-only, and on macOS with
+    // no ACL entry from its directory.
+    let mut file = super::credential_file::create(&staged)?;
     file.write_all(text.as_bytes())?;
     file.sync_all()?;
     Ok(staged)
