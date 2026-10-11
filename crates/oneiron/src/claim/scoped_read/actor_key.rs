@@ -34,9 +34,9 @@ pub(crate) struct RoomTurnCeiling {
     pub(crate) room: EntityId,
     /// The member reading through this ceiling; every other member is a peer.
     pub(crate) caller: EntityId,
-    /// The room's Scope for this read: what `room_scope` returned when the
-    /// turn opened, met with what it returns for the current roster.
-    pub(crate) scope: crate::federation::Scope,
+    /// The turn's Scope terms, shared by the turn and every lane built from
+    /// it; see [`TurnTerms`].
+    pub(crate) terms: TurnTerms,
     /// The room's members, sorted and unique: each row must pass the
     /// all-of-audience rule for every one of them (ARCH-0006a).
     pub(crate) roster: Vec<EntityId>,
@@ -45,20 +45,150 @@ pub(crate) struct RoomTurnCeiling {
     pub(crate) peers: Vec<ScopedReadActorKey>,
 }
 
+/// What `room_scope` gives for a roster, as two terms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoomTerms {
+    /// The room's world ceiling: every row it reads lies in it, public or
+    /// not.
+    pub(crate) worlds: crate::federation::Scope,
+    /// The met clearance of the members that bring one (ILDF2): `None` while
+    /// only the owner and the vault's own agents are in the meet.
+    pub(crate) clearance: Option<crate::federation::Scope>,
+    /// Whether the clearance holds rows to P7. A turn does; a member's own
+    /// read of the room outside a turn keeps only the world, audience and
+    /// peer gates, and never takes a clearance.
+    pub(crate) p7: bool,
+}
+
+impl RoomTerms {
+    /// The room's Scope: the world ceiling met with the clearance.
+    pub(crate) fn room_scope(&self) -> crate::federation::Scope {
+        match &self.clearance {
+            Some(clearance) => self.worlds.meet(clearance),
+            None => self.worlds.clone(),
+        }
+    }
+
+    /// `self` met with `now`; a term `now` lacks never widens it.
+    fn meet(&self, now: &Self) -> Self {
+        Self {
+            worlds: self.worlds.meet(&now.worlds),
+            clearance: if self.p7 {
+                meet_clearance(self.clearance.as_ref(), now.clearance.as_ref())
+            } else {
+                None
+            },
+            p7: self.p7,
+        }
+    }
+}
+
+/// One room turn's terms, shared by its handle and every lane built from
+/// it. Each read meets what its own snapshot finds into them, so a turn only
+/// narrows: a clearance it lost stays lost across verbs, and only a new turn
+/// reads wider again.
+#[derive(Debug, Clone)]
+pub(crate) struct TurnTerms(std::sync::Arc<std::sync::Mutex<RoomTerms>>);
+
+impl PartialEq for TurnTerms {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for TurnTerms {}
+
+impl TurnTerms {
+    pub(crate) fn new(terms: RoomTerms) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(terms)))
+    }
+
+    /// The terms as the turn holds them now.
+    pub(crate) fn get(&self) -> RoomTerms {
+        self.with(RoomTerms::clone)
+    }
+
+    /// `read` over the terms as the turn holds them now.
+    pub(crate) fn with<R>(&self, read: impl FnOnce(&RoomTerms) -> R) -> R {
+        read(
+            &self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// Meets `now` into the turn and returns what the turn holds after.
+    pub(crate) fn meet(&self, now: &RoomTerms) -> RoomTerms {
+        let mut held = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let met = held.meet(now);
+        if met != *held {
+            *held = met.clone();
+        }
+        met
+    }
+
+    /// Meets one snapshot's clearance into the turn, if it holds rows to P7.
+    pub(crate) fn meet_clearance(&self, clearance: Option<&crate::federation::Scope>) {
+        let Some(clearance) = clearance else {
+            return;
+        };
+        let mut held = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !held.p7 {
+            return;
+        }
+        let met = meet_clearance(held.clearance.as_ref(), Some(clearance));
+        if met != held.clearance {
+            held.clearance = met;
+        }
+    }
+
+    /// Whether the turn holds rows to P7.
+    pub(crate) fn p7(&self) -> bool {
+        self.with(|terms| terms.p7)
+    }
+}
+
 impl RoomTurnCeiling {
     /// World membership of one ordinary record: a claim's world, else base
     /// reality, which also holds every record that is not a claim.
     pub(crate) fn admits_world(&self, world: Option<EntityId>) -> bool {
-        self.scope.worlds.contains(&crate::federation::ScopeId(
-            world.unwrap_or_else(crate::claim::base_world_id),
-        ))
+        let world = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+        self.terms
+            .with(|terms| terms.worlds.worlds.contains(&world))
+    }
+
+    /// P7 for one record the room reads: with a clearance in the meet, the
+    /// record's own Scope sits under the room's Scope or is positively
+    /// public. A record with no stamp is never public.
+    pub(crate) fn discloses(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+    ) -> crate::Result<bool> {
+        let Some(scope) = self
+            .terms
+            .with(|terms| terms.clearance.as_ref().map(|_| terms.room_scope()))
+        else {
+            return Ok(true);
+        };
+        crate::disclosure::discloses_raw(vault, txn, &scope, id, raw)
     }
 
     /// This ceiling conjoined with `now`, the room as a later snapshot reads
-    /// it: the two Scopes met, both rosters as one audience, and every peer
-    /// read either holds. A member who joined binds the read; one who left
-    /// still binds a lane built while it belonged. Refreshing a ceiling can
-    /// therefore narrow the read and never drop a restriction it held.
+    /// it: `now`'s terms met into the turn's, both rosters as one audience,
+    /// and every peer read either holds. A member who joined binds the read;
+    /// one who left still binds a lane built while it belonged. Refreshing a
+    /// ceiling can therefore narrow the read and never drop a restriction it
+    /// held.
     #[must_use]
     pub(crate) fn narrowed_by(&self, now: &Self) -> Self {
         let mut roster = self.roster.clone();
@@ -71,10 +201,11 @@ impl RoomTurnCeiling {
                 peers.push(peer.clone());
             }
         }
+        self.terms.meet(&now.terms.get());
         Self {
             room: self.room,
             caller: self.caller,
-            scope: self.scope.meet(&now.scope),
+            terms: self.terms.clone(),
             roster,
             peers,
         }
@@ -85,6 +216,17 @@ impl RoomTurnCeiling {
         roster
             .iter()
             .all(|member| self.roster.binary_search(member).is_ok())
+    }
+}
+
+/// Two clearance terms met; `None` is no term, so it never narrows.
+pub(crate) fn meet_clearance(
+    a: Option<&crate::federation::Scope>,
+    b: Option<&crate::federation::Scope>,
+) -> Option<crate::federation::Scope> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.meet(b)),
+        (one, other) => one.or(other).cloned(),
     }
 }
 
@@ -178,10 +320,14 @@ impl ScopedReadActorKey {
     }
 
     /// Read only rows in `worlds`, a claim by its own world and any other
-    /// record as base reality. The ceiling only narrows.
+    /// record as base reality. The ceiling only narrows: it meets any the
+    /// key already holds.
     #[must_use]
     pub(crate) fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
-        self.worlds = Some(worlds);
+        self.worlds = Some(match self.worlds.take() {
+            Some(held) => held.meet(&worlds),
+            None => worlds,
+        });
         self
     }
 

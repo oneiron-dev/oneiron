@@ -300,7 +300,8 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
     // P1: with no non-owner present the met clearance is the top of the
     // lattice, never bottom, so the owner alone sees everything.
     assert_eq!(
-        crate::disclosure::disclosable_set(&vault, &InterlocutorSet::owner_alone())?.clearance(),
+        crate::disclosure::DisclosableSet::resolve(&vault, &InterlocutorSet::owner_alone(), false)?
+            .clearance(),
         &crate::federation::Scope::top()
     );
     let ctx = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;

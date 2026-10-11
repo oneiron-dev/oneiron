@@ -17,6 +17,10 @@ pub(super) struct AnthropicHttp {
     pub(super) cap: OutputCap,
 }
 
+/// One `.send()` per call over [`ProviderHttp`], which follows no redirect
+/// and never resends: a run's gate may wrap this transport's adapter.
+impl oneiron::llm::SingleSend for AnthropicHttp {}
+
 /// The Messages API requires `max_tokens`; this is sent when neither the
 /// caller nor the provider entry names one.
 pub(super) const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 4_096;

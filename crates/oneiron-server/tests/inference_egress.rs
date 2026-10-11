@@ -20,6 +20,12 @@ use std::sync::{
 use tower::ServiceExt;
 
 struct Backend(Arc<AtomicUsize>);
+// One request per call: the raw routes' gate wraps it.
+impl oneiron::llm::SingleRouteBackend for Backend {
+    fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+        Ok(())
+    }
+}
 impl LlmBackend for Backend {
     fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         self.0.fetch_add(1, Ordering::SeqCst);
