@@ -56,6 +56,28 @@ pub(super) fn has_embedding_source(raw: &[u8]) -> Result<bool> {
         _ => Ok(false),
     }
 }
+/// Marks a restored record to be embedded again and queues the worker's job
+/// for it: the image holds no vectors, and the worker leases queued jobs only,
+/// so a marker alone left a restored vault without them for good.
+fn mark_for_reembedding(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    text: &[u8],
+) -> Result<()> {
+    vault.store.mark_pending_embedding(txn, id, text)?;
+    #[cfg(feature = "sync")]
+    if vault.config.embedding_model.is_some() {
+        crate::sync::queue::push_embed_job_in_txn(
+            &vault.store,
+            txn,
+            id,
+            crate::embed::EMBED_PRIORITY_BACKFILL,
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
     vault.with_write_txn_grouped(|txn| {
         let rows = crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, txn)?
@@ -120,18 +142,14 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                 _ => {}
             }
             if has_embedding_source(raw)? {
-                vault
-                    .store
-                    .mark_pending_embedding(txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+                mark_for_reembedding(vault, txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
                 embeddings += 1;
             }
             // A TURN embeds its messages' text, so it is marked at that text.
             if header.entity_type == crate::registry::ENTITY_TYPE_TURN
                 && let Some(text) = crate::embed::turn_text_in_txn(vault, txn, id)?
             {
-                vault
-                    .store
-                    .mark_pending_embedding(txn, id, text.as_bytes())?;
+                mark_for_reembedding(vault, txn, id, text.as_bytes())?;
                 embeddings += 1;
             }
         }

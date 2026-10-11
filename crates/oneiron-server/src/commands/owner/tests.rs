@@ -119,6 +119,7 @@ fn doctor_counts_vectors_by_device_and_lists_one_devices_ids() {
     let vault_path = root.path().join("vault");
     let mut vault_config = oneiron::VaultConfig::server();
     vault_config.dimensions = 4;
+    vault_config.embedding_model = Some("test/model@v1".to_owned());
     let on_cuda = oneiron::EntityId::now();
     {
         let vault = oneiron::Vault::open_owned(&vault_path, vault_config).unwrap();

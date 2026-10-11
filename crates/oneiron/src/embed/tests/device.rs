@@ -204,8 +204,10 @@ fn a_replica_marks_the_vectors_it_computes_and_a_replay_keeps_them() {
     );
 }
 
-/// Export and restore: a checkpoint holds no vectors, so a restore embeds them
-/// again and carries no mark for a vector it did not restore. The restoring
+/// Export and restore: a checkpoint holds no vectors, so a restore carries no
+/// mark for a vector it did not restore, and queues the worker to embed them
+/// again (bug repro: it only marked them, and the worker leases queued jobs
+/// only, so a restored vault never got its vectors back). The restoring
 /// worker's device marks what it computes, and a new space drops every mark
 /// with the vectors.
 #[test]
