@@ -38,7 +38,7 @@ pub(super) struct TemporalScoringContext {
     pub(super) learned_anchor_mid: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) struct TemporalCandidateCollectionContext<'a> {
     pub(super) radius: u64,
     pub(super) per_scan_cap: usize,
