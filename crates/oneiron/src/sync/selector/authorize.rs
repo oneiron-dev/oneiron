@@ -506,9 +506,16 @@ pub(super) fn filter_window_doc(
         if !grant
             .authority_scope
             .admits("read", &scope, &crate::federation::Scope::top())
-            || !super::scope::settled_world_selected(blob, &scope, scope_position)
         {
             return;
+        }
+        match super::scope::settled_position_selected(&id, blob, &scope, scope_position) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
         }
         let Some(decision) = entity_selector_decision(
             vault,

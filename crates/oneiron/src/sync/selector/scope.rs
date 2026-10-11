@@ -522,18 +522,29 @@ pub(super) fn band_filter(
     (position.bands != ScopeAxis::All).then_some(&position.bands)
 }
 
-/// A SUMMARY born in a world other than base (an epoch a placed run wrote)
-/// shares the base window but travels only where the selector selects its
-/// world: shared-base residence is not base-world disclosure. Every other
-/// row keeps its own world rule.
-pub(super) fn settled_world_selected(
+/// A SUMMARY a run settled (an epoch summary) travels only where the
+/// selector, under its pact ceiling, selects the position it was born at:
+/// shared-base residence is not base-world disclosure, and a SUMMARY has no
+/// `FacetOf` row, so its settled facet is judged here, never widened by a
+/// selected source it rides on. A SUMMARY still at its generic stamp (its
+/// own substrate facet) has no settled facet and keeps the graph closure.
+/// Every other row keeps its own world and facet rules.
+pub(super) fn settled_position_selected(
+    id: &EntityId,
     raw: &[u8],
     record: &crate::federation::Scope,
     position: &FederationDirectionScope,
-) -> bool {
-    raw.first().copied() != Some(crate::registry::ENTITY_TYPE_SUMMARY)
-        || record.worlds == crate::federation::base_world_axis()
-        || record.worlds.is_narrowing_of(&position.worlds)
+) -> Result<bool> {
+    if raw.first().copied() != Some(crate::registry::ENTITY_TYPE_SUMMARY) {
+        return Ok(true);
+    }
+    let world = record.worlds == crate::federation::base_world_axis()
+        || record.worlds.is_narrowing_of(&position.worlds);
+    let generic = record.facets
+        == ScopeAxis::Some(BTreeSet::from([ScopeId(
+            crate::claim::substrate_facet_id(*id)?,
+        )]));
+    Ok(world && (generic || record.facets.is_narrowing_of(&position.facets)))
 }
 
 pub(super) fn entity_selector_decision(

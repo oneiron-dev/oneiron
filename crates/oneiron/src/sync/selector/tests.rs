@@ -5010,3 +5010,154 @@ fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<(
     assert!(after.contains(&person) && !after.contains(&kept));
     Ok(())
 }
+
+fn epoch_summary_bytes(epoch: u64, text: &str) -> crate::Result<Vec<u8>> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    encode_epoch_summary_body(&EpochSummaryBody {
+        v: EPOCH_SUMMARY_BODY_VERSION,
+        session: entity_id(0x7e).to_hex(),
+        epoch,
+        turn_start: epoch * 3,
+        turn_end: epoch * 3 + 2,
+        level: EPOCH_SUMMARY_LEVEL,
+        text: text.into(),
+        actor: entity_id(0x7f).to_hex(),
+    })
+}
+
+/// Astra #1384b P2-1: a summary's settled facet binds the export. A
+/// vault-wide run summarized a step faceted F; the summary is born under
+/// the vault's default facet. A peer whose pact ceiling is F gets the step,
+/// never the summary riding its `DerivedFrom` edge to it.
+#[test]
+fn an_epoch_summary_leaves_only_where_its_settled_facet_is_selected() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let shared = entity_id(0x76);
+    let (step, summary) = (entity_id(0x77), entity_id(0x78));
+    let key = WindowKey::new("2026-03");
+    let at = key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(&shared, ENTITY_TYPE_FACET, occurred, at, b"shared")?;
+    vault
+        .batch()
+        .put(&step, ENTITY_TYPE_EVENT, occurred, at, b"the shared step")
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(1, "the run took the shared step")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &step, 1.0)
+        .commit()?;
+    vault
+        .batch()
+        .edge(&step, EdgeKind::FacetOf, &shared, 1.0)
+        .commit()?;
+    // A vault-wide run's summary: base reality, the vault's default facet.
+    let placement = crate::compaction::EpochPlacement::default();
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, summary))?;
+    assert_ne!(vault.default_facet()?, shared);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::from_iter([ScopeId(shared)]),
+            bands: ScopeAxis::All,
+        }],
+    );
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let sent = import_ids(
+        &filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?
+            .export(ExportMode::all_updates())
+            .unwrap(),
+    );
+    assert!(sent.contains(&step), "the faceted step is selected");
+    assert!(
+        !sent.contains(&summary),
+        "a summary born under another facet stays out of the pact ceiling"
+    );
+    Ok(())
+}
+
+/// Astra #1384b P2-2: the fence judges a source by the export that carries
+/// it. Person R, learned in January, is selected only through February's
+/// faceted event, which January's window does not hold, so no window
+/// exports R. The February summary written from R stays home with it.
+#[test]
+fn an_epoch_summary_stays_home_when_no_window_exports_its_source() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let facet = entity_id(0x79);
+    let (person, event, summary) = (entity_id(0x7a), entity_id(0x7b), entity_id(0x7c));
+    let (january, february) = (WindowKey::new("2026-01"), WindowKey::new("2026-02"));
+    let jan = january.start_timestamp().unwrap() + 60;
+    let feb = february.start_timestamp().unwrap() + 60;
+    let at = |second| TimeRange {
+        start: second,
+        end: second,
+    };
+    vault.put_entity(&facet, ENTITY_TYPE_FACET, at(jan), jan, b"facet")?;
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        at(jan),
+        jan,
+        b"the private sentence",
+    )?;
+    vault
+        .batch()
+        .put(&event, ENTITY_TYPE_EVENT, at(feb), feb, b"the faceted event")
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            at(feb),
+            feb,
+            &epoch_summary_bytes(1, "the run read the private sentence")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &person, 1.0)
+        .edge(&summary, EdgeKind::DerivedFrom, &event, 1.0)
+        .commit()?;
+    vault
+        .batch()
+        .edge(&event, EdgeKind::FacetOf, &facet, 1.0)
+        .edge(&person, EdgeKind::Mentions, &event, 1.0)
+        .commit()?;
+    // Born under the requested facet: its own position is selected.
+    let placement = crate::compaction::EpochPlacement {
+        world: None,
+        facet: Some(facet),
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, summary))?;
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::Base,
+        vec![facet],
+        vec![],
+    );
+    let mut sent = Vec::new();
+    for key in [&january, &february] {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        sent.extend(import_ids(
+            &filtered_window_doc(&vault, &doc, key, test_selector_scope(), &selector)?
+                .export(ExportMode::all_updates())
+                .unwrap(),
+        ));
+    }
+    assert!(sent.contains(&event), "the faceted event is selected");
+    assert!(!sent.contains(&person), "no window exports the person");
+    assert!(
+        !sent.contains(&summary),
+        "the summary stays home with a source no window exports"
+    );
+    Ok(())
+}

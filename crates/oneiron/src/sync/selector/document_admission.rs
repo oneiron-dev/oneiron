@@ -201,6 +201,17 @@ fn selected_in_txn(
     // The export's facet closure is ONE hop from a selected seed, never a
     // transitive walk. Re-read both endpoint rows and every live facet stamp
     // from this writer; a stale window cannot preserve a removed seed.
+    // Egress closes over the one window that packs `id`, as the exporter
+    // does: a seed selects it only when that window packs the seed too,
+    // across an edge the window packs. A row no window places selects
+    // nothing, and a seed in another window never stands in for one here.
+    let window = match egress {
+        Some(_) => match vault.get_raw_in(txn, &id)?.as_deref().and_then(carrier_window) {
+            Some(window) => Some(window),
+            None => return Ok(false),
+        },
+        None => None,
+    };
     for row in crate::ports::EdgeStoreRead::port_edges(
         &vault.store,
         txn,
@@ -211,6 +222,17 @@ fn selected_in_txn(
     )? {
         spend(&mut budget)?;
         let edge = row?;
+        if let Some(window) = &window
+            && (edge.kind == EdgeKind::Blocks
+                || vault
+                    .get_raw_in(txn, &edge.target)?
+                    .as_deref()
+                    .and_then(carrier_window)
+                    .as_ref()
+                    != Some(window))
+        {
+            continue;
+        }
         if edge.kind == EdgeKind::SameAs
             && !super::scope::document_coreference_context_in_txn(
                 vault,
@@ -232,6 +254,18 @@ fn selected_in_txn(
         }
     }
     Ok(false)
+}
+
+/// The window sync packs a stored row into: its learned-at month, in the
+/// partition of its world (only a CLAIM names one, every other row is base).
+/// `None` for a row that cannot be placed.
+fn carrier_window(raw: &[u8]) -> Option<crate::sync::WindowKey> {
+    let header = EntityMetadataHeader::parse(raw)?;
+    let month = crate::sync::WindowKey::from_timestamp(header.learned_at);
+    Some(match crate::sync::types::entity_world(raw).ok()? {
+        None => month,
+        Some(world) => crate::sync::WindowKey::for_month_world(&month, world),
+    })
 }
 
 struct StoredSelection<'a, 'env> {
@@ -273,11 +307,12 @@ impl StoredSelection<'_, '_> {
             None => false,
         };
         if withheld
-            || !super::scope::settled_world_selected(
+            || !super::scope::settled_position_selected(
+                &id,
                 &raw,
                 &record,
                 self.admission.position.as_scope(),
-            )
+            )?
         {
             return Ok(None);
         }
