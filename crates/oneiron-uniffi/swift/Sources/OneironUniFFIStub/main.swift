@@ -382,7 +382,8 @@ func recallDtosCompile() {
         provenance: provenance,
         world: nil,
         facet: nil,
-        salience: 0.5
+        salience: 0.5,
+        conversationId: nil
     )
     let _: String = item.hedgeBucket
     let honesty = ScopeHonesty(outOfScopeWorlds: ["world:compile-only"])

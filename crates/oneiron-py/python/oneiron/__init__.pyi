@@ -85,6 +85,7 @@ class MemoryItem(TypedDict):
     facet: str | None
     salience: float | None
     cited_messages: NotRequired[list[CitedMessage]]
+    conversation_id: NotRequired[str]
 
 class CitedMessage(TypedDict):
     short_id: str

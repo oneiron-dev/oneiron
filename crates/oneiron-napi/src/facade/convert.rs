@@ -317,6 +317,7 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
                 value_text: cited.value_text,
             })
             .collect(),
+        conversation_id: item.conversation_id,
     }
 }
 

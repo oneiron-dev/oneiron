@@ -93,6 +93,7 @@ async fn conversation_rooms_members_threads_and_filters_round_trip() {
         server.clone(),
         Request::builder()
             .uri("/v1/core/conversations?kind=mirror&external_id=remote-room&limit=10&countMode=exact")
+            .header(AUTHORIZATION, owner_reader_bearer(&server))
             .body(Body::empty())
             .unwrap(),
     )
@@ -274,6 +275,7 @@ async fn conversation_kind_filters_are_exact_and_include_legacy_direct() {
             server.clone(),
             Request::builder()
                 .uri(format!("/v1/core/conversations?kind={kind}&limit=10"))
+                .header(AUTHORIZATION, owner_reader_bearer(&server))
                 .body(Body::empty())
                 .unwrap(),
         )

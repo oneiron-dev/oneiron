@@ -66,7 +66,7 @@ async fn receipt_key_cannot_authorize_http_or_rotate_into_a_new_binding() {
     let app = crate::build_app(server.clone());
     let private = || {
         Request::builder()
-            .uri("/v1/core/conversations")
+            .uri("/v1/core/outbound/capabilities")
             .body(Body::empty())
             .unwrap()
     };
@@ -77,7 +77,7 @@ async fn receipt_key_cannot_authorize_http_or_rotate_into_a_new_binding() {
         StatusCode::UNAUTHORIZED
     );
     let mut root = Request::builder()
-        .uri("/v1/core/conversations")
+        .uri("/v1/core/outbound/capabilities")
         .header("authorization", format!("Bearer {ISSUER_KEY}"))
         .body(Body::empty())
         .unwrap();

@@ -830,7 +830,9 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
     let compiled = String::from_utf8(session.compiled.clone()).expect("utf-8 block");
     assert!(compiled.contains("Be concise."));
     assert!(!compiled.contains("Be elsewhere."));
-    assert_eq!(session.read_receipt.suppressed_count, 1);
+    // What the slip cannot read lies in a world it does not grant, so it
+    // adds no count either (DEC-0005: no name, no count; Astra #1388 P2).
+    assert_eq!(session.read_receipt.suppressed_count, 0);
     Ok(())
 }
 

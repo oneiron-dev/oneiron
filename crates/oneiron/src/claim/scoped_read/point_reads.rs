@@ -209,13 +209,33 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
+        self.read_projected_opaque(reads, requested, |_, _| Ok(false), project)
+    }
+
+    /// [`Self::read_projected`], where `opaque` names, in the read's own
+    /// snapshot, an id whose withheld row this reader may not learn of: it
+    /// adds no count, as a missing row adds none.
+    pub(crate) fn read_projected_opaque<T, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
             let (row, withheld) = match read.target {
-                ReadTarget::Id(id) => self.id_row_in(&txn, &policy, &filter, id, read.mode)?,
+                ReadTarget::Id(id) => {
+                    let (row, withheld) = self.id_row_in(&txn, &policy, &filter, id, read.mode)?;
+                    if withheld > 0 && opaque(&txn, &id)? {
+                        (row, 0)
+                    } else {
+                        (row, withheld)
+                    }
+                }
                 ReadTarget::ShortRef {
                     short_id,
                     content_hash,

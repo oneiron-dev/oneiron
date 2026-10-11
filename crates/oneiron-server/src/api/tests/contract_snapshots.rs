@@ -251,8 +251,21 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
     ));
 
     let conversations_path = "/v1/core/conversations?view=full&limit=5&countMode=exact";
-    let (status, mut body) =
-        core_json(server.clone(), "GET", conversations_path, "core:read", None).await;
+    // The list reads as a named reader: here the vault's owner.
+    let owner = server.vault.ensure_embedded_owner_actor().expect("owner");
+    let (status, mut body) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "GET",
+            conversations_path,
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={};actor_class=human",
+                owner.to_hex()
+            )),
+            None,
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let root_id = server.vault.root_project().expect("root project");
     let root = server

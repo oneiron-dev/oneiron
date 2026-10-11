@@ -123,10 +123,13 @@ fn session_evidence(
     }
 }
 
+/// Proves `conversation` holds no DAG state, looking only at the turns
+/// `admits` names.
 fn prove_childof_only(
     vault: &Vault,
     txn: &RoTxn<'_>,
     conversation: &EntityId,
+    admits: &dyn Fn(&EntityId) -> bool,
 ) -> Result<PreviewTopology> {
     let store = &vault.store;
     let marker = MIGRATED.get(store, txn, conversation)?;
@@ -141,6 +144,11 @@ fn prove_childof_only(
         None,
     )? {
         let id = entry?.target;
+        // A row the caller does not admit is never looked at, not even for
+        // whether it exists.
+        if !admits(&id) {
+            continue;
+        }
         let Some(raw) = store.port_entity_record(txn, &id)? else {
             return Err(Error::CorruptedIndex("conversation ChildOf row"));
         };
@@ -195,6 +203,31 @@ impl SelectedPathSnapshot {
         txn: &RoTxn<'_>,
         conversation: &EntityId,
     ) -> Result<PreviewTopology> {
+        Self::read_admitting(vault, txn, conversation, &|_: &EntityId| true)
+    }
+
+    /// As `read`, but with no selected HEAD the ChildOf-only proof looks only
+    /// at the turns `admits` names: a reader's preview is never decided by a
+    /// turn it may not read.
+    pub(crate) fn read_admitting(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        conversation: &EntityId,
+        admits: &dyn Fn(&EntityId) -> bool,
+    ) -> Result<PreviewTopology> {
+        match Self::selected(vault, txn, conversation)? {
+            Some(path) => Ok(PreviewTopology::Selected(path)),
+            None => prove_childof_only(vault, txn, conversation, admits),
+        }
+    }
+
+    /// The checked selected path of `conversation`, or `None` when it has no
+    /// selected HEAD.
+    pub(crate) fn selected(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        conversation: &EntityId,
+    ) -> Result<Option<Self>> {
         let store = &vault.store;
         let head = graph::read_id(store, txn, HEAD, conversation)?;
         if !matches!(
@@ -204,7 +237,7 @@ impl SelectedPathSnapshot {
             return Err(graph::invalid("selected conversation is not live"));
         }
         let Some(head) = head else {
-            return prove_childof_only(vault, txn, conversation);
+            return Ok(None);
         };
         let mut seen = HashSet::new();
         let mut reversed = Vec::new();
@@ -260,6 +293,6 @@ impl SelectedPathSnapshot {
                 return Err(Error::CorruptedIndex("conversation canonical mark"));
             }
         }
-        Ok(PreviewTopology::Selected(Self { turns: reversed }))
+        Ok(Some(Self { turns: reversed }))
     }
 }
