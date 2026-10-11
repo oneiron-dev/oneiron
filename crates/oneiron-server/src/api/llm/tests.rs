@@ -621,3 +621,84 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
         .collect();
     assert_eq!(denied, ["model", "openai.models", "provider"].repeat(2));
 }
+
+/// The same refusal on a server with no model backend: the 400 and its one
+/// `Denied` row, with nothing reserved (Astra on #1382). A provider-option
+/// namespace no adapter reads is caller text: neither the reply nor the row
+/// (which the default sink logs as it is) quotes it.
+#[tokio::test]
+async fn a_raw_call_that_picks_its_own_route_has_its_row_with_no_backend_attached() {
+    use tower::ServiceExt;
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
+    let server = SyncServer::new(
+        vault,
+        crate::config::SyncServerConfig {
+            auth_secret: Some("owner".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_run_receipts(receipts.clone());
+    let server = Arc::new(server);
+    let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-route-no-backend");
+    let router = crate::api::api_routes(server.clone());
+    let picks: [(&str, Pick); 2] = [
+        ("model", |r| {
+            r.params.insert("model".into(), "other/model@1".into());
+        }),
+        ("*.model", |r| {
+            r.provider_options.insert(
+                "Bearer sk-test-sentinel-0000".into(),
+                serde_json::json!({ "model": "other/model@1" }),
+            );
+        }),
+    ];
+    for verb in ["generate", "stream"] {
+        for (named, pick) in picks {
+            let mut wire = request();
+            pick(&mut wire);
+            let reply = router
+                .clone()
+                .oneshot(crate::test_credentials::bind_slip_request(
+                    &server,
+                    &slip,
+                    &key,
+                    axum::http::Request::post(format!("/v1/llm/{verb}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&wire).unwrap()))
+                        .unwrap(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(reply.status(), StatusCode::BAD_REQUEST, "{verb} {named}");
+            let bytes = axum::body::to_bytes(reply.into_body(), 65_536)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                body,
+                serde_json::json!({"error":{"code":"route_selector_forbidden","key":named}}),
+                "{verb} {named}"
+            );
+        }
+    }
+    let rows = receipts.rows();
+    for row in &rows {
+        let logged = serde_json::to_string(row).unwrap();
+        assert!(!logged.contains("sk-test-sentinel"), "{logged}");
+    }
+    let denied: Vec<String> = rows
+        .into_iter()
+        .map(|row| match row.event {
+            oneiron::llm::run_admission::RunEvent::Denied {
+                reason: oneiron::llm::run_admission::RunDenied::RouteOverride { key },
+                lease: None,
+                ..
+            } => key,
+            other => panic!("not a route denial: {other:?}"),
+        })
+        .collect();
+    assert_eq!(denied, ["model", "*.model", "model", "*.model"]);
+}

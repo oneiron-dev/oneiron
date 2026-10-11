@@ -213,6 +213,44 @@ task. A vault with a model
 manifest needs a seat judge this server does not bind yet, so its runs are
 refused with `code_run_binding_failed`.
 
+### Type check (shadow mode)
+
+Each generated program can be type-checked before it runs, against the same
+declarations the executor prompt teaches (`allowJs` + `checkJs`, strict,
+ES2022, no DOM or Node globals). It is off by default:
+
+```toml
+[models.code_mode.check]
+mode = "shadow"              # "off" (default) or "shadow"; "enforce" is reserved and refused
+backend = "tsc-rs"           # "tsc-rs" in process (default) or "microsoft"
+microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # optional
+```
+
+Shadow mode blocks nothing and changes no program's result. Once a step's own
+state is saved, the check's report is appended to the run's replay record as
+`executor/repl/<step>.code-check.json`: backend and pin, latency, the first 32
+diagnostics in program coordinates (`diagnostics_omitted` counts the rest), or
+a failure code. Each check also logs one `oneiron::code_check` line with the
+step's outcome (`completed`, `waiting`, `continued` or `failed`) and the
+running counts. A step that fails keeps no report, and neither does a run in an
+off-record session, whose overlay is quota-bounded; their checks are only in
+the log.
+
+`tsc-rs` is the pinned Wasm module in `components/tsc-rs`, compiled once at
+startup (a few seconds) and run in a fresh instance per check, two at a time.
+`microsoft` runs Microsoft's native `tsc` (`@typescript/typescript-<platform>`,
+version `7.1.0-dev.20261010.1` only) as a process per check, in its own
+process group and temporary directory but with this host's file system. Since
+resolving a module would read or probe the path it names, it leaves unchecked
+(`code_check_unsupported`) any program that could name one: one containing
+`import`, `export`, `require`, `reference`, `module` or a `\u` escape, in any
+case.
+With `tsc-rs` selected, a set `microsoft_tsc` is the fallback for any check
+tsc-rs cannot finish, a busy one included. A step's report names the checker
+whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
+server logs why. The checker binary is trusted configuration, like any path
+in this file; the programs it checks are not.
+
 ## 7. Raw calls
 
 With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any

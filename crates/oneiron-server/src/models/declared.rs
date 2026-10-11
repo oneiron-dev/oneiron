@@ -3,7 +3,7 @@
 //! and every teacher call goes through its admission and the gate.
 use std::sync::Arc;
 
-use oneiron::llm::run_admission::{RunAdmission, RunDenied};
+use oneiron::llm::run_admission::{RunAdmission, RunDenied, UNRESOLVED_SELECTOR};
 use oneiron::{FatalLlmError, LlmRequest, LlmResponse, LlmResult};
 
 use super::ModelRouter;
@@ -28,7 +28,9 @@ impl DeclaredRun {
     /// the run froze at its start. The call goes out as that model, rung by
     /// rung when it is a seat, each rung admitted against the declaration.
     /// A selector the run cannot resolve, or a model this server does not
-    /// serve, is refused before admission, with its `Denied` row.
+    /// serve, is refused before admission, with its `Denied` row. The row
+    /// for an unresolved selector keeps none of its bytes: a caller may pass
+    /// any text there.
     pub async fn generate(
         &self,
         selector: &str,
@@ -37,7 +39,7 @@ impl DeclaredRun {
         let model = self
             .admission
             .resolve(selector)
-            .map_err(|denied| self.admission.refuse(Some(selector), selector, denied))?;
+            .map_err(|denied| self.admission.refuse(None, UNRESOLVED_SELECTOR, denied))?;
         let Some((locality, ladder)) = self
             .router
             .as_ref()

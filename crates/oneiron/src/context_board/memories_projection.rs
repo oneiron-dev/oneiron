@@ -222,6 +222,12 @@ impl crate::Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TimeRange;
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, PointRead,
+        ScopedReadActorKey,
+    };
+    use crate::context_pack::FieldProfile;
     #[test]
     fn opaque_entity_fields_cannot_claim_provenance_or_foreign_authority() {
         let fields = std::collections::HashMap::from([
@@ -248,28 +254,72 @@ mod tests {
         assert_eq!(row.world, None);
     }
     #[test]
-    fn memories_render_the_authorized_snapshot_without_refetching_claim_bytes() -> crate::Result<()>
-    {
+    fn board_keeps_authorized_claim_bytes_and_issued_hash_after_private_rewrite()
+    -> crate::Result<()> {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-        let mut pack = vault.context_pack().run()?;
-        pack.results = vec![ContextEntity {
-            id: crate::test_util::entity(0x71),
-            short_id: "cl1".into(),
-            content_hash: 0xab,
-            source_revision_ref: None,
-            entity_type: ENTITY_TYPE_CLAIM,
-            critical: false,
-            score: 1.0,
-            edges: None,
-            vector: None,
-            fields: Some(std::collections::HashMap::from([
-                ("src".into(), serde_json::json!("user_stated")),
-                ("val".into(), serde_json::json!("authorized snapshot")),
-            ])),
-        }];
-        // The authorized packet can outlive a rewrite/deletion. It must never
-        // combine its old short-ref hash with a new unguarded body read.
+        let claim = crate::test_util::entity(0x71);
+        let subject = crate::test_util::entity(0x72);
+        vault.put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )?;
+        let mut body = ClaimBody::new(
+            "profile.likes",
+            ClaimSubject::Entity(subject),
+            rmpv::Value::from("authorized snapshot"),
+            0.9,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.source = Some(ClaimSource::UserStated);
+        body.scope = Some(rmpv::Value::Map(vec![(
+            "sensitivity".into(),
+            "private".into(),
+        )]));
+        vault.put_claim(&claim, &body, TimeRange { start: 10, end: 10 }, 10)?;
+        crate::test_util::authorize_readers(&vault, &["viewer"]);
+        let read = vault.scoped_read(ScopedReadActorKey::new("viewer").unwrap());
+        let mut pack = vault
+            .context_pack()
+            .search_temporal(10, 10, 8)
+            .filter_types(&[ENTITY_TYPE_CLAIM])
+            .field_profile(FieldProfile::Full)
+            .run()?;
+        read.filter_context_pack(&mut pack)?;
+        let served = pack
+            .results
+            .iter()
+            .find(|row| row.id == claim)
+            .expect("authorized claim");
+        let issued_hash = served.content_hash;
+        let issued_short_id = served.short_id.clone();
+        assert!(
+            read.read(&[PointRead::short(&issued_short_id, issued_hash)], None)?
+                .single()
+                .value
+                .is_some()
+        );
+        body.value = rmpv::Value::from("private rewrite must not appear on the board");
+        body.approval = ClaimApprovalStatus::Proposed;
+        body.scope = Some(rmpv::Value::Map(vec![(
+            "sensitivity".into(),
+            "private".into(),
+        )]));
+        vault.put_claim(&claim, &body, TimeRange { start: 11, end: 11 }, 11)?;
+        assert_eq!(
+            vault.get_claim(&claim)?.unwrap().value.as_str(),
+            Some("private rewrite must not appear on the board")
+        );
+        assert!(
+            read.read(&[PointRead::id(claim)], None)?
+                .single()
+                .value
+                .is_none()
+        );
         let section = vault.project_memories_section(
             &pack,
             MemoriesBudget::new(1, 0, 0, 0, 0, 0),
@@ -277,15 +327,15 @@ mod tests {
             None,
             &std::collections::BTreeSet::new(),
         )?;
-        assert_eq!(
-            section.rows[0].claim_source,
-            Some(crate::claim::ClaimSource::UserStated)
-        );
-        assert_eq!(
-            section.rows[0].snippet.as_deref(),
-            Some("\"authorized snapshot\"")
-        );
-        assert_eq!(section.rows[0].content_hash, "ab");
+        let row = section
+            .rows
+            .iter()
+            .find(|row| row.id == claim.to_hex())
+            .unwrap();
+        assert_eq!(row.short_id, issued_short_id);
+        assert_eq!(row.content_hash, format!("{issued_hash:02x}"));
+        assert_eq!(row.claim_source, Some(ClaimSource::UserStated));
+        assert_eq!(row.snippet.as_deref(), Some("\"authorized snapshot\""));
         Ok(())
     }
 }

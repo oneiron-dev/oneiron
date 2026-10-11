@@ -1405,7 +1405,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/attempt_queue/tests/manifest_pack_compat.rs",
@@ -1838,7 +1838,7 @@
      "path": "src/authority/slip_replay.rs",
      "purpose": "Bounded, timestamp-bound replay windows for authenticated slip requests",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -11469,7 +11469,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/memories_projection.rs",
@@ -16482,6 +16482,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/code_check.rs",
+     "purpose": "Shadow mode: before a generated program runs, it is type-checked against the declarations its prompt teaches",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -16491,7 +16501,7 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 3,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -16502,7 +16512,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "JS host bridge: recording dispatcher, sandbox contract, and prompt sites",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -16526,7 +16536,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/repl.rs",
@@ -16543,7 +16553,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -16560,6 +16570,14 @@
      "notable": [],
      "path": "src/engine_executor/tests/agent_verb_regressions.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/engine_executor/tests/code_check.rs",
+     "purpose": "The checked-in `src/task_verb/code-mode.d.ts`, which a shadow check's oracle fixtures read, is the verb…",
      "surface": {}
     },
     {
@@ -16970,7 +16988,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/failure_ladder/tests.rs",
@@ -24936,7 +24954,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/origin/smart_http/door_serve_tests.rs",
@@ -26105,7 +26123,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/persona_snapshot/tests.rs",
@@ -27530,7 +27548,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -38516,7 +38534,7 @@
      "path": "tests/it/effect_spine_oracle.rs",
      "purpose": "Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener",
      "surface": {
-      "crate-vis": 73
+      "crate-vis": 69
      }
     },
     {
@@ -38706,7 +38724,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_convergence_props.rs",
@@ -38849,6 +38867,14 @@
      "notable": [],
      "path": "tests/policy_row_verbs.rs",
      "purpose": "Public-door policy-row proof independent of unrelated lib-test compilation",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -39526,9 +39552,9 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 13,
+     "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-native JS code-mode executor"
     },
@@ -40317,10 +40343,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 33,
+   "over_bar": 34,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2449,
-   "test_files": 775
+   "source_files": 2450,
+   "test_files": 777
   },
   "oneiron-android": {
    "files": [
@@ -41881,6 +41907,144 @@
    "purpose": "oneiron-bench — benchmark harness skeleton",
    "source_files": 99,
    "test_files": 18
+  },
+  "oneiron-code-check": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/latency.rs",
+     "purpose": "Check latency on the synthetic fixtures, per backend: `cargo run --release -p oneiron-code-check --example…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BackendId",
+      "BackendKind",
+      "CheckConfigError",
+      "CheckFailure",
+      "CheckInput",
+      "CheckMode",
+      "CheckReport",
+      "CodeCheck",
+      "Declaration",
+      "Diagnostic",
+      "Fallback",
+      "ShadowCheck"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "An optional type check of code-mode programs before they run",
+     "surface": {
+      "enum": 4,
+      "fn": 6,
+      "mod": 1,
+      "re-export": 3,
+      "struct": 7,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckMetrics",
+      "LatencySummary",
+      "MetricsSnapshot",
+      "StepThen"
+     ],
+     "path": "src/metrics.rs",
+     "purpose": "Shadow-mode counts: how often agent programs fail a check, which diagnostics they carry, and what their step…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MicrosoftTsc"
+     ],
+     "path": "src/microsoft.rs",
+     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/output.rs",
+     "purpose": "Reads `tsc --pretty false` output",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TscRsBudget",
+      "TscRsWasm"
+     ],
+     "path": "src/tsc_rs.rs",
+     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/golden.rs",
+     "purpose": "Oracle comparison: the synthetic code-mode programs of the tsc-check evidence give the same diagnostics on…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "metrics": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Shadow-mode counts: how often agent programs fail a check, which diagnostics they carry, and what their step…"
+    },
+    "microsoft": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is…"
+    },
+    "output": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Reads `tsc --pretty false` output"
+    },
+    "tsc_rs": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "An optional type check of code-mode programs before they run",
+   "source_files": 6,
+   "test_files": 1
   },
   "oneiron-contracts": {
    "files": [
@@ -47579,7 +47743,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/fetch_policy.rs",
@@ -49194,6 +49358,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/api/tests/mcp_code_check.rs",
+     "purpose": "Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/api/tests/mcp_memory.rs",
      "purpose": "Memory tool projections exercise the same scoped reads as native clients",
      "surface": {}
@@ -49212,7 +49384,9 @@
      "notable": [],
      "path": "src/api/tests/mcp_quickjs.rs",
      "purpose": "Production execute_code uses real JS through the vault-owned host and wire",
-     "surface": {}
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -49953,6 +50127,7 @@
      "kind": "src",
      "notable": [
       "ChatSettings",
+      "CodeCheckSettings",
       "CodeModeSettings",
       "DreamerSettings",
       "ModelsConfig",
@@ -49964,7 +50139,7 @@
       "crate-vis": 2,
       "fn": 1,
       "re-export": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -51138,7 +51313,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -52163,6 +52338,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/api_cli.rs",
+     "purpose": "`oneiron api call` through the shipped binary: a literal `--data` body and an `@FILE` body reach an…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -52219,6 +52402,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/managed_ledger_wire.rs",
+     "purpose": "The managed wake ledger's push, through its real Unix-socket path: the frame an independent peer receives…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -52264,6 +52455,16 @@
      "notable": [],
      "path": "tests/it/reopen_after_restart.rs",
      "purpose": "Text saved through `oneiron serve` survives a restart (prune e2e row 4): witness one invented line, stop the…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/slip_clock.rs",
+     "purpose": "An agent's holder proof is judged on wall time, not on time the vault was seen running (perf pass, 2026-10-11)",
      "surface": {}
     },
     {
@@ -52333,7 +52534,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 174,
+     "files": 175,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52539,7 +52740,7 @@
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 318,
-   "test_files": 128
+   "test_files": 132
   },
   "oneiron-uniffi": {
    "files": [
