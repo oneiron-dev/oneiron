@@ -668,11 +668,16 @@ impl PendingEmbeddingReconciler {
 /// not a production filter — a filter here would silently absorb a routing bug
 /// instead of surfacing it. The base-only `PendingEmbeddingReconciler` needs no
 /// equivalent: it reads base rows session content never enters.
+///
+/// `admit` runs first in the write's own transaction: a retrieval in a room
+/// on record lands its jobs, as every other landing does, only while its
+/// route stands and its saver holds. A refusal there enqueues nothing.
 #[cfg(feature = "sync")]
 pub(crate) fn enqueue_pending_embedding_jobs(
     vault: &crate::Vault,
     ids: &[EntityId],
     priority: u8,
+    admit: &dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
@@ -687,6 +692,7 @@ pub(crate) fn enqueue_pending_embedding_jobs(
          embeds inline and must never enqueue a background job"
     );
     vault.with_write_txn_grouped(|wtxn| {
+        admit(wtxn)?;
         for id in ids {
             if vault
                 .store
