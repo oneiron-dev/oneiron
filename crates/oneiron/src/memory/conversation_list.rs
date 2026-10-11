@@ -457,7 +457,10 @@ impl Memory<'_> {
     /// `rows`, a shown turn's own row and its messages as the lane admitted
     /// them, less each message a member's history does not show. A message
     /// keeps its own place in its room's history whatever turn quotes it, so
-    /// the audience check judges it by its own time (Astra #1388b P1).
+    /// the audience check judges it by its own time (Astra #1388b P1). A
+    /// message the check cannot place in one room, such as one another
+    /// room's turn links too, is not quoted, and the list goes on (Sol
+    /// R4-F1).
     fn quoted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -473,7 +476,11 @@ impl Memory<'_> {
         for row in rows {
             let shown = match &row {
                 Some(row) if row.id != *turn => {
-                    audience.readable(self.vault, txn, row.id, &[self.actor])?
+                    match audience.readable(self.vault, txn, row.id, &[self.actor]) {
+                        Ok(readable) => readable,
+                        Err(Error::Record(_)) => false,
+                        Err(error) => return Err(error.into()),
+                    }
                 }
                 _ => true,
             };

@@ -1133,7 +1133,8 @@ fn a_room_turned_direct_during_a_list_keeps_its_bound() {
 /// A message keeps its own place in a room's history whatever turn quotes
 /// it: a later turn that also links a message from before the reader joined
 /// never previews it for the late joiner, though the owner's preview quotes
-/// it (Astra #1388b P1).
+/// it (Astra #1388b P1). One that also sits in another room is not quoted
+/// either, and the list still reads (Sol R4-F1).
 #[test]
 fn a_pre_join_message_a_later_turn_links_stays_hidden() {
     use crate::conversation::{ConversationBody, HistoryChoice};
@@ -1191,6 +1192,32 @@ fn a_pre_join_message_a_later_turn_links_stays_hidden() {
         .expect("the later turn links the message");
     let owner = vault.memory(rooted.owner, EdgeActorClass::Human);
     assert_eq!(preview_of(&owner, room).as_deref(), Some(words));
+    assert_eq!(preview_of(&memory, room), None);
+    // A message another room's turn holds, linked to the same later turn,
+    // has no one room: it is not quoted, and the list still reads (Sol
+    // R4-F1).
+    let (elsewhere, there) = (entity(0xB3), entity(0xC8));
+    witness(
+        vault,
+        rooted.owner,
+        elsewhere,
+        there,
+        AT + 20,
+        said(
+            WitnessAuthor::User,
+            "said in another room",
+            Some(entity(SPACE)),
+        ),
+    );
+    let foreign = {
+        let txn = vault.store.env.read_txn().expect("read txn");
+        vault.turn_message_ids_in(&txn, &there).expect("messages")[0]
+    };
+    vault
+        .batch()
+        .edge(&foreign, crate::EdgeKind::PartOf, &new, 1.0)
+        .commit()
+        .expect("the later turn links another room's message");
     assert_eq!(preview_of(&memory, room), None);
 }
 
