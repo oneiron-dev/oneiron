@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header::AUTHORIZATION};
@@ -47,7 +47,6 @@ fn the_shipped_server_accepts_an_agents_proof_after_a_stop_longer_than_the_windo
         &config,
     )))
     .expect("token agent prints its credential as JSON");
-    let minted_at = Instant::now();
     let token = minted["token"].as_str().expect("token").to_owned();
     let slip = CapabilitySlip::from_token(&token).expect("v2 slip");
     let key = signing_key(minted["binding_key"].as_str().expect("binding key"));
@@ -73,9 +72,9 @@ fn the_shipped_server_accepts_an_agents_proof_after_a_stop_longer_than_the_windo
     assert_eq!(read(&proof), 401, "the same proof replayed");
     sigterm(first);
 
-    // Down for 70 s, counted from the mint: the last moment the old window's
-    // clock was written.
-    std::thread::sleep(Duration::from_secs(70).saturating_sub(minted_at.elapsed()));
+    // Down for 70 s, counted from the stop: the old window's clock moved
+    // while the first server ran, and never while it was down.
+    std::thread::sleep(Duration::from_secs(70));
 
     let _second = serve(&config, port, &dir.path().join("serve-2.log"));
     let now = unix_seconds_now();
