@@ -100,11 +100,15 @@ pub(super) fn identity_topology_entity_type_for_store_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<u8>> {
-    let Some(raw) = store.port_entity_record(rtxn, id)? else {
+    // A proposal may name any row, a custody record among them, whose body
+    // carries its value (ARCH-0069 S1): only the header of a wiped copy is
+    // read.
+    let Some(raw) = store.port_entity_raw_wiped(rtxn, id)? else {
         return Ok(None);
     };
-
-    Ok(Some(raw.entity_type))
+    crate::batch::EntityMetadataHeader::parse(&raw)
+        .map(|header| Some(header.entity_type))
+        .ok_or(Error::CorruptedIndex("entity header"))
 }
 
 pub(super) fn identity_topology_event_for_store_in_txn(

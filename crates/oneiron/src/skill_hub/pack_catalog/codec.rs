@@ -89,7 +89,7 @@ pub(crate) fn validate_pack_source_put(
     entity_type: u8,
     bytes: &[u8],
 ) -> Result<()> {
-    let previous = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
+    let previous = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?;
     if let Some(raw) = &previous {
         let header = crate::batch::EntityMetadataHeader::parse(raw)
             .ok_or(crate::error::Error::CorruptedIndex("pack source header"))?;

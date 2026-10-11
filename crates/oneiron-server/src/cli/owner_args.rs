@@ -1,6 +1,6 @@
 //! Flags for the owner's own commands: doctor, backup, restore, window
-//! recovery, export, the secret scan switch, importing history, import
-//! consent and agent-run consent.
+//! recovery, export, the secret scan switch, registering and rotating a
+//! secret, importing history, import consent and agent-run consent.
 //!
 //! Every command that opens the vault reads the same config as `serve`
 //! (`--config`, `--vault-path`, `ONEIRON_*`) and needs the vault stopped: the
@@ -124,6 +124,75 @@ pub enum SecretScanSwitch {
 pub struct SecretScanArgs {
     /// `on` or `off`. Omit it to print the setting and every change to it.
     pub mode: Option<SecretScanSwitch>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// The value is read from stdin, exactly as given (`printf %s "$TOKEN" |`
+/// keeps a trailing newline out), and never from the command line.
+#[derive(Subcommand, Clone, Debug)]
+pub enum SecretsCommand {
+    /// Put a secret into the stopped vault's custody.
+    Register(Box<SecretRegisterArgs>),
+    /// Replace a secret's value. Each lease picks the new value up when it
+    /// next materializes.
+    Rotate(Box<SecretRotateArgs>),
+}
+
+/// A secret's custody class (ARCH-0069 S1).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum SecretClass {
+    /// Encrypted and synced, unless `--device-only`.
+    CustodyPortable,
+    /// Never leaves this device.
+    CustodyDeviceBound,
+    /// Never replicated; other vaults get doored use through grants.
+    CrossVault,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SecretRegisterArgs {
+    /// The secret's custody name.
+    #[arg(long)]
+    pub name: String,
+
+    #[arg(long, value_enum)]
+    pub class: SecretClass,
+
+    /// The custody ladder's rung: 0 doored, 1 leased, 2 local-registered.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=2))]
+    pub rung: u8,
+
+    /// Keep a portable value on this device.
+    #[arg(long)]
+    pub device_only: bool,
+
+    /// An effector that may use the secret, at its rung: `EFFECTOR` or
+    /// `EFFECTOR=SCOPE,SCOPE` (`deploy=read`). Repeat for more. With
+    /// `--repo` and none given, the manifest's bindings are used.
+    #[arg(long = "binding", value_name = "EFFECTOR[=SCOPES]")]
+    pub bindings: Vec<String>,
+
+    /// A repository this vault serves whose secret manifest declares the
+    /// name. Its entry is copied onto the record, and nothing wider than it
+    /// is registered.
+    #[arg(long)]
+    pub repo: Option<String>,
+
+    /// The published ref the manifest is read at.
+    #[arg(long = "ref", default_value = "refs/heads/main")]
+    pub git_ref: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SecretRotateArgs {
+    /// The secret's custody name.
+    #[arg(long)]
+    pub name: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

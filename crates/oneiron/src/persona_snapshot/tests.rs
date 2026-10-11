@@ -250,40 +250,110 @@ fn stale_consent_stamp_rejects_export() -> Result<()> {
 }
 
 #[test]
-fn export_record_body_round_trips() -> Result<()> {
-    let record = PersonaSnapshotExportRecord {
-        subject_ref: EntityId::from_bytes([0x61; 16])?,
-        audience_ref: Some("contact:kenji".to_owned()),
-        identity_line: "Lexi — founder".to_owned(),
-        compiled_at_secs: 1_000,
-        stale_after_secs: 2_000,
-        compiled_fingerprint: "a".repeat(64),
-        takes_included: true,
-        granted_by: "owner".to_owned(),
-        granted_at_secs: 1_100,
-        exported_at_secs: 1_200,
-        included_row_ids: vec!["row:aaaa".to_owned()],
-        struck_row_ids: vec!["row:bbbb".to_owned()],
-        artifact_fingerprint: "b".repeat(64),
-    };
-    let bytes = encode_persona_snapshot_export_body(&record)?;
-    let decoded = decode_persona_snapshot_export_body(&bytes)?;
-    assert_eq!(decoded, record);
+fn persona_export_wire_fixture_is_persisted_and_malformed_rows_are_refused() -> Result<()> {
+    let fixture = [
+        b"\x8e".as_slice(),
+        b"\xadschemaVersion\x01".as_slice(),
+        b"\xaasubjectRef\xd9 61616161616161616161616161616161".as_slice(),
+        b"\xabaudienceRef\xc0".as_slice(),
+        b"\xacidentityLine\xa4card".as_slice(),
+        b"\xaecompiledAtSecs\x01".as_slice(),
+        b"\xaestaleAfterSecs\x02".as_slice(),
+        b"\xb3compiledFingerprint\xd9@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_slice(),
+        b"\xadtakesIncluded\xc2".as_slice(),
+        b"\xa9grantedBy\xa5owner".as_slice(),
+        b"\xadgrantedAtSecs\x03".as_slice(),
+        b"\xaeexportedAtSecs\x04".as_slice(),
+        b"\xaeincludedRowIds\x91\xa5row:a".as_slice(),
+        b"\xacstruckRowIds\x91\xa5row:b".as_slice(),
+        b"\xb3artifactFingerprint\xd9@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".as_slice(),
+    ].concat();
+    let fixture = fixture.as_slice();
+    let (_dir, vault) = test_vault();
+    let id = EntityId::from_bytes([0x71; 16])?;
+    let record = decode_persona_snapshot_export_body(fixture)?;
+    assert_eq!(record.subject_ref, EntityId::from_bytes([0x61; 16])?);
+    assert_eq!(record.identity_line, "card");
     assert_eq!(
-        decoded.compile_stamp_identity(),
-        format!(
-            "{PERSONA_SNAPSHOT_COMPILE_STAMP_SCHEMA_VERSION}:{}",
-            "a".repeat(64)
-        )
+        record.compile_stamp_identity(),
+        "oneiron.persona_snapshot_compile.v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    vault.put_persona_snapshot_export(&id, &record)?;
+    let persisted = vault.get_raw(&id)?.unwrap();
+    assert_eq!(
+        &persisted[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        fixture
     );
 
-    let overlapping = PersonaSnapshotExportRecord {
-        struck_row_ids: vec!["row:aaaa".to_owned()],
-        ..record
+    let write_bytes = |target: &EntityId, bytes: Vec<u8>| {
+        vault.with_write_txn(|txn| {
+            crate::batch::apply_ops(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                txn,
+                vec![crate::batch::BatchOp::Put {
+                    id: *target,
+                    entity_type: crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+                    occurred: TimeRange { start: 4, end: 4 },
+                    learned_at: 4,
+                    data: bytes,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                vault
+                    .text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )
+        })
     };
-    let err = encode_persona_snapshot_export_body(&overlapping)
-        .expect_err("overlapping row id lists must be rejected");
-    assert_eq!(err.kind(), ErrorKind::InvalidPersonaSnapshot);
+    let Value::Map(base) = rmpv::decode::read_value(&mut std::io::Cursor::new(fixture)).unwrap()
+    else {
+        panic!("fixture map")
+    };
+    let mut bad_version = base.clone();
+    bad_version[0].1 = Value::from(2_u64);
+    let mut missing = base.clone();
+    missing.remove(0);
+    let mut unknown = base.clone();
+    unknown.push((Value::from("extra"), Value::Nil));
+    let mut overlap = base;
+    overlap
+        .iter_mut()
+        .find(|(k, _)| k.as_str() == Some("struckRowIds"))
+        .unwrap()
+        .1 = Value::Array(vec![Value::from("row:a")]);
+    for (byte, entries) in [
+        (0x72, bad_version),
+        (0x73, missing),
+        (0x74, unknown),
+        (0x75, overlap),
+    ] {
+        let target = EntityId::from_bytes([byte; 16])?;
+        let mut malformed = Vec::new();
+        rmpv::encode::write_value(&mut malformed, &Value::Map(entries)).unwrap();
+        assert_eq!(
+            write_bytes(&target, malformed).unwrap_err().kind(),
+            ErrorKind::InvalidPersonaSnapshot
+        );
+        assert!(vault.get_raw(&target)?.is_none());
+    }
+    let mut invalid_record = record;
+    invalid_record.struck_row_ids = vec!["row:a".to_owned()];
+    assert_eq!(
+        vault
+            .put_persona_snapshot_export(&id, &invalid_record)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidPersonaSnapshot
+    );
+    assert_eq!(
+        &vault.get_raw(&id)?.unwrap()[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        fixture
+    );
     Ok(())
 }
 

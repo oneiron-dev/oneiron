@@ -9,7 +9,8 @@
 //! credentials, no compression. The body is capped, and the whole fetch,
 //! every hop's send and its whole body, runs inside the call's time left.
 //! These are the rules the seal crate's own guarded fetcher keeps
-//! (ARCH-0064a, SGN-00).
+//! (ARCH-0064a, SGN-00). A POST redirected by 301, 302 or 303 goes on as a
+//! GET without its body; by 307 or 308 it keeps both (RFC 9110 §15.4).
 //!
 //! The handler blocks, as a host call does: run it off any async runtime.
 
@@ -195,6 +196,7 @@ async fn fetch(
         status: 0,
     };
     let mut url = first;
+    let mut method = request.method;
     let mut hops = 0u8;
     loop {
         allowed(&url, grant)?;
@@ -213,7 +215,7 @@ async fn fetch(
             .resolve_to_addrs(&host, &addrs)
             .build()
             .map_err(|err| failed(format!("client: {err}")))?;
-        let builder = match request.method {
+        let builder = match method {
             FetchMethod::Get => client.get(url.clone()),
             FetchMethod::Post => {
                 let builder = client.post(url.clone());
@@ -247,6 +249,9 @@ async fn fetch(
                 .and_then(|location| location.to_str().ok())
                 .and_then(|location| url.join(location).ok())
                 .ok_or_else(|| refused(AskCode::Failed, "a redirect with no location"))?;
+            if matches!(status.as_u16(), 301..=303) {
+                method = FetchMethod::Get;
+            }
             hops += 1;
             continue;
         }

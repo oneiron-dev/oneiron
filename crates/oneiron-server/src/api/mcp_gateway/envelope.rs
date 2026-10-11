@@ -241,7 +241,9 @@ pub(crate) async fn handle_mcp_request(
                     "tools": { "listChanged": false },
                 },
                 "surfaceMode": mode.as_str(),
-                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call with connector actor metadata matching this authenticated credential.",
+                "executeCodeAdmitted": matches!(mode, McpSurfaceMode::Primary)
+                    && super::admission::mcp_execute_code_admitted(server, &actor),
+                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call to call one. A call runs as this credential's actor; it need not name one, and an actor block that names anyone else is refused.",
                 "actor": mcp_actor_result(&actor),
             }))
         }
@@ -261,7 +263,7 @@ pub(crate) async fn handle_mcp_request(
             let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
-                let args = mcp_validated_call_args(server, mode, params, raw_arguments)?;
+                let args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                 ensure_mcp_actor_matches(&args, &actor)?;
                 mcp_admit_scoped_call(server, &args, &actor)?;
                 execute_mcp_tool(server, args, &actor).await

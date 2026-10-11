@@ -424,6 +424,12 @@ impl OrganProcess {
         self.inbox.alive.load(Ordering::SeqCst)
     }
 
+    /// Whether the organ has exited, whether or not the reader has seen
+    /// its socket close yet. It looks without reaping.
+    pub(crate) fn exited(&self) -> bool {
+        self.lifeline.exited()
+    }
+
     /// Whether the process may still run, even with its socket closed: only
     /// `end` makes this false. Waits for an `end` in progress.
     pub(crate) fn is_running(&self) -> bool {

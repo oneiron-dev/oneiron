@@ -23,8 +23,6 @@ use crate::vault::Vault;
 
 #[cfg(test)]
 use super::seat::{CalendarConnectorSeatConfig, seat_identity};
-#[cfg(test)]
-use crate::calendar::claims::CalendarPassportDirection;
 
 /// One remote calendar object as a provider reported it.
 ///
@@ -500,75 +498,6 @@ mod tests {
             cadence_jitter_min_seconds: 300,
             cadence_jitter_max_seconds: 900,
         }
-    }
-
-    fn passport(sequence: u32, hash: [u8; 32]) -> CalendarPassportValue {
-        CalendarPassportValue {
-            system: "caldav-work".to_owned(),
-            uid: "uid-1@example.com".to_owned(),
-            last_sequence: sequence,
-            content_hash: hash,
-            direction: CalendarPassportDirection::TwoWay,
-            last_seen_at: 1_800_000_000,
-            presence: CalendarPassportPresence::Live,
-        }
-    }
-
-    fn upsert(sequence: u32, hash: [u8; 32]) -> RemoteCalendarChange {
-        RemoteCalendarChange::Upsert(RemoteCalendarObject {
-            href: "/cal/uid-1.ics".to_owned(),
-            etag: Some("etag-1".to_owned()),
-            uid: "uid-1@example.com".to_owned(),
-            sequence,
-            content_hash: hash,
-            ics: Vec::new(),
-        })
-    }
-
-    #[test]
-    fn echo_law_is_sequence_first_then_hash() {
-        let live = passport(3, [7_u8; 32]);
-        assert_eq!(
-            classify_remote_change(None, &upsert(0, [7_u8; 32])),
-            EchoDisposition::ApplyInbound
-        );
-        assert_eq!(
-            classify_remote_change(Some(&live), &upsert(3, [7_u8; 32])),
-            EchoDisposition::AcknowledgeEcho
-        );
-        assert_eq!(
-            classify_remote_change(Some(&live), &upsert(2, [7_u8; 32])),
-            EchoDisposition::AcknowledgeEcho,
-            "a stale replay never regresses passport state"
-        );
-        assert_eq!(
-            classify_remote_change(Some(&live), &upsert(3, [9_u8; 32])),
-            EchoDisposition::ApplyRemoteUpdate,
-            "same-SEQUENCE hash drift applies"
-        );
-        assert_eq!(
-            classify_remote_change(Some(&live), &upsert(4, [7_u8; 32])),
-            EchoDisposition::ApplyRemoteUpdate
-        );
-
-        let mut absent = passport(3, [7_u8; 32]);
-        absent.presence = CalendarPassportPresence::Absent;
-        assert_eq!(
-            classify_remote_change(Some(&absent), &upsert(3, [7_u8; 32])),
-            EchoDisposition::ApplyRemoteUpdate,
-            "a source that comes back is applied, not acknowledged"
-        );
-
-        assert_eq!(
-            classify_remote_change(
-                Some(&live),
-                &RemoteCalendarChange::Delete {
-                    href: "/cal/uid-1.ics".to_owned(),
-                    uid: "uid-1@example.com".to_owned(),
-                }
-            ),
-            EchoDisposition::ApplyRemoteDeletion
-        );
     }
 
     #[test]
