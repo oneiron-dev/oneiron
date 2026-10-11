@@ -33,6 +33,8 @@ mod conversation_dag;
 mod conversation_reactions;
 mod conversation_rooms;
 mod core_memory_conversations;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod mcp_code_check;
 mod mcp_memory;
 mod mcp_paging_cursors;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -46,6 +48,7 @@ mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_gate;
 mod run_tree;
+mod search_deadline;
 mod support_contract;
 mod support_mcp;
 mod support_mcp_credentials;

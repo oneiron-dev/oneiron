@@ -1,5 +1,5 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
-use crate::models::OfferLadder;
+use crate::models::{OfferLadder, RawInference};
 use crate::{auth::CoreAuth, server::SyncServer};
 use axum::{
     Json, Router,
@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::StreamExt;
-use oneiron::llm::run_admission::RunAdmission;
+use oneiron::llm::run_admission::{RunAdmission, RunDenied};
 use oneiron::{LlmError, LlmRequest, LlmStreamEvent};
 use std::sync::Arc;
 
@@ -32,7 +32,8 @@ fn refusal(status: StatusCode, code: &str) -> Response {
     (status, Json(serde_json::json!({"error":{"code":code}}))).into_response()
 }
 /// A param or provider option that would pick the model or the route
-/// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`.
+/// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`,
+/// with `*` for a namespace no adapter reads.
 fn route_selector_refusal(key: &str) -> Response {
     (
         StatusCode::BAD_REQUEST,
@@ -110,8 +111,10 @@ fn admit(
         return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
     }
     // The request's model id picks the model and its route; a body field that
-    // names another is refused before anything is reserved.
+    // names another is refused before anything is reserved, with its row.
     if let Some(key) = request.route_selector_override() {
+        let reason = RunDenied::RouteOverride { key: key.clone() };
+        RawInference::refuse(request, reason, server.run_receipts());
         return Err(Box::new(route_selector_refusal(&key)));
     }
     let Some(raw) = &server.llm else {

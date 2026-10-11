@@ -377,3 +377,115 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
     assert_eq!(next.sequence, resumed.sequence + 1);
     assert_eq!(transport.requests.borrow()[1].expected_etag, resumed.etag);
 }
+
+#[test]
+fn older_connector_poll_preserves_committed_event_passport_and_outbox() {
+    struct Replay(RemoteSyncBatch);
+    impl CalendarRemoteTransport for Replay {
+        fn provider_key(&self) -> &'static str {
+            crate::calendar::caldav::CALDAV_PROVIDER_KEY
+        }
+        fn pull(
+            &self,
+            _secret_ref: &str,
+            _calendar_ref: &str,
+            _cursor: Option<&str>,
+        ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+            Ok(self.0.clone())
+        }
+        fn upsert(
+            &self,
+            _secret_ref: &str,
+            _calendar_ref: &str,
+            _request: &RemoteWriteRequest,
+        ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+            panic!("a stale poll never writes")
+        }
+        fn delete(
+            &self,
+            _secret_ref: &str,
+            _calendar_ref: &str,
+            _href: &str,
+            _expected_etag: Option<&str>,
+            _uid: &str,
+            _sequence: u32,
+        ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+            panic!("a stale poll never deletes")
+        }
+    }
+    let (_dir, vault) = open_calendar_vault();
+    let owner = crate::WriteActor::new(
+        vault.ensure_embedded_owner_actor().unwrap(),
+        crate::EdgeActorClass::Human,
+    );
+    let event = vault
+        .create_native_calendar_event(
+            &crate::calendar::origin::CalendarEventInput {
+                name: "older".into(),
+                ..Default::default()
+            },
+            crate::TimeRange {
+                start: NOW,
+                end: NOW + 60,
+            },
+            owner,
+        )
+        .unwrap();
+    let transport = ChangeDuringUpsert {
+        on_first: RefCell::new(None),
+        requests: RefCell::default(),
+    };
+    let older = write_calendar_event(&vault, &seat(), &transport, event, NOW).unwrap();
+    put_local_edit(&vault, event, &renamed_body(&vault, event, "current"));
+    let current = write_calendar_event(&vault, &seat(), &transport, event, NOW + 1).unwrap();
+    assert!(current.sequence > older.sequence);
+    assert_ne!(current.content_hash, older.content_hash);
+    let event_before = vault.get_raw(&event).unwrap();
+    let passports_before = live_passports_for_event(&vault, &event).unwrap();
+    assert!(!passports_before.is_empty());
+    let passport_bytes: Vec<_> = passports_before
+        .iter()
+        .map(|(id, _)| (*id, vault.get_raw(id).unwrap()))
+        .collect();
+    let outbox_before = calendar_write_outbox_rows(&vault).unwrap();
+    assert!(!outbox_before.is_empty());
+    assert!(
+        outbox_before
+            .iter()
+            .all(|row| row.state == CalendarWriteOutboxState::Committed)
+    );
+    // The provider replays the older revision: both its SEQUENCE and its
+    // content predate the committed write.
+    let stale = transport.requests.borrow()[0].clone();
+    let replay = Replay(RemoteSyncBatch {
+        next_cursor: None,
+        changes: vec![RemoteCalendarChange::Upsert(RemoteCalendarObject {
+            href: "/work/event.ics".into(),
+            etag: Some("stale".into()),
+            uid: stale.uid.clone(),
+            sequence: stale.sequence,
+            content_hash: ics_content_hash(&stale.ics, &stale.uid).unwrap(),
+            ics: stale.ics,
+        })],
+    });
+    let outcome = run_calendar_connector_sync(&vault, &seat(), &replay, NOW + 2, 7).unwrap();
+    assert!(matches!(
+        outcome,
+        CalendarSyncOutcome::Reenqueued {
+            applied: 0,
+            acknowledged: 1,
+            source_absences: 0,
+            status_cancellations: 0,
+            ..
+        }
+    ));
+    assert_eq!(vault.get_raw(&event).unwrap(), event_before);
+    assert_eq!(
+        live_passports_for_event(&vault, &event).unwrap(),
+        passports_before
+    );
+    for (id, raw) in passport_bytes {
+        assert_eq!(vault.get_raw(&id).unwrap(), raw);
+    }
+    assert_eq!(calendar_write_outbox_rows(&vault).unwrap(), outbox_before);
+}

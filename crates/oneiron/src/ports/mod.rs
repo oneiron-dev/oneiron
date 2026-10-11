@@ -52,8 +52,8 @@ pub(crate) use integrity::{
 };
 pub use records::*;
 pub(crate) use time::{
-    CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, persist_id_floor_in_txn,
-    recorded_at_in_txn,
+    CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, observe_clock_floor_in_txn,
+    persist_id_floor_in_txn, recorded_at_in_txn,
 };
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;

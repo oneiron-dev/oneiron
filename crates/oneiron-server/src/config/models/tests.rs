@@ -189,3 +189,31 @@ rungs = [{ model = "cpa:org/model" }, { model = "cpa:org.model" }]
         "{error}"
     );
 }
+
+/// TSC-WIRE: the type check is off unless asked for, `enforce` is a reserved
+/// name that is not wired, and the backend is one key.
+#[test]
+fn the_code_check_is_off_by_default_and_enforce_is_refused() {
+    use oneiron_code_check::{BackendKind, CheckMode};
+    let check = |body: &str| resolve(&format!("[code_mode.check]\n{body}"));
+    let default = resolve("").unwrap().code_mode.check;
+    assert_eq!(default.mode, CheckMode::Off);
+    assert_eq!(default.backend, BackendKind::TscRs);
+    let shadow = check("mode = \"shadow\"").unwrap().code_mode.check;
+    assert_eq!(shadow.mode, CheckMode::Shadow);
+    let error = check("mode = \"enforce\"").unwrap_err();
+    assert!(
+        error.to_string().contains("code_check_enforce_reserved"),
+        "{error}"
+    );
+    let microsoft =
+        check("mode = \"shadow\"\nbackend = \"microsoft\"\nmicrosoft_tsc = \"/opt/tsc\"")
+            .unwrap()
+            .code_mode
+            .check;
+    assert_eq!(microsoft.backend, BackendKind::Microsoft);
+    assert!(
+        check("backend = \"microsoft\"").is_err(),
+        "it needs its binary"
+    );
+}

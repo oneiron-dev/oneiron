@@ -4,6 +4,10 @@
 //! return its exit code. The runtime maps each call's inputs read-only, runs
 //! the verb, unmaps the inputs and sends the reply. It exits when the engine
 //! closes the socket, so an organ never outlives its engine.
+//!
+//! On a 1.1 session a verb may ask the engine for something mid-call
+//! ([`CallContext::ask`]). The reader thread routes each answer to the verb
+//! that waits for it, and a cancel wakes that verb at once.
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -11,7 +15,7 @@ use std::os::fd::{AsFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
 
@@ -20,9 +24,10 @@ use serde_bytes::ByteBuf;
 use crate::frame::{FrameError, recv_frame, send_frame};
 use crate::region::{MappedRegion, SharedRegion};
 use crate::wire::{
-    Call, DEFAULT_FRAME_LIMIT, ErrorCode, FromOrgan, Hash32, HelloAck, INLINE_MAX_BYTES, Input,
-    Limits, MAX_FDS_PER_FRAME, Notes, OrganError, OrganIdentity, Outcome, Output, PROTOCOL,
-    Payload, Proposal, Reply, ToOrgan, TypedBody, VerbSpec,
+    ASK_VALUE_MAX, Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call,
+    DEFAULT_FRAME_LIMIT, ErrorCode, FromOrgan, Hash32, HelloAck, INLINE_MAX_BYTES, Input, Limits,
+    MAX_FDS_PER_FRAME, Notes, OrganError, OrganIdentity, Outcome, Output, PROTOCOL, Payload,
+    Proposal, ProtocolVersion, Reply, ToOrgan, TypedBody, VerbSpec,
 };
 
 /// Reads every input byte and folds it; the host's read-throughput probe.
@@ -79,6 +84,7 @@ pub struct CallContext<'a> {
     pub inputs: &'a [InputBytes],
     pub limits: Limits,
     cancel: &'a AtomicBool,
+    asker: Asker,
 }
 
 impl<'a> CallContext<'a> {
@@ -102,7 +108,13 @@ impl<'a> CallContext<'a> {
             inputs,
             limits,
             cancel,
+            asker: Asker::default(),
         }
+    }
+
+    fn with_asker(mut self, asker: Asker) -> Self {
+        self.asker = asker;
+        self
     }
 
     #[must_use]
@@ -119,6 +131,199 @@ impl<'a> CallContext<'a> {
             Ok(())
         }
     }
+
+    /// Asks the engine for something mid-call and waits for its answer.
+    /// One ask is in flight per call: a second, from another thread of the
+    /// same verb, waits for the first. A refusal does not stop the call; the
+    /// verb goes on or fails, as it chooses.
+    ///
+    /// # Errors
+    /// The engine's refusal; [`AskCode::Unsupported`] on a 1.0 session or
+    /// outside a served call, where nothing is sent; [`AskCode::Cancelled`]
+    /// once the call is cancelled; [`AskCode::TooLarge`] for a value over
+    /// [`ASK_VALUE_MAX`], refused before it is sent.
+    pub fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+        self.asker.ask(verb, value)
+    }
+
+    /// This call's way to ask, for code that must own it, such as a library
+    /// that takes a `'static` signer or fetcher. It is good for the call
+    /// only: once the call has replied, it refuses without sending.
+    #[must_use]
+    pub fn asker(&self) -> Asker {
+        self.asker.clone()
+    }
+}
+
+/// What the engine answered.
+#[derive(Debug)]
+pub struct AskReply {
+    pub value: rmpv::Value,
+    /// Bytes beside the value.
+    pub data: Option<AskBytes>,
+}
+
+/// An answer's bytes, in the organ's own memory. A region the engine
+/// sealed is copied out and unmapped as the answer arrives, so the engine's
+/// pages are never held past the ask, and what the organ keeps counts
+/// against its own memory grant.
+#[derive(Debug)]
+pub struct AskBytes {
+    pub content_hash: Hash32,
+    bytes: Vec<u8>,
+}
+
+impl Deref for AskBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// One served call's way to ask, and the ask that waits for its answer.
+#[derive(Debug, Default)]
+struct CallState {
+    cancel: AtomicBool,
+    waiting: Mutex<Option<(u32, mpsc::SyncSender<Wake>)>>,
+}
+
+impl CallState {
+    /// Marks the call cancelled and wakes the ask that waits, if any. The
+    /// flag is set before the wait is looked at, and an ask registers its
+    /// wait before it reads the flag, so one of the two always sees the
+    /// other.
+    fn cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+        if let Some((_, wake)) = lock(&self.waiting).take() {
+            let _ = wake.try_send(Wake::Cancelled);
+        }
+    }
+
+    /// Hands an answer to the ask it names; any other answer is dropped.
+    fn answer(&self, answer: AskAnswer, fds: Vec<OwnedFd>) {
+        let mut waiting = lock(&self.waiting);
+        if waiting.as_ref().is_some_and(|(id, _)| *id == answer.id)
+            && let Some((_, wake)) = waiting.take()
+        {
+            let _ = wake.try_send(Wake::Answer(answer.outcome, fds));
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Wake {
+    Answer(AskOutcome, Vec<OwnedFd>),
+    Cancelled,
+}
+
+/// One call's way to ask the engine ([`CallContext::ask`]). Cloning it
+/// shares the call's one ask in flight.
+#[derive(Debug, Clone, Default)]
+pub struct Asker {
+    line: Option<Arc<AskLine>>,
+}
+
+impl Asker {
+    /// [`CallContext::ask`], from code that owns the asker.
+    ///
+    /// # Errors
+    /// As [`CallContext::ask`]; outside a served call, or once the call has
+    /// replied, [`AskCode::Unsupported`] or [`AskCode::Cancelled`] without
+    /// sending.
+    pub fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+        match &self.line {
+            Some(line) => line.ask(verb, value),
+            None => Err(AskRefusal::new(
+                AskCode::Unsupported,
+                "this call has no engine to ask",
+            )),
+        }
+    }
+}
+
+/// How a served call asks: the socket's writer, this call's state.
+#[derive(Debug)]
+struct AskLine {
+    writer: Arc<Mutex<UnixStream>>,
+    limit: u32,
+    call: u64,
+    state: Arc<CallState>,
+    asks: bool,
+    next: AtomicU32,
+    one: Mutex<()>,
+}
+
+impl AskLine {
+    fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+        if !self.asks {
+            return Err(AskRefusal::new(
+                AskCode::Unsupported,
+                "the engine speaks 1.0, which carries no asks",
+            ));
+        }
+        let encoded = rmp_serde::to_vec_named(&value).map_or(usize::MAX, |bytes| bytes.len());
+        if encoded > ASK_VALUE_MAX {
+            return Err(AskRefusal::new(
+                AskCode::TooLarge,
+                format!("an ask's value is {encoded} bytes, over {ASK_VALUE_MAX}"),
+            ));
+        }
+        let cancelled = || AskRefusal::new(AskCode::Cancelled, "the call was cancelled");
+        let _one = lock(&self.one);
+        let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
+        let (wake, woken) = mpsc::sync_channel(1);
+        *lock(&self.state.waiting) = Some((id, wake));
+        // The flag is read under the writer: the call's reply needs the
+        // writer too, and is sent only after the flag is set, so an ask is
+        // either on the wire before the reply or never sent.
+        let writer = lock(&self.writer);
+        if self.state.cancel.load(Ordering::SeqCst) {
+            lock(&self.state.waiting).take();
+            return Err(cancelled());
+        }
+        let ask = FromOrgan::Ask(Ask {
+            call: self.call,
+            id,
+            verb: verb.to_owned(),
+            value,
+        });
+        let sent = send_frame(&writer, &ask, &[], self.limit);
+        drop(writer);
+        if sent.is_err() {
+            lock(&self.state.waiting).take();
+            return Err(AskRefusal::new(AskCode::Failed, "the ask was not sent"));
+        }
+        match woken.recv() {
+            Ok(Wake::Answer(AskOutcome::Answered { value, data }, fds)) => Ok(AskReply {
+                value,
+                data: data.map(|data| answer_bytes(data, fds)).transpose()?,
+            }),
+            Ok(Wake::Answer(AskOutcome::Refused(refusal), _)) => Err(refusal),
+            Ok(Wake::Cancelled) | Err(_) => Err(cancelled()),
+        }
+    }
+}
+
+fn answer_bytes(data: AskData, fds: Vec<OwnedFd>) -> Result<AskBytes, AskRefusal> {
+    let broken = |what: &str| AskRefusal::new(AskCode::Failed, format!("answer data: {what}"));
+    let bytes = match data.data {
+        Payload::Inline(bytes) if bytes.len() as u64 == data.len => bytes.into_vec(),
+        Payload::Inline(_) => return Err(broken("inline length")),
+        Payload::Slot(slot) => {
+            let fd = fds
+                .into_iter()
+                .nth(usize::from(slot))
+                .ok_or_else(|| broken("slot"))?;
+            // Mapped, copied, and unmapped here; the descriptor closes too.
+            MappedRegion::map(fd, data.len)
+                .map_err(|err| broken(&err.to_string()))?
+                .to_vec()
+        }
+    };
+    Ok(AskBytes {
+        content_hash: data.content_hash,
+        bytes,
+    })
 }
 
 /// One input's bytes, valid for the call.
@@ -177,15 +382,17 @@ pub fn serve<O: Organ>(organ: O) -> ExitCode {
 struct Shared<O> {
     organ: Arc<O>,
     verbs: Vec<VerbSpec>,
-    writer: Mutex<UnixStream>,
-    cancels: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+    writer: Arc<Mutex<UnixStream>>,
+    calls: Mutex<HashMap<u64, Arc<CallState>>>,
     limits: Limits,
+    /// The version this session speaks: the lower minor of both sides.
+    session: ProtocolVersion,
 }
 
 struct Job {
     call: Call,
     fds: Vec<OwnedFd>,
-    cancel: Arc<AtomicBool>,
+    state: Arc<CallState>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -211,12 +418,17 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
     });
     send_frame(stream, &ack, &[], hello.limits.max_reply_frame)?;
     let limits = hello.limits;
+    let session = PROTOCOL.session(hello.protocol).unwrap_or(ProtocolVersion {
+        major: PROTOCOL.major,
+        minor: 0,
+    });
     let shared = Arc::new(Shared {
         organ,
         verbs,
-        writer: Mutex::new(stream.try_clone()?),
-        cancels: Mutex::new(HashMap::new()),
+        writer: Arc::new(Mutex::new(stream.try_clone()?)),
+        calls: Mutex::new(HashMap::new()),
         limits,
+        session,
     });
     let (jobs, queue) = mpsc::channel::<Job>();
     let queue = Arc::new(Mutex::new(queue));
@@ -229,16 +441,27 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
         crate::spin::poll_readable(stream);
         match recv_frame::<ToOrgan>(stream, limits.max_call_frame) {
             Ok((ToOrgan::Call(call), fds)) => {
-                let cancel = Arc::new(AtomicBool::new(false));
-                lock(&shared.cancels).insert(call.id, Arc::clone(&cancel));
-                if jobs.send(Job { call, fds, cancel }).is_err() {
+                let state = Arc::new(CallState::default());
+                lock(&shared.calls).insert(call.id, Arc::clone(&state));
+                if jobs.send(Job { call, fds, state }).is_err() {
                     return Ok(());
                 }
             }
             Ok((ToOrgan::Cancel { id, .. }, _)) => {
-                if let Some(flag) = lock(&shared.cancels).get(&id) {
-                    flag.store(true, Ordering::Relaxed);
+                let state = lock(&shared.calls).get(&id).cloned();
+                if let Some(state) = state {
+                    state.cancel();
                 }
+            }
+            // An answer for a call that has ended is dropped with its fds.
+            Ok((ToOrgan::Answer(answer), fds)) if shared.session.asks() => {
+                let state = lock(&shared.calls).get(&answer.call).cloned();
+                if let Some(state) = state {
+                    state.answer(answer, fds);
+                }
+            }
+            Ok((ToOrgan::Answer(_), _)) => {
+                return Err(FrameError::Protocol("an answer on a 1.0 session"));
             }
             Ok((ToOrgan::Shutdown, _)) | Err(FrameError::Closed) => return Ok(()),
             Ok((ToOrgan::Hello(_), _)) => return Err(FrameError::Protocol("a second hello")),
@@ -262,7 +485,7 @@ fn work<O: Organ>(shared: &Shared<O>, queue: &Mutex<mpsc::Receiver<Job>>) {
         let Ok(job) = next else { return };
         let id = job.call.id;
         let (outcome, fds) = answer(shared, job);
-        lock(&shared.cancels).remove(&id);
+        lock(&shared.calls).remove(&id);
         let borrowed: Vec<BorrowedFd<'_>> = fds.iter().map(AsFd::as_fd).collect();
         let writer = lock(&shared.writer);
         let reply = FromOrgan::Reply(Reply { id, outcome });
@@ -298,7 +521,7 @@ fn work<O: Organ>(shared: &Shared<O>, queue: &Mutex<mpsc::Receiver<Job>>) {
 }
 
 fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
-    let Job { call, fds, cancel } = job;
+    let Job { call, fds, state } = job;
     let Some(spec) = shared.verbs.iter().find(|spec| spec.name == call.verb) else {
         let error = OrganError::new(ErrorCode::UnknownVerb, call.verb);
         return (Outcome::Error(error), Vec::new());
@@ -317,6 +540,17 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
         Ok(inputs) => inputs,
         Err(error) => return (Outcome::Error(error), Vec::new()),
     };
+    let asker = Asker {
+        line: Some(Arc::new(AskLine {
+            writer: Arc::clone(&shared.writer),
+            limit: shared.limits.max_reply_frame,
+            call: call.id,
+            state: Arc::clone(&state),
+            asks: shared.session.asks(),
+            next: AtomicU32::new(0),
+            one: Mutex::new(()),
+        })),
+    };
     let ctx = CallContext::new(
         &call.verb,
         call.schema,
@@ -324,8 +558,9 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
         call.body.as_ref(),
         &inputs,
         shared.limits,
-        &cancel,
-    );
+        &state.cancel,
+    )
+    .with_asker(asker);
     let result = catch_unwind(AssertUnwindSafe(|| match call.verb.as_str() {
         VERB_TOUCH => Ok(touch(&ctx)),
         VERB_ECHO => Ok(Answer {
@@ -335,6 +570,8 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
         _ => shared.organ.call(&ctx),
     }))
     .unwrap_or_else(|_| Err(OrganError::new(ErrorCode::Internal, "the verb panicked")));
+    // An asker the verb kept refuses from here on, without sending.
+    state.cancel();
     drop(inputs);
     match result.and_then(encode_answer) {
         Ok((proposal, fds)) => (Outcome::Proposal(proposal), fds),

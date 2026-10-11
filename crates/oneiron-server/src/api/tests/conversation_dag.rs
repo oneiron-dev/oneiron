@@ -463,6 +463,186 @@ async fn a_landed_turn_wakes_the_dreamer_on_the_vault_grain() {
     host.shutdown().await;
 }
 
+/// A Dreamer whose start scan has read a turn captured before it started, and
+/// a server on its handle. Start's own turn scan runs off the request path and
+/// could pick a witnessed turn up instead, so the earlier turn must be read
+/// first: that scan's one write transaction planned it, so the scan is over
+/// before any witness. A later read comes from the door's own wake.
+async fn server_past_the_start_scan(
+    fake: &FakeLlm,
+) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
+    let (dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    crate::ai_host::test_support::capture_user_turn(&vault, "my aunt Mei lives in Kyoto");
+    let models = models(
+        &fake.base_url,
+        "[dreamer]\nsummary_prompt = \"Summarize these records.\"",
+    );
+    let host = AiHost::start(Arc::clone(&vault), Some(&models), true).await;
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(fake, "Kyoto")).await,
+        "start's turn scan queued no Micro round for the earlier turn"
+    );
+    let config = SyncServerConfig {
+        auth_secret: Some(crate::ai_host::test_support::TEST_SECRET.to_owned()),
+        ..Default::default()
+    };
+    let server = Arc::new(
+        SyncServer::new(vault, config)
+            .expect("sync server")
+            .with_ai(host.handle()),
+    );
+    (dir, server, host)
+}
+
+fn read_by_a_round(fake: &FakeLlm, text: &str) -> bool {
+    fake.seen()
+        .iter()
+        .any(|seen| seen.body["messages"].to_string().contains(text))
+}
+
+/// A witnessed turn is learned as it occurs, so it must occur after the
+/// earlier turn the Micro watermark has stepped past.
+fn later_turn(server: &SyncServer) -> Value {
+    json!({
+        "conversation_ref": "41414141414141414141414141414141",
+        "occurred_at": server.vault.now_recorded_at() + 1,
+        "messages": [{"author": "user", "message_type": "text", "is_visible": true, "order": 0,
+            "content": "my brother Kenji moved to Sapporo last winter"}],
+    })
+}
+
+/// The same wake through the generated facade: a turn witnessed at
+/// `POST /v1/core/facade/witness` is read by a Micro round. The handler is
+/// generated (the verb-table row's `lands_turn`), so this fails if
+/// `scripts/sdk/generate.py` stops emitting the wake.
+#[tokio::test]
+async fn a_facade_witness_turn_wakes_the_dreamer() {
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, host) = server_past_the_start_scan(&fake).await;
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let (slip, key) = crate::test_credentials::credential(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            owner.to_hex()
+        ),
+    );
+    let request = crate::test_credentials::bind_slip_request(
+        &server,
+        &slip,
+        &key,
+        json_request("POST", "/v1/core/facade/witness", later_turn(&server)),
+    );
+    let response = crate::build_app(Arc::clone(&server))
+        .oneshot(request)
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &fake, "Sapporo"
+        ))
+        .await,
+        "no Micro round read the witnessed turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
+/// The same wake through MCP: a turn witnessed by the generated `witness` tool
+/// is read by a Micro round. Every MCP door (the tool list, code mode, the
+/// stdio bridge) reaches the verb table through one generated dispatcher, so
+/// this fails if `scripts/sdk/generate.py` stops emitting the wake there.
+#[tokio::test]
+async fn an_mcp_witness_turn_wakes_the_dreamer() {
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, host) = server_past_the_start_scan(&fake).await;
+    let actor = seeded_test_entity_id(0x0024_6512);
+    let credential = "mcp-witness-wake";
+    register_mcp_actor(&server, credential, actor, EdgeActorClass::Human).await;
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "write_memory"),
+        json!({"arguments": {"spec": later_turn(&server)}}),
+    );
+    let (_, body) = route_json(
+        Arc::clone(&server),
+        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &fake, "Sapporo"
+        ))
+        .await,
+        "no Micro round read the witnessed turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
+/// Room speech lands its turn through the same witness gate, so the generated
+/// `rooms.speak` tool wakes the turn producer too.
+#[tokio::test]
+async fn an_mcp_room_speech_wakes_the_dreamer() {
+    use oneiron::workspace_roster::ProjectRecord;
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, host) = server_past_the_start_scan(&fake).await;
+    let owner = seeded_test_entity_id(0x0024_6513);
+    let credential = "mcp-room-speech-wake";
+    register_mcp_actor(&server, credential, owner, EdgeActorClass::Human).await;
+    let project = EntityId::now();
+    let root = server.vault.root_project().expect("root");
+    let record = ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    bind_room_owner(&server, owner);
+    create_owned_project(&server, owner, project, &record);
+    let mut turn = later_turn(&server);
+    turn["conversation_ref"] = json!(record.home_room);
+    turn["turn_ref"] = json!(EntityId::now().to_hex());
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(owner, "speak_room"),
+        json!({"arguments": {"spec": turn, "room_ref": record.home_room}}),
+    );
+    let (_, body) = route_json(
+        Arc::clone(&server),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "speak",
+            "rooms.speak",
+            args,
+        ),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &fake, "Sapporo"
+        ))
+        .await,
+        "no Micro round read the room's turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
 /// No Dreamer writes summaries here, so a declaration is refused rather than
 /// queued for a writer that never comes.
 #[tokio::test]

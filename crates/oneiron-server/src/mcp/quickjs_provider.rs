@@ -11,6 +11,7 @@ use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::llm::seat::SeatJudge;
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault};
+use oneiron_code_check::ShadowCheck;
 use std::sync::Arc;
 
 use crate::models::{InjectedRuns, LoggedReceipts};
@@ -69,6 +70,7 @@ pub struct McpQuickJsProvider {
     /// The host's own model and meter, when the host injected them: rebound
     /// to the server's run receipts when the server takes this provider.
     injected: Option<(Arc<dyn SingleRouteBackend>, BudgetGuard)>,
+    code_check: Option<Arc<ShadowCheck>>,
 }
 
 impl McpQuickJsProvider {
@@ -111,6 +113,7 @@ impl McpQuickJsProvider {
             seat_router: None,
             clock_from_first_start: false,
             injected: None,
+            code_check: None,
         })
     }
 
@@ -135,6 +138,14 @@ impl McpQuickJsProvider {
         self
     }
 
+    /// Shadow mode: type-check every generated program before it runs and
+    /// record the diagnostics beside its step. Nothing is blocked.
+    #[must_use]
+    pub fn with_code_check(mut self, shadow: Arc<ShadowCheck>) -> Self {
+        self.code_check = Some(shadow);
+        self
+    }
+
     /// Install the host's typed model judgment and profile for manifest-backed runs.
     #[must_use]
     pub fn with_model_seat_router(
@@ -156,6 +167,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn seat_facet(&self) -> Option<&str> {
         self.seat_router.as_ref().map(|(_, facet)| facet.as_str())
+    }
+    fn code_check(&self) -> Option<&ShadowCheck> {
+        self.code_check.as_deref()
     }
     fn backend(&self) -> &dyn LlmBackend {
         self.backend.as_ref()

@@ -3,6 +3,7 @@
 
 mod agent_credentials;
 mod ai_serve;
+mod api_cli;
 mod booking_agent_api;
 // The broker runs as a second user through a user namespace: Linux only.
 #[cfg(target_os = "linux")]
@@ -14,6 +15,9 @@ mod fake_llm;
 mod first_owner_bootstrap;
 mod history_import;
 mod import_claims;
+// The wake ledger talks to Hypnos over a Unix socket.
+#[cfg(unix)]
+mod managed_ledger_wire;
 mod mcp_oracle;
 // The credential file's owner-only mode and SIGTERM are Unix-only.
 #[cfg(unix)]
@@ -24,4 +28,7 @@ mod remote_pairing;
 // SIGTERM through `libc::kill` is Unix-only.
 #[cfg(unix)]
 mod reopen_after_restart;
+// Restarts the shipped server through `reopen_after_restart`'s helpers.
+#[cfg(unix)]
+mod slip_clock;
 mod ws_sync;

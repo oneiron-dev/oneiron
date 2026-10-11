@@ -842,6 +842,31 @@ async fn a_declared_run_calls_only_its_teachers_and_a_t1_key_only_when_allowed()
         [RunDenied::UndeclaredTeacher { .. }, RunDenied::KeyAtT1]
     ));
 
+    // A declared teacher no offer here serves, and a selector the run cannot
+    // resolve: each is refused before admission, and each has its row. A
+    // caller may pass any text as the selector, so the unresolved one's row
+    // keeps none of it, only its length (Astra on #1382).
+    let missing = ModelId::new("missing/teacher@v1").unwrap();
+    let unresolved = "Bearer sk-test-sentinel-0000";
+    let run = runtime.declared_run("distill-1b", declared(&[&missing]), None);
+    for selector in [missing.as_str(), unresolved] {
+        assert!(
+            run.generate(selector, request(&missing, "hi"))
+                .await
+                .is_err()
+        );
+    }
+    assert!(matches!(
+        &denied(receipts.rows())[2..],
+        [RunDenied::NoOffer { model }, RunDenied::UnknownSelector { len }]
+            if *model == missing && *len == unresolved.len()
+    ));
+    for row in receipts.rows() {
+        let row = serde_json::to_string(&row).unwrap();
+        assert!(!row.contains("sk-test-sentinel"), "{row}");
+    }
+    assert_eq!(run.admission().read().reserved_units, 0);
+
     // A keyless declared teacher holds the run's rules.
     let run = runtime.declared_run("distill-3", declared(&[&own_id]), None);
     let answer = run
