@@ -632,10 +632,14 @@ fn fold_scope(receipt: &mut Option<ScopedReadReceipt>, mut read: ScopedReadRecei
     fold_receipt(receipt, read);
 }
 
+/// A change a test makes to the vault between a list's rows and previews.
+#[cfg(test)]
+type PreviewHook = Box<dyn FnOnce(&crate::Vault)>;
+
 #[cfg(test)]
 thread_local! {
     /// A test seam: runs once, between the list's rows and their previews.
-    static BEFORE_PREVIEWS: std::cell::RefCell<Option<Box<dyn FnOnce(&crate::Vault)>>> =
+    static BEFORE_PREVIEWS: std::cell::RefCell<Option<PreviewHook>> =
         const { std::cell::RefCell::new(None) };
 }
 
