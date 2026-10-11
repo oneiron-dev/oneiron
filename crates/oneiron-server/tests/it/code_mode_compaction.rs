@@ -198,9 +198,10 @@ fn wait_healthy(origin: &str, server: &mut Running, log: &Path) -> Value {
     }
 }
 
-/// The served run, end to end: returns every `execute_code` result and the
-/// health answer. Blocking; the fake model runs on the test's runtime.
-fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>) {
+/// The served run, end to end: returns the health answer, every
+/// `execute_code` result and the server's log. Blocking; the fake model runs
+/// on the test's runtime.
+fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>, String) {
     let vault = dir.join("vault");
     let config = dir.join("oneiron.toml");
     stdout(oneiron(
@@ -244,6 +245,8 @@ fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>) {
     let log = dir.join("serve.log");
     let mut server = Running(
         oneiron(&["serve", "--host", "127.0.0.1", "--port", &port], &config)
+            .env("RUST_LOG", "warn,oneiron::run_receipt=info")
+            .env("NO_COLOR", "1")
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(&log).unwrap())
             .spawn()
@@ -302,7 +305,7 @@ fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>) {
     }
     drop(bridge);
     drop(server);
-    (health, results)
+    (health, results, std::fs::read_to_string(&log).unwrap())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -311,7 +314,7 @@ async fn a_long_served_run_compacts_by_itself_and_finishes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().to_owned();
     let url = fake.base_url.clone();
-    let (health, results) = tokio::task::spawn_blocking(move || run_long_task(&path, &url))
+    let (health, results, log) = tokio::task::spawn_blocking(move || run_long_task(&path, &url))
         .await
         .unwrap();
 
@@ -362,5 +365,25 @@ async fn a_long_served_run_compacts_by_itself_and_finishes() {
     assert!(
         swapped.contains("sandbox.fs.read_file"),
         "its output stays reachable"
+    );
+
+    // Each pass's model call is a run like every other server model call:
+    // admitted on a one-use permit, dispatched through the run's gate and
+    // settled, each step in the server's run receipts.
+    let events: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("\"run\":\"code-mode-compaction\""))
+        .filter_map(|line| {
+            ["admitted", "denied", "dispatched", "settled", "revised"]
+                .into_iter()
+                .find(|event| line.contains(&format!("\"event\":\"{event}\"")))
+        })
+        .collect();
+    assert!(
+        !events.is_empty()
+            && events
+                .chunks(3)
+                .all(|call| call == ["admitted", "dispatched", "settled"]),
+        "every compaction call is admitted, dispatched and settled: {events:?}\n{log}"
     );
 }
