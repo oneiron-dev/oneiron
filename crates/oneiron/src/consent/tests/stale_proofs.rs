@@ -2,6 +2,7 @@
 //! that writes the act (engine-core-07, engine-prs-14).
 
 use super::*;
+use crate::error::{Error, GateError, Result};
 
 fn refused<T: std::fmt::Debug>(result: Result<T>) -> bool {
     matches!(

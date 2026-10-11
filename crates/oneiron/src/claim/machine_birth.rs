@@ -411,7 +411,7 @@ mod tests {
             let signature = signer.sign(&transcript);
             signer
                 .verifying_key()
-                .verify(&transcript, &signature)
+                .verify_strict(&transcript, &signature)
                 .unwrap();
             let Some(Value::Map(evidence)) = &mut body.evidence else {
                 panic!("fixture evidence must be a map")
