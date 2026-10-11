@@ -11,6 +11,7 @@ use crate::claim::transition::{
     machine_claim_transition_event_hash, machine_claim_transition_event_id,
 };
 use crate::error::{ClaimError, Error, Result};
+use crate::side_table::{Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use rand_core::RngCore;
@@ -36,6 +37,12 @@ pub(crate) const PIN_PREFIX: &[u8] = b"claim:machine-history-pin:v1:";
 pub(crate) fn pin_key(target: EntityId) -> Vec<u8> {
     [PIN_PREFIX, target.as_bytes()].concat()
 }
+
+/// A host re-root's carry of one MACHINE history: the birth digest it carried,
+/// then the content hash of the handoff packet the move signed for it. Only
+/// the move writes it; a delete retires it with the history.
+pub(crate) const CARRY: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&crate::side_table::CLAIM_MACHINE_HISTORY_CARRY);
 
 pub(crate) struct MachineHistoryRows {
     pub(crate) birth: SignedClaimBirth,

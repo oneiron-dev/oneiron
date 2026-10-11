@@ -196,8 +196,9 @@ side_tables! {
     CLAIM_DEFERRED: VaultMeta b"claim.deferred.v1:" Named;
     /// Immutable before/after revision binding for an accepted supersession. Key: old id16 + new id16.
     CLAIM_SUPERSESSION_DIFF: VaultMeta b"claim.supersession_diff.v1:" Raw;
-    /// The hash (32 bytes) of the ReRoot whose host re-root carried one MACHINE claim's signed
-    /// history, written by that move only. Key: id16 (target claim).
+    /// A host re-root's carry of one MACHINE claim's signed history: the carried birth digest
+    /// (32 bytes), then the content hash (32 bytes) of the handoff packet the move signed for it.
+    /// Written by that move only; retired with the history on delete. Key: id16 (target claim).
     CLAIM_MACHINE_HISTORY_CARRY: VaultMeta b"claim:machine-history-carry:v1:" Raw;
     /// The pinned signed handoff (encoded `ClaimHistoryHandoff`) that roots one MACHINE claim's
     /// signed birth and transition history. Key: id16 (target claim).

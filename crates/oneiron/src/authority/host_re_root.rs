@@ -10,20 +10,12 @@
 use super::slip_vault::require_host;
 use super::*;
 use crate::claim::history_projection::{
-    PIN_PREFIX, trusted_machine_handoff, verified_handoff_chain,
+    CARRY, PIN_PREFIX, trusted_machine_handoff, verified_handoff_chain,
 };
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use rand_core::{OsRng, RngCore};
-
-/// The hash of the ReRoot that carried one MACHINE history, written by the
-/// move itself. Key: id16 (target claim).
-const CARRY_PREFIX: &[u8] = b"claim:machine-history-carry:v1:";
-
-fn carry_key(target: EntityId) -> Vec<u8> {
-    [CARRY_PREFIX, target.as_bytes()].concat()
-}
 
 /// What a host re-root changed, for the owner's report.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,13 +101,12 @@ impl Vault {
             })
             .collect();
 
-        let re_root = self.re_root_authority_in_txn(
+        self.re_root_authority_in_txn(
             &mut txn,
             next.root_device(),
             current.public_key(),
             |transcript| Ok(current.sign_slip(transcript)),
         )?;
-        let re_root_hash = authority_entry_hash(&re_root)?;
         // The new root's first entry: its sequence is what enrollment extends.
         self.ensure_host_root_slip_in_txn(&mut txn, next)?;
         for machine in &writers {
@@ -124,10 +115,13 @@ impl Vault {
         for target in &carried {
             let mut challenge = [0; 32];
             OsRng.fill_bytes(&mut challenge);
-            self.carry_machine_history_in_txn(&mut txn, *target, next, challenge)?;
-            self.store
-                .vault_meta
-                .put(&mut txn, &carry_key(*target), &re_root_hash)?;
+            let carry = self.carry_machine_history_in_txn(&mut txn, *target, next, challenge)?;
+            let birth = trusted_machine_handoff(&self.store, &txn, *target)?
+                .births
+                .first()
+                .map(|birth| birth.digest)
+                .ok_or_else(invalid_authority)?;
+            CARRY.put(&self.store, &mut txn, target, &[birth, carry].concat())?;
         }
         txn.commit()?;
         Ok(HostReRoot {
@@ -167,8 +161,9 @@ impl Vault {
 /// the key stayed bound to `actor` as a writer and was never revoked as an
 /// actor, and a live root carried the birth's history at the very ReRoot
 /// that made it root. A writer's actor revoke stays terminal across a move,
-/// and so does a history the move left: only the move records a carry, so a
-/// later lifecycle write cannot stand in for one.
+/// and so does a history the move left: only the move records a carry, of the
+/// one birth it carried and in the one packet it signed, so neither a later
+/// lifecycle write nor a later birth at the same id stands in for one.
 pub(super) fn origin_carried_past_re_root(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -195,13 +190,19 @@ fn carried_by_live_root(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<bool> {
-    let Some(carried_at) = store.vault_meta.get(txn, &carry_key(target))? else {
+    let Some(record) = CARRY.get(store, txn, &target)? else {
+        return Ok(false);
+    };
+    let Some((birth, carry)) = record.split_at_checked(32) else {
         return Ok(false);
     };
     let tip = trusted_machine_handoff(store, txn, target)?;
+    if !matches!(tip.births.as_slice(), [only] if only.digest[..] == *birth) {
+        return Ok(false);
+    }
     for packet in verified_handoff_chain(store, txn, &tip, fold)? {
         if packet.previous_handoff_hash.is_some()
-            && *carried_at == packet.authority_head[..]
+            && packet.content_hash().is_ok_and(|hash| hash[..] == *carry)
             && fold.valid_entries.contains(&packet.authority_head)
             && fold
                 .roster
