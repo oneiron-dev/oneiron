@@ -400,7 +400,8 @@ pub(crate) async fn execute_mcp_tool(
 /// task reads that task's card, which is task detail too. `describe(self)`
 /// renders the whole run brief, not filtered rows, so it takes the same guard.
 /// A `born` write (`tasks.create`) carries the connector's world and facet
-/// into the records it mints, so only those two axes may be narrowed.
+/// into the records it mints, so only those two axes may be narrowed, and it
+/// needs a Write grant.
 pub(crate) fn mcp_verb_gate(
     server: &Arc<SyncServer>,
     tool: crate::mcp::McpGeneratedVerbTool,
@@ -461,11 +462,14 @@ fn mcp_credential_gate(
             "this facade cannot project the credential's record bounds",
         )
     })?;
-    let scope = mcp_call_scope(server, actor, auth, effect);
     match bounds {
-        // The world and facet it carries were judged just above.
-        McpRecordBounds::Born => auth.require_granted(scope),
-        McpRecordBounds::Filtered | McpRecordBounds::Unrestricted => auth.require(scope),
+        // The world and facet it carries were judged just above. The birth
+        // takes Write: a Propose-only grant would rest on a ceiling read
+        // outside the transaction that commits the TASK.
+        McpRecordBounds::Born => auth.require_granted(crate::auth::CoreScope::Write),
+        McpRecordBounds::Filtered | McpRecordBounds::Unrestricted => {
+            auth.require(mcp_call_scope(server, actor, auth, effect))
+        }
     }
     .map_err(|_| mcp_proof_error())
 }
