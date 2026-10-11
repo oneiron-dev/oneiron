@@ -108,7 +108,7 @@ fn answer(body: &Value) -> String {
     let filler = oneiron::count_context_pack_tokens(FILLER).max(1) as u64;
     let repeats = usize::try_from(STEP_TOKENS / filler + 1).unwrap();
     format!(
-        "// {}\nconsole.log('step-console-{step}');",
+        "console.log('step-console-{step}');\n// {}",
         FILLER.repeat(repeats)
     )
 }
