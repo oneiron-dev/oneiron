@@ -82,7 +82,7 @@ fn an_in_room_recall_returns_the_turn_only_the_room_holds() {
             });
         assert_eq!(item.kind, "TURN", "the message comes back as its turn");
         assert_eq!(
-            item.short_id,
+            short_id_part(&item.short_id),
             short_id_part(&receipt.turn_short_id),
             "the item names the turn by the room's own short id"
         );
