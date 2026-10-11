@@ -175,13 +175,14 @@ impl OffRecordSession<'_> {
             }],
             occurred_at,
         };
-        // The run's own checks, in the transaction that lands the turn: its
+        // The run's own checks, first in each transaction the witness opens
+        // (its container probes and the one that lands the turn): its
         // participant is still in the room, and the route it bound at run
         // entry still stands. Their refusal travels back as the typed error
         // it was.
         let refused = std::cell::Cell::new(None);
-        let admit = |wtxn: &mut heed::RwTxn<'_>| {
-            self.participant_in_txn(wtxn)
+        let admit = |txn: &heed::RoTxn<'_>| {
+            self.participant_in_txn(txn)
                 .and_then(|()| route.revalidate())
                 .map_err(|error| {
                     let shown = crate::memory::MemoryError::new(
