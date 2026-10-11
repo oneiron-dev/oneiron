@@ -635,7 +635,7 @@ fn a_call_refused_before_it_asks_shows_no_earlier_lines() -> TestResult {
     let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
     assert!(sealer.seal(&input, &request).is_err());
     assert!(!sealer.asked().is_empty());
-    let mut bad = input.clone();
+    let mut bad = input;
     bad.revisions.clear();
     let refused = sealer.seal(&bad, &request);
     assert!(
