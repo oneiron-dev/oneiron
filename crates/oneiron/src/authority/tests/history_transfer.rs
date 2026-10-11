@@ -499,7 +499,7 @@ fn a_retired_root_installs_no_second_root() {
         authority_entry_hash(&forked).unwrap(),
         authority_entry_hash(&onward).unwrap(),
     );
-    let mut entries = vec![genesis.clone(), handoff.clone(), forked.clone(), onward];
+    let mut entries = vec![genesis.clone(), handoff.clone(), forked, onward];
     for _ in 0..2 {
         let fold = fold_authority_log(&entries);
         assert!(fold.valid_entries.contains(&handoff_hash));
