@@ -90,9 +90,13 @@ impl ProviderHttp {
             value.set_sensitive(true);
             headers.insert(name, value);
         }
+        // One request per call (`SingleSend`): a redirect is answered, never
+        // followed, and nothing is sent twice. reqwest's default policy would
+        // resend a request an HTTP/2 server refused at the protocol level.
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(provider.timeout_secs.min(30)))
             .timeout(Duration::from_secs(provider.timeout_secs))
             .build()?;

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::guard::BudgetGuard;
 use super::ledger::LeaseState;
 use super::types::{BudgetAdmission, BudgetRead};
-use crate::llm::{BudgetDenied, BudgetLease, LlmUsage, ModelLocality};
+use crate::llm::{BudgetDenied, BudgetLease, CallPurpose, LlmUsage, ModelLocality};
 
 /// What one bound admission grants its lease for. The guard records it and
 /// compares it at dispatch; it holds no rule about which subjects or routes a
@@ -95,6 +95,20 @@ impl BudgetGuard {
         Ok(state.metered_admission(lease))
     }
 
+    /// [`Self::admit_reserve_bound`] for a model call: a policy row for the
+    /// call's purpose caps it too, as it caps
+    /// [`Self::admit_for_request`].
+    pub fn admit_call_bound(
+        &self,
+        reserve_units: u64,
+        purpose: &CallPurpose,
+        binding: DispatchBinding,
+    ) -> Result<BudgetAdmission, BudgetDenied> {
+        let mut state = self.lock_state();
+        let lease = state.reserve_bound(reserve_units, Some(purpose), Some(binding))?;
+        Ok(state.metered_admission(lease))
+    }
+
     /// Starts the one call a bound lease was granted for, before any byte
     /// leaves. It checks the issuer, that the lease is open and not yet
     /// started, and that `call` is the bound subject, route and offer; then
@@ -140,6 +154,18 @@ impl BudgetGuard {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
         state.leases.get(lease.id()).map(|record| record.dispatched)
+    }
+
+    /// Whether this lease is still open, neither settled nor aborted; `None`
+    /// for a lease another meter issued or this one never did.
+    #[must_use]
+    pub fn lease_open(&self, lease: &BudgetLease) -> Option<bool> {
+        let state = self.lock_state();
+        state.check_lease_provenance(lease).ok()?;
+        state
+            .leases
+            .get(lease.id())
+            .map(|record| record.state == LeaseState::Open)
     }
 
     /// Moves this meter's limit and per-call reservation: an owner's or a

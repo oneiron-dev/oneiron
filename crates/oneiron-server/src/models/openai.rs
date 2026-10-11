@@ -17,6 +17,10 @@ pub(super) struct OpenAiHttp {
     pub(super) cap: OutputCap,
 }
 
+/// One `.send()` per call over [`ProviderHttp`], which follows no redirect
+/// and never resends: a run's gate may wrap this transport's adapter.
+impl oneiron::llm::SingleSend for OpenAiHttp {}
+
 impl From<HttpFailure> for OpenAiCompatTransportError {
     fn from(failure: HttpFailure) -> Self {
         match failure {

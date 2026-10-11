@@ -1,16 +1,15 @@
-//! A backend over every configured model and seat, chosen by the request's
-//! own model id: the raw `/v1/llm` routes call whichever model they name.
+//! Every configured model and seat by id: the raw `/v1/llm` routes call
+//! whichever model they name, through its ladder and a run.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oneiron::{
-    BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest,
-    LlmStreamResult, ModelId, ModelLocality,
-};
+use oneiron::{ModelId, ModelLocality};
+
+use super::ladder::OfferLadder;
 
 #[derive(Default)]
 pub struct ModelRouter {
-    routes: BTreeMap<ModelId, (ModelLocality, Arc<dyn LlmBackend>)>,
+    routes: BTreeMap<ModelId, (ModelLocality, Arc<OfferLadder>)>,
 }
 
 impl ModelRouter {
@@ -18,9 +17,9 @@ impl ModelRouter {
         &mut self,
         model: ModelId,
         locality: ModelLocality,
-        backend: Arc<dyn LlmBackend>,
+        ladder: Arc<OfferLadder>,
     ) {
-        self.routes.insert(model, (locality, backend));
+        self.routes.insert(model, (locality, ladder));
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -33,39 +32,10 @@ impl ModelRouter {
         self.routes.get(model).map(|(locality, _)| *locality)
     }
 
-    fn backend(&self, model: &ModelId) -> Option<&Arc<dyn LlmBackend>> {
-        self.routes.get(model).map(|(_, backend)| backend)
-    }
-
-    /// Where `model` runs and the backend that serves it.
-    pub(super) fn served(&self, model: &ModelId) -> Option<(ModelLocality, Arc<dyn LlmBackend>)> {
+    /// Where `model` runs and the ladder that serves it.
+    pub fn served(&self, model: &ModelId) -> Option<(ModelLocality, Arc<OfferLadder>)> {
         self.routes
             .get(model)
-            .map(|(locality, backend)| (*locality, Arc::clone(backend)))
-    }
-}
-
-impl LlmBackend for ModelRouter {
-    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
-        self.backend(model)
-            .is_some_and(|backend| backend.supports(model, capability))
-    }
-
-    fn generate<'a>(
-        &'a self,
-        request: LlmRequest,
-        lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        match self.backend(&request.model) {
-            Some(backend) => backend.generate(request, lease),
-            None => Box::pin(async { Err(FatalLlmError::InvalidRequest.into()) }),
-        }
-    }
-
-    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        match self.backend(&request.model) {
-            Some(backend) => backend.stream(request, lease),
-            None => Err(FatalLlmError::InvalidRequest.into()),
-        }
+            .map(|(locality, ladder)| (*locality, Arc::clone(ladder)))
     }
 }

@@ -26,7 +26,7 @@ use oneiron_driver::{
 use super::policy::extraction_egress;
 use super::status::{StatusCell, WorkState, WorkStatus};
 use crate::config::models::DreamerSettings;
-use crate::models::{ModelRuntime, Seat};
+use crate::models::{ModelRuntime, RunBackend, Seat};
 
 /// Stamped on every admission and park this server makes.
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
@@ -191,6 +191,9 @@ fn now_ms() -> u64 {
         })
 }
 
+/// The run a Dreamer pass's model calls are admitted under.
+const DREAMER_PASS_RUN: &str = "dreamer-pass";
+
 /// The consolidation factory, rebuilt for each pass on the model that pass's
 /// extraction is admitted as, with each pass and attempt reported to status.
 struct ObservedFactory {
@@ -231,8 +234,27 @@ impl PassExecutorFactory for ObservedFactory {
                 return Err(error);
             }
         };
+        // The pass's calls go out as a run on a line that mirrors the pass's
+        // own: its limit, and the vault's budget policy for the Dreamer's
+        // actor, so each rung's permit meets the same caps. Each rung takes
+        // its own permit through the run's gate, and the line charges what
+        // the engine's step layer does not see (a failed rung, an answer
+        // with no usage). The step layer still meters the pass on `guard`
+        // with its own lease; a line spent first traps the step on budget
+        // as the pass's own admission would.
+        let line = self.vault.policy_budget_guard(
+            DREAMER_PASS_RUN,
+            guard.read().limit_units,
+            guard.reserve_units(),
+            oneiron::BudgetExhaustionPolicy::Suspend,
+            self.actor,
+        )?;
+        let backend = RunBackend::new(
+            route.ladder,
+            self.runtime.undeclared_run(DREAMER_PASS_RUN, line),
+        );
         let mut factory = ConsolidationExecutorFactory::new(
-            route.backend,
+            Arc::new(backend),
             DreamerClaimAuthoringStrategy::SinglePass,
             self.actor,
             route.model.clone(),

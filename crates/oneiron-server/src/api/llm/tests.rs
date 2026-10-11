@@ -42,6 +42,16 @@ fn response() -> LlmResponse {
         finish_reason: FinishReason::Stop,
     }
 }
+// One request per call: the raw routes' gate wraps it. A stream this
+// fixture refuses to start is refused here, before the gate dispatches it.
+impl oneiron::llm::SingleRouteBackend for Backend {
+    fn preflight(&self, request: &LlmRequest, stream: bool) -> oneiron::LlmResult<()> {
+        match backend_error(&request.model) {
+            Some(error) if stream => Err(error.into()),
+            _ => Ok(()),
+        }
+    }
+}
 impl LlmBackend for Backend {
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
@@ -264,8 +274,9 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
     })
     .await
     .unwrap();
-    // A synchronous stream-start failure never starts provider work, so the
-    // server releases its reservation rather than charging the host.
+    // A stream its backend refuses to start (in its preflight, before the
+    // run's gate dispatches it) never starts provider work, so the server
+    // releases its reservation rather than charging the host.
     for _ in 0..100 {
         if budget.read().reserved_units == 0 {
             break;
@@ -339,6 +350,12 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
 async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_usage() {
     use tower::ServiceExt;
     struct Partial(bool);
+    // One request per call: the raw routes' gate wraps it.
+    impl oneiron::llm::SingleRouteBackend for Partial {
+        fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+            Ok(())
+        }
+    }
     impl LlmBackend for Partial {
         fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
             unreachable!()
@@ -415,6 +432,12 @@ async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_
 async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
     use tower::ServiceExt;
     struct MissingUsage;
+    // One request per call: the raw routes' gate wraps it.
+    impl oneiron::llm::SingleRouteBackend for MissingUsage {
+        fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+            Ok(())
+        }
+    }
     impl LlmBackend for MissingUsage {
         fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
             Box::pin(async {
@@ -496,6 +519,12 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     // A backend that answers anything, as a provider key would, and counts
     // what reached it.
     struct Counting(AtomicUsize);
+    // One request per call: the raw routes' gate wraps it.
+    impl oneiron::llm::SingleRouteBackend for Counting {
+        fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
+            Ok(())
+        }
+    }
     impl LlmBackend for Counting {
         fn generate<'a>(&'a self, r: LlmRequest, l: &'a BudgetLease) -> LlmGenerateFuture<'a> {
             self.0.fetch_add(1, Ordering::SeqCst);
@@ -511,6 +540,7 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     seed_models(&vault);
     let budget = BudgetGuard::with_reserve_units("raw", 100, 10, BudgetExhaustionPolicy::Suspend);
     let backend = Arc::new(Counting(AtomicUsize::new(0)));
+    let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
     let server = SyncServer::new(
         vault,
         crate::config::SyncServerConfig {
@@ -519,7 +549,8 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
         },
     )
     .unwrap()
-    .with_llm_backend(backend.clone(), budget.clone());
+    .with_llm_backend(backend.clone(), budget.clone())
+    .with_run_receipts(receipts.clone());
     let server = Arc::new(server);
     let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-route-selector");
     let router = crate::api::api_routes(server.clone());
@@ -574,4 +605,100 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     );
     assert_eq!(budget.read().used_units, 0);
     assert_eq!(budget.read().reserved_units, 0);
+    // Each refusal is receipted on the raw run: one denial naming the key,
+    // with no lease.
+    let denied: Vec<String> = receipts
+        .rows()
+        .into_iter()
+        .map(|row| match row.event {
+            oneiron::llm::run_admission::RunEvent::Denied {
+                reason: oneiron::llm::run_admission::RunDenied::RouteOverride { key },
+                lease: None,
+                ..
+            } => key,
+            other => panic!("not a route denial: {other:?}"),
+        })
+        .collect();
+    assert_eq!(denied, ["model", "openai.models", "provider"].repeat(2));
+}
+
+/// The same refusal on a server with no model backend: the 400 and its one
+/// `Denied` row, with nothing reserved (Astra on #1382). A provider-option
+/// namespace no adapter reads is caller text: neither the reply nor the row
+/// (which the default sink logs as it is) quotes it.
+#[tokio::test]
+async fn a_raw_call_that_picks_its_own_route_has_its_row_with_no_backend_attached() {
+    use tower::ServiceExt;
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
+    let server = SyncServer::new(
+        vault,
+        crate::config::SyncServerConfig {
+            auth_secret: Some("owner".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_run_receipts(receipts.clone());
+    let server = Arc::new(server);
+    let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-route-no-backend");
+    let router = crate::api::api_routes(server.clone());
+    let picks: [(&str, Pick); 2] = [
+        ("model", |r| {
+            r.params.insert("model".into(), "other/model@1".into());
+        }),
+        ("*.model", |r| {
+            r.provider_options.insert(
+                "Bearer sk-test-sentinel-0000".into(),
+                serde_json::json!({ "model": "other/model@1" }),
+            );
+        }),
+    ];
+    for verb in ["generate", "stream"] {
+        for (named, pick) in picks {
+            let mut wire = request();
+            pick(&mut wire);
+            let reply = router
+                .clone()
+                .oneshot(crate::test_credentials::bind_slip_request(
+                    &server,
+                    &slip,
+                    &key,
+                    axum::http::Request::post(format!("/v1/llm/{verb}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&wire).unwrap()))
+                        .unwrap(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(reply.status(), StatusCode::BAD_REQUEST, "{verb} {named}");
+            let bytes = axum::body::to_bytes(reply.into_body(), 65_536)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                body,
+                serde_json::json!({"error":{"code":"route_selector_forbidden","key":named}}),
+                "{verb} {named}"
+            );
+        }
+    }
+    let rows = receipts.rows();
+    for row in &rows {
+        let logged = serde_json::to_string(row).unwrap();
+        assert!(!logged.contains("sk-test-sentinel"), "{logged}");
+    }
+    let denied: Vec<String> = rows
+        .into_iter()
+        .map(|row| match row.event {
+            oneiron::llm::run_admission::RunEvent::Denied {
+                reason: oneiron::llm::run_admission::RunDenied::RouteOverride { key },
+                lease: None,
+                ..
+            } => key,
+            other => panic!("not a route denial: {other:?}"),
+        })
+        .collect();
+    assert_eq!(denied, ["model", "*.model", "model", "*.model"]);
 }

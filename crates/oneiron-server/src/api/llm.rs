@@ -1,4 +1,5 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
+use crate::models::{OfferLadder, RawInference};
 use crate::{auth::CoreAuth, server::SyncServer};
 use axum::{
     Json, Router,
@@ -9,7 +10,8 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::StreamExt;
-use oneiron::{BudgetGuard, BudgetLease, LlmError, LlmRequest, LlmStreamEvent};
+use oneiron::llm::run_admission::{RunAdmission, RunDenied};
+use oneiron::{LlmError, LlmRequest, LlmStreamEvent};
 use std::sync::Arc;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -30,7 +32,8 @@ fn refusal(status: StatusCode, code: &str) -> Response {
     (status, Json(serde_json::json!({"error":{"code":code}}))).into_response()
 }
 /// A param or provider option that would pick the model or the route
-/// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`.
+/// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`,
+/// with `*` for a namespace no adapter reads.
 fn route_selector_refusal(key: &str) -> Response {
     (
         StatusCode::BAD_REQUEST,
@@ -96,45 +99,25 @@ async fn replace_defaults(
     }
 }
 
-struct Reservation {
-    guard: BudgetGuard,
-    lease: BudgetLease,
-    started: bool,
-}
-impl Reservation {
-    fn settle_terminal(&self, usage: &oneiron::LlmUsage) -> Result<(), oneiron::llm::BudgetDenied> {
-        // Providers can omit usage even after producing content. Zero totals are
-        // not proof of a free call; retain the same conservative charge as drop.
-        if usage.input.total == 0 && usage.output.total == 0 {
-            self.guard.settle_reserved(&self.lease).map(|_| ())
-        } else {
-            self.guard.settle_per_call(&self.lease, usage).map(|_| ())
-        }
-    }
-}
-impl Drop for Reservation {
-    fn drop(&mut self) {
-        if self.started {
-            let _ = self.guard.settle_reserved(&self.lease);
-        } else {
-            let _ = self.guard.abort(&self.lease);
-        }
-    }
-}
+/// Admits a raw call: the owner, then the vault's inference policy for the
+/// model the request names. The call itself is admitted rung by rung under a
+/// run on the raw routes' meter, as it goes out.
 fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
     request: &mut LlmRequest,
-) -> Result<(Arc<dyn oneiron::LlmBackend>, Reservation), Box<Response>> {
+) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
     if !auth.is_owner_grade() {
         return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
     }
     // The request's model id picks the model and its route; a body field that
-    // names another is refused before anything is reserved.
+    // names another is refused before anything is reserved, with its row.
     if let Some(key) = request.route_selector_override() {
+        let reason = RunDenied::RouteOverride { key: key.clone() };
+        RawInference::refuse(request, reason, server.run_receipts());
         return Err(Box::new(route_selector_refusal(&key)));
     }
-    let Some((backend, guard)) = &server.llm else {
+    let Some(raw) = &server.llm else {
         return Err(Box::new(refusal(
             StatusCode::SERVICE_UNAVAILABLE,
             "llm_unavailable",
@@ -165,35 +148,20 @@ fn admit(
             })
         })?;
     *request = authorized.into_request();
-    let admission = guard
-        .admit_for_request(request)
-        .map_err(|e| Box::new(failure(e.into())))?;
-    Ok((
-        backend.clone(),
-        Reservation {
-            guard: guard.clone(),
-            lease: admission.lease,
-            started: false,
-        },
-    ))
+    raw.call(request, server.run_receipts())
+        .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "invalid_request")))
 }
 async fn generate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Json(mut request): Json<LlmRequest>,
 ) -> Response {
-    let (backend, mut reservation) = match admit(&server, &auth, &mut request) {
+    let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
     };
-    reservation.started = true;
-    match backend.generate(request, &reservation.lease).await {
-        Ok(response) => {
-            if let Err(e) = reservation.settle_terminal(&response.usage) {
-                return failure(e.into());
-            }
-            Json(response).into_response()
-        }
+    match ladder.generate(&run, request, None).await {
+        Ok(response) => Json(response).into_response(),
         Err(e) => failure(e),
     }
 }
@@ -211,20 +179,19 @@ async fn stream(
     State(server): State<Arc<SyncServer>>,
     Json(mut request): Json<LlmRequest>,
 ) -> Response {
-    let (backend, mut reservation) = match admit(&server, &auth, &mut request) {
+    let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
     };
+    // The first rung is admitted here, so a refused call answers before the
+    // stream starts. Each rung settles itself; a stream the client leaves
+    // ends its call, and a started rung keeps its reservation as spend.
+    let mut source = match ladder.stream(&run, request, None) {
+        Ok(source) => source,
+        Err(e) => return failure(e),
+    };
     let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
-        let mut source = match backend.stream(request, &reservation.lease) {
-            Ok(source) => source,
-            Err(error) => {
-                send_error(&send, error).await;
-                return;
-            }
-        };
-        reservation.started = true;
         loop {
             let item = tokio::select! { _ = send.closed() => return, item = source.next() => item };
             let Some(item) = item else {
@@ -237,15 +204,7 @@ async fn stream(
                     return;
                 }
             };
-            let done = if let LlmStreamEvent::Done { usage, .. } = &event {
-                if let Err(error) = reservation.settle_terminal(usage) {
-                    send_error(&send, error.into()).await;
-                    return;
-                }
-                true
-            } else {
-                false
-            };
+            let done = matches!(event, LlmStreamEvent::Done { .. });
             match serde_json::to_vec(&event) {
                 Ok(mut bytes) => {
                     bytes.push(b'\n');

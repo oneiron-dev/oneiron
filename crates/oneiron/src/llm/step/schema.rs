@@ -128,6 +128,8 @@ pub(super) async fn generate(
         let mut response =
             match super::execute::generate_with_retry(backend, &wire, active_lease).await {
                 Ok(response) => response,
+                // The first call failed: nothing was answered, nothing spent.
+                Err(source) if attempt == 1 => return Err(DurableStepError::Llm(source)),
                 Err(source) => {
                     return Err(DurableStepError::SpentLlm {
                         source,

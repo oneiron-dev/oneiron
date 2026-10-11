@@ -108,7 +108,10 @@ pub struct SyncServer {
     /// The `[oneironer]` tagger slot, `None` when no tagger is configured.
     /// Attached by the serve path after construction, like the embedder.
     pub(crate) tagger: Option<TaggerSlot>,
-    pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
+    /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
+    pub(crate) llm: Option<crate::models::RawInference>,
+    /// Where the run admission of every model call writes its receipts.
+    pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
     /// Inert unless the serve path attaches a configured host.
     pub(crate) ai: crate::ai_host::AiHandle,
@@ -257,6 +260,7 @@ impl SyncServer {
             embedder: None,
             tagger: None,
             llm: None,
+            run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             extraction_egress: None,
             owner_host: None,
@@ -303,6 +307,7 @@ impl SyncServer {
     #[cfg(feature = "code-sandbox-wasmtime")]
     #[must_use]
     pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+        let provider = provider.with_run_receipts(self.run_receipts());
         self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
             Arc::new(provider),
         )));
@@ -340,13 +345,33 @@ impl SyncServer {
 
     /// Enables owner-authenticated raw inference with a host-owned backend and budget.
     /// Remote lease IDs are correlation only; each call needs local admission.
+    ///
+    /// Each call is admitted as a run on `budget` and sent through the run's
+    /// gate, which wraps only a backend that sends one request per call, so
+    /// `backend` is a [`oneiron::llm::SingleRouteBackend`]: a ladder or a
+    /// retrying backend cannot be injected below the gate.
     pub fn with_llm_backend(
         mut self,
-        backend: Arc<dyn oneiron::LlmBackend>,
+        backend: Arc<dyn oneiron::llm::SingleRouteBackend>,
         budget: oneiron::BudgetGuard,
     ) -> Self {
-        self.llm = Some((backend, budget));
+        self.llm = Some(crate::models::RawInference::injected(backend, budget));
         self
+    }
+
+    /// Writes every model call's run receipts to `receipts` instead of the
+    /// log, including the calls of models and providers attached before.
+    #[must_use]
+    pub fn with_run_receipts(
+        self,
+        receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+    ) -> Self {
+        self.run_receipts.choose(receipts);
+        self
+    }
+
+    pub(crate) fn run_receipts(&self) -> Arc<dyn oneiron::llm::run_admission::RunReceiptSink> {
+        self.run_receipts.clone()
     }
 
     /// Attaches the AI host's handle. When `[models]` configured any model,

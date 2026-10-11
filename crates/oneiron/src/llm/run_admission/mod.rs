@@ -21,7 +21,7 @@ mod permit;
 mod receipt;
 mod settle;
 
-pub use admission::{RunAdmission, RunCall, RunCallError, RunDenied};
+pub use admission::{RunAdmission, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR};
 pub use declaration::{
     BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration,
 };

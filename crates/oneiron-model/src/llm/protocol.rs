@@ -52,7 +52,9 @@ impl LlmRequest {
     /// The first generic param, provider-option namespace or provider-option
     /// key that would pick the model or the route on a provider's wire, as
     /// `key` or `namespace.key`. The request's model id and the host's binding
-    /// pick both; an adapter refuses a request that names another.
+    /// pick both; an adapter refuses a request that names another. A
+    /// namespace no adapter reads is caller text, so it is named `*` instead:
+    /// refusals, receipts and replies quote the result.
     #[must_use]
     pub fn route_selector_override(&self) -> Option<String> {
         if let Some(key) = self.params.keys().find(|key| is_route_selector(key)) {
@@ -66,6 +68,11 @@ impl LlmRequest {
                 .as_object()
                 .and_then(|options| options.keys().find(|key| is_route_selector(key)))
             {
+                let namespace = if KNOWN_NAMESPACES.contains(&namespace.as_str()) {
+                    namespace.as_str()
+                } else {
+                    OTHER_NAMESPACE
+                };
                 return Some(format!("{namespace}.{key}"));
             }
         }
@@ -77,6 +84,12 @@ impl LlmRequest {
 /// the model itself, a fallback model list, and a router's route or provider
 /// preference.
 const ROUTE_SELECTOR_KEYS: [&str; 4] = ["model", "models", "route", "provider"];
+
+/// The provider-option namespaces the adapters read.
+const KNOWN_NAMESPACES: [&str; 3] = ["openai", "anthropic", "gemini"];
+
+/// How [`LlmRequest::route_selector_override`] names any other namespace.
+const OTHER_NAMESPACE: &str = "*";
 
 fn is_route_selector(key: &str) -> bool {
     ROUTE_SELECTOR_KEYS.contains(&key)
