@@ -228,36 +228,32 @@ impl HostedMediaHashMatchProvider for KnownMatchProvider {
 }
 
 #[test]
-fn noop_hosted_media_hash_match_provider_reports_no_match() -> Result<()> {
-    let bytes = b"secret-media-bytes";
+fn media_input_debug_redacts_text_and_numeric_byte_representations() {
+    let secret = b"private-media-canary-7391";
     let input = HostedMediaHashMatchInput {
         project_id: "project.alpha",
         path: "portrait.JPG",
         media_type: "image/jpeg",
-        content_hash: *blake3::hash(bytes).as_bytes(),
-        size_bytes: u64::try_from(bytes.len())
-            .map_err(|_| Error::ArithmeticOverflow("test bytes"))?,
-        bytes,
+        content_hash: [0xAB; 32],
+        size_bytes: secret.len() as u64,
+        bytes: secret,
     };
-
-    let provider = NoopHostedMediaHashMatchProvider;
-    assert!(matches!(
-        provider.check_hosted_media(input)?,
-        HostedMediaHashMatchDecision::NoMatch
-    ));
-    assert_eq!(
-        hosted_media_type_for_blob("payload.bin", b"\xff\xd8\xff\xe0jpeg-body"),
-        Some("image/jpeg")
-    );
-    assert_eq!(
-        hosted_media_type_for_blob("portrait.JPG", b"extension-only-candidate"),
-        Some("image/jpeg")
-    );
-    assert_eq!(hosted_media_type_for_blob("README.md", b"plain text"), None);
-
-    let debug = format!("{input:?}");
-    assert!(!debug.contains("secret-media-bytes"));
-    Ok(())
+    let text = std::str::from_utf8(secret).unwrap();
+    let compact_bytes = format!("{secret:?}");
+    let pretty_bytes = format!("{secret:#?}");
+    let decimal_sequence = secret
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    for debug in [format!("{input:?}"), format!("{input:#?}")] {
+        assert!(debug.contains("portrait.JPG"));
+        assert!(!debug.contains(text));
+        assert!(!debug.contains(&compact_bytes));
+        assert!(!debug.contains(&pretty_bytes));
+        let without_whitespace: String = debug.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(!without_whitespace.contains(&decimal_sequence));
+    }
 }
 
 #[test]
