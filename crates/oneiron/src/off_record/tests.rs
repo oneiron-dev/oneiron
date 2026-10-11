@@ -1241,17 +1241,13 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
     Ok(())
 }
 
-/// ARCH-0052 D5 (drift E4; Codex burn engine-prs-02): with capture on, a
-/// run bound in a room on record searches the room, and the search matches a
-/// message nobody saved. Once the saver has left, the run row that would
-/// name it is refused in the transaction that would write it, so neither the
-/// search nor the close leaves a trace of it in base, and the saving stops.
-#[test]
-fn a_bound_runs_search_leaves_no_base_trace_once_the_saver_left() -> Result<()> {
-    use crate::code_run::{HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemorySearchCall};
+/// A room holding the vault's owner, with one message nobody saved in its
+/// stretch, which the owner has then put on record.
+fn a_room_on_record_with_an_unsaved_message(
+    vault: &Vault,
+) -> Result<(EntityId, crate::WriteActor, OffRecordSession<'_>)> {
     use crate::conversation::{ConversationBody, HistoryChoice};
 
-    let (_tmp, vault) = temp_vault();
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
     let room = EntityId::now();
@@ -1288,16 +1284,70 @@ fn a_bound_runs_search_leaves_no_base_trace_once_the_saver_left() -> Result<()> 
     let proof =
         vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
     session.flip_on_record_as(&proof)?;
+    Ok((room, by, session))
+}
+
+/// A search for the message nobody saved.
+fn search_for_the_unsaved_message() -> crate::code_run::SelfCall {
+    crate::code_run::SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new(
+        "unsavedlanternneedle",
+        5,
+    ))
+}
+
+/// ARCH-0052 D5 (drift E4; Codex burn engine-prs-02): with capture on, a
+/// run bound in a room on record searches the room, and the search matches a
+/// message nobody saved. Once the saver has left, the run row that would
+/// name it is refused in the transaction that would write it, so neither the
+/// search nor the close leaves a trace of it in base, and the saving stops.
+#[test]
+fn a_bound_runs_search_leaves_no_base_trace_once_the_saver_left() -> Result<()> {
+    use crate::code_run::{HostSelfDispatcher, SelfDispatcher};
+
+    let (_tmp, vault) = temp_vault();
+    let (room, by, session) = a_room_on_record_with_an_unsaved_message(&vault)?;
     let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-run")?;
-    vault.leave_member(room, owner, by, 50)?;
+    vault.leave_member(room, by.entity_ref(), by, 50)?;
 
     let base_runs_before = vault.retrieval_runs(64)?.len();
     let error = dispatcher
-        .dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
-            "unsavedlanternneedle",
-            5,
-        )))
+        .dispatch(search_for_the_unsaved_message())
         .expect_err("a room whose saver left publishes no run");
+    assert!(
+        matches!(
+            error,
+            Error::OffRecord(OffRecordError::OffRecordSavingStopped { .. })
+        ),
+        "{error:?}"
+    );
+    drop(dispatcher);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    session.close()?;
+    assert_eq!(vault.retrieval_runs(64)?.len(), base_runs_before);
+    Ok(())
+}
+
+/// Astra #1392, P1: the saver was checked against the room's roster now, not
+/// against the membership they put the room on record in. A saver who left
+/// and joined again, with no new "from here on", revived the old saving: a
+/// run bound before they left published its search of an unsaved message in
+/// base. Leaving ends the saving for good, so the search is refused and the
+/// stretch is back off record.
+#[test]
+fn a_saver_who_left_and_joined_again_does_not_revive_the_saving() -> Result<()> {
+    use crate::code_run::{HostSelfDispatcher, SelfDispatcher};
+    use crate::conversation::HistoryChoice;
+
+    let (_tmp, vault) = temp_vault();
+    let (room, by, session) = a_room_on_record_with_an_unsaved_message(&vault)?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-run")?;
+    vault.leave_member(room, by.entity_ref(), by, 50)?;
+    vault.join_member(room, by.entity_ref(), by, 55, HistoryChoice::Share)?;
+
+    let base_runs_before = vault.retrieval_runs(64)?.len();
+    let error = dispatcher
+        .dispatch(search_for_the_unsaved_message())
+        .expect_err("saving that stopped publishes no run");
     assert!(
         matches!(
             error,
