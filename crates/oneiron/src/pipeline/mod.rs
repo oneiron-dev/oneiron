@@ -73,8 +73,8 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::rerank::{RerankCandidate, RerankOptions, Reranker};
 #[cfg(test)]
 use crate::store::{
-    RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceStage,
+    RetrievalAction, RetrievalRunId, RetrievalScoreBreakdown, RetrievalSignal, RetrievalTrace,
+    RetrievalTraceStage,
 };
 #[cfg(test)]
 use crate::temporal::TemporalAnchorMode;
