@@ -65,8 +65,9 @@ impl Memory<'_> {
     /// P7 for one rule `room` renders under `terms`, judged in the snapshot
     /// that reads the rule: the clearance `terms` captured with `roster`
     /// meets the room's clearance in this snapshot, so a clearance narrowed
-    /// since never renders the rule. A member who joined since, whose own
-    /// read the render never checked, keeps the rule out. See
+    /// since never renders the rule; through a turn, that meets into the
+    /// turn and the turn decides. A member who joined since, whose own read
+    /// the render never checked, keeps the rule out. See
     /// [`crate::disclosure::discloses_raw`].
     pub(super) fn room_discloses(
         &self,
@@ -91,21 +92,28 @@ impl Memory<'_> {
         } else {
             None
         };
-        if let Some(turn) = self.room_turn() {
-            turn.terms.meet_clearance(fresh.as_ref());
-        }
-        let Some(clearance) =
-            crate::claim::meet_clearance(terms.clearance.as_ref(), fresh.as_ref())
-        else {
-            return Ok(true);
+        // Through a turn, the turn's own terms decide: they hold the
+        // captured ones and every narrowing a read has met since.
+        let effective = match self.room_turn() {
+            Some(turn) => {
+                turn.terms.meet_clearance(fresh.as_ref());
+                turn.terms.get()
+            }
+            None => RoomTerms {
+                clearance: crate::claim::meet_clearance(terms.clearance.as_ref(), fresh.as_ref()),
+                ..terms.clone()
+            },
         };
+        if effective.clearance.is_none() {
+            return Ok(true);
+        }
         let Some(record) = vault.store.port_entity_record(&txn, &id)? else {
             return Ok(false);
         };
         Ok(crate::disclosure::discloses_raw(
             vault,
             &txn,
-            &terms.worlds.meet(&clearance),
+            &effective.room_scope(),
             id,
             &record.encode(),
         )?)
@@ -334,6 +342,21 @@ impl Memory<'_> {
     }
 }
 
+impl Vault {
+    /// The world set a room of `members` reads inside (ARCH-0067 §8): the
+    /// meet of their ARCH-0022 reading defaults in one snapshot, the world
+    /// ceiling of `room_scope`. A host bounds a room assembly by it. A room
+    /// of no members reads no world; `None` bounds none.
+    pub fn room_world_set(
+        &self,
+        members: &[EntityId],
+    ) -> crate::Result<Option<crate::pipeline::WorldAuthoritySet>> {
+        let txn = self.store.env.read_txn()?;
+        let defaults = reading_defaults_in(self, &txn, members)?;
+        super::scope_worlds(&room_worlds(&defaults)?)
+    }
+}
+
 /// The one refusal for a room the caller cannot read: missing, deleted, not
 /// a channel, or not the caller's. Nothing about the record leaks first.
 fn unknown_room() -> MemoryError {
@@ -391,18 +414,6 @@ fn reading_defaults_in(
         .collect()
 }
 
-/// Whether `member` is positively known as the vault owner: the embedded
-/// owner, or a live human owner binding in a rooted vault.
-fn is_vault_owner(
-    fold: &crate::authority::AuthorityFold,
-    embedded_owner: EntityId,
-    member: &EntityId,
-) -> bool {
-    *member == embedded_owner
-        || (fold.vault_id.is_some()
-            && crate::authority::actor_binding_is_active(fold, member, "human"))
-}
-
 /// Each member's clearance term in `txn` (ILDF2): none for the vault owner
 /// and the vault's own agents, else the member's contact clearance, bottom
 /// when there is none.
@@ -411,14 +422,10 @@ fn clearances_in(
     txn: &heed::RoTxn<'_>,
     members: &[EntityId],
 ) -> crate::Result<Vec<Option<Scope>>> {
-    let embedded_owner = crate::vault::embedded_owner_actor_id()?;
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     members
         .iter()
         .map(|member| {
-            if is_vault_owner(&fold, embedded_owner, member) {
-                return Ok(None);
-            }
             crate::disclosure::room_party_in(vault, txn, &fold, *member)?.clearance_in(vault, txn)
         })
         .collect()
@@ -450,7 +457,7 @@ fn peer_read_keys_in(
         .iter()
         .filter(|member| **member != caller)
         .map(|member| {
-            if is_vault_owner(&fold, embedded_owner, member) {
+            if crate::disclosure::is_vault_owner(&fold, embedded_owner, member) {
                 return Ok(crate::claim::ScopedReadActorKey::vault_owner(*member));
             }
             // The same positive and private-access gates the member's own

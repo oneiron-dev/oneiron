@@ -118,6 +118,16 @@ pub(crate) async fn run_context_pack(
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
     let scoped_read = if let (Some(members), Some(room)) = (room_members.as_deref(), &room) {
+        // Every row a room reads lies in its members' met world set, as a
+        // room turn's ceiling holds it (ARCH-0067 §8).
+        let scoped_read = match server
+            .vault
+            .room_world_set(members)
+            .map_err(|e| core_engine_error("room world set failed", e))?
+        {
+            Some(worlds) => scoped_read.within_worlds(worlds),
+            None => scoped_read,
+        };
         scoped_read
             .for_audience(members)
             .with_peer_reads(room.agent_reads())
@@ -170,7 +180,7 @@ pub(crate) async fn run_context_pack(
     let disclosure = resolve_core_disclosure(
         &server.vault,
         interlocutors.as_ref(),
-        room.as_ref().map(|room| room.owner.is_some()),
+        room.as_ref().map(|room| room.reader.is_some()),
     )?;
 
     let mut builder = server

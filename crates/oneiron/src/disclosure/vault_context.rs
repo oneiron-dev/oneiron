@@ -290,19 +290,20 @@ impl DisclosureContext {
         Self::resolve_with(vault, set, false)
     }
 
-    /// A room assembly follows the same rule as any other audience. When
-    /// the room's own proven owner reads it, the roster names everyone the
-    /// assembly reaches, so the owner joins the meet with no term and an
-    /// empty non-owner set folds to the top (P1). The mode still follows
-    /// the set: the roster never proves the owner present.
-    pub fn resolve_room(vault: &Vault, set: InterlocutorSet, owner_reads: bool) -> Result<Self> {
-        Self::resolve_with(vault, set, owner_reads)
+    /// A room assembly follows the same rule as any other audience. When a
+    /// proven `reader` reads it, the room's own owner or one of the vault's
+    /// own agents, the roster names everyone the assembly reaches, so the
+    /// reader joins the meet with no term and an empty non-owner set folds
+    /// to the top (P1). The mode still follows the set: the roster never
+    /// proves the owner present.
+    pub fn resolve_room(vault: &Vault, set: InterlocutorSet, reader: bool) -> Result<Self> {
+        Self::resolve_with(vault, set, reader)
     }
 
-    fn resolve_with(vault: &Vault, set: InterlocutorSet, owner_reads: bool) -> Result<Self> {
+    fn resolve_with(vault: &Vault, set: InterlocutorSet, reader: bool) -> Result<Self> {
         Ok(Self {
             mode: DisclosureMode::from_set(&set),
-            disclosable: DisclosableSet::resolve(vault, &set, owner_reads)?,
+            disclosable: DisclosableSet::resolve(vault, &set, reader)?,
             interlocutors: set,
         })
     }

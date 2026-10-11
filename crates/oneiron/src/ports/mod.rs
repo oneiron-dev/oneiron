@@ -49,6 +49,7 @@ pub(crate) use integrity::{
     invalidate_source_in_txn, record_dependency_in_txn, record_derived_edge_in_txn, stale_in_txn,
 };
 pub use records::*;
+pub(crate) use regeneration::dependency_sources_in;
 pub(crate) use time::{
     CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, persist_id_floor_in_txn,
     recorded_at_in_txn,

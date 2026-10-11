@@ -993,8 +993,9 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
 /// for the owner and adds no clearance term; its own grant bounds what the
 /// room reads instead. A room holding the bound owner and that agent
 /// assembles its own default-Sensitive history, owner present or away, once
-/// the agent may read it too. Before, the agent was an unknown party and
-/// the room public-only.
+/// the agent may read it too: a policy grant for the room's records and a
+/// relationship grant for its message's space. Before, the agent was an
+/// unknown party and the room public-only.
 #[tokio::test]
 async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     let (_dir, server) = interlocutor_test_server();
@@ -1048,30 +1049,30 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
         )
         .commit()
         .expect("onboard exact project and room in one batch");
-    let turn = oneiron::EntityId::now();
-    let message = oneiron::EntityId::now();
+    let space = seeded_test_entity_id(0x2094_0304);
     server
         .vault
         .memory(owner, oneiron::EdgeActorClass::Human)
         .rooms_speak(&oneiron::memory::WitnessTurn {
             conversation_ref: room.to_hex(),
-            turn_ref: Some(turn.to_hex()),
+            turn_ref: Some(oneiron::EntityId::now().to_hex()),
             messages: vec![oneiron::memory::WitnessMessage {
-                id: Some(message.to_hex()),
+                id: Some(oneiron::EntityId::now().to_hex()),
                 author: oneiron::memory::WitnessAuthor::User,
                 message_type: "text".into(),
                 content: "lantern harbor room2094".into(),
-                metadata: None,
+                metadata: Some(json!({ "rel": space.to_hex() })),
                 is_visible: true,
                 order: 0,
             }],
             occurred_at: 2,
         })
         .expect("speak");
-    let spoken = [turn.to_hex(), message.to_hex()];
 
-    for granted in [false, true] {
-        if granted {
+    // Nothing, the policy grant alone, then both: only the agent's whole
+    // read of the message lets the room read it.
+    for grants in 0..3 {
+        if grants == 1 {
             super::context_board_history::restrict_principal_read_types(
                 &server,
                 agent,
@@ -1081,6 +1082,26 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
                 ],
             );
         }
+        if grants == 2 {
+            server
+                .vault
+                .create_access_grant(
+                    &seeded_test_entity_id(0x2094_0305),
+                    &oneiron::access_grant::AccessGrant {
+                        principal_ref: agent,
+                        scope: oneiron::access_grant::AccessGrantScope::Messages {
+                            space_ref: space,
+                        },
+                        capability: oneiron::access_grant::AccessGrantCapability::MessagesRead,
+                        authority_scope: oneiron::federation::Scope::top(),
+                        status: oneiron::access_grant::AccessGrantStatus::Active,
+                        created_at: 1,
+                        revoked_at: None,
+                        expires_at: None,
+                    },
+                )
+                .expect("grant the message's space");
+        }
         for (owner_present, mode) in [(None, "absence_clamp"), (Some(true), "owner_alone")] {
             let mut request = json!({"conversation_id": room.to_hex(), "query": "room2094"});
             if let Some(present) = owner_present {
@@ -1089,15 +1110,10 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
             let (status, body) = room_owner_json(server.clone(), owner, &request).await;
             assert_eq!(status, StatusCode::OK, "{body}");
             assert_eq!(body["disclosure"]["mode"], mode, "{body}");
-            let reads = body["results"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(|row| row["id"].as_str())
-                .any(|id| spoken.iter().any(|spoken| spoken == id));
             assert_eq!(
-                reads, granted,
-                "the room reads its history only as its agent may ({mode}): {body}"
+                body.to_string().contains("lantern harbor room2094"),
+                grants == 2,
+                "the room reads its history only as its agent may ({grants}, {mode}): {body}"
             );
         }
     }
@@ -1105,7 +1121,10 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
 
 /// A bare host secret proves no PERSON, so the vault's own agents stay
 /// unknown parties to it: a room of agents alone never reads as the owner
-/// alone, presence asserted or not, and keeps Tier A out.
+/// alone, presence asserted or not, and reads only public rows. The agent
+/// reading on its own credential is the room's proven reader: it adds no
+/// clearance term, so the room reads what its own grant admits, and never
+/// Tier A.
 #[tokio::test]
 async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
     let (_dir, server) = interlocutor_test_server();
@@ -1138,8 +1157,18 @@ async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
         .expect("agent-only room");
     let private = seed_text_turn(&server, "agent room private2094");
     server.vault.set_disclosure_tier_a(&private, 101).unwrap();
+    let sensitive = seed_text_turn(&server, "agent room sensitive2094");
+    let request = json!({"conversation_id": room.to_hex(), "query": "agent room"});
+    let ids = |body: &Value| -> Vec<String> {
+        body["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["id"].as_str().map(str::to_owned))
+            .collect()
+    };
     for interlocutors in [None, Some(json!({"owner_present": true}))] {
-        let mut request = json!({"conversation_id": room.to_hex(), "query": "private2094"});
+        let mut request = request.clone();
         if let Some(interlocutors) = interlocutors {
             request["interlocutors"] = interlocutors;
         }
@@ -1153,12 +1182,45 @@ async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_ne!(body["disclosure"]["mode"], "owner_alone", "{body}");
         assert!(
-            !body["results"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|row| row["id"] == private.to_hex()),
-            "a bare host cannot disclose Tier A through an agent-only room: {body}"
+            !ids(&body).contains(&private.to_hex()) && !ids(&body).contains(&sensitive.to_hex()),
+            "a bare host reads only public rows through an agent-only room: {body}"
         );
     }
+
+    let agent_reads = |server: std::sync::Arc<SyncServer>| {
+        route_json(
+            server,
+            core_request_with_authz(
+                "POST",
+                "/v1/core/context-pack",
+                test_bearer(&format!(
+                    "scope=core:read;principal_ref={};actor_class=agent",
+                    agent.to_hex()
+                )),
+                Some(&request),
+            ),
+        )
+    };
+    let (status, before) = agent_reads(server.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert!(
+        !ids(&before).contains(&sensitive.to_hex()),
+        "the agent's own read bounds the room: {before}"
+    );
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let (status, after) = agent_reads(server.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_ne!(after["disclosure"]["mode"], "owner_alone", "{after}");
+    assert!(
+        ids(&after).contains(&sensitive.to_hex()),
+        "the agent reads the room as its own grant admits: {after}"
+    );
+    assert!(
+        !ids(&after).contains(&private.to_hex()),
+        "an agent's room never holds Tier A: {after}"
+    );
 }

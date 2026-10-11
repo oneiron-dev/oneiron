@@ -30,9 +30,20 @@ pub(crate) fn word_sources_in(
     let sources = match header.entity_type {
         ENTITY_TYPE_SUMMARY => super::body_covers_in_txn(vault, txn, id, header.entity_type, body),
         // A reply carries its summary under the `summary` key, in any
-        // string encoding; the decoder below decides.
+        // string encoding; the decoder below decides. Its words are the
+        // summary's as it landed, so the sources its landing registered
+        // stay its sources whatever the summary covers now.
         ENTITY_TYPE_TURN if names(b"summary") => {
-            super::body_covers_in_txn(vault, txn, id, header.entity_type, body)
+            super::body_covers_in_txn(vault, txn, id, header.entity_type, body).and_then(|covers| {
+                covers
+                    .map(|mut covers| {
+                        covers.extend(crate::ports::dependency_sources_in(&vault.store, txn, id)?);
+                        covers.sort_unstable();
+                        covers.dedup();
+                        Ok(covers)
+                    })
+                    .transpose()
+            })
         }
         ENTITY_TYPE_CLAIM if names(b"merge.summary") => super::merge_word_sources_in_txn(
             vault,

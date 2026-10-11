@@ -417,8 +417,10 @@ fn a_room_lane_rebuilds_its_ceiling_only_for_a_new_member() -> Result<()> {
             b"agent",
         )?;
     }
-    // The agent is the vault's own: it adds no clearance term.
+    // Both are the vault's own agents: neither adds a clearance term, so
+    // only the ceiling's rebuild is under test.
     crate::test_util::bind_test_agent(&vault, agent);
+    crate::test_util::bind_test_agent(&vault, joiner);
     crate::test_util::bind_test_owner(&vault, owner);
     let (project, mut record) = project_room(&vault, owner, &[agent])?;
     let room = EntityId::from_hex(&record.home_room)?;
@@ -724,6 +726,21 @@ fn a_guests_clearance_bounds_every_read_a_room_turn_makes() -> Result<()> {
     set(Scope::default(), 500)?;
     assert!(!renders(&members), "a clearance narrowed since");
     set(Scope::top(), 600)?;
+    // Through a turn, a narrowing one rule meets holds for the next rule.
+    let turn = host.for_room_turn(room).expect("open room turn");
+    let renders_in_turn = || {
+        turn.memory()
+            .room_discloses(room, &captured, &members, tier_b_id)
+            .expect("render p7")
+    };
+    assert!(renders_in_turn());
+    set(Scope::default(), 610)?;
+    assert!(!renders_in_turn());
+    set(Scope::top(), 620)?;
+    assert!(
+        !renders_in_turn(),
+        "a render through a turn never widens back"
+    );
 
     // A revoked contact keeps its clearance row, yet its member is unknown
     // again: bottom, as the context-pack resolver reads the same contact.
@@ -803,7 +820,7 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
         path: crate::conversation_dag::ScopePath::Canonical,
         include_forks: false,
     };
-    let (_, landed) = vault.mint_and_land_scope_summary(
+    let (summary, landed) = vault.mint_and_land_scope_summary(
         &scope,
         "lantern summary",
         crate::WriteActor::new(owner, EdgeActorClass::Human),
@@ -833,5 +850,47 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
     );
     assert!(discloses(turn, &both)?);
     assert!(discloses(copy, &both)?);
+    let recover = |covers: Vec<EntityId>, at: u64| -> Result<()> {
+        let mut body = crate::scope_summary::decode_scope_summary_body(
+            &vault.get(&summary)?.expect("summary body"),
+        )?;
+        body.covers = covers;
+        vault.put_entity(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange { start: at, end: at },
+            at,
+            &crate::scope_summary::encode_scope_summary_body(&body)?,
+        )
+    };
+    // A summary put again over other records leaves the copy's words with
+    // the records they came from.
+    let later = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .rooms_speak(&spoken(room, later, 3))
+        .expect("speak");
+    recover(vec![later], 4)?;
+    let sources = {
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .port_entity_record(&txn, &copy)?
+            .expect("row")
+            .encode();
+        crate::scope_summary::word_sources_in(&vault, &txn, &copy, &raw)?
+    };
+    assert!(
+        matches!(
+            sources,
+            crate::scope_summary::WordSources::From(ref sources)
+                if sources.contains(&turn) && sources.contains(&later)
+        ),
+        "the copy's words still came from the first turn"
+    );
+    // A summary put again to cover its own copy makes the copy's words a
+    // cycle: P7 discloses nothing rather than walking it forever.
+    recover(vec![copy], 5)?;
+    assert!(!discloses(copy, &both)?, "a cycle discloses nothing");
     Ok(())
 }

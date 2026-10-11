@@ -69,10 +69,12 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
-    /// Read only rows in `worlds`; see [`ScopedReadActorKey::within_worlds`].
-    /// The ceiling rides the key, so a lane built from it keeps it too.
+    /// Read only rows in `worlds`, a claim by its own world and any other
+    /// record as base reality. The ceiling rides the key, so a lane built
+    /// from it keeps it too, and it meets any ceiling the key already holds.
+    /// A room assembly passes the room's world set (ARCH-0067 §8).
     #[must_use]
-    pub(crate) fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
+    pub fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
         self.actor_key = self.actor_key.within_worlds(worlds);
         self
     }

@@ -10,9 +10,11 @@ use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, Result};
 use crate::federation::{Scope, Sensitivity, SensitivityCeiling};
 use crate::interlocutor::{InterlocutorClass, InterlocutorSet};
+use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scope_summary::WordSources;
+use std::collections::BTreeSet;
 
 pub use crate::context_board::room_scope as disclosable_set;
 
@@ -33,9 +35,9 @@ impl DisclosableSet {
     /// lattice (P1), never bottom. An unknown party, a missing or revoked
     /// clearance, or a row that does not decode contributes bottom, so that
     /// party narrows the set to public-only. An empty roster names no one
-    /// and is public-only too. `reader` adds the proven owner reading the
-    /// assembly as one more party with no term. Only storage I/O errors
-    /// surface.
+    /// and is public-only too. `reader` adds a proven reader of the
+    /// assembly, the owner or one of the vault's own agents, as one more
+    /// party with no term. Only storage I/O errors surface.
     pub fn resolve(vault: &Vault, roster: &InterlocutorSet, reader: bool) -> Result<Self> {
         let txn = vault.store.env.read_txn()?;
         let mut terms = roster
@@ -82,7 +84,8 @@ fn admits(clearance: &Scope, record: &Scope) -> bool {
 /// vector are its messages' (`embed::turn_text_in_txn`), so each live
 /// message `PartOf` it, and a scope summary, a TURN copying one, or a merge
 /// header naming one carries the words of every record and MESSAGE the
-/// summary came from. Sources that no longer resolve disclose nothing.
+/// summary came from. Sources that no longer resolve disclose nothing, nor
+/// does a closure that cycles or outgrows [`MAX_WORD_CLOSURE`].
 pub(crate) fn discloses_raw(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -90,42 +93,94 @@ pub(crate) fn discloses_raw(
     id: EntityId,
     raw: &[u8],
 ) -> Result<bool> {
-    let store = &vault.store;
-    if !crate::federation::record_scope::scope_for_blob(store, txn, id, raw)?
-        .is_some_and(|record| admits(scope, &record))
-    {
-        return Ok(false);
+    WordClosure {
+        vault,
+        txn,
+        scope,
+        path: BTreeSet::new(),
+        judged: BTreeSet::new(),
     }
-    let sources = match crate::scope_summary::word_sources_in(vault, txn, &id, raw)? {
-        WordSources::Own => Vec::new(),
-        WordSources::From(sources) => sources,
-        WordSources::Unresolved => return Ok(false),
-    };
-    for source in sources {
-        let Some(row) = store.port_entity_record(txn, &source)? else {
+    .discloses(id, raw)
+}
+
+/// How many records one P7 decision may follow: room for a summary's whole
+/// covers list and its messages, each bounded by `MAX_ANCESTOR_DEPTH`.
+const MAX_WORD_CLOSURE: usize = 4 * MAX_ANCESTOR_DEPTH;
+
+/// One P7 decision's walk over the records whose words a revision carries.
+struct WordClosure<'a> {
+    vault: &'a Vault,
+    txn: &'a heed::RoTxn<'a>,
+    scope: &'a Scope,
+    /// The records on the way to the current one: meeting one again is a
+    /// cycle.
+    path: BTreeSet<EntityId>,
+    /// Every record judged so far; each passed, or the walk has stopped.
+    judged: BTreeSet<EntityId>,
+}
+
+impl WordClosure<'_> {
+    fn discloses(&mut self, id: EntityId, raw: &[u8]) -> Result<bool> {
+        if self.path.contains(&id) {
             return Ok(false);
+        }
+        if !self.judged.insert(id) {
+            return Ok(true);
+        }
+        if self.judged.len() > MAX_WORD_CLOSURE {
+            return Ok(false);
+        }
+        self.path.insert(id);
+        let disclosed = self.discloses_with_sources(id, raw);
+        self.path.remove(&id);
+        disclosed
+    }
+
+    fn discloses_with_sources(&mut self, id: EntityId, raw: &[u8]) -> Result<bool> {
+        let store = &self.vault.store;
+        if !crate::federation::record_scope::scope_for_blob(store, self.txn, id, raw)?
+            .is_some_and(|record| admits(self.scope, &record))
+        {
+            return Ok(false);
+        }
+        let sources = match crate::scope_summary::word_sources_in(self.vault, self.txn, &id, raw)? {
+            WordSources::Own => Vec::new(),
+            WordSources::From(sources) => sources,
+            WordSources::Unresolved => return Ok(false),
         };
-        if !discloses_raw(vault, txn, scope, source, &row.encode())? {
-            return Ok(false);
+        for source in sources {
+            let Some(row) = store.port_entity_record(self.txn, &source)? else {
+                return Ok(false);
+            };
+            if !self.discloses(source, &row.encode())? {
+                return Ok(false);
+            }
         }
-    }
-    if EntityMetadataHeader::parse(raw).is_none_or(|header| header.entity_type != ENTITY_TYPE_TURN)
-    {
-        return Ok(true);
-    }
-    for part in store.port_edges(txn, &id, EdgeDirection::In, Some(EdgeKind::PartOf), None)? {
-        let message = part?.target;
-        let Some(row) = store.port_entity_record(txn, &message)? else {
-            continue;
-        };
-        if row.entity_type != ENTITY_TYPE_MESSAGE || row.body.is_empty() {
-            continue;
+        if EntityMetadataHeader::parse(raw)
+            .is_none_or(|header| header.entity_type != ENTITY_TYPE_TURN)
+        {
+            return Ok(true);
         }
-        if !discloses_raw(vault, txn, scope, message, &row.encode())? {
-            return Ok(false);
+        for part in store.port_edges(
+            self.txn,
+            &id,
+            EdgeDirection::In,
+            Some(EdgeKind::PartOf),
+            None,
+        )? {
+            let message = part?.target;
+            let Some(row) = store.port_entity_record(self.txn, &message)? else {
+                continue;
+            };
+            if row.entity_type != ENTITY_TYPE_MESSAGE || row.body.is_empty() {
+                continue;
+            }
+            if !self.discloses(message, &row.encode())? {
+                return Ok(false);
+            }
         }
+        Ok(true)
     }
-    Ok(true)
 }
 
 /// `contact`'s clearance as `txn` reads it: bottom when the contact has

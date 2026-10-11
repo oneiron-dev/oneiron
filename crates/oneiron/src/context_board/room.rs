@@ -50,6 +50,18 @@ impl RosterParty for RoomPresence {
     }
 }
 
+impl RosterParty for WorldAuthoritySet {
+    fn present(&self) -> bool {
+        true
+    }
+    fn worlds(&self) -> Option<&WorldAuthoritySet> {
+        Some(self)
+    }
+    fn clearance(&self) -> Option<&Scope> {
+        None
+    }
+}
+
 impl RosterParty for Option<Scope> {
     fn present(&self) -> bool {
         true
