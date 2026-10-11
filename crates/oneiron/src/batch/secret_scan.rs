@@ -213,9 +213,14 @@ pub(crate) fn release_joined_messagepack(items: &[rmpv::Value]) -> bool {
     joined_messagepack(items, Door::Release)
 }
 
+/// [`release_joined_strings`] over a JSON array's items.
+pub(crate) fn release_joined_json(items: &[serde_json::Value]) -> bool {
+    joined_json(items, Door::Release)
+}
+
 /// The text items of a MessagePack array read joined. An item is read as text
-/// as it is read alone: a string, and binary or extension bytes, which carry
-/// words as well as a string does.
+/// as it is read alone: a string, binary or extension bytes, and an array of
+/// byte values, which carry words as well as a string does.
 fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
     let texts: Vec<_> = items
         .iter()
@@ -224,10 +229,36 @@ fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
             rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
                 Some(String::from_utf8_lossy(bytes))
             }
+            rmpv::Value::Array(values) => byte_values(values.iter().map(rmpv::Value::as_u64))
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into()),
             _ => None,
         })
         .collect();
     joined_strings(&texts, door)
+}
+
+/// [`joined_messagepack`] for JSON items: a string, and an array of byte
+/// values (MessagePack binary projects to one).
+fn joined_json(items: &[serde_json::Value], door: Door) -> bool {
+    let texts: Vec<std::borrow::Cow<'_, str>> = items
+        .iter()
+        .filter_map(|item| match item {
+            serde_json::Value::String(text) => Some(text.as_str().into()),
+            serde_json::Value::Array(values) => {
+                byte_values(values.iter().map(serde_json::Value::as_u64))
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into())
+            }
+            _ => None,
+        })
+        .collect();
+    joined_strings(&texts, door)
+}
+
+/// An array's items as bytes, when every one is a byte value.
+fn byte_values(items: impl Iterator<Item = Option<u64>>) -> Option<Vec<u8>> {
+    items
+        .map(|item| item.and_then(|n| u8::try_from(n).ok()))
+        .collect()
 }
 
 /// The write door's text rules over text a stream scanner joined across a
@@ -379,15 +410,11 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
         Value::Array(values) => {
             // MessagePack binary values project to JSON byte arrays. They must
             // not become an alternate encoding around recursive redaction.
-            let bytes: Option<Vec<u8>> = values
-                .iter()
-                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
-                .collect();
-            let strings: Vec<&str> = values.iter().filter_map(Value::as_str).collect();
+            let bytes = byte_values(values.iter().map(Value::as_u64));
             if bytes
                 .as_ref()
                 .is_some_and(|bytes| detect_bytes(bytes, door))
-                || joined_strings(&strings, door)
+                || joined_json(values, door)
             {
                 *value = replacement();
                 return true;
@@ -395,10 +422,9 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
             let changed = values.iter_mut().fold(false, |changed, value| {
                 sanitize_json(value, null, door) | changed
             });
-            // Read again once items are nulled: the strings left are the ones
-            // a second pass reads joined, so the array is its own fixed point.
-            let strings: Vec<&str> = values.iter().filter_map(Value::as_str).collect();
-            if changed && joined_strings(&strings, door) {
+            // Read again once items are nulled: the text left is what a second
+            // pass reads joined, so the array is its own fixed point.
+            if changed && joined_json(values, door) {
                 *value = replacement();
             }
             changed
@@ -448,10 +474,7 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
             true
         }
         Value::Array(values) => {
-            let bytes: Option<Vec<u8>> = values
-                .iter()
-                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
-                .collect();
+            let bytes = byte_values(values.iter().map(Value::as_u64));
             if bytes
                 .as_ref()
                 .is_some_and(|bytes| detect_bytes(bytes, door))

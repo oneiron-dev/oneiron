@@ -2,6 +2,7 @@
 //!
 //! No raw/base64 body is shipped beside this tree. Unknown binary and extension
 //! payloads are nulled: an opaque byte string is not proof that it is public data.
+use std::borrow::Cow;
 use std::io::Cursor;
 
 use rmpv::Value as Mp;
@@ -415,15 +416,7 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize, limit: usi
                 .collect();
             // Read again once items are nulled: the text left is what a second
             // pass reads joined, so the array is its own fixed point.
-            let kept: Vec<&str> = exported
-                .iter()
-                .filter_map(|value| match value {
-                    ExportValue::String(text) | ExportValue::BinaryText(text) => {
-                        Some(text.as_str())
-                    }
-                    _ => None,
-                })
-                .collect();
+            let kept: Vec<_> = exported.iter().filter_map(exported_text).collect();
             if release_joined_strings(&kept) {
                 return ExportValue::Nil;
             }
@@ -455,6 +448,25 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize, limit: usi
                 .collect(),
         ),
         Mp::Ext(_, _) => ExportValue::Nil,
+    }
+}
+
+/// An exported item as a second pass reads it joined
+/// ([`release_joined_messagepack`] over its MessagePack): a string, binary
+/// text or id bytes, and an array of byte values.
+fn exported_text(value: &ExportValue) -> Option<Cow<'_, str>> {
+    match value {
+        ExportValue::String(text) | ExportValue::BinaryText(text) => Some(Cow::Borrowed(text)),
+        ExportValue::EntityReference(bytes) => Some(String::from_utf8_lossy(bytes)),
+        ExportValue::Array(items) => items
+            .iter()
+            .map(|item| match item {
+                ExportValue::Integer(value) => value.parse::<u8>().ok(),
+                _ => None,
+            })
+            .collect::<Option<Vec<u8>>>()
+            .map(|bytes| Cow::Owned(String::from_utf8_lossy(&bytes).into_owned())),
+        _ => None,
     }
 }
 

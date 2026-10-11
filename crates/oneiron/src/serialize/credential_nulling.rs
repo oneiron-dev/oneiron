@@ -1,7 +1,5 @@
 //! Unconditional credential removal before any context/export format writer.
-use crate::batch::secret_scan::{
-    release_credential_field, release_joined_strings, scan_file_content,
-};
+use crate::batch::secret_scan::{release_credential_field, release_joined_json, scan_file_content};
 use serde_json::{Map, Value};
 
 /// A field name whose value no export carries: this writer's own names, and
@@ -76,21 +74,15 @@ fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Valu
     match value {
         Value::String(text) if scan_file_content("", text.as_bytes()).is_some() => Value::Null,
         Value::Array(values) if encoded_credentials(values, depth) => Value::Null,
-        Value::Array(values)
-            if release_joined_strings(
-                &values.iter().filter_map(Value::as_str).collect::<Vec<_>>(),
-            ) =>
-        {
-            Value::Null
-        }
+        Value::Array(values) if release_joined_json(values) => Value::Null,
         Value::Array(values) => {
             let kept: Vec<Value> = values
                 .iter()
                 .map(|value| null_at_depth("", value, depth + 1, document))
                 .collect();
-            // Read again once items are nulled: the strings left are the ones
-            // a second pass reads joined, so the array is its own fixed point.
-            if release_joined_strings(&kept.iter().filter_map(Value::as_str).collect::<Vec<_>>()) {
+            // Read again once items are nulled: the text left is what a second
+            // pass reads joined, so the array is its own fixed point.
+            if release_joined_json(&kept) {
                 Value::Null
             } else {
                 Value::Array(kept)

@@ -346,27 +346,88 @@ mod tests {
         Ok(())
     }
 
+    /// Whether an output still carries the fixture's word `sausage`, read as
+    /// the release doors read text: strings, binary and extension bytes, and
+    /// arrays of byte values.
+    fn carries_sausage(bytes: &[u8]) -> bool {
+        fn texts(value: &rmpv::Value, out: &mut String) {
+            use rmpv::Value as M;
+            match value {
+                M::String(text) => out.push_str(&String::from_utf8_lossy(text.as_bytes())),
+                M::Binary(bytes) | M::Ext(_, bytes) => {
+                    out.push_str(&String::from_utf8_lossy(bytes));
+                }
+                M::Array(items) => match items
+                    .iter()
+                    .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
+                    .collect::<Option<Vec<u8>>>()
+                {
+                    Some(bytes) => out.push_str(&String::from_utf8_lossy(&bytes)),
+                    None => items.iter().for_each(|item| texts(item, out)),
+                },
+                M::Map(entries) => entries.iter().for_each(|(key, value)| {
+                    texts(key, out);
+                    texts(value, out);
+                }),
+                _ => {}
+            }
+            out.push('\n');
+        }
+        let mut text = String::from_utf8_lossy(bytes).into_owned();
+        if let Some(value) = crate::batch::secret_scan::decode_members(bytes) {
+            texts(&value, &mut text);
+        }
+        text.contains("sausage")
+    }
+
     #[test]
-    fn a_phrase_one_binary_word_per_item_leaves_by_no_release_door() -> Result<()> {
+    fn a_phrase_one_byte_word_per_item_leaves_by_no_release_door() -> Result<()> {
         let (_dir, vault) = vault_with_scan_off()?;
-        let words = rmpv::Value::Array(
-            PHRASE
-                .split(' ')
-                .map(|word| rmpv::Value::Binary(word.as_bytes().to_vec()))
+        let words: Vec<&[u8]> = PHRASE.split(' ').map(str::as_bytes).collect();
+        // One word per item: MessagePack binary, MessagePack byte values, the
+        // two mixed, and JSON byte values.
+        let binary = |word: &[u8]| rmpv::Value::Binary(word.to_vec());
+        let numbers =
+            |word: &[u8]| rmpv::Value::Array(word.iter().map(|&b| rmpv::Value::from(b)).collect());
+        let items = [
+            words.iter().map(|word| binary(word)).collect::<Vec<_>>(),
+            words.iter().map(|word| numbers(word)).collect(),
+            words
+                .iter()
+                .enumerate()
+                .map(|(at, word)| if at == 6 { numbers(word) } else { binary(word) })
                 .collect(),
+        ];
+        let mut bodies = Vec::new();
+        for value in items.map(rmpv::Value::Array) {
+            let mut body = Vec::new();
+            rmpv::encode::write_value(&mut body, &value).unwrap();
+            bodies.push(body);
+        }
+        bodies.push(
+            serde_json::to_vec(&serde_json::json!({ "words": words }))
+                .map_err(|_| Error::InvariantViolation("fixture JSON"))?,
         );
-        let mut body = Vec::new();
-        rmpv::encode::write_value(&mut body, &words).unwrap();
-        let id = put_asset(&vault, &body)?;
-        let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
-        let served = redacted_memory_payload(stored)?;
-        assert!(
-            !String::from_utf8_lossy(&served).contains("sausage"),
-            "raw serving: {served:?}"
-        );
-        let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-        let document = String::from_utf8_lossy(export.bytes()).into_owned();
-        assert!(!document.contains("sausage"), "typed export: {document}");
+        for body in &bodies {
+            assert!(carries_sausage(body));
+            let id = put_asset(&vault, body)?;
+            let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
+            let served = redacted_memory_payload(stored)?;
+            assert!(!carries_sausage(&served), "raw serving: {served:?}");
+            let typed =
+                crate::serialize::ExportBody::from_bytes(body, crate::registry::ENTITY_TYPE_ASSET);
+            assert!(
+                !typed.to_bytes().is_ok_and(|bytes| carries_sausage(&bytes)),
+                "typed export: {typed:?}"
+            );
+            let bundle: Value = serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)
+                .map_err(|_| Error::InvariantViolation("bundle JSON"))?;
+            let emitted = bundle["entities"][0]["body"].to_string();
+            assert!(
+                !carries_sausage(emitted.as_bytes()),
+                "bundle export: {emitted}"
+            );
+        }
         Ok(())
     }
 
