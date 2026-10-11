@@ -1838,7 +1838,7 @@
      "path": "src/authority/slip_replay.rs",
      "purpose": "Bounded, timestamp-bound replay windows for authenticated slip requests",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -3113,7 +3113,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1
      }
     },
@@ -27530,7 +27530,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -31946,7 +31946,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PackAdapter",
@@ -31956,7 +31956,7 @@
      "path": "src/skill_hub/pack_catalog/manifest.rs",
      "purpose": "Closed PACK.md manifest parser",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 1,
       "struct": 1
@@ -52264,6 +52264,16 @@
      "notable": [],
      "path": "tests/it/reopen_after_restart.rs",
      "purpose": "Text saved through `oneiron serve` survives a restart (prune e2e row 4): witness one invented line, stop the…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/slip_clock.rs",
+     "purpose": "An agent's holder proof is judged on wall time, not on time the vault was seen running (perf pass, 2026-10-11)",
      "surface": {}
     },
     {
@@ -52539,7 +52549,7 @@
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 318,
-   "test_files": 128
+   "test_files": 129
   },
   "oneiron-uniffi": {
    "files": [
