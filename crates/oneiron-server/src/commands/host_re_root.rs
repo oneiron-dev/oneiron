@@ -146,17 +146,9 @@ pub fn host_re_root(args: HostReRootArgs) -> anyhow::Result<()> {
 fn read_secret_file(path: &Path) -> anyhow::Result<Zeroizing<String>> {
     let mut file = std::fs::File::open(path)
         .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = file.metadata()?.permissions().mode();
-        anyhow::ensure!(
-            mode & 0o077 == 0,
-            "{} can be read by other users (mode {:o}); run `chmod 600` on it",
-            path.display(),
-            mode & 0o777
-        );
-    }
+    // Owner-only by its mode and, on macOS, by its ACL: an ACL entry can let
+    // other users read a file whose mode says 600.
+    super::credential_file::admit(path, &file)?;
     let mut text = Zeroizing::new(String::new());
     file.read_to_string(&mut text)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
