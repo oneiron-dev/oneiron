@@ -15,6 +15,8 @@
 //! and the receipt records every ask. `net.fetch` is the host's own
 //! handler: a guarded fetch inside the grant's allowlist.
 //!
+//! [`seal`] is the engine's seal port over the seal organ.
+//!
 //! Unix only. The design page is the companion to this crate.
 #![cfg(unix)]
 
@@ -27,6 +29,7 @@ mod process;
 mod receipt;
 mod regions;
 mod sandbox;
+pub mod seal;
 mod slot;
 mod spec;
 
@@ -35,7 +38,9 @@ pub use budget::BudgetConfig;
 pub use error::{HostError, Unavailable};
 pub use fetch::GuardedFetch;
 pub use host::{OrganHost, OrganOutcome, OrganOutput};
-pub use receipt::{AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, Unanswered};
+pub use receipt::{
+    AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
+};
 pub use slot::{OrganState, OrganStatus};
 pub use spec::{
     AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput,

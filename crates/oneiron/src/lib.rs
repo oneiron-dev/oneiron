@@ -580,3 +580,8 @@ mod m8_forward_oracle;
 
 #[cfg(test)]
 pub(crate) mod test_util;
+
+/// Doors for tests that drive the engine from another crate. Not API.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support;

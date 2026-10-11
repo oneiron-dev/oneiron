@@ -5,9 +5,9 @@ use std::sync::Arc;
 use rsa::rand_core::RngCore;
 
 use crate::api::{
-    FetchMethod, FetchPurpose, FetchRequest, PadesProfile, ProfileDegradeReason, SealBackend,
-    SealConfig, SealFetcher, SealWarning, Sha256Digest, SignDigestRequest, SignatureAlgorithm,
-    SigningIdentity,
+    FetchMethod, FetchPurpose, FetchRequest, PadesProfile, PreparedRevision, ProfileDegradeReason,
+    SealBackend, SealConfig, SealFetcher, SealWarning, Sha256Digest, SignRevisionRequest,
+    SignatureAlgorithm, SigningIdentity,
 };
 use crate::error::{FatalCode, RetryableCode, SealError, SealStage};
 
@@ -72,23 +72,18 @@ pub(crate) fn map_backend_error(err: crate::api::BackendError) -> SealError {
     }
 }
 
-/// Request one prehashed signature from the backend and verify it against
-/// the signer certificate before any embedding (§4 seam rules).
+/// Request one signature over a revision's signed attributes from the
+/// backend and verify it against the signer certificate before any
+/// embedding (§4 seam rules).
 async fn request_signature(
     ctx: &SealContext<'_>,
     identity: &SigningIdentity,
-    sub_op_id: String,
+    request: SignRevisionRequest,
     signing_input: &[u8],
 ) -> Result<Vec<u8>, SealError> {
-    let digest = cms::sha256(signing_input);
-    let request = SignDigestRequest {
-        operation_id: sub_op_id,
-        digest_algorithm: crate::api::DigestAlgorithm::Sha256,
-        digest,
-    };
     let signed = ctx
         .backend
-        .sign_digest(request)
+        .sign_revision(request)
         .await
         .map_err(map_backend_error)?;
     let bytes = match (identity.algorithm, signed) {
@@ -163,22 +158,73 @@ struct SignedCandidate {
     token: Option<tsp::ValidatedToken>,
 }
 
+/// The caller's revision whose hole holds `capacity` DER bytes, as a draft,
+/// with its index. Its hole must be all zeros after the prepared input,
+/// and its ByteRange must leave out exactly that hole.
+fn supplied_draft(
+    input: &[u8],
+    revisions: &[PreparedRevision<'_>],
+    capacity: usize,
+) -> Result<(u32, pdf::DraftRevision), SealError> {
+    let invalid = || SealError::Fatal {
+        stage: SealStage::PdfIncrementalUpdate,
+        code: FatalCode::PdfInvariantFailed,
+    };
+    let (id, revision) = (0u32..)
+        .zip(revisions)
+        .find(|(_, revision)| {
+            let [_, open, close, _] = revision.byte_range;
+            close.checked_sub(open) == Some(2 + 2 * capacity as u64)
+        })
+        .ok_or_else(invalid)?;
+    let bytes = [input, revision.suffix].concat();
+    let [start, open, close, rest] = revision.byte_range.map(|at| usize::try_from(at).ok());
+    let (open, close, rest) = (open.ok_or_else(invalid)?, close.ok_or_else(invalid)?, rest);
+    if start != Some(0)
+        || open < input.len()
+        || close.checked_add(rest.ok_or_else(invalid)?) != Some(bytes.len())
+        || bytes[open] != b'<'
+        || bytes[close - 1] != b'>'
+        || bytes[open + 1..close - 1].iter().any(|b| *b != b'0')
+    {
+        return Err(invalid());
+    }
+    Ok((
+        id,
+        pdf::DraftRevision {
+            bytes,
+            contents_gap: Some((open, close - 1)),
+            byte_range: Some(revision.byte_range),
+        },
+    ))
+}
+
 /// Build the signature revision at one capacity, returning `Ok(None)` when
 /// the CMS does not fit and the caller must rebuild at the next capacity.
+/// With `revisions`, the caller's revision of that capacity is signed and
+/// none is written here.
+#[allow(clippy::too_many_arguments)]
 async fn try_capacity(
     ctx: &SealContext<'_>,
     prepared: &pdf::PreparedInput,
+    revisions: &[PreparedRevision<'_>],
     operation_id: &str,
     input_sha: &Sha256Digest,
     identity: &SigningIdentity,
     target: PadesProfile,
     capacity: usize,
 ) -> Result<Option<SignedCandidate>, SealError> {
-    let kind = pdf::RevisionKind::Signature {
-        field_name: pdf::field_name_for(operation_id),
-        date_str: pdf::pdf_date(ctx.clock_ms),
+    let (revision_id, mut draft) = if revisions.is_empty() {
+        let kind = pdf::RevisionKind::Signature {
+            field_name: pdf::field_name_for(operation_id),
+            date_str: pdf::pdf_date(ctx.clock_ms),
+        };
+        let draft = pdf::append_revision(&prepared.bytes, &prepared.state, &kind, capacity)?;
+        (None, draft)
+    } else {
+        let (id, draft) = supplied_draft(&prepared.bytes, revisions, capacity)?;
+        (Some(id), draft)
     };
-    let mut draft = pdf::append_revision(&prepared.bytes, &prepared.state, &kind, capacity)?;
     let br = draft.byte_range.ok_or(SealError::Fatal {
         stage: SealStage::PdfIncrementalUpdate,
         code: FatalCode::PdfInvariantFailed,
@@ -191,8 +237,14 @@ async fn try_capacity(
         cms::attr_signing_cert_v2(&identity.signer_certificate_der, &issuer, &serial),
     ];
     let (wire, signing) = cms::assemble_signed_attrs(attrs);
-    let sub_id = sub_operation_id(operation_id, input_sha, "sign", capacity);
-    let signature = request_signature(ctx, identity, sub_id, &signing).await?;
+    let request = SignRevisionRequest {
+        operation_id: sub_operation_id(operation_id, input_sha, "sign", capacity),
+        revision_id,
+        byte_range: br,
+        signed_attributes_der: wire.clone(),
+        digest: cms::sha256(&signing),
+    };
+    let signature = request_signature(ctx, identity, request, &signing).await?;
     let mut unsigned = Vec::new();
     let mut token = None;
     if target >= PadesProfile::BaselineT {
@@ -270,10 +322,12 @@ async fn append_doc_timestamp(
 }
 
 /// Full profile assembly (§7). Always produces at least B-B or an error;
-/// higher profiles degrade with structured warnings.
+/// higher profiles degrade with structured warnings. With `revisions`, the
+/// ordinary signature goes into one of the caller's revisions.
 pub(crate) async fn assemble(
     ctx: &SealContext<'_>,
     prepared: &pdf::PreparedInput,
+    revisions: &[PreparedRevision<'_>],
     operation_id: &str,
     target: PadesProfile,
 ) -> Result<AssemblyOutcome, SealError> {
@@ -291,6 +345,7 @@ pub(crate) async fn assemble(
         candidate = try_capacity(
             ctx,
             prepared,
+            revisions,
             operation_id,
             &input_sha,
             &identity,

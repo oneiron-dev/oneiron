@@ -5,8 +5,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::api::{
-    PdfSealEngine, SealBackend, SealClock, SealConfig, SealFetcher, SealRequest, SealedPdf,
-    VerifyReport,
+    PdfSealEngine, PreparedRevision, SealBackend, SealClock, SealConfig, SealFetcher, SealRequest,
+    SealedPdf, VerifyReport,
 };
 use crate::error::{FatalCode, SealError, SealStage};
 
@@ -81,14 +81,36 @@ impl NativeSealEngine {
             clock,
         })
     }
-}
 
-#[async_trait]
-impl PdfSealEngine for NativeSealEngine {
-    async fn seal_pdf(
+    /// [`PdfSealEngine::seal_pdf`], signing in a signature revision the
+    /// caller wrote rather than one written here: one per rung of the
+    /// contents ladder, each `input_bytes` followed by its suffix. The
+    /// engine builds the CMS for the one that fits, and any validation
+    /// data or document timestamp after it.
+    ///
+    /// # Errors
+    /// As [`PdfSealEngine::seal_pdf`]; a revision whose hole or ByteRange
+    /// is not the ladder's is fatal.
+    pub async fn seal_pdf_in_revisions(
         &self,
         input_bytes: &[u8],
         seal_request: &SealRequest,
+        revisions: &[PreparedRevision<'_>],
+    ) -> Result<SealedPdf, SealError> {
+        if revisions.is_empty() {
+            return Err(SealError::Fatal {
+                stage: SealStage::InputValidation,
+                code: FatalCode::InvalidConfiguration,
+            });
+        }
+        self.seal(input_bytes, seal_request, revisions).await
+    }
+
+    async fn seal(
+        &self,
+        input_bytes: &[u8],
+        seal_request: &SealRequest,
+        revisions: &[PreparedRevision<'_>],
     ) -> Result<SealedPdf, SealError> {
         // operation_id is validated before any signing or fetch work (§4).
         seal_request.validate_operation_id()?;
@@ -113,6 +135,7 @@ impl PdfSealEngine for NativeSealEngine {
         let outcome = profile::assemble(
             &ctx,
             &prepared,
+            revisions,
             &seal_request.operation_id,
             seal_request.target_profile,
         )
@@ -131,6 +154,17 @@ impl PdfSealEngine for NativeSealEngine {
             warnings: outcome.warnings,
             self_verify_report: report,
         })
+    }
+}
+
+#[async_trait]
+impl PdfSealEngine for NativeSealEngine {
+    async fn seal_pdf(
+        &self,
+        input_bytes: &[u8],
+        seal_request: &SealRequest,
+    ) -> Result<SealedPdf, SealError> {
+        self.seal(input_bytes, seal_request, &[]).await
     }
 
     fn verify_sealed_pdf(&self, sealed_bytes: &[u8]) -> Result<VerifyReport, SealError> {

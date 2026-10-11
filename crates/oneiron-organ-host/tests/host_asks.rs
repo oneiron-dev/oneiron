@@ -3,13 +3,14 @@
 //! only an ask the grant names and the caller answers gets an answer, a
 //! refusal leaves the call to the organ, an ask runs inside its call's
 //! deadline, a flooding organ is cut off, a handler cannot nest a call, a
-//! fetch reaches only its allowlist, and an organ built for 1.0 still runs.
+//! fetch reaches only its allowlist and redirects a POST as RFC 9110 says,
+//! and an organ built for 1.0 still runs.
 //! An answer goes only to a call still in flight under a live grant, counts
 //! its value against the call's answer bytes, and every ask stays on record
 //! however the call ends.
 #![cfg(unix)]
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, mpsc};
@@ -22,8 +23,8 @@ use oneiron_organ_host::{
     HostConfig, HostError, OrganCall, OrganHost, OrganSpec, Unanswered,
 };
 use oneiron_organ_protocol::{
-    ASK_NET_FETCH, AskCode, AskRefusal, FetchAsk, FetchMethod, Hash32, PROTOCOL, ProtocolVersion,
-    touch_fold,
+    ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FetchAsk, FetchMethod, Hash32, PROTOCOL,
+    ProtocolVersion, touch_fold,
 };
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
@@ -643,6 +644,114 @@ fn a_fetch_that_drips_its_body_ends_at_the_deadline() {
             .any(|path| path == "/drip:closed")
     });
     assert!(closed, "{:?}", served.lock().expect("log"));
+}
+
+/// A one-thread HTTP server on loopback: `/301`, `/302`, `/303`, `/307` and
+/// `/308` redirect to `/landed` with that status; any other path answers
+/// `hello`. Returns its port and each request as `METHOD path content-type
+/// body`.
+fn serve_redirects() -> (u16, std::sync::Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let log = std::sync::Arc::clone(&asked);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut first = String::new();
+            if reader.read_line(&mut first).is_err() {
+                continue;
+            }
+            let (mut content_type, mut len) = ("-".to_owned(), 0);
+            loop {
+                let mut header = String::new();
+                match reader.read_line(&mut header) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) if header == "\r\n" => break,
+                    Ok(_) => {}
+                }
+                let (name, value) = header.split_once(':').unwrap_or_default();
+                match name.to_ascii_lowercase().as_str() {
+                    "content-type" => value.trim().clone_into(&mut content_type),
+                    "content-length" => len = value.trim().parse().unwrap_or_default(),
+                    _ => {}
+                }
+            }
+            let mut body = vec![0; len];
+            if reader.read_exact(&mut body).is_err() {
+                continue;
+            }
+            let mut words = first.split_whitespace();
+            let (method, path) = (
+                words.next().unwrap_or_default(),
+                words.next().unwrap_or_default(),
+            );
+            log.lock().expect("log").push(format!(
+                "{method} {path} {content_type} {}",
+                String::from_utf8_lossy(&body)
+            ));
+            let response = match path.trim_start_matches('/').parse::<u16>() {
+                Ok(code) => format!(
+                    "HTTP/1.1 {code} Moved\r\nLocation: /landed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                ),
+                Err(_) => "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".into(),
+            };
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    (port, asked)
+}
+
+#[test]
+fn a_redirected_post_keeps_its_body_only_on_307_and_308() {
+    // CodeRabbit (#1378): every hop re-sent the POST and its body. A
+    // timestamp request is the first POST an organ sends.
+    let (_dir, vault) = vault();
+    let (port, asked) = serve_redirects();
+    let host = fetching(port);
+    let asks = AskHandlers::none().with(ASK_NET_FETCH, &GuardedFetch);
+    for (code, then) in [
+        (301, "GET /landed - "),
+        (302, "GET /landed - "),
+        (303, "GET /landed - "),
+        (307, "POST /landed application/timestamp-query query"),
+        (308, "POST /landed application/timestamp-query query"),
+    ] {
+        asked.lock().expect("log").clear();
+        let bytes = rmp_serde::to_vec_named(&FetchAsk {
+            purpose: "test".into(),
+            method: FetchMethod::Post,
+            url: format!("http://127.0.0.1:{port}/{code}"),
+            content_type: Some("application/timestamp-query".into()),
+            body: Some(ByteBuf::from(b"query".to_vec())),
+        })
+        .expect("fetch encodes");
+        let post = rmpv::decode::read_value(&mut bytes.as_slice()).expect("fetch value");
+        let outcome = host
+            .call_with(
+                &vault,
+                ask_call(ASK_NET_FETCH, post, 1, Duration::from_secs(10)),
+                Vec::new(),
+                &asks,
+            )
+            .expect("the organ goes on");
+        let line = &lines(&outcome.report)[0];
+        let answer = field(line, "answered").expect("answered");
+        assert_eq!(
+            field(answer, "status").and_then(rmpv::Value::as_u64),
+            Some(200),
+            "{code}"
+        );
+        assert_eq!(
+            *asked.lock().expect("log"),
+            vec![
+                format!("POST /{code} application/timestamp-query query"),
+                then.to_owned()
+            ],
+            "{code}"
+        );
+    }
 }
 
 #[test]

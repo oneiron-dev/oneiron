@@ -407,6 +407,125 @@ fn dts_revision_registers_a_signature_field_in_acroform() {
     );
 }
 
+/// Sol R12 on #1379: the writer re-emitted the catalog with six decimal
+/// places, so a DSS revision turned a catalog value of 0.0000004 into 0,
+/// and the verifier, comparing catalogs, refused the organ's own B-LT seal.
+/// What the signature and DSS revisions re-emit reads back as it was.
+#[test]
+fn revisions_keep_the_numbers_of_the_catalog_they_re_emit() {
+    let mut intent = Dictionary::new();
+    intent.set("S", Object::Name(b"GTS_PDFA1".to_vec()));
+    intent.set("VendorThreshold", Object::Real(0.000_000_4));
+    let media = Object::Array(vec![
+        Object::Integer(0),
+        Object::Integer(0),
+        Object::Real(200.125),
+        Object::Integer(200),
+    ]);
+    let (mut doc, _) = doc_with_page(
+        &[(b"MediaBox", media)],
+        &[(
+            b"OutputIntents",
+            Object::Array(vec![Object::Dictionary(intent)]),
+        )],
+    );
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("save");
+    let signed = sign_revision(&prepared(&bytes), 1024);
+    let state =
+        reparse_revision(&signed.bytes, &SealResourceLimits::default()).expect("reparse signed");
+    let dss_obj = state.max_obj + 1;
+    let kind = RevisionKind::Dss {
+        material_objects: vec![(dss_obj, b"<< /Type /DSS >>".to_vec())],
+        dss_obj,
+    };
+    let dss = append_revision(&signed.bytes, &state, &kind, 0).expect("dss revision");
+    for out in [&signed.bytes, &dss.bytes] {
+        let doc = Document::load_mem(out).expect("reload");
+        let catalog = doc.catalog().expect("catalog");
+        let intents = catalog
+            .get(b"OutputIntents")
+            .and_then(Object::as_array)
+            .expect("intents");
+        let threshold = intents[0]
+            .as_dict()
+            .and_then(|intent| intent.get(b"VendorThreshold"))
+            .and_then(Object::as_float)
+            .expect("threshold");
+        assert_eq!(threshold.to_bits(), 0.000_000_4_f32.to_bits());
+    }
+}
+
+/// A classic-xref PDF from its object bodies, numbered from 1; object 1 is
+/// the catalog. lopdf writes 1.0 as `1`, so a real with no fraction needs
+/// hand-written bytes.
+fn classic(objects: &[&str]) -> Vec<u8> {
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (number, body) in (1..).zip(objects) {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{number} 0 obj\n{body}\nendobj\n").as_bytes());
+    }
+    let size = objects.len() + 1;
+    let xref = out.len();
+    out.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+    for offset in offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    out
+}
+
+/// Values of every kind a writer re-emits, in PDF syntax, at their edges:
+/// reals without a fraction, tiny, negative zero and past f32 (lopdf reads
+/// those as infinities), literal strings with escapes and raw bytes, an
+/// empty literal and a hex string, a name with an escaped byte, nested empty
+/// containers, and the i64 limits.
+const EDGES: &str = r"/One 1.0 /Tiny 0.0000004 /NegZero -0.0
+    /Big 1000000000000000000000000000000000000000000.0
+    /Small -1000000000000000000000000000000000000000000.0
+    /Label (a\(b\)\\c\r\n\t\003 \377) /Empty () /Hex <00FF> /Spaced /A#20b
+    /Nested [<< >> [] (x) <>] /Max 9223372036854775807 /Min -9223372036854775808";
+
+/// Sol R12-R14 on #1379: with an indirect AcroForm the signature leaves the
+/// catalog alone, so the DSS revision is the first to re-emit it. The
+/// verifier compares the catalogs, `/DSS` aside, by value and type, and
+/// refused the organ's own B-LT seal when a real was rounded, written
+/// without a point or as `inf`, or a literal string came back as hex.
+#[test]
+fn a_dss_revision_re_emits_the_catalog_as_it_was() {
+    let catalog = format!("<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R {EDGES} >>");
+    let pdf = classic(&[
+        &catalog,
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+        "<< /Fields [] >>",
+    ]);
+    let signed = sign_revision(&prepared(&pdf), 1024);
+    let state =
+        reparse_revision(&signed.bytes, &SealResourceLimits::default()).expect("reparse signed");
+    let dss_obj = state.max_obj + 1;
+    let kind = RevisionKind::Dss {
+        material_objects: vec![(dss_obj, b"<< /Type /DSS >>".to_vec())],
+        dss_obj,
+    };
+    let dss = append_revision(&signed.bytes, &state, &kind, 0).expect("dss revision");
+    let catalog_of = |bytes: &[u8]| {
+        let doc = Document::load_mem(bytes).expect("the PDF reads");
+        doc.catalog().expect("catalog").clone()
+    };
+    let before = catalog_of(&pdf);
+    assert_eq!(catalog_of(&signed.bytes), before);
+    let mut after = catalog_of(&dss.bytes);
+    assert!(
+        after.remove(b"DSS").is_some(),
+        "the DSS revision's own catalog"
+    );
+    assert_eq!(after, before);
+}
+
 #[test]
 fn direct_acroform_dict_fields_survive_signing() {
     let mut doc = Document::with_version("1.4");
