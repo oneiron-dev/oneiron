@@ -50734,13 +50734,23 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/admitted.rs",
+     "purpose": "A remote embedder's requests under run admission (ARCH-0053 `#run-admission`)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -53095,7 +53105,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "embedder": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53249,9 +53259,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 8,
+   "over_bar": 9,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 325,
+   "source_files": 326,
    "test_files": 135
   },
   "oneiron-uniffi": {
