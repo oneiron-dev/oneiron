@@ -591,6 +591,9 @@ pub struct MemoryItem {
     pub facet: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f32>,
+    /// For a TURN or MESSAGE item, the conversation it is in (32 hex), when
+    /// the reader may read that conversation.
+    pub conversation_id: Option<String>,
 }
 
 /// What the requested scope excluded.
