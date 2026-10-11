@@ -278,7 +278,10 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
 /// only the TASK born there.
 #[test]
 fn a_room_reads_no_task_born_outside_its_worlds() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    // The shipped default policy, under which a writer's create mints its
+    // TASK rather than parking a proposal; the room's grants extend it.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let fiction = id(0x72);
     let writer = id(0x74);
