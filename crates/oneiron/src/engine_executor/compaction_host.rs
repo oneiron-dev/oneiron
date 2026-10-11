@@ -122,7 +122,7 @@ impl EngineNativeExecutor<'_> {
             if limit.is_some_and(|limit| sealed > limit) {
                 if window.is_empty() {
                     return Err(crate::Error::InvalidConfig(
-                        "one step's output is larger than the compaction backend takes".into(),
+                        "the compaction backend cannot take the next step's output whole".into(),
                     )
                     .into());
                 }

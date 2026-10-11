@@ -28,7 +28,7 @@ use oneiron::{BudgetGuard, CompactionOwnership, MemoryProfile, Vault, WriteActor
 
 use super::CHAT_ROLE;
 use super::status::{CompactionState, CompactionStatus, StatusCell};
-use crate::config::models::{ModelsConfig, role_key};
+use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::mcp::McpQuickJsProvider;
 use crate::models::{ModelRuntime, RoleRefusal, settle_answered};
 
@@ -115,9 +115,6 @@ impl CodeModeCompaction {
                 return Self::Off(CompactionOff::NoPrompt);
             }
         };
-        let Some(ladder_context) = role_contexts(models, role).min() else {
-            return Self::Off(CompactionOff::NoSeat);
-        };
         let backend = Arc::new(ServedCompactionBackend {
             vault: Arc::clone(vault),
             models: Arc::clone(runtime),
@@ -127,12 +124,7 @@ impl CodeModeCompaction {
             locality: seat.locality,
             prompt_tokens: oneiron::count_context_pack_tokens(&prompt) as u64,
             prompt,
-            contexts: models
-                .providers
-                .iter()
-                .map(|(name, provider)| (name.clone(), provider.context_tokens))
-                .collect(),
-            ladder_context,
+            allowances: input_allowances(models, runtime),
             handle: tokio::runtime::Handle::current(),
         });
         let mut registry = CompactionBackendRegistry::new();
@@ -201,19 +193,15 @@ impl CodeModeCompaction {
     }
 }
 
-/// Each rung's whole context on `role`.
-fn role_contexts(models: &ModelsConfig, role: ModelRole) -> impl Iterator<Item = u64> + '_ {
-    models
-        .roles
-        .get(&role)
-        .into_iter()
-        .flatten()
-        .filter_map(|rung| models.providers.get(&rung.model.provider))
-        .map(|provider| provider.context_tokens)
+/// The prompt a rung prepends to every call it serves.
+fn rung_prompt_tokens(rung: &Rung) -> u64 {
+    rung.prompt.as_deref().map_or(0, |prompt| {
+        oneiron::count_context_pack_tokens(prompt) as u64
+    })
 }
 
 /// The input a call on `role` may fill on its smallest rung: its context
-/// less the output its provider reserves.
+/// less the output its provider reserves and the prompt the rung prepends.
 fn input_tokens(models: &ModelsConfig, role: ModelRole) -> Option<u64> {
     models
         .roles
@@ -225,9 +213,40 @@ fn input_tokens(models: &ModelsConfig, role: ModelRole) -> Option<u64> {
                 .max_output_tokens
                 .filter(|output| *output < provider.context_tokens)
                 .unwrap_or(0);
-            Some(provider.context_tokens - output)
+            Some((provider.context_tokens - output).saturating_sub(rung_prompt_tokens(rung)))
         })
         .min()
+}
+
+/// What one call may fill with input and output on each model id a route
+/// can name: a rung's model, its provider's context less the prompt the
+/// rung prepends (the smallest where several rungs serve it); a seat, its
+/// ladder's smallest.
+fn input_allowances(models: &ModelsConfig, runtime: &ModelRuntime) -> BTreeMap<ModelId, u64> {
+    let mut allowances = BTreeMap::new();
+    for (role, rungs) in &models.roles {
+        let mut ladder: Option<u64> = None;
+        for rung in rungs {
+            let Some(provider) = models.providers.get(&rung.model.provider) else {
+                continue;
+            };
+            let Ok(model) = rung.model.engine_id(&provider.revision) else {
+                continue;
+            };
+            let room = provider
+                .context_tokens
+                .saturating_sub(rung_prompt_tokens(rung));
+            allowances
+                .entry(model)
+                .and_modify(|held: &mut u64| *held = (*held).min(room))
+                .or_insert(room);
+            ladder = Some(ladder.map_or(room, |held| held.min(room)));
+        }
+        if let (Some(seat), Some(room)) = (runtime.seat(*role), ladder) {
+            allowances.insert(seat.model.clone(), room);
+        }
+    }
+    allowances
 }
 
 /// Each pass runs on its own thread; the run never waits for it.
@@ -258,24 +277,13 @@ struct ServedCompactionBackend {
     locality: ModelLocality,
     prompt: String,
     prompt_tokens: u64,
-    /// Each configured provider's context, by provider name.
-    contexts: BTreeMap<String, u64>,
-    /// The smallest context on the role's ladder, which a call may fall to.
-    ladder_context: u64,
+    /// See [`input_allowances`]. A model id not here is trusted with no
+    /// window.
+    allowances: BTreeMap<ModelId, u64>,
     handle: tokio::runtime::Handle,
 }
 
 impl ServedCompactionBackend {
-    /// The context a pass on `model` may fill: its provider's, and never more
-    /// than the ladder's smallest rung.
-    fn context_for(&self, model: &ModelId) -> u64 {
-        self.contexts
-            .get(model.provider())
-            .map_or(self.ladder_context, |context| {
-                (*context).min(self.ladder_context)
-            })
-    }
-
     fn llm_request(
         &self,
         request: &CompactionRequest,
@@ -333,11 +341,12 @@ impl CompactionBackend for ServedCompactionBackend {
 
     /// Read on the vault's live route, as a pass is admitted.
     fn window_token_limit(&self, summary_token_budget: u64) -> Option<u64> {
-        let routed = self
+        let context = self
             .models
             .seat(self.role)
-            .and_then(|seat| self.models.route_role(&self.vault, self.role, seat).ok());
-        let context = routed.map_or(self.ladder_context, |route| self.context_for(&route.model));
+            .and_then(|seat| self.models.route_role(&self.vault, self.role, seat).ok())
+            .and_then(|route| self.allowances.get(&route.model).copied())
+            .unwrap_or(0);
         let room = context
             .saturating_sub(output_tokens(summary_token_budget))
             .saturating_sub(self.prompt_tokens);
@@ -363,7 +372,12 @@ impl CompactionBackend for ServedCompactionBackend {
                 refused(suppression, refusal.to_string())
             })?;
         // The admitted model, not the configured ladder, must hold the call.
-        let context = self.context_for(&call.request.model);
+        let Some(&context) = self.allowances.get(&call.request.model) else {
+            return Err(refused(
+                CompactionSuppression::TurnScoped { check: None },
+                format!("no context is known for {}", call.request.model),
+            ));
+        };
         let input = call
             .request
             .messages

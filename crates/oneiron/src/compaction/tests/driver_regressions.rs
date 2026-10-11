@@ -407,3 +407,53 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
     );
     Ok(())
 }
+
+/// agent-runtime-v1 §d7: a host-numbered window cut short of its watermark
+/// (a backend that takes less) completes only through its last step, so the
+/// same position crosses again and the rest compacts: a run parked at its
+/// window resumes with no new step.
+#[test]
+fn a_window_cut_short_of_its_watermark_leaves_the_rest_to_compact() -> Result<()> {
+    use crate::compaction::{CompactionWatermark, PriorEpoch};
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x60);
+    let mut driver = engine_driver(1_000);
+    let position = CompactionWatermark {
+        learned_at: 0,
+        turn_id: None,
+        turn: Some(5),
+    };
+    let begins = |driver: &mut CompactionDriver| {
+        matches!(
+            driver.observe_positioned(u64::MAX, position),
+            CompactionDirective::Begin { .. }
+        )
+    };
+    assert!(begins(&mut driver));
+    let cut = host_window(&vault, 0x80, 0, 2);
+    let first = driver.request_for_log(&vault, &session, cut, Vec::new(), Vec::new(), None)?;
+    assert_eq!(first.watermark.turn, Some(1));
+    let product = driver
+        .backend()
+        .compact(&first, None)
+        .expect("the fixture backend answers");
+    driver.integrate(
+        &vault,
+        &session,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&first, product),
+        &[],
+    )?;
+    assert!(begins(&mut driver), "the same position compacts the rest");
+    let rest = driver.request_for_log(
+        &vault,
+        &session,
+        host_window(&vault, 0x90, 2, 4),
+        Vec::new(),
+        Vec::new(),
+        Some(PriorEpoch::new(1, 1)),
+    )?;
+    assert_eq!(rest.watermark.turn, Some(5));
+    Ok(())
+}

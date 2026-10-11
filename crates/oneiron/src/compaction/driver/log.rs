@@ -73,6 +73,15 @@ impl CompactionDriver {
                 "compaction window names more sources than one summary may derive from",
             ));
         }
+        // A window the host cut short of the watermark (a backend that takes
+        // less) completes only through its last step, so the same position
+        // crosses again for the rest.
+        if let Some(last) = window.last().map(|message| message.turn)
+            && last < stop
+            && let CompactionState::Compacting { watermark, .. } = &mut self.state
+        {
+            watermark.turn = Some(last);
+        }
         let mut seen = std::collections::BTreeSet::new();
         let sources = sources.into_iter().filter(|id| seen.insert(*id)).collect();
         self.seal_request(
