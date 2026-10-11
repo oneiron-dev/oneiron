@@ -275,7 +275,12 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
         assert!(folded.roster[&next_key].revoked);
         assert!(!folded.roster[&host.public_key()].revoked);
     }
-    store(&target, &floor);
+    // The append door refuses the retired key's row (engine-crates-03).
+    assert!(
+        target
+            .put_authority_log_entry(&floor, TimeRange { start: 5, end: 5 }, 5)
+            .is_err()
+    );
     let after_floor = target.authority_fold().unwrap();
     assert!(!after_floor.valid_entries.contains(&floor_hash));
     assert!(

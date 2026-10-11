@@ -92,9 +92,9 @@ impl Retirements {
 ///   or below the handoff's sequence. When none qualifies (two that each miss
 ///   the other, or a fork below the handoff's sequence), all of them stand
 ///   and refuse one another: the fold fails closed rather than pick a root.
-/// - Across signers, a handoff that stands on a key another standing handoff
-///   retired does not stand, unless that one stands on a key it retired: a
-///   key a rotation superseded cannot fork a ReRoot that displaces the
+/// - Across signers, a handoff signed by a key another standing handoff
+///   retired does not stand, unless that one is signed by a key it retired:
+///   a key a rotation superseded cannot fork a ReRoot that displaces the
 ///   rotation's successor. Two that fence each other both stand, and fail
 ///   closed.
 pub(super) fn reject_retired_signer_forks(
@@ -147,31 +147,59 @@ pub(super) fn reject_retired_signer_forks(
         }
     }
 
-    let candidates: Vec<(AuthorityEntryHash, Fence)> = standing
-        .iter()
-        .map(|handoff| {
-            (
-                *handoff,
-                fence_of(handoff, states, entries, ancestors, &handoffs),
-            )
-        })
-        .collect();
-    let fenced_by =
-        |hash: &AuthorityEntryHash, fence: &Fence| fence.excludes(hash, entries, ancestors);
-    let keep: Vec<bool> = candidates
-        .iter()
-        .map(|(handoff, own)| {
-            !candidates.iter().any(|(other, fence)| {
-                other != handoff && fenced_by(handoff, fence) && !fenced_by(other, own)
+    // A handoff that falls only because an entry in its ancestry stands on a
+    // retired key (a fork's descendant, say) retires nothing: its fence could
+    // name the live root's keys it merged. Drop such handoffs and settle again;
+    // if the rounds never settle, every standing handoff keeps its fence.
+    let kept_fences = |considered: &[AuthorityEntryHash]| -> Vec<Fence> {
+        let candidates: Vec<(AuthorityEntryHash, Fence)> = considered
+            .iter()
+            .map(|handoff| (*handoff, fence_of(handoff, states, entries, ancestors, &handoffs)))
+            .collect();
+        let fenced_by =
+            |hash: &AuthorityEntryHash, fence: &Fence| fence.signed_outside(hash, entries);
+        let keep: Vec<bool> = candidates
+            .iter()
+            .map(|(handoff, own)| {
+                !candidates.iter().any(|(other, fence)| {
+                    other != handoff && fenced_by(handoff, fence) && !fenced_by(other, own)
+                })
             })
-        })
-        .collect();
-    let fences = candidates
-        .into_iter()
-        .zip(keep)
-        .filter_map(|((_, fence), keep)| keep.then_some(fence))
-        .collect();
-    let retirements = Retirements { fences };
+            .collect();
+        candidates
+            .into_iter()
+            .zip(keep)
+            .filter_map(|((_, fence), keep)| keep.then_some(fence))
+            .collect()
+    };
+    let mut considered = standing.clone();
+    let mut settled = None;
+    for _ in 0..=standing.len() {
+        let fences = kept_fences(&considered);
+        let direct = |hash: &AuthorityEntryHash| {
+            fences
+                .iter()
+                .any(|fence| fence.signed_outside(hash, entries))
+        };
+        let next: Vec<AuthorityEntryHash> = standing
+            .iter()
+            .filter(|handoff| {
+                direct(handoff)
+                    || !ancestors
+                        .get(*handoff)
+                        .is_some_and(|past| past.iter().any(direct))
+            })
+            .copied()
+            .collect();
+        if next == considered {
+            settled = Some(fences);
+            break;
+        }
+        considered = next;
+    }
+    let retirements = Retirements {
+        fences: settled.unwrap_or_else(|| kept_fences(&standing)),
+    };
 
     let rejected: BTreeSet<AuthorityEntryHash> = states
         .keys()
@@ -201,7 +229,9 @@ pub(super) fn reject_retired_signer_forks(
 }
 
 /// What `handoff` retires: every key in its parents' rosters, live or
-/// revoked, other than the key it hands the vault to.
+/// revoked, other than the key it hands the vault to and any key an earlier
+/// handoff in its ancestry already retired (that one fences it, and stands or
+/// falls on its own).
 fn fence_of(
     handoff: &AuthorityEntryHash,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
@@ -210,16 +240,30 @@ fn fence_of(
     handoffs: &[AuthorityEntryHash],
 ) -> Fence {
     let entry = &entries[handoff];
+    let held = |handoff: &AuthorityEntryHash| -> BTreeSet<&AuthorityKey> {
+        entries[handoff]
+            .parent_hashes
+            .iter()
+            .filter_map(|parent| states.get(parent))
+            .flat_map(|state| state.roster.keys())
+            .collect()
+    };
     let successor = match &entry.op {
         AuthorityOp::ReRoot { new_device } => Some(&new_device.key),
         _ => None,
     };
-    let keys = entry
-        .parent_hashes
+    let earlier: BTreeSet<&AuthorityKey> = handoffs
         .iter()
-        .filter_map(|parent| states.get(parent))
-        .flat_map(|state| state.roster.keys())
-        .filter(|key| Some(*key) != successor)
+        .filter(|earlier| {
+            ancestors
+                .get(handoff)
+                .is_some_and(|past| past.contains(*earlier))
+        })
+        .flat_map(held)
+        .collect();
+    let keys = held(handoff)
+        .into_iter()
+        .filter(|key| Some(*key) != successor && !earlier.contains(key))
         .cloned()
         .collect();
     let mut line = BTreeSet::from([*handoff]);
