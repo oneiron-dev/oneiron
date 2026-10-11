@@ -44,6 +44,12 @@ pub(crate) enum SnapshotMergeRow {
     },
 }
 
+/// [`OverlaySnapshot::staged_rows`].
+pub(crate) struct StagedRows {
+    pub(crate) clear_base: bool,
+    pub(crate) rows: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+}
+
 pub(crate) struct SnapshotMergePlan {
     pub(crate) clear_base: bool,
     pub(crate) deleted_keys: BTreeSet<Vec<u8>>,
@@ -60,6 +66,30 @@ impl OverlaySnapshot {
                 None => SnapshotLookup::Passthrough,
             },
             KeyspaceState::DupSort { .. } => SnapshotLookup::Passthrough,
+        }
+    }
+
+    /// What this snapshot stages in a single-valued keyspace: whether it
+    /// cleared base, and each row, `None` for a tombstone over base.
+    pub(crate) fn staged_rows(&self, keyspace: OverlayKeyspace) -> StagedRows {
+        match self.state.keyspaces[keyspace.slot()].as_ref() {
+            KeyspaceState::Single { clear_base, rows } => StagedRows {
+                clear_base: *clear_base,
+                rows: rows
+                    .iter()
+                    .map(|(key, value)| {
+                        let value = match value {
+                            OverlayValue::Present(value) => Some(value.clone()),
+                            OverlayValue::Tombstone => None,
+                        };
+                        (key.clone(), value)
+                    })
+                    .collect(),
+            },
+            KeyspaceState::DupSort { clear_base, .. } => StagedRows {
+                clear_base: *clear_base,
+                rows: Vec::new(),
+            },
         }
     }
 

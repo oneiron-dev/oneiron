@@ -495,11 +495,17 @@ macro_rules! manifest_dbs {
                 self.room.is_some()
             }
 
-            /// Whether the room holds a live row of its own, which a read here
-            /// may name. Base holds no reference to one (ARCH-0052: the taint
-            /// guard covers references).
-            pub(crate) fn holds_room_rows(&self) -> crate::Result<bool> {
-                self.room.map_or(Ok(false), |room| room.has_entities())
+            /// Whether the room stages anything of its own (a row, a vector,
+            /// a posting, a deletion), which a read here may reflect. Base
+            /// holds nothing derived from one (ARCH-0052: the taint guard
+            /// covers references).
+            pub(crate) fn holds_room_rows(&self) -> bool {
+                self.room.is_some_and(|room| room.stages_anything())
+            }
+
+            /// Whether the room holds `id` as a row of its own.
+            pub(crate) fn room_holds(&self, id: &crate::EntityId) -> crate::Result<bool> {
+                self.room.map_or(Ok(false), |room| room.contains_entity(id))
             }
 
             /// The vault's canonical store, for authority a content reader

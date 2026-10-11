@@ -52,14 +52,20 @@ pub(super) struct RetrievalTxnOutput {
 }
 
 /// Pending-embedding markers are base rows only (K6: a room keeps no `pe:`
-/// keyspace), so they are read on the vault's own store.
+/// keyspace), so they are read on the vault's own store. A row the room
+/// `read` holds is the room's, embedded inline there: a base marker under
+/// its id names a body the room replaced, and no job may name it.
 pub(super) fn pending_vectors_for_scores(
     store: &Store,
+    read: &crate::store::StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     scores: &[ScoredEntity],
 ) -> Result<Vec<PendingVectorEmbedding>> {
     let mut pending = Vec::new();
     for scored in scores {
+        if read.room_holds(&scored.id)? {
+            continue;
+        }
         if let Some(token) = store.pending_embedding_token(rtxn, &scored.id)? {
             pending.push(PendingVectorEmbedding {
                 id: scored.id,

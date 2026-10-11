@@ -16,22 +16,67 @@ impl Vault {
     /// Actor-bound diary ids are evaluated by the scoped query in this read
     /// transaction. The ownerless RetrievalIndex trait always passes None.
     /// `store` is what the search reads: the vault's own accessors, or a
-    /// room's view, whose staged vectors and graph nodes compose with base.
+    /// room's view.
+    ///
+    /// A room stages whole HNSW neighbour lists over base's, and those hide
+    /// the nodes base links in later (on record, base keeps growing). So the
+    /// walk always runs on base's own graph, and the vectors a room stages are
+    /// scored exactly beside it: a room holds few. A hit whose vector the room
+    /// replaced or removed takes the room's.
     pub(crate) fn scoped_vector_search_quality_in_txn(
         &self,
-        store: &impl crate::store::ManifestDbs,
+        store: &crate::store::StoreRead<'_>,
         txn: &RoTxn<'_>,
         query: &[f32],
         limit: usize,
         skip_rescore: bool,
         private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
     ) -> Result<Vec<ScoredEntity>> {
-        let population = crate::hnsw::hnsw_entity_count(store, txn)?;
+        let staged = store
+            .vectors
+            .staged_rows()
+            .map(|staged| self.staged_vectors(staged))
+            .transpose()?;
+        let base = store.base();
+        let population = crate::hnsw::hnsw_entity_count(base, txn)?;
         // A nonzero request still validates an apparently empty index.
         let mut requested = limit.min(population.max(1));
         loop {
-            let rows =
-                crate::hnsw::hnsw_search(store, &self.config, txn, query, requested, skip_rescore)?;
+            let mut rows = match &staged {
+                Some(staged) if staged.clear_base => Vec::new(),
+                _ => crate::hnsw::hnsw_search(
+                    base,
+                    &self.config,
+                    txn,
+                    query,
+                    requested,
+                    skip_rescore,
+                )?,
+            };
+            if let Some(staged) = &staged {
+                rows.retain(|row| !staged.vectors.contains_key(&row.id));
+                for (id, vector) in &staged.vectors {
+                    if let Some(vector) = vector
+                        && !crate::vault_cleanup::is_archived_in_txn(store, txn, id)?
+                    {
+                        rows.push(ScoredEntity {
+                            id: *id,
+                            score: crate::hnsw::exact_score(
+                                &self.config,
+                                query,
+                                vector,
+                                skip_rescore,
+                            )?,
+                        });
+                    }
+                }
+                rows.sort_unstable_by(|left, right| {
+                    right
+                        .score
+                        .total_cmp(&left.score)
+                        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
+                });
+            }
             let mut visible = filter_results(store, txn, rows, private_note_ids)?;
             visible.truncate(limit);
             if visible.len() >= limit || requested >= population {
@@ -42,7 +87,31 @@ impl Vault {
     }
 }
 
+/// The vectors a room stages, by id: `None` where it removed base's.
+struct StagedVectors {
+    clear_base: bool,
+    vectors: std::collections::HashMap<EntityId, Option<Vec<f32>>>,
+}
+
 impl Vault {
+    fn staged_vectors(&self, staged: crate::session_overlay::StagedRows) -> Result<StagedVectors> {
+        let mut vectors = std::collections::HashMap::with_capacity(staged.rows.len());
+        for (key, value) in staged.rows {
+            let id = <[u8; ENTITY_ID_LEN]>::try_from(key.as_slice())
+                .ok()
+                .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+                .ok_or(Error::CorruptedIndex("staged vector key"))?;
+            let vector = value
+                .map(|raw| crate::le_bytes_to_f32_vec(&raw, self.config.dimensions))
+                .transpose()?;
+            vectors.insert(id, vector);
+        }
+        Ok(StagedVectors {
+            clear_base: staged.clear_base,
+            vectors,
+        })
+    }
+
     /// [`RetrievalIndex::port_retrieval_vector_get`] read through `store`,
     /// a room's view included.
     pub(crate) fn vector_in_txn(
@@ -74,7 +143,14 @@ impl RetrievalIndex for Vault {
         limit: usize,
         skip_rescore: bool,
     ) -> Result<Vec<ScoredEntity>> {
-        self.scoped_vector_search_quality_in_txn(&self.store, txn, query, limit, skip_rescore, None)
+        self.scoped_vector_search_quality_in_txn(
+            &self.store.read(),
+            txn,
+            query,
+            limit,
+            skip_rescore,
+            None,
+        )
     }
 
     fn port_retrieval_phonetic_upsert(

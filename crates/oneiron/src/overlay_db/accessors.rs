@@ -71,6 +71,13 @@ impl OverlayDb {
         Ok(Self::composed(self.base, overlay, snapshot, keyspace))
     }
 
+    /// What this accessor's room stages over base, from the snapshot its
+    /// reads compose; `None` for the vault's own accessor.
+    pub(crate) fn staged_rows(&self) -> Option<crate::session_overlay::StagedRows> {
+        let overlay = self.overlay.as_ref()?;
+        Some(overlay.snapshot.staged_rows(overlay.keyspace))
+    }
+
     pub(crate) fn get<'txn>(
         &self,
         txn: &'txn RoTxn<'_>,

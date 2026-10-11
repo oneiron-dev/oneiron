@@ -670,7 +670,7 @@ impl PipelineBuilder<'_> {
             {
                 empty_reason = Some(EmptyReason::NoData);
             }
-            let pending_vectors = pending_vectors_for_scores(&self.vault.store, rtxn, &scores)?;
+            let pending_vectors = pending_vectors_for_scores(&self.vault.store, &self.read, rtxn, &scores)?;
             let retrieval_trace = if capture_retrieval_trace {
                 Some(self.assemble_retrieval_trace(TraceInputs {
                     derivation_owner: crate::federation::derivation::owner_in_txn(

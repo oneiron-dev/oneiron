@@ -173,6 +173,27 @@ pub(crate) fn hnsw_search(
         .collect())
 }
 
+/// The score [`hnsw_search`] gives `vector` for `query_vector`, computed
+/// exactly: on the full row when the search rescores, on the scoring prefix
+/// otherwise.
+pub(crate) fn exact_score(
+    config: &VaultConfig,
+    query_vector: &[f32],
+    vector: &[f32],
+    skip_rescore: bool,
+) -> Result<f32> {
+    let rescore_active =
+        config.fast_dims.is_some() && query_vector.len() == config.dimensions && !skip_rescore;
+    let dims = if rescore_active {
+        query_vector.len()
+    } else {
+        score_dims_for(config)
+    };
+    let distance =
+        PreparedCosine::new(score_prefix(query_vector, dims)?).distance(score_prefix(vector, dims)?);
+    Ok((1.0 - distance).clamp(-1.0, 1.0))
+}
+
 /// The scoring prefix length for one vault: `fast_dims` when the MRL funnel
 /// is configured, full `dimensions` otherwise.
 pub(super) fn score_dims_for(config: &VaultConfig) -> usize {

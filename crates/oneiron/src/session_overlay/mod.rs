@@ -24,7 +24,7 @@ pub(crate) use self::keyspace::OverlayKeyspace;
 pub(crate) use self::overlay::{SessionOverlay, TxnSegmentGuard, txn_segment_installed};
 pub(crate) use self::route::{RouteTarget, SessionWriteRoute};
 pub(crate) use self::snapshot::{
-    OverlaySnapshot, SnapshotLookup, SnapshotMergePlan, SnapshotMergeRow,
+    OverlaySnapshot, SnapshotLookup, SnapshotMergePlan, SnapshotMergeRow, StagedRows,
 };
 
 // The flat session_overlay.rs module used to provide these names to the test

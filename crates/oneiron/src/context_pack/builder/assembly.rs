@@ -243,7 +243,9 @@ impl<'a> ContextPackBuilder<'a> {
             &l2_subjects,
             self.disclosure.as_ref(),
             self.l2_summary_reader,
-            self.session.is_none(),
+            // The cache is the vault's and outlives any room: a summary
+            // over a room's rows is computed, never kept.
+            self.session.is_none() && !self.read.is_union(),
         ) {
             // Only bounded-summary limits may omit an implicit optional
             // prefix. Corruption, disclosure and explicit-request errors stay

@@ -37,6 +37,7 @@ impl ScopedRead<'_> {
         let results = self
             .vault
             .query()
+            .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search_vector(query, fetch_limit)
@@ -91,6 +92,7 @@ impl ScopedRead<'_> {
         let mut pipeline = self
             .vault
             .query()
+            .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search_text(query, fetch_limit)

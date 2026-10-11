@@ -57,6 +57,7 @@ impl ScopedRead<'_> {
         let results = self
             .vault
             .query()
+            .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search(query, vector, None, fetch_limit)

@@ -353,7 +353,7 @@ impl OffRecordSession<'_> {
             limit,
             &crate::config::Bm25RankProfile::default(),
         )?;
-        let holds_room_rows = view.read().holds_room_rows()?;
+        let holds_room_rows = view.read().holds_room_rows();
         drop(view);
 
         let telemetry = self.retrieval_telemetry(route)?;
