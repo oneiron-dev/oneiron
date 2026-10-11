@@ -102,7 +102,6 @@ impl AskHandler for Bytes {
             value: ask.value.clone(),
             data: Some(self.bytes.clone()),
             fetch: None,
-            signed: None,
         })
     }
 }

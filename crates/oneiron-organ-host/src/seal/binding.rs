@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealLimits};
+use crate::asks::AskRequest;
 use crate::receipt::SignedReceipt;
 
 const ID_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
@@ -166,12 +167,8 @@ impl<'a> SealCall<'a> {
     /// seal signs with that messageDigest and the key's certificate, and
     /// signs SHA-256 of their `SET OF` encoding. It never signs a hash the
     /// organ sent.
-    pub(super) fn sign(
-        &self,
-        value: &rmpv::Value,
-        deadline: Instant,
-    ) -> Result<(Vec<u8>, SignedReceipt), AskRefusal> {
-        let request: SignAsk = decode(value).ok_or_else(|| {
+    pub(super) fn sign(&self, ask: &AskRequest<'_>) -> Result<Vec<u8>, AskRefusal> {
+        let request: SignAsk = decode(ask.value).ok_or_else(|| {
             bad("a signature ask is {operation_id, revision_id, byte_range, signed_attributes_der}")
         })?;
         if !request.operation_id.starts_with(&self.operation) {
@@ -205,23 +202,27 @@ impl<'a> SealCall<'a> {
             .into();
         let attributes = signed_attributes(&request.signed_attributes_der, &content, &signer)?;
         let prehash: [u8; 32] = Sha256::digest(&attributes).into();
+        // On record before the key runs: a key may sign and still fail.
+        let mut signed = SignedReceipt {
+            operation_id: request.operation_id,
+            prehash,
+            content_sha256: content,
+            revision: Some(request.revision_id),
+            signature_sha256: None,
+        };
+        ask.record_signing(signed.clone());
         let signature = self
             .keys
-            .sign_prehash(&request.operation_id, &prehash, deadline)
+            .sign_prehash(&signed.operation_id, &prehash, ask.deadline)
             .map_err(key_refusal)?;
         lock(&self.issued).push(Issued {
             revision: index,
             attributes,
             signature: signature.clone(),
         });
-        let signed = SignedReceipt {
-            operation_id: request.operation_id,
-            prehash,
-            content_sha256: content,
-            revision: Some(request.revision_id),
-            signature_sha256: Sha256::digest(&signature).into(),
-        };
-        Ok((signature, signed))
+        signed.signature_sha256 = Some(Sha256::digest(&signature).into());
+        ask.record_signing(signed);
+        Ok(signature)
     }
 
     /// Admits a sealed PDF only when it begins with one of this call's

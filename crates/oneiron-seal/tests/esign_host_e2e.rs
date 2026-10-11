@@ -83,6 +83,29 @@ impl SealKeys for Keys {
     }
 }
 
+/// Keys whose signature is made but never comes back, as when a remote
+/// key's reply is lost.
+struct LostReply<'a>(&'a Keys);
+
+impl SealKeys for LostReply<'_> {
+    fn identity(&self, deadline: Instant) -> Result<SealIdentity, SealKeyError> {
+        self.0.identity(deadline)
+    }
+
+    fn sign_prehash(
+        &self,
+        operation: &str,
+        digest: &[u8; 32],
+        deadline: Instant,
+    ) -> Result<Vec<u8>, SealKeyError> {
+        self.0.sign_prehash(operation, digest, deadline)?;
+        Err(SealKeyError {
+            detail: "the key's reply was lost".to_owned(),
+            retryable: true,
+        })
+    }
+}
+
 /// The real sealer, whose verifier reports a failed content digest.
 struct RejectVerify<'a>(&'a dyn EsignSealer);
 
@@ -306,6 +329,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     let receipt = lines[0].signed.as_ref().ok_or("no signed receipt")?;
     assert_eq!(receipt.prehash, signed[0]);
     assert_eq!(receipt.revision, Some(0));
+    assert!(receipt.signature_sha256.is_some());
     assert!(lines[0].refused.is_none() && lines[0].unanswered.is_none());
     // Each verification runs in a process of its own: the warm seal
     // process stays as it was, and one more process starts and ends.
@@ -537,6 +561,42 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     Ok(())
 }
 
+/// The key signs and its reply is lost. The seal fails, and every prehash
+/// the key signed is still on the receipt, with no signature (ARCH-0075:
+/// every prehash the key signs is in the receipt; Sol R7 on #1379).
+#[test]
+fn a_key_that_signs_and_then_fails_leaves_its_prehash_on_record() -> TestResult {
+    let (keys, cert) = synthetic_keys()?;
+    let lost = LostReply(&keys);
+    let host = OrganHost::new(HostConfig::default());
+    host.install(seal_spec(ORGAN, FetchGrant::default()));
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let sealer = HostedSealer::new(&host, &vault, &lost, SealSettings::new(vec![cert], "seal"));
+    let request = EsignSealRequest {
+        operation_id: "op".to_owned(),
+        profile: SealProfile::BaselineB,
+    };
+    let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+    assert!(sealer.seal(&input, &request).is_err());
+    let signed = keys.signed();
+    assert!(!signed.is_empty());
+    let receipts: Vec<_> = sealer
+        .asked()
+        .into_iter()
+        .filter(|line| line.verb == ASK_SIGN)
+        .filter_map(|line| line.signed)
+        .collect();
+    for prehash in &signed {
+        let receipt = receipts
+            .iter()
+            .find(|receipt| receipt.prehash == *prehash)
+            .ok_or("a prehash the key signed is not on record")?;
+        assert_eq!(receipt.signature_sha256, None);
+    }
+    Ok(())
+}
+
 #[test]
 fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -737,6 +797,24 @@ mod hostile {
                 .ok_or("no signature ask")?;
             assert_eq!(line.signed.map(|signed| signed.prehash), Some(signed[0]));
         }
+        Ok(())
+    }
+
+    /// The organ seals for real, then rebuilds the CMS in the hole without
+    /// the signer's certificate, which signingCertificateV2 names, so no
+    /// verifier could find the signer. The signature and its attributes are
+    /// the ones issued, but the output is not admitted (Sol R7 on #1379).
+    #[test]
+    fn a_signature_without_its_certificate_is_not_admitted() -> TestResult {
+        let (keys, cert) = synthetic_keys()?;
+        let host = rogue_host("drop-certs");
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
+        let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+        let refused = sealer.seal(&input, &request());
+        assert!(unbound(&refused), "{refused:?}");
+        assert_eq!(keys.signed().len(), 1);
         Ok(())
     }
 }

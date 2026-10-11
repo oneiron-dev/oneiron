@@ -568,12 +568,11 @@ struct SignAnswer {
 
 impl AskHandler for Sign<'_> {
     fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
-        let (signature, signed) = self.call.sign(ask.value, ask.deadline)?;
+        let signature = self.call.sign(ask)?;
         Ok(Answered {
             value: to_value(&SignAnswer {
                 signature: ByteBuf::from(signature),
             })?,
-            signed: Some(signed),
             ..Answered::default()
         })
     }

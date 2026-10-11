@@ -51,6 +51,19 @@ pub struct AskRequest<'a> {
     pub max_bytes: u64,
     /// The install grant's fetch allowlist.
     pub fetch: &'a FetchGrant,
+    /// What a key signed for this ask, for the receipt.
+    pub(crate) signing: &'a Mutex<Option<SignedReceipt>>,
+}
+
+impl AskRequest<'_> {
+    /// Puts a signature on the ask's receipt line, in the host's own words.
+    /// Record it before the key signs, then again with the signature's
+    /// hash: the line keeps the last one however the ask ends, refused,
+    /// unsent or panicked, so a key that signed and then failed still
+    /// leaves its prehash on record.
+    pub fn record_signing(&self, signed: SignedReceipt) {
+        *self.signing.lock().unwrap_or_else(PoisonError::into_inner) = Some(signed);
+    }
 }
 
 /// A handler's answer.
@@ -60,8 +73,6 @@ pub struct Answered {
     pub data: Option<Vec<u8>>,
     /// For a fetch, where it went, for the receipt.
     pub fetch: Option<FetchTarget>,
-    /// For a signature, what the key signed, for the receipt.
-    pub signed: Option<SignedReceipt>,
 }
 
 impl Default for Answered {
@@ -71,7 +82,6 @@ impl Default for Answered {
             value: rmpv::Value::Nil,
             data: None,
             fetch: None,
-            signed: None,
         }
     }
 }
@@ -177,6 +187,8 @@ pub(crate) struct CallAsks<'a> {
     /// Answer bytes lent so far, values and data.
     lent: u64,
     refused_past_cap: bool,
+    /// What the running handler's key signed, until its line settles.
+    signing: Mutex<Option<SignedReceipt>>,
     pub(crate) receipts: Vec<AskReceipt>,
 }
 
@@ -201,6 +213,7 @@ impl<'a> CallAsks<'a> {
             bytes_left: spec.max_ask_bytes.min(spec.call_memory_bytes),
             lent: 0,
             refused_past_cap: false,
+            signing: Mutex::new(None),
             receipts: Vec::new(),
         }
     }
@@ -282,6 +295,7 @@ impl<'a> CallAsks<'a> {
             deadline: self.deadline,
             max_bytes: self.bytes_left,
             fetch: &self.spec.fetch,
+            signing: &self.signing,
         };
         // On record while the handler runs, so a handler that panics leaves
         // its line; the settled line replaces it once the handler returns.
@@ -294,6 +308,12 @@ impl<'a> CallAsks<'a> {
         };
         self.receipts.pop();
         line.handler_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        // A signature is on record whether or not it is delivered.
+        line.signed = self
+            .signing
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         match answered {
             Ok(answered) => self.answer(&ask, line, answered),
             Err(refusal) => self.refuse(&ask, line, refusal),
@@ -315,17 +335,10 @@ impl<'a> CallAsks<'a> {
     }
 
     fn answer(&mut self, ask: &Ask, mut line: AskReceipt, answered: Answered) -> AskStep {
-        let Answered {
-            value,
-            data,
-            fetch,
-            signed,
-        } = answered;
+        let Answered { value, data, fetch } = answered;
         if fetch.is_some() {
             line.fetch = fetch;
         }
-        // A signature is on record whether or not it is delivered.
-        line.signed = signed;
         // The value is answer bytes too: a fetch's final URL, or anything a
         // handler puts there, crosses inline and lands in the organ's heap.
         let value_len =
@@ -397,8 +410,17 @@ impl<'a> CallAsks<'a> {
 }
 
 impl Drop for CallAsks<'_> {
-    /// Hands the call's lines to its handlers, however the call ended.
+    /// Hands the call's lines to its handlers, however the call ended. A
+    /// handler that panicked keeps what its key signed on its line.
     fn drop(&mut self) {
+        let signing = self
+            .signing
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let (Some(signed), Some(line)) = (signing, self.receipts.last_mut()) {
+            line.signed = Some(signed);
+        }
         self.handlers
             .asked
             .lock()

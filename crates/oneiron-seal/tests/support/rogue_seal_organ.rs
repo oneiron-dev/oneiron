@@ -14,7 +14,9 @@
 //! - `alter-prefix`: seals for real, then changes one byte of the prepared
 //!   PDF;
 //! - `append-update`: seals for real, then appends an update after the
-//!   signed revision and still calls it B-B.
+//!   signed revision and still calls it B-B;
+//! - `drop-certs`: seals for real, then rebuilds the CMS in the hole
+//!   without its certificates.
 //!
 //! Its `seal.verify` always passes.
 
@@ -49,6 +51,7 @@ mod rogue {
         Unsigned,
         AlterPrefix,
         AppendUpdate,
+        DropCerts,
     }
 
     impl Mode {
@@ -58,6 +61,7 @@ mod rogue {
                 "unsigned" => Some(Self::Unsigned),
                 "alter-prefix" => Some(Self::AlterPrefix),
                 "append-update" => Some(Self::AppendUpdate),
+                "drop-certs" => Some(Self::DropCerts),
                 _ => None,
             }
         }
@@ -195,7 +199,7 @@ mod rogue {
                     ));
                 }
                 Mode::Unsigned => (pdf.to_vec(), args.profile),
-                Mode::AlterPrefix | Mode::AppendUpdate => {
+                Mode::AlterPrefix | Mode::AppendUpdate | Mode::DropCerts => {
                     let engine = NativeSealEngine::new(
                         SealConfig {
                             trust_anchors_der: args
@@ -227,13 +231,13 @@ mod rogue {
                         block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions))
                     };
                     let mut bytes = sealed.map_err(bad)?.bytes;
-                    if self.0 == Mode::AlterPrefix {
-                        bytes[pdf.len() / 2] ^= 0x01;
-                    } else {
-                        bytes.extend_from_slice(
+                    match self.0 {
+                        Mode::AlterPrefix => bytes[pdf.len() / 2] ^= 0x01,
+                        Mode::AppendUpdate => bytes.extend_from_slice(
                             b"\n9999 0 obj\n<< /Type /Annot /Subtype /FreeText \
                               /Contents (paid in full) >>\nendobj\n",
-                        );
+                        ),
+                        _ => drop_certificates(&mut bytes, pdf.len(), &revisions)?,
                     }
                     (bytes, PadesProfile::BaselineB)
                 }
@@ -337,6 +341,48 @@ mod rogue {
             };
             let _ = asker.ask("seal.sign", to_value(&bound)?);
         }
+        Ok(())
+    }
+
+    /// Rebuilds the CMS in the signed revision's hole without its
+    /// certificates; the signature and its attributes stay as issued.
+    fn drop_certificates(
+        bytes: &mut [u8],
+        base: usize,
+        revisions: &[PreparedRevision<'_>],
+    ) -> Result<(), OrganError> {
+        let revision = revisions
+            .iter()
+            .find(|revision| base + revision.suffix.len() == bytes.len())
+            .ok_or_else(|| bad("no revision is the output"))?;
+        let [_, open, close, _] = revision.byte_range;
+        let open = usize::try_from(open).map_err(bad)? + 1;
+        let close = usize::try_from(close).map_err(bad)? - 1;
+        let hole = bytes.get_mut(open..close).ok_or_else(|| bad("hole"))?;
+        let der = hole
+            .chunks(2)
+            .map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                    .ok_or_else(|| bad("hex"))
+            })
+            .collect::<Result<Vec<u8>, OrganError>>()?;
+        let mut reader = der::SliceReader::new(&der).map_err(bad)?;
+        let mut info = cms::content_info::ContentInfo::decode(&mut reader).map_err(bad)?;
+        let mut signed: cms::signed_data::SignedData = info.content.decode_as().map_err(bad)?;
+        signed.certificates = None;
+        info.content = der::Any::encode_from(&signed).map_err(bad)?;
+        let hex: String = info
+            .to_der()
+            .map_err(bad)?
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        hole.fill(b'0');
+        hole.get_mut(..hex.len())
+            .ok_or_else(|| bad("the CMS grew"))?
+            .copy_from_slice(hex.as_bytes());
         Ok(())
     }
 
