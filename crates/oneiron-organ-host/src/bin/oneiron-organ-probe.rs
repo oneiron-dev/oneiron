@@ -270,10 +270,10 @@ mod rogue {
     }
 
     /// Answers the handshake, then meets the `n`th call with the frames
-    /// `meet` returns and a nap without reading. It exits at once if it is
-    /// ever sent an answer: these modes never wait for one, so an answer is
-    /// the host's mistake.
-    fn never_answered(meet: impl Fn(u64, usize) -> (Vec<FromOrgan>, Duration)) {
+    /// `meet` returns, each followed by its nap without reading. It exits at
+    /// once if it is ever sent an answer: these modes never wait for one, so
+    /// an answer is the host's mistake.
+    fn never_answered(meet: impl Fn(u64, usize) -> Vec<(FromOrgan, Duration)>) {
         let stream = socket();
         let Some(organ) = hello_organ(&stream) else {
             return;
@@ -285,14 +285,14 @@ mod rogue {
         while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
             match message {
                 ToOrgan::Call(call) => {
-                    let (frames, nap) = meet(call.id, calls);
+                    let steps = meet(call.id, calls);
                     calls += 1;
-                    for frame in frames {
+                    for (frame, nap) in steps {
                         if send_frame(&stream, &frame, &[], DEFAULT_FRAME_LIMIT).is_err() {
                             return;
                         }
+                        std::thread::sleep(nap);
                     }
-                    std::thread::sleep(nap);
                 }
                 ToOrgan::Answer(_) => return,
                 _ => {}
@@ -303,7 +303,12 @@ mod rogue {
     /// Asks, and replies right behind the ask, so the ask waits in the
     /// host's queue after the call is over.
     pub(super) fn ask_then_reply() {
-        never_answered(|call, _| (vec![ask(call, 1), reply(call)], Duration::ZERO));
+        never_answered(|call, _| {
+            vec![
+                (ask(call, 1), Duration::ZERO),
+                (reply(call), Duration::ZERO),
+            ]
+        });
     }
 
     /// Asks on its first call, then stops reading for 1.5 s, so a large
@@ -311,9 +316,25 @@ mod rogue {
     pub(super) fn ask_then_nap() {
         never_answered(|call, n| {
             if n == 0 {
-                (vec![ask(call, 1)], Duration::from_millis(1500))
+                vec![(ask(call, 1), Duration::from_millis(1500))]
             } else {
-                (vec![reply(call)], Duration::ZERO)
+                vec![(reply(call), Duration::ZERO)]
+            }
+        });
+    }
+
+    /// Asks on its first call and stops reading for 1 s, so the host's
+    /// next frames fill the socket; then replies to that call and reads
+    /// again 300 ms later. Later calls get a reply at once.
+    pub(super) fn ask_nap_reply() {
+        never_answered(|call, n| {
+            if n == 0 {
+                vec![
+                    (ask(call, 1), Duration::from_millis(1000)),
+                    (reply(call), Duration::from_millis(300)),
+                ]
+            } else {
+                vec![(reply(call), Duration::ZERO)]
             }
         });
     }
@@ -397,6 +418,10 @@ fn main() -> std::process::ExitCode {
         }
         Some("--ask-then-reply") => {
             rogue::ask_then_reply();
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--ask-nap-reply") => {
+            rogue::ask_nap_reply();
             std::process::ExitCode::SUCCESS
         }
         Some("--ask-then-nap") => {

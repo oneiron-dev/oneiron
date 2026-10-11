@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
-    PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled, recv_frame_until,
+    PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled, recv_frame_until, send_frame_if,
     send_frame_until, spin,
 };
 
@@ -125,6 +125,13 @@ impl Inbox {
     /// entry when the reply comes or the process ends.
     fn in_flight(&self, id: u64) -> bool {
         lock(&self.pending).contains_key(&id)
+    }
+
+    /// Holds the calls in flight while call `id` is one of them: no reply
+    /// is routed until the guard drops.
+    fn holding_in_flight(&self, id: u64) -> Option<MutexGuard<'_, HashMap<u64, Pending>>> {
+        let pending = lock(&self.pending);
+        pending.contains_key(&id).then_some(pending)
     }
 }
 
@@ -551,10 +558,12 @@ impl OrganProcess {
     /// Once it holds the writer, it drops the answer if the call's grant was
     /// revoked or the call is no longer in flight. A revocation records
     /// itself before its cancel takes the writer, so an answer that waited
-    /// for the writer never follows its call's revoked cancel; and one never
-    /// goes after the reply the reader has already taken. (A reply the organ
-    /// sends while the answer is on its way crosses it, as an ask crosses a
-    /// cancel.)
+    /// for the writer never follows its call's revoked cancel. The answer's
+    /// first byte goes under the lock the reader routes replies under, with
+    /// the call checked in flight again, so an answer that then waits for
+    /// room in the socket never goes after the reply the reader has taken.
+    /// (A reply the organ sends once the answer has started crosses it, as
+    /// an ask crosses a cancel.)
     ///
     /// The call may ask again only once this holds the writer, so a second
     /// ask that comes while the answer waits for the writer still breaks the
@@ -574,8 +583,12 @@ impl OrganProcess {
         if revoked() || !self.inbox.answered(id) {
             return Ok(false);
         }
-        send_frame_until(&writer, answer, fds, self.max_call_frame, Some(deadline))?;
-        Ok(true)
+        let still = || self.inbox.holding_in_flight(id);
+        match send_frame_if(&writer, answer, fds, self.max_call_frame, deadline, still) {
+            Ok(()) => Ok(true),
+            Err(FrameError::Withdrawn) => Ok(false),
+            Err(err) => Err(err),
+        }
     }
 
     /// Runs an ask's handler on this thread while a watchdog keeps the

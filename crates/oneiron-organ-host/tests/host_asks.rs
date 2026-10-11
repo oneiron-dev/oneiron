@@ -778,6 +778,77 @@ fn an_answer_that_waits_for_the_writer_never_follows_a_revoked_cancel() {
     assert_eq!(host.status("probe").expect("installed").recent_crashes, 0);
 }
 
+/// On its run, has a call fill the socket, then answers once that call
+/// has gone.
+#[cfg(target_os = "linux")]
+struct Filler(Mutex<mpsc::Sender<()>>);
+
+#[cfg(target_os = "linux")]
+impl AskHandler for Filler {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        let _ = self.0.lock().expect("sender").send(());
+        thread::sleep(Duration::from_millis(300));
+        Ok(Answered::default())
+    }
+}
+
+/// Linux: a Unix socket stops polling writable once more than a quarter
+/// of its send buffer waits unread, while a send blocks only at the whole
+/// buffer. So a frame of half the buffer goes whole yet leaves the next
+/// frame waiting for room before its first byte.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_answer_that_waits_for_room_never_follows_its_calls_reply() {
+    // Astra (#1378) P2: the call was checked in flight under the writer,
+    // but its answer could then wait for room in the socket while the
+    // reader took the call's reply, and go after it. The organ asks and
+    // stops reading for 1 s; a call of half the send buffer fills the
+    // socket; the answer waits for room; the organ replies, then reads
+    // again. The answer must not go: the organ exits if it is answered.
+    let send_buffer: usize = std::fs::read_to_string("/proc/sys/net/core/wmem_default")
+        .expect("wmem_default")
+        .trim()
+        .parse()
+        .expect("a byte count");
+    let (_dir, vault) = vault();
+    let mut racing = spec(vec![AskGrant::new(ANSWER, 4)]);
+    racing.args = vec!["--ask-nap-reply".into()];
+    racing.verbs = vec!["organ.echo".into()];
+    racing.threads = 2;
+    let host = host(racing);
+    let (fill, filling) = mpsc::channel();
+    let filler = Filler(Mutex::new(fill));
+    let asks = AskHandlers::none().with(ANSWER, &filler);
+    let (host, vault) = (&host, &vault);
+    let (asked, filled) = thread::scope(|scope| {
+        let filled = scope.spawn(move || {
+            filling.recv_timeout(Duration::from_secs(30)).ok()?;
+            let half = OrganCall {
+                args: "x".repeat(send_buffer / 2).into(),
+                ..echo(Duration::from_secs(20))
+            };
+            Some(host.call(vault, half))
+        });
+        let asked = host.call_with(vault, echo(Duration::from_secs(20)), Vec::new(), &asks);
+        (asked, filled.join().expect("filler"))
+    });
+    let outcome = asked.expect("the reply stands");
+    assert_eq!(outcome.receipt.asks.len(), 1);
+    assert_eq!(
+        outcome.receipt.asks[0].unanswered,
+        Some(Unanswered::NotSent)
+    );
+    filled
+        .expect("the filling call ran")
+        .expect("and was answered");
+    // An answer would have reached the organ before this call.
+    host.call(vault, echo(Duration::from_secs(10)))
+        .expect("the organ was never answered");
+    let status = host.status("probe").expect("installed");
+    assert_eq!(status.spawns, 1);
+    assert_eq!(status.recent_crashes, 0);
+}
+
 #[test]
 fn a_failed_call_keeps_its_ask_lines() {
     // Astra (#1378) P2: an organ that asked, was answered, then failed
