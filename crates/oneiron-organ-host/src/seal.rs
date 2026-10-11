@@ -430,6 +430,12 @@ impl EsignSealer for HostedSealer<'_> {
         input: &EsignSealInput,
         request: &EsignSealRequest,
     ) -> Result<EsignSealed, EsignSealerError> {
+        // The last call's lines go first: a call refused before it asks
+        // anything has none.
+        self.asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         let call = SealCall::new(self.keys, &request.operation_id, input)?;
         let identity = Identity { call: &call };
         let sign = Sign { call: &call };

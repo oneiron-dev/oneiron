@@ -614,6 +614,38 @@ fn a_key_that_signs_and_then_fails_leaves_its_prehash_on_record() -> TestResult 
     Ok(())
 }
 
+/// A call refused before it asks anything leaves none of the last call's
+/// lines in `asked()` (Sol R10 on #1379).
+#[test]
+fn a_call_refused_before_it_asks_shows_no_earlier_lines() -> TestResult {
+    let (keys, cert) = synthetic_keys()?;
+    let lost = LostReply {
+        keys: &keys,
+        panics: false,
+    };
+    let host = OrganHost::new(HostConfig::default());
+    host.install(seal_spec(ORGAN, FetchGrant::default()));
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let sealer = HostedSealer::new(&host, &vault, &lost, SealSettings::new(vec![cert], "seal"));
+    let request = EsignSealRequest {
+        operation_id: "op".to_owned(),
+        profile: SealProfile::BaselineB,
+    };
+    let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+    assert!(sealer.seal(&input, &request).is_err());
+    assert!(!sealer.asked().is_empty());
+    let mut bad = input.clone();
+    bad.revisions.clear();
+    let refused = sealer.seal(&bad, &request);
+    assert!(
+        matches!(&refused, Err(EsignSealerError::Fatal { code, .. }) if code == "invalid_revision"),
+        "{refused:?}"
+    );
+    assert!(sealer.asked().is_empty());
+    Ok(())
+}
+
 #[test]
 fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
