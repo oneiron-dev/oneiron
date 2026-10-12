@@ -432,6 +432,7 @@ impl super::RetrievalIndexMaintenance for Vault {
         id: &EntityId,
     ) -> Result<bool> {
         let had_vector = self.store.vectors.delete(txn, id.as_bytes())?;
+        crate::embed::record_embedding_device_in_txn(&self.store, txn, id, None)?;
         crate::hnsw::hnsw_deindex(&self.store, txn, id)?;
         Ok(had_vector)
     }
