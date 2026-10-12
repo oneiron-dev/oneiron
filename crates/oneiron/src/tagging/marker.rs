@@ -179,7 +179,11 @@ impl TaggingMarkerConfig {
         if !is_checkpoint(&self.checkpoint) {
             return invalid("tagging checkpoint must be 16 lowercase hex digits");
         }
-        if self.stack.as_deref().is_some_and(|stack| !is_checkpoint(stack)) {
+        if self
+            .stack
+            .as_deref()
+            .is_some_and(|stack| !is_checkpoint(stack))
+        {
             return invalid("tagging stack must be 16 lowercase hex digits");
         }
         if self.live_window_tokens > MAX_LIVE_WINDOW_TOKENS {
@@ -233,8 +237,7 @@ impl MarkerPayload {
     /// retried, because no pass can ever read it.
     pub(super) fn decode(bytes: &[u8]) -> Option<Self> {
         rmp_serde::from_slice::<Self>(bytes).ok().filter(|payload| {
-            is_checkpoint(&payload.checkpoint)
-                && payload.stack.as_deref().is_none_or(is_checkpoint)
+            is_checkpoint(&payload.checkpoint) && payload.stack.as_deref().is_none_or(is_checkpoint)
         })
     }
 

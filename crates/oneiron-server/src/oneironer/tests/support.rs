@@ -483,7 +483,12 @@ pub(super) fn say(
 }
 
 /// A visible text message by `author` at `order`, with a fixed id when given.
-pub(super) fn said(author: WitnessAuthor, content: &str, order: u32, id: Option<&str>) -> WitnessMessage {
+pub(super) fn said(
+    author: WitnessAuthor,
+    content: &str,
+    order: u32,
+    id: Option<&str>,
+) -> WitnessMessage {
     WitnessMessage {
         id: id.map(str::to_owned),
         author,

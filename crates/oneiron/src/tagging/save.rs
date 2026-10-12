@@ -144,7 +144,13 @@ pub(super) fn save_in_txn(
                 .len()
                 .saturating_sub(kept(|reference| *reference == MentionReference::Context)),
             unresolved_speaker_links: kept(|reference| {
-                matches!(reference, MentionReference::Speaker { resolved: false, .. })
+                matches!(
+                    reference,
+                    MentionReference::Speaker {
+                        resolved: false,
+                        ..
+                    }
+                )
             }),
         });
     }
@@ -277,7 +283,10 @@ enum Coref {
         confidence: Option<f32>,
     },
     /// A span an earlier turn's tag set holds, and the link it holds.
-    Context { link: MentionLink, confidence: f32 },
+    Context {
+        link: MentionLink,
+        confidence: f32,
+    },
     /// The turn's speaker or addressee, and the person it named, if one.
     Speaker {
         target: SpeakerTarget,
@@ -351,7 +360,12 @@ pub(crate) fn save_shadow_output_in_txn(
         turn,
         input,
         output,
-        envelope: envelope(&input_hash(input), model, config, output.stack_sha16.as_deref()),
+        envelope: envelope(
+            &input_hash(input),
+            model,
+            config,
+            output.stack_sha16.as_deref(),
+        ),
     };
     save_in_txn(vault, txn, answer, config, now)?;
     tag_set_in_txn(&vault.store, txn, &turn)
@@ -533,11 +547,11 @@ impl<'v> Linker<'v> {
 
     /// The link a speaker link resolves to: the turn's author for the
     /// speaker, and for the addressee the one other party of the turn's
-    /// room, when it has exactly one. `None` when no one person is it: the
-    /// turn's messages name no single author, the room's audience is not
-    /// one other party besides them, or the person is no entity a mention
-    /// may name in a world of this turn. One member of a group is never
-    /// picked.
+    /// room, when it has exactly one, now and when the turn was said. `None`
+    /// when no one person is it: the turn's messages name no single author,
+    /// the room's audience is not one other party besides them, or the
+    /// person is no entity a mention may name in a world of this turn. One
+    /// member of a group is never picked.
     fn speaker_link(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -547,9 +561,13 @@ impl<'v> Linker<'v> {
         let store = &self.vault.store;
         let mut authors = BTreeSet::new();
         for message in messages {
-            for edge in
-                store.port_edges(txn, message, EdgeDirection::Out, Some(EdgeKind::AuthoredBy), None)?
-            {
+            for edge in store.port_edges(
+                txn,
+                message,
+                EdgeDirection::Out,
+                Some(EdgeKind::AuthoredBy),
+                None,
+            )? {
                 authors.insert(edge?.target);
             }
         }
@@ -563,19 +581,35 @@ impl<'v> Linker<'v> {
                 let Some(room) = sole_peer(self.vault, txn, &self.turn, EdgeKind::ChildOf)? else {
                     return Ok(None);
                 };
-                let audience = match self.vault.room_audience_members_in_txn(txn, room) {
-                    Ok(audience) => audience.into_iter().collect::<BTreeSet<_>>(),
+                let Some(said) = store.port_entity_record(txn, &self.turn)? else {
+                    return Ok(None);
+                };
+                let read = |audience: Result<Vec<EntityId>>| match audience {
+                    Ok(audience) => Ok(Some(audience.into_iter().collect::<BTreeSet<_>>())),
                     Err(
                         error @ (Error::Storage(_)
                         | Error::Io(_)
                         | Error::MapFull
                         | Error::ConcurrentWrite(_)),
-                    ) => return Err(error),
+                    ) => Err(error),
                     // A room whose audience does not read has no one other
                     // party.
-                    Err(_) => return Ok(None),
+                    Err(_) => Ok(None),
                 };
-                if !audience.contains(&author) {
+                // The room's audience now and its roster when the turn was
+                // said must be the same pair: someone who has left since
+                // could have been the one spoken to, so a roster that moved
+                // keeps the decision unresolved.
+                let (Some(audience), Some(then)) = (
+                    read(self.vault.room_audience_members_in_txn(txn, room))?,
+                    read(
+                        self.vault
+                            .membership_at_in_txn(txn, room, said.occurred.start),
+                    )?,
+                ) else {
+                    return Ok(None);
+                };
+                if audience != then || !audience.contains(&author) {
                     return Ok(None);
                 }
                 let mut others = audience.into_iter().filter(|id| *id != author);

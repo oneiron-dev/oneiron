@@ -89,10 +89,13 @@ impl ExtractionEncoder for Scripted {
                 } else {
                     text.find(' ').unwrap_or(text.len())
                 };
+                // The unmapped span is the text's last character: spans come
+                // in order and never share coordinates.
+                let last = text.char_indices().last().map_or(0, |(at, _)| at);
                 Ok(answer_json(serde_json::json!({
                     "spans": [
                         {"message": 0, "start": 0, "end": end, "label": "PERSON", "confidence": 0.9},
-                        {"message": 0, "start": 0, "end": end, "label": "UNMAPPED", "confidence": 0.4}
+                        {"message": 0, "start": last, "end": text.len(), "label": "UNMAPPED", "confidence": 0.4}
                     ],
                     "links": [{"span": 1, "antecedent": 0}],
                     "vad": {"valence": 0.2, "arousal": 0.4, "dominance": 0.6}

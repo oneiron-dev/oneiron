@@ -31,7 +31,11 @@ impl Memory<'_> {
                 messages,
                 context: Vec::new(),
                 language: None,
-                speaker: None,
+                // The side the witnessed messages' authors name, as the
+                // witness stores them.
+                speaker: crate::tagging::turn_role(
+                    turn.messages.iter().map(|message| message.author.as_str()),
+                ),
             })
         })();
         let input = match input_result {

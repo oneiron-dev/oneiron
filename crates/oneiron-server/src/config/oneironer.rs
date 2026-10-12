@@ -306,9 +306,11 @@ impl OneironerConfig {
                 "oneironer.provider = \"endpoint\" requires oneironer.checkpoint_sha16, 16 lowercase hex digits"
             );
         }
-        if self.stack_sha16.as_deref().is_some_and(|stack| {
-            oneiron::tagging::TaggingMarkerConfig::new(stack).is_err()
-        }) {
+        if self
+            .stack_sha16
+            .as_deref()
+            .is_some_and(|stack| oneiron::tagging::TaggingMarkerConfig::new(stack).is_err())
+        {
             anyhow::bail!("oneironer.stack_sha16 must be 16 lowercase hex digits");
         }
         if self.label_count.is_none_or(|count| count == 0) {

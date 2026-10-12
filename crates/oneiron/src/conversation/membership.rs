@@ -183,9 +183,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         conversation: EntityId,
     ) -> Result<Vec<EntityId>> {
+        self.membership_at_in_txn(txn, conversation, u64::MAX)
+    }
+    /// [`Self::membership_at`] in the caller's snapshot.
+    pub(crate) fn membership_at_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+        at: u64,
+    ) -> Result<Vec<EntityId>> {
         body::body_in(self, txn, conversation)?;
         Ok(
-            members_at_rows(&rows_in(&self.store, txn, conversation)?, u64::MAX)
+            members_at_rows(&rows_in(&self.store, txn, conversation)?, at)
                 .into_iter()
                 .collect(),
         )

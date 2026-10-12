@@ -22,8 +22,7 @@ use crate::config::{
     resolve_serve_config_with_sources,
 };
 use support::{
-    Answer, CHECKPOINT, LABEL_COUNT, NONSTANDARD_STATUS, STACK, StubTagger, card,
-    endpoint_config,
+    Answer, CHECKPOINT, LABEL_COUNT, NONSTANDARD_STATUS, STACK, StubTagger, card, endpoint_config,
 };
 
 fn input(text: &str) -> EncoderInput {
@@ -630,14 +629,19 @@ fn a_v1_card_or_another_pinned_stack_refuses_the_tagger_at_start() {
 }
 
 /// A v2 answer is bound to the card read after it: one naming another stack
-/// fails the call, and so does a link with no confidence.
+/// fails the call, and so does a link with no confidence or a mood with a
+/// field the contract does not name.
 #[test]
-fn an_answer_off_its_cards_stack_or_with_a_bare_link_fails_the_call() {
+fn an_answer_off_its_cards_stack_or_outside_the_contract_fails_the_call() {
     let stub = StubTagger::start(Answer::Good);
     let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
     let request = input("Ada sailed north");
     assert_eq!(
-        tagger.infer(&request).expect("answer").stack_sha16.as_deref(),
+        tagger
+            .infer(&request)
+            .expect("answer")
+            .stack_sha16
+            .as_deref(),
         Some(STACK)
     );
     let code = |tagger: &HttpTagger| match tagger.infer(&request) {
@@ -655,6 +659,15 @@ fn an_answer_off_its_cards_stack_or_with_a_bare_link_fails_the_call() {
             "spans": [{"message": 0, "start": 0, "end": 3, "label": "PERSON", "confidence": 0.9},
                       {"message": 0, "start": 4, "end": 10, "label": "PERSON", "confidence": 0.9}],
             "links": [{"span": 1, "antecedent": 0}],
+        })
+    });
+    assert_eq!(code(&tagger), "tagger extract response is not the contract");
+    // The mood is three coordinates; a fourth field is outside the contract.
+    stub.set_script(|_: &serde_json::Value| {
+        json!({
+            "spans": [],
+            "links": [],
+            "vad": {"valence": 0.1, "arousal": 0.5, "dominance": 0.5, "note": "unexpected"},
         })
     });
     assert_eq!(code(&tagger), "tagger extract response is not the contract");

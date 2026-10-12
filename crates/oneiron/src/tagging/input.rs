@@ -12,8 +12,8 @@ use crate::conversation_dag::{
 };
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
+use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::extraction::{EncoderInput, EncoderMessage, EncoderTurn, SpeakerRole};
 use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -249,9 +249,12 @@ fn members_in_txn(
 /// one non-system author among them, the user's (`A`) or the companion's
 /// (`B`). `None` when they name none, both, or an author this build does not
 /// know: a role is never guessed.
-fn turn_role<'a>(authors: impl IntoIterator<Item = &'a [u8]>) -> Option<SpeakerRole> {
+pub(crate) fn turn_role<A: AsRef<[u8]>>(
+    authors: impl IntoIterator<Item = A>,
+) -> Option<SpeakerRole> {
     let mut role = None;
     for author in authors {
+        let author = author.as_ref();
         let this = if author == WITNESS_AUTHOR_USER.as_bytes() {
             SpeakerRole::User
         } else if author == WITNESS_AUTHOR_COMPANION.as_bytes() {
@@ -415,33 +418,29 @@ fn context_message_in_txn(
     id: &EntityId,
     budget: usize,
 ) -> Result<ContextText> {
-    let message = match context_row_in_txn(vault, txn, id)? {
+    let (content, author) = match context_row_in_txn(vault, txn, id)? {
         ContextRow::Nothing => return Ok(ContextText::Nothing),
         ContextRow::Unbounded => return Ok(ContextText::Unbounded),
-        ContextRow::Shown(message) => message,
+        ContextRow::Shown { content, author } => (content, author),
     };
-    Ok(match super::body::newest_chars(message.content, budget) {
-        Some((text, chars)) => ContextText::Text(text.to_owned(), chars, message.author.to_vec()),
+    Ok(match super::body::newest_chars(&content, budget) {
+        Some((text, chars)) => ContextText::Text(text.to_owned(), chars, author),
         None => ContextText::Nothing,
     })
 }
 
 /// An earlier MESSAGE's stored row as the window reads it.
-enum ContextRow<'t> {
+enum ContextRow {
     /// No visible text: absent, deleted, archived, stale or undecodable.
     Nothing,
     /// Its text lives in an entity document.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     Unbounded,
-    /// The row's fields, with visible, non-empty text.
-    Shown(super::body::MessageFields<'t>),
+    /// Its visible, non-empty text and its author, as stored.
+    Shown { content: Vec<u8>, author: Vec<u8> },
 }
 
-fn context_row_in_txn<'t>(
-    vault: &Vault,
-    txn: &'t heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<ContextRow<'t>> {
+fn context_row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<ContextRow> {
     let store = &vault.store;
     if vault.archive_tombstone_in_txn(txn, id)?.is_some()
         || vault.port_tombstone_is_deleted(txn, id)?
@@ -465,7 +464,10 @@ fn context_row_in_txn<'t>(
     if message.stale || !message.is_visible || message.content.is_empty() {
         return Ok(ContextRow::Nothing);
     }
-    Ok(ContextRow::Shown(message))
+    Ok(ContextRow::Shown {
+        content: message.content.to_vec(),
+        author: message.author.to_vec(),
+    })
 }
 
 /// Where the text the window sent for an earlier MESSAGE starts in the text
@@ -479,13 +481,12 @@ pub(super) fn sent_text_offset_in_txn(
     id: &EntityId,
     sent: &str,
 ) -> Result<Option<usize>> {
-    let ContextRow::Shown(message) = context_row_in_txn(vault, txn, id)? else {
+    let ContextRow::Shown { content, .. } = context_row_in_txn(vault, txn, id)? else {
         return Ok(None);
     };
-    Ok(message
-        .content
+    Ok(content
         .ends_with(sent.as_bytes())
-        .then(|| message.content.len() - sent.len()))
+        .then(|| content.len() - sent.len()))
 }
 
 /// Up to `limit` turns before `turn` in its conversation, nearest first.

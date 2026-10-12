@@ -6,8 +6,8 @@ mod types;
 pub(crate) use shadow::hash_input;
 pub use types::{
     ContextLink, CorefLink, EncoderGolden, EncoderInput, EncoderMessage, EncoderOutput,
-    EncoderParity, EncoderTurn, ExtractionEncoder, NerSpan, ShadowTrace, SpeakerLink,
-    SpeakerRole, SpeakerTarget, WitnessWithShadow,
+    EncoderParity, EncoderTurn, ExtractionEncoder, NerSpan, ShadowTrace, SpeakerLink, SpeakerRole,
+    SpeakerTarget, WitnessWithShadow,
 };
 #[cfg(test)]
 mod tests;

@@ -101,7 +101,12 @@ pub struct EncoderOutput {
     pub spans: Vec<NerSpan>,
     #[serde(default)]
     pub links: Vec<CorefLink>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Read strictly: the three coordinates and no other field.
+    #[serde(
+        default,
+        deserialize_with = "strict_vad",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub vad: Option<Vad>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_links: Vec<ContextLink>,
@@ -110,6 +115,24 @@ pub struct EncoderOutput {
     /// The served stack that made the answer, as its model card names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack_sha16: Option<String>,
+}
+/// The mood as a tagger sends it. The shared [`Vad`] reads past fields it
+/// does not know; an answer is refused for any field outside the contract.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireVad {
+    valence: f32,
+    arousal: f32,
+    dominance: f32,
+}
+fn strict_vad<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vad>, D::Error> {
+    Ok(Option::<WireVad>::deserialize(deserializer)?.map(|vad| Vad {
+        valence: vad.valence,
+        arousal: vad.arousal,
+        dominance: vad.dominance,
+    }))
 }
 /// Hosts own checkpoint execution. No engine implementation guesses model outputs.
 pub trait ExtractionEncoder: Send + Sync {

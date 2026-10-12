@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use oneiron::EntityId;
 use oneiron::attempt_queue::AttemptState;
+use oneiron::edge::EdgeActorClass;
 use oneiron::memory::WitnessAuthor;
 use oneiron::memory::extraction::SpeakerTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -27,6 +28,7 @@ use crate::config::{OneironerConfig, OneironerMode};
 const FIRST: &str = "Mira booked the flights";
 const SECOND: &str = "I can drive her there";
 const THIRD: &str = "She said thanks to you";
+const FOURTH: &str = "Mira wrote back";
 const OTHER_STACK: &str = "0f0f0f0f0f0f0f0f";
 
 fn saving(stub: &StubTagger) -> OneironerConfig {
@@ -156,12 +158,18 @@ fn a_pronoun_takes_an_earlier_turns_name_and_a_speaker_link_names_its_person() {
         })
     );
     assert_eq!(second_tags.mentions[1].link, person_link(mira));
-    assert_eq!(second_tags.mentions[1].reference, Some(MentionReference::Context));
+    assert_eq!(
+        second_tags.mentions[1].reference,
+        Some(MentionReference::Context)
+    );
     assert_eq!(second_tags.mentions[1].link_confidence, Some(0.9));
 
     let third_tags = tags(&vault, &third);
     assert_eq!(third_tags.mentions[0].link, person_link(mira));
-    assert_eq!(third_tags.mentions[0].reference, Some(MentionReference::Context));
+    assert_eq!(
+        third_tags.mentions[0].reference,
+        Some(MentionReference::Context)
+    );
     assert_eq!(third_tags.mentions[0].antecedent, None);
     assert_eq!(third_tags.mentions[1].link, person_link(companion));
     assert_eq!(
@@ -182,7 +190,11 @@ fn a_pronoun_takes_an_earlier_turns_name_and_a_speaker_link_names_its_person() {
         .into_iter()
         .map(|hit| hit.turn)
         .collect();
-    assert_eq!(hits, BTreeSet::from([first, second, third]), "every turn names her");
+    assert_eq!(
+        hits,
+        BTreeSet::from([first, second, third]),
+        "every turn names her"
+    );
     for outcome in outcomes(&tagged) {
         let TaggingOutcome::Saved {
             unresolved_context_links,
@@ -233,10 +245,11 @@ fn a_pronoun_takes_an_earlier_turns_name_and_a_speaker_link_names_its_person() {
 }
 
 /// A context link whose earlier span the vault never saved keeps no
-/// antecedent and is counted; a context link to a turn the request did not
-/// send refuses the whole answer, and the marker waits.
+/// antecedent and is counted. A context link to a turn the request did not
+/// send refuses the whole answer, and so do two spans at one place, which a
+/// later context link could not tell apart; their markers wait.
 #[test]
-fn a_context_link_to_an_unsaved_span_is_counted_and_one_outside_the_window_is_refused() {
+fn a_context_link_to_an_unsaved_span_is_counted_and_an_answer_off_the_contract_is_refused() {
     let stub = StubTagger::start(Answer::Good);
     stub.set_script(|body: &Value| {
         let text = body["messages"][0]["text"].as_str().unwrap_or_default();
@@ -249,6 +262,11 @@ fn a_context_link_to_an_unsaved_span_is_counted_and_one_outside_the_window_is_re
                 link["end"] = json!(11);
                 json!({"spans": [pronoun(12, 15)], "links": [], "context_links": [link]})
             }
+            FOURTH => json!({
+                "spans": [{"message": 0, "start": 0, "end": 4, "label": "PERSON", "confidence": 0.9},
+                          {"message": 0, "start": 0, "end": 4, "label": "ORG", "confidence": 0.6}],
+                "links": [],
+            }),
             _ => {
                 let elsewhere = EntityId::from_bytes([0x5a; 16]).expect("id").to_hex();
                 json!({
@@ -263,30 +281,44 @@ fn a_context_link_to_an_unsaved_span_is_counted_and_one_outside_the_window_is_re
     let dir = tempfile::tempdir().expect("dir");
     let (vault, clock) = open_clocked_vault(dir.path(), &saving(&stub));
     let owner = speaker(&vault);
-    let room = make_room(&vault, 0x73, &[owner, person(&vault, 0x23, "fixture friend")]);
+    let room = make_room(
+        &vault,
+        0x73,
+        &[owner, person(&vault, 0x23, "fixture friend")],
+    );
     let user = |text, at| {
         clock.set(at);
-        say(&vault, owner, room, None, said(WitnessAuthor::User, text, 0, None), at)
+        say(
+            &vault,
+            owner,
+            room,
+            None,
+            said(WitnessAuthor::User, text, 0, None),
+            at,
+        )
     };
     let first = user(FIRST, NOW + 1);
     let second = user(SECOND, NOW + 2);
     let third = user(THIRD, NOW + 3);
+    let fourth = user(FOURTH, NOW + 4);
 
     let tagged = server(&vault, Some(&saving(&stub)));
     let running = Running::start(&tagged);
+    let refused = |why: OutputRefusal| {
+        outcomes(&tagged).iter().any(|outcome| {
+            matches!(
+                outcome,
+                TaggingOutcome::Failed {
+                    failure: TaggingFailure::Refused { refusal },
+                    ..
+                } if *refusal == why
+            )
+        })
+    };
     assert!(wait_until_long(|| {
         vault.turn_tags(&second).expect("read").is_some()
-            && outcomes(&tagged).iter().any(|outcome| {
-                matches!(
-                    outcome,
-                    TaggingOutcome::Failed {
-                        failure: TaggingFailure::Refused {
-                            refusal: OutputRefusal::UnknownContext
-                        },
-                        ..
-                    }
-                )
-            })
+            && refused(OutputRefusal::UnknownContext)
+            && refused(OutputRefusal::SpanOrder)
     }));
     running.stop();
 
@@ -303,7 +335,71 @@ fn a_context_link_to_an_unsaved_span_is_counted_and_one_outside_the_window_is_re
         }
     )));
     assert_eq!(vault.turn_tags(&third).expect("read"), None);
-    assert!(owes_a_pass(&vault), "the refused turn still owes a pass");
+    assert_eq!(vault.turn_tags(&fourth).expect("read"), None);
+    assert!(owes_a_pass(&vault), "the refused turns still owe a pass");
+}
+
+/// A turn said in a room of three keeps its addressee unresolved after one
+/// of the others leaves: the one other party left now was not the only one
+/// there when the turn was said.
+#[test]
+fn an_addressee_in_a_room_someone_has_left_since_stays_unresolved() {
+    let stub = StubTagger::start(Answer::Good);
+    stub.set_script(|_: &Value| {
+        json!({
+            "spans": [pronoun(10, 13)],
+            "links": [],
+            "speaker_links": [{"span": 0, "target": "addressee", "confidence": 0.95}],
+        })
+    });
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, clock) = open_clocked_vault(dir.path(), &saving(&stub));
+    let owner = speaker(&vault);
+    let friend = person(&vault, 0x25, "fixture friend");
+    let neighbour = person(&vault, 0x26, "fixture neighbour");
+    let room = make_room(&vault, 0x75, &[owner, friend, neighbour]);
+    clock.set(NOW + 1);
+    let turn = say(
+        &vault,
+        owner,
+        room,
+        None,
+        said(WitnessAuthor::User, "Thanks to you", 0, None),
+        NOW + 1,
+    );
+    clock.set(NOW + 2);
+    vault
+        .leave_member(
+            room,
+            neighbour,
+            oneiron::WriteActor::new(owner, EdgeActorClass::Human),
+            NOW + 2,
+        )
+        .expect("the neighbour leaves");
+
+    let tagged = server(&vault, Some(&saving(&stub)));
+    let running = Running::start(&tagged);
+    assert!(wait_until_long(|| vault
+        .turn_tags(&turn)
+        .expect("read")
+        .is_some()));
+    running.stop();
+    let you = &tags(&vault, &turn).mentions[0];
+    assert_eq!(you.link, MentionLink::Tag, "nobody is picked");
+    assert_eq!(
+        you.reference,
+        Some(MentionReference::Speaker {
+            target: SpeakerTarget::Addressee,
+            resolved: false,
+        })
+    );
+    assert!(outcomes(&tagged).iter().any(|outcome| matches!(
+        outcome,
+        TaggingOutcome::Saved {
+            unresolved_speaker_links: 1,
+            ..
+        }
+    )));
 }
 
 /// The served stack binds the answer: one naming another stack than the
@@ -317,11 +413,13 @@ fn an_answer_naming_another_stack_than_its_card_fails_and_the_marker_waits() {
     let turn = super::support::witness(&vault, FIRST);
     let tagged = server(&vault, Some(&saving(&stub)));
     let running = Running::start(&tagged);
-    assert!(wait_until_long(|| outcomes(&tagged).iter().any(|outcome| matches!(
-        outcome,
-        TaggingOutcome::Failed { failure: TaggingFailure::Call { code }, .. }
-            if code == "tagger answer names another stack than its model card"
-    ))));
+    assert!(wait_until_long(|| outcomes(&tagged).iter().any(
+        |outcome| matches!(
+            outcome,
+            TaggingOutcome::Failed { failure: TaggingFailure::Call { code }, .. }
+                if code == "tagger answer names another stack than its model card"
+        )
+    )));
     running.stop();
     assert_eq!(vault.turn_tags(&turn).expect("read"), None);
     assert!(owes_a_pass(&vault), "the turn still owes a pass");
@@ -344,14 +442,35 @@ fn a_head_swap_at_a_fixed_checkpoint_owes_every_turn_a_new_pass() {
     {
         let vault = open_vault_for(dir.path(), &pinned(STACK));
         owner = speaker(&vault);
-        room = make_room(&vault, 0x74, &[owner, person(&vault, 0x24, "fixture friend")]);
-        tagged_turn = say(&vault, owner, room, None, said(WitnessAuthor::User, FIRST, 0, None), NOW);
+        room = make_room(
+            &vault,
+            0x74,
+            &[owner, person(&vault, 0x24, "fixture friend")],
+        );
+        tagged_turn = say(
+            &vault,
+            owner,
+            room,
+            None,
+            said(WitnessAuthor::User, FIRST, 0, None),
+            NOW,
+        );
         let tagged = server(&vault, Some(&pinned(STACK)));
         let running = Running::start(&tagged);
-        assert!(wait_until_long(|| vault.turn_tags(&tagged_turn).expect("read").is_some()));
+        assert!(wait_until_long(|| vault
+            .turn_tags(&tagged_turn)
+            .expect("read")
+            .is_some()));
         running.stop();
         drop(tagged);
-        waiting_turn = say(&vault, owner, room, None, said(WitnessAuthor::User, THIRD, 0, None), NOW + 1);
+        waiting_turn = say(
+            &vault,
+            owner,
+            room,
+            None,
+            said(WitnessAuthor::User, THIRD, 0, None),
+            NOW + 1,
+        );
         assert_eq!(
             tags(&vault, &tagged_turn).envelope.stack.as_deref(),
             Some(STACK)
@@ -385,7 +504,9 @@ fn a_head_swap_at_a_fixed_checkpoint_owes_every_turn_a_new_pass() {
             .expect("read")
             .is_some_and(|tags| tags.envelope.stack.as_deref() == Some(OTHER_STACK))
     };
-    assert!(wait_until_long(|| under_new_head(&tagged_turn) && under_new_head(&waiting_turn)));
+    assert!(wait_until_long(
+        || under_new_head(&tagged_turn) && under_new_head(&waiting_turn)
+    ));
     running.stop();
     assert!(
         outcomes(&tagged)

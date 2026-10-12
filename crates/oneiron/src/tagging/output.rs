@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::extraction::{EncoderInput, EncoderOutput};
+use crate::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
 
 const MAX_ROWS: usize = 4096;
 const MAX_LABEL_BYTES: usize = 64;
@@ -30,6 +30,9 @@ pub enum OutputRefusal {
     /// A context link names a turn or a message the input did not send as
     /// context.
     UnknownContext,
+    /// Spans are out of (message, start, end) order, or two share
+    /// coordinates.
+    SpanOrder,
 }
 
 /// The rules `Memory::witness_with_shadow` applies to an answer, applied to
@@ -61,15 +64,25 @@ pub(super) fn check_output(
     check_links(input, output)
 }
 
-/// The link rules: each link of the three kinds names a span of the answer,
-/// carries a confidence in 0..1 where it has one, and is the only link its
-/// span carries. An in-turn link points back; a context link names a turn
-/// and a message the input sent as context, and offsets on character
-/// boundaries of that message's text as sent.
+/// The link rules: spans come in (message, start, end) order and never share
+/// coordinates, so an index or a later context link's coordinates name one
+/// span. Each link of the three kinds names a span of the answer, carries a
+/// confidence in 0..1 where it has one, and is the only link its span
+/// carries. An in-turn link points back; a context link names a turn and a
+/// message the input sent as context, and offsets on character boundaries of
+/// that message's text as sent.
 pub(crate) fn check_links(
     input: &EncoderInput,
     output: &EncoderOutput,
 ) -> Result<(), OutputRefusal> {
+    let at = |span: &NerSpan| (span.message, span.start, span.end);
+    if output
+        .spans
+        .windows(2)
+        .any(|pair| at(&pair[0]) >= at(&pair[1]))
+    {
+        return Err(OutputRefusal::SpanOrder);
+    }
     if output.links.len() > MAX_ROWS
         || output.context_links.len() > MAX_ROWS
         || output.speaker_links.len() > MAX_ROWS
@@ -89,7 +102,10 @@ pub(crate) fn check_links(
         if link.antecedent >= link.span {
             return Err(OutputRefusal::BadLink);
         }
-        if link.confidence.is_some_and(|confidence| !is_confidence(confidence)) {
+        if link
+            .confidence
+            .is_some_and(|confidence| !is_confidence(confidence))
+        {
             return Err(OutputRefusal::BadConfidence);
         }
     }
@@ -115,7 +131,11 @@ pub(crate) fn check_links(
 }
 
 /// The text the input sent for `message` of context turn `turn`.
-pub(super) fn context_text<'a>(input: &'a EncoderInput, turn: &str, message: &str) -> Option<&'a str> {
+pub(super) fn context_text<'a>(
+    input: &'a EncoderInput,
+    turn: &str,
+    message: &str,
+) -> Option<&'a str> {
     input
         .context
         .iter()
