@@ -23,12 +23,15 @@
 //! Holding less never drops a reversal, so every doubt releases the hold. A
 //! queued round holds nothing until its attempt completes, so a round that
 //! ends any other way (failed, cancelled while landing, its source erased)
-//! has consumed no repeat. A held turn whose words are published again
-//! holds nothing more, even if they later return to what was queued: the
-//! attempt may have read either version. A rider is planned again when
-//! material older than it but newer than the turn it repeated is queued
-//! later (a parked turn whose edge landed, a re-dirtied turn), because that
-//! material may have changed the value the rider returned to.
+//! has consumed no repeat. A held turn whose words change holds nothing
+//! more, even if they later return to what was queued: the attempt may have
+//! read either version. A rider whose words change, or that loses a
+//! MESSAGE, is read again: no attempt read its new words. A turn rides
+//! once, under its current key. A rider is also planned again when the
+//! turn it repeated is queued again, or material older than the rider but
+//! newer than that turn is queued later (a parked turn whose edge landed, a
+//! re-dirtied turn), because either may have changed the value the rider
+//! returned to.
 //!
 //! Queued and applied state are rows: a restart between queue and apply
 //! keeps the queued attempt, and the window it planned stays read. The rows
@@ -72,6 +75,9 @@ const GIVEN: SideTable<EntityId, Vec<[u8; 32]>, Named> =
 /// A turn consumed as a repeat of the held turn. Key: its temporal key.
 const RIDER: SideTable<TurnKey, Rider, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_RIDER);
+/// The temporal key each riding TURN rides under, one per TURN. Key: TURN id.
+const RIDES: SideTable<EntityId, TurnKey, Named> =
+    SideTable::new(&side_table::DREAMER_PROJECTION_RIDES);
 
 /// A TURN's own temporal key, `(learned_at, id)`.
 type TurnKey = (u64, EntityId);
@@ -298,26 +304,25 @@ pub(crate) fn hold_in_txn(
         }
     }
     // A turn queued again rides nothing.
-    for at in &queued {
-        if let Some(rider) = RIDER.get(store, txn, at)? {
-            unride_in_txn(store, txn, at, &rider.round)?;
-        }
+    for (_, turn) in &queued {
+        unride_in_txn(store, txn, turn)?;
     }
     release_in_txn(store, txn, &queued)?;
-    if let Some((id, after, riders)) = &plan.ride
-        && let Some(mut round) = ROUND.get(store, txn, id)?
-    {
+    if let Some((id, after, riders)) = &plan.ride {
+        // A turn rides once, under its current key.
+        for (_, turn) in riders {
+            unride_in_txn(store, txn, turn)?;
+        }
+        let Some(mut round) = ROUND.get(store, txn, id)? else {
+            return Ok(());
+        };
         for at in riders {
-            if let Some(rider) = RIDER.get(store, txn, at)?
-                && rider.round != *id
-            {
-                unride_in_txn(store, txn, at, &rider.round)?;
-            }
             let rider = Rider {
                 round: *id,
                 after: *after,
             };
             RIDER.put(store, txn, at, &rider)?;
+            RIDES.put(store, txn, &at.1, at)?;
             round.riders.push(*at);
         }
         round.riders.sort_unstable();
@@ -327,10 +332,10 @@ pub(crate) fn hold_in_txn(
     Ok(())
 }
 
-/// Plans again every rider that `queued` material falls between: queued
-/// later than the held turn it repeated and earlier than itself, so it may
-/// have changed the value the rider returned to. Queues in temporal order
-/// read no rider row.
+/// Plans again every rider that `queued` material falls between: the held
+/// turn it repeated, queued again, or a turn after that one and before the
+/// rider, queued later. Either may have changed the value the rider
+/// returned to. Queues in temporal order read no rider row.
 fn release_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -344,33 +349,36 @@ fn release_in_txn(
         let (at, rider) = row?;
         if rider.after < at
             && queued
-                .range((Bound::Excluded(rider.after), Bound::Excluded(at)))
+                .range((Bound::Included(rider.after), Bound::Excluded(at)))
                 .next()
                 .is_some()
         {
-            released.push((at, rider.round));
+            released.push(at.1);
         }
     }
-    for (at, round) in &released {
-        unride_in_txn(store, txn, at, round)?;
-        requeue_turn_in_txn(store, txn, &at.1)?;
+    for turn in &released {
+        unride_in_txn(store, txn, turn)?;
+        requeue_turn_in_txn(store, txn, turn)?;
     }
     Ok(())
 }
 
-/// Deletes a rider's row and takes it off the round it rode.
-fn unride_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    at: &TurnKey,
-    id: &[u8; 32],
-) -> Result<()> {
-    RIDER.delete(store, txn, at)?;
-    let Some(mut round) = ROUND.get(store, txn, id)? else {
-        return Ok(());
+/// Ends a TURN's ride, if it rides: its rows go and the round it rode drops
+/// it. Returns whether it rode.
+fn unride_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<bool> {
+    let Some(at) = RIDES.get(store, txn, turn)? else {
+        return Ok(false);
     };
-    round.riders.retain(|rider| rider != at);
-    keep_in_txn(store, txn, id, &round)
+    RIDES.delete(store, txn, turn)?;
+    let Some(rider) = RIDER.get(store, txn, &at)? else {
+        return Ok(true);
+    };
+    RIDER.delete(store, txn, &at)?;
+    if let Some(mut round) = ROUND.get(store, txn, &rider.round)? {
+        round.riders.retain(|other| *other != at);
+        keep_in_txn(store, txn, &rider.round, &round)?;
+    }
+    Ok(true)
 }
 
 /// Writes a round back, or deletes it once it can hold nothing and has
@@ -424,14 +432,18 @@ pub(crate) fn apply_in_txn(
     keep_in_txn(store, txn, &id, &round)
 }
 
-/// A TURN whose words were published again stops holding, for good: an
-/// attempt queued before the change may have read either version, so a
-/// later return to the queued words proves nothing.
-pub(crate) fn unhold_in_txn(
+/// A TURN whose words changed. As the held turn it stops holding, for
+/// good: an attempt queued before the change may have read either version,
+/// so a later return to the queued words proves nothing. As a rider it is
+/// read again: no attempt has read its new words.
+pub(crate) fn words_changed_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
+    if unride_in_txn(store, txn, turn)? {
+        requeue_turn_in_txn(store, txn, turn)?;
+    }
     let Some(mut latest) = LATEST.get(store, txn, &())? else {
         return Ok(());
     };
@@ -446,19 +458,17 @@ pub(crate) fn unhold_in_txn(
 /// words to holds nothing more. The riders that round consumed are
 /// re-dirtied, so a live repeat of what the turn said is read as new, and so
 /// are the other turns of a round still queued, whose attempt cannot read
-/// its batch without the erased turn. A TURN erased itself (`gone`, not a
-/// MESSAGE of it) rides nothing more either.
+/// its batch without the erased turn. The turn rides nothing more: a TURN
+/// erased itself (`gone`) is read no more, and a TURN that lost a MESSAGE
+/// is read again, since no attempt has read the words it keeps.
 pub(crate) fn erase_turn_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
     gone: bool,
 ) -> Result<()> {
-    if gone
-        && let Some(at) = turn_key_in_txn(store, txn, turn)?
-        && let Some(rider) = RIDER.get(store, txn, &at)?
-    {
-        unride_in_txn(store, txn, &at, &rider.round)?;
+    if unride_in_txn(store, txn, turn)? && !gone {
+        requeue_turn_in_txn(store, txn, turn)?;
     }
     let Some(given) = GIVEN.get(store, txn, turn)? else {
         return Ok(());
@@ -468,12 +478,8 @@ pub(crate) fn erase_turn_in_txn(
             continue;
         };
         for at in &round.riders {
-            if RIDER
-                .get(store, txn, at)?
-                .is_some_and(|rider| rider.round == *id)
-            {
-                RIDER.delete(store, txn, at)?;
-            }
+            RIDER.delete(store, txn, at)?;
+            RIDES.delete(store, txn, &at.1)?;
             requeue_turn_in_txn(store, txn, &at.1)?;
         }
         let batch: &[_] = if round.applied { &[] } else { &round.turns };

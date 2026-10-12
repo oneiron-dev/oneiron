@@ -393,6 +393,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DREAMER_PROJECTION_GIVEN",
         "DREAMER_PROJECTION_LATEST",
         "DREAMER_PROJECTION_RIDER",
+        "DREAMER_PROJECTION_RIDES",
         "DREAMER_PROJECTION_ROUND",
         "DREAMER_PROJECTOR_POLICY",
         "DREAMER_SIEVE_CURSOR",

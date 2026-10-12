@@ -674,3 +674,78 @@ fn a_held_turn_rewritten_and_restored_holds_nothing() -> Result<()> {
     assert_eq!(micro_rounds(&vault)?[1], vec![back]);
     Ok(())
 }
+
+/// Sol R4 (P1): a repeat rode the held turn, and the held turn itself was
+/// queued again with changed words (a finalized stream continuation keeps
+/// its TURN row and re-dirties it), but only material strictly between the
+/// two released the repeat, so its return to the old words was never read
+/// after the change. The repeated turn queued again releases it too.
+#[test]
+fn a_repeat_is_planned_again_when_the_turn_it_repeated_is_queued_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 23, at);
+    let held = seed_turn(&vault, &session, "user", "I live in Kyoto.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let back = seed_turn(&vault, &session, "user", "I live in Kyoto.", at + 3);
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+
+    // New words under the held turn's own key, re-dirtied as a finalized
+    // stream continuation re-dirties its turn.
+    vault
+        .batch()
+        .put(
+            &held,
+            ENTITY_TYPE_TURN,
+            occurred(at),
+            at,
+            &turn_body("user", "I live in Kyoto. I moved to Osaka.", None),
+        )
+        .commit()?;
+    vault.with_write_txn(|txn| {
+        crate::dreamer_consolidation::redirty::redirty_turn_in_txn(&vault, txn, &held)
+    })?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 5)?);
+    assert_eq!(
+        micro_rounds(&vault)?,
+        vec![vec![held], vec![held], vec![back]]
+    );
+    Ok(())
+}
+
+/// Sol R4 (P1): a turn consumed as a repeat kept riding after one of its
+/// MESSAGEs was erased, though what it still says is only part of the held
+/// turn's words, which is new material. A rider that loses a MESSAGE is read
+/// again.
+#[test]
+fn a_repeat_that_loses_a_message_is_read_again() -> Result<()> {
+    use super::witnessed_turns::{allow_system_rows, message};
+    use crate::memory::WitnessAuthor;
+    let (_dir, vault) = open_vault();
+    let person = EntityId::from_bytes([0x73; 16])?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
+    allow_system_rows(&vault, person)?;
+    let conversation = EntityId::from_bytes([0x74; 16])?;
+    let said = || {
+        vec![
+            message(0, WitnessAuthor::User, "I live in Kyoto.", true),
+            message(1, WitnessAuthor::User, "I moved to Osaka.", true),
+        ]
+    };
+    let held = witness_into(&vault, person, conversation, said());
+    let at = vault.now_recorded_at();
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let again = said();
+    let moved = EntityId::from_hex(again[1].id.as_deref().expect("message id"))?;
+    let back = witness_into(&vault, person, conversation, again);
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+
+    vault
+        .delete_room_record_unchecked_for_test(&moved, crate::deletion::DeleteReason::UserDelete)?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![held], vec![back]]);
+    Ok(())
+}

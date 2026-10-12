@@ -72,15 +72,15 @@ pub(crate) fn mark_on_publication_in_txn(
     Ok(())
 }
 
-/// A TURN whose words changed owes the sieve a new read and holds nothing
-/// in the projection more, in the commit that changes them.
+/// A TURN whose words changed owes the sieve a new read, holds nothing in
+/// the projection more, and rides no round, in the commit that changes them.
 pub(crate) fn words_changed_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &crate::EntityId,
 ) -> crate::Result<()> {
     sieve::owe_read_in_txn(store, txn, turn)?;
-    projector::unhold_in_txn(store, txn, turn)
+    projector::words_changed_in_txn(store, txn, turn)
 }
 
 /// The TURNs whose words `id` is: itself for a TURN, every TURN a MESSAGE is
