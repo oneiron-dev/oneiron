@@ -235,14 +235,40 @@ async fn forward(
         .unwrap()
 }
 
-/// `text` with every copy of `key` cut out: a provider's error body may echo
+/// The forms a log or a report could carry `key` in: the key itself, and its
+/// base64 (standard and URL-safe) at each of the three alignments it can
+/// start at inside a longer encoded value, cut to the characters the key
+/// alone decides.
+fn key_forms(key: &str) -> Vec<String> {
+    use base64::Engine as _;
+    let mut forms = vec![key.to_owned()];
+    for offset in 0..3 {
+        let mut bytes = vec![0_u8; offset];
+        bytes.extend_from_slice(key.as_bytes());
+        let encoded = base64::engine::general_purpose::STANDARD_NO_PAD.encode(&bytes);
+        let end = bytes.len() / 3 * 4 + [0, 1, 2][bytes.len() % 3];
+        let middle = &encoded[[0, 2, 3][offset].min(end)..end];
+        // Too short a cut would match anything.
+        if middle.len() >= 8 {
+            forms.push(middle.to_owned());
+            forms.push(middle.replace('+', "-").replace('/', "_"));
+        }
+    }
+    forms.dedup();
+    forms
+}
+
+/// `text` with every form of `key` cut out: a provider's error body may echo
 /// the key it refused.
 fn redact(text: &str, key: &str) -> String {
-    text.replace(key, "[provider key]")
+    key_forms(key)
+        .iter()
+        .fold(text.to_owned(), |text, form| text.replace(form, "[provider key]"))
 }
 
 /// Cuts the key out of every file under `out`, returning the files it was in.
 fn scrub(out: &Path, key: &str) -> Vec<PathBuf> {
+    let forms = key_forms(key);
     let mut found = Vec::new();
     for path in std::fs::read_dir(out)
         .unwrap()
@@ -250,7 +276,7 @@ fn scrub(out: &Path, key: &str) -> Vec<PathBuf> {
         .filter(|path| path.is_file())
     {
         let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
-        if text.contains(key) {
+        if forms.iter().any(|form| text.contains(form)) {
             std::fs::write(&path, redact(&text, key)).unwrap();
             found.push(path);
         }
