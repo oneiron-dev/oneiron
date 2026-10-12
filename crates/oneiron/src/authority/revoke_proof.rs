@@ -152,6 +152,29 @@ impl RevokeFacts {
         self.by_hash
             .retain(|hash, _| !retirements.excludes(hash, entries, ancestors));
     }
+
+    /// Forgets every restriction proved through a handoff that did not take
+    /// effect. The heir a refused or pruned ReRoot names was never root, so
+    /// it restricts nothing, however its own branch folds; a restriction the
+    /// fold dropped counts only when every ReRoot in its ancestry `settled`.
+    pub(super) fn forget_unsettled(
+        &mut self,
+        settled: &BTreeMap<AuthorityEntryHash, FoldState>,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ) {
+        self.by_hash.retain(|hash, _| {
+            settled.contains_key(hash)
+                || ancestors.get(hash).is_some_and(|line| {
+                    line.iter().all(|ancestor| {
+                        settled.contains_key(ancestor)
+                            || !entries
+                                .get(ancestor)
+                                .is_some_and(|row| matches!(row.op, AuthorityOp::ReRoot { .. }))
+                    })
+                })
+        });
+    }
 }
 
 /// The target's own folded state, proved over its signed ancestry alone.

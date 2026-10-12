@@ -1,10 +1,12 @@
-//! Handoff settlement (engine-crates-03, Sol reviews 2 and 3): forks and
+//! Handoff settlement (engine-crates-03, Sol reviews 2 to 4): forks and
 //! cycles of handoffs install no successor and keep their fences closed, a
 //! handoff that stands on fenced rows or fails on its own rows retires
-//! nothing, a fenced row's floor or collision prunes nothing, only an
-//! authority row is resident history, and no door admits a new row that
-//! stands on a retired key.
+//! nothing, a fenced row's floor or collision prunes nothing, the heir of a
+//! handoff that never took effect restricts nothing, only an authority row
+//! is resident history, and no door admits a new row that stands on a
+//! retired key.
 use super::history_transfer::{re_root_entry, store};
+use super::observation_safety::advance_observation_floor;
 use super::support::*;
 use super::*;
 use crate::{TimeRange, Vault, VaultConfig};
@@ -440,4 +442,269 @@ fn a_hosted_vaults_replicated_door_keeps_its_cloud_successor() {
     let fold = vault.authority_fold().unwrap();
     assert!(is_live(&fold, &cloud));
     assert!(!fold.valid_entries.contains(&hash(&fork)));
+}
+
+/// The old root's slips, minted in `vault`'s log: every stored row, the
+/// latest mint's hash, the highest sequence and the signing time.
+fn minted_slips(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    slips: &[[u8; 32]],
+) -> (Vec<AuthorityLogEntry>, AuthorityEntryHash, u64, u64) {
+    let root = vault.ensure_host_root_slip(issuer).unwrap();
+    for slip_id in slips {
+        let mut claims = root.claims.clone();
+        claims.slip_id = *slip_id;
+        claims.parent_id = Some(root.claims.slip_id);
+        vault.mint_capability_slip(issuer, claims).unwrap();
+    }
+    let minted = vault.authority_fold().unwrap();
+    let entries: Vec<AuthorityLogEntry> = minted
+        .valid_entries
+        .iter()
+        .map(|hash| {
+            vault
+                .get_authority_log_entry(&authority_log_entity_id_from_hash(hash).unwrap())
+                .unwrap()
+                .unwrap()
+        })
+        .collect();
+    let head = minted.slips.mints[slips.last().unwrap()].entry_hash;
+    let seq = entries.iter().map(|entry| entry.seq).max().unwrap();
+    (entries, head, seq, root.claims.issued_at)
+}
+
+/// A federation confirmation; two that share a nonce collide.
+fn confirmation(id: u8, nonce: u8) -> AuthorityOp {
+    AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+        kind: AuthorityConfirmKind::Accept,
+        confirm_id: [id; 32],
+        peer_vault_id: [96; 32],
+        epoch: 1,
+        nonce: [nonce; 16],
+    })
+}
+
+/// Which of two colliding confirmations the fold drops.
+fn loser<'a>(
+    entries: &[AuthorityLogEntry],
+    first: &'a AuthorityLogEntry,
+    second: &'a AuthorityLogEntry,
+) -> &'a AuthorityLogEntry {
+    let mut all = entries.to_vec();
+    all.extend([first.clone(), second.clone()]);
+    if fold_authority_log(&all).valid_entries.contains(&hash(first)) {
+        second
+    } else {
+        first
+    }
+}
+
+/// The heir of a handoff that never took effect restricts nothing (Sol
+/// review 4, finding 1). The live root's handoff stands on two confirmations
+/// that collide, so it installs no heir; the heir's withdrawal of a live slip,
+/// proved on its own dropped branch, withdraws nothing. A withdrawal the live
+/// root signs on the losing confirmation's branch still stands.
+#[test]
+fn the_heir_of_a_handoff_that_never_took_effect_withdraws_no_slip() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let issuer = HostSlipIssuer::from_secret(b"unsettled heir host root").unwrap();
+    let (kept, withdrawn) = ([98; 32], [99; 32]);
+    let (mut entries, head, seq, at) = minted_slips(&vault, &issuer, &[kept, withdrawn]);
+    let vault_id = Some(vault.authority_fold().unwrap().vault_id.unwrap());
+    let sign = |seq: u64, mut parents: Vec<AuthorityEntryHash>, op: AuthorityOp| {
+        parents.sort();
+        issuer.sign_entry(vault_id, seq, parents, op, at).unwrap()
+    };
+    let first = sign(seq + 1, vec![head], confirmation(1, 97));
+    let second = sign(seq + 2, vec![head], confirmation(2, 97));
+    let heir = ed_key(211);
+    let handoff = sign(
+        seq + 3,
+        vec![hash(&first), hash(&second)],
+        AuthorityOp::ReRoot {
+            new_device: owner_device(&heir, AuthorityTier::Software),
+        },
+    );
+    let forged = sign_ed(
+        unsigned_entry(
+            vault_id,
+            1,
+            vec![hash(&handoff)],
+            AuthorityOp::SlipRevoke { slip_id: kept },
+            authority_key_from_ed(&heir),
+            at,
+        ),
+        &heir,
+    );
+    let lost = loser(&entries, &first, &second);
+    let control = sign(
+        seq + 4,
+        vec![hash(lost)],
+        AuthorityOp::SlipRevoke { slip_id: withdrawn },
+    );
+    entries.extend([
+        first.clone(),
+        second.clone(),
+        handoff.clone(),
+        forged.clone(),
+        control.clone(),
+    ]);
+
+    let fold = fold_authority_log(&entries);
+    assert!(!fold.valid_entries.contains(&hash(&handoff)));
+    assert!(!fold.valid_entries.contains(&hash(&forged)));
+    assert!(!fold.valid_entries.contains(&hash(&control)));
+    assert!(fold.retired_keys.is_empty());
+    assert!(
+        !fold.slips.explicit_revoked.contains(&kept),
+        "the heir of a handoff that never took effect withdrew a live slip"
+    );
+    assert!(fold.slips.explicit_revoked.contains(&withdrawn));
+    entries.reverse();
+    assert_eq!(fold_authority_log(&entries), fold);
+}
+
+/// The same holds after a real handoff (Sol review 4, finding 1, its settled
+/// variant): the successor's own handoff to an heir stands on colliding
+/// confirmations, and the heir withdraws none of the successor's slips. A
+/// withdrawal the successor signs on the losing confirmation's branch, whose
+/// ancestry holds only the settled handoff, still stands.
+#[test]
+fn after_a_settled_handoff_an_unsettled_heir_withdraws_no_slip() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let issuer = HostSlipIssuer::from_secret(b"settled then unsettled heir").unwrap();
+    let (kept, withdrawn) = ([100; 32], [101; 32]);
+    let (mut entries, head, seq, at) = minted_slips(&vault, &issuer, &[kept, withdrawn]);
+    let id = vault.authority_fold().unwrap().vault_id.unwrap();
+    let (next, heir) = (ed_key(212), ed_key(213));
+    let settled = issuer
+        .sign_entry(
+            Some(id),
+            seq + 1,
+            vec![head],
+            AuthorityOp::ReRoot {
+                new_device: owner_device(&next, AuthorityTier::Software),
+            },
+            at,
+        )
+        .unwrap();
+    let first = signed(id, &[&settled], &next, 1, confirmation(3, 97));
+    let second = signed(id, &[&settled], &next, 2, confirmation(4, 97));
+    let handoff = signed(
+        id,
+        &[&first, &second],
+        &next,
+        3,
+        AuthorityOp::ReRoot {
+            new_device: owner_device(&heir, AuthorityTier::Software),
+        },
+    );
+    let forged = signed(
+        id,
+        &[&handoff],
+        &heir,
+        1,
+        AuthorityOp::SlipRevoke { slip_id: kept },
+    );
+    entries.push(settled.clone());
+    let lost = loser(&entries, &first, &second);
+    let control = signed(
+        id,
+        &[lost],
+        &next,
+        4,
+        AuthorityOp::SlipRevoke { slip_id: withdrawn },
+    );
+    entries.extend([
+        first.clone(),
+        second.clone(),
+        handoff.clone(),
+        forged.clone(),
+        control.clone(),
+    ]);
+
+    let fold = fold_authority_log(&entries);
+    assert!(fold.valid_entries.contains(&hash(&settled)));
+    assert!(is_live(&fold, &next));
+    assert!(!fold.valid_entries.contains(&hash(&handoff)));
+    assert!(!fold.valid_entries.contains(&hash(&forged)));
+    assert!(!is_live(&fold, &heir));
+    assert!(
+        !fold.slips.explicit_revoked.contains(&kept),
+        "an heir the settled successor named in a refused handoff withdrew its slip"
+    );
+    assert!(fold.slips.explicit_revoked.contains(&withdrawn));
+}
+
+/// An approval the stale-roster window expired inside a handoff's own line is
+/// still history to the doors (Sol review 4, finding 2): the successor's
+/// handoff that names it as a parent is admitted. An approval the old root
+/// signed beside the handoff, as old as the expired one, was fenced instead,
+/// and a row built on it is still refused.
+#[test]
+fn an_expired_approval_in_a_handoffs_line_refuses_no_successor_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault_at(dir.path(), 1_000);
+    vault
+        .set_authority_observation_policy(AuthorityObservationPolicy {
+            stale_roster_window_secs: 10,
+            ..AuthorityObservationPolicy::default()
+        })
+        .unwrap();
+    let (old, next, heir) = (ed_key(214), ed_key(215), ed_key(216));
+    let genesis = genesis_entry(214, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let approval = signed(id, &[&genesis], &old, 1, confirmation(5, 90));
+    let beside = signed(id, &[&genesis], &old, 2, confirmation(6, 91));
+    let handoff = signed(
+        id,
+        &[&approval],
+        &old,
+        3,
+        AuthorityOp::ReRoot {
+            new_device: owner_device(&next, AuthorityTier::Software),
+        },
+    );
+    for entry in [&genesis, &approval, &beside, &handoff] {
+        store(&vault, entry);
+    }
+    advance_observation_floor(&vault, 1_020);
+    let fold = vault.authority_fold().unwrap();
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::StaleRosterApproval(hash(&approval)))
+    );
+    assert!(
+        !fold
+            .issues
+            .contains(&AuthorityFoldIssue::StaleRosterApproval(hash(&beside)))
+    );
+    assert!(!fold.valid_entries.contains(&hash(&beside)));
+    assert!(is_live(&fold, &next));
+
+    let on_fenced = signed(id, &[&handoff, &beside], &next, 1, confirmation(7, 92));
+    assert!(
+        vault
+            .put_authority_log_entry(&on_fenced, TimeRange { start: 3, end: 3 }, 3)
+            .is_err()
+    );
+    let successor = signed(
+        id,
+        &[&handoff, &approval],
+        &next,
+        1,
+        AuthorityOp::ReRoot {
+            new_device: owner_device(&heir, AuthorityTier::Software),
+        },
+    );
+    vault
+        .put_authority_log_entry(&successor, TimeRange { start: 3, end: 3 }, 3)
+        .expect("a door refused the successor's handoff over an approval in its line");
+    let fold = vault.authority_fold().unwrap();
+    assert!(fold.valid_entries.contains(&hash(&successor)));
+    assert!(is_live(&fold, &heir));
+    assert!(!fold.valid_entries.contains(&hash(&approval)));
 }

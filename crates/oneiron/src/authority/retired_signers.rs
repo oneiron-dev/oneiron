@@ -374,7 +374,9 @@ impl AuthorityFold {
     /// The fold refuses such a row with its descendants, so a door refuses a
     /// new row that descends from one, whoever signs it. `row` reads an
     /// ancestor by hash, stored or arriving beside `entry`; the walk stops at
-    /// rows this fold holds, whose ancestry it holds too.
+    /// rows this fold holds, whose ancestry it holds too. An approval the
+    /// stale-roster window expired counts as held here: it stood in the
+    /// settled fold, so no fence refused it, though it approves nothing now.
     pub(crate) fn stands_on_retired_key(
         &self,
         hash: &AuthorityEntryHash,
@@ -387,10 +389,21 @@ impl AuthorityFold {
         if self.retired_keys.is_empty() {
             return Ok(false);
         }
+        let expired: BTreeSet<&AuthorityEntryHash> = self
+            .issues
+            .iter()
+            .filter_map(|issue| match issue {
+                AuthorityFoldIssue::StaleRosterApproval(hash) => Some(hash),
+                _ => None,
+            })
+            .collect();
         let mut seen = BTreeSet::new();
         let mut stack = entry.parent_hashes.clone();
         while let Some(parent) = stack.pop() {
-            if self.valid_entries.contains(&parent) || !seen.insert(parent) {
+            if self.valid_entries.contains(&parent)
+                || expired.contains(&parent)
+                || !seen.insert(parent)
+            {
                 continue;
             }
             let Some(ancestor) = row(&parent)? else {

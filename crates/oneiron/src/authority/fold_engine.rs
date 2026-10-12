@@ -644,6 +644,7 @@ fn fold_authority_log_once(
 
     revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
     revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
+    revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = BTreeSet::new();
     for (hash, state) in &states {
