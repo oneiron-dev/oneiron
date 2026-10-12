@@ -153,8 +153,8 @@ fn is_url_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"%-._~!$&'()*+,;=:@/?#".contains(&byte)
 }
 
-/// `run` percent-decoded, and for each decoded byte the span of `run` it
-/// came from.
+/// `run` percent-decoded, and for each decoded byte where in `run` its
+/// source starts.
 fn percent_decoded_from(run: &[u8]) -> Decoded {
     let hex = |byte: u8| {
         char::from(byte)
@@ -175,7 +175,7 @@ fn percent_decoded_from(run: &[u8]) -> Decoded {
             out.push(run[at]);
             1
         };
-        from.push((at, at + len));
+        from.push(at);
         at += len;
     }
     (out, from)
@@ -226,42 +226,69 @@ fn run_end(key: &[u8], bytes: &[u8], mut at: usize) -> usize {
     at
 }
 
-/// A decoding of a reading: the decoded bytes, and for each the span of the
-/// reading it came from.
-type Decoded = (Zeroizing<Vec<u8>>, Vec<(usize, usize)>);
+/// A decoding of a reading: the decoded bytes, and for each where in the
+/// reading its source starts. The sources tile the reading in order, so a
+/// byte's source ends where the next different start begins.
+type Decoded = (Zeroizing<Vec<u8>>, Vec<usize>);
 
 /// A decoding, and the escape character it reads.
 type Decoding = (u8, fn(&[u8]) -> Decoded);
 
 /// Writes `run` to `out` with each match of a form, in the run as sent and
 /// in each reading through up to [`DEPTH`] decodings (JSON-unescaped or
-/// percent-decoded, in any order), replaced at the match's source bytes only.
+/// percent-decoded, in any order), replaced at the match's source bytes only:
+/// one [`MARKER`] per stretch of marked bytes. A match marks one bit per run
+/// byte, so overlapping and repeated matches cost no more room.
 fn strip_run(forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec<u8>) {
-    let mut spans = Vec::new();
-    search(forms, run, None, 0, &mut spans);
-    replace_spans(run, spans, out);
+    let mut marked = vec![0_u64; run.len().div_ceil(64)];
+    search(forms, run, None, 0, run.len(), &mut marked);
+    let is_marked = |at: usize| (marked[at / 64] >> (at % 64)) & 1 == 1;
+    let mut at = 0;
+    while at < run.len() {
+        if is_marked(at) {
+            out.extend_from_slice(MARKER);
+            while at < run.len() && is_marked(at) {
+                at += 1;
+            }
+        } else {
+            out.push(run[at]);
+            at += 1;
+        }
+    }
 }
 
-/// Adds the run span of each form in `text`, a reading `depth` decodings
-/// deep whose bytes came from the run spans `sources` (the run itself when
-/// `None`), then reads it through each decoding that changes it. Depth first,
-/// so only one chain of readings is held at a time.
+/// Marks the run bytes of each form in `text`, a reading `depth` decodings
+/// deep whose bytes' sources start at `starts` in the run of `run_len` bytes
+/// (the run itself when `None`), then reads it through each decoding that
+/// changes it. Depth first, so only one chain of readings is held at a time.
 fn search(
     forms: &[Zeroizing<Vec<u8>>],
     text: &[u8],
-    sources: Option<&[(usize, usize)]>,
+    starts: Option<&[usize]>,
     depth: usize,
-    spans: &mut Vec<(usize, usize)>,
+    run_len: usize,
+    marked: &mut [u64],
 ) {
-    let source = |first: usize, end: usize| match sources {
-        Some(sources) => (sources[first].0, sources[end - 1].1),
+    // The run span of `text[first..end]`: from its first byte's start to the
+    // next different start after its last byte, or the run's end.
+    let span = |first: usize, end: usize| match starts {
+        Some(starts) => (
+            starts[first],
+            starts[end..]
+                .iter()
+                .copied()
+                .find(|&start| start != starts[end - 1])
+                .unwrap_or(run_len),
+        ),
         None => (first, end),
     };
     for form in forms {
-        spans.extend(
-            memchr::memmem::find_iter(text, form.as_slice())
-                .map(|found| source(found, found + form.len())),
-        );
+        for found in memchr::memmem::find_iter(text, form.as_slice()) {
+            let (start, end) = span(found, found + form.len());
+            for at in start..end {
+                marked[at / 64] |= 1 << (at % 64);
+            }
+        }
     }
     if depth == DEPTH {
         return;
@@ -275,23 +302,23 @@ fn search(
         if decoded.as_slice() == text {
             continue;
         }
-        let from: Vec<(usize, usize)> = from
-            .into_iter()
-            .map(|(first, end)| source(first, end))
-            .collect();
-        search(forms, &decoded, Some(&from), depth + 1, spans);
+        let from: Vec<usize> = match starts {
+            Some(starts) => from.into_iter().map(|at| starts[at]).collect(),
+            None => from,
+        };
+        search(forms, &decoded, Some(&from), depth + 1, run_len, marked);
     }
 }
 
-/// `run` JSON-unescaped, and for each unescaped byte the span of `run` it
-/// came from.
+/// `run` JSON-unescaped, and for each unescaped byte where in `run` its
+/// source starts.
 fn json_unescaped_from(run: &[u8]) -> Decoded {
     let mut text = Zeroizing::new(Vec::with_capacity(run.len()));
     let mut from = Vec::with_capacity(run.len());
     let mut at = 0;
     while at < run.len() {
         let len = unescape_one(&run[at..], &mut text);
-        from.resize(text.len(), (at, at + len));
+        from.resize(text.len(), at);
         at += len;
     }
     (text, from)
@@ -312,24 +339,6 @@ fn hex4(digits: Option<&[u8]>) -> Option<u32> {
         return None;
     }
     u32::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()
-}
-
-/// Writes `run` to `out` with each of the source `spans` (overlapping or
-/// not, in any order) replaced by [`MARKER`], once per joined stretch.
-fn replace_spans(run: &[u8], mut spans: Vec<(usize, usize)>, out: &mut Vec<u8>) {
-    spans.sort_unstable();
-    let mut rest = 0;
-    for (start, end) in spans {
-        if end <= rest {
-            continue;
-        }
-        if start >= rest {
-            out.extend_from_slice(&run[rest..start]);
-            out.extend_from_slice(MARKER);
-        }
-        rest = end;
-    }
-    out.extend_from_slice(&run[rest..]);
 }
 
 /// Reads the escape or the byte `rest` starts with, pushes what it spells
