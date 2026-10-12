@@ -95,7 +95,7 @@ impl ChildBroker {
     }
 
     /// The running child's pid, starting it first if it is not running. A
-    /// start blocks until the child listens, at most [`START_DEADLINE`].
+    /// start blocks until the child listens, at most `START_DEADLINE` (10 s).
     pub fn ensure(&self) -> std::io::Result<u32> {
         let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(child) = running.as_mut() {
