@@ -75,7 +75,10 @@ pub(crate) fn canonical_speech_conversation_id_for_run(
 /// ONE turn per run, not one per utterance: a TURN is the maximal consecutive
 /// run of ONE speaker, and every bubble a run emits is the same Companion. The
 /// bubbles' own `order` values carry the interleaving.
-pub(super) fn executor_speech_turn_id(run_ref: &str, run_id: Option<EntityId>) -> Result<EntityId> {
+pub(in crate::code_run) fn executor_speech_turn_id(
+    run_ref: &str,
+    run_id: Option<EntityId>,
+) -> Result<EntityId> {
     match run_id {
         Some(run_id) => derived_executor_id(
             EXECUTOR_SPEECH_TURN_DOMAIN,

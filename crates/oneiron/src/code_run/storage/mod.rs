@@ -17,3 +17,5 @@ pub(crate) use self::speech_identity::{
     executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
 };
+#[cfg(test)]
+pub(super) use self::speech_identity::executor_speech_turn_id;
