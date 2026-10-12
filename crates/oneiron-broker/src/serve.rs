@@ -32,8 +32,10 @@ pub const LISTENING: &[u8] = b"listening\n";
 /// A broker serving one daemon.
 #[derive(Debug, Clone)]
 pub struct ServeConfig {
-    /// The Unix socket to listen on. Its directory is the access fence the
-    /// host provisions; the peer check below is the one the broker makes.
+    /// The Unix socket to listen on, open to every local user (0666). The
+    /// fence is the peer-uid check, made on both ends, and the key coming
+    /// with each call's frame, never held between calls. The directory the
+    /// host provisions is defence in depth.
     pub socket: PathBuf,
     /// The daemon's uid, the only peer served.
     pub client_uid: u32,
