@@ -9,7 +9,7 @@ use super::hygiene::{CalendarInviteHygieneContext, hydrate_calendar_invite_hygie
 use super::mime::{ics_blob_content_hash, read_calendar_invite_ics};
 use super::passport::{
     admitted_passport_for_in_txn, encode_passport_value, event_ref_for_indexed_uid,
-    resolve_event_by_uid,
+    resolve_admitted_event_by_uid,
 };
 use super::payload::{CalendarInviteMethod, CalendarInvitePayload};
 use crate::Vault;
@@ -267,13 +267,14 @@ fn classify_invite_state(
 
 /// Resolves the EVENT one invite UID names.
 ///
-/// Live passport claims are synced truth and are consulted first; on the first
-/// confirm no passport carries the UID yet, so the CAL-02 UID index — which the
-/// minting side (booking confirm / ingest) already writes through
+/// Admitted passport claims are synced truth and are consulted first, so a
+/// pending proposal carrying the UID never picks the EVENT. On the first
+/// confirm no admitted passport carries the UID yet, so the CAL-02 UID index —
+/// which the minting side (booking confirm / ingest) already writes through
 /// [`super::passport::index_passport_uid`] — is the fallback. Nothing new is
 /// indexed here.
 fn resolve_invite_event(vault: &Vault, uid: &str) -> Result<Option<EntityId>, CalendarError> {
-    if let Some(event_ref) = resolve_event_by_uid(vault, uid)? {
+    if let Some(event_ref) = resolve_admitted_event_by_uid(vault, uid)? {
         return Ok(Some(event_ref));
     }
     event_ref_for_indexed_uid(vault, uid)
