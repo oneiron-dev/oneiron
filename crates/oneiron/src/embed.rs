@@ -94,6 +94,20 @@ pub trait Embedder: Send + Sync {
     fn provenance(&self) -> EmbeddingProvenance {
         EmbeddingProvenance::unknown()
     }
+    /// [`Self::embed`], each vector with the device and runtime that computed
+    /// it. An embedder whose answers name their own (an endpoint that says)
+    /// overrides this; any other marks each with [`Self::provenance`].
+    fn embed_marked(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+        let provenance = self.provenance();
+        Ok(self
+            .embed(inputs)?
+            .into_iter()
+            .map(|vector| (vector, provenance.clone()))
+            .collect())
+    }
 }
 
 /// Tri-state PII egress verdict for one pending entity (ONE-EMBED E6).
@@ -382,7 +396,7 @@ impl PendingEmbeddingReconciler {
             ))?;
             let inputs: Vec<PendingEmbeddingInput> =
                 remote_work.iter().map(|work| work.input.clone()).collect();
-            match rung.embedder.embed(&inputs) {
+            match rung.embedder.embed_marked(&inputs) {
                 Ok(vectors) => {
                     if vectors.len() != remote_work.len() {
                         return Err(Error::InvariantViolation(
@@ -391,7 +405,12 @@ impl PendingEmbeddingReconciler {
                     }
                     report.routed_remote += remote_work.len();
                     report.embedded += vectors.len();
-                    self.fill_batch(&remote_work, &vectors, rung.embedder.as_ref(), &mut report)?;
+                    self.fill_batch(
+                        &remote_work,
+                        &vectors,
+                        rung.embedder.locality(),
+                        &mut report,
+                    )?;
                 }
                 Err(e) => {
                     tracing::warn!(?e, "remote embed failed; falling back to local");
@@ -433,27 +452,27 @@ impl PendingEmbeddingReconciler {
         }
         let inputs: Vec<PendingEmbeddingInput> =
             work.iter().map(|item| item.input.clone()).collect();
-        let vectors = self.embedder.embed(&inputs)?;
+        let vectors = self.embedder.embed_marked(&inputs)?;
         if vectors.len() != work.len() {
             return Err(Error::InvariantViolation(
                 "embedder returned mismatched vector count",
             ));
         }
         report.embedded += vectors.len();
-        self.fill_batch(work, &vectors, self.embedder.as_ref(), report)
+        self.fill_batch(work, &vectors, self.embedder.locality(), report)
     }
 
+    /// Fills each leased row with its vector, marked with the device and
+    /// runtime that computed that vector.
     fn fill_batch(
         &self,
         work: &[LeasedPendingEmbedding],
-        vectors: &[Vec<f32>],
-        embedder: &dyn Embedder,
+        vectors: &[(Vec<f32>, EmbeddingProvenance)],
+        locality: EmbedderLocality,
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
-        let locality = embedder.locality();
-        let provenance = embedder.provenance();
-        for (item, vector) in work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(item, vector, locality, &provenance)? {
+        for (item, (vector, provenance)) in work.iter().zip(vectors.iter()) {
+            if self.complete_leased_work(item, vector, locality, provenance)? {
                 report.filled += 1;
             } else {
                 report.stale_fills += 1;

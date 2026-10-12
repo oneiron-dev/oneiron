@@ -134,8 +134,8 @@ impl Vault {
                 Some(_) => None,
                 None if !embeddable => None,
                 None => match embedder {
-                    Some(embedder) => match embedder.embed_revision(&input) {
-                        Ok(vector) => Some(vector),
+                    Some(embedder) => match embedder.embed_revision_marked(&input) {
+                        Ok(marked) => Some(marked),
                         Err(
                             error @ (Error::InvalidConfig(_)
                             | Error::DimensionMismatch { .. }
@@ -196,8 +196,7 @@ impl Vault {
                     report.superseded.push(input.entity);
                     continue;
                 }
-                None => generated
-                    .map(|vector| (vector, embedder.map(IndexedRevisionEmbedder::provenance))),
+                None => generated.map(|(vector, provenance)| (vector, Some(provenance))),
             };
             let codes = super::phonetic::take_phonetic(
                 &self.store,
@@ -359,8 +358,8 @@ impl Vault {
         for input in candidates {
             let vector = match input.payload() {
                 None => None,
-                Some(_) => match embedder.embed_revision(&input) {
-                    Ok(vector) => Some(vector),
+                Some(_) => match embedder.embed_revision_marked(&input) {
+                    Ok(marked) => Some(marked),
                     Err(
                         error @ (Error::InvalidConfig(_)
                         | Error::DimensionMismatch { .. }
@@ -380,7 +379,7 @@ impl Vault {
                 continue;
             }
             match vector {
-                Some(vector) => {
+                Some((vector, provenance)) => {
                     if let Err(error) = apply_ops(
                         &self.store,
                         &self.config,
@@ -390,7 +389,7 @@ impl Vault {
                             id: input.entity,
                             vector,
                             pending_embedding_token: None,
-                            provenance: Some(embedder.provenance()),
+                            provenance: Some(provenance),
                         }],
                         self.text_index_trusted
                             .load(std::sync::atomic::Ordering::Acquire),

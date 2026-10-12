@@ -27,7 +27,9 @@
 //! vault's client holds to the listing it admitted: a restart with another
 //! model behind the same name is refused like one with other settings. The
 //! profile also decides whether the vault takes the model's measured evidence
-//! floors.
+//! floors. Every answer also names the device and runtime that computed it,
+//! which the vault marks each of its vectors with (ARCH-0036), so a vault on a
+//! shared endpoint still tells a CPU's vectors from a GPU's.
 //!
 //! A request's bearer key is checked from its headers before any of its body
 //! is read. A body must declare its length, and is read only once that fits a
@@ -48,7 +50,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use base64::Engine as _;
-use oneiron::embed::Embedder;
+use oneiron::embed::{Embedder, EmbeddingProvenance};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
@@ -143,6 +145,8 @@ pub(super) trait ServedModel: Send + Sync + 'static {
     fn transform(&self) -> &str;
     /// The settings it runs with that a vault's evidence floors depend on.
     fn profile(&self) -> &RunProfile;
+    /// The device and runtime it computes on.
+    fn provenance(&self) -> EmbeddingProvenance;
     /// Each text's module-chain output, in input order.
     fn embed_raw(
         &self,
@@ -168,6 +172,10 @@ impl ServedModel for LocalEmbedder {
 
     fn profile(&self) -> &RunProfile {
         LocalEmbedder::profile(self)
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        Embedder::provenance(self)
     }
 
     fn embed_raw(
@@ -370,6 +378,10 @@ struct EmbeddingsResponse {
     model_id: String,
     transform: String,
     profile: RunProfile,
+    /// The device and runtime that computed these vectors, which the vault
+    /// marks them with. Not held to the listing: one model is one space on
+    /// every device.
+    provenance: EmbeddingProvenance,
 }
 
 #[derive(Serialize)]
@@ -620,6 +632,7 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
         model_id: served.embedder.model_id().to_owned(),
         transform: served.embedder.transform().to_owned(),
         profile: served.embedder.profile().clone(),
+        provenance: served.embedder.provenance(),
     })
     .into_response()
 }
