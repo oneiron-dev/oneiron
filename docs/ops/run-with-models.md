@@ -108,8 +108,10 @@ macOS), so another process of that user cannot read or trace its memory. It
 binds no socket file: it takes calls only over a socket pair the server made when
 it started it, so it serves that server alone. Its calls' receipts say
 `same_user`, and the provider's entry in the model status carries
-`"unproven": true`, the badge. A separate user stays the first choice. The child
-is the `oneiron-broker` beside the server's binary, or:
+`"unproven": true`, the badge: another process of that user can still stop the
+child, reach the server's own descriptors, or open the child's memory in the
+moment it starts, before it closes itself. A separate user stays the first
+choice. The child is the `oneiron-broker` beside the server's binary, or:
 
 ```toml
 [models.broker]

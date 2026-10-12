@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rustix::io::Errno;
-use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, recvmsg};
+use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, recvmsg};
 use tokio::io::Interest;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Semaphore;
@@ -173,8 +173,9 @@ pub(crate) async fn serve_channel(
 }
 
 /// The descriptors that came with the channel's next byte, or `None` once
-/// the daemon has closed its end. The child starts no process, so they need
-/// no close-on-exec.
+/// the daemon has closed its end. A message whose descriptors did not all
+/// fit passes none. The child starts no process, so they need no
+/// close-on-exec.
 fn receive(channel: &UnixStream) -> io::Result<Option<Vec<OwnedFd>>> {
     let mut byte = [0; 1];
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
@@ -194,6 +195,10 @@ fn receive(channel: &UnixStream) -> io::Result<Option<Vec<OwnedFd>>> {
         if let RecvAncillaryMessage::ScmRights(passed) = message {
             fds.extend(passed);
         }
+    }
+    if received.flags.contains(ReturnFlags::CTRUNC) {
+        // Closed here.
+        fds.clear();
     }
     Ok(Some(fds))
 }

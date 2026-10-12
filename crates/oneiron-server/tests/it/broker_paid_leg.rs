@@ -1190,7 +1190,12 @@ fn same_user_a_listener_at_the_old_child_path_gets_nothing() {
 /// directory of its own, inside a new user and network namespace when
 /// `namespace`, and asserts it passed.
 fn run_channel_case(case: &str, namespace: bool) {
-    let tmp = tempfile::tempdir().expect("runner tmp");
+    // Under /tmp: the old child socket path below it must fit a Unix socket
+    // address, which a fleet job's long TMPDIR could overrun.
+    let tmp = tempfile::Builder::new()
+        .prefix("broker-channel-")
+        .tempdir_in("/tmp")
+        .expect("runner tmp");
     let exe = std::env::current_exe().expect("test binary");
     let mut runner = if namespace {
         let mut unshare = Command::new("unshare");
@@ -1255,7 +1260,9 @@ async fn channel_runner() {
         "impostor" => impostor().await,
         other => panic!("no channel case {other}"),
     }
-    println!("RUNNER DONE");
+    // On a line of its own: a serial harness prints the test's name, with no
+    // line end, before the test runs.
+    println!("\nRUNNER DONE");
 }
 
 /// In a network namespace of its own, after a full paid call: some socket
@@ -1283,7 +1290,10 @@ async fn census() {
         .iter()
         .filter(|socket| !before.contains(&socket.inode) && !after.contains(&socket.inode))
         .collect();
-    assert!(!child_sockets.is_empty(), "no socket of the child: {table:?}");
+    assert!(
+        !child_sockets.is_empty(),
+        "no socket of the child: {table:?}"
+    );
     for socket in &child_sockets {
         assert!(
             !socket.listening,

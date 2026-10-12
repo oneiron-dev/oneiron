@@ -15,14 +15,15 @@
 //! its stdin, which the daemon holds, closes, or the channel does. That
 //! happens when the daemon drops it or dies.
 //!
-//! What this mode cannot close: a process of the same uid that opens the
-//! child's memory in the moment between its start and its first act keeps
-//! that handle. The child starts once and is kept warm, so that moment comes
-//! once per start, not once per call. Such a process can also stop or kill
-//! the child, or reach the daemon's own descriptors (its ends of the channel
-//! and of the start pipes among them), and so make a call fail after its
-//! permit started, which is charged as a started call. None of that hands it
-//! the key.
+//! What this mode cannot close, against a process of the same uid: it can
+//! open the child's memory in the moment between its start and its first
+//! act, and keep that handle (the child starts once and is kept warm, so that
+//! moment comes once per start, not once per call); it can reach the daemon's
+//! own descriptors, its ends of the channel, of the start pipes and of each
+//! call's socket pair among them; and it can stop or kill the child. The
+//! first two lie outside what this mode protects. Stopping or killing the
+//! child hands it no key: it makes a call fail after its permit started,
+//! which is charged as a started call.
 
 use std::ffi::OsString;
 use std::io::{BufRead as _, IoSlice, Read as _};
@@ -34,7 +35,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustix::io::Errno;
 use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
@@ -48,6 +49,8 @@ const START_DEADLINE: Duration = Duration::from_secs(10);
 /// takes each one at once, so only a child that has stopped leaves none.
 const HANDOVER_DEADLINE: Duration = Duration::from_secs(5);
 
+/// A child gone mid-handover is an error, never a SIGPIPE: per send on Linux,
+/// and through `SO_NOSIGPIPE` on the channel on macOS.
 #[cfg(target_os = "linux")]
 const SEND_FLAGS: SendFlags = SendFlags::NOSIGNAL;
 #[cfg(not(target_os = "linux"))]
@@ -126,7 +129,8 @@ impl ChildBroker {
 
     fn start(&self) -> std::io::Result<Running> {
         let (channel, theirs) = UnixStream::pair()?;
-        channel.set_write_timeout(Some(HANDOVER_DEADLINE))?;
+        #[cfg(target_os = "macos")]
+        rustix::net::sockopt::set_socket_nosigpipe(&channel, true)?;
         let end = theirs.as_raw_fd();
         let mut command = Command::new(&self.program);
         command
@@ -217,7 +221,7 @@ fn on_channel_fd(end: RawFd) -> std::io::Result<()> {
 }
 
 /// Passes `end` to the child over `channel`, on one byte, waiting at most
-/// [`HANDOVER_DEADLINE`] for room.
+/// [`HANDOVER_DEADLINE`] in all for room.
 fn hand_over(channel: &UnixStream, end: BorrowedFd<'_>) -> std::io::Result<()> {
     let fds = [end];
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
@@ -225,12 +229,21 @@ fn hand_over(channel: &UnixStream, end: BorrowedFd<'_>) -> std::io::Result<()> {
     if !control.push(SendAncillaryMessage::ScmRights(&fds)) {
         return Err(std::io::ErrorKind::InvalidInput.into());
     }
+    let deadline = Instant::now() + HANDOVER_DEADLINE;
+    let mut left = HANDOVER_DEADLINE;
     loop {
+        // The send timeout bounds one send: one a signal cut short is sent
+        // again with what is left.
+        channel.set_write_timeout(Some(left))?;
         match sendmsg(channel, &[IoSlice::new(&[0])], &mut control, SEND_FLAGS) {
             Ok(1) => return Ok(()),
             Ok(_) => return Err(std::io::ErrorKind::WriteZero.into()),
             Err(Errno::INTR) => {}
             Err(errno) => return Err(errno.into()),
+        }
+        left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
         }
     }
 }
