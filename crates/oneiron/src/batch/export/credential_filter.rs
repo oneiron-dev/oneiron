@@ -347,8 +347,8 @@ mod tests {
     }
 
     /// Whether an output still carries the fixture's word `sausage`, read as
-    /// the release doors read text: strings, binary and extension bytes, and
-    /// arrays of byte values.
+    /// the release doors read text: strings, binary and extension bytes,
+    /// arrays of byte values, and the MessagePack a decoded output encodes to.
     fn carries_sausage(bytes: &[u8]) -> bool {
         fn texts(value: &rmpv::Value, out: &mut String) {
             use rmpv::Value as M;
@@ -376,6 +376,9 @@ mod tests {
         let mut text = String::from_utf8_lossy(bytes).into_owned();
         if let Some(value) = crate::batch::secret_scan::decode_members(bytes) {
             texts(&value, &mut text);
+            let mut encoded = Vec::new();
+            rmpv::encode::write_value(&mut encoded, &value).unwrap();
+            text.push_str(&String::from_utf8_lossy(&encoded));
         }
         text.contains("sausage")
     }
@@ -385,8 +388,9 @@ mod tests {
         let (_dir, vault) = vault_with_scan_off()?;
         let words: Vec<&[u8]> = PHRASE.split(' ').map(str::as_bytes).collect();
         // One word per item: MessagePack binary, MessagePack byte values, the
-        // two mixed, byte values each in an array of its own, and JSON byte
-        // values bare and wrapped.
+        // two mixed, byte values each in an array of its own, the phrase's
+        // byte values after a line break, a word per 64-bit number, and JSON
+        // byte values bare and wrapped.
         let binary = |word: &[u8]| rmpv::Value::Binary(word.to_vec());
         let numbers =
             |word: &[u8]| rmpv::Value::Array(word.iter().map(|&b| rmpv::Value::from(b)).collect());
@@ -402,11 +406,40 @@ mod tests {
                 .iter()
                 .map(|word| rmpv::Value::Array(vec![numbers(word)]))
                 .collect(),
+            std::iter::once(rmpv::Value::from("\n"))
+                .chain(PHRASE.bytes().map(rmpv::Value::from))
+                .collect(),
+            words
+                .iter()
+                .map(|word| {
+                    let mut padded = [b' '; 8];
+                    padded[..word.len()].copy_from_slice(word);
+                    rmpv::Value::from(u64::from_be_bytes(padded))
+                })
+                .collect(),
         ];
         let mut bodies = Vec::new();
         for value in items.map(rmpv::Value::Array) {
             let mut body = Vec::new();
             rmpv::encode::write_value(&mut body, &value).unwrap();
+            // The write door refuses each in its raw bytes.
+            assert!(
+                crate::batch::secret_scan::scan_write_payload(&body).is_err(),
+                "{value}"
+            );
+            // A reader that projects it to JSON redacts the projection.
+            let mut projected = crate::companion::companion_value_to_json(&value);
+            redact_credentials(&mut projected);
+            let written = crate::serialize::null_credentials(
+                "",
+                &crate::companion::companion_value_to_json(&value),
+            );
+            for output in [projected, written] {
+                assert!(
+                    !carries_sausage(output.to_string().as_bytes()),
+                    "projected: {output}"
+                );
+            }
             bodies.push(body);
         }
         let wrapped: Vec<Vec<&[u8]>> = words.iter().map(|word| vec![*word]).collect();

@@ -267,18 +267,79 @@ fn byte_values(items: impl Iterator<Item = Option<u64>>) -> Option<Vec<u8>> {
 /// A walk that judges each part, and each array's items joined, can still
 /// leave a secret spread over parts it keeps apart (a phrase one word per
 /// nested item), as the write door reads it in a body's raw bytes; a value
-/// that reads as one leaves whole-redacted.
+/// that reads as one leaves whole-redacted. The value's own encoding is also
+/// read as the write door reads a body: there a number, a length or a header
+/// carries bytes as a string does.
 pub(crate) fn release_reads_whole(value: &rmpv::Value) -> bool {
     let mut text = String::new();
     messagepack_leaves(value, &mut text);
-    detect(&text, Door::Release).is_some()
+    detect(&text, Door::Release).is_some() || write_door_refuses_encoding(value)
 }
 
-/// [`release_reads_whole`] over a JSON value.
+/// [`release_reads_whole`] over a JSON value. A JSON value can be the
+/// projection of a MessagePack body, so it is also read through the
+/// MessagePack it projects from: a float as either width it may have had.
 pub(crate) fn release_reads_whole_json(value: &serde_json::Value) -> bool {
     let mut text = String::new();
     json_leaves(value, &mut text);
-    detect(&text, Door::Release).is_some()
+    if detect(&text, Door::Release).is_some() {
+        return true;
+    }
+    let mut narrows = false;
+    write_door_refuses_encoding(&messagepack_form(value, false, &mut narrows))
+        || (narrows && write_door_refuses_encoding(&messagepack_form(value, true, &mut narrows)))
+}
+
+/// The write door's text rules over a value's MessagePack encoding, the raw
+/// bytes it reads in a body. A value that cannot be encoded reads as a secret.
+fn write_door_refuses_encoding(value: &rmpv::Value) -> bool {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value).is_err() || detect_bytes(&bytes, Door::Write)
+}
+
+/// A JSON value as MessagePack. `narrow` writes a float that a single-width
+/// float holds exactly at that width; `narrows` records whether there is one.
+fn messagepack_form(value: &serde_json::Value, narrow: bool, narrows: &mut bool) -> rmpv::Value {
+    use serde_json::Value;
+    match value {
+        Value::Null => rmpv::Value::Nil,
+        Value::Bool(flag) => rmpv::Value::Boolean(*flag),
+        Value::Number(number) => {
+            if let Some(number) = number.as_u64() {
+                return rmpv::Value::from(number);
+            }
+            if let Some(number) = number.as_i64() {
+                return rmpv::Value::from(number);
+            }
+            let number = number.as_f64().unwrap_or_default();
+            let single = number as f32;
+            if f64::from(single) == number {
+                *narrows = true;
+                if narrow {
+                    return rmpv::Value::F32(single);
+                }
+            }
+            rmpv::Value::F64(number)
+        }
+        Value::String(text) => rmpv::Value::from(text.as_str()),
+        Value::Array(values) => rmpv::Value::Array(
+            values
+                .iter()
+                .map(|value| messagepack_form(value, narrow, narrows))
+                .collect(),
+        ),
+        Value::Object(fields) => rmpv::Value::Map(
+            fields
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        rmpv::Value::from(key.as_str()),
+                        messagepack_form(value, narrow, narrows),
+                    )
+                })
+                .collect(),
+        ),
+    }
 }
 
 fn messagepack_leaves(value: &rmpv::Value, out: &mut String) {
