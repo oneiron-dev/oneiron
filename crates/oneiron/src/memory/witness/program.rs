@@ -393,13 +393,8 @@ impl Memory<'_> {
                 // overlay segment installs, and a divergent body or parent
                 // leaves no journal or index delta.
                 WitnessSink::Overlay(overlay) => {
-                    let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
-                    super::reject_erased_person_in_txn(
-                        self.vault,
-                        wtxn,
-                        plan.conversation_id,
-                        person_author,
-                    )?;
+                    let rostered = room_speech.is_some();
+                    let person_author = self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
                     self.admit_witness_in_txn(&plan, &overlay.read_view()?, wtxn, person_author)?
                 }
             };

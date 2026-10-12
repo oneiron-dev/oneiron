@@ -295,3 +295,123 @@ fn a_save_keeps_nothing_of_a_saved_turn_moved_out_of_sight_while_it_waits() {
             .expect("probe")
     );
 }
+
+/// The orders of the messages base holds in `turn`, sorted.
+fn base_orders(vault: &Vault, turn: &EntityId) -> Vec<u32> {
+    let mut orders: Vec<u32> = vault
+        .sources(turn, EdgeKind::PartOf, None)
+        .expect("the turn's messages")
+        .iter()
+        .map(|id| {
+            let body = vault.get(id).expect("read").expect("a message");
+            crate::memory::witness_message_order(&body).expect("its order")
+        })
+        .collect();
+    orders.sort_unstable();
+    orders
+}
+
+/// Astra on #1411: a save copied a message said into a saved turn at the
+/// order it was said at, and an ordinary witness had put another message at
+/// that order into the turn since, seeing only base. The turn then held two
+/// messages at one order, and the run could not speak into it again. The
+/// save refuses with a conflict naming the turn and keeps nothing; the
+/// message stays in the room, and the run speaks on at a free order.
+#[test]
+fn a_save_refuses_a_copy_whose_order_the_turn_took_since() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    run.dispatch(said(1, "and the boat is moored at the north pier"))
+        .expect("the run speaks on into its turn");
+    let shell = vault
+        .targets(&turn, EdgeKind::ChildOf, None)
+        .expect("its conversation")[0];
+    vault
+        .memory(room.agent, EdgeActorClass::Agent)
+        .witness(&crate::memory::WitnessTurn {
+            conversation_ref: shell.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![crate::memory::WitnessMessage {
+                id: None,
+                author: crate::memory::WitnessAuthor::Companion,
+                message_type: "text".to_owned(),
+                content: "a word said on record at order 1".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 1,
+            }],
+            occurred_at: 60_500,
+        })
+        .expect("an ordinary witness appends to the saved turn");
+    assert_eq!(base_orders(&vault, &turn), vec![0, 1]);
+
+    let refused = session.save_talk_by(room.owner, None).err();
+    assert!(
+        matches!(
+            &refused,
+            Some(Error::OffRecord(
+                crate::error::OffRecordError::OffRecordCopyConflict { turn_ref, order: 1 }
+            )) if *turn_ref == turn.to_hex()
+        ),
+        "the save copied onto a taken order: {refused:?}"
+    );
+    assert_eq!(base_orders(&vault, &turn), vec![0, 1], "one message per order");
+    assert!(vault.get_raw(&message(1)).expect("read").is_none());
+    assert!(
+        session
+            .overlay()
+            .contains_entity(&message(1))
+            .expect("probe")
+    );
+
+    run.dispatch(said(2, "the tide turns at nine"))
+        .expect("the run speaks on at a free order");
+    assert!(
+        session
+            .overlay()
+            .contains_entity(&message(2))
+            .expect("probe")
+    );
+}
+
+/// Astra on #1411: the owner deleted the conversation a stretch had saved a
+/// turn into and kept the turn. The next save found the turn live and still
+/// under the conversation, and copied what the run said since into the
+/// deleted conversation. A save copies nothing into a deleted conversation;
+/// the message stays in the room, unsaved.
+#[test]
+fn a_save_copies_nothing_into_a_saved_conversation_since_deleted() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    run.dispatch(said(1, "and the boat is moored at the north pier"))
+        .expect("the run speaks on into its turn");
+    let shell = vault
+        .targets(&turn, EdgeKind::ChildOf, None)
+        .expect("its conversation")[0];
+    let deleted = vault
+        .delete_entity_with_reason(&shell, crate::DeleteReason::UserDelete)
+        .expect("delete the saved conversation");
+    assert!(deleted.existed);
+    assert!(vault.get(&turn).expect("read").is_some(), "the turn stays");
+
+    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    assert!(
+        saved.is_empty(),
+        "copied into a deleted conversation: {saved:?}"
+    );
+    assert!(vault.get_raw(&message(1)).expect("read").is_none());
+    assert!(
+        session
+            .overlay()
+            .contains_entity(&message(1))
+            .expect("probe")
+    );
+}

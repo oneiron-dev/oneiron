@@ -175,6 +175,27 @@ pub(crate) struct Appended {
     pub(crate) held: BTreeSet<EntityId>,
 }
 
+/// The refusal of a copy whose message `order` is taken in `turn`.
+fn copy_conflict(turn: EntityId, order: u32) -> Error {
+    Error::OffRecord(OffRecordError::OffRecordCopyConflict {
+        turn_ref: turn.to_hex(),
+        order,
+    })
+}
+
+impl Appended {
+    /// A copy that wrote nothing; `held` is what base already holds.
+    fn nothing(held: BTreeSet<EntityId>) -> Self {
+        Self {
+            outcome: PromoteOutcome {
+                replayed: Vec::new(),
+                short_id_mapping: Vec::new(),
+            },
+            held,
+        }
+    }
+}
+
 /// The promote transaction's session-membership exemption (ARCH-0052 D2, K4).
 ///
 /// This is a CAPABILITY, not a hint: the `members` field and `mint` are
@@ -336,10 +357,15 @@ impl FloorWrites<'_> {
     /// batch, the turn's tagging and embedding markers, and the `pm:`
     /// markers of the messages' own windows.
     ///
-    /// Nothing is copied into a turn base no longer holds as this stretch
-    /// saved it (deleted, or promoted by another stretch): its messages stay
-    /// in the room, unsaved. A message id base already holds without a
-    /// receipt is refused, never written over.
+    /// The writer's checks of a witness that appends to a turn run here too,
+    /// against base in this transaction (Astra on #1411). Nothing is copied
+    /// into a turn base no longer holds as this stretch saved it (deleted,
+    /// promoted by another stretch, or its conversation deleted), nor what a
+    /// person since erased from that conversation said: its messages stay in
+    /// the room, unsaved. A message whose order base now holds in the turn
+    /// refuses the copy with [`OffRecordError::OffRecordCopyConflict`], and a
+    /// message id base already holds without a receipt is refused; neither
+    /// is ever written over or renumbered.
     pub(crate) fn copy_append(
         &self,
         vault: &Vault,
@@ -356,32 +382,35 @@ impl FloorWrites<'_> {
         let saved = PROMOTE_RECEIPTS
             .get(self.store, wtxn, &turn)?
             .filter(|receipt| receipt.session_ref == session_ref);
-        // A deleted turn keeps its header and edges as a shell: only a live
-        // row is the turn this stretch saved (Sol on engine-prs-30).
-        let live = matches!(
-            crate::vault::live_entity_row_in_txn(self.store, wtxn, &turn)?,
-            crate::vault::LiveEntityRow::Live { entity_type, .. }
-                if entity_type == crate::registry::ENTITY_TYPE_TURN
-        ) && crate::ports::EdgeStoreRead::port_edge_get(
-            self.store,
-            wtxn,
-            &turn,
-            EdgeKind::ChildOf,
-            &plan.conversation(),
-        )?
-        .is_some();
+        let conversation = plan.conversation();
+        // A deleted turn or conversation keeps its header and edges as a
+        // shell: only live rows are what this stretch saved (Sol on
+        // engine-prs-30), and a conversation also needs a body, as the
+        // witness writer asks.
+        let txn: &heed::RoTxn<'_> = wtxn;
+        let live_as = |id: &EntityId, kind: u8| -> Result<bool> {
+            Ok(matches!(
+                crate::vault::live_entity_row_in_txn(self.store, txn, id)?,
+                crate::vault::LiveEntityRow::Live { entity_type, body }
+                    if entity_type == kind && !body.is_empty()
+            ))
+        };
+        let live = live_as(&turn, crate::registry::ENTITY_TYPE_TURN)?
+            && live_as(&conversation, crate::registry::ENTITY_TYPE_CONVERSATION)?
+            && crate::ports::EdgeStoreRead::port_edge_get(
+                self.store,
+                txn,
+                &turn,
+                EdgeKind::ChildOf,
+                &conversation,
+            )?
+            .is_some();
         let Some(saved) = saved.filter(|_| live) else {
             tracing::debug!(
                 turn = %turn.to_hex(),
                 "off-record copy skipped a turn base does not hold as this stretch saved it"
             );
-            return Ok(Appended {
-                outcome: PromoteOutcome {
-                    replayed: Vec::new(),
-                    short_id_mapping: Vec::new(),
-                },
-                held,
-            });
+            return Ok(Appended::nothing(held));
         };
 
         let mut fresh = BTreeSet::new();
@@ -403,13 +432,7 @@ impl FloorWrites<'_> {
             }
         }
         if fresh.is_empty() {
-            return Ok(Appended {
-                outcome: PromoteOutcome {
-                    replayed: Vec::new(),
-                    short_id_mapping: Vec::new(),
-                },
-                held,
-            });
+            return Ok(Appended::nothing(held));
         }
         // Every check reads the plan's own ops, which wipe with it; the copy
         // the replay takes is cloned last, straight into the builder that
@@ -419,21 +442,61 @@ impl FloorWrites<'_> {
                 crate::session_overlay::replayed_subject(op).is_some_and(|id| fresh.contains(&id))
             })
         };
+        let mut orders = BTreeSet::new();
         for op in fresh_ops() {
-            if let BatchOp::PublicEdgeWithCreatedAt {
-                kind: EdgeKind::AuthoredBy,
-                tgt,
-                ..
-            } = op
-                && crate::ports::EntityStoreRead::port_entity_raw(self.store, wtxn, tgt)?.is_none()
-            {
-                return Err(Error::OffRecord(
-                    OffRecordError::OffRecordPromoteAuthorMissing {
-                        turn_ref: turn.to_hex(),
-                        actor_ref: tgt.to_hex(),
-                    },
-                ));
+            match op {
+                BatchOp::PublicEdgeWithCreatedAt {
+                    kind: EdgeKind::AuthoredBy,
+                    tgt,
+                    ..
+                } => {
+                    let Some(author) =
+                        crate::ports::EntityStoreRead::port_entity_record(self.store, wtxn, tgt)?
+                    else {
+                        return Err(Error::OffRecord(
+                            OffRecordError::OffRecordPromoteAuthorMissing {
+                                turn_ref: turn.to_hex(),
+                                actor_ref: tgt.to_hex(),
+                            },
+                        ));
+                    };
+                    if author.entity_type == crate::registry::ENTITY_TYPE_PERSON
+                        && !crate::conversation::room_person_write_allowed(
+                            self.store,
+                            wtxn,
+                            conversation,
+                            *tgt,
+                        )?
+                    {
+                        tracing::debug!(
+                            turn = %turn.to_hex(),
+                            "off-record copy skipped a turn holding words of a person since erased from it"
+                        );
+                        return Ok(Appended::nothing(BTreeSet::new()));
+                    }
+                }
+                BatchOp::Put {
+                    entity_type, data, ..
+                } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE => {
+                    let order = crate::memory::witness_message_order(data)?;
+                    if !orders.insert(order) {
+                        return Err(copy_conflict(turn, order));
+                    }
+                }
+                _ => {}
             }
+        }
+        // One message per order in a turn: an ordinary witness may have put
+        // one at a copied message's order since the last save, seeing only
+        // base. No base sibling shares a fresh id, so none is exempt.
+        if let Some(order) = crate::memory::taken_witness_message_order(
+            self.store,
+            wtxn,
+            &turn,
+            &orders,
+            &std::collections::HashSet::new(),
+        )? {
+            return Err(copy_conflict(turn, order));
         }
         // The copied messages' own windows, never the save's clock.
         #[cfg(feature = "sync")]

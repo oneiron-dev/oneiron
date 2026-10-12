@@ -1101,3 +1101,134 @@ async fn a_rostered_viewer_speaks_off_record_and_not_on_record() {
     );
     assert!(!stored(&dir, "a viewer word on record"));
 }
+
+/// Astra on #1411: a Viewer speaks off record by the room's roster alone, and
+/// the witness still read the message ids they named in the vault. A MESSAGE
+/// of a room they are not in answered one way for a wrong text, another for
+/// its own text, another for a row of another kind, and a deleted id let the
+/// word land, so a guessed id told its kind and whether a guessed text was
+/// right. Every id the vault holds or deleted now gets one refusal, and the
+/// Viewer's words still land, with or without an id of their own.
+#[tokio::test]
+async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
+    use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+    use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+
+    let (_dir, server) = auth_test_server();
+    let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
+    let gil = person(&server, "Gil");
+    crate::test_credentials::bind_actor(server.vault(), "secret", gil, "human");
+    let ada = person(&server, "Ada");
+    crate::test_credentials::bind_actor(server.vault(), "secret", ada, "human");
+    let room = conversation(&server, owner_id, &[owner_id, gil]);
+    // Ada's room, which Gil is not in, and three of her words there.
+    let elsewhere = conversation(&server, owner_id, &[owner_id, ada]);
+    let (kept, soft, hard) = (EntityId::now(), EntityId::now(), EntityId::now());
+    server
+        .vault()
+        .memory(ada, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: elsewhere.to_hex(),
+            turn_ref: None,
+            messages: [kept, soft, hard]
+                .iter()
+                .zip(0..)
+                .map(|(id, order)| WitnessMessage {
+                    id: Some(id.to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: format!("ada's word {order}"),
+                    metadata: None,
+                    is_visible: true,
+                    order,
+                })
+                .collect(),
+            occurred_at: 50,
+        })
+        .unwrap();
+    for (id, reason) in [
+        (soft, oneiron::DeleteReason::UserDelete),
+        (hard, oneiron::DeleteReason::UserHardDelete),
+    ] {
+        server
+            .vault()
+            .delete_room_record_unchecked_for_test(&id, reason)
+            .unwrap();
+    }
+    let proof = server
+        .vault()
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault()
+        .initialize_shared_vault(
+            &proof,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner_id,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: gil,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            10,
+        )
+        .unwrap();
+    let viewer = slip("gil", gil, "human");
+    let (status, started) = start(&server, viewer.clone(), room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+
+    let named = |id: EntityId, text: &str| {
+        let mut body = turn(room, "porch", 100, text);
+        body["turn"]["messages"][0]["id"] = json!(id.to_hex());
+        body
+    };
+    let mut answers = Vec::new();
+    for (id, text) in [
+        (kept, "a guess at ada's word"),
+        (kept, "ada's word 0"),
+        (elsewhere, "ada's word 0"),
+        (soft, "ada's word 1"),
+        (hard, "ada's word 2"),
+    ] {
+        let answer = call(
+            &server,
+            "POST",
+            "/v1/core/off-record/witness",
+            viewer.clone(),
+            Some(&named(id, text)),
+        )
+        .await;
+        answers.push(answer);
+    }
+    assert_eq!(answers[0].0, StatusCode::BAD_REQUEST, "{answers:?}");
+    assert!(
+        answers.windows(2).all(|pair| pair[0] == pair[1]),
+        "the refusals tell the ids apart: {answers:?}"
+    );
+
+    say(&server, viewer.clone(), room, "porch", 101, SECRET_WORDS).await;
+    let (status, receipt) = call(
+        &server,
+        "POST",
+        "/v1/core/off-record/witness",
+        viewer.clone(),
+        Some(&named(EntityId::now(), "a word with an id of its own")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{receipt}");
+    let (status, file) = act(&server, "export", viewer, room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{file}");
+    let mut kept_words = words(&file);
+    kept_words.sort_unstable();
+    assert_eq!(kept_words, ["a word with an id of its own", SECRET_WORDS]);
+}

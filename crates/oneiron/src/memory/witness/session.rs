@@ -312,6 +312,48 @@ impl Memory<'_> {
 
     // ── the overlay landing ─────────────────────────────────────────────
 
+    /// The overlay landing's guards in its writer, ahead of the shared door,
+    /// and the speaker's PERSON byline, once an erased PERSON is refused.
+    ///
+    /// An id this call names that the room does not hold must be one base
+    /// never gave out: a hard-deleted id is refused, as the base writer
+    /// refuses it, so a save cannot bring it back. A participant speaking by
+    /// the room's roster alone (`rostered`) may read nothing of base through
+    /// a message id either: every id base holds or deleted, whatever its kind
+    /// or body, gets the same refusal before the shared door reads it (Astra
+    /// on #1411). An id the room holds is the stretch's own, and the shared
+    /// door checks it as a retry.
+    pub(super) fn overlay_guards_in_txn(
+        &self,
+        plan: &WitnessPlan<'_>,
+        sink: &OverlaySink<'_, '_>,
+        rostered: bool,
+        wtxn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<Option<EntityId>> {
+        for id in plan.message_ids() {
+            if sink.overlay.contains_entity(&id)? {
+                continue;
+            }
+            let deleted = self.vault.local_hard_delete_marker_exists_in_txn(wtxn, &id)?;
+            if rostered
+                && (deleted
+                    || crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, wtxn, &id)?
+                        .is_some())
+            {
+                return Err(MemoryError::bad_request_with(
+                    "a witnessed message id must be new, or one this stretch holds",
+                    &["Leave the message id out, and the stretch gives the message one."],
+                ));
+            }
+            if deleted {
+                return Err(hard_deleted_refusal(&id));
+            }
+        }
+        let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
+        super::reject_erased_person_in_txn(self.vault, wtxn, plan.conversation_id, person_author)?;
+        Ok(person_author)
+    }
+
     pub(super) fn overlay_sink<'a, 'v>(
         &self,
         session: &'a OffRecordSession<'v>,
