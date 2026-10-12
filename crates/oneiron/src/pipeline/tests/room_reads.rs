@@ -1051,12 +1051,7 @@ fn a_room_hides_a_base_vector_that_lands_while_its_turn_is_open() -> Result<()> 
             ),
             room_text(claim, "lateembeddingneedle"),
         ],
-        || {
-            vault
-                .batch()
-                .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
-                .commit()
-        },
+        || vault.batch().vector(&claim, &[1.0, 0.0, 0.0, 0.0]).commit(),
     )?;
 
     let fields = room_pack_fields(&vault, &session, claim, "lateembeddingneedle")?;
