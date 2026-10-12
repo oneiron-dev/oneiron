@@ -452,10 +452,21 @@ pub(crate) fn discover_response(
             _ => {}
         }
     }
+    let whole = lane.is_none();
     let namespaces = match lane {
         Some(_) => lane_namespaces.into_iter().collect(),
         None => predicate_namespaces(&server.vault, &claim_ids)?,
     };
+    // The whole vault was read raw, in snapshots after the one that judged
+    // the credential. Judged again once they are read, it vouches for every
+    // row: a revocation is final, so a credential still whole-vault now held
+    // through every read.
+    if whole
+        && auth.verified_slip().is_some()
+        && !(auth.credential_is_live(&server.vault) && discovers_whole_vault(server, auth)?)
+    {
+        return Err(ApiError::unauthorized());
+    }
 
     Ok(DiscoverResponse {
         api_version: API_LEVEL,

@@ -264,3 +264,88 @@ fn deferred_task_read_failure_is_reported_without_poisoning_section() {
         .expect("section remains available");
     assert!(section.rows.iter().any(|row| row.id == healthy.to_hex()));
 }
+
+/// Sol R7-002 on #1413: a handle bound to a read credential described every
+/// TASK raw, so a credential held to one world got the card and the board row
+/// of a TASK born in another, which its own point read withholds. The bound
+/// handle describes only the TASKs its credential reads; an unbound handle,
+/// and the rows a host cuts for its own reader, still hold the whole board.
+#[test]
+fn a_credential_bound_handle_describes_only_the_tasks_it_reads() {
+    let (_dir, vault) = open_vault();
+    crate::test_support::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().expect("policy id"),
+        &crate::gate::default_policy_manifest().expect("default policy"),
+    )
+    .expect("install the default policy");
+    let own = own_agent(&vault);
+    let (near, far) = (
+        EntityId::from_bytes([0x5D; 16]).expect("world id"),
+        EntityId::from_bytes([0x5E; 16]).expect("world id"),
+    );
+    let born_in = |world, now| {
+        vault
+            .memory(own, EdgeActorClass::Agent)
+            .with_birth_position(crate::federation::record_scope::BirthPosition {
+                world: Some(world),
+                facet: None,
+            })
+            .tasks_create(&spec(now))
+            .expect("the agent creates a TASK")
+            .task_ref
+            .expect("the create mints a TASK")
+    };
+    let (kept, withheld) = (born_in(near, 120), born_in(far, 121));
+
+    let issuer = crate::test_support::test_host_issuer();
+    let mut claims = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root")
+        .claims;
+    claims.slip_id = *blake3::hash(b"one world task reader").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = own.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.scope = crate::federation::scope_codec::read_preset();
+    claims.scope.worlds = [crate::federation::ScopeId(near)].into_iter().collect();
+    let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+    let tag = b"one-world-tasks";
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            tag,
+            &issuer.binding_proof(&slip, tag).expect("binding proof"),
+        )
+        .expect("verify");
+    let unbound = vault.memory(own, EdgeActorClass::Agent);
+    let bound = vault
+        .memory(own, EdgeActorClass::Agent)
+        .with_read_proof(&proof);
+    let listed = |memory: &Memory<'_>| {
+        let mut ids: Vec<String> = memory
+            .describe_section()
+            .expect("the TASKS section")
+            .rows
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    let mut both = vec![kept.to_hex(), withheld.to_hex()];
+    both.sort();
+    assert_eq!(listed(&unbound), both);
+    assert_eq!(listed(&bound), vec![kept.to_hex()]);
+    assert_eq!(
+        bound.describe_rows().expect("rows").intents.len(),
+        2,
+        "the rows a host cuts itself stay whole"
+    );
+    assert!(bound.describe_card(kept).is_ok());
+    assert!(
+        bound.describe_card(withheld).is_err(),
+        "a TASK the credential does not read has no card"
+    );
+}

@@ -89,6 +89,32 @@ impl Memory<'_> {
         Ok(key)
     }
 
+    /// Of `ids`, the ones a handle bound to a read credential reads, each
+    /// judged by the lane's point read in one snapshot, as `get_entity`
+    /// judges it. `None` is a handle bound to no credential: its surfaces
+    /// show what the actor's own verbs do.
+    pub(crate) fn credential_readable_ids(
+        &self,
+        ids: &[EntityId],
+    ) -> MemoryResult<Option<std::collections::BTreeSet<EntityId>>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        let reads: Vec<_> = ids.iter().map(|id| PointRead::id(*id)).collect();
+        let rows = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .read(&reads, None)
+            .map_err(MemoryError::from)?
+            .value;
+        Ok(Some(
+            rows.into_iter()
+                .flatten()
+                .filter(|row| row.body.is_some())
+                .map(|row| row.id)
+                .collect(),
+        ))
+    }
+
     /// Whether the bound actor is the vault owner: the local embedded owner,
     /// or a human whose owner binding verifies.
     pub(super) fn is_vault_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {

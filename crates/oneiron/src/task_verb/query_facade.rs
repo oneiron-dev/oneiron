@@ -55,12 +55,23 @@ impl Memory<'_> {
     /// A named task's card is read direct by id: a row outside the collapsed
     /// board prefix is hidden, never gone, so the card never inherits the
     /// section's scan cap.
+    ///
+    /// A handle bound to a read credential describes only the TASKs that
+    /// credential reads: a task it does not read has no card, as an absent
+    /// one has none.
     pub fn describe(&self, task_ref: Option<EntityId>) -> MemoryResult<TaskDescription> {
         let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let Some(task_ref) = task_ref else {
-            return Ok(TaskDescription::Section(self.section_rows()?.render()));
+            let rows = self.credential_rows(self.section_rows()?)?;
+            return Ok(TaskDescription::Section(rows.render()));
         };
+        if self
+            .credential_readable_ids(&[task_ref])?
+            .is_some_and(|readable| readable.is_empty())
+        {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        }
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
         };
@@ -75,10 +86,12 @@ impl Memory<'_> {
     }
 
     /// The rows `describe` renders its TASKS section from, before the render
-    /// cap. A host whose reader is narrower than this facade's actor keeps
-    /// the rows that reader may see and renders only those
-    /// ([`TasksSectionRows::render`]). An acknowledged failure, which the
-    /// section never renders, is not among them.
+    /// cap and before any reader's cut: the actor's whole board, even on a
+    /// handle bound to a read credential. A host whose reader is narrower
+    /// than this facade's actor keeps the rows that reader may see and
+    /// renders only those ([`TasksSectionRows::render`]), so it can count
+    /// what it withheld. An acknowledged failure, which the section never
+    /// renders, is not among them.
     pub fn describe_rows(&self) -> MemoryResult<TasksSectionRows> {
         let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -102,6 +115,26 @@ impl Memory<'_> {
             bare_jobs: snapshot.bare_jobs,
             source_exhausted: snapshot.source_exhausted,
         })
+    }
+
+    /// `rows` cut to what a handle bound to a read credential reads: each
+    /// TASK and job by the credential's point read, and a row id that names
+    /// no entity, which no read can prove, dropped. An unbound handle keeps
+    /// them all.
+    fn credential_rows(&self, mut rows: TasksSectionRows) -> MemoryResult<TasksSectionRows> {
+        let ids: Vec<EntityId> = rows
+            .intents
+            .iter()
+            .map(|intent| intent.id.as_str())
+            .chain(rows.bare_jobs.iter().map(|job| job.id.as_str()))
+            .filter_map(|id| EntityId::from_hex(id).ok())
+            .collect();
+        if let Some(readable) = self.credential_readable_ids(&ids)? {
+            let reads = |id: &str| EntityId::from_hex(id).is_ok_and(|id| readable.contains(&id));
+            rows.intents.retain(|intent| reads(&intent.id));
+            rows.bare_jobs.retain(|job| reads(&job.id));
+        }
+        Ok(rows)
     }
 
     /// Updates one TASK. Today the update is the free render-tier
