@@ -361,18 +361,25 @@ fn a_room_reads_no_task_born_outside_its_worlds() -> Result<()> {
             );
         }
     }
-    let refs: Vec<String> = base.iter().chain(&born).map(EntityId::to_hex).collect();
+    let mut expected: Vec<String> = base.iter().map(EntityId::to_hex).collect();
     let mut hydrated: Vec<String> = turn
-        .hydrate(&refs)
-        .expect("hydrate")
+        .hydrate(&expected)
+        .expect("hydrate the base TASK")
         .value
         .into_iter()
         .map(|view| view.id_hex)
         .collect();
     hydrated.sort();
-    let mut expected: Vec<String> = base.iter().map(EntityId::to_hex).collect();
     expected.sort();
-    assert_eq!(hydrated, expected, "hydration serves the base TASK alone");
+    assert_eq!(hydrated, expected, "hydration serves the base TASK");
+    // Hydration refuses a ref it cannot serve as NOT_FOUND, as for an id
+    // nothing holds.
+    for row in &born {
+        let refused = turn
+            .hydrate(&[row.to_hex()])
+            .expect_err("hydration withholds the TASK born outside the room");
+        assert_eq!(refused.code, crate::memory::MEMORY_CODE_NOT_FOUND);
+    }
 
     let found = |scope: crate::pipeline::WorldScope| -> Result<Vec<EntityId>> {
         Ok(vault
