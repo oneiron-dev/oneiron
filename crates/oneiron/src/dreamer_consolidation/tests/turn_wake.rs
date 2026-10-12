@@ -675,11 +675,13 @@ fn a_held_turn_rewritten_and_restored_holds_nothing() -> Result<()> {
     Ok(())
 }
 
-/// Sol R4 (P1): a repeat rode the held turn, and the held turn itself was
-/// queued again with changed words (a finalized stream continuation keeps
-/// its TURN row and re-dirties it), but only material strictly between the
-/// two released the repeat, so its return to the old words was never read
-/// after the change. The repeated turn queued again releases it too.
+/// Sol R4 and R5 (P1): a repeat rode the held turn, and the held turn
+/// itself was queued again with changed words (a finalized stream
+/// continuation keeps its TURN row and re-dirties it; a re-put can also move
+/// its key back), but only material between the two keys the repeat
+/// recorded released it, so its return to the old words was never read
+/// after the change. The repeated turn queued again, under any key,
+/// releases it too.
 #[test]
 fn a_repeat_is_planned_again_when_the_turn_it_repeated_is_queued_again() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -691,15 +693,15 @@ fn a_repeat_is_planned_again_when_the_turn_it_repeated_is_queued_again() -> Resu
     let back = seed_turn(&vault, &session, "user", "I live in Kyoto.", at + 3);
     assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
 
-    // New words under the held turn's own key, re-dirtied as a finalized
-    // stream continuation re-dirties its turn.
+    // New words on the held turn, re-put under an earlier key and
+    // re-dirtied as a finalized stream continuation re-dirties its turn.
     vault
         .batch()
         .put(
             &held,
             ENTITY_TYPE_TURN,
-            occurred(at),
-            at,
+            occurred(at - 5),
+            at - 5,
             &turn_body("user", "I live in Kyoto. I moved to Osaka.", None),
         )
         .commit()?;

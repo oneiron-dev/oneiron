@@ -28,10 +28,10 @@
 //! read either version. A rider whose words change, or that loses a
 //! MESSAGE, is read again: no attempt read its new words. A turn rides
 //! once, under its current key. A rider is also planned again when the
-//! turn it repeated is queued again, or material older than the rider but
-//! newer than that turn is queued later (a parked turn whose edge landed, a
-//! re-dirtied turn), because either may have changed the value the rider
-//! returned to.
+//! turn it repeated is queued again, under whatever key it has then, or
+//! material older than the rider but newer than that turn is queued later
+//! (a parked turn whose edge landed, a re-dirtied turn), because either may
+//! have changed the value the rider returned to.
 //!
 //! Queued and applied state are rows: a restart between queue and apply
 //! keeps the queued attempt, and the window it planned stays read. The rows
@@ -332,10 +332,11 @@ pub(crate) fn hold_in_txn(
     Ok(())
 }
 
-/// Plans again every rider that `queued` material falls between: the held
-/// turn it repeated, queued again, or a turn after that one and before the
-/// rider, queued later. Either may have changed the value the rider
-/// returned to. Queues in temporal order read no rider row.
+/// Plans again every rider the `queued` material may have changed the value
+/// of: a rider of a queued turn, which is that turn queued again under any
+/// key, and a rider a queued turn falls strictly between the turn it
+/// repeated and itself, queued later. A queue in temporal order reads only
+/// its own turns' rounds.
 fn release_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -344,16 +345,31 @@ fn release_in_txn(
     let Some(first) = queued.first() else {
         return Ok(());
     };
-    let mut released = Vec::new();
+    let mut released = BTreeSet::new();
+    for (_, source) in queued {
+        for id in GIVEN.get(store, txn, source)?.unwrap_or_default() {
+            let Some(round) = ROUND.get(store, txn, &id)? else {
+                continue;
+            };
+            for at in &round.riders {
+                if RIDER
+                    .get(store, txn, at)?
+                    .is_some_and(|rider| rider.after.1 == *source)
+                {
+                    released.insert(at.1);
+                }
+            }
+        }
+    }
     for row in RIDER.iter_range(store, txn, Bound::Excluded(first), Bound::Unbounded)? {
         let (at, rider) = row?;
         if rider.after < at
             && queued
-                .range((Bound::Included(rider.after), Bound::Excluded(at)))
+                .range((Bound::Excluded(rider.after), Bound::Excluded(at)))
                 .next()
                 .is_some()
         {
-            released.push(at.1);
+            released.insert(at.1);
         }
     }
     for turn in &released {
