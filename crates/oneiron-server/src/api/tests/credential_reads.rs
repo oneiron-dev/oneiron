@@ -719,11 +719,14 @@ fn room_turn(
 
 /// Astra #1413-002: the signal feed admitted a reacted message under the
 /// credential, but the reaction under the room's audience alone, so a
-/// credential whose records leave the reaction out heard of it. The feed
-/// admits the reaction CLAIM as it admits any record now, and a removal
-/// still reaches a credential that reads the reaction. A full-scope slip
-/// that is not the owner's reads its feed under its own key too: once its
-/// grant reads no claim, it hears of no reaction.
+/// credential whose records leave the reaction out heard of it. Each signal
+/// is admitted under the credential's own lane now, the reaction CLAIM
+/// included, and a removal still reaches a credential that reads the
+/// reaction. (Through the context pack, these narrowed credentials also sit
+/// under a disclosure clamp that withholds this room's reaction from them,
+/// so their lane's admission is checked directly.) A full-scope slip that is
+/// not the owner's read the pack's feed raw; it reads it under its own key
+/// too: once its grant reads no claim, it hears of no reaction.
 #[tokio::test]
 async fn reaction_signals_read_under_the_credential() {
     use oneiron::memory::WitnessAuthor;
@@ -801,12 +804,52 @@ async fn reaction_signals_read_under_the_credential() {
         })
         .expect("the owner reacts")
         .id;
-    let signals = |recipe: String, in_room: bool| {
-        let mut request = json!({ "query": "credkey", "limit": 20, "signals_since": 0 });
-        if in_room {
-            request["conversation_id"] = json!(room.room.to_hex());
+    // The reaction's events in the agent's feed that `recipe`'s own lane
+    // admits, as the context pack admits each signal.
+    let admitted = |recipe: &str| {
+        let auth = crate::test_credentials::authenticate(&room.server, recipe);
+        let lane = crate::api::scoped_read_for_core_auth(&room.server.vault, &auth)
+            .expect("the credential's lane");
+        let mut events = Vec::new();
+        for signal in room
+            .server
+            .vault
+            .reactions_since(room.agent, 0)
+            .expect("the agent's feed")
+        {
+            if signal.reaction == reaction
+                && lane
+                    .is_reaction_signal_readable_under(&signal, None)
+                    .expect("signal admission")
+            {
+                events.push(signal.event().to_owned());
+            }
         }
-        let server = room.server.clone();
+        events.sort();
+        events
+    };
+    let left_out = room.agent_recipe(Some(&[words]));
+    let named = room.agent_recipe(Some(&[words, reaction]));
+    assert!(
+        admitted(&left_out).is_empty(),
+        "records that leave the reaction out admit none of it"
+    );
+    assert_eq!(admitted(&named), ["reaction.put"]);
+    room.server
+        .vault
+        .remove_reaction(words, room.owner, "👀", owner)
+        .expect("the owner removes the reaction");
+    assert_eq!(
+        admitted(&named),
+        ["reaction.put", "reaction.revoked"],
+        "a removal reaches a credential that reads the reaction"
+    );
+    assert!(admitted(&left_out).is_empty());
+
+    let full = format!("principal_ref={};actor_class=agent", room.agent.to_hex());
+    let signals = || {
+        let request = json!({ "query": "credkey", "limit": 20, "signals_since": 0 });
+        let (server, recipe) = (room.server.clone(), full.clone());
         async move {
             let (status, body) = route_json(
                 server,
@@ -822,32 +865,8 @@ async fn reaction_signals_read_under_the_credential() {
             body
         }
     };
-
-    let left_out = room.agent_recipe(Some(&[words]));
-    let named = room.agent_recipe(Some(&[words, reaction]));
-    let body = signals(left_out.clone(), true).await;
-    assert!(
-        !body.to_string().contains(&reaction.to_hex()),
-        "records that leave the reaction out hear nothing of it: {body}"
-    );
     assert_eq!(
-        heard(&signals(named.clone(), true).await, reaction),
-        ["reaction.put"]
-    );
-    room.server
-        .vault
-        .remove_reaction(words, room.owner, "👀", owner)
-        .expect("the owner removes the reaction");
-    assert_eq!(
-        heard(&signals(named, true).await, reaction),
-        ["reaction.put", "reaction.revoked"],
-        "a removal reaches a credential that reads the reaction"
-    );
-    assert!(heard(&signals(left_out, true).await, reaction).is_empty());
-
-    let full = format!("principal_ref={};actor_class=agent", room.agent.to_hex());
-    assert_eq!(
-        heard(&signals(full.clone(), false).await, reaction),
+        heard(&signals().await, reaction),
         ["reaction.put", "reaction.revoked"]
     );
     super::context_board_history::restrict_principal_read_types(
@@ -858,7 +877,7 @@ async fn reaction_signals_read_under_the_credential() {
             oneiron::registry::ENTITY_TYPE_TURN,
         ],
     );
-    let body = signals(full, false).await;
+    let body = signals().await;
     assert!(
         heard(&body, reaction).is_empty(),
         "a grant that reads no claim hears of no reaction: {body}"
@@ -887,6 +906,30 @@ async fn reaction_pills_read_under_the_credential() {
             actor: oneiron::WriteActor::new(room.owner, oneiron::EdgeActorClass::Human),
         })
         .expect("the owner reacts");
+    let pill = |viewer: oneiron::EntityId, class: &'static str| {
+        let recipe = format!("principal_ref={};actor_class={class}", viewer.to_hex());
+        let uri = format!(
+            "/v1/core/conversations/{}/records?with=reactions&viewer={}",
+            room.room.to_hex(),
+            viewer.to_hex()
+        );
+        let (server, unscoped) = (room.server.clone(), room.unscoped);
+        async move {
+            let (status, body) = route_json(
+                server,
+                core_request_with_authz("GET", &uri, test_bearer(&recipe), None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{recipe}: {body}");
+            let body = body.to_string();
+            assert!(body.contains(&unscoped.to_hex()), "{recipe}: {body}");
+            body.contains("👀")
+        }
+    };
+    assert!(
+        pill(room.agent, "agent").await,
+        "a grant that reads claims sees the pill"
+    );
     super::context_board_history::restrict_principal_read_types(
         &room.server,
         room.agent,
@@ -895,23 +938,11 @@ async fn reaction_pills_read_under_the_credential() {
             oneiron::registry::ENTITY_TYPE_TURN,
         ],
     );
-    for (viewer, class, pill) in [(room.agent, "agent", false), (room.owner, "human", true)] {
-        let recipe = format!("principal_ref={};actor_class={class}", viewer.to_hex());
-        let uri = format!(
-            "/v1/core/conversations/{}/records?with=reactions&viewer={}",
-            room.room.to_hex(),
-            viewer.to_hex()
-        );
-        let (status, body) = route_json(
-            room.server.clone(),
-            core_request_with_authz("GET", &uri, test_bearer(&recipe), None),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{recipe}: {body}");
-        let body = body.to_string();
-        assert!(body.contains(&room.unscoped.to_hex()), "{recipe}: {body}");
-        assert_eq!(body.contains("👀"), pill, "{recipe}: {body}");
-    }
+    assert!(
+        !pill(room.agent, "agent").await,
+        "a grant that reads no claim sees no pill"
+    );
+    assert!(pill(room.owner, "human").await, "the owner sees every pill");
 }
 
 /// Sol R5-003 on #1413 (the rulings' sweep): legacy discovery admitted any
