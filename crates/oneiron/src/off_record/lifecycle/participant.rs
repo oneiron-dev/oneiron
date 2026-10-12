@@ -3,7 +3,10 @@
 //! participant, and only while they are on the room's roster: every
 //! transaction its handle opens checks that again, in that transaction. Once
 //! they are removed the run does nothing more in the room, while the room,
-//! its saver and everyone else's runs go on.
+//! its saver and everyone else's runs go on. The check comes first in each
+//! transaction, and each call of the run is checked again before it is
+//! answered, so a removed run learns nothing of what changed in the room,
+//! its saver or its own row since.
 
 use std::sync::Arc;
 
@@ -41,7 +44,7 @@ impl<'vault> OffRecordSession<'vault> {
                 room: self.room()?,
             }),
         };
-        bound.participant_in_txn(&self.vault.store.env.read_txn()?)?;
+        bound.admit_participant()?;
         Ok(bound)
     }
 
@@ -49,6 +52,17 @@ impl<'vault> OffRecordSession<'vault> {
     /// bound to.
     pub(crate) fn participant(&self) -> Option<EntityId> {
         self.participant.map(|participant| participant.actor)
+    }
+
+    /// Refuses, in a fresh snapshot, a run whose participant is no longer in
+    /// its room. A run's calls make this check before they run and again
+    /// before they answer, so a removed run hears only that it is not in the
+    /// room, whatever has changed there since.
+    pub(crate) fn admit_participant(&self) -> Result<()> {
+        if matches!(self.participant, Some(RunParticipant { room: Some(_), .. })) {
+            self.participant_in_txn(&self.vault.store.env.read_txn()?)?;
+        }
+        Ok(())
     }
 
     /// Refuses, in `txn`, a run whose participant is no longer in its room.

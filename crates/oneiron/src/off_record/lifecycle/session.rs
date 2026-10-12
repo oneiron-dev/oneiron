@@ -488,8 +488,8 @@ impl OffRecordSession<'_> {
                 let overlay = self.entry.overlay.clone();
                 let segment = self.vault.with_write_txn_grouped(|wtxn| {
                     let segment = overlay.install_txn_segment()?;
-                    route.revalidate()?;
                     self.participant_in_txn(wtxn)?;
+                    route.revalidate()?;
                     let view = self.vault.store.session_view(overlay.clone())?;
                     accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
                     table.put(&view, wtxn, key, value)?;

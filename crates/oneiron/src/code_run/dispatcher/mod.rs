@@ -281,12 +281,23 @@ impl<'a> HostSelfDispatcher<'a> {
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
-        let run_id = site.map(|site| site.run_id);
         // The descriptor bridge answers before the policy probe: that probe is
         // itself a vault read, and `self.context` must perform none.
-        if !matches!(call, SelfCall::Context(_)) {
-            self.enforce_off_record_effect_policy(call.effect())?;
+        if matches!(call, SelfCall::Context(_)) {
+            return self.dispatch_effect(call, site);
         }
+        self.storage.answered(|| {
+            self.enforce_off_record_effect_policy(call.effect())?;
+            self.dispatch_effect(call, site)
+        })
+    }
+
+    fn dispatch_effect(
+        &self,
+        call: SelfCall,
+        site: Option<ExecutorCallSite<'_>>,
+    ) -> Result<SelfDispatchOutcome> {
+        let run_id = site.map(|site| site.run_id);
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
             SelfCall::AgentsPut(call) => {
@@ -372,7 +383,10 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
     /// 0. the run's `SessionWriteRoute` was captured at RUN ENTRY, in
     ///    [`HostSelfDispatcher::for_off_record_session`] — not here, and never
     ///    per dispatch;
-    /// 1. mode-scoped effect policy, below, before anything else;
+    /// 1. mode-scoped effect policy, below, before anything else but the
+    ///    run's participant: a session-bound run's call is answered only
+    ///    while they are in the room, checked before the call and again once
+    ///    it is done (`ExecutorStorage::answered`);
     /// 2. host envelope, then the write gate;
     /// 3. for on-record supersede only, ONE-1936's stale-target guard inside
     ///    its own transaction;
