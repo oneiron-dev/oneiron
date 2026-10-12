@@ -82,9 +82,9 @@ impl Drop for SaverCheck<'_, '_> {
     }
 }
 
-/// A base write's first step in its transaction: the route it was taken on
-/// still stands, in a room on record its saver still holds, and a run's
-/// write comes from a participant still in the room.
+/// A base write's first step in its transaction: a run's write comes from a
+/// participant still in the room, in a room on record its saver still
+/// holds, and the route it was taken on still stands.
 pub(super) struct Landing<'r, 's, 'vault> {
     pub(super) route: &'r SessionWriteRoute,
     session: &'s OffRecordSession<'vault>,
@@ -93,10 +93,8 @@ pub(super) struct Landing<'r, 's, 'vault> {
 
 impl Landing<'_, '_, '_> {
     pub(super) fn in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
-        if let Some(saver) = &self.saver {
-            saver.in_txn(txn)?;
-        }
-        self.session.participant_in_txn(txn)?;
+        self.session
+            .participant_and_saver_in_txn(self.saver.as_ref(), txn)?;
         // The route is checked again here, not only before the writer: a
         // room that went off record, or whose saving stopped, while this
         // write waited for the writer keeps nothing of it.
@@ -107,6 +105,14 @@ impl Landing<'_, '_, '_> {
     /// stands and a run's write comes from a participant still in the room.
     pub(super) fn in_overlay_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
         self.session.participant_in_txn(txn)?;
+        self.route.revalidate()
+    }
+
+    /// The route checked before a writer opens, or with no writer at all,
+    /// after a run's participant: a run removed from the room hears only
+    /// that.
+    pub(super) fn revalidate(&self) -> Result<()> {
+        self.session.admit_participant()?;
         self.route.revalidate()
     }
 }
@@ -286,20 +292,32 @@ impl<'vault> OffRecordSession<'vault> {
     }
 
     /// One write transaction for this stretch, in which `check` runs before
-    /// `write`: a room on record writes into base only while its saver holds,
-    /// and a run's handle writes only while its participant is in the room.
+    /// `write`: a run's handle writes only while its participant is in the
+    /// room, and a room on record writes into base only while its saver holds.
     pub(crate) fn with_saver_write_txn<T>(
         &self,
         check: Option<SaverCheck<'_, '_>>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<T> {
         self.vault.with_write_txn_grouped(|wtxn| {
-            if let Some(check) = &check {
-                check.in_txn(wtxn)?;
-            }
-            self.participant_in_txn(wtxn)?;
+            self.participant_and_saver_in_txn(check.as_ref(), wtxn)?;
             write(wtxn)
         })
+    }
+
+    /// A run's participant, then `saver`, in `txn`. A run removed from the
+    /// room is refused as that and nothing else: it never hears the saver's
+    /// state. The saver is still checked, so one found lapsed here still
+    /// stops the saving once its check drops.
+    fn participant_and_saver_in_txn(
+        &self,
+        saver: Option<&SaverCheck<'_, '_>>,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        let admitted = self.participant_in_txn(txn);
+        let held = saver.map_or(Ok(()), |saver| saver.in_txn(txn));
+        admitted?;
+        held
     }
 
     /// The refusal of a landing whose saver no longer holds: nothing of it

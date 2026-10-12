@@ -18,6 +18,15 @@ struct Room {
 /// A room holding the vault's owner and an agent, whose stretch the owner
 /// has put on record ("from here on").
 fn room_on_record(vault: &Vault) -> (Room, OffRecordSession<'_>) {
+    room_on_record_as(vault, |proof| proof)
+}
+
+/// The same room, put on record under the proof `bind` makes of the
+/// owner's.
+fn room_on_record_as(
+    vault: &Vault,
+    bind: impl FnOnce(crate::consent::AuthenticatedOwner) -> crate::consent::AuthenticatedOwner,
+) -> (Room, OffRecordSession<'_>) {
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let agent = seed_first_party_actor(vault);
     let by = WriteActor::new(owner, EdgeActorClass::Human);
@@ -43,7 +52,7 @@ fn room_on_record(vault: &Vault) -> (Room, OffRecordSession<'_>) {
             crate::store::GateDecisionId::now(),
         )
         .expect("owner proof");
-    session.flip_on_record_as(&proof).expect("from here on");
+    session.flip_on_record_as(&bind(proof)).expect("from here on");
     (Room { id, owner, agent }, session)
 }
 
@@ -395,5 +404,152 @@ fn a_removed_agents_run_learns_nothing_of_the_room_from_its_refusal() {
         not_in_room(at_a_taken_order.as_ref(), room.agent)
             && not_in_room(at_a_taken_turn.as_ref(), room.agent),
         "{at_a_taken_order:?} / {at_a_taken_turn:?}"
+    );
+}
+
+/// Astra on #1406, P2: the write gate read the run's actor row in a
+/// transaction of its own, before the room's check. A run whose agent was
+/// removed, and then purged from the vault, was told `EntityNotFound`, not
+/// `NotInRoom`, so its refusal showed what the owner had done since. The
+/// room's check now answers first, at the run's door and in the gate's
+/// writer, where the actor's row is read after it.
+#[test]
+fn a_removed_agents_write_is_refused_alike_once_its_person_is_purged() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_on_record(&vault);
+    let run = bind_run(&session, &room);
+    vault
+        .leave_member(
+            room.id,
+            room.agent,
+            WriteActor::new(room.owner, EdgeActorClass::Human),
+            50,
+        )
+        .expect("the owner removes the agent");
+    vault
+        .delete_entity_with_options(
+            &room.agent,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
+        .expect("the owner purges the agent");
+    assert!(
+        vault.get_raw(&room.agent).expect("read the agent").is_none(),
+        "the agent's PERSON is gone"
+    );
+
+    let id = EntityId::now();
+    let refused = run
+        .dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            id,
+            said_in_the_room(&room),
+            range(60),
+            60,
+        )))
+        .err();
+    assert!(not_in_room(refused.as_ref(), room.agent), "{refused:?}");
+    assert!(vault.get_raw(&id).expect("read the claim").is_none());
+}
+
+/// Astra on #1406, P2: a base write checked the saver before the run's
+/// participant. Once the owner's credential was revoked, a run whose agent
+/// had been removed was told `SavingStopped`, with the saver named, and once
+/// the saving had stopped, that the room was talk-only: its refusal showed
+/// the saver's state. The participant answers first now, whatever the saver
+/// or the room's mode, and the saving still stops for everyone else.
+#[test]
+fn a_removed_agents_run_hears_nothing_of_the_saver() {
+    use crate::authority::HostSlipIssuer;
+
+    let (_dir, vault) = open_test_vault();
+    let issuer = HostSlipIssuer::from_secret(b"room saver slip fixture").expect("issuer");
+    let mut slip_id = None;
+    let (room, session) = room_on_record_as(&vault, |proof| {
+        let mut claims = vault.ensure_host_root_slip(&issuer).expect("root slip").claims;
+        claims.slip_id = *blake3::hash(b"room-saver-owner-slip").as_bytes();
+        claims.parent_id = None;
+        claims.holder_ref = proof.actor().to_hex();
+        claims.actor_class = Some("human".into());
+        let slip = vault.mint_capability_slip(&issuer, claims).expect("the owner's slip");
+        slip_id = Some(slip.claims.slip_id);
+        let verified = vault
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                b"room-saver",
+                &issuer.binding_proof(&slip, b"room-saver").expect("binding proof"),
+            )
+            .expect("verify the slip");
+        vault.bind_owner_credential(proof, verified).expect("bind the owner's slip")
+    });
+    let run = bind_run(&session, &room);
+    let storage = ExecutorStorage::for_session(&session, room.agent).expect("bind the storage");
+    let note = |name: &str| {
+        let raw = format!("{name}: the lighthouse key is under the blue stone");
+        let output =
+            CodeRunRawOutput::from_bytes(format!("/mnt/outputs/{name}.txt"), raw.as_bytes())
+                .expect("raw output");
+        storage.put_code_run_raw_output(&output, raw.as_bytes()).err()
+    };
+    let put_claim = || {
+        run.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            EntityId::now(),
+            said_in_the_room(&room),
+            range(60),
+            60,
+        )))
+        .err()
+    };
+    vault
+        .leave_member(
+            room.id,
+            room.agent,
+            WriteActor::new(room.owner, EdgeActorClass::Human),
+            50,
+        )
+        .expect("the owner removes the agent");
+    let refused = note("kept");
+    assert!(not_in_room(refused.as_ref(), room.agent), "{refused:?}");
+
+    vault
+        .revoke_capability_slip(&issuer, slip_id.expect("the owner's slip"))
+        .expect("revoke the owner's slip");
+    let refused = [put_claim(), note("revoked")];
+    assert!(
+        refused.iter().all(|refused| not_in_room(refused.as_ref(), room.agent)),
+        "{refused:?}"
+    );
+
+    // The owner speaks: their landing finds the saving lapsed and stops it.
+    vault
+        .memory(room.owner, EdgeActorClass::Human)
+        .witness_into_session_as_member(
+            &session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: room.id.to_hex(),
+                turn_ref: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: None,
+                    author: crate::memory::WitnessAuthor::Companion,
+                    message_type: "text".to_owned(),
+                    content: "the owner's word after the revocation".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: 70,
+            },
+            None,
+            None,
+        )
+        .expect("the owner speaks");
+    assert_eq!(
+        session.mode().expect("the stretch's mode"),
+        OffRecordMode::OffRecord,
+        "the saving stopped"
+    );
+    let refused = [put_claim(), note("stopped"), run.dispatch(spoken(1)).err()];
+    assert!(
+        refused.iter().all(|refused| not_in_room(refused.as_ref(), room.agent)),
+        "{refused:?}"
     );
 }
