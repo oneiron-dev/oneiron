@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use super::super::{BudgetDenied, ModelId, ModelLocality};
+use super::super::{BrokerIsolation, BudgetDenied, ModelId, ModelLocality};
 use super::admission::RunDenied;
 use super::declaration::{DeclarationEditor, LeaseUnit};
 use super::host::{AllocationRef, Payer};
@@ -42,6 +42,10 @@ pub enum RunEvent {
         /// The model the provider reported serving, when it reported one.
         #[serde(skip_serializing_if = "Option::is_none")]
         served_model: Option<String>,
+        /// How the credential broker that sent the call is kept apart from
+        /// the daemon, when one sent it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        broker_isolation: Option<BrokerIsolation>,
         answered: bool,
     },
     Settled {

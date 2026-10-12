@@ -1,8 +1,22 @@
 //! Which candle device the local provider runs on, and at what precision.
 
 use candle_core::{DType, Device};
+use oneiron::embed::{EmbeddingDevice, EmbeddingProvenance};
 
 use crate::config::{EmbedderDevice, EmbedderQuant};
+
+/// candle's version, as this crate's `Cargo.toml` pins it (`=`).
+const CANDLE_VERSION: &str = "0.11.0";
+
+/// The order a CPU sums each projection in: candle's portable dot product on
+/// x86_64 (or the tiled kernel, which equals it bit for bit), its AVX2 one on
+/// a build that targets AVX2, and the architecture's own elsewhere
+/// ([`super::cpu_q8::REPRODUCES_CANDLE`]).
+const CPU_KERNEL: &str = if cfg!(all(target_arch = "x86_64", target_feature = "avx2")) {
+    "x86_64+avx2"
+} else {
+    std::env::consts::ARCH
+};
 
 /// Resolves the configured device against what this build can actually reach.
 ///
@@ -57,6 +71,20 @@ pub(super) const fn run_dtype(quant: EmbedderQuant) -> DType {
     match quant {
         EmbedderQuant::Q8_0 => DType::F32,
         EmbedderQuant::None => DType::BF16,
+    }
+}
+
+/// Who computes this provider's vectors: the device it resolved and the
+/// runtime build, stored beside each vector (ARCH-0036). It is never part of
+/// the space, which the same model shares on every device.
+pub(super) fn provenance(device: &Device, quant: EmbedderQuant) -> EmbeddingProvenance {
+    let runtime = format!("candle {CANDLE_VERSION} {}", quant.as_str());
+    match device {
+        Device::Cpu => {
+            EmbeddingProvenance::new(EmbeddingDevice::Cpu, format!("{runtime} {CPU_KERNEL}"))
+        }
+        Device::Cuda(_) => EmbeddingProvenance::new(EmbeddingDevice::Cuda, runtime),
+        Device::Metal(_) => EmbeddingProvenance::new(EmbeddingDevice::Metal, runtime),
     }
 }
 

@@ -975,3 +975,90 @@ fn sse_events_decode_across_reads_and_every_line_end() {
     assert_eq!(datas(push(b"\ndata: a\ndata: b\n\ndata: tail")), ["a\nb"]);
     assert_eq!(datas(decoder.finish()), ["tail"]);
 }
+
+/// A vault-held key's rung refuses, before its permit starts, a call that
+/// could only fail before anything is sent: no broker socket at the
+/// configured path (nothing there, or a file that is not a socket), or a
+/// custody door that would not release the key to the broker. None reads
+/// the key, and none is charged.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
+    use std::os::unix::fs::MetadataExt as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Door {
+        holds: bool,
+        reads: AtomicUsize,
+    }
+    impl KeyDoor for Door {
+        fn check(&self, name: &str) -> anyhow::Result<()> {
+            anyhow::ensure!(self.holds, "no secret is registered as {name}");
+            Ok(())
+        }
+        fn read(&self, _: &str) -> anyhow::Result<zeroize::Zeroizing<Vec<u8>>> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            anyhow::bail!("this door hands out nothing")
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    // A separate-user broker: any uid but this process's own.
+    let uid = std::fs::metadata(dir.path()).unwrap().uid().wrapping_add(1);
+    let socket = dir.path().join("broker.sock");
+    let config = config(&format!(
+        "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{{ model = \"paid:teacher\" }}]\n[broker]\nsocket = \"{}\"\nuid = {uid}\n",
+        socket.display()
+    ));
+    let mut listener = None;
+    let cases = [
+        ("no path", true),
+        ("a plain file", true),
+        ("a door that refuses", false),
+    ];
+    for (case, holds) in cases {
+        match case {
+            "a plain file" => std::fs::write(&socket, b"").unwrap(),
+            "a door that refuses" => {
+                std::fs::remove_file(&socket).unwrap();
+                listener = Some(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+            }
+            _ => {}
+        }
+        let door = Arc::new(Door {
+            holds,
+            reads: AtomicUsize::new(0),
+        });
+        let runtime = ModelRuntime::build_with_keys(Some(&config), Some(door.clone()));
+        let model = runtime
+            .seat(ModelRole::Checker)
+            .expect("seat")
+            .model
+            .clone();
+        let receipts = Arc::new(MemoryReceipts::default());
+        let meter = BudgetGuard::new("broker-test", 100_000, BudgetExhaustionPolicy::Suspend);
+        let run = undeclared_run("broker-test", meter.clone(), receipts.clone());
+        let (_, ladder) = runtime.router().unwrap().served(&model).unwrap();
+        let refused = ladder.generate(&run, request(&model, "hi"), None).await;
+        assert!(refused.is_err(), "{case}");
+        assert_eq!(
+            door.reads.load(Ordering::SeqCst),
+            0,
+            "{case}: the key was read"
+        );
+        assert_eq!(
+            (meter.read().used_units, meter.read().reserved_units),
+            (0, 0),
+            "{case}"
+        );
+        let rows = receipts.rows();
+        assert!(!events(&rows).contains(&"dispatched"), "{case}");
+        let denied: Vec<_> = rows
+            .iter()
+            .filter_map(|row| match &row.event {
+                RunEvent::Denied { reason, .. } => Some(reason.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(denied, [RunDenied::BackendRefused], "{case}: {rows:?}");
+    }
+    drop(listener);
+}
