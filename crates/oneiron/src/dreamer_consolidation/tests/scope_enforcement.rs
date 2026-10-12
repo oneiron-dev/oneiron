@@ -144,6 +144,7 @@ fn assembly_preserves_stricter_internal_taint_after_parent_reread() -> Result<()
         attempt.status.attempt.id,
         None,
         Some(&snapshot),
+        None,
     )?;
     vault.set_consolidation_selection(&selection::SelectionConfig {
         soak_ms: 0,

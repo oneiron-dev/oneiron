@@ -105,6 +105,9 @@ impl ConsolidationExecutor<'_> {
         resources.require_output(resources.scope())?;
         resources.require_signals(resources.scope())?;
         let transcript = resources.transcript(resources.scope(), &turn_ids)?;
+        // What this attempt lists stays what it listed first, so a replay
+        // meets its memoized answer.
+        super::neighbourhood::pin(ctx.vault, attempt_id, resources.known())?;
 
         let step_ctx = DurableStepContext {
             vault: ctx.vault,

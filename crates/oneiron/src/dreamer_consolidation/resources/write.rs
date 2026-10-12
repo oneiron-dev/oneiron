@@ -43,6 +43,10 @@ pub(crate) struct ConsolidationFence {
     texts: BTreeMap<EntityId, TurnText>,
     conversation: EntityId,
     rules: crate::dreamer_consolidation::routing::PredicateKeyRules,
+    /// Priors a correction in this same handoff closed with its grant. The
+    /// branch's own hand changed them, so the handoff's later writes no
+    /// longer hold them to their pins.
+    closed: std::sync::Mutex<BTreeSet<EntityId>>,
 }
 
 impl ConsolidationFence {
@@ -50,6 +54,14 @@ impl ConsolidationFence {
     /// may promote under (`validate_run` refuses any other).
     pub(crate) fn run_identity(&self) -> (WriteActor, crate::attempt_queue::AttemptId) {
         (self.actor, self.attempt)
+    }
+
+    /// Records a prior this handoff's own granted correction closed. A
+    /// poisoned lock records nothing, and the later writes refuse.
+    pub(crate) fn closed_by_this_write(&self, prior: EntityId) {
+        if let Ok(mut closed) = self.closed.lock() {
+            closed.insert(prior);
+        }
     }
 }
 
@@ -94,6 +106,12 @@ impl BranchResources<'_> {
             }
             if let [(id, true)] = matches.as_slice() {
                 let id = *id;
+                // Nothing attaches to an unvetted head, so a candidate that
+                // restates one is already said; this attempt's own head met
+                // again is its replay.
+                if self.provisional.contains(&id) && id != candidate.claim_id {
+                    continue;
+                }
                 if candidate.evidence_turn_refs.contains(&id) {
                     return Err(invalid_consolidation(
                         "claim evidence cannot support itself",
@@ -126,6 +144,7 @@ impl BranchResources<'_> {
             texts: self.texts.clone(),
             conversation: self.partition.conversation_ref,
             rules: self.rules.clone(),
+            closed: std::sync::Mutex::default(),
         }
     }
 }
@@ -177,7 +196,12 @@ impl ConsolidationFence {
                 "extraction fallback eligibility revoked",
             ));
         }
-        for (id, pin) in &self.sources {
+        let closed = self
+            .closed
+            .lock()
+            .map_err(|_| invalid_consolidation("fence closed-prior lock"))?
+            .clone();
+        for (id, pin) in self.sources.iter().filter(|(id, _)| !closed.contains(id)) {
             if !read.is_entity_readable_with_policy_in(txn, &policy, id)? {
                 return Err(invalid_consolidation("pinned source read revoked"));
             }

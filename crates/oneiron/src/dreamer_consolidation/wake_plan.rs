@@ -24,6 +24,8 @@ pub struct PreparedConsolidationAttempt {
     queued_input: rmpv::Value,
     source_versions: BTreeMap<EntityId, ScopeResource>,
     retry_budget: crate::gate::retry_source_policy::ResolvedRetryBudget,
+    /// The known entities its turns name, read at the wake's snapshot.
+    neighbourhood: super::neighbourhood::Neighbourhood,
 }
 
 impl PreparedConsolidationAttempt {
@@ -50,6 +52,9 @@ impl PreparedConsolidationAttempt {
     }
     pub(crate) fn version(&self, id: &EntityId) -> Option<&ScopeResource> {
         self.source_versions.get(id)
+    }
+    pub(crate) fn neighbourhood(&self) -> &super::neighbourhood::Neighbourhood {
+        &self.neighbourhood
     }
 }
 
@@ -219,6 +224,7 @@ impl PreparedWake {
                 queued_input: payload.input.clone(),
                 source_versions: BTreeMap::new(),
                 retry_budget: budget,
+                neighbourhood: Default::default(),
             };
             preparations.insert(*attempt.id.as_bytes(), AttemptPreparation::Ready(prepared));
             if attempt.retry_of.is_some() && effective_scope.is_none() {
@@ -294,7 +300,7 @@ impl PreparedWake {
                 withheld += 1;
             }
         }
-        let sources: BTreeMap<_, _> = source_ids
+        let mut sources: BTreeMap<_, _> = source_ids
             .into_iter()
             .zip(rows)
             .filter_map(|(id, row)| row.map(|body| (id, body)))
@@ -415,6 +421,7 @@ impl PreparedWake {
             }
         }
         let read_receipt = read.read_receipt_in(&txn, None, withheld)?;
+        let mut known_rows = BTreeMap::new();
         for outcome in preparations.values_mut() {
             let AttemptPreparation::Ready(plan) = outcome else {
                 continue;
@@ -450,6 +457,10 @@ impl PreparedWake {
                 };
                 continue;
             }
+            let (neighbourhood, rows) =
+                neighbourhood_in(vault, &txn, &read, plan, &sources, &texts)?;
+            known_rows.extend(rows);
+            plan.neighbourhood = neighbourhood;
             plan.source_versions = ids
                 .into_iter()
                 .filter_map(|id| {
@@ -458,6 +469,11 @@ impl PreparedWake {
                         .map(|row| (id, super::resources::document_version(id, &row.2)))
                 })
                 .chain(
+                    plan.neighbourhood
+                        .claim_versions()
+                        .map(|(id, version)| (id, version.clone())),
+                )
+                .chain(
                     plan.turn_ids
                         .iter()
                         .filter_map(|id| texts.get(id))
@@ -465,6 +481,11 @@ impl PreparedWake {
                         .map(|(id, version)| (id, version.clone())),
                 )
                 .collect();
+        }
+        // The heads a neighbourhood lists are read at this snapshot too; the
+        // branch admits them as priors from these bytes.
+        for (id, row) in known_rows {
+            sources.entry(id).or_insert(row);
         }
         Ok(Self {
             sources,
@@ -524,6 +545,59 @@ impl PreparedWake {
     pub(super) fn read_receipt(&self) -> Option<&ScopedReadReceipt> {
         self.read_receipt.as_ref()
     }
+}
+
+/// The known entities `plan`'s turns name, with the claims the branch may
+/// hold as priors. Claims are listed only when the turns share one project,
+/// so a listing never mixes projects into one branch's input.
+fn neighbourhood_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: &crate::claim::ScopedRead<'_>,
+    plan: &PreparedConsolidationAttempt,
+    sources: &BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
+    texts: &BTreeMap<EntityId, super::turn_text::TurnText>,
+) -> Result<(
+    super::neighbourhood::Neighbourhood,
+    Vec<(EntityId, (u8, u64, Vec<u8>))>,
+)> {
+    let mut turns = Vec::new();
+    let mut projects = BTreeSet::new();
+    for id in &plan.turn_ids {
+        let Some((kind, _, body)) = sources.get(id) else {
+            continue;
+        };
+        projects.insert(super::resources::stored_project(
+            &vault.store,
+            txn,
+            *id,
+            *kind,
+            body,
+        )?);
+        turns.push((
+            body.as_slice(),
+            texts.get(id).and_then(super::turn_text::TurnText::text),
+        ));
+    }
+    let bound = plan.scope.as_ref();
+    let project = match (bound.and_then(|scope| scope.project), projects.len()) {
+        (Some(project), _) => Some(project),
+        (None, 1) => projects.into_iter().next().flatten(),
+        _ => None,
+    };
+    let axes = project.map(|project| Scope {
+        world: plan.partition.world_ref,
+        facet: plan.partition.facet_ref,
+        relationship: bound.and_then(|scope| scope.relationship),
+        project: Some(project),
+        ..Scope::default()
+    });
+    let passage = super::neighbourhood::Passage {
+        turns: &turns,
+        axes: axes.as_ref(),
+        bound,
+    };
+    super::neighbourhood::discover_in(vault, txn, read, plan.attempt_id, &passage)
 }
 
 /// An attempt no pass runs before a later write, which a later wake

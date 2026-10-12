@@ -33,7 +33,10 @@ pub(super) fn grant_allowed_replacement(
     match vault.grant_deferred_claim_auto_after(&replacement, run.now_ms, checker, |txn| {
         fence.validate_in_txn(vault, txn)
     }) {
-        Ok(()) => Some(prior),
+        Ok(()) => {
+            fence.closed_by_this_write(prior);
+            Some(prior)
+        }
         // The policy protects it; the owner's run review holds it.
         Err(Error::Gate(_)) => None,
         Err(error) => {
@@ -41,6 +44,29 @@ pub(super) fn grant_allowed_replacement(
             None
         }
     }
+}
+
+/// The prior this attempt's own correction closed, when an earlier pass
+/// already landed it with its grant and died before the attempt completed:
+/// the claim at the candidate's id says what the candidate says, is Auto,
+/// and supersedes a prior. A replay meets it again with no prior left to
+/// route to, so it is not written twice.
+pub(super) fn granted_correction(
+    vault: &Vault,
+    candidate: &PromotionCandidate,
+) -> Result<Option<EntityId>> {
+    if vault.get_entity_type(&candidate.claim_id)? != Some(ENTITY_TYPE_CLAIM) {
+        return Ok(None);
+    }
+    let Some(stored) = vault.get_claim(&candidate.claim_id)? else {
+        return Ok(None);
+    };
+    if stored.approval != ClaimApprovalStatus::Auto
+        || !crate::dreamer_consolidation::reviewed::names_candidate(candidate, &stored)?
+    {
+        return Ok(None);
+    }
+    superseded_prior(vault, candidate.claim_id)
 }
 
 /// The prior `head` closed, when `head` is a granted replacement.

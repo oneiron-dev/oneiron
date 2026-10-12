@@ -12,6 +12,7 @@ use super::conflict::{
 use super::wake_plan::PreparedWake;
 
 mod prior;
+pub(super) use prior::standing;
 pub(super) mod signals;
 mod write;
 use super::partition::ConsolidationPartitionKey;
@@ -80,6 +81,11 @@ pub(super) struct BranchResources<'a> {
     fallback_binding: Cell<Option<FallbackOutputPin>>,
     signals: ScopeResource,
     priors: BTreeMap<EntityId, super::PriorHead>,
+    /// Priors that stand only provisionally: a correction may close them,
+    /// nothing attaches to them.
+    provisional: BTreeSet<EntityId>,
+    /// The known entities the extraction transcript lists.
+    known: super::neighbourhood::Neighbourhood,
     rules: super::routing::PredicateKeyRules,
     /// Every scoped read this branch made, folded. Methods read through
     /// `&self`, so the fold sits behind a lock.
@@ -98,7 +104,9 @@ impl<'a> BranchResources<'a> {
         attempt: AttemptId,
         requested: Option<&Scope>,
     ) -> Result<Self> {
-        Self::open_at_pin(vault, actor, partition, turns, attempt, requested, None)
+        Self::open_at_pin(
+            vault, actor, partition, turns, attempt, requested, None, None,
+        )
     }
 
     /// Consume the exact already-prepared branch; no new scope or source
@@ -118,6 +126,7 @@ impl<'a> BranchResources<'a> {
             plan.attempt_id(),
             plan.scope(),
             Some(wake),
+            Some(plan.neighbourhood()),
         )?;
         let messages = resources.texts.values().flat_map(TurnText::versions);
         for (id, version) in resources
@@ -135,6 +144,10 @@ impl<'a> BranchResources<'a> {
         Ok(resources)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one branch's pinned inputs, each from its own wake or queue source"
+    )]
     pub(super) fn open_at_pin(
         vault: &'a Vault,
         actor: WriteActor,
@@ -143,6 +156,7 @@ impl<'a> BranchResources<'a> {
         attempt: AttemptId,
         requested: Option<&Scope>,
         prepared_wake: Option<&'a PreparedWake>,
+        known: Option<&super::neighbourhood::Neighbourhood>,
     ) -> Result<Self> {
         let actor_key = ScopedReadActorKey::with_actor_class(
             actor.entity_ref().to_hex(),
@@ -247,6 +261,12 @@ impl<'a> BranchResources<'a> {
         granted
             .writable
             .insert(super::gap::branch_gap_projection(&partition, &granted));
+        // An unscoped branch holds the heads its neighbourhood lists as exact
+        // priors, read through this actor's scoped read at the wake's pin.
+        for (_, version) in known.into_iter().flat_map(|known| known.claim_versions()) {
+            granted.readable.insert(version.clone());
+            granted.writable.insert(version.clone());
+        }
         // Never replace explicit missing rights with generated defaults. Extra
         // exact documents are the caller's graph/project slice, not source TURNs.
         // A supplied scope is authority, not a request to infer more authority.
@@ -266,6 +286,8 @@ impl<'a> BranchResources<'a> {
             fallback_binding: Cell::new(None),
             signals,
             priors: BTreeMap::new(),
+            provisional: BTreeSet::new(),
+            known: known.cloned().unwrap_or_default(),
             rules: vault.consolidation_key_rules()?,
             read_receipt: std::sync::Mutex::new(read_receipt),
         };
@@ -431,8 +453,15 @@ impl<'a> BranchResources<'a> {
         Ok(facts)
     }
 
+    /// The known entities this branch lists.
+    pub(super) fn known(&self) -> &super::neighbourhood::Neighbourhood {
+        &self.known
+    }
+
+    /// The extraction input: the known entities with the claims this branch
+    /// holds as priors, then each turn.
     pub(super) fn transcript(&self, scope: &Scope, turns: &[EntityId]) -> Result<String> {
-        let mut transcript = String::new();
+        let mut transcript = self.known.render(|id| self.priors.contains_key(id));
         for id in turns {
             let facts = self.turn(scope, id)?;
             transcript.push_str(&format!(

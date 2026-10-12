@@ -306,6 +306,7 @@ fn parent_classifies_admitted_claim_from_stored_body() -> Result<()> {
         fx.run.attempt_id,
         Some(&fx.scope),
         Some(&snapshot),
+        None,
     )?;
     let claim = SwarmEvidenceRef {
         source_id: fx.head,

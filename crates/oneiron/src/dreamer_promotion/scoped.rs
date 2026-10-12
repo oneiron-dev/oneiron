@@ -74,6 +74,13 @@ pub fn promote_scoped_consolidation(
             continue;
         }
         let evidence_refs = candidate.evidence_turn_refs.clone();
+        // This attempt's own correction, granted before a kill: what its
+        // grant left to close still closes, once.
+        if let Some(prior) = corrections::granted_correction(vault, &candidate)? {
+            corrections::close_conflicts_naming(vault, run, id, prior, &evidence_refs)?;
+            outcome.landed.push(id);
+            continue;
+        }
         match promote_one(
             vault,
             run,

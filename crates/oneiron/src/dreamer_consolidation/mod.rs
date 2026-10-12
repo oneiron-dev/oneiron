@@ -46,6 +46,7 @@ pub(crate) use failure_rules::{
 };
 mod gap;
 mod judge_context;
+mod neighbourhood;
 mod open_conflict;
 mod partition;
 mod persistence;

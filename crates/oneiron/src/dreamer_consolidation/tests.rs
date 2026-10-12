@@ -2325,6 +2325,7 @@ fn wake_prepared_wake_rereads_original_bytes_and_refuses_write_drift() -> Result
         admitted.status.attempt.id,
         None,
         Some(&pin),
+        None,
     )?;
     let citation = SwarmEvidenceRef::whole_turn(turn);
     let original = resources.verify_evidence_refs(&[citation])?;

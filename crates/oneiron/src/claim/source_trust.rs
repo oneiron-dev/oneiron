@@ -321,6 +321,17 @@ pub(crate) fn claim_consolidatable(body: &ClaimBody) -> bool {
             && body.approval != ClaimApprovalStatus::Approved)
 }
 
+/// A first-party generated `Auto` claim a later correction may close: one
+/// [`claim_consolidatable`] declines for its generated origin alone. It still
+/// never corroborates and nothing attaches to it; a correction replaces it
+/// through the deferred grant door, which judges the replacement on its own.
+pub(crate) fn claim_correctable_generated(body: &ClaimBody) -> bool {
+    claim_surfaceable(body)
+        && body.approval == ClaimApprovalStatus::Auto
+        && body.source == Some(ClaimSource::Generated)
+        && !claim_evidence_taint(body).is_some_and(evidence_taint_blocks_consolidation)
+}
+
 /// GATE-11: a generated-origin claim may never serve as extraction evidence
 /// or corroboration for another first-party write — generated output must
 /// never corroborate itself into higher trust. Reads declared source AND

@@ -1,7 +1,7 @@
 //! Exact stored-head admission and question routing. Stored ids are not
 //! candidate ids, and no resource is inferred from an extracted value.
 use super::{BranchResources, SourcePin, document_version};
-use crate::claim::{claim_consolidatable, decode_claim_body};
+use crate::claim::{claim_consolidatable, claim_correctable_generated, decode_claim_body};
 use crate::dreamer_consolidation::routing::{CandidateKeys, PredicateKeyRules, candidate_keys};
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::{ConflictSet, PriorHead, PromotionCandidate};
@@ -64,27 +64,17 @@ impl BranchResources<'_> {
             if kind != ENTITY_TYPE_CLAIM || !self.scope.allows_read(&resource) {
                 return Err(invalid_consolidation("prior head exact read refused"));
             }
-            let body = decode_claim_body(&bytes, true)?;
-            if !claim_consolidatable(&body)
-                || !matches!(body.subject, crate::ClaimSubject::Entity(_))
-            {
-                continue;
-            }
-            let prior = PriorHead { claim_id: id, body };
-            let keys = prior_keys(&prior, &Default::default())?;
-            let facet = super::signals::facet(prior.body.scope.as_ref())?;
-            if keys.identity.world != self.scope.world
-                || facet != self.scope.facet
-                || self
-                    .scope
-                    .relationship
-                    .is_some_and(|r| keys.identity.rel != Some(r))
-                || self
-                    .scope
-                    .project
-                    .is_some_and(|p| keys.identity.project != p)
-            {
-                continue;
+            let prior = PriorHead {
+                claim_id: id,
+                body: decode_claim_body(&bytes, true)?,
+            };
+            match standing(&prior, &self.scope)? {
+                Some(Standing::Prior) => {}
+                // Only a head the passage's listing names stands provisionally.
+                Some(Standing::Provisional) if self.known.lists(id) => {
+                    self.provisional.insert(id);
+                }
+                _ => continue,
             }
             // The exact read above binds the admitted document slice; the
             // project axis of the identity keeps a head in another project
@@ -196,6 +186,44 @@ impl BranchResources<'_> {
         }
         Ok(conflicts)
     }
+}
+
+/// How a stored head stands on a branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::dreamer_consolidation) enum Standing {
+    /// A consolidatable head: merge context, an attachment target, a prior.
+    Prior,
+    /// The Dreamer's own unvetted `Auto` head: a correction may close it,
+    /// and nothing attaches to it.
+    Provisional,
+}
+
+/// How a stored head can stand on a branch with `axes`, if at all: an
+/// entity claim in the branch's world and facet, and in its relationship
+/// and project when the branch is bound to one.
+pub(in crate::dreamer_consolidation) fn standing(
+    prior: &PriorHead,
+    axes: &Scope,
+) -> Result<Option<Standing>> {
+    let standing = if claim_consolidatable(&prior.body) {
+        Standing::Prior
+    } else if claim_correctable_generated(&prior.body) {
+        Standing::Provisional
+    } else {
+        return Ok(None);
+    };
+    if !matches!(prior.body.subject, crate::ClaimSubject::Entity(_)) {
+        return Ok(None);
+    }
+    let keys = prior_keys(prior, &Default::default())?;
+    let facet = super::signals::facet(prior.body.scope.as_ref())?;
+    let fits = keys.identity.world == axes.world
+        && facet == axes.facet
+        && axes
+            .relationship
+            .is_none_or(|r| keys.identity.rel == Some(r))
+        && axes.project.is_none_or(|p| keys.identity.project == p);
+    Ok(fits.then_some(standing))
 }
 
 fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateKeys> {

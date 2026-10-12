@@ -14,7 +14,8 @@ impl ConsolidationExecutor<'_> {
         })?;
         let system = r#"Extract durable memory claims from the conversation transcript.
 Respond with JSON: {"candidates":[{"subject":"<32-hex entity id>","predicate":"<dotted.predicate>","value":<json>,"confidence":<0..1>,"evidence_refs":[{"source_id":"<32-hex id>","byte_range":[start,end]}]}]}.
-Each evidence ref names a source id and either a UTF-8 byte range in the displayed turn text (start inclusive, end exclusive) or claim_id. Only claims stated by the user or assistant; never invent evidence refs."#;
+Each evidence ref names a source id and either a UTF-8 byte range in the displayed turn text (start inclusive, end exclusive) or claim_id. Only claims stated by the user or assistant; never invent evidence refs.
+Lines "entity <id> <label>" before the transcript list entities already in memory, each followed by its newest claims as "claim <id> <predicate> = <value>". Use a listed entity's id as the subject for that entity. When a turn corrects or updates a listed claim, give the new value with "corrects":"<that claim id>"."#;
         Ok(LlmRequest {
             model: call.model.clone(),
             envelope: CallEnvelope {
@@ -98,24 +99,65 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
 
         let mut candidates = Vec::new();
         for item in items {
-            let Some(subject) = item
+            // A candidate naming a listed claim corrects it and binds to that
+            // head: its subject, predicate, relationship and topic, so it
+            // routes to the head through the conflict and grant doors. A
+            // claim the branch does not hold is not one it may name.
+            let corrects = match item.get("corrects") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(named) => match named
+                    .as_str()
+                    .and_then(entity_id_from_hex)
+                    .map(|id| resources.prior(id))
+                {
+                    Some(Ok(prior)) => Some(prior),
+                    _ => {
+                        tracing::warn!(
+                            target: "oneiron::dreamer",
+                            "extracted correction names a claim the branch does not hold; not written"
+                        );
+                        continue;
+                    }
+                },
+            };
+            let named = item
                 .get("subject")
                 .and_then(|value| value.as_str())
-                .and_then(entity_id_from_hex)
-            else {
-                continue;
-            };
-            let Some(predicate) = item.get("predicate").and_then(|value| value.as_str()) else {
-                continue;
+                .and_then(entity_id_from_hex);
+            let (subject, predicate) = match corrects {
+                Some(prior) => {
+                    let ClaimSubject::Entity(subject) = prior.body.subject else {
+                        continue;
+                    };
+                    if named.is_some_and(|named| named != subject) {
+                        tracing::warn!(
+                            target: "oneiron::dreamer",
+                            "extracted correction names a claim about another subject; not written"
+                        );
+                        continue;
+                    }
+                    (subject, prior.body.predicate.as_str())
+                }
+                None => {
+                    let Some(subject) = named else {
+                        continue;
+                    };
+                    let Some(predicate) = item.get("predicate").and_then(|value| value.as_str())
+                    else {
+                        continue;
+                    };
+                    (subject, predicate)
+                }
             };
             let confidence = item
                 .get("confidence")
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or(0.5) as f32;
             let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
-            let rel = match item.get("rel") {
-                None | Some(serde_json::Value::Null) => scope.relationship,
-                Some(value) => Some(
+            let rel = match (corrects, item.get("rel")) {
+                (Some(prior), _) => prior.body.rel,
+                (None, None | Some(serde_json::Value::Null)) => scope.relationship,
+                (None, Some(value)) => Some(
                     value
                         .as_str()
                         .and_then(entity_id_from_hex)
@@ -164,8 +206,15 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                     Value::Binary(facet.as_bytes().to_vec()),
                 ));
             }
-            if let Some(topic) = item.get("topic_key").filter(|value| !value.is_null()) {
-                fields.push((Value::from("topic_key"), json_to_rmpv(topic)));
+            let topic = match corrects {
+                Some(prior) => prior_topic(prior.body.scope.as_ref()),
+                None => item
+                    .get("topic_key")
+                    .filter(|value| !value.is_null())
+                    .map(json_to_rmpv),
+            };
+            if let Some(topic) = topic {
+                fields.push((Value::from("topic_key"), topic));
             }
             if project != crate::claim::default_project_id() {
                 fields.push((
@@ -210,6 +259,16 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
         }
         Ok(candidates)
     }
+}
+
+/// The question key a stored head was filed under, as its scope map holds it.
+fn prior_topic(scope: Option<&Value>) -> Option<Value> {
+    let Some(Value::Map(fields)) = scope else {
+        return None;
+    };
+    fields
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some("topic_key")).then(|| value.clone()))
 }
 
 fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
