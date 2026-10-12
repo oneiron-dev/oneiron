@@ -2221,7 +2221,8 @@ fn a_stale_worlds_task_is_no_neighbor() -> Result<()> {
     // The shipped default policy, under which a writer's create mints its TASK.
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let world = EntityId::from_bytes_unchecked([0x5D; 16]);
+    // A received foreign world: only that range carries a stale stamp.
+    let world = EntityId::from_bytes_unchecked([0xF5; 16]);
     let writer = EntityId::from_bytes_unchecked([0x5E; 16]);
     vault.put_entity(
         &writer,

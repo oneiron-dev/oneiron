@@ -279,7 +279,8 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
 #[test]
 fn a_room_reads_no_task_born_outside_its_worlds() -> Result<()> {
     // The shipped default policy, under which a writer's create mints its
-    // TASK rather than parking a proposal; the room's grants extend it.
+    // TASK rather than parking a proposal. The room's grant would pend under
+    // it, so the fixture clears it once the TASKs are minted.
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
@@ -322,6 +323,7 @@ fn a_room_reads_no_task_born_outside_its_worlds() -> Result<()> {
     };
     let base = mint(None)?;
     let born = mint(Some(fiction))?;
+    crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
     vault
         .batch()
         .text(&base[0], &[("body", "lantern harbor")])
