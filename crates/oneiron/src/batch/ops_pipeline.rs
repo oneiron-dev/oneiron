@@ -342,10 +342,10 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// A room indexes what it stages at once and runs no idle pass. So the apply
 /// that indexes a row the room put publishes the row's revision (its indexed
 /// revision becomes its live one), and hides the row's text or vector that
-/// it did not restage when they describe another body. While base's live
-/// body is another than the room's, it hides base's vector of the row even
-/// when base has none yet, since base may still embed that body. Base keeps
-/// its deferred-index interval.
+/// it did not restage when they describe another body. When neither base's
+/// indexed body nor its live one is the room's, it hides base's vector of
+/// the row even when base has none yet, since base may still embed that
+/// body. Base keeps its deferred-index interval.
 ///
 /// # The op list IS the journal
 ///
@@ -554,10 +554,11 @@ pub(crate) fn apply_ops_session(
 
 /// Hides base's vector of `id`, a row the room holds and has not given a
 /// vector, where it describes another body than the room's. A vector base
-/// holds was embedded from its indexed body. One base writes later (an
-/// embedding or its idle pass, which can land before the room's segment
-/// commits) is embedded from its live body, so while that body is another
-/// the room hides the row before base writes one (Sol R19, R21).
+/// holds was embedded from its indexed body, so the room keeps it when that
+/// body is the room's (Sol R22). One base writes later (an embedding or its
+/// idle pass, which can land before the room's segment commits) is embedded
+/// from its live body, so while that body is another too the room hides the
+/// row before base writes one (Sol R19, R21).
 fn hide_base_vector_of_another_body(
     view: &crate::store::SessionStoreView<'_>,
     wtxn: &mut RwTxn<'_>,
@@ -568,12 +569,13 @@ fn hide_base_vector_of_another_body(
     let body = room.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     let (held, later) =
         crate::vault::entity_revision::vectors_embed_body(view.read().base(), wtxn, id, body)?;
-    if !later {
-        view.vectors.hide_base_row(id.as_bytes())?;
-    } else if !held {
+    if held {
+        return Ok(());
+    }
+    if later {
         crate::store::ManifestDbs::vectors(view).delete(wtxn, id.as_bytes())?;
     } else {
-        return Ok(());
+        view.vectors.hide_base_row(id.as_bytes())?;
     }
     crate::embed::record_embedding_device_in_txn(view, wtxn, id, None)
 }

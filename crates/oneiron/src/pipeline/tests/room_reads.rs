@@ -1163,13 +1163,12 @@ fn a_room_keeps_the_vector_base_publishes_for_the_body_it_restaged() -> Result<(
     Ok(())
 }
 
-/// The same base claim, with its new body's vector waiting for idle
-/// publication. A room puts back the body base indexed, with its words and
-/// no vector, and base's idle pass publishes its new body and that body's
-/// vector before the room's turn commits. That vector describes base's new
-/// body, not the room's, so it does not find the claim in the room.
+/// Base holds a claim with the vector of the body it indexed, and has
+/// changed the body since, with no vector of the new one yet. A room puts
+/// back the body base indexed, with its words and no vector. Base's vector
+/// describes the room's body, so it finds the claim in the room.
 #[test]
-fn a_room_that_puts_back_base_indexed_body_hides_the_vector_of_its_new_one() -> Result<()> {
+fn a_room_that_puts_back_base_indexed_body_keeps_base_vector_of_it() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let owner = vault
         .ensure_embedded_owner_actor()
@@ -1181,6 +1180,7 @@ fn a_room_that_puts_back_base_indexed_body_hides_the_vector_of_its_new_one() -> 
         .batch()
         .put(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &indexed)
         .text(&claim, &[("body", "putbackbaseword")])
+        .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
         .commit()?;
     vault
         .batch()
@@ -1192,37 +1192,23 @@ fn a_room_that_puts_back_base_indexed_body_hides_the_vector_of_its_new_one() -> 
             &local_claim_body(owner, "pendingvalue")?,
         )
         .commit()?;
-    vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
-    let session = enter(&vault, "sess-room-put-back-idle")?;
-    stage_in_room_then(
+    let session = enter(&vault, "sess-room-put-back")?;
+    replace_in_room(
         &vault,
         &session,
-        vec![
-            claim_put(claim, (occurred, 1, indexed)),
-            room_text(claim, "putbackneedle"),
-        ],
-        || {
-            vault.set_indexed_idle_delay_ms(0)?;
-            vault.refresh_staged_indexed_at_idle(u64::MAX).map(drop)
-        },
+        claim,
+        (occurred, 1, indexed),
+        "putbackneedle",
     )?;
 
-    let base_hits = vault
-        .query()
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
-        .run()?;
-    assert!(
-        base_hits.iter().any(|hit| hit.id == claim),
-        "base's idle pass published the vector, got {base_hits:?}"
-    );
     let fields = room_pack_fields(&vault, &session, claim, "putbackneedle")?;
     assert!(
         fields.contains("indexedvalue") && !fields.contains("pendingvalue"),
         "the room reads the body it put back, got {fields}"
     );
     assert!(
-        !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
-        "base's vector of its new body does not find the room's"
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "base's vector of the body the room put back finds it in the room"
     );
     session.close()?;
     Ok(())
