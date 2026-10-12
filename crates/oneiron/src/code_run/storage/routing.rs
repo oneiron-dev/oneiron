@@ -187,14 +187,19 @@ impl SessionBinding<'_> {
             ));
         }
         self.answered(|| {
-            self.session
-                .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &raw.to_vec())
+            self.session.side_table_put_routed(
+                &self.route,
+                &RAW_OUTPUTS,
+                &output.handle,
+                &raw.to_vec(),
+            )
         })
     }
 
     fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
-        let Some(raw) = self.answered(|| self.session.side_table_get(&RAW_OUTPUTS, &output.handle))?
+        let Some(raw) =
+            self.answered(|| self.session.side_table_get(&RAW_OUTPUTS, &output.handle))?
         else {
             return Ok(None);
         };

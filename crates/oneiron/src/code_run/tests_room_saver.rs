@@ -475,7 +475,9 @@ fn a_removed_agents_run_is_refused_alike_once_the_room_is_deleted() {
         )
         .expect("the owner removes the agent");
     assert!(
-        vault.delete_entity(&room.id).expect("the owner deletes the room"),
+        vault
+            .delete_entity(&room.id)
+            .expect("the owner deletes the room"),
         "the room existed"
     );
 

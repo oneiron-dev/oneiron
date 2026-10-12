@@ -106,7 +106,8 @@ impl Landing<'_, '_, '_> {
     pub(super) fn in_overlay_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
         self.session.participant_in_txn(txn)?;
         self.route.revalidate()
-    }}
+    }
+}
 
 impl<'vault> OffRecordSession<'vault> {
     /// Flips the stretch on record for the owner: later turns are saved as
