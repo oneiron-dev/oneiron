@@ -44,8 +44,9 @@ fn echoes(key: &str) -> Vec<Vec<u8>> {
     echoes
 }
 
-/// Whether `text` still gives the key away: in any echoed form, read through
-/// JSON escapes then percent-decoding, or decodable from any base64 run in it
+/// Whether `text` still gives the key away, read as a client could read it:
+/// through any chain of up to three decodings (JSON escapes, percent-encoding,
+/// in any order), then as is or decoded from any base64 run in that reading,
 /// at any offset.
 fn leaks(text: &[u8], key: &str) -> bool {
     let contains = |haystack: &[u8]| {
@@ -53,17 +54,30 @@ fn leaks(text: &[u8], key: &str) -> bool {
             .windows(key.len())
             .any(|window| window == key.as_bytes())
     };
-    let unescaped = json_unescaped(text);
-    if contains(text)
-        || contains(&percent_decoded(text))
-        || contains(&unescaped)
-        || contains(&percent_decoded(&unescaped))
-    {
-        return true;
+    readings(text).iter().any(|reading| {
+        contains(reading) || base64_readings(reading).any(|decoded| contains(&decoded))
+    })
+}
+
+/// `text` and each reading of it through up to three decodings.
+fn readings(text: &[u8]) -> Vec<Vec<u8>> {
+    let mut all = vec![text.to_vec()];
+    let mut level = all.clone();
+    for _ in 0..3 {
+        level = level
+            .iter()
+            .flat_map(|reading| [json_unescaped(reading), percent_decoded(reading)])
+            .filter(|reading| !all.contains(reading))
+            .collect();
+        all.extend(level.iter().cloned());
     }
-    // Every base64 run, read at each start offset and each end, in both
-    // alphabets, leniently: a key inside a longer encoded text shows up in
-    // one of those readings.
+    all
+}
+
+/// Every base64 run of `text`, read at each start offset and each end, in
+/// both alphabets, leniently: a key inside a longer encoded text shows up in
+/// one of those readings.
+fn base64_readings(text: &[u8]) -> impl Iterator<Item = Vec<u8>> + '_ {
     let lenient = |alphabet: &base64::alphabet::Alphabet| {
         GeneralPurpose::new(
             alphabet,
@@ -79,12 +93,12 @@ fn leaks(text: &[u8], key: &str) -> bool {
     text.split(|byte| !(byte.is_ascii_alphanumeric() || b"+/-_".contains(byte)))
         .flat_map(|run| (0..4).flat_map(move |skip| (0..4).map(move |cut| (run, skip, cut))))
         .filter_map(|(run, skip, cut)| run.get(skip..run.len().checked_sub(cut)?))
-        .flat_map(|window| {
+        .flat_map(move |window| {
             engines
-                .iter()
+                .clone()
+                .into_iter()
                 .map(move |engine| engine.decode(window).unwrap_or_default())
         })
-        .any(|decoded| contains(&decoded))
 }
 
 /// `text` with JSON's escapes read back: `\uXXXX`, a surrogate pair as one
@@ -282,4 +296,174 @@ fn only_the_key_goes_from_an_escaped_run_that_percent_decodes_to_it() {
     let stripped = strip(KEY.as_bytes(), body.as_bytes());
     let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
     assert_eq!(parsed["content"], "[redacted]");
+}
+
+/// A synthetic key from the broker's alphabet whose standard base64 holds
+/// `+`, `/` and padding: `~` and `?` as the third byte of a group spell them.
+const URL_KEY: &str = "sk~te?sentinel00";
+
+/// Each byte as `%XX`, in lowercase hex.
+fn percent_every_byte(text: &str) -> String {
+    text.bytes().map(|byte| format!("%{byte:02x}")).collect()
+}
+
+/// URL-component encoding: each byte outside the unreserved set as `%XX`.
+fn percent_component(text: &str) -> String {
+    text.bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+/// Each character as JSON's `\uXXXX`, or only every other one.
+fn json_spelled(text: &str, every: usize) -> String {
+    text.chars()
+        .enumerate()
+        .map(|(index, c)| {
+            if index % every == 0 {
+                format!("\\u{:04x}", u32::from(c))
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// The reply read back as a client would: JSON escapes, then percent-decoding,
+/// then base64.
+fn client_reads(text: &[u8]) -> Vec<u8> {
+    let decoded = percent_decoded(&json_unescaped(text));
+    let engine = GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    );
+    engine.decode(decoded).unwrap_or_default()
+}
+
+#[test]
+fn a_base64_echo_spelled_in_percent_bytes_is_redacted() {
+    // Astra on #1407: the key's base64 with each byte percent-spelled, the
+    // same with each `%` written `\u0025`, and the URL-component encoding of
+    // a base64 holding `+`, `/` and `=`. A client that percent-decodes, then
+    // base64-decodes, reads the key from each.
+    let base64 = STANDARD.encode(URL_KEY);
+    assert!(base64.contains('+') && base64.contains('/') && base64.ends_with('='));
+    let spelled = percent_every_byte(&base64);
+    let echoes = [
+        spelled.clone(),
+        spelled.replace('%', "\\u0025"),
+        percent_component(&base64),
+    ];
+    for echo in echoes {
+        assert_eq!(client_reads(echo.as_bytes()), URL_KEY.as_bytes(), "{echo}");
+        let body =
+            format!("{{\"error\":{{\"message\":\"{echo}\"}},\"usage\":{{\"input_tokens\":3}}}}");
+        let header = format!("Bearer error=\"invalid_token\", error_description=\"{echo}\"");
+        for text in [body.as_str(), header.as_str()] {
+            let stripped = strip(URL_KEY.as_bytes(), text.as_bytes());
+            assert!(
+                !leaks(&stripped, URL_KEY),
+                "{text} survived as {}",
+                String::from_utf8_lossy(&stripped)
+            );
+        }
+        let stripped = strip(URL_KEY.as_bytes(), body.as_bytes());
+        let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
+        assert_eq!(parsed["error"]["message"], "[redacted]", "{echo}");
+        assert_eq!(parsed["usage"]["input_tokens"], 3);
+        let message = parsed["error"]["message"].as_str().unwrap_or_default();
+        assert_ne!(client_reads(message.as_bytes()), URL_KEY.as_bytes());
+    }
+}
+
+/// Keys from the broker's alphabet: fixed ones, then a spread drawn from it
+/// with a fixed seed.
+fn alphabet_keys() -> Vec<String> {
+    const ALPHABET: &[u8] =
+        b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$&'()*+,;=:@/?#";
+    let mut keys = vec![
+        URL_KEY.to_owned(),
+        "sk-test/sentinel?~0000".to_owned(),
+        "sk-ant-api03-~?~?-sentinel".to_owned(),
+    ];
+    let mut state: u64 = 0x1407_5eed;
+    for len in [8, 9, 10, 13, 16, 21, 32, 47] {
+        let key: String = (0..len)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let index = usize::try_from(state >> 33).unwrap_or_default() % ALPHABET.len();
+                char::from(ALPHABET[index])
+            })
+            .collect();
+        keys.push(key);
+    }
+    keys
+}
+
+/// An outer spelling of an echo.
+type Spelling = fn(&str) -> String;
+
+#[test]
+fn every_inner_form_in_every_outer_spelling_is_redacted() {
+    let outer: [(&str, Spelling); 8] = [
+        ("as is", str::to_owned),
+        ("json every char", |text| json_spelled(text, 1)),
+        ("json every other char", |text| json_spelled(text, 2)),
+        ("percent every byte", percent_every_byte),
+        ("percent component", percent_component),
+        ("percent, then json", |text| {
+            percent_every_byte(text).replace('%', "\\u0025")
+        }),
+        ("percent twice", |text| {
+            percent_component(&percent_component(text))
+        }),
+        ("json, then percent", |text| {
+            percent_component(&json_spelled(text, 1))
+        }),
+    ];
+    for key in alphabet_keys() {
+        assert!(super::admits(key.as_bytes()), "{key}");
+        let mut inner = vec![key.clone(), format!("Bearer {key}")];
+        for engine in [&STANDARD, &STANDARD_NO_PAD, &URL_SAFE, &URL_SAFE_NO_PAD] {
+            inner.push(engine.encode(&key));
+        }
+        // The key inside a longer encoded text, at each byte offset.
+        for engine in [&STANDARD, &URL_SAFE_NO_PAD] {
+            inner.push(engine.encode(format!("u:{key}")));
+            inner.push(engine.encode(format!("Bearer {key}")));
+            inner.push(engine.encode(format!("{key}!")));
+        }
+        for form in &inner {
+            for (name, spell) in &outer {
+                let echo = spell(form);
+                let body = format!("{{\"note\":\"w0rds~{echo}~m0re\",\"n\":1}}");
+                let header = format!("error_description=\"w0rds~{echo}~m0re\"");
+                for text in [body.as_str(), header.as_str()] {
+                    assert!(
+                        leaks(text.as_bytes(), &key),
+                        "the oracle must see {name}: {text}"
+                    );
+                    let stripped = strip(key.as_bytes(), text.as_bytes());
+                    let stripped = String::from_utf8_lossy(&stripped);
+                    assert!(
+                        !leaks(stripped.as_bytes(), &key),
+                        "{key} / {name}: {text} survived as {stripped}"
+                    );
+                    // The words beside the echo stay.
+                    let (head, tail) = text.split_once(&echo).unwrap_or_default();
+                    assert!(
+                        stripped.starts_with(head) && stripped.ends_with(tail),
+                        "{key} / {name}: {stripped}"
+                    );
+                }
+            }
+        }
+    }
 }

@@ -4,16 +4,20 @@
 //!
 //! The forms are the raw key, its JSON-escaped form, `Bearer <key>`, its
 //! percent-encoded form, and its base64 in the standard and URL-safe alphabets,
-//! with and without padding. Two widenings keep an echo from slipping past on
-//! spelling alone. A key echoed inside a longer base64 text (say, `Bearer
-//! <key>` encoded whole) shifts by its offset in that text, so the part of the
-//! encoding that the key alone fixes is stripped at all three byte offsets.
-//! And percent-encoding may spell any byte as `%XX`, so a URL-like run is
-//! also read decoded, and the source bytes of each key in it are stripped.
-//! The broker sends only a key in the alphabet such a run holds ([`admits`]),
-//! so a part-encoded echo never splits across runs. JSON may spell any
-//! character `\uXXXX`, so text holding an escape is also read unescaped. The
-//! whole reply is buffered first, so a form cannot split across reads.
+//! with and without padding. A key echoed inside a longer base64 text (say,
+//! `Bearer <key>` encoded whole) shifts by its offset in that text, so the
+//! part of the encoding that the key alone fixes is a form too, at all three
+//! byte offsets.
+//!
+//! An echo may also wear the outer spellings in any composition: JSON may
+//! spell any character `\uXXXX`, percent-encoding may spell any byte `%XX`,
+//! and either may spell the other's escape characters. So each run of bytes
+//! that could spell a form, holding a backslash or a `%`, is also read
+//! through every chain of up to [`DEPTH`] such decodings, and every form is
+//! searched in every reading. Only the source bytes of each match become
+//! [`MARKER`]. The broker sends only a key in the alphabet such a run holds
+//! ([`admits`]), so a part-encoded echo never splits across runs. The whole
+//! reply is buffered first, so a form cannot split across reads.
 //!
 //! The rule works on bytes, never through a parsed JSON tree: each decoded
 //! reading sits in a buffer wiped on drop.
@@ -37,14 +41,14 @@ pub fn strip(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
             out = replace_all(&out, form);
         }
     }
-    if memchr::memchr(b'\\', &out).is_some() {
-        out = strip_escaped(key, &forms, &out);
-    }
-    if memchr::memchr(b'%', &out).is_some() {
-        out = strip_percent_runs(key, &out);
+    if memchr::memchr2(b'\\', b'%', &out).is_some() {
+        out = strip_encoded_runs(key, &forms, &out);
     }
     out
 }
+
+/// How many decodings, one on another, a run is read through.
+const DEPTH: usize = 3;
 
 /// Whether the rule can be trusted with `key`: each byte is one a URL-like
 /// run holds, so an echo spelled in any mix of forms stays in one run the
@@ -149,39 +153,9 @@ fn is_url_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"%-._~!$&'()*+,;=:@/?#".contains(&byte)
 }
 
-/// Replaces, in each URL-like run holding a `%`, the source bytes of each
-/// key its decoding holds.
-fn strip_percent_runs(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
-    let mut out = Zeroizing::new(Vec::with_capacity(bytes.len()));
-    let mut at = 0;
-    while at < bytes.len() {
-        let len = bytes[at..]
-            .iter()
-            .take_while(|byte| is_url_byte(**byte))
-            .count();
-        if len == 0 {
-            out.push(bytes[at]);
-            at += 1;
-            continue;
-        }
-        let run = &bytes[at..at + len];
-        if run.contains(&b'%') {
-            let (decoded, from) = percent_decoded_from(run);
-            let spans = memchr::memmem::find_iter(&decoded, key)
-                .map(|found| (from[found].0, from[found + key.len() - 1].1))
-                .collect();
-            replace_spans(run, spans, &mut out);
-        } else {
-            out.extend_from_slice(run);
-        }
-        at += len;
-    }
-    out
-}
-
 /// `run` percent-decoded, and for each decoded byte the span of `run` it
 /// came from.
-fn percent_decoded_from(run: &[u8]) -> (Zeroizing<Vec<u8>>, Vec<(usize, usize)>) {
+fn percent_decoded_from(run: &[u8]) -> Decoded {
     let hex = |byte: u8| {
         char::from(byte)
             .to_digit(16)
@@ -207,13 +181,16 @@ fn percent_decoded_from(run: &[u8]) -> (Zeroizing<Vec<u8>>, Vec<(usize, usize)>)
     (out, from)
 }
 
-/// Replaces each span whose JSON-unescaped reading holds a form of the key.
-/// JSON may spell any character `\uXXXX`, and a provider may escape some
-/// characters of an echo and not others, in a JSON body or not, and in a
-/// header value. So each run of bytes that could spell a form and holds an
-/// escape is read unescaped, into a buffer wiped on drop, wherever its quotes
-/// fall; only the source bytes of each match become [`MARKER`].
-fn strip_escaped(key: &[u8], forms: &[Zeroizing<Vec<u8>>], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
+/// Replaces, in each run of bytes that could spell a form and holds a
+/// backslash or a `%`, each match of a form in any reading of the run, at the
+/// match's source bytes only. A provider may escape some characters of an
+/// echo and not others, in a JSON body or not, and in a header value, so a run
+/// is taken wherever its quotes fall.
+fn strip_encoded_runs(
+    key: &[u8],
+    forms: &[Zeroizing<Vec<u8>>],
+    bytes: &[u8],
+) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(Vec::with_capacity(bytes.len()));
     let mut at = 0;
     while at < bytes.len() {
@@ -224,8 +201,8 @@ fn strip_escaped(key: &[u8], forms: &[Zeroizing<Vec<u8>>], bytes: &[u8]) -> Zero
             continue;
         }
         let run = &bytes[at..end];
-        if run.contains(&b'\\') {
-            strip_run(key, forms, run, &mut out);
+        if memchr::memchr2(b'\\', b'%', run).is_some() {
+            strip_run(forms, run, &mut out);
         } else {
             out.extend_from_slice(run);
         }
@@ -235,18 +212,89 @@ fn strip_escaped(key: &[u8], forms: &[Zeroizing<Vec<u8>>], bytes: &[u8]) -> Zero
 }
 
 /// Where the run starting at `at` ends: it takes bytes that can spell a form
-/// of the key, and each escape whole.
+/// of the key or an escape of one, and each JSON escape whole.
 fn run_end(key: &[u8], bytes: &[u8], mut at: usize) -> usize {
     while let Some(&byte) = bytes.get(at) {
         if byte == b'\\' {
             at += escape_len(&bytes[at..]);
-        } else if byte.is_ascii_alphanumeric() || b"+/=-_%".contains(&byte) || key.contains(&byte) {
+        } else if is_url_byte(byte) || key.contains(&byte) {
             at += 1;
         } else {
             break;
         }
     }
     at
+}
+
+/// A decoding of a reading: the decoded bytes, and for each the span of the
+/// reading it came from.
+type Decoded = (Zeroizing<Vec<u8>>, Vec<(usize, usize)>);
+
+/// A decoding, and the escape character it reads.
+type Decoding = (u8, fn(&[u8]) -> Decoded);
+
+/// Writes `run` to `out` with each match of a form, in the run as sent and
+/// in each reading through up to [`DEPTH`] decodings (JSON-unescaped or
+/// percent-decoded, in any order), replaced at the match's source bytes only.
+fn strip_run(forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec<u8>) {
+    let mut spans = Vec::new();
+    search(forms, run, None, 0, &mut spans);
+    replace_spans(run, spans, out);
+}
+
+/// Adds the run span of each form in `text`, a reading `depth` decodings
+/// deep whose bytes came from the run spans `sources` (the run itself when
+/// `None`), then reads it through each decoding that changes it. Depth first,
+/// so only one chain of readings is held at a time.
+fn search(
+    forms: &[Zeroizing<Vec<u8>>],
+    text: &[u8],
+    sources: Option<&[(usize, usize)]>,
+    depth: usize,
+    spans: &mut Vec<(usize, usize)>,
+) {
+    let source = |first: usize, end: usize| match sources {
+        Some(sources) => (sources[first].0, sources[end - 1].1),
+        None => (first, end),
+    };
+    for form in forms {
+        spans.extend(
+            memchr::memmem::find_iter(text, form.as_slice())
+                .map(|found| source(found, found + form.len())),
+        );
+    }
+    if depth == DEPTH {
+        return;
+    }
+    let decodings: [Decoding; 2] = [(b'\\', json_unescaped_from), (b'%', percent_decoded_from)];
+    for (escape, decode) in decodings {
+        if memchr::memchr(escape, text).is_none() {
+            continue;
+        }
+        let (decoded, from) = decode(text);
+        if decoded.as_slice() == text {
+            continue;
+        }
+        let from: Vec<(usize, usize)> = from
+            .into_iter()
+            .map(|(first, end)| source(first, end))
+            .collect();
+        search(forms, &decoded, Some(&from), depth + 1, spans);
+    }
+}
+
+/// `run` JSON-unescaped, and for each unescaped byte the span of `run` it
+/// came from.
+fn json_unescaped_from(run: &[u8]) -> Decoded {
+    let mut text = Zeroizing::new(Vec::with_capacity(run.len()));
+    let mut from = Vec::with_capacity(run.len());
+    let mut at = 0;
+    while at < run.len() {
+        let len = unescape_one(&run[at..], &mut text);
+        from.resize(text.len(), (at, at + len));
+        at += len;
+    }
+    (text, from)
 }
 
 /// The length of the escape `rest` starts with, or 1 for a lone backslash.
@@ -264,37 +312,6 @@ fn hex4(digits: Option<&[u8]>) -> Option<u32> {
         return None;
     }
     u32::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()
-}
-
-/// Writes `run` to `out` with each match of a form in its unescaped reading,
-/// and each key in that reading's percent-decoding, replaced at the match's
-/// source bytes only.
-fn strip_run(key: &[u8], forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec<u8>) {
-    let mut text = Zeroizing::new(Vec::with_capacity(run.len()));
-    // The source bytes each unescaped byte came from.
-    let mut sources = Vec::with_capacity(run.len());
-    let mut at = 0;
-    while at < run.len() {
-        let len = unescape_one(&run[at..], &mut text);
-        sources.resize(text.len(), (at, at + len));
-        at += len;
-    }
-    let mut spans: Vec<(usize, usize)> = forms
-        .iter()
-        .flat_map(|form| {
-            memchr::memmem::find_iter(&text, form.as_slice())
-                .map(|found| (sources[found].0, sources[found + form.len() - 1].1))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    if memchr::memchr(b'%', &text).is_some() {
-        let (decoded, from) = percent_decoded_from(&text);
-        spans.extend(memchr::memmem::find_iter(&decoded, key).map(|found| {
-            let (first, last) = (from[found].0, from[found + key.len() - 1].1);
-            (sources[first].0, sources[last - 1].1)
-        }));
-    }
-    replace_spans(run, spans, out);
 }
 
 /// Writes `run` to `out` with each of the source `spans` (overlapping or
