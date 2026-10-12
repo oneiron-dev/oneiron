@@ -802,7 +802,7 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("the vault's owner");
-    let claim = entity_id(0xD7);
+    let claim = entity_id(0xD0);
     // Replicated: the fixture isolates the room's read, not the write gate.
     vault
         .batch()
@@ -916,28 +916,31 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
 #[test]
 fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("the vault's owner");
     let claim = entity_id(0xDB);
     let occurred = TimeRange { start: 1, end: 1 };
+    let body = |value: &str| -> Result<Vec<u8>> {
+        let body = ClaimBody::new(
+            "test.status",
+            ClaimSubject::Entity(entity_id(0x7C)),
+            rmpv::Value::from(value),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )?;
+        crate::claim::encode_claim_body(&body)
+    };
+    // Local writes: a replicated body change drops the old body's text at
+    // once, where a local one leaves it to idle publication.
     vault
         .batch()
-        .put_replicated(
-            &claim,
-            ENTITY_TYPE_CLAIM,
-            occurred,
-            1,
-            &owner_claim_body(owner, "indexedvalue")?,
-        )
+        .put(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &body("indexedvalue")?)
         .text(&claim, &[("body", "pendingbaseword")])
         .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
-        .edge(&claim, crate::EdgeKind::ClaimOf, &owner, 1.0)
         .commit()?;
-    let pending = owner_claim_body(owner, "pendingvalue")?;
+    let pending = body("pendingvalue")?;
     vault
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &pending)
+        .put(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &pending)
         .commit()?;
     let on_base = vault
         .context_pack()
