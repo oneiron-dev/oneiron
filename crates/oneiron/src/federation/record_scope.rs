@@ -472,12 +472,12 @@ fn stored_scope(
 }
 /// The world the stored row `id` of `kind`, with body `data`, sits in: what
 /// every read that checks a world asks. A CLAIM names its own; a TASK and its
-/// authority facts sit where `stamp_task_birth` settled them, and an epoch
-/// SUMMARY where its birth stamp says (`settle_epoch_birth`); every other
-/// record, and any other SUMMARY, is base reality (`Some(None)`). `None` where
-/// the row cannot prove its world (an erased CLAIM, a TASK or epoch SUMMARY
-/// whose stamp is gone or was never settled), which a read narrowed on worlds
-/// keeps out.
+/// authority facts sit where `stamp_task_birth` settled them, and a SUMMARY
+/// where `settle_epoch_birth` settled it, whatever its body reads now; an
+/// epoch SUMMARY sits where its birth stamp says; every other record, and any
+/// other SUMMARY, is base reality (`Some(None)`). `None` where the row cannot
+/// prove its world (an erased CLAIM, a TASK or epoch SUMMARY whose stamp is
+/// gone or was never settled), which a read narrowed on worlds keeps out.
 pub(crate) fn record_world_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -490,18 +490,24 @@ pub(crate) fn record_world_in(
             .ok()
             .map(|body| body.world));
     }
-    let epoch = kind == crate::registry::ENTITY_TYPE_SUMMARY
-        && crate::compaction::decode_epoch_summary_body(data).is_ok();
-    if kind != crate::registry::ENTITY_TYPE_TASK && !epoch {
+    let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
+    if kind != crate::registry::ENTITY_TYPE_TASK && !summary {
         return Ok(Some(None));
     }
     let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
-    Ok(match worlds {
+    let stamped = match worlds {
         Some(ScopeAxis::Some(worlds)) if worlds.len() == 1 => worlds
             .first()
             .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
-    })
+    };
+    if summary
+        && stamped.flatten().is_none()
+        && crate::compaction::decode_epoch_summary_body(data).is_err()
+    {
+        return Ok(Some(None));
+    }
+    Ok(stamped)
 }
 /// Whether the TASK or authority-fact row `id`, with header and body `raw`,
 /// sits by its birth stamp inside the worlds and facets `credential` grants.

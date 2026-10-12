@@ -226,7 +226,7 @@ fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
 /// place it and counts it nowhere: its receipt is an absent id's, and its
 /// retrieval neither finds nor counts it. A summary born here in base
 /// reality, and one that is no epoch, read as base; one born in world W reads
-/// in W and not in base.
+/// in W and not in base, even once a later put leaves it no epoch body.
 #[test]
 fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
     use crate::compaction::{
@@ -328,7 +328,10 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
         let hits = vault
             .scoped_read(ScopedReadActorKey::from_verified_slip(proof).expect("read proof"))
             .search_text("harbor", 10, None)?;
-        Ok((hits.iter().map(|hit| hit.id).collect(), hits.receipt.suppressed_count))
+        Ok((
+            hits.iter().map(|hit| hit.id).collect(),
+            hits.receipt.suppressed_count,
+        ))
     };
     let (in_base, counted) = found(&base_only)?;
     assert!(
@@ -339,7 +342,10 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
         !in_base.contains(&replica) && !in_base.contains(&world_born),
         "a base-only retrieval returns neither the replica nor the W-born epoch"
     );
-    assert_eq!(counted, 0, "a base-only retrieval counts the replica nowhere");
+    assert_eq!(
+        counted, 0,
+        "a base-only retrieval counts the replica nowhere"
+    );
     assert!(
         found(&in_world)?.0.contains(&world_born),
         "a W-only retrieval finds the W-born epoch"
@@ -360,6 +366,17 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
     assert!(
         read(&base_only, world_born)?.single().is_none(),
         "a W-born epoch is not base"
+    );
+    // Sol round 15: a later put that keeps the summary's words but not its
+    // epoch body (one trailing byte) does not move it; its stamp still
+    // places it in W.
+    let mut rewritten = epoch(3)?;
+    rewritten.push(0xc0);
+    vault.put_entity(&world_born, ENTITY_TYPE_SUMMARY, at, 1, &rewritten)?;
+    assert_eq!(
+        read(&base_only, world_born)?.receipt,
+        read(&base_only, EntityId::now())?.receipt,
+        "a W-born summary rewritten off its epoch body is still not base"
     );
     Ok(())
 }
