@@ -260,12 +260,32 @@ pub(crate) struct CoreAuth {
     locality: CallerLocality,
 }
 
-/// Where the connection a request arrived on sits (DEC-0005): a TCP peer on
-/// loopback, or a kernel-verified peer on the local socket, is on this
-/// device. Any other peer, or a connection the listener recorded no peer for,
-/// is off it. Only the accepted connection decides, never a header the caller
-/// sends, so a reverse proxy on this device passes its callers as local.
-pub(crate) fn caller_locality(extensions: &axum::http::Extensions) -> CallerLocality {
+/// Proxy forwarding headers. A request that carries any of them came through
+/// a proxy on someone else's behalf.
+const FORWARDING_HEADERS: [&str; 4] = [
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-real-ip",
+];
+
+/// Where the caller of a request sits (DEC-0005): a TCP peer on loopback, or
+/// a kernel-verified peer on the local socket, is on this device. Any other
+/// peer, or a connection the listener recorded no peer for, is off it. A
+/// request carrying a proxy forwarding header is off it even on loopback: a
+/// header can only narrow, never widen, so a spoofed one costs its sender
+/// only. A reverse proxy on this device that adds no such header passes its
+/// callers as local.
+pub(crate) fn caller_locality(
+    headers: &HeaderMap,
+    extensions: &axum::http::Extensions,
+) -> CallerLocality {
+    if FORWARDING_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name))
+    {
+        return CallerLocality::OffDevice;
+    }
     let loopback = extensions
         .get::<ConnectInfo<SocketAddr>>()
         .is_some_and(|ConnectInfo(peer)| peer.ip().to_canonical().is_loopback());
@@ -498,7 +518,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Locality {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        Ok(Self(caller_locality(&parts.extensions)))
+        Ok(Self(caller_locality(&parts.headers, &parts.extensions)))
     }
 }
 
@@ -510,7 +530,7 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
         Self::for_server(&parts.headers, server)
-            .map(|auth| auth.at(caller_locality(&parts.extensions)))
+            .map(|auth| auth.at(caller_locality(&parts.headers, &parts.extensions)))
             .map_err(Into::into)
     }
 }

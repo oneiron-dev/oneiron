@@ -1,12 +1,21 @@
 //! DEC-0005: "Rows in a device-local world never leave the device that holds
 //! the flag." A caller off this device reads none of them on any read door; a
-//! caller on it (loopback here) still reads them all.
+//! caller on it (loopback here) still reads them all. A proxy forwarding
+//! header places even a loopback caller off the device.
 
 use super::*;
 use axum::extract::ConnectInfo;
 use oneiron::EntityId;
 use serde_json::json;
 use std::net::SocketAddr;
+
+/// Where a request comes from: the peer its connection reports, and the
+/// proxy forwarding header it carries, if any.
+#[derive(Clone, Copy, Debug)]
+struct Origin {
+    peer: SocketAddr,
+    forwarded: Option<(&'static str, &'static str)>,
+}
 
 struct Caller {
     server: Arc<SyncServer>,
@@ -15,18 +24,22 @@ struct Caller {
 }
 
 impl Caller {
-    /// One request from `peer`, as the listener records the connection.
+    /// One request from `from`, as the listener records the connection.
     async fn call(
         &self,
-        peer: SocketAddr,
+        from: Origin,
         method: &str,
         uri: &str,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method(method)
             .uri(uri)
-            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_TYPE, "application/json");
+        if let Some((name, value)) = from.forwarded {
+            request = request.header(name, value);
+        }
+        let request = request
             .body(body.map_or_else(Body::empty, |body| Body::from(body.to_string())))
             .unwrap();
         let mut request = crate::test_credentials::bind_slip_request(
@@ -35,7 +48,7 @@ impl Caller {
             &self.key,
             request,
         );
-        request.extensions_mut().insert(ConnectInfo(peer));
+        request.extensions_mut().insert(ConnectInfo(from.peer));
         let response = crate::build_app(Arc::clone(&self.server))
             .oneshot(request)
             .await
@@ -49,10 +62,10 @@ impl Caller {
     }
 
     /// The ids a query or pack answered with, under `field`.
-    async fn ids(&self, peer: SocketAddr, uri: &str, field: &str) -> Vec<String> {
+    async fn ids(&self, from: Origin, uri: &str, field: &str) -> Vec<String> {
         let (status, body) = self
             .call(
-                peer,
+                from,
                 "POST",
                 uri,
                 Some(json!({"query": "orchid", "limit": 10, "view": "full"})),
@@ -82,6 +95,47 @@ fn put_world(vault: &oneiron::Vault) -> EntityId {
     world
 }
 
+/// A CLAIM about `subject` under its own `predicate`, in `world` (base reality
+/// for `None`), whose text answers "orchid".
+fn put_orchid_claim(
+    server: &SyncServer,
+    subject: EntityId,
+    predicate: &str,
+    world: Option<EntityId>,
+    text: &str,
+) -> EntityId {
+    let id = EntityId::now();
+    let mut body = oneiron::ClaimBody::new(
+        predicate,
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from(text),
+        0.8,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = world;
+    server
+        .vault
+        .put_claim(
+            &id,
+            &body,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            101,
+        )
+        .unwrap();
+    server
+        .vault
+        .batch()
+        .text(&id, &[("body", text)])
+        .commit()
+        .unwrap();
+    id
+}
+
 #[tokio::test]
 async fn a_caller_off_this_device_reads_no_device_local_world() {
     let dir = tempfile::tempdir().unwrap();
@@ -89,7 +143,6 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let kept_world = put_world(&vault);
-    let open_world = put_world(&vault);
     let server = Arc::new(
         SyncServer::new(
             vault,
@@ -100,16 +153,22 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         )
         .unwrap(),
     );
-    let (kept, open) = (EntityId::now(), EntityId::now());
-    seed_world_claim(&server, kept, owner, kept_world);
-    seed_world_claim(&server, open, owner, open_world);
-    server
-        .vault
-        .batch()
-        .text(&kept, &[("body", "orchid ledger kept")])
-        .text(&open, &[("body", "orchid ledger open")])
-        .commit()
-        .unwrap();
+    // A pack gives a world's claims at most half its claim budget, so the
+    // portable claim is base reality's.
+    let kept = put_orchid_claim(
+        &server,
+        owner,
+        "test.orchid_kept",
+        Some(kept_world),
+        "orchid ledger kept",
+    );
+    let open = put_orchid_claim(
+        &server,
+        owner,
+        "test.orchid_open",
+        None,
+        "orchid ledger open",
+    );
     server.vault.set_indexed_idle_delay_ms(0).unwrap();
     server
         .vault
@@ -124,8 +183,19 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         slip,
         key,
     };
-    let here: SocketAddr = "127.0.0.1:40100".parse().unwrap();
-    let away: SocketAddr = "192.0.2.7:40100".parse().unwrap();
+    let here = Origin {
+        peer: "127.0.0.1:40100".parse().unwrap(),
+        forwarded: None,
+    };
+    let away = Origin {
+        peer: "192.0.2.7:40100".parse().unwrap(),
+        forwarded: None,
+    };
+    // A proxy on this device that marks the traffic it forwards.
+    let proxied = Origin {
+        forwarded: Some(("x-forwarded-for", "192.0.2.7")),
+        ..here
+    };
 
     // A reference the caller learned while the world was still portable.
     let (status, pack) = caller
@@ -153,22 +223,22 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         .set_world_device_only(kept_world, true)
         .unwrap();
 
-    for (peer, on_device) in [(here, true), (away, false)] {
+    for (from, on_device) in [(here, true), (away, false), (proxied, false)] {
         for (uri, field) in [
             ("/v1/core/query", "items"),
             ("/v1/core/context-pack", "results"),
         ] {
-            let ids = caller.ids(peer, uri, field).await;
-            assert!(ids.contains(&open.to_hex()), "{uri} from {peer}: {ids:?}");
+            let ids = caller.ids(from, uri, field).await;
+            assert!(ids.contains(&open.to_hex()), "{uri} from {from:?}: {ids:?}");
             assert_eq!(
                 ids.contains(&kept.to_hex()),
                 on_device,
-                "{uri} from {peer}: {ids:?}"
+                "{uri} from {from:?}: {ids:?}"
             );
         }
         let (status, body) = caller
             .call(
-                peer,
+                from,
                 "POST",
                 "/v1/core/hydrate",
                 Some(json!({"ref": kept_ref, "view": "full"})),
@@ -181,18 +251,18 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         }
         for id in [kept, kept_world] {
             let (status, body) = caller
-                .call(peer, "GET", &format!("/api/entity/{}", id.to_hex()), None)
+                .call(from, "GET", &format!("/api/entity/{}", id.to_hex()), None)
                 .await;
             let expected = if on_device {
                 StatusCode::OK
             } else {
                 StatusCode::NOT_FOUND
             };
-            assert_eq!(status, expected, "/api/entity from {peer}: {body}");
+            assert_eq!(status, expected, "/api/entity from {from:?}: {body}");
         }
         let (status, export) = caller
             .call(
-                peer,
+                from,
                 "POST",
                 "/v1/core/facade/export",
                 Some(json!({"format": "json"})),
@@ -205,17 +275,17 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
             assert_eq!(
                 rendered.contains(&id.to_hex()),
                 on_device,
-                "export from {peer}"
+                "export from {from:?}"
             );
         }
     }
 
     // An erased claim keeps its world: its shell stays home too.
     assert!(server.vault.delete_entity(&kept).unwrap());
-    for (peer, on_device) in [(here, true), (away, false)] {
+    for (from, on_device) in [(here, true), (away, false), (proxied, false)] {
         let (status, body) = caller
             .call(
-                peer,
+                from,
                 "POST",
                 "/v1/core/hydrate",
                 Some(json!({"ref": kept_ref, "view": "full"})),

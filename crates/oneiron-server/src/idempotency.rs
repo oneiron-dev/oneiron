@@ -332,8 +332,12 @@ async fn idempotent(
     let is_core_auth_route = is_core_auth_route(request_path(&request));
     let revoked = state.server.vault().as_ref();
     let core_auth = is_core_auth_route.then(|| {
-        CoreAuth::for_server(request.headers(), &state.server)
-            .map(|auth| auth.at(crate::auth::caller_locality(request.extensions())))
+        CoreAuth::for_server(request.headers(), &state.server).map(|auth| {
+            auth.at(crate::auth::caller_locality(
+                request.headers(),
+                request.extensions(),
+            ))
+        })
     });
     let auth_ok = match &core_auth {
         Some(Ok(auth)) => !auth.principal().is_empty(),
