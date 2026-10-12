@@ -1355,3 +1355,96 @@ fn a_call_the_bridge_could_not_record_halts_it() {
     assert!(run.resume(&run.config, &mut caught).is_err());
     assert_eq!(messages(), before, "nothing is spoken past the fault");
 }
+
+/// Removes the run's agent from its room, then makes `calls`, catching each
+/// failure as a guest does, and keeps what each call answered.
+struct RemovedMidStep<'v> {
+    vault: &'v Vault,
+    room: EntityId,
+    agent: EntityId,
+    by: WriteActor,
+    calls: Vec<SelfCall>,
+    answers: Vec<Result<SelfDispatchResponse>>,
+}
+
+impl JsCodeModeRuntime for RemovedMidStep<'_> {
+    fn run_step(
+        &mut self,
+        _step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> Result<JsCodeModeStepOutcome> {
+        self.vault
+            .leave_member(self.room, self.agent, self.by, 50)
+            .expect("the owner removes the agent");
+        for call in self.calls.clone() {
+            self.answers.push(host.dispatch_self(call));
+        }
+        Ok(JsCodeModeStepOutcome::complete(""))
+    }
+}
+
+/// Review repro (Sol R13, merging #1406): a room-bound run's agent was
+/// removed mid-step. Its search was refused `NotInRoom`, a refusal the bridge
+/// keeps no row for, so the bridge halted. The guest caught it and searched
+/// again, and the halt answered `Failed(host_bridge_halted)` without asking
+/// the room, where the run alone would have heard `NotInRoom` again. The
+/// bridge's answers past a halt or a wait now check the participant first.
+#[test]
+fn a_removed_agents_run_hears_not_in_room_past_its_halted_bridge() {
+    use crate::conversation::{ConversationBody, HistoryChoice};
+    use crate::error::OffRecordError;
+    use crate::off_record::OffRecordBackendClass;
+
+    let (_dir, vault) = open_test_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let by = WriteActor::new(owner, EdgeActorClass::Human);
+    let agent = seed_person(&vault, 0xE7);
+    let room = EntityId::now();
+    vault
+        .create_conversation(room, &ConversationBody::default(), by, 1)
+        .expect("room");
+    for (at, member) in [(2, owner), (3, agent)] {
+        vault
+            .join_member(room, member, by, at, HistoryChoice::Share)
+            .expect("join the room");
+    }
+    let session = vault
+        .off_record_session_vault()
+        .enter_in_room("halted-room", OffRecordBackendClass::Local, room, owner)
+        .expect("start off record");
+    let gated = GatedActorWrite::for_off_record_session(
+        &session,
+        WriteActor::new(agent, EdgeActorClass::Agent),
+        "run-halted-room",
+    )
+    .expect("bind the run");
+    let backend = FixtureBackend::new(["await self.memory.search({query: 'heron lantern'});"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let config = executor_config(entity(0xE8), EngineExecutorLimits::default());
+    let search = || SelfCall::MemorySearch(SelfMemorySearchCall::new("heron lantern", 4));
+    let mut step = RemovedMidStep {
+        vault: &vault,
+        room,
+        agent,
+        by,
+        calls: vec![search(), search()],
+        answers: Vec::new(),
+    };
+    let ended = {
+        let mut executor = EngineNativeExecutor::for_off_record_session(
+            &session, &backend, &lease, &mut step, &gated,
+        )
+        .expect("bind the executor");
+        block_on_ready(executor.run(&config)).map(|outcome| outcome.status)
+    };
+    assert!(ended.is_err(), "{ended:?}");
+    let not_in_room = |answer: &Result<SelfDispatchResponse>| {
+        matches!(
+            answer,
+            Err(Error::OffRecord(OffRecordError::OffRecordNotInRoom { actor_ref, .. }))
+                if *actor_ref == agent.to_hex()
+        )
+    };
+    assert!(step.answers.iter().all(not_in_room), "{:?}", step.answers);
+    assert_eq!(step.answers.len(), 2);
+}

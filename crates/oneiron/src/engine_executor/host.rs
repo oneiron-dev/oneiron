@@ -199,6 +199,16 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         // cannot forge either, and the replay row, the dispatched call and the
         // emitted bubble all carry the same number.
         let call = call.with_bridge_stamp(seq, started_at_ms);
+        // Past a wait or a halt the bridge answers without dispatching, but a
+        // session-bound run is still answered as its participant stands: once
+        // they left the room it hears `NotInRoom`, never the wait or the halt.
+        if (self.durable_wait.is_some() || self.hard_failure.is_some() || self.left_a_gap)
+            && let Some(storage) = self.storage
+            && let Err(err) = storage.answered(|| Ok(()))
+        {
+            self.left_a_gap = true;
+            return Err(err);
+        }
         if let Some(wait) = &self.durable_wait {
             let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
             let row =
