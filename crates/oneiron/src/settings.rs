@@ -658,11 +658,15 @@ pub(crate) fn device_only_withholds(
             }
             Ok(false)
         }
-        crate::registry::ENTITY_TYPE_SUMMARY => Ok(
-            crate::federation::record_scope::summary_worlds_in(store, txn, *id)?
-                .iter()
-                .any(|world| flagged.contains(world)),
-        ),
+        crate::registry::ENTITY_TYPE_SUMMARY => Ok(crate::federation::record_scope::record_world_in(
+            store,
+            txn,
+            *id,
+            header.entity_type,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?
+        .flatten()
+        .is_some_and(|world| flagged.contains(&world))),
         _ => Ok(false),
     }
 }

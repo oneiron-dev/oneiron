@@ -281,6 +281,7 @@ impl StoredSelection<'_, '_> {
         let Some(decision) = entity_selector_decision(
             self.vault,
             (&id, &raw),
+            &record,
             self.selector,
             &Default::default(),
             self.admission.position.as_scope(),
