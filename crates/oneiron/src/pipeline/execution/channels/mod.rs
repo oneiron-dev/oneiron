@@ -601,6 +601,7 @@ impl PipelineBuilder<'_> {
             } = self.apply_rerank_ladder(
                 rtxn,
                 &mut scores,
+                &mut metadata_cache,
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,

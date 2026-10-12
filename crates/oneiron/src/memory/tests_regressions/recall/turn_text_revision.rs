@@ -119,6 +119,42 @@ fn a_pack_pinned_at_a_recalled_turn_revision_keeps_the_turn() {
     );
 }
 
+/// Sol 9C round 3 (R3-2, P2): a turn pinned at the text revision of the
+/// words it holds at its indexed frontier keeps its vector, which belongs to
+/// that frontier. Bug repro: the vector check took only the row's own
+/// indexed revision for that frontier, so a pack pinned at a recalled turn's
+/// reference, or a reranked turn served at the words it was scored at, came
+/// back without its vector.
+#[test]
+fn a_turn_pinned_at_its_indexed_words_keeps_its_vector() {
+    const MEANING: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    let turn = witness_turn(&facade, 0xD5, &["the lighthouse keeper rows ashore"], 1_900);
+    fill_turn(&vault, &turn, &MEANING);
+    let item = recalled_turn(&facade, "lighthouse", &MEANING);
+    let revision = crate::vault::RevisionRef::from_hex(
+        item.source_revision_ref.as_deref().expect("a pinned item"),
+    )
+    .expect("revision");
+    let pack = vault
+        .context_pack()
+        .search_vector(&MEANING, 10)
+        .hydrate(true)
+        .include_vectors(true)
+        .read_mode(crate::vault::ReadMode::Pinned(revision))
+        .run_unfinalized_with_telemetry()
+        .expect("assemble")
+        .value;
+    let entity = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == turn)
+        .expect("the turn");
+    assert!(entity.vector.is_some(), "{}", item.reference());
+}
+
 /// Astra 1333 re-check F4 (P2): a context pack pinned at one turn's text
 /// revision refuses each other turn it finds without searching that turn's
 /// history. Bug repro: every other turn the pack found ran the search over

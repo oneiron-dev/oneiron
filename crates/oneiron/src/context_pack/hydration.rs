@@ -248,7 +248,7 @@ pub(super) fn hydrate_entity(
     // current row; explicit pins always carry a source revision here.
     let vector = if options.include_vectors
         && match source_revision {
-            Some(revision) => vault.indexed_revision_in_txn(rtxn, &id)? == Some(revision),
+            Some(revision) => pins_indexed_frontier(vault, rtxn, &id, header.entity_type, revision)?,
             None => true,
         } {
         read_vector(vault, rtxn, &id)?
@@ -268,6 +268,32 @@ pub(super) fn hydrate_entity(
         edges,
         vector,
     }))
+}
+
+/// Whether `revision` pins the indexed frontier the vector row belongs to:
+/// the indexed revision itself or, for a TURN, the text revision of the
+/// words it holds there, which a reranked turn is served at.
+fn pins_indexed_frontier(
+    vault: &Vault,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    revision: crate::vault::RevisionRef,
+) -> Result<bool> {
+    let Some(indexed) = vault.indexed_revision_in_txn(rtxn, id)? else {
+        return Ok(false);
+    };
+    if indexed == revision {
+        return Ok(true);
+    }
+    Ok(entity_type == crate::registry::ENTITY_TYPE_TURN
+        && crate::vault::entity_revision::served_turn_text_in_txn(
+            vault,
+            rtxn,
+            id,
+            crate::vault::ReadMode::Indexed,
+        )?
+        .is_some_and(|text| text.revision == revision))
 }
 
 /// Projects an already-decoded CLAIM body into the hydrated-fields map —

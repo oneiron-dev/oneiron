@@ -288,6 +288,9 @@ impl Reranker for PreparedCrossEncoder {
         }
         Ok(self.scores.clone())
     }
+    fn binds_words(&self) -> bool {
+        true
+    }
 }
 impl DeepSearchBackend for CrossEncoder {
     fn decompose(
@@ -354,6 +357,14 @@ fn fingerprint(query: &str, candidates: &[RerankCandidate<'_>]) -> Result<[u8; 3
         match candidate.revision {
             Some(revision) => {
                 hash.update([1]);
+                hash.update(revision.0);
+            }
+            None => hash.update([0]),
+        }
+        match candidate.turn {
+            Some((turn, revision)) => {
+                hash.update([1]);
+                hash.update(turn.as_bytes());
                 hash.update(revision.0);
             }
             None => hash.update([0]),

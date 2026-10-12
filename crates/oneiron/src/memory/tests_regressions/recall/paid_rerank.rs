@@ -38,13 +38,13 @@ impl crate::memory::RecallRerankHost for ScriptedReranker<'_> {
     }
 }
 
-/// Review repro (Sol round 2, R2-3): a turn whose message is edited while its
-/// block is scored keeps its id, score and rank, and here the text its item
-/// shows too, since the edit lands past the words an item clips to; but the
-/// words it holds changed. Bug repro: the prepared block bound only id,
-/// score, rank and claim body, and the door compared the texts it re-read
-/// after the second pass, so that pass took the first call's scores for a
-/// snapshot they were not given.
+/// Done-means (G1 check 4) at the engine's recall door: a turn whose message
+/// is edited while its block is scored, past the words its item shows, takes
+/// none of the first call's scores. The block is scored again, and the turn
+/// is served at the words its second score is for. Sol round 2 (R2-3) asked
+/// that the scores bind a row's words, not only its id, score and rank; the
+/// edit here moves those too (it binds its actor with a claim that joins the
+/// block), so the round-1 door refused the stale block as well.
 #[cfg(feature = "sync")]
 #[test]
 fn a_turn_edited_while_it_is_scored_takes_none_of_the_stale_scores() {

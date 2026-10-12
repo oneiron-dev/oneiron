@@ -6,7 +6,8 @@
 //! twice. The first pass stops at the rerank stage and keeps the exact block
 //! it would rerank: the admitted top-N candidates with their scores, ranks and
 //! claim bodies, and the revision each was read at, the one its item is
-//! served at. Each candidate's text is then read at that revision through the
+//! served at (a MESSAGE recall returns as its TURN keeps that TURN's too).
+//! Each candidate's text is then read at that revision through the
 //! reader's own scoped read, a claim's too, so nothing the reader may no
 //! longer read leaves. The host scores those texts outside every
 //! transaction, under its own admission and lease. The second pass runs with
@@ -127,6 +128,7 @@ struct BlockCandidate {
     rank: u32,
     claim: Option<ClaimBody>,
     revision: Option<crate::vault::RevisionRef>,
+    turn: Option<(EntityId, crate::vault::RevisionRef)>,
 }
 
 impl BlockCandidate {
@@ -137,6 +139,7 @@ impl BlockCandidate {
             rank: self.rank,
             claim: self.claim.as_ref(),
             revision: self.revision,
+            turn: self.turn,
         }
     }
 }
@@ -172,6 +175,7 @@ impl Reranker for BlockCapture {
                 rank: candidate.rank,
                 claim: candidate.claim.cloned(),
                 revision: candidate.revision,
+                turn: candidate.turn,
             })
             .collect();
         if let Ok(mut slot) = self.block.lock() {
@@ -180,6 +184,10 @@ impl Reranker for BlockCapture {
         Err(crate::error::Error::InvalidConfig(
             "the rerank block is captured; the recall stops here".to_owned(),
         ))
+    }
+
+    fn binds_words(&self) -> bool {
+        true
     }
 }
 
@@ -209,6 +217,10 @@ impl Reranker for PreparedBlock {
         };
         flag.store(true, Ordering::Relaxed);
         scores
+    }
+
+    fn binds_words(&self) -> bool {
+        self.prepared.binds_words()
     }
 }
 

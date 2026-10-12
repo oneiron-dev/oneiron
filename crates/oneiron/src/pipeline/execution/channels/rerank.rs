@@ -4,9 +4,11 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::builder::PipelineBuilder;
 use crate::pipeline::trace::retrieval_trace_top_scores;
-use crate::pipeline::types::{ClaimStatusGateCache, ScoredEntity};
+use crate::pipeline::types::{ClaimStatusGateCache, EntityMetadataCache, ScoredEntity, TurnFold};
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankCandidate;
 use crate::store::{RetrievalScoreComponent, RetrievalSignal};
+use crate::vault::{ReadMode, RevisionRef};
 use std::collections::HashMap;
 
 /// The read-only faces the rerank ladder draws on.
@@ -25,13 +27,15 @@ pub(super) struct RerankLadderInputs<'a> {
 
 /// What the rerank hook produced; both options are `None`, and the map
 /// empty, when it did not run.
+#[derive(Default)]
 pub(super) struct RerankApplied {
     pub(super) merged_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     pub(super) reranked_trace_scores: Option<Vec<ScoredEntity>>,
-    /// The revision of the words each block candidate was scored at. The
-    /// block is served at these, so a TURN shows the words its score is
-    /// for, not those its messages hold by the time its item is read.
-    pub(super) words_revisions: HashMap<EntityId, crate::vault::RevisionRef>,
+    /// For a reranker that binds words, the revision of the words each block
+    /// candidate was scored at, and each TURN a scored MESSAGE folds into.
+    /// The run serves those rows at these, so a TURN shows the words its
+    /// score is for, not those its messages hold by the time it is read.
+    pub(super) words_revisions: HashMap<EntityId, RevisionRef>,
 }
 
 impl PipelineBuilder<'_> {
@@ -59,6 +63,7 @@ impl PipelineBuilder<'_> {
         &self,
         rtxn: &heed::RoTxn<'_>,
         scores: &mut [ScoredEntity],
+        metadata_cache: &mut EntityMetadataCache,
         inputs: RerankLadderInputs<'_>,
     ) -> Result<RerankApplied> {
         let mut rerank_merged_components = None;
@@ -91,9 +96,19 @@ impl PipelineBuilder<'_> {
                 ladder.push(base);
             }
             ladder.sort_unstable_by(|left, right| right.total_cmp(left));
+            let binds = reranker.binds_words();
             let mut candidates: Vec<RerankCandidate<'_>> = Vec::with_capacity(block_len);
             for (index, scored) in scores[..block_len].iter().enumerate() {
-                let revision = self.words_revision(rtxn, &scored.id)?;
+                // Only a reranker whose scores are for the words reads them,
+                // and a deadline that comes meanwhile skips the stage.
+                let (revision, turn) = if binds {
+                    if self.deadline_reached() {
+                        return Ok(RerankApplied::default());
+                    }
+                    self.bound_words(rtxn, &scored.id, metadata_cache)?
+                } else {
+                    (None, None)
+                };
                 candidates.push(RerankCandidate {
                     id: scored.id,
                     score: scored.score,
@@ -104,12 +119,19 @@ impl PipelineBuilder<'_> {
                         .get(&scored.id)
                         .and_then(|decision| decision.as_ref()),
                     revision,
+                    turn,
                 });
             }
             let rerank_scores = reranker.rerank(query, &candidates)?;
             words_revisions = candidates
                 .iter()
-                .filter_map(|candidate| Some((candidate.id, candidate.revision?)))
+                .flat_map(|candidate| {
+                    candidate
+                        .revision
+                        .map(|revision| (candidate.id, revision))
+                        .into_iter()
+                        .chain(candidate.turn)
+                })
                 .collect();
             drop(candidates);
             if rerank_scores.len() != block_len {
@@ -178,31 +200,48 @@ impl PipelineBuilder<'_> {
     }
 
     /// The revision of the words `id` holds in this transaction (see
-    /// [`RerankCandidate::revision`]).
-    fn words_revision(
+    /// [`RerankCandidate::revision`]) and, for a MESSAGE the run folds into
+    /// its TURN, that TURN's (see [`RerankCandidate::turn`]).
+    fn bound_words(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
-    ) -> Result<Option<crate::vault::RevisionRef>> {
-        use crate::ports::EntityStoreRead;
-        let kind = self
-            .vault
-            .store
-            .port_entity_record(rtxn, id)?
-            .map(|row| row.entity_type);
-        if kind == Some(crate::registry::ENTITY_TYPE_TURN) {
-            return Ok(crate::vault::entity_revision::served_turn_text_in_txn(
-                self.vault,
-                rtxn,
-                id,
-                crate::vault::ReadMode::Indexed,
-            )?
-            .map(|text| text.revision));
+        metadata_cache: &mut EntityMetadataCache,
+    ) -> Result<(Option<RevisionRef>, Option<(EntityId, RevisionRef)>)> {
+        let kind = metadata_cache
+            .get(&self.vault.store, rtxn, id)?
+            .map(|meta| meta.entity_type);
+        if kind == Some(ENTITY_TYPE_TURN) {
+            return Ok((self.turn_words(rtxn, id)?, None));
         }
-        match self.vault.indexed_revision_in_txn(rtxn, id) {
-            Ok(revision) => Ok(revision),
-            Err(Error::EntityNotFound) => Ok(None),
-            Err(error) => Err(error),
-        }
+        let revision = match self.vault.indexed_revision_in_txn(rtxn, id) {
+            Ok(revision) => revision,
+            Err(Error::EntityNotFound) => None,
+            Err(error) => return Err(error),
+        };
+        let turn = match kind {
+            Some(ENTITY_TYPE_MESSAGE) if self.turn_fold != TurnFold::Off => {
+                match super::turn_fold::turn_of(&self.vault.store, rtxn, id, metadata_cache)? {
+                    Some(turn) => self
+                        .turn_words(rtxn, &turn)?
+                        .map(|revision| (turn, revision)),
+                    None => None,
+                }
+            }
+            _ => None,
+        };
+        Ok((revision, turn))
+    }
+
+    /// The text revision of the words `turn` holds in this transaction, which
+    /// commits to the state of every message they come from.
+    fn turn_words(&self, rtxn: &heed::RoTxn<'_>, turn: &EntityId) -> Result<Option<RevisionRef>> {
+        Ok(crate::vault::entity_revision::served_turn_text_in_txn(
+            self.vault,
+            rtxn,
+            turn,
+            ReadMode::Indexed,
+        )?
+        .map(|text| text.revision))
     }
 }

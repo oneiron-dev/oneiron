@@ -171,6 +171,7 @@ impl DepthAccumulator {
                 rank: u32::try_from(index + 1).unwrap_or(u32::MAX),
                 claim: claim.as_ref(),
                 revision: self.revisions.get(id).copied(),
+                turn: None,
             })
             .collect()
     }
