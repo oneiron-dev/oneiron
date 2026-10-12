@@ -360,9 +360,9 @@ impl FloorWrites<'_> {
     /// The writer's checks of a witness that appends to a turn run here too,
     /// against base in this transaction (Astra on #1411). Nothing is copied
     /// into a turn base no longer holds as this stretch saved it (deleted,
-    /// promoted by another stretch, or its conversation deleted), nor what a
-    /// person since erased from that conversation said: its messages stay in
-    /// the room, unsaved. A message whose order base now holds in the turn
+    /// promoted by another stretch, its conversation deleted, or its speaker
+    /// no longer the messages' own), nor what a person since erased from that
+    /// conversation said: its messages stay in the room, unsaved. A message whose order base now holds in the turn
     /// refuses the copy with [`OffRecordError::OffRecordCopyConflict`], and a
     /// message id base already holds without a receipt is refused; neither
     /// is ever written over or renumbered.
@@ -385,18 +385,22 @@ impl FloorWrites<'_> {
         let conversation = plan.conversation();
         // A deleted turn or conversation keeps its header and edges as a
         // shell: only live rows are what this stretch saved (Sol on
-        // engine-prs-30), and a conversation also needs a body, as the
-        // witness writer asks.
+        // engine-prs-30), and each also needs a body, as the witness writer
+        // asks.
         let txn: &heed::RoTxn<'_> = wtxn;
-        let live_as = |id: &EntityId, kind: u8| -> Result<bool> {
-            Ok(matches!(
-                crate::vault::live_entity_row_in_txn(self.store, txn, id)?,
+        let live_body = |id: &EntityId, kind: u8| -> Result<Option<Vec<u8>>> {
+            Ok(match crate::vault::live_entity_row_in_txn(self.store, txn, id)? {
                 crate::vault::LiveEntityRow::Live { entity_type, body }
-                    if entity_type == kind && !body.is_empty()
-            ))
+                    if entity_type == kind && !body.is_empty() =>
+                {
+                    Some(body)
+                }
+                _ => None,
+            })
         };
-        let live = live_as(&turn, crate::registry::ENTITY_TYPE_TURN)?
-            && live_as(&conversation, crate::registry::ENTITY_TYPE_CONVERSATION)?
+        let turn_body = live_body(&turn, crate::registry::ENTITY_TYPE_TURN)?;
+        let live = turn_body.is_some()
+            && live_body(&conversation, crate::registry::ENTITY_TYPE_CONVERSATION)?.is_some()
             && crate::ports::EdgeStoreRead::port_edge_get(
                 self.store,
                 txn,
@@ -405,7 +409,7 @@ impl FloorWrites<'_> {
                 &conversation,
             )?
             .is_some();
-        let Some(saved) = saved.filter(|_| live) else {
+        let (Some(saved), Some(turn_body)) = (saved.filter(|_| live), turn_body) else {
             tracing::debug!(
                 turn = %turn.to_hex(),
                 "off-record copy skipped a turn base does not hold as this stretch saved it"
@@ -443,6 +447,7 @@ impl FloorWrites<'_> {
             })
         };
         let mut orders = BTreeSet::new();
+        let mut bodies: Vec<&[u8]> = Vec::new();
         for op in fresh_ops() {
             match op {
                 BatchOp::PublicEdgeWithCreatedAt {
@@ -482,9 +487,19 @@ impl FloorWrites<'_> {
                     if !orders.insert(order) {
                         return Err(copy_conflict(turn, order));
                     }
+                    bodies.push(data.as_slice());
                 }
                 _ => {}
             }
+        }
+        // The turn's speaker is what an append to it is checked against, and
+        // a native put may have changed it since the save.
+        if !crate::memory::turn_admits_message_bodies(&turn_body, &bodies)? {
+            tracing::debug!(
+                turn = %turn.to_hex(),
+                "off-record copy skipped a turn that no longer speaks as its messages"
+            );
+            return Ok(Appended::nothing(BTreeSet::new()));
         }
         // One message per order in a turn: an ordinary witness may have put
         // one at a copied message's order since the last save, seeing only

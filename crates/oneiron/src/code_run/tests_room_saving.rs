@@ -419,3 +419,63 @@ fn a_save_copies_nothing_into_a_saved_conversation_since_deleted() {
             .expect("probe")
     );
 }
+
+/// Sol on #1411: a save copied what a run said into a turn it saved, after a
+/// native put had changed the turn's speaker. An ordinary append is checked
+/// against the turn's speaker and would be refused; the copy was not. A save
+/// copies nothing into a turn that no longer speaks as its messages; the
+/// message stays in the room, unsaved.
+#[test]
+fn a_save_copies_nothing_into_a_saved_turn_whose_speaker_changed() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    run.dispatch(said(1, "and the boat is moored at the north pier"))
+        .expect("the run speaks on into its turn");
+    // A native put says the turn is the user's now.
+    let body = vault.get(&turn).expect("read").expect("the saved turn");
+    let Value::Map(fields) = rmpv::decode::read_value(&mut body.as_slice()).expect("decode")
+    else {
+        panic!("a turn body is a map");
+    };
+    let fields = fields
+        .into_iter()
+        .map(|(key, value)| {
+            if key.as_str() == Some("speaker") {
+                (key, Value::from("user"))
+            } else {
+                (key, value)
+            }
+        })
+        .collect();
+    let mut restamped = Vec::new();
+    rmpv::encode::write_value(&mut restamped, &Value::Map(fields)).expect("encode");
+    vault
+        .put_entity(
+            &turn,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange {
+                start: 60_000,
+                end: 60_000,
+            },
+            1,
+            &restamped,
+        )
+        .expect("restamp the turn");
+
+    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    assert!(
+        saved.is_empty(),
+        "copied into a turn that speaks as another: {saved:?}"
+    );
+    assert!(vault.get_raw(&message(1)).expect("read").is_none());
+    assert!(
+        session
+            .overlay()
+            .contains_entity(&message(1))
+            .expect("probe")
+    );
+}

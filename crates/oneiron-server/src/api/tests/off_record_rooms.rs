@@ -1102,12 +1102,13 @@ async fn a_rostered_viewer_speaks_off_record_and_not_on_record() {
     assert!(!stored(&dir, "a viewer word on record"));
 }
 
-/// Astra on #1411: a Viewer speaks off record by the room's roster alone, and
-/// the witness still read the message ids they named in the vault. A MESSAGE
-/// of a room they are not in answered one way for a wrong text, another for
-/// its own text, another for a row of another kind, and a deleted id let the
-/// word land, so a guessed id told its kind and whether a guessed text was
-/// right. Every id the vault holds or deleted now gets one refusal, and the
+/// Astra and Sol on #1411: a Viewer speaks off record by the room's roster
+/// alone, and the witness still read the message ids they named in the vault.
+/// A MESSAGE of a room they are not in answered one way for a wrong text,
+/// another for its own text, another for a row of another kind; a provisional
+/// entity's id failed inside the vault; a deleted id, or one another room's
+/// stretch holds, let the word land. So a guessed id told its kind and whether
+/// a guessed text was right. Every such id now gets one refusal, and the
 /// Viewer's words still land, with or without an id of their own.
 #[tokio::test]
 async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
@@ -1179,19 +1180,44 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                     member_ref: gil,
                     role: Some(FederationGrantRole::Viewer),
                 },
+                InitialSharedMember {
+                    member_ref: ada,
+                    role: Some(FederationGrantRole::Viewer),
+                },
             ],
             10,
         )
         .unwrap();
-    let viewer = slip("gil", gil, "human");
-    let (status, started) = start(&server, viewer.clone(), room, "porch").await;
-    assert_eq!(status, StatusCode::OK, "{started}");
-
-    let named = |id: EntityId, text: &str| {
-        let mut body = turn(room, "porch", 100, text);
+    // An id a save holds for a provisional entity, with no entity row.
+    let provisional = EntityId::now();
+    server
+        .vault()
+        .hold_provisional_id_for_test(&provisional, "Mirela", &elsewhere)
+        .unwrap();
+    // An id Ada's own stretch in her room holds, off record.
+    let named_in = |room: EntityId, session_ref: &str, id: EntityId, text: &str| {
+        let mut body = turn(room, session_ref, 100, text);
         body["turn"]["messages"][0]["id"] = json!(id.to_hex());
         body
     };
+    let ada_slip = slip("ada", ada, "human");
+    let (status, started) = start(&server, ada_slip.clone(), elsewhere, "den").await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let pending = EntityId::now();
+    let (status, receipt) = call(
+        &server,
+        "POST",
+        "/v1/core/off-record/witness",
+        ada_slip,
+        Some(&named_in(elsewhere, "den", pending, "ada's word off record")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{receipt}");
+
+    let viewer = slip("gil", gil, "human");
+    let (status, started) = start(&server, viewer.clone(), room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let named = |id: EntityId, text: &str| named_in(room, "porch", id, text);
     let mut answers = Vec::new();
     for (id, text) in [
         (kept, "a guess at ada's word"),
@@ -1199,6 +1225,8 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
         (elsewhere, "ada's word 0"),
         (soft, "ada's word 1"),
         (hard, "ada's word 2"),
+        (provisional, "Mirela called"),
+        (pending, "ada's word off record"),
     ] {
         let answer = call(
             &server,

@@ -318,11 +318,12 @@ impl Memory<'_> {
     /// An id this call names that the room does not hold must be one base
     /// never gave out: a hard-deleted id is refused, as the base writer
     /// refuses it, so a save cannot bring it back. A participant speaking by
-    /// the room's roster alone (`rostered`) may read nothing of base through
-    /// a message id either: every id base holds or deleted, whatever its kind
-    /// or body, gets the same refusal before the shared door reads it (Astra
-    /// on #1411). An id the room holds is the stretch's own, and the shared
-    /// door checks it as a retry.
+    /// the room's roster alone (`rostered`) may read nothing of the vault
+    /// through a message id either: every id the vault holds, deleted, holds
+    /// for a provisional entity, or another stretch holds, whatever its kind
+    /// or body, gets the same refusal before the shared door or the staging
+    /// reads it (Astra and Sol on #1411). An id the room holds is the
+    /// stretch's own, and the shared door checks it as a retry.
     pub(super) fn overlay_guards_in_txn(
         &self,
         plan: &WitnessPlan<'_>,
@@ -330,6 +331,7 @@ impl Memory<'_> {
         rostered: bool,
         wtxn: &heed::RoTxn<'_>,
     ) -> MemoryResult<Option<EntityId>> {
+        let view = sink.read_view()?;
         for id in plan.message_ids() {
             if sink.overlay.contains_entity(&id)? {
                 continue;
@@ -344,7 +346,9 @@ impl Memory<'_> {
                         wtxn,
                         &id,
                     )?
-                    .is_some())
+                    .is_some()
+                    || crate::tagging::holds_id_in_txn(&view, wtxn, &id)?
+                    || self.vault.store.off_record_sessions.contains_entity(&id)?)
             {
                 return Err(MemoryError::bad_request_with(
                     "a witnessed message id must be new, or one this stretch holds",

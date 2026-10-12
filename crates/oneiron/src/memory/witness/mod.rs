@@ -14,7 +14,9 @@ mod validation;
 
 pub use self::types::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
-pub(crate) use self::codec::{IMPORTED_SOURCE_KEY, guard_import_stamp, witness_message_body};
+pub(crate) use self::codec::{
+    IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
+};
 pub(crate) use self::program::ImportedTurnStamp;
 
 pub(crate) use self::validation::{

@@ -47,6 +47,26 @@ pub struct ProvisionalEntity {
 }
 
 impl Vault {
+    /// Holds `id` as a provisional entity named `name`, from the turn
+    /// `origin`, as a save mints one. For fixtures outside this module.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn hold_provisional_id_for_test(
+        &self,
+        id: &EntityId,
+        name: &str,
+        origin: &EntityId,
+    ) -> Result<()> {
+        let entity = ProvisionalEntity {
+            kind: crate::registry::ENTITY_TYPE_PERSON,
+            name: name.to_owned(),
+            origin: *origin,
+            facet: None,
+            minted_at: 1,
+        };
+        self.with_write_txn(|txn| mint_in_txn(&self.store, txn, id, &entity))
+    }
+
     /// A provisional entity, while it is one and the text its name came from
     /// reads.
     pub fn provisional_entity(&self, id: &EntityId) -> Result<Option<ProvisionalEntity>> {
@@ -294,12 +314,21 @@ pub(crate) fn refuse_held_id_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if PROVISIONAL.contains(dbs, txn, id)? {
+    if holds_id_in_txn(dbs, txn, id)? {
         return Err(Error::InvariantViolation(
             "an entity write names a provisional entity's id",
         ));
     }
     Ok(())
+}
+
+/// Whether a provisional entity holds `id`, reading only.
+pub(crate) fn holds_id_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    PROVISIONAL.contains(dbs, txn, id)
 }
 
 fn hint_key(entity: &ProvisionalEntity, id: &EntityId) -> ([u8; 1], [u8; 32], EntityId) {
