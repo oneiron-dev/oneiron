@@ -769,6 +769,19 @@ fn vectors_from_a_cpu_endpoint_and_a_cuda_endpoint_are_marked_apart() {
     );
     assert_eq!(
         vault.embedding_provenance(&third).expect("read"),
+        Some(remote.clone())
+    );
+    // A mark this build cannot read never fails the answer (review repro: a
+    // mark nested past the decoder's depth limit refused the whole answer).
+    let mut deep = json!("cuda");
+    for _ in 0..200 {
+        deep = json!([deep]);
+    }
+    silent.serve_on(json!({ "device": deep, "runtime": "candle 0.11.0 q8_0" }));
+    let fourth = put_claim(&vault, 0xEA, "a claim an endpoint marks past the depth limit");
+    assert_eq!(fill_from(&silent), 1);
+    assert_eq!(
+        vault.embedding_provenance(&fourth).expect("read"),
         Some(remote)
     );
     assert_eq!(

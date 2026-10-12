@@ -23,6 +23,7 @@ use oneiron::embed::{
     Embedder, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance, PendingEmbeddingInput,
 };
 use oneiron::error::StoreError;
+use serde_json::value::RawValue;
 
 use super::local::evidence::{self, RunProfile};
 use super::remote::RungHold;
@@ -113,10 +114,11 @@ struct EmbeddingsResponse {
     #[serde(default)]
     profile: Option<serde_json::Value>,
     /// The device and runtime that computed them, from `embedder serve`,
-    /// kept as sent and read by [`answer_mark`]: a mark this build cannot
-    /// read never fails the answer.
+    /// kept as raw text and read by [`answer_mark`]: a mark this build cannot
+    /// read, even one nested past the decoder's depth limit, never fails the
+    /// answer.
     #[serde(default)]
-    provenance: Option<serde_json::Value>,
+    provenance: Option<Box<RawValue>>,
 }
 
 /// One answer's vectors, in request order, and the device and runtime it
@@ -781,8 +783,8 @@ impl QueryEmbedder for HttpEmbedder {
 /// The device and runtime an answer names, when it names a device the
 /// endpoint ran on and a runtime fit to store; otherwise the endpoint did not
 /// say.
-fn answer_mark(sent: Option<serde_json::Value>) -> Option<EmbeddingProvenance> {
-    let mark: EmbeddingProvenance = serde_json::from_value(sent?).ok()?;
+fn answer_mark(sent: Option<Box<RawValue>>) -> Option<EmbeddingProvenance> {
+    let mark: EmbeddingProvenance = serde_json::from_str(sent?.get()).ok()?;
     let ran_on = matches!(
         mark.device,
         EmbeddingDevice::Cpu | EmbeddingDevice::Cuda | EmbeddingDevice::Metal
