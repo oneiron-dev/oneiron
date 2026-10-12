@@ -1307,6 +1307,205 @@ fn a_credential_for_one_world_finds_nothing_by_base_words_published_while_a_room
     Ok(())
 }
 
+/// Base's claim `claim` on `owner`, holding `value`, found by `word`, and
+/// embedded at `vector` if given. Replicated: the fixture isolates the
+/// room's read, not the write gate.
+fn base_claim_for_the_room(
+    vault: &Vault,
+    owner: EntityId,
+    claim: EntityId,
+    (value, word): (&str, &str),
+    vector: Option<[f32; 4]>,
+) -> Result<()> {
+    let mut batch = vault
+        .batch()
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &owner_claim_body(owner, value)?,
+        )
+        .text(&claim, &[("body", word)])
+        .edge(&claim, crate::EdgeKind::ClaimOf, &owner, 1.0);
+    if let Some(vector) = vector {
+        batch = batch.vector(&claim, &vector);
+    }
+    batch.commit()
+}
+
+/// A room embeds a base claim's body of its own, then changes the body
+/// again and indexes it with its words and no vector. The vector the room
+/// staged describes the earlier body, so it no longer finds the claim there
+/// (Sol R23).
+#[test]
+fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xCC);
+    base_claim_for_the_room(&vault, owner, claim, ("ownbasevalue", "ownbaseword"), None)?;
+    let session = enter(&vault, "sess-room-own-vector")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![
+            claim_put(
+                claim,
+                (
+                    TimeRange { start: 10, end: 10 },
+                    10,
+                    owner_claim_body(owner, "ownembeddedvalue")?,
+                ),
+            ),
+            room_vector(claim, [1.0, 0.0, 0.0, 0.0]),
+            room_text(claim, "ownembeddedword"),
+        ],
+    )?;
+    assert!(
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "the room's vector of its body finds the claim"
+    );
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
+        (
+            TimeRange { start: 11, end: 11 },
+            11,
+            owner_claim_body(owner, "ownchangedvalue")?,
+        ),
+        "ownchangedneedle",
+    )?;
+
+    let fields = room_pack_fields(&vault, &session, claim, "ownchangedneedle")?;
+    assert!(
+        fields.contains("ownchangedvalue") && !fields.contains("ownembeddedvalue"),
+        "the room reads its new body, got {fields}"
+    );
+    assert!(
+        !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "the room's vector of its earlier body does not find the new one"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// A room replaces a base claim's body and indexes it, which hides base's
+/// vector, then puts base's body back in a later turn and indexes that. Base's
+/// vector describes the body the room put back, so it finds the claim in
+/// the room again (Sol R23).
+#[test]
+fn a_room_that_puts_base_body_back_after_another_serves_base_vector_of_it() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xCD);
+    base_claim_for_the_room(
+        &vault,
+        owner,
+        claim,
+        ("backbasevalue", "backbaseword"),
+        Some([1.0, 0.0, 0.0, 0.0]),
+    )?;
+    let session = enter(&vault, "sess-room-back-again")?;
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
+        (
+            TimeRange { start: 10, end: 10 },
+            10,
+            owner_claim_body(owner, "backroomvalue")?,
+        ),
+        "backroomword",
+    )?;
+    assert!(
+        !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "base's vector of its body does not find the room's"
+    );
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
+        (
+            TimeRange { start: 1, end: 1 },
+            1,
+            owner_claim_body(owner, "backbasevalue")?,
+        ),
+        "backagainneedle",
+    )?;
+
+    let fields = room_pack_fields(&vault, &session, claim, "backagainneedle")?;
+    assert!(
+        fields.contains("backbasevalue") && !fields.contains("backroomvalue"),
+        "the room reads the body it put back, got {fields}"
+    );
+    assert!(
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "base's vector of that body finds it in the room again"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// Base sheds its rebuildable graph (SLIM) while its only vector is one a
+/// room hides. The room's next vector rebuilds the graph the room inherits,
+/// the hidden row still a node of it, so base's later graph leaves the
+/// room's with an entry: the room embeds again, and its search finds both
+/// rows it embedded and not the hidden one (Sol R23).
+#[test]
+fn a_room_embeds_over_a_shed_base_graph_whose_only_node_it_hides() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xCE);
+    base_claim_for_the_room(
+        &vault,
+        owner,
+        claim,
+        ("shedbasevalue", "shedbaseword"),
+        Some([1.0, 0.0, 0.0, 0.0]),
+    )?;
+    let session = enter(&vault, "sess-room-shed-graph")?;
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
+        (
+            TimeRange { start: 10, end: 10 },
+            10,
+            owner_claim_body(owner, "shedroomvalue")?,
+        ),
+        "shedroomword",
+    )?;
+    vault.with_write_txn(|txn| crate::hnsw::drop_rebuildable_hnsw(&vault.store, txn).map(drop))?;
+    let first = entity_id(0xCF);
+    stage_in_room(
+        &vault,
+        &session,
+        vec![room_put(first), room_vector(first, [0.8, 0.6, 0.0, 0.0])],
+    )?;
+    put_vector(&vault, entity_id(0xE3), [0.0, 1.0, 0.0, 0.0])?;
+    let second = entity_id(0xE4);
+    stage_in_room(
+        &vault,
+        &session,
+        vec![room_put(second), room_vector(second, [0.6, 0.8, 0.0, 0.0])],
+    )?;
+
+    let hits = vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?;
+    assert!(
+        hits.contains(&first) && hits.contains(&second) && !hits.contains(&claim),
+        "the room finds the rows it embedded and not the one it hid, got {hits:?}"
+    );
+    session.close()?;
+    Ok(())
+}
+
 /// A scoped read in the room fetches as many candidates as the room's read
 /// holds, base's rows and the room's. A room row outside the worlds the
 /// lane asks for then takes no place from a base row inside them.

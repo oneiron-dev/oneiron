@@ -101,6 +101,21 @@ impl OverlayDb {
         })
     }
 
+    /// The keys of base's rows this accessor's room hides; none for the
+    /// vault's own accessor, or for a room that cleared base.
+    pub(crate) fn hidden_keys(&self, txn: &RoTxn<'_>) -> Result<Vec<Vec<u8>>> {
+        let Some(staged) = self.staged_rows().filter(|staged| !staged.clear_base) else {
+            return Ok(Vec::new());
+        };
+        let mut keys = Vec::new();
+        for (key, value) in staged.rows {
+            if value.is_none() && self.base.get(txn, &key)?.is_some() {
+                keys.push(key);
+            }
+        }
+        Ok(keys)
+    }
+
     /// [`Self::get`], with base's row where this accessor's room hides it. A
     /// walk over a graph the room inherits from base reads this way: a row
     /// the room hides is still a node of that graph, and the walk passes

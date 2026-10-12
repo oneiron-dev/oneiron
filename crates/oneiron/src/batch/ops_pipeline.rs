@@ -535,31 +535,33 @@ pub(crate) fn apply_ops_session(
         overlay.stage_journal_entry(entry)?;
     }
     // The apply that indexes a row the room put publishes its revision, and
-    // hides an index of another body that it did not restage (see above).
+    // hides an index of another body that it did not restage (see above). A
+    // vector the room staged describes the body it indexed last, so it stands
+    // until the body changes (Sol R23).
     for id in texts.union(&vectors) {
         if !view.entities.stages_row(id.as_bytes()) {
             continue;
         }
-        if crate::vault::entity_revision::publish_room_revision(view, wtxn, id)?
-            && !texts.contains(id)
-        {
+        let changed = crate::vault::entity_revision::publish_room_revision(view, wtxn, id)?;
+        if changed && !texts.contains(id) {
             crate::bm25::deindex_text(view, wtxn, id)?;
         }
-        if !vectors.contains(id) && !view.vectors.stages_row(id.as_bytes()) {
-            hide_base_vector_of_another_body(view, wtxn, id)?;
+        if !vectors.contains(id) && (changed || !view.vectors.stages_row(id.as_bytes())) {
+            hide_vector_of_another_body(view, wtxn, id)?;
         }
     }
     Ok(())
 }
 
-/// Hides base's vector of `id`, a row the room holds and has not given a
-/// vector, where it describes another body than the room's. A vector base
-/// holds was embedded from its indexed body, so the room keeps it when that
-/// body is the room's (Sol R22). One base writes later (an embedding or its
-/// idle pass, which can land before the room's segment commits) is embedded
-/// from its live body, so while that body is another too the room hides the
-/// row before base writes one (Sol R19, R21).
-fn hide_base_vector_of_another_body(
+/// Leaves `id`, a row the room holds and has not given a vector for its
+/// body, only a vector of that body. A vector base holds was embedded from
+/// its indexed body, so the room serves base's when that body is the room's
+/// (Sol R22), in place of a mask or a vector the room staged for an earlier
+/// body (Sol R23). One base writes later (an embedding or its idle pass,
+/// which can land before the room's segment commits) is embedded from its
+/// live body, so while that body is another too the room hides the row
+/// before base writes one (Sol R19, R21).
+fn hide_vector_of_another_body(
     view: &crate::store::SessionStoreView<'_>,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -567,15 +569,25 @@ fn hide_base_vector_of_another_body(
     let room = crate::ports::EntityStoreRead::port_entity_raw(view, wtxn, id)?
         .ok_or(Error::CorruptedIndex("staged row without entity"))?;
     let body = room.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-    let (held, later) =
-        crate::vault::entity_revision::vectors_embed_body(view.read().base(), wtxn, id, body)?;
+    let base = view.read().base();
+    let vectors = &view.vectors;
+    let (held, later) = crate::vault::entity_revision::vectors_embed_body(base, wtxn, id, body)?;
     if held {
-        return Ok(());
+        if !vectors.hides(id.as_bytes()) && !vectors.stages_row(id.as_bytes()) {
+            return Ok(());
+        }
+        let Some(raw) = base.vectors.get(wtxn, id.as_bytes())? else {
+            vectors.delete(wtxn, id.as_bytes())?;
+            return crate::embed::record_embedding_device_in_txn(view, wtxn, id, None);
+        };
+        let raw = raw.into_owned();
+        vectors.put(wtxn, id.as_bytes(), &raw)?;
+        return crate::embed::copy_embedding_device_in_txn(base, view, wtxn, id);
     }
     if later {
-        crate::store::ManifestDbs::vectors(view).delete(wtxn, id.as_bytes())?;
+        vectors.delete(wtxn, id.as_bytes())?;
     } else {
-        view.vectors.hide_base_row(id.as_bytes())?;
+        vectors.hide_base_row(id.as_bytes())?;
     }
     crate::embed::record_embedding_device_in_txn(view, wtxn, id, None)
 }
