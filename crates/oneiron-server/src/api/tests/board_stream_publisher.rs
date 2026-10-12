@@ -1131,7 +1131,11 @@ async fn a_deleted_task_stays_in_the_world_it_was_born_in() {
 }
 
 /// The whole answer the /v1 query lane gives `credential` for `word`.
-async fn query_answer(server: &Arc<SyncServer>, credential: &str, word: &str) -> (StatusCode, Value) {
+async fn query_answer(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    word: &str,
+) -> (StatusCode, Value) {
     route_json(
         server.clone(),
         core_request_with_authz(
@@ -1244,7 +1248,12 @@ async fn a_credential_counts_a_task_it_withholds_inside_its_world() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(body["narrowing"]["suppressed_count"], Value::from(1), "{body}");
-    let absent = timeline_answer(&server, "inside-reader", seeded_test_entity_id(0xb1a5_0052)).await;
+    assert_eq!(
+        body["narrowing"]["suppressed_count"],
+        Value::from(1),
+        "{body}"
+    );
+    let absent =
+        timeline_answer(&server, "inside-reader", seeded_test_entity_id(0xb1a5_0052)).await;
     assert!(absent.1.contains("\"suppressed_count\":0"), "{}", absent.1);
 }

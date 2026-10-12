@@ -182,7 +182,10 @@ fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
         )
         .text(&replica, &[("body", "lantern harbor")])
         .commit()?;
-    assert!(vault.record_scope(&replica)?.is_none(), "a replica is unstamped");
+    assert!(
+        vault.record_scope(&replica)?.is_none(),
+        "a replica is unstamped"
+    );
 
     let issuer = HostSlipIssuer::from_secret(b"whole slip count host root")?;
     let mut base_only = vault.ensure_host_root_slip(&issuer)?;

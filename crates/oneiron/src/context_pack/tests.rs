@@ -2268,7 +2268,10 @@ fn a_stale_worlds_task_is_no_neighbor() -> Result<()> {
             .map(|entity| entity.id)
             .collect())
     };
-    assert!(neighbors()?.contains(&born), "a live world's TASK is a neighbor");
+    assert!(
+        neighbors()?.contains(&born),
+        "a live world's TASK is a neighbor"
+    );
 
     let stamp = crate::federation::encode_world_stale_stamp(crate::federation::WorldStaleStamp {
         reason: crate::federation::FederationStaleReason::Disconnected,

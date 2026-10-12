@@ -464,10 +464,13 @@ pub(crate) fn task_inside_credential(
     if whole(&credential.worlds) && whole(&credential.facets) {
         return Ok(true);
     }
-    Ok(scope_for_blob(store, txn, id, raw)?.is_some_and(|position| {
-        (whole(&credential.worlds) || !position.worlds.meet(&credential.worlds).is_bottom())
-            && (whole(&credential.facets) || !position.facets.meet(&credential.facets).is_bottom())
-    }))
+    Ok(
+        scope_for_blob(store, txn, id, raw)?.is_some_and(|position| {
+            (whole(&credential.worlds) || !position.worlds.meet(&credential.worlds).is_bottom())
+                && (whole(&credential.facets)
+                    || !position.facets.meet(&credential.facets).is_bottom())
+        }),
+    )
 }
 /// A promoted edit may change content but cannot re-position the same id.
 /// Read this in the author admission snapshot, before importing peer ops.

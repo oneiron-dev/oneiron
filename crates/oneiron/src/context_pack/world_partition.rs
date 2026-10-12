@@ -74,7 +74,10 @@ pub(super) fn partition_results_by_world(
     // `non_base_fraction` of it.
     let is_claim = |entity: &ContextEntity| entity.entity_type == ENTITY_TYPE_CLAIM;
     let base_claim_count = base.iter().filter(|entity| is_claim(entity)).count();
-    let non_base_claims = non_base.iter().filter(|(_, entity)| is_claim(entity)).count();
+    let non_base_claims = non_base
+        .iter()
+        .filter(|(_, entity)| is_claim(entity))
+        .count();
     let claim_budget = base_claim_count + non_base_claims;
     let non_base_cap = ((claim_budget as f32) * non_base_fraction).floor().max(0.0) as usize;
 
