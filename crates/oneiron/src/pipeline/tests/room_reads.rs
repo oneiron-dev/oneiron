@@ -56,6 +56,7 @@ fn room_vector(id: EntityId, vector: [f32; 4]) -> BatchOp {
         id,
         vector: vector.to_vec(),
         pending_embedding_token: None,
+        provenance: None,
     }
 }
 
