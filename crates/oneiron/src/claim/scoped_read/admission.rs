@@ -461,6 +461,12 @@ impl ScopedRead<'_> {
         if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
             return Ok(false);
         }
+        // A row a room holds carries no stamp (`stamp_put` writes base only),
+        // and a missing stamp is not inferred: it has no position the
+        // credential reads, so it has no count either.
+        if self.store_read().room_holds(id)? {
+            return Ok(true);
+        }
         // Every record that is not a claim is base reality, stamped or not
         // (as `revision_world` reads it): a row replayed with no stamp is no
         // less outside a credential that cannot read base (Astra #1388b P2).

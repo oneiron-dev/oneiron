@@ -4,7 +4,7 @@
 use super::*;
 use crate::batch::BatchOp;
 use crate::off_record::{OffRecordBackendClass, OffRecordSession};
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD};
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
 
 /// Stages `ops` in the room through its own apply door, as a turn would.
@@ -482,6 +482,67 @@ fn a_text_search_in_the_room_finds_base_rows_indexed_after_it_cleared_base_text(
         vec![later],
         "base's new row is found, and the row the room cleared is not"
     );
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// A credential that reads one world names no count of a row outside it
+/// (DEC-0005: no name, no count). A claim only the room holds carries no
+/// record-scope stamp to place it. So the room's read withholds it and
+/// counts nothing, as the same read outside the room, where it does not
+/// exist.
+#[test]
+fn a_credential_for_one_world_counts_no_claim_the_room_holds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let holder = entity_id(0xD1);
+    put_entity(&vault, holder, ENTITY_TYPE_PERSON, 1, 1, 1)?;
+    let world = entity_id(0xD2);
+    put_entity(&vault, world, ENTITY_TYPE_WORLD, 1, 1, 1)?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"room count fixture")?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = [0xD3; 32];
+    claims.holder_ref = holder.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.scope = crate::federation::scope_codec::read_preset();
+    claims.scope.worlds = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        crate::federation::ScopeId(world),
+    ]));
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let binding = b"room-count";
+    let signature = issuer.binding_proof(&slip, binding)?;
+    let verified = vault.verify_capability_slip(&issuer.public_key(), &slip, binding, &signature)?;
+    let key = crate::claim::ScopedReadActorKey::from_verified_slip(&verified).expect("slip reader");
+
+    let session = enter(&vault, "sess-room-claim-count")?;
+    let claim = entity_id(0xD4);
+    stage_in_room(
+        &vault,
+        &session,
+        vec![BatchOp::Put {
+            id: claim,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: TimeRange { start: 10, end: 10 },
+            learned_at: 10,
+            data: active_claim_body(None),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+    )?;
+
+    let outside = vault
+        .scoped_read(key.clone())
+        .get_entity_parts_with_receipt(&claim, None)?;
+    assert!(outside.value.is_none(), "base holds nothing of it");
+    assert_eq!(outside.receipt.suppressed_count, 0);
+
+    let view = session.read_view()?;
+    let inside = vault
+        .scoped_read_in_session(key, &view)
+        .get_entity_parts_with_receipt(&claim, None)?;
+    assert!(inside.value.is_none(), "the credential cannot read base reality");
+    assert_eq!(inside.receipt.suppressed_count, 0, "and names no count of the room's claim");
     drop(view);
     session.close()?;
     Ok(())
