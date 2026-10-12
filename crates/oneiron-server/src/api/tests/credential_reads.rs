@@ -472,8 +472,9 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
     // undeclared predicate pends on the criticality floor.
     super::context_board_history::edit_vault_policy(&server, 199, |entries| {
         use rmpv::Value as Mp;
-        let Some((_, Mp::Array(rules))) =
-            entries.iter_mut().find(|(key, _)| key.as_str() == Some("rules"))
+        let Some((_, Mp::Array(rules))) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("rules"))
         else {
             panic!("the vault policy carries rules");
         };
@@ -620,10 +621,7 @@ async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
     ];
     for (uri, recipe) in doors {
         let narrowed = format!("{recipe};records={}", room.unscoped.to_hex());
-        for (recipe, expected) in [
-            (recipe, StatusCode::OK),
-            (narrowed, StatusCode::FORBIDDEN),
-        ] {
+        for (recipe, expected) in [(recipe, StatusCode::OK), (narrowed, StatusCode::FORBIDDEN)] {
             let (status, body) = route_json(
                 room.server.clone(),
                 core_request_with_authz("GET", &uri, test_bearer(&recipe), None),
