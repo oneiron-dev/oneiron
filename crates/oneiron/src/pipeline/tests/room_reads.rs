@@ -1180,3 +1180,48 @@ fn a_room_hides_the_text_of_a_row_base_indexed_after_its_totals() -> Result<()> 
     session.close()?;
     Ok(())
 }
+
+/// A room apply that puts a row and indexes it in the same call is refused
+/// before anything stages: its view reads the overlay as it was before the
+/// call, so the index could not publish the revision the put staged.
+#[test]
+fn a_room_apply_that_puts_and_indexes_one_row_is_refused() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let session = enter(&vault, "sess-room-put-and-index")?;
+    let route = session.write_route()?;
+    let overlay = session.overlay();
+    let scope = JournalScope::new(EntityId::now(), EntityId::now());
+    let entry = |op| JournalEntry {
+        scope,
+        role: JournalRole::TurnPut,
+        learned_at: 10,
+        occurred: TimeRange { start: 10, end: 10 },
+        op,
+    };
+    let row = entity_id(0xDF);
+    for index in [
+        room_text(row, "refusedneedle"),
+        room_vector(row, [1.0, 0.0, 0.0, 0.0]),
+    ] {
+        let refused = vault.with_write_txn_grouped(|wtxn| {
+            let _segment = overlay.install_txn_segment()?;
+            crate::batch::apply_ops_session(
+                &session.read_view()?,
+                &route,
+                &vault.config,
+                &vault.analyzer,
+                wtxn,
+                vec![entry(room_put(row)), entry(index.clone())],
+            )
+        });
+        assert!(
+            matches!(refused, Err(crate::error::Error::InvariantViolation(_))),
+            "got {refused:?}"
+        );
+    }
+    let view = session.read_view()?;
+    assert!(!view.read().room_holds(&row)?, "nothing of it staged");
+    drop(view);
+    session.close()?;
+    Ok(())
+}

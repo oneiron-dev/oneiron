@@ -328,6 +328,22 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// index keys.
 ///
 /// [`JournalRole`]: crate::session_overlay::JournalRole
+///
+/// # A row's put and its index take separate applies
+///
+/// `view` reads the overlay as it was when it was built, so an op here does
+/// not see the ones staged before it in the same call. The witness door
+/// applies one entry per call, each on a fresh view, so that each op reads
+/// the ones before it. A call that puts a row and also indexes it (`Text` or
+/// `Vector`) is refused before anything stages: its index could not publish
+/// the revision the put staged.
+///
+/// A room indexes what it stages at once and runs no idle pass. So the apply
+/// that indexes a row the room put publishes the row's revision (its indexed
+/// revision becomes its live one), and hides the row's text or vector that
+/// it did not restage when they describe another body. Base keeps its
+/// deferred-index interval.
+///
 /// # The op list IS the journal
 ///
 /// This entry takes [`JournalEntry`] values, not bare [`BatchOp`]s: staging a
@@ -356,9 +372,30 @@ pub(crate) fn apply_ops_session(
     }
     let overlay = route.overlay();
 
+    // A row's put and its index take separate applies (see above), refused
+    // before a byte stages.
     let mut puts = HashSet::new();
     let mut texts = HashSet::new();
     let mut vectors = HashSet::new();
+    for entry in &entries {
+        match &entry.op {
+            BatchOp::Put { id, .. } => {
+                puts.insert(*id);
+            }
+            BatchOp::Text { id, .. } => {
+                texts.insert(*id);
+            }
+            BatchOp::Vector { id, .. } => {
+                vectors.insert(*id);
+            }
+            _ => {}
+        }
+    }
+    if texts.iter().chain(&vectors).any(|id| puts.contains(id)) {
+        return Err(Error::InvariantViolation(
+            "a session apply indexes no row it puts; the index takes an apply of its own",
+        ));
+    }
     for entry in entries {
         match &entry.op {
             BatchOp::Put {
@@ -441,7 +478,6 @@ pub(crate) fn apply_ops_session(
                     entry.occurred,
                     entry.learned_at,
                 )?;
-                puts.insert(*id);
             }
             BatchOp::Edge {
                 src,
@@ -462,7 +498,6 @@ pub(crate) fn apply_ops_session(
             }
             BatchOp::Text { id, fields } => {
                 crate::bm25::index_text(view, wtxn, analyzer, id, fields)?;
-                texts.insert(*id);
             }
             BatchOp::Vector {
                 id,
@@ -471,7 +506,6 @@ pub(crate) fn apply_ops_session(
                 ..
             } => {
                 stage_vector_row(view, config, wtxn, id, vector, provenance.as_ref())?;
-                vectors.insert(*id);
                 // `pending_rebuild` can only come back false: the legacy arm
                 // that would set it needs a base `&Store` this call does not
                 // have. Passing a local sink states that and keeps the shared
@@ -498,14 +532,10 @@ pub(crate) fn apply_ops_session(
         }
         overlay.stage_journal_entry(entry)?;
     }
-    // A room indexes what it stages at once and runs no idle pass: a row the
-    // room put is published by the apply that indexes it, and an index of the
-    // row this apply did not restage is hidden when it describes another
-    // body. Every read here sees the overlay as it was when `view` was built,
-    // so a row this same apply puts waits for the next apply that indexes it
-    // (the witness door applies one entry per call, each on a fresh view).
+    // The apply that indexes a row the room put publishes its revision, and
+    // hides an index of another body that it did not restage (see above).
     for id in texts.union(&vectors) {
-        if puts.contains(id) || !view.read().room_holds(id)? {
+        if !view.read().room_holds(id)? {
             continue;
         }
         if !crate::vault::entity_revision::publish_room_revision(view, wtxn, id)? {
