@@ -367,7 +367,8 @@ fn a_world_listing_cursor_names_no_withheld_world() -> Result<()> {
         for world in withheld {
             assert!(
                 !rendered.contains(&world.to_hex()),
-                "page {pages} names withheld world {world}"
+                "page {pages} names withheld world {}",
+                world.to_hex()
             );
         }
         listed.extend(
