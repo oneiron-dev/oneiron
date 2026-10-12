@@ -22,7 +22,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, claim_surfaceable};
 fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
-    let mut value = crate::companion::companion_value_to_json(value);
+    // The MessagePack is read before the projection drops a float's width.
+    let mut value = value.clone();
+    crate::batch::export::redact_messagepack_credentials(&mut value);
+    let mut value = crate::companion::companion_value_to_json(&value);
     crate::batch::export::redact_credentials(&mut value);
     value
 }

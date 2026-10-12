@@ -302,10 +302,12 @@ pub(super) fn decode_body_json(bytes: &[u8]) -> Option<serde_json::Value> {
         return None;
     }
     let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor).ok()?;
+    let mut value = rmpv::decode::read_value(&mut cursor).ok()?;
     if !cursor.is_empty() {
         return None;
     }
+    // The MessagePack is read before the projection drops a float's width.
+    crate::batch::export::redact_messagepack_credentials(&mut value);
     let mut value = companion_value_to_json(&value);
     crate::batch::export::redact_credentials(&mut value);
     Some(value)

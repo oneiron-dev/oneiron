@@ -480,3 +480,48 @@ fn a_string_array_export_is_its_own_fixed_point() {
     let json = serde_json::to_string(&exported).unwrap();
     assert!(!json.contains("sausage"), "{json}");
 }
+
+#[test]
+fn fields_that_spell_a_phrase_together_leave_no_context_writer() {
+    // One word per field of one entity: each field is clean read alone.
+    let words = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    let fields = words
+        .split(' ')
+        .enumerate()
+        .map(|(at, word)| (format!("{:02}", at + 1), Value::String(word.to_owned())))
+        .collect();
+    let pack = ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
+        retrieval_quality: Default::default(),
+        results: vec![ContextEntity {
+            source_revision_ref: None,
+            critical: false,
+            id: EntityId::from_bytes_unchecked([0x94; 16]),
+            short_id: "as01".to_owned(),
+            content_hash: 0x01,
+            entity_type: crate::registry::ENTITY_TYPE_ASSET,
+            score: 0.5,
+            fields: Some(fields),
+            edges: None,
+            vector: None,
+        }],
+        neighbors: vec![],
+        stats: empty_stats(),
+        empty: None,
+    };
+    for format in [PackFormat::Json, PackFormat::Yaml, PackFormat::Markdown] {
+        let text = String::from_utf8_lossy(&serialize_pack(
+            &pack,
+            &savings_config(format, FieldProfile::Full),
+        ))
+        .into_owned();
+        assert!(!text.contains("sausage"), "{format:?}: {text}");
+    }
+    let projected = project_pack_for_json_response(
+        pack,
+        &savings_config(PackFormat::Json, FieldProfile::Full),
+    );
+    let results = format!("{:?}", projected.results);
+    assert!(!results.contains("sausage"), "{results}");
+}

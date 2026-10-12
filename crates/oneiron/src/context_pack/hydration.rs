@@ -277,18 +277,32 @@ pub(super) fn hydrate_entity(
 /// omits `false`). Reusing the gate's decode means the body is MessagePack-
 /// decoded once per result for gate + projection (AC 9).
 fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> {
+    // Parts that read as a secret together, before this projection drops a
+    // float's width, project as null.
+    let secret = crate::batch::export::claim_reads_as_secret(body);
+    let project = |value: &rmpv::Value| {
+        if secret {
+            serde_json::Value::Null
+        } else {
+            rmpv_to_json(value)
+        }
+    };
     let mut out = HashMap::new();
     out.insert(
         "pred".to_owned(),
-        serde_json::Value::String(body.predicate.clone()),
+        if secret {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String(body.predicate.clone())
+        },
     );
-    out.insert("val".to_owned(), rmpv_to_json(&body.value));
+    out.insert("val".to_owned(), project(&body.value));
     out.insert("conf".to_owned(), serde_json::json!(body.confidence));
     if let Some(salience) = body.salience {
         out.insert("sal".to_owned(), serde_json::json!(salience));
     }
     if let Some(evidence) = &body.evidence {
-        out.insert("evid".to_owned(), rmpv_to_json(evidence));
+        out.insert("evid".to_owned(), project(evidence));
     }
     if let Some(valid_from) = body.valid_from {
         out.insert("from".to_owned(), serde_json::json!(valid_from));
@@ -329,7 +343,7 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     // binary as null, and so does this one.
     out.insert("subj".to_owned(), serde_json::Value::Null);
     if let Some(scope) = &body.scope {
-        out.insert("scope".to_owned(), rmpv_to_json(scope));
+        out.insert("scope".to_owned(), project(scope));
     }
     out.insert(
         "appr".to_owned(),
@@ -363,6 +377,11 @@ fn decode_entity_fields(
 
     let mut cursor = Cursor::new(payload);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
+    // A body that reads as a secret whole, before this projection drops a
+    // float's width, hydrates no field.
+    if crate::batch::secret_scan::release_parts_read_whole(&[&value]) {
+        return Some(HashMap::new());
+    }
     let rmpv::Value::Map(entries) = value else {
         return None;
     };

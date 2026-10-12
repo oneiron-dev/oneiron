@@ -174,11 +174,21 @@ fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
             // Redact a copy of the stored MessagePack before projecting it:
             // a value stored while the ingest scan was off is still never
             // served, and binary is checked before it becomes hex.
-            let mut value = body.value;
+            // A claim whose parts read as a secret together serves none of them.
+            let secret = oneiron::batch::export::claim_reads_as_secret(&body);
+            let mut value = if secret {
+                rmpv::Value::from("[redacted]")
+            } else {
+                body.value
+            };
             oneiron::batch::export::redact_messagepack_credentials(&mut value);
             RunProposal {
                 claim_id: member.claim_id.to_hex(),
-                predicate: redacted(body.predicate),
+                predicate: if secret {
+                    "[redacted]".to_owned()
+                } else {
+                    redacted(body.predicate)
+                },
                 subject: match &body.subject {
                     ClaimSubject::Entity(id) => id.to_hex(),
                     ClaimSubject::Edge { source, target, .. } => {

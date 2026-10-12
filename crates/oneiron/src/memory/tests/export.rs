@@ -591,3 +591,87 @@ fn every_export_lands_a_receipt_and_a_refused_one_lands_none() {
         .unwrap();
     assert_eq!(vault.export_receipts().unwrap().len(), 2);
 }
+
+/// The public BIP39 test vector, a word per 64-bit number, with two floats
+/// between its halves whose widths no JSON number keeps: read at either
+/// width alone, each float puts a non-list word into the run.
+fn phrase_in_numbers() -> Value {
+    let words = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    let mut items: Vec<Value> = words
+        .split(' ')
+        .map(|word| {
+            let mut padded = [b' '; 8];
+            padded[..word.len()].copy_from_slice(word.as_bytes());
+            Value::from(u64::from_be_bytes(padded))
+        })
+        .collect();
+    items.insert(6, Value::F32(f32::from_bits(0x4000_0208)));
+    items.insert(7, Value::F64(f64::from_bits(0x4088_0000_0000_0000)));
+    Value::Array(items)
+}
+
+#[test]
+fn memory_reads_read_messagepack_before_projecting_it() {
+    let (_dir, vault, owner) = owner_vault();
+    let id = crate::vault::embedded_owner_actor_id().unwrap();
+    let authenticated = vault
+        .authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())
+        .unwrap();
+    vault
+        .set_secret_scan_mode(
+            &authenticated,
+            crate::batch::secret_scan::SecretScanMode::Off,
+            10,
+        )
+        .unwrap();
+    let value = phrase_in_numbers();
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &value).unwrap();
+    assert!(crate::batch::secret_scan::scan_write_payload(&body).is_err());
+    let asset = EntityId::now();
+    vault
+        .batch()
+        .put(&asset, ENTITY_TYPE_ASSET, test_time(5), 5, &body)
+        .commit()
+        .unwrap();
+    let subject = put_person(&vault, 0x6b);
+    let mut claim = crate::claim::ClaimBody::new(
+        "profile.note",
+        crate::claim::ClaimSubject::Entity(subject),
+        value,
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    claim.source = Some(crate::claim::ClaimSource::UserStated);
+    vault
+        .put_claim(&EntityId::now(), &claim, test_time(6), 6)
+        .unwrap();
+
+    let memory = facade_for(&vault, owner);
+    let asset = memory.get_entity(&asset.to_hex()).unwrap().value.unwrap();
+    let claims = memory
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: None,
+            lifecycle: None,
+            limit: 10,
+        })
+        .unwrap()
+        .value;
+    assert_eq!(claims.len(), 1);
+    for served in [asset.body.unwrap_or_default(), claims[0].value.clone()] {
+        // Read back through MessagePack, as the projection was read from it.
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(
+            &mut bytes,
+            &serde_json::from_value::<Value>(served.clone()).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains("sausage"),
+            "{served}"
+        );
+    }
+}

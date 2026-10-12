@@ -290,11 +290,35 @@ pub(crate) fn release_reads_whole_json(value: &serde_json::Value) -> bool {
         || (narrows && write_door_refuses_encoding(&messagepack_form(value, true, &mut narrows)))
 }
 
+/// The parts a release door emits from one body, read before it projects them
+/// (a projection loses a float's width and a byte's type): whether one part,
+/// once its parts are judged, or all of them together, still reads as a
+/// secret as [`release_reads_whole`] reads it.
+pub(crate) fn release_parts_read_whole(parts: &[&rmpv::Value]) -> bool {
+    let mut judged = Vec::with_capacity(parts.len());
+    for part in parts {
+        let mut part = (*part).clone();
+        sanitize_messagepack(&mut part, true, Door::Release);
+        if release_reads_whole(&part) {
+            return true;
+        }
+        judged.push(part);
+    }
+    release_reads_whole(&rmpv::Value::Array(judged))
+}
+
+/// The write door's text rules over bytes a release door returns as they are
+/// stored: an encoding can differ from the value's own (a wider header, a
+/// length that reads as a line break), and the write door reads the bytes.
+pub(crate) fn write_door_refuses_raw(bytes: &[u8]) -> bool {
+    detect_bytes(bytes, Door::Write)
+}
+
 /// The write door's text rules over a value's MessagePack encoding, the raw
 /// bytes it reads in a body. A value that cannot be encoded reads as a secret.
 fn write_door_refuses_encoding(value: &rmpv::Value) -> bool {
     let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).is_err() || detect_bytes(&bytes, Door::Write)
+    rmpv::encode::write_value(&mut bytes, value).is_err() || write_door_refuses_raw(&bytes)
 }
 
 /// A JSON value as MessagePack. `narrow` writes a float that a single-width

@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimReadStatus, PointRead, ScopedReadResult};
 fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
-    let mut value = crate::companion::companion_value_to_json(value);
+    // The MessagePack is read before the projection drops a float's width.
+    let mut value = value.clone();
+    crate::batch::export::redact_messagepack_credentials(&mut value);
+    let mut value = crate::companion::companion_value_to_json(&value);
     crate::batch::export::redact_credentials(&mut value);
     value
 }
@@ -448,18 +451,31 @@ impl Memory<'_> {
     }
 
     fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {
+        // A claim whose parts read as a secret together serves none of them.
+        let secret = crate::batch::export::claim_reads_as_secret(body);
+        let served = |value: &rmpv::Value| {
+            if secret {
+                serde_json::Value::String("[redacted]".to_owned())
+            } else {
+                companion_value_to_json(value)
+            }
+        };
         Ok(ClaimView {
             claim_ref: id.to_hex(),
             short_ref: self.short_ref_of(id)?,
-            predicate: body.predicate.clone(),
+            predicate: if secret {
+                "[redacted]".to_owned()
+            } else {
+                body.predicate.clone()
+            },
             subject_ref: subject_ref_string(&body.subject),
-            value: companion_value_to_json(&body.value),
+            value: served(&body.value),
             confidence: body.confidence,
             approval: body.approval.as_str().to_owned(),
             lifecycle: body.lifecycle.as_str().to_owned(),
             source: body.source.map(|source| source.as_str().to_owned()),
             world_ref: body.world.map(|world| world.to_hex()),
-            scope: body.scope.as_ref().map(companion_value_to_json),
+            scope: body.scope.as_ref().map(served),
             valid_from: body.valid_from,
             valid_to: body.valid_to,
             salience: body.salience,

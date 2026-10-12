@@ -20,6 +20,17 @@ pub fn redact_messagepack_credentials(value: &mut rmpv::Value) -> bool {
     crate::batch::secret_scan::sanitize_messagepack_credentials(value, false)
 }
 
+/// Whether the parts a reader serves from one claim (its predicate, value,
+/// evidence and scope) read as a secret together, in their MessagePack form
+/// and before any projection; a reader then serves none of them.
+pub fn claim_reads_as_secret(body: &crate::claim::ClaimBody) -> bool {
+    let predicate = rmpv::Value::from(body.predicate.as_str());
+    let mut parts = vec![&predicate, &body.value];
+    parts.extend(body.evidence.as_ref());
+    parts.extend(body.scope.as_ref());
+    crate::batch::secret_scan::release_parts_read_whole(&parts)
+}
+
 /// Filter a legacy raw transport without changing safe payload bytes or types.
 pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     // The original bytes go back only when no member of them is redacted: a
@@ -27,7 +38,7 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     // tree that keeps every member, its keys included.
     if let Ok(mut value) = serde_json::from_slice::<rmpv::Value>(&bytes) {
         if !redact_messagepack_credentials(&mut value) {
-            return Ok(bytes);
+            return Ok(unchanged_or_marker(bytes, br#""[redacted]""#));
         }
         return serde_json::to_vec(&value)
             .map_err(|_| Error::InvariantViolation("redacted JSON encode failed"));
@@ -37,7 +48,8 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
         && cursor.position() == bytes.len() as u64
     {
         if !crate::batch::secret_scan::sanitize_messagepack_credentials(&mut value, false) {
-            return Ok(bytes);
+            // `[redacted]` as a MessagePack string.
+            return Ok(unchanged_or_marker(bytes, b"\xaa[redacted]"));
         }
         let mut output = Vec::new();
         rmpv::encode::write_value(&mut output, &value)
@@ -48,6 +60,17 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
         Ok(b"[redacted]".to_vec())
     } else {
         Ok(bytes)
+    }
+}
+
+/// Stored bytes go back as they are only when the write door's reading of
+/// those very bytes refuses nothing: an encoding can differ from the decoded
+/// value's own (a wider header, a length that reads as a line break).
+fn unchanged_or_marker(bytes: Vec<u8>, marker: &[u8]) -> Vec<u8> {
+    if crate::batch::secret_scan::write_door_refuses_raw(&bytes) {
+        marker.to_vec()
+    } else {
+        bytes
     }
 }
 
@@ -411,11 +434,7 @@ mod tests {
                 .collect(),
             words
                 .iter()
-                .map(|word| {
-                    let mut padded = [b' '; 8];
-                    padded[..word.len()].copy_from_slice(word);
-                    rmpv::Value::from(u64::from_be_bytes(padded))
-                })
+                .map(|word| rmpv::Value::from(u64::from_be_bytes(padded(word))))
                 .collect(),
         ];
         let mut bodies = Vec::new();
@@ -478,6 +497,36 @@ mod tests {
                 "bundle export: {emitted}"
             );
         }
+        Ok(())
+    }
+
+    /// A word padded to the eight bytes of a 64-bit number.
+    fn padded(word: &[u8]) -> [u8; 8] {
+        let mut padded = [b' '; 8];
+        padded[..word.len()].copy_from_slice(word);
+        padded
+    }
+
+    #[test]
+    fn raw_serving_reads_the_bytes_it_returns() -> Result<()> {
+        // Each map's 16-bit length ends in a line break, which stands the
+        // phrase (a word per number) on a line of its own in these bytes; the
+        // value's own encoding has no such break, so `xyzzy` joins the words.
+        let mut body = vec![0x94, 0xcf];
+        body.extend(padded(b"xyzzy"));
+        body.extend([0xde, 0x00, 0x0a]);
+        for word in PHRASE.split(' ') {
+            body.push(0xcf);
+            body.extend(padded(word.as_bytes()));
+        }
+        body.extend([0xc0; 8]);
+        body.extend([0xde, 0x00, 0x0a]);
+        body.extend([0xc0; 20]);
+        body.push(0xcf);
+        body.extend(padded(b"xyzzy"));
+        assert!(crate::batch::secret_scan::scan_write_payload(&body).is_err());
+        let served = redacted_memory_payload(body)?;
+        assert!(!carries_sausage(&served), "{served:?}");
         Ok(())
     }
 
