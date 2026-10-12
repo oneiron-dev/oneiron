@@ -581,7 +581,8 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
 
     // A room's P7 rule reads the same words: a clearance that takes the
     // summaries' own stamps, but not their source's, discloses neither of
-    // the two written from it.
+    // the two written from it. Facets never bound a disclosure, so the
+    // clearance parts them by kind band.
     let discloses = |scope: &crate::federation::Scope, id: EntityId| -> Result<bool> {
         let rtxn = vault.store.env.read_txn()?;
         let raw = vault.get_raw_in(&rtxn, &id)?.expect("a stored summary");
@@ -590,12 +591,7 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
     let top = crate::federation::Scope::top();
     assert!(discloses(&top, summary)? && discloses(&top, nested)?);
     let mut summaries_only = top.clone();
-    summaries_only.facets = crate::federation::ScopeAxis::Some(
-        [summary, nested, lone]
-            .into_iter()
-            .map(|id| crate::claim::substrate_facet_id(id).map(crate::federation::ScopeId))
-            .collect::<Result<_>>()?,
-    );
+    summaries_only.bands = crate::federation::ScopeAxis::Some([ENTITY_TYPE_SUMMARY].into());
     assert!(
         !discloses(&summaries_only, summary)? && !discloses(&summaries_only, nested)?,
         "a room clearance short of the source discloses neither summary"

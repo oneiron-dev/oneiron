@@ -2,6 +2,7 @@
 //! selector export only beside every record it was written from, judged by
 //! what the exporter itself ships (agent-runtime-v1 §d7).
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use loro::LoroDoc;
@@ -64,11 +65,12 @@ pub(super) fn unbacked_epochs(
         )? {
             let from = edge?.target;
             sources.push(from);
-            if !backs.contains_key(&from) {
-                let backed = shipped.contains(&from)
-                    && !withdrawn(&from)?
-                    && ships_whole(vault, rtxn, source, &from)?;
-                backs.insert(from, backed);
+            if let Entry::Vacant(slot) = backs.entry(from) {
+                slot.insert(
+                    shipped.contains(&from)
+                        && !withdrawn(&from)?
+                        && ships_whole(vault, rtxn, source, &from)?,
+                );
             }
         }
         epochs.insert(*id, Some(sources));
@@ -104,7 +106,8 @@ fn ships_whole(
     source: &LoroDoc,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(match vault.get_raw_in(rtxn, id)?.and_then(|raw| raw.first().copied()) {
+    let kind = vault.get_raw_in(rtxn, id)?.and_then(|raw| raw.first().copied());
+    Ok(match kind {
         None
         | Some(
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT
