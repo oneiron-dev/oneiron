@@ -270,8 +270,14 @@ fn fold_authority_log_inner(
                     ..local
                 },
             );
+            // A handoff in conflict keeps its standing here: its fence stays
+            // closed, so the handoff it conflicts with never settles alone.
             let retained: BTreeSet<_> = candidates
-                .intersection(&result.valid_entries)
+                .iter()
+                .filter(|candidate| {
+                    result.valid_entries.contains(*candidate)
+                        || result.closed_handoffs.contains(*candidate)
+                })
                 .copied()
                 .collect();
             if retained == candidates {
@@ -570,18 +576,16 @@ fn fold_authority_log_once(
 
     reject_below_concurrent_tier_floors(&mut states, &by_hash, &entry_ancestors, &mut issues);
     // A handoff's predecessor stays retired on every branch, not only its own.
-    // It runs before confirmations contend, so a retired key's confirmation
-    // never wins a nonce collision against the new root's.
-    let retirements = super::retired_signers::reject_retired_signer_forks(
+    // Fences close before confirmations contend, so a retired key's
+    // confirmation never wins a nonce collision against the new root's.
+    let retirements = super::retired_signers::settle_handoffs(
         &mut states,
         &by_hash,
         &entry_ancestors,
         &mut issues,
+        |states, present| federation_confirm_losers(states, &by_hash, present),
     );
     let retired_keys = retirements.keys();
-    // Confirmations are consumable across branches, not only in ancestry.
-    // Only entries already proven against their live roster can contend.
-    reject_replayed_federation_confirms(&mut states, &by_hash, &entry_ancestors, &mut issues);
     let mut vault_ids = BTreeSet::new();
     for state in states.values() {
         vault_ids.insert(state.vault_id);
@@ -604,6 +608,7 @@ fn fold_authority_log_once(
             valid_entries: BTreeSet::new(),
             roster: BTreeMap::new(),
             retired_keys: BTreeSet::new(),
+            closed_handoffs: BTreeSet::new(),
             tier_floor: None,
             genesis_fragile: false,
             federation_pacts: BTreeMap::new(),
@@ -679,6 +684,7 @@ fn fold_authority_log_once(
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.clone()),
         retired_keys,
+        closed_handoffs: retirements.handoffs(),
         tier_floor: merged.as_ref().map(|state| state.tier_floor),
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
@@ -708,17 +714,19 @@ fn fold_authority_log_once(
     }
 }
 
-fn reject_replayed_federation_confirms(
-    states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
+/// The confirmations that lose a collision among the rows `present` keeps.
+/// Confirmations are consumable across branches, not only in ancestry, and
+/// only entries already proven against their live roster contend.
+fn federation_confirm_losers(
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
-    issues: &mut Vec<AuthorityFoldIssue>,
-) {
+    present: &dyn Fn(&AuthorityEntryHash) -> bool,
+) -> BTreeSet<AuthorityEntryHash> {
     let mut ids = BTreeSet::new();
     let mut nonces = BTreeSet::new();
     let mut rejected = BTreeSet::new();
     // Hash order is a stable choice among otherwise valid concurrent asks.
-    for hash in states.keys() {
+    for hash in states.keys().filter(|hash| present(hash)) {
         if let AuthorityOp::FederationConfirm(action) = &entries[hash].op {
             let vault = states[hash].vault_id;
             if ids.contains(&(vault, action.confirm_id)) || nonces.contains(&(vault, action.nonce))
@@ -730,18 +738,5 @@ fn reject_replayed_federation_confirms(
             }
         }
     }
-    states.retain(|hash, _| {
-        if rejected.contains(hash) {
-            issues.push(AuthorityFoldIssue::InvalidEntry(*hash));
-            false
-        } else if ancestors
-            .get(hash)
-            .is_some_and(|parents| !parents.is_disjoint(&rejected))
-        {
-            issues.push(AuthorityFoldIssue::InvalidAncestry(*hash));
-            false
-        } else {
-            true
-        }
-    });
+    rejected
 }

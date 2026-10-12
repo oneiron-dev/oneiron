@@ -3,7 +3,7 @@ use super::support::*;
 use super::*;
 use crate::{TimeRange, Vault, VaultConfig};
 
-fn store(vault: &Vault, entry: &AuthorityLogEntry) {
+pub(super) fn store(vault: &Vault, entry: &AuthorityLogEntry) {
     vault
         .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
@@ -458,7 +458,7 @@ fn handoff_only_preserves_its_valid_pre_handoff_ancestors() {
     }
 }
 
-fn re_root_entry(
+pub(super) fn re_root_entry(
     id: AuthorityVaultId,
     parent: &AuthorityLogEntry,
     signer: &ed25519_dalek::SigningKey,
@@ -485,9 +485,12 @@ fn re_root_entry(
 }
 
 /// engine-crates-03: a handoff retires its predecessor on every branch. The
-/// old root signs a second handoff parented to the genesis, before the first;
-/// it installs no second root, on any arrival order, and the fork's own
-/// successor signs nothing that stands.
+/// old root signs a second handoff parented to the genesis; it installs no
+/// second root, on any arrival order, and the fork's own successor signs
+/// nothing that stands. A fork is unsettled at any sequence (Sol review 2,
+/// Engine ruling 2026-10-13): neither successor stands and the old root stays
+/// retired. This once let the lower-sequence handoff stand, a pick a gap in
+/// the old root's sequences could turn round.
 #[test]
 fn a_retired_root_installs_no_second_root() {
     let old = ed_key(160);
@@ -504,39 +507,25 @@ fn a_retired_root_installs_no_second_root() {
         authority_entry_hash(&forked).unwrap(),
         authority_entry_hash(&onward).unwrap(),
     );
-    let mut entries = vec![genesis.clone(), handoff.clone(), forked, onward];
+    let mut entries = vec![genesis, handoff, forked, onward];
     for _ in 0..2 {
         let fold = fold_authority_log(&entries);
-        assert!(fold.valid_entries.contains(&handoff_hash));
+        assert!(!fold.valid_entries.contains(&handoff_hash));
         assert!(!fold.valid_entries.contains(&forked_hash));
         assert!(!fold.valid_entries.contains(&onward_hash));
         assert!(
             fold.issues
                 .contains(&AuthorityFoldIssue::RetiredSigner(forked_hash))
         );
-        assert!(fold.roster[&authority_key_from_ed(&old)].revoked);
-        assert!(!fold.roster[&authority_key_from_ed(&next)].revoked);
-        assert!(
-            fold.roster
-                .get(&authority_key_from_ed(&fork))
-                .is_none_or(|device| device.revoked)
-        );
+        assert!(fold.retired_keys.contains(&authority_key_from_ed(&old)));
+        assert!(fold.roster.values().all(|device| device.revoked));
         assert!(
             !fold
                 .roster
                 .contains_key(&authority_key_from_ed(&after_fork))
         );
-        assert!(fold.retired_keys.contains(&authority_key_from_ed(&old)));
         entries.reverse();
     }
-
-    // At the handoff's own sequence the order is undecidable: neither
-    // successor stands, and the old root stays retired.
-    let twin = re_root_entry(id, &genesis, &old, 1, &fork);
-    let fold = fold_authority_log(&[genesis, handoff, twin]);
-    assert!(!fold.valid_entries.contains(&handoff_hash));
-    assert!(fold.roster[&authority_key_from_ed(&old)].revoked);
-    assert!(fold.roster.values().all(|device| device.revoked));
 }
 
 /// engine-crates-03 at the doors: after a handoff, a row the old root signs
@@ -618,7 +607,10 @@ fn re_root_to_host(
 }
 
 /// A replica that imports `history` plus `extra` from scratch.
-fn replica_with(history: Vec<Vec<u8>>, extra: &AuthorityLogEntry) -> (tempfile::TempDir, Vault) {
+pub(super) fn replica_with(
+    history: Vec<Vec<u8>>,
+    extra: &AuthorityLogEntry,
+) -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let mut history = history;
@@ -671,9 +663,12 @@ fn a_retired_root_withdraws_no_slip_the_new_root_minted() {
 }
 
 /// A key a rotation superseded before the handoff forks no ReRoot (Sol
-/// review 1). The handoff retires every key its parents' roster held, the
-/// revoked one too, so the fork stands nowhere and the rotation's successor
-/// keeps its handoff.
+/// review 1). The handoff fences every key its parents' roster held, the
+/// revoked one too, so the vault that folded the handoff refuses the fork at
+/// its door and keeps the successor. A replica that imports both reads a
+/// fork: neither successor stands and both keys stay retired (Sol review 2,
+/// Engine ruling 2026-10-13). Round 1 let the rotation's successor win there;
+/// that one-way yield is what a three-handoff cycle turned open.
 #[test]
 fn a_key_rotated_out_before_the_handoff_forks_no_root() {
     let dir = tempfile::tempdir().unwrap();
@@ -692,33 +687,35 @@ fn a_key_rotated_out_before_the_handoff_forks_no_root() {
     vault.apply_signed_re_root(&handoff).unwrap();
     let forked = re_root_entry(id, &genesis, &old, 2, &fork);
     assert!(vault.apply_signed_re_root(&forked).is_err());
+    assert!(!vault.authority_fold().unwrap().roster[&host.public_key()].revoked);
 
     let (_replica_dir, replica) =
         replica_with(vault.export_signed_authority_history().unwrap(), &forked);
     mature_observed_widen(&replica, &rotation);
     let fold = replica.authority_fold().unwrap();
-    assert!(
-        fold.valid_entries
-            .contains(&authority_entry_hash(&handoff).unwrap())
-    );
-    assert!(
-        !fold
-            .valid_entries
-            .contains(&authority_entry_hash(&forked).unwrap())
-    );
-    assert!(!fold.roster[&host.public_key()].revoked);
-    assert!(
-        fold.roster
-            .get(&authority_key_from_ed(&fork))
-            .is_none_or(|device| device.revoked)
-    );
+    for entry in [&handoff, &forked] {
+        assert!(
+            !fold
+                .valid_entries
+                .contains(&authority_entry_hash(entry).unwrap())
+        );
+    }
+    for key in [&old, &next] {
+        assert!(fold.retired_keys.contains(&authority_key_from_ed(key)));
+    }
+    assert!(fold.roster.values().all(|device| device.revoked));
 }
 
-/// The successor root may merge an entry the old root signed beside its
-/// handoff (Sol review 1). Its own handoff then stands, and its successor is
-/// the live root; the merge never leaves the vault without one.
+/// A successor's handoff that merges a row its predecessor's handoff fenced
+/// installs nothing, on a fresh replica as on one that holds the first
+/// handoff (Sol review 2, finding 2). Round 1 widened the first handoff's line
+/// through the second, so a fresh replica installed the third root while the
+/// one holding the first handoff refused the merge at its door. Now both keep
+/// the second root, and its route onward is a handoff from the heads it has.
 #[test]
-fn a_successor_handoff_that_merges_a_missed_entry_keeps_a_live_root() {
+fn a_successor_merge_of_a_fenced_row_installs_nothing_anywhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let old = ed_key(172);
     let next = ed_key(173);
     let third = ed_key(174);
@@ -742,11 +739,37 @@ fn a_successor_handoff_that_merges_a_missed_entry_keeps_a_live_root() {
         .push(authority_entry_hash(&missed).unwrap());
     second.parent_hashes.sort();
     let second = sign_ed(second, &next);
-    let fold = fold_authority_log(&[genesis, missed, first, second.clone()]);
+    let bodies: Vec<Vec<u8>> = [&genesis, &missed, &first, &second]
+        .into_iter()
+        .map(|entry| encode_authority_log_entry_body(entry).unwrap())
+        .collect();
+    let keeps_next = |fold: &AuthorityFold| {
+        !fold.roster[&authority_key_from_ed(&next)].revoked
+            && fold
+                .roster
+                .get(&authority_key_from_ed(&third))
+                .is_none_or(|device| device.revoked)
+    };
+
+    let fresh_dir = tempfile::tempdir().unwrap();
+    let fresh = Vault::open(fresh_dir.path(), VaultConfig::default()).unwrap();
+    fresh.import_signed_authority_history(&bodies).unwrap();
+    let fold = fresh.authority_fold().unwrap();
+    assert!(keeps_next(&fold), "a fresh replica installs no third root");
     assert!(
-        fold.valid_entries
+        !fold
+            .valid_entries
             .contains(&authority_entry_hash(&second).unwrap())
     );
+
+    store(&vault, &genesis);
+    vault.apply_signed_re_root(&first).unwrap();
+    assert!(vault.import_signed_authority_history(&bodies).is_err());
+    assert!(keeps_next(&vault.authority_fold().unwrap()));
+    vault
+        .apply_signed_re_root(&re_root_entry(id, &first, &next, 1, &third))
+        .unwrap();
+    let fold = vault.authority_fold().unwrap();
     assert!(!fold.roster[&authority_key_from_ed(&third)].revoked);
     assert!(fold.roster[&authority_key_from_ed(&next)].revoked);
 }
