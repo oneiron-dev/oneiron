@@ -187,34 +187,10 @@ pub(crate) fn capture_entity_revision(
     id: &EntityId,
     new_raw: &[u8],
 ) -> Result<()> {
-    capture(store, txn, id, new_raw, false).map(drop)
-}
-
-/// [`capture_entity_revision`] for a row a room indexes in the same apply. A
-/// room indexes what it stages at once and runs no idle pass, so the revision
-/// it stages is its indexed one too; base keeps its deferred interval. True
-/// when the indexed revision moved to other content: an index of the row the
-/// apply did not restage then belongs to another revision.
-pub(crate) fn capture_published_entity_revision(
-    store: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    id: &EntityId,
-    new_raw: &[u8],
-) -> Result<bool> {
-    capture(store, txn, id, new_raw, true)
-}
-
-fn capture(
-    store: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    id: &EntityId,
-    new_raw: &[u8],
-    publish: bool,
-) -> Result<bool> {
     let header = EntityMetadataHeader::parse(new_raw)
         .ok_or(Error::CorruptedIndex("entity revision header"))?;
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
-        return Ok(false);
+        return Ok(());
     }
     let prior = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     let existing = state(store, txn, id)?;
@@ -244,26 +220,15 @@ fn capture(
             retain_frontier(store, txn, id, current.live, &doc)?;
             save_doc(store, txn, id, &doc)?;
             current.has_doc = true;
-            if metadata_only || publish {
+            if metadata_only {
                 current.indexed = current.live;
             }
         }
         IDENTITY.put(store, txn, &current.live.0, id)?;
-        put_state(store, txn, id, &current)?;
-        return Ok(publish && current.has_doc && !metadata_only);
+        return put_state(store, txn, id, &current);
     };
     if prior.as_deref() == Some(new_raw) {
-        if !publish {
-            return Ok(false);
-        }
-        // The same body again. A revision still pending is published as is,
-        // and the state is written even unchanged: an earlier put of the row
-        // in the same room apply may have staged another, which no read here
-        // sees.
-        let moved = current.live != current.indexed;
-        current.indexed = current.live;
-        put_state(store, txn, id, &current)?;
-        return Ok(moved);
+        return Ok(());
     }
     let doc = if current.has_doc {
         load_doc(store, txn, id)?
@@ -291,11 +256,7 @@ fn capture(
     let next = reference(id, &doc.oplog_frontiers().encode());
     retain_frontier(store, txn, id, next, &doc)?;
     save_doc(store, txn, id, &doc)?;
-    // Other content than the indexed revision's, now or still pending.
-    let moved = !metadata_only || current.live != current.indexed;
-    if publish {
-        current.indexed = next;
-    } else if metadata_only {
+    if metadata_only {
         if current.live == current.indexed {
             current.indexed = next;
         } else {
@@ -304,14 +265,41 @@ fn capture(
             super::pending_index::retarget_revision(store, txn, id, current.live, next)?;
             super::phonetic::retarget_revision(store, txn, id, current.live, next)?;
         }
-    }
-    if !metadata_only {
+    } else {
         current.changed_at_ms = now_ms;
     }
     current.live = next;
     current.has_doc = true;
+    put_state(store, txn, id, &current)
+}
+
+/// Publishes the revision a room holds pending for `id`. A room indexes what
+/// it stages at once and runs no idle pass, so once it indexes a row it put,
+/// the row's indexed revision is its live one; base keeps its deferred
+/// interval. True when the body is not the one indexed before, so an index
+/// of the row that the room did not restage describes another body.
+pub(crate) fn publish_room_revision(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(mut current) = state(store, txn, id)? else {
+        return Ok(false);
+    };
+    if current.live == current.indexed {
+        return Ok(false);
+    }
+    let live = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        .ok_or(Error::CorruptedIndex("revision without entity"))?;
+    // Without a document the indexed body cannot be read back: it counts as
+    // another, and the room hides what it did not restage.
+    let changed = !current.has_doc
+        || doc_raw(&fork_revision(store, txn, id, current.indexed)?)?
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            != live.get(ENTITY_METADATA_HEADER_LEN..);
+    current.indexed = current.live;
     put_state(store, txn, id, &current)?;
-    Ok(publish && moved)
+    Ok(changed)
 }
 
 pub(crate) fn storage_manages_text(

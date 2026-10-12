@@ -7,32 +7,41 @@ use crate::off_record::{OffRecordBackendClass, OffRecordSession};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD};
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
 
-/// Stages `ops` in the room through its own apply door, as a turn would.
+/// Stages `ops` in the room through its own apply door, as a turn would:
+/// one op per apply, each on a fresh view of the overlay (a view reads the
+/// overlay as it was when it was built). A put is staged under its own
+/// stamps.
 fn stage_in_room(vault: &Vault, session: &OffRecordSession<'_>, ops: Vec<BatchOp>) -> Result<()> {
     let route = session.write_route()?;
     let overlay = session.overlay();
     let scope = JournalScope::new(EntityId::now(), EntityId::now());
-    let entries = ops
-        .into_iter()
-        .map(|op| JournalEntry {
-            scope,
-            role: JournalRole::TurnPut,
-            learned_at: 10,
-            occurred: TimeRange { start: 10, end: 10 },
-            op,
-        })
-        .collect();
     let segment = vault.with_write_txn_grouped(|wtxn| {
         let segment = overlay.install_txn_segment()?;
-        let view = vault.store.session_view(overlay.clone())?;
-        crate::batch::apply_ops_session(
-            &view,
-            &route,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            entries,
-        )?;
+        for op in ops {
+            let (occurred, learned_at) = match &op {
+                BatchOp::Put {
+                    occurred,
+                    learned_at,
+                    ..
+                } => (*occurred, *learned_at),
+                _ => (TimeRange { start: 10, end: 10 }, 10),
+            };
+            let entry = JournalEntry {
+                scope,
+                role: JournalRole::TurnPut,
+                learned_at,
+                occurred,
+                op,
+            };
+            crate::batch::apply_ops_session(
+                &session.read_view()?,
+                &route,
+                &vault.config,
+                &vault.analyzer,
+                wtxn,
+                vec![entry],
+            )?;
+        }
         Ok(segment)
     })?;
     segment.commit()
@@ -916,12 +925,15 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
 #[test]
 fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let claim = entity_id(0xDB);
     let occurred = TimeRange { start: 1, end: 1 };
     let body = |value: &str| -> Result<Vec<u8>> {
         let body = ClaimBody::new(
             "test.status",
-            ClaimSubject::Entity(entity_id(0x7C)),
+            ClaimSubject::Entity(owner),
             rmpv::Value::from(value),
             0.9,
             ClaimApprovalStatus::Auto,
@@ -1049,12 +1061,12 @@ fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refus
     Ok(())
 }
 
-/// Two puts of one row in one room apply, the second restoring the body
-/// base holds, with the room's words. The row's last put decides what the
-/// room indexed: a pack in the room reads base's body by those words, and
-/// base's vector, which belongs to that body, still finds the row there.
+/// A room puts another body for a row, then puts base's body back and
+/// indexes the row with its own words. What it publishes is the body base
+/// indexed: a pack in the room reads it by the room's words, and base's
+/// vector of that body still finds the row there.
 #[test]
-fn a_rooms_last_put_of_a_row_decides_the_revision_it_indexed() -> Result<()> {
+fn a_room_that_puts_a_rows_body_back_keeps_the_index_of_that_body() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let owner = vault
         .ensure_embedded_owner_actor()

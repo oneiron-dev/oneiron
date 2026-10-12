@@ -44,46 +44,6 @@ pub(in crate::batch) fn stage_entity_body_row(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
-    let payload = entity_body_row(store, wtxn, id, entity_type, occurred, learned_at, data)?;
-    crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
-    land_entity_body_row(store, wtxn, id, entity_type, data, &payload)
-}
-
-/// [`stage_entity_body_row`] for a row a room indexes in the same apply: its
-/// revision is published as it is staged (`capture_published_entity_revision`).
-/// True when the published revision holds other content than the row's
-/// indexed one did.
-pub(in crate::batch) fn stage_published_body_row(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    entity_type: u8,
-    occurred: TimeRange,
-    learned_at: u64,
-    data: &[u8],
-) -> Result<bool> {
-    let payload = entity_body_row(store, wtxn, id, entity_type, occurred, learned_at, data)?;
-    let moved = crate::vault::entity_revision::capture_published_entity_revision(
-        store,
-        wtxn,
-        id,
-        &payload.0,
-    )?;
-    land_entity_body_row(store, wtxn, id, entity_type, data, &payload)?;
-    Ok(moved)
-}
-
-/// Validates and reindexes what the body names, and returns its row: the
-/// metadata header followed by the body.
-fn entity_body_row(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    entity_type: u8,
-    occurred: TimeRange,
-    learned_at: u64,
-    data: &[u8],
-) -> Result<RowEnvelope> {
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
@@ -95,17 +55,7 @@ fn entity_body_row(
     payload.0.extend_from_slice(&occurred.end.to_be_bytes());
     payload.0.extend_from_slice(&learned_at.to_be_bytes());
     payload.0.extend_from_slice(data);
-    Ok(payload)
-}
-
-fn land_entity_body_row(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    entity_type: u8,
-    data: &[u8],
-    payload: &RowEnvelope,
-) -> Result<()> {
+    crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
     Ok(())
