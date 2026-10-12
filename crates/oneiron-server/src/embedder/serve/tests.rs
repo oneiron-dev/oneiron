@@ -100,6 +100,7 @@ struct Synthetic {
     model_id: &'static str,
     transform: &'static str,
     profile: RunProfile,
+    provenance: EmbeddingProvenance,
 }
 
 impl ServedModel for Synthetic {
@@ -117,6 +118,10 @@ impl ServedModel for Synthetic {
 
     fn profile(&self) -> &RunProfile {
         &self.profile
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        self.provenance.clone()
     }
 
     fn embed_raw(
@@ -150,6 +155,10 @@ fn synthetic() -> Arc<dyn ServedModel> {
         model_id: SYNTHETIC_MODEL,
         transform: SYNTHETIC_TRANSFORM,
         profile: RunProfile::of(&EmbedderConfig::default()),
+        provenance: EmbeddingProvenance::new(
+            oneiron::embed::EmbeddingDevice::Cuda,
+            "candle 0.11.0 q8_0",
+        ),
     })
 }
 
@@ -292,7 +301,8 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
 /// model behind an alias can change while the alias stays. Every listing row,
 /// an alias's too, and every answer names the model loaded, which the vault
 /// holds to its own, and the profile it runs with, which decides the vault's
-/// evidence floors (review P3).
+/// evidence floors (review P3). Every answer also names the device and runtime
+/// that computed it, which the vault marks its vectors with (ARCH-0036).
 #[test]
 fn every_row_and_answer_names_the_model_loaded() {
     let (addr, _runtime) = on_loopback(router(synthetic(), vec!["shared".to_owned()], None));
@@ -326,4 +336,8 @@ fn every_row_and_answer_names_the_model_loaded() {
     assert_eq!(answer["model_id"], SYNTHETIC_MODEL);
     assert_eq!(answer["transform"], SYNTHETIC_TRANSFORM);
     assert_eq!(answer["profile"], profile);
+    assert_eq!(
+        answer["provenance"],
+        serde_json::json!({ "device": "cuda", "runtime": "candle 0.11.0 q8_0" })
+    );
 }

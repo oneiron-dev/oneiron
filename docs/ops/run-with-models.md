@@ -126,6 +126,9 @@ path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture 
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
 for the user that runs it, and `newuidmap`. A Linux host that is meant to prove the
 broker runs it; there, a missing prerequisite fails the run instead of skipping it.
+The full gate (`SCOPE_FULL=true scripts/ci/run_scoped.sh test`) runs it after the
+workspace tests, so the host that runs the full gate needs the range and
+`newuidmap`.
 
 `max_output_tokens` is a ceiling on every call to that provider: it is sent
 when a call names no limit, and a larger limit is cut down to it. An
