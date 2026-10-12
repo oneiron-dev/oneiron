@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::store::StoreRead;
 
 use super::validation::disclosure_admits_target;
-use super::world_partition::claim_world_by_id;
+use super::world_partition::record_world_by_id;
 
 #[cfg(not(test))]
 pub(super) const MAX_EDGE_SCAN_RESULTS: usize = 100_000;
@@ -197,7 +197,7 @@ pub(super) fn walk_edges(
                 // traversed through, so it cannot spend the edge budget it was
                 // excluded from either.
                 if let Some(stale) = stale_worlds
-                    && claim_world_by_id(store, rtxn, &edge.target)?
+                    && record_world_by_id(store, rtxn, &edge.target)?
                         .is_some_and(|world| stale.contains_key(&world))
                 {
                     continue;

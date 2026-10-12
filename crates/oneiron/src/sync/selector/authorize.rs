@@ -461,6 +461,7 @@ pub(super) fn filter_window_doc(
         let Some(decision) = entity_selector_decision(
             vault,
             (&id, blob),
+            &scope,
             selector,
             &facet_scope,
             scope_position,
