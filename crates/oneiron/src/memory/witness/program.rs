@@ -394,7 +394,8 @@ impl Memory<'_> {
                 // leaves no journal or index delta.
                 WitnessSink::Overlay(overlay) => {
                     let rostered = room_speech.is_some();
-                    let person_author = self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
+                    let person_author =
+                        self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
                     self.admit_witness_in_txn(&plan, &overlay.read_view()?, wtxn, person_author)?
                 }
             };

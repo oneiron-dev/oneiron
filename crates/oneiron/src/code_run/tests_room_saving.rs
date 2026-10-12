@@ -359,7 +359,11 @@ fn a_save_refuses_a_copy_whose_order_the_turn_took_since() {
         ),
         "the save copied onto a taken order: {refused:?}"
     );
-    assert_eq!(base_orders(&vault, &turn), vec![0, 1], "one message per order");
+    assert_eq!(
+        base_orders(&vault, &turn),
+        vec![0, 1],
+        "one message per order"
+    );
     assert!(vault.get_raw(&message(1)).expect("read").is_none());
     assert!(
         session

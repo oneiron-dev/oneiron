@@ -334,11 +334,17 @@ impl Memory<'_> {
             if sink.overlay.contains_entity(&id)? {
                 continue;
             }
-            let deleted = self.vault.local_hard_delete_marker_exists_in_txn(wtxn, &id)?;
+            let deleted = self
+                .vault
+                .local_hard_delete_marker_exists_in_txn(wtxn, &id)?;
             if rostered
                 && (deleted
-                    || crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, wtxn, &id)?
-                        .is_some())
+                    || crate::ports::EntityStoreRead::port_entity_raw(
+                        &self.vault.store,
+                        wtxn,
+                        &id,
+                    )?
+                    .is_some())
             {
                 return Err(MemoryError::bad_request_with(
                     "a witnessed message id must be new, or one this stretch holds",

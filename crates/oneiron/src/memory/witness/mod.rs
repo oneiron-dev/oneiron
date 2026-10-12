@@ -18,7 +18,8 @@ pub(crate) use self::codec::{IMPORTED_SOURCE_KEY, guard_import_stamp, witness_me
 pub(crate) use self::program::ImportedTurnStamp;
 
 pub(crate) use self::validation::{
-    next_witness_message_order, sole_edge_target, taken_witness_message_order, witness_message_order,
+    next_witness_message_order, sole_edge_target, taken_witness_message_order,
+    witness_message_order,
 };
 
 // Helpers the sibling test suite resolves through `use super::witness::*`;
