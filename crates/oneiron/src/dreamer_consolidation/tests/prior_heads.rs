@@ -1234,7 +1234,11 @@ fn a_replay_after_writing_about_a_listed_person_never_calls_again() -> Result<()
         "{first:?}"
     );
     let written = vault.claims_for_subject(&person)?;
-    assert_eq!(written.len(), 2, "the pass wrote one new claim beside the head");
+    assert_eq!(
+        written.len(),
+        2,
+        "the pass wrote one new claim beside the head"
+    );
     let replay = block_on_ready(executor.execute(&admitted, &mut ctx))
         .unwrap_or_else(|error| panic!("the replay refused: {error}"));
     assert!(
