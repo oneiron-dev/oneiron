@@ -490,7 +490,7 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     vault
         .bind_host_owner_for_test(&issuer, owner)
         .expect("bind the owner");
-    let mut claims = root.claims.clone();
+    let mut claims = root.claims;
     claims.slip_id = *blake3::hash(b"narrower owner credential").as_bytes();
     claims.parent_id = None;
     claims.holder_ref = owner.to_hex();

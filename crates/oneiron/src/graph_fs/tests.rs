@@ -328,7 +328,7 @@ fn worlds_list_under_the_readers_own_authority() -> Result<()> {
 
     let issuer = crate::test_support::test_host_issuer();
     let root = vault.ensure_host_root_slip(&issuer)?;
-    let mut claims = root.claims.clone();
+    let mut claims = root.claims;
     claims.slip_id = *blake3::hash(b"one world credential").as_bytes();
     claims.parent_id = None;
     claims.holder_ref = holder.to_hex();
@@ -434,7 +434,7 @@ fn a_kept_lane_lists_no_world_after_its_credential_is_revoked() -> Result<()> {
     let root = vault.ensure_host_root_slip(&issuer)?;
     vault.bind_host_owner_for_test(&issuer, owner)?;
     let slip_id = *blake3::hash(b"the owner's world credential").as_bytes();
-    let mut claims = root.claims.clone();
+    let mut claims = root.claims;
     claims.slip_id = slip_id;
     claims.parent_id = None;
     claims.holder_ref = owner.to_hex();
