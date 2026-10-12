@@ -37,7 +37,8 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// First hard bridge failure (gate rejection or failed audited write).
     /// The guest received a typed `Denied`/`Failed` RESPONSE for it (budget
     /// attached); the executor fails the step with this error AFTER the
-    /// step returns, and later calls in the step are refused fail-closed.
+    /// step returns, and later calls and recorded-output reads in the step
+    /// are refused fail-closed.
     pub(super) hard_failure: Option<Error>,
 }
 
@@ -107,6 +108,29 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor recoverable output storage unavailable".into(),
         ))?;
+        // A read answers where the step's next bridge call would: a step that
+        // can no longer close reads nothing more, past a halted bridge or past
+        // a write that did not meet its receipt, in this attempt or before.
+        let halted = if self.hard_failure.is_some() {
+            Some("host_bridge_halted".to_owned())
+        } else {
+            self.gated_write
+                .refusal_past_an_unmet_write(
+                    ExecutorCallSite {
+                        run_id: self.run_id,
+                        seq: self.next_seq,
+                        step_start: self.step_start,
+                        earlier: &self.bridge_calls,
+                    },
+                    None,
+                )?
+                .map(|refused| refused.outcome)
+        };
+        if let Some(code) = halted {
+            return Err(Error::InvalidConfig(format!(
+                "recorded output read refused: {code}"
+            )));
+        }
         // The run's recorded outputs hold what its calls read: a bound door
         // rules on reading them back as on any other call the run serves.
         self.gated_write

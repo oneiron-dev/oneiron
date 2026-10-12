@@ -12,13 +12,15 @@ use crate::task_verb::sdk::{AgentVerb, TaskCreateRequest};
 /// on the host's memory surface, under the origin the dispatcher hands it.
 /// Its answer is the task receipt, with `extra` fields beside it. Once
 /// `closed`, it refuses every call as the MCP door refuses a revoked slip's;
-/// one that `refuses_kept` refuses reading a kept answer back, and only that.
+/// one that `refuses_kept` refuses reading a kept answer back, and only that,
+/// in a gate's own word once `refuses_kept_as_a_gate`.
 struct TaskCreateDoor {
     vault: Arc<Vault>,
     actor: WriteActor,
     extra: serde_json::Map<String, serde_json::Value>,
     closed: std::sync::atomic::AtomicBool,
     refuses_kept: std::sync::atomic::AtomicBool,
+    refuses_kept_as_a_gate: std::sync::atomic::AtomicBool,
 }
 
 impl TaskCreateDoor {
@@ -63,8 +65,11 @@ impl AgentVerbDoor for TaskCreateDoor {
         if call == RunCall::RecordedOutput
             && self.refuses_kept.load(std::sync::atomic::Ordering::SeqCst)
         {
+            let as_a_gate = self
+                .refuses_kept_as_a_gate
+                .load(std::sync::atomic::Ordering::SeqCst);
             return Err(AgentVerbRefusal {
-                code: "read_refused".to_owned(),
+                code: if as_a_gate { "deny" } else { "read_refused" }.to_owned(),
             });
         }
         self.admits().map(|()| None)
@@ -147,6 +152,7 @@ impl<'a> VerbWriteRun<'a> {
             extra,
             closed: std::sync::atomic::AtomicBool::new(false),
             refuses_kept: std::sync::atomic::AtomicBool::new(false),
+            refuses_kept_as_a_gate: std::sync::atomic::AtomicBool::new(false),
         });
         let gated_write = GatedActorWrite::new(vault, actor, "verb-write-resume")
             .expect("gated actor write")
@@ -549,6 +555,133 @@ fn a_bubble_past_a_refused_kept_answer_speaks_nothing() {
     );
 }
 
+/// The guest's answer to a call the door refused with `code`.
+fn refused_as(effect: SelfEffect, code: &str) -> SelfDispatchOutcome {
+    SelfDispatchOutcome::Denied(crate::code_run::SelfDeniedResult {
+        effect,
+        outcome: code.to_owned(),
+        reason_codes: Vec::new(),
+    })
+}
+
+/// Review repro (Astra, #1405 re-check): a refused kept answer kept its step
+/// from closing, but only the attempt that got it knew. The next attempt of
+/// the same step started with an empty history, and its bubble committed
+/// before the unmet receipt stopped the checkpoint. The refusal now stands on
+/// the receipt: every attempt of the step gets it until an admitted read
+/// reconciles the receipt, and the step then closes with its one task.
+#[test]
+fn a_refused_kept_answer_holds_in_the_steps_next_attempt() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    let first = run.stop_after(vec![create_task()]);
+    let messages = || {
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .len()
+    };
+    let before = messages();
+    let speak = || SelfCall::Speak(SelfSpeechCall::new("still here"));
+    let not_closed = |outcome: EngineExecutorResult<EngineExecutorOutcome>| {
+        assert!(
+            matches!(
+                outcome,
+                Err(EngineExecutorError::Engine(Error::InvariantViolation(_)))
+            ),
+            "a step whose write was refused does not close: {outcome:?}"
+        );
+    };
+
+    run.door
+        .refuses_kept
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut refused = resumed_step(vec![create_task()]);
+    not_closed(run.resume(&run.config, &mut refused));
+    assert_eq!(
+        refused.answers,
+        vec![refused_as(SelfEffect::AgentVerb, "read_refused")]
+    );
+
+    let mut next = resumed_step(vec![speak(), create_task()]);
+    not_closed(run.resume(&run.config, &mut next));
+    assert_eq!(messages(), before, "the next attempt speaks nothing");
+    assert_eq!(
+        next.answers,
+        vec![
+            refused_as(SelfEffect::Speak, "read_refused"),
+            refused_as(SelfEffect::AgentVerb, "read_refused"),
+        ]
+    );
+
+    run.door
+        .refuses_kept
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut admitted = resumed_step(vec![create_task(), speak()]);
+    let outcome = run.resume(&run.config, &mut admitted);
+    assert_eq!(
+        outcome.expect("the admitted attempt").status,
+        EngineExecutorStatus::Complete
+    );
+    assert_eq!(
+        admitted.answers.first(),
+        Some(&first),
+        "the admitted attempt answers with the first receipt"
+    );
+    assert_eq!(messages(), before + 1, "the reconciled step speaks again");
+}
+
+/// A kept answer's refusal spelled as a gate's own word stands on its receipt
+/// as that gate's rejection: the step's next attempt halts its bridge at its
+/// first call, as after any gate's, and so cannot close on a later admitted
+/// read. The attempt after it reconciles the receipt and closes.
+#[test]
+fn a_kept_answer_refused_in_a_gate_word_halts_the_next_attempt() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    let first = run.stop_after(vec![create_task()]);
+    let speak = || SelfCall::Speak(SelfSpeechCall::new("still here"));
+
+    run.door
+        .refuses_kept_as_a_gate
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    run.door
+        .refuses_kept
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut refused = resumed_step(vec![create_task()]);
+    assert!(run.resume(&run.config, &mut refused).is_err());
+    assert_eq!(
+        refused.answers,
+        vec![refused_as(SelfEffect::AgentVerb, "deny")]
+    );
+
+    run.door
+        .refuses_kept
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut next = resumed_step(vec![speak(), create_task()]);
+    assert!(run.resume(&run.config, &mut next).is_err());
+    assert_eq!(
+        next.answers,
+        vec![
+            refused_as(SelfEffect::Speak, "deny"),
+            SelfDispatchOutcome::Failed(crate::code_run::SelfFailedResult {
+                effect: SelfEffect::AgentVerb,
+                error: "host_bridge_halted".to_owned(),
+            }),
+        ]
+    );
+
+    let mut admitted = resumed_step(vec![create_task()]);
+    let outcome = run.resume(&run.config, &mut admitted);
+    assert_eq!(
+        outcome.expect("the admitted attempt").status,
+        EngineExecutorStatus::Complete
+    );
+    assert_eq!(admitted.answers, vec![first]);
+}
+
 /// A host door that admits a run's own calls until it closes, as a connector
 /// credential stops admitting them once it is revoked.
 struct ClosingDoor {
@@ -815,4 +948,155 @@ fn a_door_refusal_spelled_as_a_gate_word_halts_the_bridge_as_a_gate_does() {
             (1, "self.speak", "failed")
         ]
     );
+}
+
+/// Step 0 records an observation. Step 1 makes `calls`, then reads that
+/// observation back through its context reference. One that `stops` halts
+/// the process after its calls, before the step's checkpoint. With
+/// `reopens`, the door admits recorded reads again before the read, as a
+/// door may change its ruling between two calls.
+struct ReadsBackPastItsCalls {
+    calls: Vec<SelfCall>,
+    stops: bool,
+    reopens: Option<Arc<TaskCreateDoor>>,
+    answers: Vec<SelfDispatchOutcome>,
+    reads: Vec<Result<Option<Vec<u8>>>>,
+}
+
+impl ReadsBackPastItsCalls {
+    fn new(calls: Vec<SelfCall>) -> Self {
+        Self {
+            calls,
+            stops: false,
+            reopens: None,
+            answers: Vec::new(),
+            reads: Vec::new(),
+        }
+    }
+}
+
+impl JsCodeModeRuntime for ReadsBackPastItsCalls {
+    fn run_step(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> Result<JsCodeModeStepOutcome> {
+        if step.seq == 0 {
+            return Ok(JsCodeModeStepOutcome::pending(RECORDED_OBSERVATION));
+        }
+        for call in self.calls.clone() {
+            self.answers.push(host.dispatch_self(call)?.outcome);
+        }
+        assert!(
+            !self.stops,
+            "the process stops before the step's checkpoint"
+        );
+        if let Some(door) = &self.reopens {
+            door.refuses_kept
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        let path = super::super::store::recoverable_chunk_path(
+            0,
+            crate::compaction::output::OutputRef::from_bytes(RECORDED_OBSERVATION.as_bytes()),
+            0,
+        );
+        self.reads.push(host.read_recoverable_output(&path));
+        Ok(JsCodeModeStepOutcome::complete(""))
+    }
+}
+
+/// Review repro (Sol R9, #1405): past a resumed write whose kept answer the
+/// door refused, the guest read an earlier step's recorded output back. The
+/// read is a host import, not a bridge call, so it skipped the check that
+/// refuses every call past such a write; the door, asked again, admitted it,
+/// and the guest got the bytes although its step could no longer close. The
+/// read now gets that write's refusal before any bytes load.
+#[test]
+fn a_recorded_read_past_a_refused_kept_answer_reads_nothing() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    let mut first = ReadsBackPastItsCalls {
+        stops: true,
+        ..ReadsBackPastItsCalls::new(vec![create_task()])
+    };
+    assert!(
+        run.run(&run.config, &mut first).is_err(),
+        "the process stopped"
+    );
+    assert!(
+        matches!(first.answers.as_slice(), [SelfDispatchOutcome::AgentVerb(_)]),
+        "the first attempt's write committed: {:?}",
+        first.answers
+    );
+
+    run.door
+        .refuses_kept
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut resumed = ReadsBackPastItsCalls {
+        reopens: Some(Arc::clone(&run.door)),
+        ..ReadsBackPastItsCalls::new(vec![create_task()])
+    };
+    let outcome = run.resume(&run.config, &mut resumed);
+    assert!(
+        matches!(
+            outcome,
+            Err(EngineExecutorError::Engine(Error::InvariantViolation(_)))
+        ),
+        "a step whose write was refused does not close: {outcome:?}"
+    );
+    assert_eq!(
+        resumed.answers,
+        vec![SelfDispatchOutcome::Denied(
+            crate::code_run::SelfDeniedResult {
+                effect: SelfEffect::AgentVerb,
+                outcome: "read_refused".to_owned(),
+                reason_codes: Vec::new(),
+            }
+        )]
+    );
+    let [read] = resumed.reads.as_slice() else {
+        panic!("step 1 read once: {:?}", resumed.reads);
+    };
+    let refused = read
+        .as_ref()
+        .expect_err("the read past the refusal is refused");
+    assert!(refused.to_string().contains("read_refused"), "{refused}");
+}
+
+/// Review repro (Sol R9, #1405), the halt half: a door's `deny` halts the
+/// bridge, and a recorded-output read after it is refused as a bridge call
+/// there is, though the door admits recorded reads.
+#[test]
+fn a_recorded_read_past_a_halted_bridge_reads_nothing() {
+    let (_dir, vault) = open_test_vault();
+    let gated = gated_actor_write(&vault, "run-halted-recorded-read")
+        .with_agent_verb_door(Arc::new(GateWordDoor));
+    let config = executor_config(entity(0xEB), EngineExecutorLimits::default());
+    let backend = FixtureBackend::new([
+        "const first = 1;",
+        "await self.memory.search({query: 'heron lantern'});",
+    ]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime = ReadsBackPastItsCalls::new(vec![SelfCall::MemorySearch(
+        SelfMemorySearchCall::new("heron lantern", 4),
+    )]);
+    let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
+    let failed = block_on_ready(executor.run(&config)).expect_err("the step fails on the refusal");
+    drop(executor);
+    assert!(
+        matches!(
+            &failed,
+            EngineExecutorError::Engine(Error::Gate(GateError::GateWriteRejected {
+                outcome: "deny",
+                ..
+            }))
+        ),
+        "{failed}"
+    );
+    let [read] = runtime.reads.as_slice() else {
+        panic!("step 1 read once: {:?}", runtime.reads);
+    };
+    let refused = read.as_ref().expect_err("the read past the halt is refused");
+    assert!(refused.to_string().contains("host_bridge_halted"), "{refused}");
 }

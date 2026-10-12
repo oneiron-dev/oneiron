@@ -202,14 +202,9 @@ impl<'a> HostSelfDispatcher<'a> {
         };
         let admitted = door.admit_run_call(call);
         if let Err(refusal) = &admitted
-            && let Some(outcome) = crate::error::GateDenialOutcome::parse(&refusal.code)
+            && let Some(rejected) = gate_rejection(&refusal.code)
         {
-            return Err(crate::Error::Gate(
-                crate::error::GateError::GateWriteRejected {
-                    outcome: outcome.as_str(),
-                    reason_codes: Vec::new(),
-                },
-            ));
+            return Err(rejected);
         }
         Ok(admitted)
     }
@@ -311,7 +306,7 @@ impl<'a> HostSelfDispatcher<'a> {
         // A step that can no longer close commits nothing more.
         if let Some(site) = site
             && !matches!(call, SelfCall::Context(_))
-            && let Some(refused) = self.refusal_past_an_unmet_write(site)?
+            && let Some(refused) = self.refusal_past_an_unmet_write(site, Some(&call))?
         {
             return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
                 effect: call.effect(),
@@ -383,6 +378,17 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
         }
     }
+}
+
+/// The gate rejection a door's refusal is when it is spelled as a gate's
+/// outcome word, as `admit_run_call` says.
+fn gate_rejection(code: &str) -> Option<crate::Error> {
+    crate::error::GateDenialOutcome::parse(code).map(|outcome| {
+        crate::Error::Gate(crate::error::GateError::GateWriteRejected {
+            outcome: outcome.as_str(),
+            reason_codes: Vec::new(),
+        })
+    })
 }
 
 impl HostSelfDispatcher<'_> {
