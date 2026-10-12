@@ -37,9 +37,11 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# The same-user child starts with its channel and stdio only.
+oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 # The same-user child's channel: each call's socket passes to it as a
-# descriptor (SCM_RIGHTS).
-rustix = { version = "1", features = ["net", "std"] }
+# descriptor (SCM_RIGHTS), and the daemon polls it for the child's hang-up.
+rustix = { version = "1", features = ["event", "net", "std"] }
 
 [dev-dependencies]
 tempfile = "3"

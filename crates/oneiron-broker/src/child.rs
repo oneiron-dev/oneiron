@@ -13,7 +13,13 @@
 //! reach it, and no path or pid number names it to the daemon. It says it
 //! serves on its stdout, a pipe only the daemon holds. The child exits when
 //! its stdin, which the daemon holds, closes, or the channel does. That
-//! happens when the daemon drops it or dies.
+//! happens when the daemon drops it or dies. A child that let its channel go
+//! is replaced before the next call's permit starts.
+//!
+//! Every other subprocess of the daemon starts through `oneiron_spawn`, with
+//! only the descriptors it is named. So none keeps a copy of a socket pair's
+//! end in the moment, on macOS, between the pair's making and its
+//! close-on-exec.
 //!
 //! What this mode cannot close, against a process of the same uid: it can
 //! open the child's memory in the moment between its start and its first
@@ -28,15 +34,16 @@
 use std::ffi::OsString;
 use std::io::{BufRead as _, IoSlice, Read as _};
 use std::mem::MaybeUninit;
-use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, RawFd};
+use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
 
@@ -50,7 +57,7 @@ const START_DEADLINE: Duration = Duration::from_secs(10);
 const HANDOVER_DEADLINE: Duration = Duration::from_secs(5);
 
 /// A child gone mid-handover is an error, never a SIGPIPE: per send on Linux,
-/// and through `SO_NOSIGPIPE` on the channel on macOS.
+/// and through `SO_NOSIGPIPE` on each socket on macOS.
 #[cfg(target_os = "linux")]
 const SEND_FLAGS: SendFlags = SendFlags::NOSIGNAL;
 #[cfg(not(target_os = "linux"))]
@@ -102,8 +109,9 @@ impl ChildBroker {
         }
     }
 
-    /// Starts the child if it is not running. A start blocks until the child
-    /// says it serves, at most `START_DEADLINE` (10 s).
+    /// Starts the child if it is not running, or if it let its channel go. A
+    /// start blocks until the child says it serves, at most `START_DEADLINE`
+    /// (10 s).
     pub fn ensure(&self) -> std::io::Result<()> {
         let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
         live(&mut running, || self.start()).map(drop)
@@ -116,6 +124,12 @@ impl ChildBroker {
         let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
         let child = live(&mut running, || self.start())?;
         let (ours, theirs) = UnixStream::pair()?;
+        // The frame and the reply go on these: a peer gone is an error to
+        // either side, whatever its SIGPIPE disposition.
+        #[cfg(target_os = "macos")]
+        for end in [&ours, &theirs] {
+            rustix::net::sockopt::set_socket_nosigpipe(end, true)?;
+        }
         let handed = hand_over(&child.channel, theirs.as_fd());
         drop(theirs);
         if let Err(error) = handed {
@@ -131,8 +145,8 @@ impl ChildBroker {
         let (channel, theirs) = UnixStream::pair()?;
         #[cfg(target_os = "macos")]
         rustix::net::sockopt::set_socket_nosigpipe(&channel, true)?;
-        let end = theirs.as_raw_fd();
-        let mut command = Command::new(&self.program);
+        let mut command =
+            oneiron_spawn::command_with_fds(&self.program, &[(theirs.as_raw_fd(), CHANNEL_FD)]);
         command
             .arg("child")
             .args(&self.args)
@@ -144,16 +158,19 @@ impl ChildBroker {
             // Its own group, so a terminal's signal to the daemon's group
             // leaves it to end at its stdin's close.
             .process_group(0);
-        // SAFETY: the closure runs in the child between fork and exec. It only
-        // makes async-signal-safe calls (dup2, fcntl) on a descriptor number
-        // taken before the fork, and allocates nothing.
-        unsafe {
-            command.pre_exec(move || on_channel_fd(end));
-        }
         let spawned = command.spawn();
         drop(theirs);
         let mut process = spawned?;
-        match listening(&mut process) {
+        // A child that let its channel go before it said it serves never
+        // served.
+        let served = listening(&mut process).and_then(|lifeline| {
+            if channel_open(&channel) {
+                Ok(lifeline)
+            } else {
+                Err(std::io::Error::other("the broker let its channel go"))
+            }
+        });
+        match served {
             Ok(lifeline) => Ok(Running {
                 process,
                 lifeline,
@@ -182,14 +199,15 @@ impl Drop for ChildBroker {
 }
 
 /// The running child in `running`, after `start` replaced one that exited,
-/// or whose state is unknown, or put one where there was none.
+/// whose state is unknown or that let its channel go, or put one where there
+/// was none.
 fn live(
     running: &mut Option<Running>,
     start: impl FnOnce() -> std::io::Result<Running>,
 ) -> std::io::Result<&mut Running> {
-    let alive = running
-        .as_mut()
-        .is_some_and(|child| matches!(child.process.try_wait(), Ok(None)));
+    let alive = running.as_mut().is_some_and(|child| {
+        matches!(child.process.try_wait(), Ok(None)) && channel_open(&child.channel)
+    });
     if !alive {
         if let Some(child) = running.take() {
             child.stop();
@@ -201,22 +219,20 @@ fn live(
         .ok_or_else(|| std::io::ErrorKind::NotConnected.into())
 }
 
-/// Puts the child's end of the channel on [`CHANNEL_FD`], open across exec.
-/// Runs in the child between fork and exec.
-fn on_channel_fd(end: RawFd) -> std::io::Result<()> {
-    let placed = if end == CHANNEL_FD {
-        // SAFETY: `end` is the channel's end, inherited open; clearing its
-        // close-on-exec flag only keeps it across exec.
-        unsafe { libc::fcntl(end, libc::F_SETFD, 0) == 0 }
-    } else {
-        // SAFETY: both descriptors are valid in the child; dup2 leaves the
-        // copy on CHANNEL_FD without close-on-exec.
-        unsafe { libc::dup2(end, CHANNEL_FD) == CHANNEL_FD }
+/// Whether the child still holds its end of `channel`. It never writes
+/// there, so anything to read, a hang-up or an error means it let it go.
+fn channel_open(channel: &UnixStream) -> bool {
+    let now = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
     };
-    if placed {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
+    loop {
+        let mut fds = [PollFd::new(channel, PollFlags::IN)];
+        match poll(&mut fds, Some(&now)) {
+            Ok(ready) => return ready == 0,
+            Err(Errno::INTR) => {}
+            Err(_) => return false,
+        }
     }
 }
 
@@ -281,3 +297,6 @@ fn listening(process: &mut Child) -> std::io::Result<ChildStdin> {
         Err(RecvTimeoutError::Timeout) => Err(std::io::ErrorKind::TimedOut.into()),
     }
 }
+
+#[cfg(test)]
+mod tests;

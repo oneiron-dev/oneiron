@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::Shutdown;
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::process::{Child, Command};
+use std::process::Child;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{
@@ -424,9 +424,9 @@ impl OrganProcess {
         ours.set_nonblocking(true)?;
         let reader = ours.try_clone()?;
         let shutdown = ours.try_clone()?;
-        let mut command = Command::new(&spec.program);
+        let mut command = oneiron_spawn::command_with_fds(&spec.program, &[(theirs.as_raw_fd(), 3)]);
         command.args(&spec.args);
-        sandbox::confine(&mut command, theirs.as_raw_fd(), spec);
+        sandbox::confine(&mut command, spec);
         let child = command.spawn()?;
         drop(theirs);
         let pid = child.id();
