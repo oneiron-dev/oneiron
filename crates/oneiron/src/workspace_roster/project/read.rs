@@ -207,6 +207,12 @@ impl<'a, 't> ProjectReader<'a, 't> {
             ));
         }
         let Some(proof) = proof else {
+            // Only a v3 proof signs a roster; an unsigned state vouches for none.
+            if authority.roster.is_some() {
+                return Ok(ProjectVerdict::Quarantined(
+                    "an unsigned project state carries a roster",
+                ));
+            }
             return self.unsigned(id, authority);
         };
         let holder = match self.verify(id, authority, proof)? {
@@ -318,7 +324,17 @@ impl<'a, 't> ProjectReader<'a, 't> {
         if fold.slips.is_revoked(&slip.claims.slip_id) {
             return Ok(Err(ProjectVerdict::Quarantined("authorizing slip revoked")));
         }
-        let challenge = authority.write_challenge(id, proof.signed_at, proof.anchor.as_deref())?;
+        // A v2 proof over a roster, or a v3 proof without one, signs nothing.
+        let Ok(challenge) = authority.write_challenge(
+            id,
+            proof.version,
+            proof.signed_at,
+            proof.anchor.as_deref(),
+        ) else {
+            return Ok(Err(ProjectVerdict::Quarantined(
+                "invalid project write proof",
+            )));
+        };
         let Ok(verified) = slip.verify_history(
             &mint.signer,
             &fold,
