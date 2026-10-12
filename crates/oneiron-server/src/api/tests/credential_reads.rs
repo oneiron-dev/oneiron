@@ -650,20 +650,29 @@ async fn legacy_api_reads_under_the_presented_credential() {
     let room = room();
     let agent = format!("principal_ref={};actor_class=agent", room.agent.to_hex());
     let owner = format!("principal_ref={};actor_class=human", room.owner.to_hex());
-    let entity = format!("/api/entity/{}?view=full", room.spaced.to_hex());
-    for (recipe, reads) in [
-        (agent.as_str(), false),
-        ("jti=owner-bearer", true),
-        (owner.as_str(), true),
-    ] {
-        let (status, body) = route_json(
-            room.server.clone(),
-            core_request_with_authz("GET", &entity, test_bearer(recipe), None),
-        )
-        .await;
-        assert_eq!(
+    let entity = |id: oneiron::EntityId, recipe: &str| {
+        let request = core_request_with_authz(
+            "GET",
+            &format!("/api/entity/{}?view=full", id.to_hex()),
+            test_bearer(recipe),
+            None,
+        );
+        route_json(room.server.clone(), request)
+    };
+    // The agent's withheld read is the same 404 a missing row gets (Sol
+    // R5 on the check: any other refusal would pass for the wrong reason),
+    // and the same credential still reads the unscoped message.
+    let (status, body) = entity(room.spaced, &agent).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{agent}: {body}");
+    let (status, body) = entity(room.unscoped, &agent).await;
+    assert!(
+        status == StatusCode::OK && body.to_string().contains(UNSCOPED),
+        "{agent}: {status} {body}"
+    );
+    for recipe in ["jti=owner-bearer", owner.as_str()] {
+        let (status, body) = entity(room.spaced, recipe).await;
+        assert!(
             status == StatusCode::OK && body.to_string().contains(SPACED),
-            reads,
             "{recipe}: {status} {body}"
         );
     }
@@ -683,66 +692,115 @@ fn heard(body: &Value, reaction: oneiron::EntityId) -> Vec<String> {
     events
 }
 
+/// One turn of the room fixture: `message`, said by `author` at `at`.
+fn room_turn(
+    room: &Room,
+    message: oneiron::EntityId,
+    author: oneiron::memory::WitnessAuthor,
+    content: &str,
+    metadata: Value,
+    at: u64,
+) -> oneiron::memory::WitnessTurn {
+    oneiron::memory::WitnessTurn {
+        conversation_ref: room.room.to_hex(),
+        turn_ref: Some(oneiron::EntityId::now().to_hex()),
+        messages: vec![oneiron::memory::WitnessMessage {
+            id: Some(message.to_hex()),
+            author,
+            message_type: "text".into(),
+            content: content.into(),
+            metadata: Some(metadata),
+            is_visible: true,
+            order: 0,
+        }],
+        occurred_at: at,
+    }
+}
+
 /// Astra #1413-002: the signal feed admitted a reacted message under the
 /// credential, but the reaction under the room's audience alone, so a
 /// credential whose records leave the reaction out heard of it. The feed
 /// admits the reaction CLAIM as it admits any record now, and a removal
 /// still reaches a credential that reads the reaction. A full-scope slip
-/// that is not the owner's reads its feed under its own key too: a reaction
-/// on a relationship's message reaches it only on a live grant.
+/// that is not the owner's reads its feed under its own key too: once its
+/// grant reads no claim, it hears of no reaction.
 #[tokio::test]
 async fn reaction_signals_read_under_the_credential() {
+    use oneiron::memory::WitnessAuthor;
     let room = room();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let owner = oneiron::WriteActor::new(room.owner, oneiron::EdgeActorClass::Human);
-    let mut said = Vec::new();
-    for (content, metadata, at) in [
-        ("agent kettle credkey", None, 4),
-        (
-            "agent lantern credkey",
-            Some(json!({ "rel": room.space.to_hex() })),
-            5,
+    // The agent answers the owner's mention: words of its own in the room.
+    room.server
+        .vault
+        .bind_room_handle(room.room, "@credkey", room.agent)
+        .expect("the agent's room handle");
+    let (ask, words) = (oneiron::EntityId::now(), oneiron::EntityId::now());
+    let asked = room
+        .server
+        .vault
+        .memory(room.owner, oneiron::EdgeActorClass::Human)
+        .rooms_speak(&room_turn(
+            &room,
+            ask,
+            WitnessAuthor::User,
+            "credkey for the agent",
+            json!({ "room_mentions": ["@credkey"] }),
+            4,
+        ))
+        .expect("the owner asks the agent");
+    let asked = oneiron::EntityId::from_hex(
+        asked
+            .receipt_ref
+            .strip_prefix("witness:")
+            .expect("a witness receipt"),
+    )
+    .expect("the asked turn");
+    // Membership reads nothing: the agent claims a turn it may read.
+    room.server
+        .vault
+        .install_read_permit_for_test(oneiron::WriteActor::new(
+            room.agent,
+            oneiron::EdgeActorClass::Agent,
+        ))
+        .expect("read permit");
+    let agent = room
+        .server
+        .vault
+        .memory(room.agent, oneiron::EdgeActorClass::Agent);
+    let claim = agent.rooms_claim(room.room, asked, 5);
+    assert!(
+        matches!(
+            claim,
+            Ok(oneiron::workspace_roster::RoomClaimOutcome::Claimed(_))
         ),
-    ] {
-        let message = oneiron::EntityId::now();
-        room.server
-            .vault
-            .memory(room.agent, oneiron::EdgeActorClass::Agent)
-            .rooms_speak(&oneiron::memory::WitnessTurn {
-                conversation_ref: room.room.to_hex(),
-                turn_ref: Some(oneiron::EntityId::now().to_hex()),
-                messages: vec![oneiron::memory::WitnessMessage {
-                    id: Some(message.to_hex()),
-                    author: oneiron::memory::WitnessAuthor::Companion,
-                    message_type: "text".into(),
-                    content: content.into(),
-                    metadata,
-                    is_visible: true,
-                    order: 0,
-                }],
-                occurred_at: at,
-            })
-            .expect("the agent speaks");
-        let reaction = room
-            .server
-            .vault
-            .react(oneiron::reaction::ReactionInput {
-                message,
-                by: room.owner,
-                glyph: "👀".to_owned(),
-                occurred_at: now,
-                actor: owner,
-            })
-            .expect("the owner reacts")
-            .id;
-        said.push((message, reaction));
-    }
-    let [(words, reaction), (spaced, spaced_reaction)] = said[..] else {
-        unreachable!("two messages were said");
-    };
+        "{claim:?}"
+    );
+    agent
+        .rooms_speak(&room_turn(
+            &room,
+            words,
+            WitnessAuthor::Companion,
+            "agent kettle credkey",
+            json!({ "room_reply_to": asked.to_hex() }),
+            5,
+        ))
+        .expect("the agent answers");
+    let reaction = room
+        .server
+        .vault
+        .react(oneiron::reaction::ReactionInput {
+            message: words,
+            by: room.owner,
+            glyph: "👀".to_owned(),
+            occurred_at: now,
+            actor: owner,
+        })
+        .expect("the owner reacts")
+        .id;
     let signals = |recipe: String, in_room: bool| {
         let mut request = json!({ "query": "credkey", "limit": 20, "signals_since": 0 });
         if in_room {
@@ -788,16 +846,22 @@ async fn reaction_signals_read_under_the_credential() {
     assert!(heard(&signals(left_out, true).await, reaction).is_empty());
 
     let full = format!("principal_ref={};actor_class=agent", room.agent.to_hex());
-    let body = signals(full.clone(), false).await;
-    assert!(
-        heard(&body, spaced_reaction).is_empty(),
-        "no grant hears of a reaction on a relationship's message: {body}"
-    );
-    assert!(!body.to_string().contains(&spaced.to_hex()), "{body}");
-    room.grant(seeded_test_entity_id(0x2401_0031));
     assert_eq!(
-        heard(&signals(full, false).await, spaced_reaction),
-        ["reaction.put"]
+        heard(&signals(full.clone(), false).await, reaction),
+        ["reaction.put", "reaction.revoked"]
+    );
+    super::context_board_history::restrict_principal_read_types(
+        &room.server,
+        room.agent,
+        &[
+            oneiron::registry::ENTITY_TYPE_MESSAGE,
+            oneiron::registry::ENTITY_TYPE_TURN,
+        ],
+    );
+    let body = signals(full, false).await;
+    assert!(
+        heard(&body, reaction).is_empty(),
+        "a grant that reads no claim hears of no reaction: {body}"
     );
 }
 
@@ -848,4 +912,43 @@ async fn reaction_pills_read_under_the_credential() {
         assert!(body.contains(&room.unscoped.to_hex()), "{recipe}: {body}");
         assert_eq!(body.contains("👀"), pill, "{recipe}: {body}");
     }
+}
+
+/// Sol R5-003 on #1413 (the rulings' sweep): legacy discovery admitted any
+/// full-scope slip and then counted, named and dated every row raw, so the
+/// vault's agent learned of a relationship's message its own key withholds.
+/// A credential short of the whole vault discovers only what its lane reads;
+/// the owner's full credential and the host root still discover it all.
+#[tokio::test]
+async fn legacy_discovery_counts_only_what_the_credential_reads() {
+    let room = room();
+    let messages = |recipe: String| {
+        let server = room.server.clone();
+        async move {
+            let (status, body) = route_json(
+                server,
+                core_request_with_authz("GET", "/api/core/discover", test_bearer(&recipe), None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{recipe}: {body}");
+            body["counts"][oneiron::registry::ENTITY_TYPE_MESSAGE.to_string()]
+                .as_u64()
+                .unwrap_or_default()
+        }
+    };
+    let owner = messages(format!(
+        "principal_ref={};actor_class=human",
+        room.owner.to_hex()
+    ))
+    .await;
+    assert!(owner >= 2, "the owner counts both messages: {owner}");
+    assert_eq!(messages("jti=owner-bearer".to_owned()).await, owner);
+    let agent = format!("principal_ref={};actor_class=agent", room.agent.to_hex());
+    assert_eq!(
+        messages(agent.clone()).await,
+        owner - 1,
+        "the agent counts no relationship message it cannot read"
+    );
+    room.grant(seeded_test_entity_id(0x2401_0032));
+    assert_eq!(messages(agent).await, owner);
 }

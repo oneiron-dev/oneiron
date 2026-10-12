@@ -306,6 +306,13 @@ impl ScopedReadActorKey {
         self.owner
     }
 
+    /// Whether this is the vault owner's own key, which reads all of the
+    /// owner's vault while its binding holds ([`Self::vault_owner`]).
+    #[must_use]
+    pub fn reads_as_vault_owner(&self) -> bool {
+        self.owner.is_some()
+    }
+
     /// This key, bound to the credential it was presented with: every read
     /// checks `proof` as it checks any credential's, live (unexpired and
     /// unrevoked) in the read's own snapshot and within its records and

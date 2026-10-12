@@ -8,6 +8,7 @@ use super::SKILL_PACK_MIME_TYPE;
 use super::SKILL_PACK_NAME;
 use super::SKILL_PACK_RESOLUTION;
 use super::check_api_auth;
+use crate::auth::CoreAuth;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ErrorCode;
@@ -375,11 +376,33 @@ pub(crate) async fn discover(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
-    check_api_auth(&headers, &server)?;
-    discover_response(&server).map(Json)
+    let auth = check_api_auth(&headers, &server)?;
+    discover_response(&server, &auth).map(Json)
 }
 
-pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> {
+/// Whether `auth` discovers the whole vault: the server's own secret, the
+/// unattenuated host root, or the owner's own full credential. Any other
+/// credential the legacy plane admits, an agent's full-scope slip included,
+/// counts and names only the rows its own lane reads.
+fn discovers_whole_vault(server: &SyncServer, auth: &CoreAuth) -> Result<bool, ApiError> {
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(true);
+    };
+    if proof.claims().holder_ref == "host" {
+        return Ok(proof.is_full_vault_owner_grade());
+    }
+    Ok(super::credential_read_key(server.vault(), proof)?.reads_as_vault_owner())
+}
+
+pub(crate) fn discover_response(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<DiscoverResponse, ApiError> {
+    let lane = if discovers_whole_vault(server, auth)? {
+        None
+    } else {
+        Some(super::scoped_read_for_legacy_api(server, auth)?)
+    };
     let mut counts = BTreeMap::new();
     let mut personas = Vec::new();
     let mut conversations = Vec::new();
@@ -387,17 +410,31 @@ pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse,
     let mut last_activity = None;
 
     for entity_type in u8::MIN..=u8::MAX {
-        if !is_agent_visible_entity_type(entity_type) {
+        if !is_agent_visible_entity_type(entity_type)
+            || (lane.is_some() && entity_type == oneiron::registry::ENTITY_TYPE_SECRET_CUSTODY)
+        {
             continue;
         }
 
-        let ids = server
+        let mut ids = server
             .vault
             .entities_by_type(entity_type)
             .inspect_err(|e| {
                 tracing::error!(error = %e, entity_type, "discover count scan failed");
             })
             .map_err(|_| ApiError::internal_server_error("discover count scan failed"))?;
+        if let Some(lane) = &lane {
+            let mut readable = Vec::with_capacity(ids.len());
+            for id in ids {
+                if lane
+                    .is_entity_readable(&id)
+                    .map_err(|e| super::core_engine_error("discover read scope failed", e))?
+                {
+                    readable.push(id);
+                }
+            }
+            ids = readable;
+        }
 
         if ids.is_empty() {
             continue;
