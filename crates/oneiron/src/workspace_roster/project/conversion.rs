@@ -247,7 +247,7 @@ impl Vault {
             )?;
             project.tasks = tasks;
             project.roster = match policy.roster_selection {
-                RosterSelection::InheritSource => source.member_ids.clone(),
+                RosterSelection::InheritSource => source.member_ids,
                 RosterSelection::LeaderOnly => vec![leader.to_hex()],
             };
             if !project.roster.contains(&leader.to_hex()) {

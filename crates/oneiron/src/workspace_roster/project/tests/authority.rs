@@ -35,7 +35,15 @@ fn sign_legacy(
     holder: Option<EntityId>,
     anchor: Option<ProjectAnchor>,
 ) -> Result<ProjectWriteProof> {
-    sign_as(vault, id, body, holder, anchor, None, ProjectProofVersion::V2)
+    sign_as(
+        vault,
+        id,
+        body,
+        holder,
+        anchor,
+        None,
+        ProjectProofVersion::V2,
+    )
 }
 
 fn sign_as(

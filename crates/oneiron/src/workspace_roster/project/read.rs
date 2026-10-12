@@ -325,12 +325,9 @@ impl<'a, 't> ProjectReader<'a, 't> {
             return Ok(Err(ProjectVerdict::Quarantined("authorizing slip revoked")));
         }
         // A v2 proof over a roster, or a v3 proof without one, signs nothing.
-        let Ok(challenge) = authority.write_challenge(
-            id,
-            proof.version,
-            proof.signed_at,
-            proof.anchor.as_deref(),
-        ) else {
+        let Ok(challenge) =
+            authority.write_challenge(id, proof.version, proof.signed_at, proof.anchor.as_deref())
+        else {
             return Ok(Err(ProjectVerdict::Quarantined(
                 "invalid project write proof",
             )));

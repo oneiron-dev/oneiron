@@ -120,9 +120,10 @@ pub(crate) use project::spawn_signed_project_for_test;
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
     LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchor,
-    ProjectAuthority, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectQuarantine,
-    ProjectProofVersion, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange,
-    ProjectVerdict, ProjectWidenAsk, ProjectWidenAxis, ProjectWriteProof, RoomOriginCard,
+    ProjectAuthority, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt,
+    ProjectProofVersion, ProjectQuarantine, ProjectRecord, ProjectRole, ProjectRoom,
+    ProjectRoomChange, ProjectVerdict, ProjectWidenAsk, ProjectWidenAxis, ProjectWriteProof,
+    RoomOriginCard,
 };
 pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, PROJECT_PACK, PROJECT_SHORT_ID_PREFIX,
