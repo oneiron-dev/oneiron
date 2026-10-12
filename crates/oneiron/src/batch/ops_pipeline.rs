@@ -342,8 +342,9 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// A room indexes what it stages at once and runs no idle pass. So the apply
 /// that indexes a row the room put publishes the row's revision (its indexed
 /// revision becomes its live one), and hides the row's text or vector that
-/// it did not restage when they describe another body. Base keeps its
-/// deferred-index interval.
+/// it did not restage when they describe another body. It hides base's
+/// vector of the row even when base has none yet, since base may still
+/// embed its own body. Base keeps its deferred-index interval.
 ///
 /// # The op list IS the journal
 ///
@@ -545,7 +546,9 @@ pub(crate) fn apply_ops_session(
             crate::bm25::deindex_text(view, wtxn, id)?;
         }
         if !vectors.contains(id) {
-            crate::store::ManifestDbs::vectors(view).delete(wtxn, id.as_bytes())?;
+            // Whether or not base holds one yet: an embedding of base's body
+            // can still land before the room's segment commits (Sol R19).
+            view.vectors.hide_base_row(id.as_bytes())?;
             crate::embed::record_embedding_device_in_txn(view, wtxn, id, None)?;
         }
     }

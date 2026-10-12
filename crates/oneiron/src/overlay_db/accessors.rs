@@ -135,6 +135,19 @@ impl OverlayDb {
         Ok(existed)
     }
 
+    /// Hides base's row at `key` from this accessor's room: the row base
+    /// holds now and any it writes there later, before the room's segment
+    /// commits included. Base itself is not written. The vault's own
+    /// accessor has no room to hide a row from.
+    pub(crate) fn hide_base_row(&self, key: &[u8]) -> Result<()> {
+        let overlay = self.overlay.as_ref().ok_or(Error::InvariantViolation(
+            "only a room's accessor hides a base row",
+        ))?;
+        overlay
+            .live
+            .delete_with_base_backing(overlay.keyspace, key, true)
+    }
+
     pub(crate) fn delete_one_duplicate(
         &self,
         txn: &mut RwTxn<'_>,

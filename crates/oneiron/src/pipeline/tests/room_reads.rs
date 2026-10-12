@@ -12,6 +12,18 @@ use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
 /// overlay as it was when it was built). A put is staged under its own
 /// stamps.
 fn stage_in_room(vault: &Vault, session: &OffRecordSession<'_>, ops: Vec<BatchOp>) -> Result<()> {
+    stage_in_room_then(vault, session, ops, || Ok(()))
+}
+
+/// [`stage_in_room`], running `between` once base's transaction has
+/// committed and before the room's segment does, as a base write that takes
+/// the writer next would.
+fn stage_in_room_then(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    ops: Vec<BatchOp>,
+    between: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     let route = session.write_route()?;
     let overlay = session.overlay();
     let scope = JournalScope::new(EntityId::now(), EntityId::now());
@@ -44,6 +56,7 @@ fn stage_in_room(vault: &Vault, session: &OffRecordSession<'_>, ops: Vec<BatchOp
         }
         Ok(segment)
     })?;
+    between()?;
     segment.commit()
 }
 
@@ -995,6 +1008,73 @@ fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Re
     assert!(
         !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
         "the old body's vector does not find it in the room"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// Base holds a claim it has indexed and not embedded yet. A room replaces
+/// its body with the room's words and no vector, and before the room's turn
+/// commits, base's embedding of its own body lands. That vector describes
+/// base's body, so it does not find the claim in the room; base's search
+/// finds it.
+#[test]
+fn a_room_hides_a_base_vector_that_lands_while_its_turn_is_open() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xD3);
+    vault
+        .batch()
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &owner_claim_body(owner, "basevalue")?,
+        )
+        .text(&claim, &[("body", "unembeddedbaseword")])
+        .commit()?;
+    let session = enter(&vault, "sess-room-late-embedding")?;
+    stage_in_room_then(
+        &vault,
+        &session,
+        vec![
+            claim_put(
+                claim,
+                (
+                    TimeRange { start: 10, end: 10 },
+                    10,
+                    owner_claim_body(owner, "roomvalue")?,
+                ),
+            ),
+            room_text(claim, "lateembeddingneedle"),
+        ],
+        || {
+            vault
+                .batch()
+                .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
+                .commit()
+        },
+    )?;
+
+    let fields = room_pack_fields(&vault, &session, claim, "lateembeddingneedle")?;
+    assert!(
+        fields.contains("roomvalue") && !fields.contains("basevalue"),
+        "the room reads the body it indexed, got {fields}"
+    );
+    assert!(
+        !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "base's vector of its own body does not find the room's"
+    );
+    let base_hits = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .run()?;
+    assert!(
+        base_hits.iter().any(|hit| hit.id == claim),
+        "base's embedding landed, got {base_hits:?}"
     );
     session.close()?;
     Ok(())
