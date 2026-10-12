@@ -1294,7 +1294,10 @@ fn a_ruling_on_an_older_receipt_does_not_clear_a_newer_refusal() {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let other = VerbWriteRun::through(&shared, door);
         let refused = other.run(&other.config, &mut resumed_step(vec![create_task()]));
-        assert!(matches!(refused, Ok(Err(_))), "the other attempt is refused");
+        assert!(
+            matches!(refused, Ok(Err(_))),
+            "the other attempt is refused"
+        );
     }));
     let stale = run.resume(&run.config, &mut resumed_step(vec![create_task()]));
     assert!(

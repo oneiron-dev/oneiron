@@ -138,11 +138,12 @@ impl HostSelfDispatcher<'_> {
         call: Option<&SelfCall>,
     ) -> Result<Option<SelfDeniedResult>> {
         let receipt_at = |ordinal: u64| {
-            self.storage.get_code_run_replay_record(&self.write_receipt_id(
-                site.run_id,
-                site.step_start,
-                ordinal,
-            )?)
+            self.storage
+                .get_code_run_replay_record(&self.write_receipt_id(
+                    site.run_id,
+                    site.step_start,
+                    ordinal,
+                )?)
         };
         for (ordinal, made) in (0_u64..).zip(site.earlier.iter().filter(is_write)) {
             let Some(receipt) = receipt_at(ordinal)? else {
@@ -186,11 +187,12 @@ impl HostSelfDispatcher<'_> {
         let mut ruled = receipt.clone();
         ruling.seq = ruled.bridge_calls.len() as u64;
         ruled.bridge_calls.push(ruling);
-        self.storage.put_code_run_replay_record_if_generation_with_heal(
-            &ruled,
-            Some(receipt.generation()?),
-            None,
-        )?;
+        self.storage
+            .put_code_run_replay_record_if_generation_with_heal(
+                &ruled,
+                Some(receipt.generation()?),
+                None,
+            )?;
         Ok(())
     }
 

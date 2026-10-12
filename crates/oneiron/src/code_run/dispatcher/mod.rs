@@ -175,6 +175,11 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// Binds the host's door onto the SDK verb table, so `self.memory.<verb>`
     /// runs each verb with that host's ceiling and gate.
+    ///
+    /// A host that binds a door runs one attempt of a run at a time, as the
+    /// MCP code host's single-flight does: the door's rulings on a step's kept
+    /// answers and that step's checkpoint are separate records, so two
+    /// attempts of one step at once could close it past a refusal.
     #[must_use]
     pub fn with_agent_verb_door(
         mut self,
