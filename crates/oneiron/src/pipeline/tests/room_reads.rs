@@ -1075,6 +1075,67 @@ fn a_room_hides_a_base_vector_that_lands_while_its_turn_is_open() -> Result<()> 
     Ok(())
 }
 
+/// Base changed a claim's body after it indexed it, never embedded the old
+/// body, and holds the new body's vector for its idle pass. A room stages
+/// that same new body with its words and no vector, and base's idle pass
+/// publishes the vector before the room's turn commits. That vector
+/// describes the room's body too, so it finds the claim in the room.
+#[test]
+fn a_room_keeps_the_vector_base_publishes_for_the_body_it_restaged() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xC7);
+    let occurred = TimeRange { start: 1, end: 1 };
+    // Local writes: the new body waits for idle publication.
+    vault
+        .batch()
+        .put(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            1,
+            &owner_claim_body(owner, "indexedvalue")?,
+        )
+        .text(&claim, &[("body", "idleoldword")])
+        .commit()?;
+    let pending = owner_claim_body(owner, "pendingvalue")?;
+    vault
+        .batch()
+        .put(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &pending)
+        .commit()?;
+    vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+    let session = enter(&vault, "sess-room-idle-vector")?;
+    stage_in_room_then(
+        &vault,
+        &session,
+        vec![
+            claim_put(claim, (occurred, 1, pending)),
+            room_text(claim, "idlevectorneedle"),
+        ],
+        || {
+            vault.set_indexed_idle_delay_ms(0)?;
+            vault.refresh_staged_indexed_at_idle(u64::MAX).map(drop)
+        },
+    )?;
+
+    let base_hits = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .run()?;
+    assert!(
+        base_hits.iter().any(|hit| hit.id == claim),
+        "base's idle pass published the vector, got {base_hits:?}"
+    );
+    assert!(
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "base's vector of the room's body finds it in the room"
+    );
+    session.close()?;
+    Ok(())
+}
+
 /// A scoped read in the room fetches as many candidates as the room's read
 /// holds, base's rows and the room's. A room row outside the worlds the
 /// lane asks for then takes no place from a base row inside them.
