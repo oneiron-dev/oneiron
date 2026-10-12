@@ -2436,14 +2436,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/builder/edges.rs",
      "purpose": "Edge/vector/text/phonetic/delete doors plus edge-kind gate helpers",
      "surface": {
       "crate-vis": 1,
-      "fn": 13
+      "fn": 14
      }
     },
     {
@@ -16510,9 +16510,10 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 8,
+      "re-export": 1,
       "struct": 4,
       "trait": 2
      }
@@ -16526,6 +16527,23 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EmbeddingDevice",
+      "EmbeddingProvenance",
+      "EmbeddingProvenanceCount"
+     ],
+     "path": "src/embed/device.rs",
+     "purpose": "Which device and runtime computed a stored vector (ARCH-0036, owner 2026-10-11)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -16555,6 +16573,14 @@
      "notable": [],
      "path": "src/embed/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embed/tests/device.rs",
+     "purpose": "Each stored vector names the device and runtime that computed it (ARCH-0036, owner 2026-10-11): one model is…",
      "surface": {}
     },
     {
@@ -33371,7 +33397,7 @@
      "path": "src/store/open_gates/mod.rs",
      "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 2
      }
     },
@@ -33420,7 +33446,7 @@
      "path": "src/store/open_gates/read_only_door.rs",
      "purpose": "Read-only door: rows of an existing vault's `vault_meta`, read without opening it as a vault, beside another…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -36890,7 +36916,7 @@
      "surface": {
       "crate-vis": 11,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 4
      }
     },
@@ -39782,7 +39808,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 8,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -40589,8 +40615,8 @@
    },
    "over_bar": 34,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2464,
-   "test_files": 782
+   "source_files": 2465,
+   "test_files": 783
   },
   "oneiron-android": {
    "files": [
@@ -50848,7 +50874,7 @@
      "path": "src/embedder/local/device.rs",
      "purpose": "Which candle device the local provider runs on, and at what precision",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
