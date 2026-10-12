@@ -387,7 +387,7 @@ fn mcp_row_position_inside(
         .auth
         .as_ref()
         .and_then(|auth| auth.verified_slip())
-        .map(|proof| proof.scope());
+        .map(oneiron::authority::VerifiedSlip::scope);
     let whole = |axis: &oneiron::federation::ScopeAxis<_>| {
         matches!(axis, oneiron::federation::ScopeAxis::All)
     };
