@@ -1181,11 +1181,12 @@ fn a_room_hides_the_text_of_a_row_base_indexed_after_its_totals() -> Result<()> 
     Ok(())
 }
 
-/// A room apply that puts a row and indexes it in the same call is refused
-/// before anything stages: its view reads the overlay as it was before the
-/// call, so the index could not publish the revision the put staged.
+/// A room apply that writes one row twice (a put and its text, a put and
+/// its vector, two puts) is refused before anything stages: its view reads
+/// the overlay as it was before the call, so the second write would build
+/// on the row as it was before the first.
 #[test]
-fn a_room_apply_that_puts_and_indexes_one_row_is_refused() -> Result<()> {
+fn a_room_apply_that_writes_one_row_twice_is_refused() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let session = enter(&vault, "sess-room-put-and-index")?;
     let route = session.write_route()?;
@@ -1199,9 +1200,10 @@ fn a_room_apply_that_puts_and_indexes_one_row_is_refused() -> Result<()> {
         op,
     };
     let row = entity_id(0xDF);
-    for index in [
+    for second in [
         room_text(row, "refusedneedle"),
         room_vector(row, [1.0, 0.0, 0.0, 0.0]),
+        room_put(row),
     ] {
         let refused = vault.with_write_txn_grouped(|wtxn| {
             let _segment = overlay.install_txn_segment()?;
@@ -1211,7 +1213,7 @@ fn a_room_apply_that_puts_and_indexes_one_row_is_refused() -> Result<()> {
                 &vault.config,
                 &vault.analyzer,
                 wtxn,
-                vec![entry(room_put(row)), entry(index.clone())],
+                vec![entry(room_put(row)), entry(second.clone())],
             )
         });
         assert!(

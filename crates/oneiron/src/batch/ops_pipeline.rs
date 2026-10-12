@@ -329,14 +329,15 @@ pub(crate) fn apply_ops_with_gate_mode(
 ///
 /// [`JournalRole`]: crate::session_overlay::JournalRole
 ///
-/// # A row's put and its index take separate applies
+/// # One write of a row per apply
 ///
 /// `view` reads the overlay as it was when it was built, so an op here does
 /// not see the ones staged before it in the same call. The witness door
 /// applies one entry per call, each on a fresh view, so that each op reads
-/// the ones before it. A call that puts a row and also indexes it (`Text` or
-/// `Vector`) is refused before anything stages: its index could not publish
-/// the revision the put staged.
+/// the ones before it. A call that writes one row twice (two of its `Put`,
+/// `Text` and `Vector`) is refused before anything stages: its second write
+/// would build on the row as it was before the first. A put's index, in
+/// particular, could not publish the revision the put staged.
 ///
 /// A room indexes what it stages at once and runs no idle pass. So the apply
 /// that indexes a row the room put publishes the row's revision (its indexed
@@ -372,29 +373,28 @@ pub(crate) fn apply_ops_session(
     }
     let overlay = route.overlay();
 
-    // A row's put and its index take separate applies (see above), refused
-    // before a byte stages.
-    let mut puts = HashSet::new();
+    // One write of a row per apply (see above), refused before a byte stages.
+    let mut rows = HashSet::new();
     let mut texts = HashSet::new();
     let mut vectors = HashSet::new();
     for entry in &entries {
-        match &entry.op {
-            BatchOp::Put { id, .. } => {
-                puts.insert(*id);
-            }
+        let id = match &entry.op {
+            BatchOp::Put { id, .. } => id,
             BatchOp::Text { id, .. } => {
                 texts.insert(*id);
+                id
             }
             BatchOp::Vector { id, .. } => {
                 vectors.insert(*id);
+                id
             }
-            _ => {}
+            _ => continue,
+        };
+        if !rows.insert(*id) {
+            return Err(Error::InvariantViolation(
+                "a session apply writes a row once; its next write takes an apply of its own",
+            ));
         }
-    }
-    if texts.iter().chain(&vectors).any(|id| puts.contains(id)) {
-        return Err(Error::InvariantViolation(
-            "a session apply indexes no row it puts; the index takes an apply of its own",
-        ));
     }
     for entry in entries {
         match &entry.op {
