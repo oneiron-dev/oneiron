@@ -1,7 +1,7 @@
 //! Census case and regression for the worlds an agent may read.
 use super::Case;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeActorClass;
 use crate::pipeline::{
     ActiveWorldSelection, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
     PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, WorldAuthoritySet, world_access_claim_body,
@@ -95,25 +95,20 @@ fn own_default(
 
 const ALWAYS: (Option<u64>, Option<u64>) = (None, None);
 
-/// An agent reads only the worlds every owner grant its `claim_of` edges
-/// reach allows. A narrower grant whose edge was put back since the backup,
-/// its body unchanged, is one a restore would take off, widening the read
-/// (Astra R4-2); one that repeats a grant the backup already folds narrows
-/// nothing.
+/// An agent reads only the worlds every owner grant about it allows. A
+/// narrower grant written since the backup is one a restore would take off,
+/// widening the read; one that repeats a grant the backup already folds
+/// narrows nothing. (The grant's `claim_of` edge no longer counts: the fold
+/// reads the grant rows, engine-prs-06.)
 pub(super) fn world_selection_authority() -> Result<Case> {
     let (dir, vault, agent, [w1, w2]) = open_vault(config())?;
     let (wide, narrow, repeat) = (entity(0xB4), entity(0xB5), entity(0xB6));
     grant(&vault, wide, agent, &[w1, w2], ALWAYS)?;
-    grant(&vault, narrow, agent, &[w1], ALWAYS)?;
-    grant(&vault, repeat, agent, &[w1, w2], ALWAYS)?;
-    for detached in [narrow, repeat] {
-        vault.delete_edge(&detached, EdgeKind::ClaimOf, &agent)?;
-    }
     Case::after_backup(
         ROW,
         (dir, vault),
-        move |vault| vault.put_edge(&repeat, EdgeKind::ClaimOf, &agent, 1.0),
-        move |vault| vault.put_edge(&narrow, EdgeKind::ClaimOf, &agent, 1.0),
+        move |vault| grant(vault, repeat, agent, &[w1, w2], ALWAYS),
+        move |vault| grant(vault, narrow, agent, &[w1], ALWAYS),
     )
 }
 
@@ -176,12 +171,14 @@ fn assert_refused(guarded: Result<()>, sequence: &str) {
 }
 
 /// A restore never widens the worlds an agent may read, at any instant its
-/// grants and defaults decide. A narrower grant whose edge was put back
-/// since the backup is one an unguarded restore takes off (Astra R4-2), and
-/// the guard refuses it; so it does when that grant comes into force only
-/// after now, when it outlasts another grant as narrow that goes out of
-/// force after now, and when a narrower default learned again since the
-/// backup is the one in force.
+/// grants and defaults decide. A narrower grant written since the backup is
+/// one an unguarded restore takes off, and the guard refuses it; so it does
+/// when that grant comes into force only after now, when it outlasts another
+/// grant as narrow that goes out of force after now, and when a narrower
+/// default learned again since the backup is the one in force. (These
+/// narrowings were once a grant's `claim_of` edge put back since the backup;
+/// the fold now reads the grant rows, so an edge narrows nothing,
+/// engine-prs-06.)
 #[test]
 fn a_restore_does_not_widen_the_worlds_an_agent_may_read() -> Result<()> {
     let clock = ManualClock::new(NOW);
@@ -191,37 +188,31 @@ fn a_restore_does_not_widen_the_worlds_an_agent_may_read() -> Result<()> {
 
     let (_dir, vault, agent, [w1, w2]) = open_vault(config.clone())?;
     grant(&vault, wide, agent, &[w1, w2], ALWAYS)?;
-    grant(&vault, narrow, agent, &[w1], ALWAYS)?;
-    vault.delete_edge(&narrow, EdgeKind::ClaimOf, &agent)?;
     let restored = restore_after(&vault, |vault| {
-        vault.put_edge(&narrow, EdgeKind::ClaimOf, &agent, 1.0)
+        grant(vault, narrow, agent, &[w1], ALWAYS)
     })?;
     assert!(
         !admits(&vault, agent, w2)?,
-        "the reattached grant keeps the live vault off the second world"
+        "the narrower grant keeps the live vault off the second world"
     );
     assert!(
         admits(&restored.unguarded, agent, w2)?,
-        "an unguarded restore lifts the reattached grant"
+        "an unguarded restore takes the narrower grant off"
     );
-    assert_refused(restored.guarded, "a reattached narrower grant");
+    assert_refused(restored.guarded, "a narrower grant since the backup");
 
     let (_dir, vault, agent, [w1, w2]) = open_vault(config.clone())?;
     grant(&vault, wide, agent, &[w1, w2], ALWAYS)?;
-    grant(&vault, narrow, agent, &[w1], (Some(NOW + 100), None))?;
-    vault.delete_edge(&narrow, EdgeKind::ClaimOf, &agent)?;
     let restored = restore_after(&vault, |vault| {
-        vault.put_edge(&narrow, EdgeKind::ClaimOf, &agent, 1.0)
+        grant(vault, narrow, agent, &[w1], (Some(NOW + 100), None))
     })?;
     assert_refused(restored.guarded, "a narrower grant in force after now");
 
     let (_dir, vault, agent, [w1, w2]) = open_vault(config.clone())?;
     grant(&vault, wide, agent, &[w1, w2], ALWAYS)?;
     grant(&vault, mask, agent, &[w1], (None, Some(NOW + 200)))?;
-    grant(&vault, narrow, agent, &[w1], ALWAYS)?;
-    vault.delete_edge(&narrow, EdgeKind::ClaimOf, &agent)?;
     let restored = restore_after(&vault, |vault| {
-        vault.put_edge(&narrow, EdgeKind::ClaimOf, &agent, 1.0)
+        grant(vault, narrow, agent, &[w1], ALWAYS)
     })?;
     assert_refused(restored.guarded, "a narrower grant outlasting a mask");
 
