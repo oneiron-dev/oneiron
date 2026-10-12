@@ -141,8 +141,10 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             "executor recoverable output storage unavailable".into(),
         ))?;
         // The run's recorded outputs hold what its calls read. A gate's
-        // rejection of reading them back halts the bridge, as at a call.
-        if let Err(err) = self.admit_recorded_read() {
+        // rejection of reading them back halts the bridge, as at a call. The
+        // ruling is answered as a call is, so a run whose participant left
+        // the room hears `NotInRoom`, never the door's verdict.
+        if let Err(err) = storage.answered(|| self.admit_recorded_read()) {
             let Error::Gate(GateError::GateWriteRejected { outcome, .. }) = &err else {
                 return Err(err);
             };

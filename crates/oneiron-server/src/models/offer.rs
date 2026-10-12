@@ -20,7 +20,9 @@ pub struct ServedOffer {
 /// The offer `[models]` binds for `model` on `provider`. A `key_env` key is
 /// the owner's own and sits in this process, not behind the credential
 /// broker, so it is held at T1: a declared run refuses it unless the owner
-/// allows that offer. A provider with no key is the vault's own server.
+/// allows that offer. A `key_secret` key stays in the vault's custody and
+/// only the credential broker sends it, so it is at T0. A provider with no
+/// key is the vault's own server.
 pub(super) fn provider_offer(
     provider: &ProviderConfig,
     model: ModelId,
@@ -30,24 +32,24 @@ pub(super) fn provider_offer(
         .ascii_serialization();
     let route = OfferRoute::new(adapter(provider.kind), origin)
         .map_err(|error| anyhow::anyhow!("model route: {error}"))?;
-    let keyed = provider.key_env.is_some();
+    let (custody, credential_binding) = match (&provider.key_secret, &provider.key_env) {
+        (Some(secret), _) => (KeyCustody::T0, Some(format!("secret:{secret}"))),
+        (None, Some(env)) => (KeyCustody::T1, Some(format!("env:{env}"))),
+        (None, None) => (KeyCustody::Keyless, None),
+    };
     Ok(OfferBinding {
         offer: model.as_str().to_owned(),
         model,
         route,
         locality: provider.locality,
-        payer: if keyed {
+        payer: if credential_binding.is_some() {
             Payer::CustomerKey
         } else {
             Payer::Local
         },
-        credential_binding: provider.key_env.as_ref().map(|env| format!("env:{env}")),
+        credential_binding,
         catalog_revision: Some(provider.revision.clone()),
-        custody: if keyed {
-            KeyCustody::T1
-        } else {
-            KeyCustody::Keyless
-        },
+        custody,
         rates: Vec::new(),
     })
 }

@@ -104,7 +104,7 @@ impl AnthropicMessagesTransport for AnthropicHttp {
 /// Stamps the model `message` names into its usage, opening an empty usage
 /// object when it has none (or a null one), as the OpenAI-compatible
 /// transport does.
-fn carry_served_model(message: &mut JsonValue) {
+pub(super) fn carry_served_model(message: &mut JsonValue) {
     let Some(served) = message.get("model").cloned() else {
         return;
     };

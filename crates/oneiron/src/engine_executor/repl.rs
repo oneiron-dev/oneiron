@@ -494,12 +494,15 @@ impl EngineNativeExecutor<'_> {
             return Ok(());
         }
         // The bubble is the run's own `self.speak`: a bound door rules on it
-        // as on any other. A refused bubble stays a checkpointed intent that
-        // a later admitted retry delivers.
-        self.gated_write
-            .admit_run_call(crate::code_run::RunCall::Bridge(
-                crate::code_run::SelfEffect::Speak,
-            ))?
+        // as on any other, answered as a call is. A refused bubble stays a
+        // checkpointed intent that a later admitted retry delivers.
+        self.storage
+            .answered(|| {
+                self.gated_write
+                    .admit_run_call(crate::code_run::RunCall::Bridge(
+                        crate::code_run::SelfEffect::Speak,
+                    ))
+            })?
             .map_err(|refusal| super::types::EngineExecutorError::HostRefused {
                 code: refusal.code,
             })?;

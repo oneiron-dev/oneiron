@@ -128,6 +128,42 @@ fn provider_entries_never_hold_a_literal_key() {
     assert_eq!(ok.locality, oneiron::ModelLocality::ThirdParty);
 }
 
+/// ARCH-0069 `#broker-design`: a key held in the vault leaves only through
+/// the credential broker, which sends to one exact `https` origin.
+#[test]
+fn a_vault_held_key_goes_out_only_through_the_broker_over_https() {
+    let broker = "[broker]\nsocket = \"/run/oneiron-broker/broker.sock\"\nuid = 991\n";
+    let held = |provider: &str, broker: &str| -> anyhow::Result<ModelsConfig> {
+        let file: ModelsFile = toml::from_str(&format!("[providers.paid]\n{provider}\n{broker}"))?;
+        file.resolve(None)
+    };
+    let https = "kind = \"openai-compat\"\nbase_url = \"https://h\"\nkey_secret = \"provider-key\"";
+    let config = held(https, broker).unwrap();
+    assert_eq!(
+        config.providers["paid"].key_secret.as_deref(),
+        Some("provider-key")
+    );
+    assert_eq!(config.broker.unwrap().uid, 991);
+    for (provider, broker) in [
+        // No broker to send it.
+        (https, ""),
+        // Two ways to name one key.
+        (&*format!("{https}\nkey_env = \"PAID_KEY\""), broker),
+        // The broker sends over https only, even on this machine.
+        (
+            "kind = \"openai-compat\"\nbase_url = \"http://127.0.0.1:8080\"\nkey_secret = \"provider-key\"",
+            broker,
+        ),
+        (
+            "kind = \"openai-compat\"\nbase_url = \"https://h\"\nkey_secret = \"a key\"",
+            broker,
+        ),
+        (https, "[broker]\nsocket = \"broker.sock\"\nuid = 991\n"),
+    ] {
+        assert!(held(provider, broker).is_err(), "{provider}\n{broker}");
+    }
+}
+
 #[test]
 fn plain_http_is_for_this_machine_or_a_local_model_server() {
     assert!(provider("kind = \"openai-compat\"\nbase_url = \"http://api.example.com\"").is_err());
