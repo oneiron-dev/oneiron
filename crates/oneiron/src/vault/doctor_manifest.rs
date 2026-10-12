@@ -661,6 +661,14 @@ impl Vault {
 
     // ─── Tree Query API ───────────────────────────────────────
 
+    /// The embedding model the vault at `path` is pinned to, read without
+    /// opening it as a vault, beside a process that may hold it; `None` when
+    /// it holds none. A vault that holds vectors opens only under its own
+    /// model, and opening under this one pins nothing new.
+    pub fn stored_embedding_model(path: impl AsRef<std::path::Path>) -> Result<Option<String>> {
+        crate::store::read_existing_embedding_model(path.as_ref())
+    }
+
     /// Read-only diagnostic snapshot of the persisted compatibility metadata
     /// that the open-time gates consume.
     ///

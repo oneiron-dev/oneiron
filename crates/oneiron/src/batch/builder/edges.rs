@@ -17,6 +17,26 @@ impl BatchBuilder<'_> {
             id: *id,
             vector: vector.to_vec(),
             pending_embedding_token: None,
+            provenance: None,
+        });
+        self
+    }
+
+    /// Adds a vector write marked with the device and runtime that computed
+    /// it, for a host that embeds on its own; [`Self::vector`] leaves the
+    /// vector unmarked, read as unknown.
+    pub fn vector_with_provenance(
+        mut self,
+        id: &EntityId,
+        vector: &[f32],
+        provenance: crate::embed::EmbeddingProvenance,
+    ) -> Self {
+        capture_invalid_vector_component(&mut self.validation_error, vector);
+        self.ops.push(BatchOp::Vector {
+            id: *id,
+            vector: vector.to_vec(),
+            pending_embedding_token: None,
+            provenance: Some(provenance),
         });
         self
     }
@@ -35,6 +55,7 @@ impl BatchBuilder<'_> {
             id: *id,
             vector: vector.to_vec(),
             pending_embedding_token: Some(pending_embedding_token.to_vec()),
+            provenance: None,
         });
         self
     }

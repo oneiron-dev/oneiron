@@ -291,6 +291,10 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
         }
         Ok(value)
     }
+
+    fn provenance(&self) -> oneiron::embed::EmbeddingProvenance {
+        self.provider.provenance()
+    }
 }
 impl SyncServer {
     fn refresh_indexed_idle(

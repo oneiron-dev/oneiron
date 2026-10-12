@@ -97,6 +97,11 @@ impl IndexedRevisionInput {
 /// starting a pass rather than returning it as an input refusal.
 pub trait IndexedRevisionEmbedder {
     fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>>;
+    /// The device and runtime that compute what [`Self::embed_revision`]
+    /// returns, stored beside each vector. Unknown unless overridden.
+    fn provenance(&self) -> crate::embed::EmbeddingProvenance {
+        crate::embed::EmbeddingProvenance::unknown()
+    }
 }
 
 /// Refresh receipts name only revisions actually published into the index.

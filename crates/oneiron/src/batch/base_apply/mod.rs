@@ -577,6 +577,7 @@ pub(super) fn apply_ops_with_origin(
                 id,
                 vector,
                 pending_embedding_token,
+                provenance,
             } => {
                 let vector = Zeroizing::new(vector);
                 let pending_embedding_token = Zeroizing::new(pending_embedding_token);
@@ -584,7 +585,15 @@ pub(super) fn apply_ops_with_origin(
                     .as_deref()
                     .or_else(|| pending_embedding_tokens_written.get(&id).map(Vec::as_slice));
                 let plan = nsw_plans.get_mut(&id).and_then(VecDeque::pop_front);
-                let applied = apply_vector(store, config, wtxn, id, &vector, same_batch_token)?;
+                let applied = apply_vector(
+                    store,
+                    config,
+                    wtxn,
+                    id,
+                    &vector,
+                    provenance.as_ref(),
+                    same_batch_token,
+                )?;
                 if applied.wrote_vector {
                     // A plan searched the committed graph; after an earlier
                     // graph write in this batch it no longer describes it.

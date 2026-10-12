@@ -35,6 +35,18 @@ pub struct DoctorArgs {
     /// `[backup]` section is reported. Defaults to the XDG path.
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Also list the ids of the stored vectors this device family computed:
+    /// `cpu`, `cuda`, `metal`, `remote` (an endpoint's) or `unknown` (not
+    /// recorded). These are the vectors a patch for one device would embed
+    /// again.
+    #[arg(long)]
+    pub vectors_from: Option<oneiron::embed::EmbeddingDevice>,
+
+    /// With `--vectors-from`, only those this runtime computed, named as
+    /// `vector_provenance` names it.
+    #[arg(long, requires = "vectors_from")]
+    pub vectors_runtime: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

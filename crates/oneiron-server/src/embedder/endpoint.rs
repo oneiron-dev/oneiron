@@ -17,7 +17,9 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use oneiron::config::VectorEvidenceFloors;
-use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
+use oneiron::embed::{
+    Embedder, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance, PendingEmbeddingInput,
+};
 use oneiron::error::StoreError;
 
 use super::local::evidence::{self, RunProfile};
@@ -685,6 +687,16 @@ impl Embedder for HttpEmbedder {
                 Ok(vectors)
             }
         }
+    }
+
+    /// The endpoint computed them on a device the vault does not see; it is
+    /// named as an offer, model at place. The URL holds no credential or
+    /// query ([`Self::from_config`] refuses one).
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::new(
+            EmbeddingDevice::Remote,
+            format!("{}@{}", self.model_key, self.endpoint),
+        )
     }
 }
 

@@ -1,6 +1,7 @@
 //! Caller-supplied index inputs retained until atomic idle publication.
 use super::RevisionRef;
 use super::storage::state;
+use crate::embed::EmbeddingProvenance;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Result};
@@ -13,6 +14,10 @@ pub(super) struct Inputs {
     pub(super) fields: Option<Vec<(String, String)>>,
     pub(super) vector: Option<Vec<f32>>,
     pub(super) pending_embedding_token: Option<Vec<u8>>,
+    /// Who computed the staged vector; a row staged before it was kept has
+    /// none.
+    #[serde(default)]
+    pub(super) provenance: Option<EmbeddingProvenance>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Pending {
@@ -25,7 +30,7 @@ pub(crate) fn defer_index_inputs(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     fields: Option<&[(String, String)]>,
-    vector: Option<&[f32]>,
+    vector: Option<(&[f32], Option<&EmbeddingProvenance>)>,
     token: Option<&[u8]>,
 ) -> Result<bool> {
     let Some(current) = state(store, txn, id)? else {
@@ -38,9 +43,10 @@ pub(crate) fn defer_index_inputs(
     if let Some(fields) = fields {
         inputs.fields = Some(fields.to_vec());
     }
-    if let Some(vector) = vector {
+    if let Some((vector, provenance)) = vector {
         inputs.vector = Some(vector.to_vec());
         inputs.pending_embedding_token = token.map(<[u8]>::to_vec);
+        inputs.provenance = provenance.cloned();
     }
     PENDING.put(
         store,
@@ -68,6 +74,7 @@ pub(crate) fn drop_staged_vectors(store: &Store, txn: &mut heed::RwTxn<'_>) -> R
         }
         pending.inputs.vector = None;
         pending.inputs.pending_embedding_token = None;
+        pending.inputs.provenance = None;
         if pending.inputs.fields.is_none() {
             PENDING.delete(store, txn, &id)?;
         } else {

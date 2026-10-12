@@ -356,6 +356,7 @@ pub(super) fn stage_post_put_embeddings(
         cleared_pending_embedding = store.clear_pending_embedding(wtxn, id)?;
         let had_hnsw = store.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_some();
         had_vector_mutation = store.vectors.delete(wtxn, id.as_bytes())? || had_hnsw;
+        crate::embed::record_embedding_device_in_txn(store, wtxn, id, None)?;
         crate::hnsw::hnsw_deindex(store, wtxn, id)?;
     }
     let pending_embedding_token =

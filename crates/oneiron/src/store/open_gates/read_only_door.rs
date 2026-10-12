@@ -10,10 +10,12 @@ use heed::{EnvFlags, EnvOpenOptions};
 use crate::error::{Error, Result, VaultRootProblem};
 
 use super::manifest_storage_gates::{OwnedEnv, RegisteredPath, vault_root_open_guard};
+use super::open_version_keys::MODEL_ID_KEY;
 use super::vault_root_bind::vault_root_preflight_error;
 
-/// Rows of one existing vault's `vault_meta`, and the canonical root they
-/// were read from.
+/// Rows of one existing vault's metadata database (its `vault_meta`, or the
+/// `hnsw_meta` that holds its model pin), and the canonical root they were
+/// read from.
 pub(in crate::store) struct VaultMetaRows {
     pub(in crate::store) root: PathBuf,
     pub(in crate::store) rows: Vec<(Vec<u8>, Vec<u8>)>,
@@ -37,6 +39,38 @@ pub(in crate::store) fn read_existing_vault_meta(
     path: &Path,
     prefixes: &[&[u8]],
 ) -> Result<VaultMetaRows> {
+    read_existing_rows(
+        path,
+        ("vault_meta", "vault holds no side-table database"),
+        prefixes,
+    )
+}
+
+/// The embedding model the vault at `path` is pinned to, read through the
+/// same read-only environment; `None` when it holds none.
+pub(crate) fn read_existing_embedding_model(path: &Path) -> Result<Option<String>> {
+    let rows = read_existing_rows(
+        path,
+        ("hnsw_meta", "vault holds no vector metadata database"),
+        &[MODEL_ID_KEY],
+    )?
+    .rows;
+    rows.into_iter()
+        .find(|(key, _)| key.as_slice() == MODEL_ID_KEY)
+        .map(|(_, value)| {
+            String::from_utf8(value).map_err(|_| Error::CorruptedIndex("embedding model id"))
+        })
+        .transpose()
+}
+
+/// The rows under `prefixes` of one named database of the vault at `path`,
+/// and the canonical root they were read from. `database` pairs the name
+/// with the refusal for a vault that lacks it.
+fn read_existing_rows(
+    path: &Path,
+    database: (&str, &'static str),
+    prefixes: &[&[u8]],
+) -> Result<VaultMetaRows> {
     let root = match path.canonicalize() {
         Ok(root) => root,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -47,12 +81,12 @@ pub(in crate::store) fn read_existing_vault_meta(
     let (env, registered) = open_read_only(&root)?;
     let rows = (|| -> Result<_> {
         let txn = env.read_txn()?;
-        let vault_meta = env
-            .open_database::<Bytes, Bytes>(&txn, Some("vault_meta"))?
-            .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+        let db = env
+            .open_database::<Bytes, Bytes>(&txn, Some(database.0))?
+            .ok_or(Error::CorruptedIndex(database.1))?;
         let mut rows = Vec::new();
         for prefix in prefixes {
-            for row in vault_meta.prefix_iter(&txn, prefix)? {
+            for row in db.prefix_iter(&txn, prefix)? {
                 let (key, value) = row?;
                 rows.push((key.to_vec(), value.to_vec()));
             }

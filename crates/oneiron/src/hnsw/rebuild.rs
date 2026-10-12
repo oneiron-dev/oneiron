@@ -163,6 +163,7 @@ pub(crate) fn clear_hnsw_graph_in_txn(
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
     store.vectors().clear(wtxn)?;
+    crate::embed::clear_all_embedding_devices_in_txn(store, wtxn)?;
     store.hnsw_neighbors().clear(wtxn)?;
     store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
     store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;

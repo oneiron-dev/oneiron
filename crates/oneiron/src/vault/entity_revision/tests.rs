@@ -509,6 +509,78 @@ fn staged_text_and_vector_survive_reopen_and_publish_without_embedder() {
     );
 }
 
+/// ARCH-0036 (owner, 2026-10-11): idle publication marks each vector with the
+/// device that computed it. A staged vector keeps its mark through a reopen;
+/// one the idle pass embeds, first or again after a swap, carries its
+/// provider's.
+#[test]
+fn idle_publication_marks_each_vector_with_the_device_that_computed_it() {
+    use crate::embed::{EmbeddingDevice, EmbeddingProvenance};
+    struct Marked(EmbeddingProvenance);
+    impl IndexedRevisionEmbedder for Marked {
+        fn embed_revision(&self, _input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+            Ok(vec![0.0, 1.0, 0.0, 0.0])
+        }
+        fn provenance(&self) -> EmbeddingProvenance {
+            self.0.clone()
+        }
+    }
+    let cuda = EmbeddingProvenance::new(EmbeddingDevice::Cuda, "candle 0.11.0 q8_0");
+    let metal = Marked(EmbeddingProvenance::new(
+        EmbeddingDevice::Metal,
+        "candle 0.11.0 q8_0",
+    ));
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let staged = EntityId::now();
+    put(&vault, &staged, "alpha");
+    put(&vault, &staged, "beta");
+    let staged_revision = vault.pin_entity_revision(&staged).unwrap();
+    vault
+        .batch()
+        .vector_with_provenance(&staged, &[0.0, 0.0, 1.0, 0.0], cuda.clone())
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault.embedding_provenance(&staged).unwrap(),
+        Some(EmbeddingProvenance::unknown()),
+        "the published vector is still the caller's unmarked one"
+    );
+    drop(vault);
+
+    let mut vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let report = vault.refresh_staged_indexed_at_idle(u64::MAX).unwrap();
+    assert_eq!(report.refreshed, vec![(staged, staged_revision)]);
+    assert_eq!(
+        vault.get_vector(&staged).unwrap(),
+        Some(vec![0.0, 0.0, 1.0, 0.0])
+    );
+    assert_eq!(vault.embedding_provenance(&staged).unwrap(), Some(cuda));
+
+    let embedded = EntityId::now();
+    put(&vault, &embedded, "gamma");
+    put(&vault, &embedded, "delta");
+    let revision = vault.pin_entity_revision(&embedded).unwrap();
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &metal).unwrap();
+    assert_eq!(report.refreshed, vec![(embedded, revision)]);
+    assert_eq!(
+        vault.embedding_provenance(&embedded).unwrap(),
+        Some(metal.0.clone())
+    );
+
+    vault.refill_embedding_space().unwrap();
+    assert_eq!(vault.embedding_provenance(&staged).unwrap(), None);
+    vault.refresh_indexed_at_idle(u64::MAX, &metal).unwrap();
+    for id in [staged, embedded] {
+        assert_eq!(
+            vault.embedding_provenance(&id).unwrap(),
+            Some(metal.0.clone())
+        );
+    }
+}
+
 /// A vector staged for an unpublished revision carries no record of the model
 /// that made it, and idle publication prefers it over the embedder. The
 /// embedding-space swap drops it and keeps the staged text, so the idle pass
