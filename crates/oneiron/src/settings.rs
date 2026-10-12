@@ -498,6 +498,18 @@ impl Vault {
         DEVICE_ONLY_WORLD.contains(&self.store, &rtxn, &HexId(world))
     }
 
+    /// Whether a device-local world keeps `id` on this device, so no caller
+    /// off it reads the row (DEC-0005). A row whose world cannot be read is
+    /// kept too.
+    pub fn device_local_keeps(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let flagged = device_only_worlds_in(&self.store, &rtxn)?;
+        match device_only_withholds(&self.store, &rtxn, &flagged, id) {
+            Err(Error::CorruptedIndex(_)) => Ok(true),
+            held => held,
+        }
+    }
+
     /// Reads the persisted customization settings, or the default four-layer model.
     pub fn customization_settings(&self) -> Result<CustomizationSettings> {
         let rtxn = self.store.env.read_txn()?;
@@ -665,17 +677,34 @@ pub(crate) fn device_only_withholds(
     if flagged.is_empty() {
         return Ok(false);
     }
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
+    device_only_withholds_raw(store, txn, flagged, id, raw.as_deref())
+}
+
+/// [`device_only_withholds`] judged on `raw`, the revision of `id` a door
+/// serves (`None` when no row is stored): a CLAIM by the world that revision
+/// names.
+pub(crate) fn device_only_withholds_raw(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    flagged: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+    raw: Option<&[u8]>,
+) -> Result<bool> {
+    if flagged.is_empty() {
+        return Ok(false);
+    }
     if flagged.contains(id) {
         return Ok(true);
     }
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+    let Some(raw) = raw else {
         return claim_in_flagged_world(store, txn, flagged, id, None);
     };
-    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+    let header = crate::batch::EntityMetadataHeader::parse(raw)
         .ok_or(Error::CorruptedIndex("entity header"))?;
     match header.entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {
-            claim_in_flagged_world(store, txn, flagged, id, Some(raw.as_slice()))
+            claim_in_flagged_world(store, txn, flagged, id, Some(raw))
         }
         crate::registry::ENTITY_TYPE_NOTE => {
             for edge in store.port_edges(

@@ -25,6 +25,20 @@ pub struct ScopedReadActorKey {
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
     /// ranked or reached through the graph, lies in one of them.
     pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
+    /// Whether the caller sits off this device; see [`Self::at`].
+    off_device: bool,
+}
+
+/// Where a read's caller sits relative to this device (DEC-0005). Only the
+/// host decides it, from the connection the caller reached it on; nothing the
+/// caller sends sets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallerLocality {
+    /// On this device: the embedded host, or a caller on its local socket or
+    /// loopback.
+    OnDevice,
+    /// Anywhere else.
+    OffDevice,
 }
 
 /// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
@@ -261,6 +275,7 @@ impl ScopedReadActorKey {
             owner: None,
             room_turn: None,
             worlds: None,
+            off_device: false,
         })
     }
 
@@ -293,6 +308,7 @@ impl ScopedReadActorKey {
             owner: Some(owner),
             room_turn: None,
             worlds: None,
+            off_device: false,
         }
     }
 
@@ -329,6 +345,22 @@ impl ScopedReadActorKey {
             None => worlds,
         });
         self
+    }
+
+    /// Read for a caller at `locality`. A caller off this device reads no
+    /// row a device-local world keeps here, whatever its credential grants:
+    /// DEC-0005 gives the owner's own devices, not the owner, a ceiling over
+    /// those worlds. The ceiling only narrows: once off the device, a key
+    /// never reads on it again.
+    #[must_use]
+    pub fn at(mut self, locality: CallerLocality) -> Self {
+        self.off_device |= locality == CallerLocality::OffDevice;
+        self
+    }
+
+    /// Whether this key reads for a caller off this device.
+    pub(crate) fn off_device(&self) -> bool {
+        self.off_device
     }
 
     /// Attach the authenticated principal. An unbound delegated caller has no grants.

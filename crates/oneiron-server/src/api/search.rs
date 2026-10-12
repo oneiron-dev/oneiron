@@ -5,6 +5,7 @@ use super::memory_reason::{
 };
 use super::query_params;
 use super::scoped_read_for_legacy_api;
+use crate::auth::Locality;
 use crate::embedder::EmbedQueryRefusal;
 use crate::error::ApiError;
 use crate::projection;
@@ -170,6 +171,7 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
 )]
 pub(crate) async fn search_vector(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
@@ -212,6 +214,7 @@ pub(crate) async fn search_vector(
         view,
         count_mode,
         page_limit: params.limit,
+        locality,
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
@@ -313,6 +316,7 @@ pub(crate) struct TextSearchQuery {
 )]
 pub(crate) async fn search_text(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
@@ -328,6 +332,7 @@ pub(crate) async fn search_text(
         view: params.view.unwrap_or(View::Summary),
         count_mode: params.count_mode.for_search_response(),
         page_limit: params.limit,
+        locality,
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
@@ -633,6 +638,7 @@ pub(crate) struct SemanticSearchRequest {
 )]
 pub(crate) async fn search_semantic(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
@@ -677,6 +683,7 @@ pub(crate) async fn search_semantic(
         view,
         count_mode,
         page_limit,
+        locality,
     };
     let question = text.to_owned();
     let page = match deadline {
@@ -698,6 +705,7 @@ pub(crate) async fn search_semantic(
                 arrived,
                 budget,
                 count_mode,
+                locality,
                 move |server, deadline| {
                     let embedding = server.embed_query(&question).map_err(embed_query_error)?;
                     search_page(

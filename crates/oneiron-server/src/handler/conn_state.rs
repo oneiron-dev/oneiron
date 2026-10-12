@@ -26,6 +26,8 @@ pub(super) struct ConnState {
     pub(super) protocol_version: u8,
     /// App-tier authority is established only by a successful in-band bind.
     pub(super) bound_auth: Option<CoreAuth>,
+    /// Where this socket's peer sits; a bound auth reads from there.
+    pub(super) locality: oneiron::claim::CallerLocality,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
 }
@@ -43,6 +45,7 @@ impl ConnState {
             queued_chunk_objects: std::collections::VecDeque::new(),
             protocol_version,
             bound_auth: None,
+            locality: oneiron::claim::CallerLocality::OffDevice,
             residence_index: None,
         }
     }

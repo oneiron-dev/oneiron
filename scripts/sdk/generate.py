@@ -311,12 +311,12 @@ def mcp_input_dispatch(row):
                  'if !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires owner authority")); }\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = auth.verified_slip().ok_or_else(|| McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority"))?;\n'
-                 'let output = if proof.claims().holder_ref == "host" { server.vault.export_with_verified_host_owner(&input, proof) } else { memory.export_with_verified_owner(&input, proof) }.map_err(mcp_facade_error)?;\n')
+                 'let output = if proof.claims().holder_ref == "host" { server.vault.export_with_verified_host_owner(&input, proof, actor.locality()) } else { memory.export_with_verified_owner(&input, proof) }.map_err(mcp_facade_error)?;\n')
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
-                 f'let output = server.{row["server_door"]}(actor.actor_ref, actor.actor_class, proof, None, input).await.map_err(mcp_facade_error)?;\n')
+                 f'let output = server.{row["server_door"]}(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input).await.map_err(mcp_facade_error)?;\n')
     else:
         body += decode + f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
     if row.get('lands_turn'):
@@ -370,7 +370,7 @@ pub(crate) async fn execute_agent_verb_input(
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
     }
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let memory = server.vault.memory(actor.actor_ref, actor.actor_class).at(actor.locality());
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
     match tool {
 '''
@@ -470,10 +470,10 @@ def outputs():
                 let input: oneiron::memory::ExportOptions = facade_input(value)?;
                 let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
                 let output = if proof.claims().holder_ref == "host" {{
-                    server.vault.export_with_verified_host_owner(&input, proof)?
+                    server.vault.export_with_verified_host_owner(&input, proof, auth.locality())?
                 }} else {{
                     let (actor, class) = facade_actor(&auth)?;
-                    server.vault.memory(actor, class).export_with_verified_owner(&input, proof)?
+                    server.vault.memory(actor, class).at(auth.locality()).export_with_verified_owner(&input, proof)?
                 }};
                 Ok(Json(serde_json::to_value(output).map_err(|_| FacadeApiError::new(
                     StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
@@ -483,7 +483,7 @@ def outputs():
             continue
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
-        guard, result = '', f'facade_invoke(&server, &headers, actor, class, "{r["name"]}", value)?'
+        guard, result = '', f'facade_invoke(&server, &headers, actor, class, auth.locality(), "{r["name"]}", value)?'
         readables = r.get('admission', {}).get('readable', [])
         # A room turn refuses an unserved verb before any credential lookup,
         # so the refusal says nothing about the target the lookup would read.
@@ -493,13 +493,13 @@ def outputs():
             guard += f'facade_room_turn_serves(&headers, "{r["name"]}", oneiron::memory::RoomTurnHandle::serves("{r["name"]}"))?;'
         for readable in readables:
             if readable == 'rows':
-                result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
+                result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class).at(auth.locality()), facade_input(value)?)?)?'
             else:
                 guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
         # A server door runs the verb with the host's execution inputs, off the
         # runtime, inside the room turn the request names, if any.
         if r.get('server_door'):
-            result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), facade_room_turn(&headers)?, facade_input(value)?).await?)?'
+            result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), auth.locality(), facade_room_turn(&headers)?, facade_input(value)?).await?)?'
         # The typed result path consumes facade_input; invoke decodes its own input.
         validation = (f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;\n         '
                       if 'rows' in r.get('admission', {}).get('readable', []) or r.get('server_door') else '')

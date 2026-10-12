@@ -404,6 +404,7 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
             crate::mcp::McpSurfaceMode::Primary,
             "axis-admission",
             &mcp_credential_headers(&server, credential),
+            oneiron::claim::CallerLocality::OnDevice,
             &server,
         )
         .await

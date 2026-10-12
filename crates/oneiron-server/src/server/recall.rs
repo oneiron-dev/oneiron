@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use oneiron::authority::VerifiedSlip;
+use oneiron::claim::CallerLocality;
 use oneiron::memory::{
     Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult, RecallEffort,
 };
@@ -52,9 +53,10 @@ impl SyncServer {
         move |query| embeds.then(|| self.recall_query_vector(query)).flatten()
     }
 
-    /// [`Self::recall`] for `actor` under the slip it presented, on the
-    /// blocking pool. When the request names a room turn, every read recall
-    /// makes runs inside that room (ARCH-0067 §8).
+    /// [`Self::recall`] for `actor` under the slip it presented, from where
+    /// its connection sits, on the blocking pool. When the request names a
+    /// room turn, every read recall makes runs inside that room (ARCH-0067
+    /// §8).
     ///
     /// A request with a deadline answers by it whatever the blocking work is
     /// doing: past it, the door returns the last pack recall published (before
@@ -66,6 +68,7 @@ impl SyncServer {
         actor: EntityId,
         class: EdgeActorClass,
         proof: Option<VerifiedSlip>,
+        locality: CallerLocality,
         room: Option<EntityId>,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
@@ -84,7 +87,7 @@ impl SyncServer {
                 arrived,
                 on_cut: budget.map(|_| &publish as &(dyn Fn(MemoryPack) + Sync)),
             };
-            let memory = reader(&server.vault, actor, class, proof.as_ref());
+            let memory = reader(&server.vault, actor, class, proof.as_ref()).at(locality);
             let embed = server.recall_embed(input.effort);
             match room {
                 Some(room) => memory
@@ -121,6 +124,7 @@ impl SyncServer {
         actor: EntityId,
         class: EdgeActorClass,
         proof: Option<VerifiedSlip>,
+        locality: CallerLocality,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
         let arrived = Instant::now();
@@ -130,7 +134,7 @@ impl SyncServer {
             self.vault.call_mode_deadline(),
         )?;
         let Some(budget) = budget.filter(|_| effort == Effort::Light) else {
-            let memory = reader(&self.vault, actor, class, proof.as_ref());
+            let memory = reader(&self.vault, actor, class, proof.as_ref()).at(locality);
             return blocking(|| self.recall(&memory, input));
         };
         let ready = CutSlot::default();
@@ -145,7 +149,7 @@ impl SyncServer {
                     arrived,
                     on_cut: Some(&publish),
                 };
-                let memory = reader(&vault, actor, class, proof.as_ref());
+                let memory = reader(&vault, actor, class, proof.as_ref()).at(locality);
                 // Light effort embeds no query (ARCH-0044 S6).
                 let answer =
                     oneiron::task_verb::sdk::recall_at_door(&memory, input, |_| None, &door);

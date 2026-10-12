@@ -292,7 +292,10 @@ fn mcp_board_sections(
 ) -> Result<(Vec<oneiron::context_board::BoardSection>, McpBoardOmissions), McpGatewayError> {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
-    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let facade = server
+        .vault
+        .memory(actor.actor_ref, actor.actor_class)
+        .at(actor.locality());
     let oneiron::task_verb::TaskDescription::Section(tasks) =
         facade.describe(None).map_err(mcp_facade_error)?
     else {

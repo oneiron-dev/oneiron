@@ -2,6 +2,7 @@ use super::ViewQuery;
 use super::check_api_auth;
 use super::query_params;
 use super::scoped_read_for_legacy_api;
+use crate::auth::Locality;
 use crate::error::ApiError;
 use crate::projection;
 use crate::projection::View;
@@ -101,6 +102,7 @@ use utoipa::ToSchema;
 )]
 pub(crate) async fn get_entity(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
@@ -113,7 +115,7 @@ pub(crate) async fn get_entity(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
+    let scoped_read = scoped_read_for_legacy_api(&server, locality)?;
     let read = scoped_read
         .read(&[oneiron::claim::PointRead::id(id)], None)
         .inspect_err(|error| tracing::error!(%error,"get entity failed"))
@@ -238,6 +240,7 @@ mod credential_tests {
 )]
 pub(crate) async fn get_edges(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
@@ -250,7 +253,7 @@ pub(crate) async fn get_edges(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
+    let scoped_read = scoped_read_for_legacy_api(&server, locality)?;
     let read = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {

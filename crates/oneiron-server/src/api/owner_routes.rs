@@ -695,7 +695,8 @@ async fn read_graph_fs(
     let reader = auth
         .verified_slip()
         .and_then(oneiron::claim::ScopedReadActorKey::from_verified_slip)
-        .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
+        .ok_or_else(|| ApiError::forbidden_scope("owner"))?
+        .at(auth.locality());
     let query = query_params(query)?;
     let reply = blocking(move || graph_fs::run(server.vault(), reader, &query)).await?;
     Ok(Json(reply))

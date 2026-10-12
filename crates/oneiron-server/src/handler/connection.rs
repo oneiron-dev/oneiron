@@ -51,6 +51,7 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
+    crate::auth::Locality(locality): crate::auth::Locality,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
@@ -70,7 +71,9 @@ async fn ws_upgrade_handler(
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
-        .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti)))
+        .on_upgrade(move |socket| {
+            handle_connection(socket, server, conn_id, session_jti, locality)
+        }))
 }
 
 /// Whether this socket's credential has since been revoked.
@@ -117,6 +120,7 @@ async fn handle_connection(
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
+    locality: oneiron::claim::CallerLocality,
 ) {
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
@@ -185,6 +189,7 @@ async fn handle_connection(
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = ConnState::new(protocol_version);
+    conn_state.locality = locality;
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),

@@ -188,7 +188,9 @@ fn index(
     let page_limit = input.limit.min(budgets.index_page_limit);
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof).ok_or_else(AppError::unauthorized)?;
+    let actor = ScopedReadActorKey::from_verified_slip(proof)
+        .ok_or_else(AppError::unauthorized)?
+        .at(auth.locality());
     let scoped = server.vault.scoped_read(actor);
     let current_vv = doc.oplog_vv().encode();
     let grant = server
@@ -367,7 +369,9 @@ fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Value, A
     // A stored grant constrains the selector; the actor's live scoped-read
     // floor must ALSO admit the exact target. Either denial looks missing.
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof).ok_or_else(AppError::unauthorized)?;
+    let actor = ScopedReadActorKey::from_verified_slip(proof)
+        .ok_or_else(AppError::unauthorized)?
+        .at(auth.locality());
     if !server
         .vault
         .scoped_read(actor)
@@ -410,7 +414,9 @@ fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Value,
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof).ok_or_else(AppError::unauthorized)?;
+    let actor = ScopedReadActorKey::from_verified_slip(proof)
+        .ok_or_else(AppError::unauthorized)?
+        .at(auth.locality());
     let scoped = server.vault.scoped_read(actor);
     if !scoped
         .is_entity_readable(&id)

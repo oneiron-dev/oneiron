@@ -65,8 +65,9 @@ pub(super) async fn standing_prefix(
         None if blocks.len() == 1 => &blocks[0],
         None => return Err(bad()),
     };
-    let reader =
-        oneiron::claim::ScopedReadActorKey::with_actor_class(actor_ref, "agent").ok_or_else(bad)?;
+    let reader = oneiron::claim::ScopedReadActorKey::with_actor_class(actor_ref, "agent")
+        .ok_or_else(bad)?
+        .at(auth.locality());
     let mut cache = server.standing_block_cache.lock().await;
     let pinned = server
         .vault

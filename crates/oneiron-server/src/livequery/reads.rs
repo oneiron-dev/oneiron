@@ -138,7 +138,7 @@ impl Read {
             Self::Recall(request) => {
                 let (actor, class) = super::bound_reader(auth)?;
                 let proof = auth.verified_slip().cloned();
-                result(server.recall_at_sync_door(actor, class, proof, request))
+                result(server.recall_at_sync_door(actor, class, proof, auth.locality(), request))
             }
         }
     }

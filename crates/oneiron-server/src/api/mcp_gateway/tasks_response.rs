@@ -263,7 +263,7 @@ pub(crate) fn mcp_scoped_read<'a>(
                 "scoped reads require the authenticated connector proof",
             )
         })?;
-    Ok(vault.scoped_read(key))
+    Ok(vault.scoped_read(key.at(actor.locality())))
 }
 
 pub(crate) fn mcp_actor_result(actor: &McpResolvedActor) -> Value {
@@ -803,7 +803,10 @@ pub(crate) async fn execute_agent_verb_input(
             format!("{tool} input names unknown field `{field}`"),
         ));
     }
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let memory = server
+        .vault
+        .memory(actor.actor_ref, actor.actor_class)
+        .at(actor.locality());
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
@@ -912,7 +915,14 @@ pub(crate) async fn execute_agent_verb_input(
                 .and_then(crate::auth::CoreAuth::verified_slip)
                 .cloned();
             let output = server
-                .recall_off_runtime(actor.actor_ref, actor.actor_class, proof, None, input)
+                .recall_off_runtime(
+                    actor.actor_ref,
+                    actor.actor_class,
+                    proof,
+                    actor.locality(),
+                    None,
+                    input,
+                )
                 .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -938,7 +948,9 @@ pub(crate) async fn execute_agent_verb_input(
                 )
             })?;
             let output = if proof.claims().holder_ref == "host" {
-                server.vault.export_with_verified_host_owner(&input, proof)
+                server
+                    .vault
+                    .export_with_verified_host_owner(&input, proof, actor.locality())
             } else {
                 memory.export_with_verified_owner(&input, proof)
             }

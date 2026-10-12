@@ -75,7 +75,7 @@ fn rpc_error(request_id: u64, error: AppError) -> Result<Vec<Vec<u8>>, ProtocolE
 /// Both identity claims come from the credential, exactly as on the HTTP facade.
 fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory<'a>, AppError> {
     let (actor, class) = bound_reader(auth)?;
-    let memory = vault.memory(actor, class);
+    let memory = vault.memory(actor, class).at(auth.locality());
     // Reads run under the credential this principal presented (ONE-1187-D6).
     Ok(match auth.verified_slip() {
         Some(proof) => memory.with_read_proof(proof),

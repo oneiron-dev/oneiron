@@ -103,6 +103,9 @@ impl<'a> ScopedRead<'a> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        if self.device_withholds_in(txn, id, None)? {
+            return Ok(false);
+        }
         if self.actor_key.room_turn.is_none()
             && self.actor_key.worlds.is_none()
             && self.audience.is_none()
@@ -130,6 +133,9 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
+        if self.device_withholds_in(txn, id, Some(raw))? {
+            return Ok(false);
+        }
         if self.actor_key.room_turn.is_none() && self.actor_key.worlds.is_none() {
             return self.audience_conjunct_in(txn, id, raw);
         }
@@ -167,6 +173,39 @@ impl<'a> ScopedRead<'a> {
             }
         }
         self.audience_conjunct_in(txn, id, raw)
+    }
+
+    /// Whether a device-local world keeps `id` from this read: a caller off
+    /// this device reads none of its rows (DEC-0005), neither the revision
+    /// `raw` a door serves nor the row as it stands. A row whose world cannot
+    /// be read stays here too.
+    fn device_withholds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: Option<&[u8]>,
+    ) -> Result<bool> {
+        if !self.actor_key.off_device() {
+            return Ok(false);
+        }
+        let store = &self.vault.store;
+        let flagged = crate::settings::device_only_worlds_in(store, txn)?;
+        let withholds = match raw {
+            Some(raw) => {
+                crate::settings::device_only_withholds_raw(store, txn, &flagged, id, Some(raw))
+            }
+            None => Ok(false),
+        };
+        match withholds.and_then(|held| {
+            if held {
+                Ok(true)
+            } else {
+                crate::settings::device_only_withholds(store, txn, &flagged, id)
+            }
+        }) {
+            Err(Error::CorruptedIndex(_)) => Ok(true),
+            held => held,
+        }
     }
 
     /// Whether each of `peers` reads the revision `raw` too, under this
@@ -408,10 +447,12 @@ impl ScopedRead<'_> {
         // private one; its count would say it exists, so it reads as absent.
         // A row outside the worlds the read asked for is not withheld by
         // policy; scope honesty names its world instead. A row in a world the
-        // credential cannot read has no name and no count (DEC-0005).
+        // credential cannot read, or one a device-local world keeps from a
+        // caller off this device, has no name and no count (DEC-0005).
         if self.actor_key.room_turn.is_none()
             && !self.outside_asked_worlds(&row)
             && !self.outside_credential_worlds_in(txn, id, &row)?
+            && !self.device_withholds_in(txn, id, None)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
         {
             Ok(ReadAdmission::Suppressed)

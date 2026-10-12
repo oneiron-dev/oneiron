@@ -216,7 +216,7 @@ pub(super) fn handle_app_message_with_connection(
                 server
                     .wire_telemetry
                     .record("auth.bind", actor, oneiron_vault_contract::now_ts());
-            state.bound_auth = Some(binding?);
+            state.bound_auth = Some(binding?.at(state.locality));
             for frame in crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?
             {
                 direct_tx

@@ -6,11 +6,13 @@
 //! MAC tokens never establish production authority.
 
 use std::collections::BTreeSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::FromRequestParts;
+use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, request::Parts};
+use oneiron::claim::CallerLocality;
 
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
@@ -252,6 +254,29 @@ pub(crate) struct CoreAuth {
     verified_slip: Option<oneiron::authority::VerifiedSlip>,
     /// Exact authenticated instrument, independent of the verifier's remaining TTL.
     instrument: Option<[u8; 32]>,
+    /// Where the connection this caller reached the server on sits. Off this
+    /// device until the request's own connection says otherwise; see
+    /// [`caller_locality`].
+    locality: CallerLocality,
+}
+
+/// Where the connection a request arrived on sits (DEC-0005): a TCP peer on
+/// loopback, or a kernel-verified peer on the local socket, is on this
+/// device. Any other peer, or a connection the listener recorded no peer for,
+/// is off it. Only the accepted connection decides, never a header the caller
+/// sends, so a reverse proxy on this device passes its callers as local.
+pub(crate) fn caller_locality(extensions: &axum::http::Extensions) -> CallerLocality {
+    let loopback = extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|ConnectInfo(peer)| peer.ip().to_canonical().is_loopback());
+    let local_socket = extensions
+        .get::<ConnectInfo<crate::managed::UnixPeer>>()
+        .is_some_and(|ConnectInfo(peer)| peer.verified());
+    if loopback || local_socket {
+        CallerLocality::OnDevice
+    } else {
+        CallerLocality::OffDevice
+    }
 }
 
 impl CoreAuth {
@@ -314,6 +339,7 @@ impl CoreAuth {
             org_ref: None,
             verified_slip: None,
             instrument: None,
+            locality: CallerLocality::OffDevice,
         })
     }
 
@@ -329,6 +355,7 @@ impl CoreAuth {
             org_ref: None,
             verified_slip: None,
             instrument: None,
+            locality: CallerLocality::OffDevice,
         }
     }
 
@@ -349,6 +376,18 @@ impl CoreAuth {
 
     pub(crate) fn verified_slip(&self) -> Option<&oneiron::authority::VerifiedSlip> {
         self.verified_slip.as_ref()
+    }
+
+    /// Where this caller's connection sits; every read it makes reads there.
+    pub(crate) fn locality(&self) -> CallerLocality {
+        self.locality
+    }
+
+    /// This caller, as the request's connection at `locality` places it.
+    #[must_use]
+    pub(crate) fn at(mut self, locality: CallerLocality) -> Self {
+        self.locality = locality;
+        self
     }
 
     pub(crate) fn principal(&self) -> &str {
@@ -451,6 +490,18 @@ impl CoreAuth {
     }
 }
 
+/// The request's [`caller_locality`], for a handler that reads without a
+/// [`CoreAuth`].
+pub(crate) struct Locality(pub(crate) CallerLocality);
+
+impl<S: Send + Sync> FromRequestParts<S> for Locality {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(caller_locality(&parts.extensions)))
+    }
+}
+
 impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
     type Rejection = crate::error::EnvelopedApiError;
 
@@ -458,7 +509,9 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        Self::for_server(&parts.headers, server).map_err(Into::into)
+        Self::for_server(&parts.headers, server)
+            .map(|auth| auth.at(caller_locality(&parts.extensions)))
+            .map_err(Into::into)
     }
 }
 
@@ -593,6 +646,7 @@ fn core_auth_for_live_claims(
         org_ref: claims.org_ref,
         verified_slip: None,
         instrument: None,
+        locality: CallerLocality::OffDevice,
     })
 }
 

@@ -383,6 +383,8 @@ pub struct Memory<'v> {
     /// The write origin a host bound, when one did: claim doors stamp it in
     /// place of the caller's declared source.
     pub(super) host_origin: Option<HostWriteOrigin>,
+    /// Where the caller sits; see [`Memory::at`].
+    pub(super) locality: crate::claim::CallerLocality,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -429,6 +431,7 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            locality: crate::claim::CallerLocality::OnDevice,
         }
     }
 
@@ -456,6 +459,7 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            locality: crate::claim::CallerLocality::OnDevice,
         }
     }
 }
@@ -488,6 +492,7 @@ impl<'v> Memory<'v> {
                 read_proof: self.read_proof.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
+                locality: self.locality,
             },
         })
     }
@@ -506,6 +511,19 @@ impl Memory<'_> {
     #[must_use]
     pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
         self.read_proof = Some(proof.clone());
+        self
+    }
+
+    /// Serves a caller at `locality`, as the host found it from the
+    /// connection. Every read lane, and the whole-vault export, then reads as
+    /// [`ScopedReadActorKey::at`](crate::claim::ScopedReadActorKey::at) does:
+    /// a caller off this device reads no device-local world (DEC-0005). It
+    /// only narrows; a handle off the device never reads on it again.
+    #[must_use]
+    pub fn at(mut self, locality: crate::claim::CallerLocality) -> Self {
+        if locality == crate::claim::CallerLocality::OffDevice {
+            self.locality = locality;
+        }
         self
     }
 

@@ -154,10 +154,11 @@ fn facade_invoke(
     headers: &HeaderMap,
     actor: EntityId,
     class: EdgeActorClass,
+    locality: oneiron::claim::CallerLocality,
     verb: &str,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let memory = server.vault.memory(actor, class);
+    let memory = server.vault.memory(actor, class).at(locality);
     Ok(match facade_room_turn(headers)? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
