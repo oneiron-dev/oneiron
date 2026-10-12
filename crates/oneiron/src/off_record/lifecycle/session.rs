@@ -360,11 +360,13 @@ impl OffRecordSession<'_> {
         // The search read the room. While the room holds rows of its own,
         // its run may name them, and base holds no reference to a live
         // overlay row (the taint guard covers references): on record, such a
-        // run keeps no row in base.
-        if !self.vault.store.retrieval_telemetry_capture_enabled()
-            || (telemetry.writes_to_base() && holds_room_rows)
-        {
+        // run keeps no row in base, though its saver must still hold.
+        if !self.vault.store.retrieval_telemetry_capture_enabled() {
             telemetry.revalidate_without_capture()?;
+            return Ok(search.scores);
+        }
+        if telemetry.writes_to_base() && holds_room_rows {
+            telemetry.admit_withheld_run()?;
             return Ok(search.scores);
         }
         let record = Vault::vault_search_retrieval_run_record(
