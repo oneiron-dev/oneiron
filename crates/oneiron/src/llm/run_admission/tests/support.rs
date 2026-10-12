@@ -66,6 +66,9 @@ pub(super) struct FakeProvider {
     sent: Mutex<Vec<Sent>>,
     reply: Mutex<Reply>,
     refused: Mutex<Vec<LlmCapability>>,
+    /// Whether it builds its request bytes before it sends, as a broker's
+    /// adapter does, and names their digest.
+    bytes: Mutex<bool>,
 }
 
 impl FakeProvider {
@@ -77,7 +80,12 @@ impl FakeProvider {
                 output: 1,
             }),
             refused: Mutex::new(Vec::new()),
+            bytes: Mutex::new(false),
         })
+    }
+
+    pub(super) fn bind_bytes(&self) {
+        *self.bytes.lock().expect("bytes") = true;
     }
 
     pub(super) fn refuse(&self, capability: LlmCapability) {
@@ -138,6 +146,11 @@ impl SingleRouteBackend for FakeProvider {
             .into()),
             None => Ok(()),
         }
+    }
+
+    fn request_digest(&self, request: &LlmRequest, _: bool) -> LlmResult<Option<String>> {
+        Ok((*self.bytes.lock().expect("bytes"))
+            .then(|| format!("bytes:{}", request.canonical_hash_hex().expect("digest"))))
     }
 }
 

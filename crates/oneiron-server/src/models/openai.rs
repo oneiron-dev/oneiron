@@ -47,20 +47,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 .http
                 .post_json(&request.path, &request.headers, &body)
                 .await?;
-            // A proxy may answer under its own spelling of the model (a login
-            // prefix stripped, say). Record what it said; never reject on it.
-            // A reply without usage (or with a null one) gets one carrying only
-            // that name; the
-            // adapter reads its absent counts as zero, as it would anyway.
-            let served = reply.body.get("model").cloned();
-            if (200..300).contains(&reply.status)
-                && served.is_some()
-                && let Some(body) = reply.body.as_object_mut()
-                && body.get("usage").is_none_or(JsonValue::is_null)
-            {
-                body.insert("usage".into(), JsonValue::Object(Default::default()));
-            }
-            record_served_model(reply.body.get_mut("usage"), served);
+            carry_served_model(reply.status, &mut reply.body);
             Ok(OpenAiCompatHttpResponse {
                 status: reply.status,
                 headers: reply.headers,
@@ -89,6 +76,24 @@ impl OpenAiCompatTransport for OpenAiHttp {
         );
         Ok(Box::pin(frames))
     }
+}
+
+/// Stamps the model a reply names into its usage.
+///
+/// A proxy may answer under its own spelling of the model (a login prefix
+/// stripped, say). Record what it said; never reject on it. A 2xx reply
+/// without usage (or with a null one) gets one carrying only that name; the
+/// adapter reads its absent counts as zero, as it would anyway.
+pub(super) fn carry_served_model(status: u16, body: &mut JsonValue) {
+    let served = body.get("model").cloned();
+    if (200..300).contains(&status)
+        && served.is_some()
+        && let Some(body) = body.as_object_mut()
+        && body.get("usage").is_none_or(JsonValue::is_null)
+    {
+        body.insert("usage".into(), JsonValue::Object(Default::default()));
+    }
+    record_served_model(body.get_mut("usage"), served);
 }
 
 /// The stream as the adapter reads it, with the served model on its usage.

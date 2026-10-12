@@ -12,6 +12,7 @@ fn binding(model: &str, locality: ModelLocality) -> DispatchBinding {
         route: ROUTE.to_owned(),
         locality,
         offer: "customer-key".to_owned(),
+        request_digest: None,
     }
 }
 

@@ -16,7 +16,7 @@ use super::types::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{CustodyTier, SecretCustodyFloor};
+use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor};
 
 use crate::vault::Vault;
 
@@ -65,6 +65,31 @@ impl Vault {
                 generation,
             }],
         })
+    }
+
+    /// Whether [`Vault::inject_secret_at_door`] would release `secret_ref` to
+    /// `effector` now: the same resolution, admission rule, custody floor,
+    /// door policy and read grant on the binding the value door resolves,
+    /// all read from the value-free admission projection. A host asks before
+    /// it starts a call that will need the value, so a call the door would
+    /// refuse is refused before it starts.
+    pub fn check_secret_at_door(&self, secret_ref: &str, effector: &str) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        let (_, rec) = read_record_for_ref_in_txn(&self.store, &txn, secret_ref)?;
+        let floor = SecretCustodyFloor::resolve(&self.store, &txn)?;
+        admit_record_use(&rec, effector, CustodyTier::T0Doored, &floor)?;
+        crate::credential_door::admit_materialization_in_txn(&self.store, &txn, effector, None)?;
+        if rec
+            .binding_for(effector)
+            .is_some_and(SecretBinding::grants_read)
+        {
+            Ok(())
+        } else {
+            Err(Error::Secret(SecretError::SecretBindingDenied {
+                effector: effector.to_owned(),
+                secret_ref: rec.name,
+            }))
+        }
     }
 
     /// T1 lease materialization. Admits `T1Leased` under the one admission

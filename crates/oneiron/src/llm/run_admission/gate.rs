@@ -7,9 +7,9 @@ use std::task::{Context, Poll};
 use futures_core::Stream;
 
 use super::super::{
-    BudgetLease, DispatchBinding, FatalLlmError, LlmBackend, LlmCapability, LlmError,
-    LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmUsage,
-    ModelId, SingleRouteBackend,
+    BrokerIsolation, BudgetLease, DispatchBinding, FatalLlmError, LlmBackend, LlmCapability,
+    LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult,
+    LlmUsage, ModelId, SingleRouteBackend,
 };
 use super::admission::{RunDenied, RunInner};
 
@@ -45,8 +45,17 @@ impl GatedBackend {
         Self { run, inner, offer }
     }
 
+    /// The digest of the exact bytes the wrapped backend would send for
+    /// `request`, when it builds them first; `None` when it does not, or
+    /// cannot build them.
+    pub(super) fn request_digest(&self, request: &LlmRequest) -> Option<String> {
+        self.inner.request_digest(request, false).ok().flatten()
+    }
+
     /// Checks and starts the call's permit; returns the digest of the request
-    /// that is about to leave.
+    /// that is about to leave. A backend that builds its request bytes first
+    /// names their digest, and the permit must have been admitted for exactly
+    /// those bytes ([`RunAdmission::admit_request`](super::RunAdmission::admit_request)).
     fn open(&self, request: &LlmRequest, lease: &BudgetLease, stream: bool) -> LlmResult<String> {
         let model = request.model.as_str();
         if let Some(key) = request.route_selector_override() {
@@ -54,16 +63,27 @@ impl GatedBackend {
             self.run.refuse(Some(model), Some(lease), reason);
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        if let Err(error) = self.inner.preflight(request, stream) {
-            self.run
-                .refuse(Some(model), Some(lease), RunDenied::BackendRefused);
-            return Err(error);
-        }
-        let digest = request
-            .canonical_hash_hex()
-            .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
+        let bound = self
+            .inner
+            .preflight(request, stream)
+            .and_then(|()| self.inner.request_digest(request, stream));
+        let bound = match bound {
+            Ok(bound) => bound,
+            Err(error) => {
+                self.run
+                    .refuse(Some(model), Some(lease), RunDenied::BackendRefused);
+                return Err(error);
+            }
+        };
+        let digest = match &bound {
+            Some(bound) => bound.clone(),
+            None => request
+                .canonical_hash_hex()
+                .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?,
+        };
         let call = DispatchBinding {
             subject: model.to_owned(),
+            request_digest: bound,
             ..self.offer.clone()
         };
         self.run.begin_dispatch(lease, &call)?;
@@ -77,15 +97,18 @@ impl GatedBackend {
                 lease: lease.clone(),
                 model: request.model.clone(),
                 digest,
+                broker_isolation: self.inner.broker_isolation(),
             }),
         }
     }
 }
 
-struct Dispatch {
-    lease: BudgetLease,
-    model: ModelId,
-    digest: String,
+/// A started call, as its dispatch receipt names it.
+pub(super) struct Dispatch {
+    pub(super) lease: BudgetLease,
+    pub(super) model: ModelId,
+    pub(super) digest: String,
+    pub(super) broker_isolation: Option<BrokerIsolation>,
 }
 
 /// A started call's dispatch receipt, written once: when the call ends, or
@@ -98,14 +121,9 @@ struct Pending<'a> {
 impl Pending<'_> {
     fn finish(&mut self, served_model: Option<String>, answered: bool) {
         if let Some(dispatch) = self.dispatch.take() {
-            self.gate.run.dispatched(
-                &dispatch.lease,
-                dispatch.model.as_str(),
-                &self.gate.offer.route,
-                dispatch.digest,
-                served_model,
-                answered,
-            );
+            self.gate
+                .run
+                .dispatched(dispatch, &self.gate.offer.route, served_model, answered);
         }
     }
 }

@@ -25,10 +25,11 @@ impl<T: ManifestDbs> EntityStoreRead for T {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
-        Ok(self
-            .entities()
-            .get(txn, id.as_bytes())?
-            .map(|bytes| zeroize::Zeroizing::new(bytes.to_vec())))
+        Ok(self.entities().get(txn, id.as_bytes())?.map(|bytes| {
+            #[cfg(test)]
+            super::row_copies::saw_wiped(&bytes);
+            zeroize::Zeroizing::new(bytes.to_vec())
+        }))
     }
     fn port_entity_raw_records<'a>(
         &self,

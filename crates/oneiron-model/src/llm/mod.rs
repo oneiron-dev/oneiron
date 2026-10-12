@@ -65,8 +65,8 @@ pub use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub use self::backend::{
-    BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream, LlmStreamResult,
-    SingleRouteBackend, SingleSend,
+    BrokerIsolation, BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream,
+    LlmStreamResult, SingleRouteBackend, SingleSend,
 };
 pub use self::call::{
     CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality,
