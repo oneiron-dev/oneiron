@@ -6,6 +6,7 @@ use super::super::*;
 use super::program::{
     AdmittedTurn, ImportedTurnStamp, WitnessAdmission, WitnessDoor, WitnessPlan, WitnessTarget,
 };
+use super::session::Admit;
 
 use std::sync::atomic::Ordering;
 
@@ -16,6 +17,16 @@ use crate::error::{Error, OffRecordError};
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::session_overlay::SessionWriteRoute;
+
+/// Tags an importer holds for the turn it lands, and the cell the program
+/// leaves what they did to the turn's tagging marker in. They are settled in
+/// the turn's own write, after its marker is committed (ARCH-0036: an import
+/// that already holds tags completes its marker without a tagger call).
+#[derive(Clone, Copy)]
+pub(super) struct HeldTags<'a> {
+    pub(super) tags: &'a crate::memory::extraction::EncoderOutput,
+    pub(super) outcome: &'a std::cell::Cell<Option<crate::tagging::HeldTagsOutcome>>,
+}
 
 /// What the base guards proved inside the write transaction.
 pub(super) enum BaseGuards {
@@ -92,7 +103,7 @@ impl Memory<'_> {
         let receipt = self.run_witness(
             turn,
             WitnessTarget::Held {
-                held: super::program::HeldTags {
+                held: HeldTags {
                     tags,
                     outcome: &outcome,
                 },
@@ -227,20 +238,21 @@ impl Memory<'_> {
 
     /// The conversation and TURN a base landing writes, each with its
     /// pre-transaction "not stored yet" answer. `continuation` is the session's
-    /// on-record shell, which replaces the caller's conversation ref.
+    /// on-record shell, which replaces the caller's conversation ref. A
+    /// session door's `admit` runs first in each probe's read.
     pub(super) fn resolve_base_containers(
         &self,
         turn: &WitnessTurn,
         continuation: Option<EntityId>,
         door: WitnessDoor,
+        admit: Option<Admit<'_>>,
     ) -> MemoryResult<((EntityId, bool), (EntityId, bool))> {
+        let probe = |reference: &str, expected_type| {
+            self.resolve_or_new_container(reference, expected_type, admit)
+        };
         let conversation = match continuation {
-            Some(shell) => {
-                self.resolve_or_new_container(&shell.to_hex(), ENTITY_TYPE_CONVERSATION)?
-            }
-            None => {
-                self.resolve_or_new_container(&turn.conversation_ref, ENTITY_TYPE_CONVERSATION)?
-            }
+            Some(shell) => probe(&shell.to_hex(), ENTITY_TYPE_CONVERSATION)?,
+            None => probe(&turn.conversation_ref, ENTITY_TYPE_CONVERSATION)?,
         };
         // K7 witness-door ownership backstop (ARCH-0052 D2 backstop (a)). A
         // conversation owned by a live session overlay is witnessed through the
@@ -267,10 +279,8 @@ impl Memory<'_> {
             );
         }
         let turn = match (door, &turn.turn_ref) {
-            (WitnessDoor::HostTurn(id), _) => {
-                self.resolve_or_new_container(&id.to_hex(), ENTITY_TYPE_TURN)?
-            }
-            (_, Some(reference)) => self.resolve_or_new_container(reference, ENTITY_TYPE_TURN)?,
+            (WitnessDoor::HostTurn(id), _) => probe(&id.to_hex(), ENTITY_TYPE_TURN)?,
+            (_, Some(reference)) => probe(reference, ENTITY_TYPE_TURN)?,
             (_, None) => (self.vault.store.clock.entity_id()?, true),
         };
         Ok((conversation, turn))
@@ -551,14 +561,24 @@ impl Memory<'_> {
         Ok(())
     }
 
-    /// The base receipt: canonical short ids, hex when none exists.
-    pub(super) fn base_receipt(&self, plan: &WitnessPlan<'_>) -> MemoryResult<WitnessReceipt> {
+    /// The base receipt, read in the transaction `txn` that wrote the turn:
+    /// canonical short ids, hex when none exists.
+    pub(super) fn base_receipt_in_txn(
+        &self,
+        plan: &WitnessPlan<'_>,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<WitnessReceipt> {
+        let short_ref = |id: &EntityId| -> MemoryResult<String> {
+            Ok(self
+                .short_ref_of_in_txn(txn, id)?
+                .unwrap_or_else(|| id.to_hex()))
+        };
         let mut message_short_ids = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
-            message_short_ids.push(self.short_ref_or_hex(&planned.id)?);
+            message_short_ids.push(short_ref(&planned.id)?);
         }
         Ok(WitnessReceipt {
-            turn_short_id: self.short_ref_or_hex(&plan.turn_id)?,
+            turn_short_id: short_ref(&plan.turn_id)?,
             message_short_ids,
             receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),
         })
@@ -568,12 +588,17 @@ impl Memory<'_> {
         &self,
         reference: &str,
         expected_type: u8,
+        admit: Option<Admit<'_>>,
     ) -> MemoryResult<(EntityId, bool)> {
+        let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        if let Some(admit) = admit {
+            admit(&rtxn)?;
+        }
         let trimmed = reference.trim();
         if trimmed.len() == 32 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
             let id = EntityId::from_hex(trimmed)
                 .map_err(|_| MemoryError::bad_request(format!("invalid entity id {trimmed:?}")))?;
-            return match self.vault.get_entity_type(&id)? {
+            return match self.vault.get_entity_type_in_txn(&rtxn, &id)? {
                 Some(entity_type) if entity_type == expected_type => Ok((id, false)),
                 Some(entity_type) => Err(MemoryError::bad_request(format!(
                     "ref {trimmed:?} resolves to kind {} but {} was expected",
@@ -583,8 +608,8 @@ impl Memory<'_> {
                 None => Ok((id, true)),
             };
         }
-        let id = self.resolve_ref(reference)?;
-        match self.vault.get_entity_type(&id)? {
+        let id = resolve_entity_ref_in_txn(self.vault, &rtxn, trimmed)?;
+        match self.vault.get_entity_type_in_txn(&rtxn, &id)? {
             Some(entity_type) if entity_type == expected_type => Ok((id, false)),
             Some(entity_type) => Err(MemoryError::bad_request(format!(
                 "ref {reference:?} resolves to kind {} but {} was expected",
@@ -595,5 +620,23 @@ impl Memory<'_> {
                 "entity {reference:?} does not resolve"
             ))),
         }
+    }
+}
+
+/// [`resolve_entity_ref`] in `rtxn`: a short ref resolves in that snapshot. A
+/// hex id or a malformed ref reads nothing, so it takes the shared path.
+fn resolve_entity_ref_in_txn(
+    vault: &crate::Vault,
+    rtxn: &heed::RoTxn<'_>,
+    reference: &str,
+) -> MemoryResult<EntityId> {
+    match crate::entity_id::parse_short_ref_syntax(reference) {
+        Ok((short_id, content_hash)) => vault
+            .hydrate_short_id_in(rtxn, short_id, content_hash)?
+            .map(|entry| entry.id)
+            .ok_or_else(|| {
+                MemoryError::not_found(format!("short ref {reference:?} does not resolve"))
+            }),
+        Err(_) => resolve_entity_ref(vault, reference),
     }
 }
