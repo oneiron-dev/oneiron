@@ -60,8 +60,7 @@ fn leaks(text: &[u8], key: &str) -> bool {
             .any(|window| window == key.as_bytes())
     };
     readings(text).iter().any(|reading| {
-        contains(reading)
-            || base64_readings(reading, key.len()).any(|decoded| contains(&decoded))
+        contains(reading) || base64_readings(reading, key.len()).any(|decoded| contains(&decoded))
     })
 }
 
@@ -540,8 +539,9 @@ fn a_key_split_across_two_chains_of_decodings_goes_with_its_run() {
         json(&percent_every_byte(&json(head))),
         percent_every_byte(&json(&percent_every_byte(tail)))
     );
-    let four_steps =
-        percent_decoded(&json_unescaped(&percent_decoded(&json_unescaped(echo.as_bytes()))));
+    let four_steps = percent_decoded(&json_unescaped(&percent_decoded(&json_unescaped(
+        echo.as_bytes(),
+    ))));
     assert_eq!(four_steps, key.as_bytes());
     let body = format!("{{\"error\":{{\"message\":\"bad key: {echo}\"}},\"n\":1}}");
     let header = format!("Bearer error=\"invalid_token\", error_description=\"{echo}\"");
