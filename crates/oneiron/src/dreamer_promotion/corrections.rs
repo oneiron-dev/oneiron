@@ -38,7 +38,10 @@ pub(super) fn grant_allowed_replacement(
             Some(prior)
         }
         // The policy protects it; the owner's run review holds it.
-        Err(Error::Gate(_)) => None,
+        Err(Error::Gate(error)) => {
+            tracing::info!(target: "oneiron::dreamer", %error, replacement = %replacement.to_hex(), "a staged replacement is held for the owner");
+            None
+        }
         Err(error) => {
             tracing::warn!(%error, replacement = %replacement.to_hex(), "a staged replacement was not granted; it stays in the owner's review");
             None
