@@ -22317,7 +22317,7 @@
       "const": 1,
       "crate-vis": 8,
       "enum": 2,
-      "fn": 15,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -22350,7 +22350,7 @@
      "path": "src/llm/run_admission/gate.rs",
      "purpose": "The run's model backend: every call starts its permit here, before any byte leaves, and leaves a dispatch…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -22478,7 +22478,7 @@
      "path": "src/llm/run_admission/tests/support.rs",
      "purpose": "Local fakes for the research-connector fixture",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -27661,7 +27661,7 @@
      "path": "src/ports/row_copies.rs",
      "purpose": "The row-copy hook, so a test can see that no entity read on a path copied a row holding a value into a…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -30258,7 +30258,7 @@
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
       "crate-vis": 1,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -42275,6 +42275,299 @@
    "source_files": 108,
    "test_files": 18
   },
+  "oneiron-broker": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallHeader",
+      "Outcome",
+      "ReplyHeader"
+     ],
+     "path": "src/call.rs",
+     "purpose": "One call's header and its reply's header, and the checks both sides run",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/call/tests.rs",
+     "purpose": "The checks both sides run on a call (ARCH-0069 `#broker-design`): the digest binds the exact request, and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cli.rs",
+     "purpose": "`oneiron-broker serve --socket <path> --client-uid <uid> [--extra-roots <pem>]… [--timeout-secs <n>]`: the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrokerClient",
+      "BrokerConnection",
+      "BrokerReply"
+     ],
+     "path": "src/client.rs",
+     "purpose": "The daemon's side of the socket",
+     "surface": {
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/digest.rs",
+     "purpose": "The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrokerError",
+      "Failure",
+      "Refusal"
+     ],
+     "path": "src/error.rs",
+     "purpose": "Why a call stopped",
+     "surface": {
+      "enum": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/frame.rs",
+     "purpose": "The wire between the daemon and the broker, one connection per call",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Isolation"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "mod": 2,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/peer.rs",
+     "purpose": "Who this process is, and closing its memory to processes of its own uid",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SendPolicy"
+     ],
+     "path": "src/send.rs",
+     "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServeConfig"
+     ],
+     "path": "src/serve.rs",
+     "purpose": "The broker's side of the socket: one call per connection, from the daemon's uid only",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/serve/tests.rs",
+     "purpose": "The broker end to end, on a real Unix socket against the local TLS fake: one send with the key, the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Shape"
+     ],
+     "path": "src/shape.rs",
+     "purpose": "The shape rows: for each wire protocol the broker speaks, the method, the path, where the model selector…",
+     "surface": {
+      "enum": 1,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/shape/tests.rs",
+     "purpose": "The selector parser's refusals, as `#door-reads-model` and the broker design list them: the parser reads the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/strip.rs",
+     "purpose": "The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/strip/tests.rs",
+     "purpose": "The strip forms of ARCH-0069 `#model-adapter-strip-forms`, each written the way a provider could echo it…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FakeProvider",
+      "FakeReply",
+      "SeenRequest"
+     ],
+     "path": "src/testing.rs",
+     "purpose": "A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture",
+     "surface": {
+      "fn": 8,
+      "struct": 3
+     }
+    }
+   ],
+   "modules": {
+    "call": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "One call's header and its reply's header, and the checks both sides run"
+    },
+    "cli": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`oneiron-broker serve --socket <path> --client-uid <uid> [--extra-roots <pem>]… [--timeout-secs <n>]`: the…"
+    },
+    "client": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The daemon's side of the socket"
+    },
+    "digest": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth…"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Why a call stopped"
+    },
+    "frame": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The wire between the daemon and the broker, one connection per call"
+    },
+    "peer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Who this process is, and closing its memory to processes of its own uid"
+    },
+    "send": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…"
+    },
+    "serve": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "The broker's side of the socket: one call per connection, from the daemon's uid only"
+    },
+    "shape": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "The shape rows: for each wire protocol the broker speaks, the method, the path, where the model selector…"
+    },
+    "strip": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a…"
+    },
+    "testing": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
+   "source_files": 13,
+   "test_files": 4
+  },
   "oneiron-code-check": {
    "files": [
     {
@@ -45613,6 +45906,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BrokerIsolation",
       "BudgetLease",
       "LlmBackend",
       "LlmStream",
@@ -45623,6 +45917,7 @@
      "purpose": "Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget…",
      "surface": {
       "crate-vis": 1,
+      "enum": 1,
       "fn": 3,
       "struct": 2,
       "trait": 3,
@@ -50141,6 +50436,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/bin/oneiron-broker.rs",
+     "purpose": "`oneiron-broker serve`: the credential broker, run as its own OS user",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/bin/oneiron.rs",
      "purpose": "—",
      "surface": {}
@@ -50625,6 +50928,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BrokerConfig",
       "ChatSettings",
       "CodeCheckSettings",
       "CodeModeSettings",
@@ -50636,13 +50940,13 @@
      "purpose": "`[models]`: which model serves each role, at three levels of detail",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OutputLimitField",
@@ -51940,7 +52244,24 @@
      "path": "src/models/anthropic.rs",
      "purpose": "The Anthropic-compatible transport: any `/v1/messages` server",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "KeyDoor",
+      "VaultKeyDoor"
+     ],
+     "path": "src/models/broker.rs",
+     "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -52012,8 +52333,8 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 2,
-      "fn": 9,
-      "re-export": 8,
+      "fn": 10,
+      "re-export": 9,
       "struct": 2
      }
     },
@@ -52037,7 +52358,7 @@
      "path": "src/models/openai.rs",
      "purpose": "The OpenAI-compatible transport: any `/v1/chat/completions` server",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -52945,6 +53266,14 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/it/broker_paid_leg.rs",
+     "purpose": "RSG-006's paid leg (ARCH-0069 `#broker-design`, ARCH-0053 `#training-fixture-cases`) on the real…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/campaign_surface_oracle.rs",
      "purpose": "ONE-1778 (CA-07) surface oracle",
      "surface": {}
@@ -53242,7 +53571,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53335,8 +53664,8 @@
    },
    "over_bar": 9,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 326,
-   "test_files": 136
+   "source_files": 328,
+   "test_files": 137
   },
   "oneiron-uniffi": {
    "files": [

@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | — |
 | `src/lib.rs` | src | s | 2 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
 | `src/llm/assembly.rs` | src | s | 1 struct · 7 fn | StreamAssembly | Shared typed stream assembly |
-| `src/llm/backend.rs` | src | s | 2 struct · 3 trait · 3 fn · 3 type · 1 crate-vis | BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
+| `src/llm/backend.rs` | src | s | 2 struct · 1 enum · 3 trait · 3 fn · 3 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
 | `src/llm/budget/dispatch.rs` | src | s | 1 struct · 1 enum · 10 fn · 1 const | DispatchBinding, DispatchRefused | Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is… |
 | `src/llm/budget/guard.rs` | src | s | 1 struct · 14 fn · 1 crate-vis | BudgetGuard | Guard handle: admission, abort, reads, and settlement entry points |
 | `src/llm/budget/ladders.rs` | src | s | 5 crate-vis | — | Threshold ladder emission for the budget meter |
