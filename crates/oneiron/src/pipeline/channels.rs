@@ -1,5 +1,4 @@
 use crate::ports::EntityStoreRead;
-use std::collections::HashSet;
 
 use heed::RoTxn;
 
@@ -16,6 +15,7 @@ use super::support::{
     combine_proximity, compute_radius, effective_range_width, interval_distance,
     learned_anchor_range, midpoint, point_interval_distance, resolve_sigma_secs, sigmoid,
 };
+use super::temporal_bound::{ReadableRows, TemporalCandidates, TemporalWindow, axis_can_grow};
 use super::types::{
     ADAPTIVE_ROUNDS, ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, ClaimStatusGateCache, EntityMetadata,
     EntityMetadataCache, MAX_TEMPORAL_SEEK_BUFFER, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
@@ -23,9 +23,9 @@ use super::types::{
 };
 
 #[derive(Debug, Clone, Copy)]
-struct TemporalCandidateScore {
-    id: EntityId,
-    score: f32,
+pub(super) struct TemporalCandidateScore {
+    pub(super) id: EntityId,
+    pub(super) score: f32,
     overlap_tiebreak: u64,
 }
 
@@ -43,6 +43,9 @@ pub(super) struct TemporalCandidateCollectionContext<'a> {
     pub(super) radius: u64,
     pub(super) per_scan_cap: usize,
     pub(super) deadline: Option<&'a RetrievalDeadline>,
+    /// The last round's radius, when the collector should say whether a
+    /// window that wide could add a row.
+    pub(super) widest: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -52,6 +55,8 @@ pub(super) struct TemporalIndexCollectionContext<'a> {
     pub(super) anchor_mid: u64,
     pub(super) cap: usize,
     pub(super) deadline: Option<&'a RetrievalDeadline>,
+    /// The widest window's bounds, if the collector should probe it.
+    pub(super) widest: Option<(u64, u64)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -84,8 +89,29 @@ pub(super) fn execute_temporal(
     metadata_cache: &mut EntityMetadataCache,
     deadline: Option<&RetrievalDeadline>,
 ) -> Result<Vec<ScoredEntity>> {
-    if config.limit == 0 {
+    let Some(mut held) = temporal_window(store, rtxn, config, now, metadata_cache, deadline, None)?
+    else {
         return Ok(Vec::new());
+    };
+    held.scored.truncate(held.rows);
+    held.rescore(store, rtxn, config, metadata_cache)?;
+    Ok(held.into_scores())
+}
+
+/// Runs a temporal call's rounds and scores what its window holds; `None`
+/// for a call that asks for nothing. With a `reader`, only the rows it may
+/// read count toward either stop ([`ReadableRows`]).
+pub(super) fn temporal_window(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    config: &TemporalSearchConfig,
+    now: u64,
+    metadata_cache: &mut EntityMetadataCache,
+    deadline: Option<&RetrievalDeadline>,
+    reader: Option<&ReadableRows<'_, '_>>,
+) -> Result<Option<TemporalWindow>> {
+    if config.limit == 0 {
+        return Ok(None);
     }
 
     if config.anchor_mode == TemporalAnchorMode::Both
@@ -102,20 +128,34 @@ pub(super) fn execute_temporal(
     let learned_anchor_mid = midpoint(learned_anchor.0, learned_anchor.1);
 
     let range_width = effective_range_width(config.anchor_start, config.anchor_end);
-    let per_scan_cap = config.limit.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
+    // A scoped call scans and returns its widened rows. Its window grows
+    // until it can fill them, and it keeps the rows an unscoped call for that
+    // many rows would, but scores and orders them with the sigma the request
+    // settles on: the one in force once the window could fill the request.
+    let rows = config.widened.unwrap_or(config.limit);
+    let per_scan_cap = rows.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
 
     let mut sigma = sigma_initial;
+    let mut settled_sigma = None;
     let mut previous_radius = None;
-    let mut candidates = HashSet::<EntityId>::new();
+    let mut candidates = TemporalCandidates::default();
+    // With a reader, the collectors say whether the last round's window could
+    // add a row; until one says it could not, assume it could.
+    let widest = reader.filter(|_| config.adaptive).map(|_| {
+        let last = (1..ADAPTIVE_ROUNDS).fold(sigma, |sigma, _| sigma.saturating_mul(2).max(1));
+        compute_radius(range_width, last)
+    });
+    let mut can_grow = true;
 
     for round in 0..ADAPTIVE_ROUNDS {
         let radius = compute_radius(range_width, sigma);
 
-        if round == 0 || previous_radius != Some(radius) {
+        if can_grow && (round == 0 || previous_radius != Some(radius)) {
             let collection = TemporalCandidateCollectionContext {
                 radius,
                 per_scan_cap,
                 deadline,
+                widest,
             };
             let scoring = TemporalScoringContext {
                 sigma,
@@ -124,7 +164,7 @@ pub(super) fn execute_temporal(
                 learned_anchor,
                 learned_anchor_mid,
             };
-            collect_temporal_candidates(
+            can_grow = collect_temporal_candidates(
                 store,
                 rtxn,
                 config,
@@ -137,24 +177,54 @@ pub(super) fn execute_temporal(
 
         previous_radius = Some(radius);
 
-        if !config.adaptive || candidates.len() >= config.limit || round + 1 == ADAPTIVE_ROUNDS {
-            break;
+        let last = !config.adaptive || round + 1 == ADAPTIVE_ROUNDS;
+        if let Some(reader) = reader {
+            // A last round needs no count to settle sigma: unsettled, the
+            // request falls back to that round's sigma anyway.
+            if settled_sigma.is_none()
+                && !last
+                && reader.read_at_least(store, rtxn, candidates.ids(), config.limit)?
+            {
+                settled_sigma = Some(sigma);
+            }
+            // Once no wider window can add a row, the rounds left change
+            // only the window's sigma, and that picks nothing: the bound cuts
+            // only when the reader may read more rows than it keeps, and then
+            // the window stops here anyway. Run them out only to settle
+            // sigma, which needs no collection.
+            if last
+                || (!can_grow && settled_sigma.is_some())
+                || (can_grow && reader.read_at_least(store, rtxn, candidates.ids(), rows)?)
+            {
+                break;
+            }
+        } else {
+            if settled_sigma.is_none() && candidates.count() >= config.limit {
+                settled_sigma = Some(sigma);
+            }
+            if last || candidates.count() >= rows {
+                break;
+            }
         }
 
         sigma = sigma.saturating_mul(2).max(1);
     }
 
-    let scoring = TemporalScoringContext {
+    let window = TemporalScoringContext {
         sigma,
         now,
         anchor_mid,
         learned_anchor,
         learned_anchor_mid,
     };
+    let request = TemporalScoringContext {
+        sigma: settled_sigma.unwrap_or(sigma),
+        ..window
+    };
 
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
-    for id in candidates {
+    for &id in candidates.ids() {
         checkpoint(deadline)?;
         let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
             continue;
@@ -164,19 +234,16 @@ pub(super) fn execute_temporal(
         }) {
             continue;
         }
-        scored.push(score_temporal_candidate(id, meta, config, &scoring));
+        scored.push(score_temporal_candidate(id, meta, config, &window));
     }
 
     sort_temporal_candidate_scores(&mut scored);
-    scored.truncate(config.limit);
-
-    Ok(scored
-        .into_iter()
-        .map(|entry| ScoredEntity {
-            id: entry.id,
-            score: entry.score,
-        })
-        .collect())
+    Ok(Some(TemporalWindow {
+        scored,
+        window,
+        request,
+        rows,
+    }))
 }
 
 pub(super) fn collect_temporal_candidates(
@@ -186,8 +253,8 @@ pub(super) fn collect_temporal_candidates(
     collection: TemporalCandidateCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     scoring: &TemporalScoringContext,
-    out: &mut HashSet<EntityId>,
-) -> Result<()> {
+    out: &mut TemporalCandidates,
+) -> Result<bool> {
     let deadline = collection.deadline;
     let radius = collection.radius;
     let per_scan_cap = collection.per_scan_cap;
@@ -201,12 +268,18 @@ pub(super) fn collect_temporal_candidates(
     let learned_window_end = learned_anchor_end.saturating_add(radius);
     let learned_mid = midpoint(learned_anchor_start, learned_anchor_end);
 
+    let widest = |start: u64, end: u64| {
+        collection
+            .widest
+            .map(|radius| (start.saturating_sub(radius), end.saturating_add(radius)))
+    };
     let occurred_collection = TemporalIndexCollectionContext {
         window_start: occurred_window_start,
         window_end: occurred_window_end,
         anchor_mid: occurred_mid,
         cap: per_scan_cap,
         deadline,
+        widest: widest(config.anchor_start, config.anchor_end),
     };
     let learned_collection = TemporalIndexCollectionContext {
         window_start: learned_window_start,
@@ -214,24 +287,23 @@ pub(super) fn collect_temporal_candidates(
         anchor_mid: learned_mid,
         cap: per_scan_cap,
         deadline,
+        widest: widest(learned_anchor_start, learned_anchor_end),
     };
 
-    match config.anchor_mode {
-        TemporalAnchorMode::Occurred => {
-            collect_occurred_candidates(
-                store,
-                rtxn,
-                occurred_collection,
-                metadata_cache,
-                config.query_occurred_range,
-                out,
-            )?;
-        }
+    let mut can_grow = match config.anchor_mode {
+        TemporalAnchorMode::Occurred => collect_occurred_candidates(
+            store,
+            rtxn,
+            occurred_collection,
+            metadata_cache,
+            config.query_occurred_range,
+            out,
+        )?,
         TemporalAnchorMode::Learned => {
-            collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?;
+            collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?
         }
         TemporalAnchorMode::Auto | TemporalAnchorMode::Both => {
-            collect_occurred_candidates(
+            let occurred = collect_occurred_candidates(
                 store,
                 rtxn,
                 occurred_collection,
@@ -239,19 +311,21 @@ pub(super) fn collect_temporal_candidates(
                 config.query_occurred_range,
                 out,
             )?;
-            collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?;
+            collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?
+                || occurred
         }
-    }
+    };
 
     if config.anchor_mode != TemporalAnchorMode::Learned {
         // Keep the top `per_scan_cap` spanners by the same exact temporal score
-        // used later in `execute_temporal()`. Since `per_scan_cap` is 4x the
+        // used later in `temporal_window()`. Since `per_scan_cap` is 4x the
         // final result limit, anything outside this top-k cannot enter the
-        // final top-k after exact scoring.
+        // final top-k after exact scoring. The buffer fills to twice the cap
+        // before it drops back to the cap, so a spanner costs amortized
+        // constant work however large the cap is.
         let mut spanners = Vec::<TemporalCandidateScore>::new();
-        let trim_threshold = per_scan_cap
-            .saturating_mul(2)
-            .min(std::cmp::max(MAX_TEMPORAL_SEEK_BUFFER, per_scan_cap));
+        let trim_threshold = per_scan_cap.saturating_mul(2);
+        let mut spanning = 0_usize;
         for entry in
             store.port_entity_long_spanning(rtxn, occurred_window_start, occurred_window_end)?
         {
@@ -271,10 +345,12 @@ pub(super) fn collect_temporal_candidates(
                 continue;
             }
             spanners.push(score_temporal_candidate(id, meta, config, scoring));
+            spanning += 1;
 
-            if spanners.len() > trim_threshold {
-                sort_temporal_candidate_scores(&mut spanners);
-                spanners.truncate(per_scan_cap);
+            if spanners.len() >= trim_threshold {
+                retain_best_temporal_candidate_scores(&mut spanners, per_scan_cap);
+                #[cfg(test)]
+                SPANNER_TRIMS.with(|trims| trims.set(trims.get() + 1));
             }
         }
 
@@ -283,12 +359,15 @@ pub(super) fn collect_temporal_candidates(
         for candidate in spanners {
             out.insert(candidate.id);
         }
+        // A wider window's spanners span this one too, so it adds none while
+        // every one of them is kept here.
+        can_grow |= spanning > per_scan_cap;
     }
 
-    Ok(())
+    Ok(can_grow)
 }
 
-fn score_temporal_candidate(
+pub(super) fn score_temporal_candidate(
     id: EntityId,
     meta: EntityMetadata,
     config: &TemporalSearchConfig,
@@ -351,13 +430,33 @@ fn score_temporal_candidate(
     }
 }
 
-fn sort_temporal_candidate_scores(scores: &mut [TemporalCandidateScore]) {
-    scores.sort_unstable_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.overlap_tiebreak.cmp(&b.overlap_tiebreak))
-            .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
-    });
+fn compare_temporal_candidate_scores(
+    a: &TemporalCandidateScore,
+    b: &TemporalCandidateScore,
+) -> std::cmp::Ordering {
+    b.score
+        .total_cmp(&a.score)
+        .then_with(|| a.overlap_tiebreak.cmp(&b.overlap_tiebreak))
+        .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
+}
+
+pub(super) fn sort_temporal_candidate_scores(scores: &mut [TemporalCandidateScore]) {
+    scores.sort_unstable_by(compare_temporal_candidate_scores);
+}
+
+/// Keeps the `keep` best of `scores`, unordered: the set a sort and
+/// truncation keeps, in linear time.
+fn retain_best_temporal_candidate_scores(scores: &mut Vec<TemporalCandidateScore>, keep: usize) {
+    if scores.len() > keep {
+        scores.select_nth_unstable_by(keep, compare_temporal_candidate_scores);
+        scores.truncate(keep);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Intermediate trims of the spanner buffer on this thread.
+    pub(super) static SPANNER_TRIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn collect_occurred_candidates(
@@ -366,10 +465,11 @@ fn collect_occurred_candidates(
     collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     query_range: Option<(u64, u64)>,
-    out: &mut HashSet<EntityId>,
-) -> Result<()> {
+    out: &mut TemporalCandidates,
+) -> Result<bool> {
+    let mut can_grow = false;
     for axis in [TimeAxis::OccurredStart, TimeAxis::OccurredEnd] {
-        if let Some(range) = query_range {
+        can_grow |= if let Some(range) = query_range {
             // Widened temporal scans include nearby non-overlapping rows.
             // Do not let them consume a scan cap before the occurred filter.
             collect_query_occurred_candidates(
@@ -380,12 +480,12 @@ fn collect_occurred_candidates(
                 metadata_cache,
                 range,
                 out,
-            )?;
+            )?
         } else {
-            collect_index_candidates(store, axis, rtxn, collection, out)?;
-        }
+            collect_index_candidates(store, axis, rtxn, collection, out)?
+        };
     }
-    Ok(())
+    Ok(can_grow)
 }
 
 fn collect_query_occurred_candidates(
@@ -395,17 +495,18 @@ fn collect_query_occurred_candidates(
     collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     query_range: (u64, u64),
-    out: &mut HashSet<EntityId>,
-) -> Result<()> {
+    out: &mut TemporalCandidates,
+) -> Result<bool> {
     let TemporalIndexCollectionContext {
         window_start,
         window_end,
         anchor_mid,
         cap,
         deadline,
+        ..
     } = collection;
     if cap == 0 || window_start > window_end {
-        return Ok(());
+        return Ok(cap != 0);
     }
     let forward = store.port_entity_timeline(
         rtxn,
@@ -428,6 +529,7 @@ fn collect_query_occurred_candidates(
     )?;
     let mut rows = Vec::<TemporalIndexRow>::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
     let trim_threshold = cap.saturating_mul(2).max(1);
+    let (mut forward_rows, mut backward_rows) = (0_usize, 0_usize);
     for entry in forward.chain(backward) {
         let time = entry?;
         checkpoint(deadline)?;
@@ -442,6 +544,11 @@ fn collect_query_occurred_candidates(
         ) {
             continue;
         }
+        if time.timestamp >= anchor_mid {
+            forward_rows += 1;
+        } else {
+            backward_rows += 1;
+        }
         rows.push(TemporalIndexRow {
             timestamp: time.timestamp,
             id: time.id,
@@ -455,7 +562,13 @@ fn collect_query_occurred_candidates(
     for row in rows.into_iter().take(cap) {
         out.insert(row.id);
     }
-    Ok(())
+    Ok(axis_can_grow(
+        store,
+        axis,
+        rtxn,
+        collection,
+        [forward_rows >= cap, backward_rows >= cap],
+    ))
 }
 
 pub(super) fn collect_index_candidates(
@@ -463,8 +576,8 @@ pub(super) fn collect_index_candidates(
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext<'_>,
-    out: &mut HashSet<EntityId>,
-) -> Result<()> {
+    out: &mut TemporalCandidates,
+) -> Result<bool> {
     let TemporalIndexCollectionContext {
         window_start,
         window_end,
@@ -473,7 +586,7 @@ pub(super) fn collect_index_candidates(
         ..
     } = collection;
     if cap == 0 || window_start > window_end {
-        return Ok(());
+        return Ok(cap != 0);
     }
 
     let mut rows =
@@ -494,6 +607,7 @@ pub(super) fn collect_index_candidates(
         };
         rows.push(row);
     }
+    let forward_full = rows.len() >= cap;
 
     let mut backward = store.port_entity_timeline(
         rtxn,
@@ -506,6 +620,7 @@ pub(super) fn collect_index_candidates(
         },
     )?;
     let mut backward_rows = collect_temporal_index_rows(&mut backward, cap)?;
+    let backward_full = backward_rows.len() >= cap;
     normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows)?;
     rows.extend(backward_rows);
 
@@ -514,7 +629,13 @@ pub(super) fn collect_index_candidates(
         out.insert(row.id);
     }
 
-    Ok(())
+    Ok(axis_can_grow(
+        store,
+        axis,
+        rtxn,
+        collection,
+        [forward_full, backward_full],
+    ))
 }
 
 fn next_temporal_index_row<I>(iter: &mut I) -> Result<Option<TemporalIndexRow>>
@@ -653,20 +774,6 @@ pub(crate) fn indexed_vector_population(store: &StoreRead<'_>, rtxn: &RoTxn<'_>)
         .staged_rows()
         .map_or(0, |staged| staged.rows.len());
     Ok(crate::hnsw::hnsw_entity_count(store.base(), rtxn)?.saturating_add(staged))
-}
-
-pub(super) fn scoped_entity_channel_limit(
-    store: &StoreRead<'_>,
-    rtxn: &RoTxn<'_>,
-    requested: usize,
-    scope_widening_active: bool,
-) -> Result<usize> {
-    if !scope_widening_active || requested == 0 {
-        return Ok(requested);
-    }
-    let entity_count = usize::try_from(store.port_entity_count(rtxn)?)
-        .map_err(|_| Error::IndexOverflow("entity count"))?;
-    Ok(requested.max(entity_count))
 }
 
 pub(super) fn truncate_widened_channel_results_to_scope(

@@ -4,11 +4,14 @@ use crate::corpus::CorpusScope;
 use crate::error::{Error, Result};
 
 use super::builder::PipelineBuilder;
+use super::capabilities::CapabilityLane;
 use super::channels::{
-    execute_temporal, scoped_entity_channel_limit, scoped_vector_channel_limit,
-    truncate_widened_channel_results_to_scope,
+    execute_temporal, scoped_vector_channel_limit, truncate_widened_channel_results_to_scope,
 };
 use super::filters::import_claim_gate_decisions_for_scores;
+use super::temporal_bound::{
+    ReadableRows, execute_temporal_for_reader, scoped_temporal_channel_limit,
+};
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PipelineFilterConfig, RelMode,
     ScoredEntity, TemporalSearchConfig, WorldScope,
@@ -78,7 +81,7 @@ impl PipelineBuilder<'_> {
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<Vec<ScoredEntity>> {
         let mut scoped_config = config.clone();
-        scoped_config.limit = scoped_entity_channel_limit(
+        scoped_config.widened = Some(scoped_temporal_channel_limit(
             &self.read,
             rtxn,
             config.limit,
@@ -87,17 +90,53 @@ impl PipelineBuilder<'_> {
                 || filters.corpus_scope != &CorpusScope::All
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
-        )?;
-        // Widen before the temporal collector's scan caps and score truncation.
-        let mut scores = execute_temporal(
+        )?);
+        // Widen the collector's window, scan caps and score truncation, not
+        // the request sigma settles on.
+        let Some(predicate) = filters.candidate_filter else {
+            let mut scores = execute_temporal(
+                &self.read,
+                rtxn,
+                &scoped_config,
+                now,
+                metadata_cache,
+                filters.deadline,
+            )?;
+            self.truncate_corpus_channel(
+                &mut scores,
+                rtxn,
+                config.limit,
+                filters,
+                self.has_strict_text_scope_filter(),
+                (metadata_cache, claim_gate),
+            )?;
+            return Ok(scores);
+        };
+        // Only rows the call's predicate admits count toward the rounds and
+        // take places in the bound, and the walk below takes the bound's cut
+        // as it reaches each row. The memory lane's kinds join the same
+        // predicate, so no row past the cut is read for them.
+        let reader = ReadableRows::new(predicate, filters.deadline);
+        let (mut scores, cut) = execute_temporal_for_reader(
             &self.read,
             rtxn,
             &scoped_config,
             now,
             metadata_cache,
             filters.deadline,
+            &reader,
         )?;
-        self.truncate_corpus_channel(
+        let memory = self.memory_category;
+        let kept =
+            |store: &crate::store::StoreRead<'_>, txn: &RoTxn<'_>, id: &crate::EntityId| -> Result<bool> {
+                Ok(cut.keeps(store, txn, id)?
+                    && (!memory || CapabilityLane::Memory.admits(store, txn, id)?))
+            };
+        let filters = PipelineFilterConfig {
+            candidate_filter: Some(&kept),
+            ..filters
+        };
+        self.truncate_to_scope(
             &mut scores,
             rtxn,
             config.limit,
@@ -117,10 +156,22 @@ impl PipelineBuilder<'_> {
         strict_scope: bool,
         caches: (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
     ) -> Result<()> {
-        let (metadata_cache, claim_gate) = caches;
         if self.memory_category {
             super::capabilities::retain_memory_candidates(scores, &self.read, rtxn)?;
         }
+        self.truncate_to_scope(scores, rtxn, requested, filters, strict_scope, caches)
+    }
+
+    fn truncate_to_scope(
+        &self,
+        scores: &mut Vec<ScoredEntity>,
+        rtxn: &RoTxn<'_>,
+        requested: usize,
+        filters: PipelineFilterConfig<'_>,
+        strict_scope: bool,
+        caches: (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
+    ) -> Result<()> {
+        let (metadata_cache, claim_gate) = caches;
         if (!strict_scope
             && filters.corpus_scope == &CorpusScope::All
             && filters.candidate_filter.is_none())

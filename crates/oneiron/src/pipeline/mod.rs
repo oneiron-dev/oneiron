@@ -15,6 +15,7 @@ mod scoped_channels;
 pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;
 mod support;
+mod temporal_bound;
 mod trace;
 mod types;
 mod world_authority;
