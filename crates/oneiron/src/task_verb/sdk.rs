@@ -232,7 +232,7 @@ pub fn recall_at_door(
     embed: impl FnOnce(&str) -> Option<Vec<f32>>,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
-    use crate::memory::{RecallRerank, RerankReport, RerankSkip};
+    use crate::memory::{RecallRerank, RecallRerankHost, RerankReport, RerankSkip};
     let (effort, budget) = crate::memory::resolve_recall_dial(
         input.effort,
         input.deadline_ms,
@@ -255,7 +255,7 @@ pub fn recall_at_door(
         &scope,
         limit,
         input.format.as_deref(),
-        host.map(|host| host.lease()),
+        host.map(RecallRerankHost::lease),
         &crate::retrieval_depth::RecallExecution {
             as_of: input.as_of,
             reranker: host.map(|_| &preflight as &dyn crate::rerank::Reranker),
