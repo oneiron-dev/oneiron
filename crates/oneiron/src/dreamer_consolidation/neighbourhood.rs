@@ -20,14 +20,14 @@ use std::collections::BTreeSet;
 use super::PriorHead;
 use super::resources::{document_version, standing};
 use super::value_projection::rmpv_to_json;
+use crate::attempt_queue::AttemptId;
 use crate::claim::{
     PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_sensitivity_band,
     decode_claim_body, is_reserved_predicate,
 };
-use crate::attempt_queue::AttemptId;
 use crate::llm::{Scope, ScopeResource};
-use crate::side_table::{self, LegacyJson, SideTable};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Result, Vault};
 
 /// At most this many entities per branch: a few turns rarely name more known
@@ -63,6 +63,8 @@ const NAMED_KINDS: [u8; 3] = [ENTITY_TYPE_PERSON, ENTITY_TYPE_ORG, ENTITY_TYPE_P
 const RESTRICTED_BAND: u8 = 3;
 
 type Row = (u8, u64, Vec<u8>);
+/// The claim rows a listing names, for the wake to pin as sources.
+pub(super) type ListedRows = Vec<(EntityId, Row)>;
 /// The ids one attempt listed: each entity with its listed claims, in order.
 type Pins = Vec<(EntityId, Vec<EntityId>)>;
 
@@ -199,7 +201,7 @@ pub(super) fn discover_in(
     read: &ScopedRead<'_>,
     attempt: AttemptId,
     passage: &Passage<'_>,
-) -> Result<(Neighbourhood, Vec<(EntityId, Row)>)> {
+) -> Result<(Neighbourhood, ListedRows)> {
     let (fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
     let Some(pins) = PINS.get(&vault.store, txn, attempt.as_bytes())? else {
         return Ok((
@@ -217,12 +219,15 @@ pub(super) fn discover_in(
     let ids: Vec<_> = pins.iter().map(|(id, _)| *id).collect();
     let mut entities = Vec::new();
     let mut gone = BTreeSet::new();
-    for ((id, claims), row) in pins.into_iter().zip(read.get_entities_parts_in_txn(txn, &ids)?) {
+    for ((id, claims), row) in pins
+        .into_iter()
+        .zip(read.get_entities_parts_in_txn(txn, &ids)?)
+    {
         let Some((kind, _, body)) = row else {
             gone.insert(id);
             continue;
         };
-        if !NAMED_KINDS.contains(&kind) {
+        if !NAMED_KINDS.contains(&kind) || !named_within(passage.bound, id, &body) {
             continue;
         }
         let mut entity = KnownEntity {
@@ -231,7 +236,10 @@ pub(super) fn discover_in(
             claims: Vec::new(),
         };
         if let Some(axes) = passage.axes {
-            for (claim, row) in claims.iter().zip(read.get_entities_parts_in_txn(txn, &claims)?) {
+            for (claim, row) in claims
+                .iter()
+                .zip(read.get_entities_parts_in_txn(txn, &claims)?)
+            {
                 let Some(row) = row else {
                     gone.insert(*claim);
                     continue;
@@ -269,7 +277,7 @@ fn fresh_in(
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,
     passage: &Passage<'_>,
-) -> Result<(Vec<KnownEntity>, Vec<(EntityId, Row)>)> {
+) -> Result<(Vec<KnownEntity>, ListedRows)> {
     let named = named_entities(vault, txn, passage.turns)?;
     let rows = read.get_entities_parts_in_txn(txn, &named)?;
     let mut entities = Vec::new();
@@ -279,7 +287,7 @@ fn fresh_in(
         let Some((kind, _, body)) = row else {
             continue;
         };
-        if !NAMED_KINDS.contains(&kind) {
+        if !NAMED_KINDS.contains(&kind) || !named_within(passage.bound, id, &body) {
             continue;
         }
         if entities.len() == MAX_ENTITIES {
@@ -355,6 +363,14 @@ fn named_entities(
         }
     }
     Ok(named)
+}
+
+/// Whether a supplied scope lets the branch read the entity whose stored
+/// `body` names it. A supplied scope is authority: an entity it grants no
+/// read of is not shown, nor any claim about it. Without one, the Dreamer's
+/// own scoped read admitted the row.
+fn named_within(bound: Option<&Scope>, id: EntityId, body: &[u8]) -> bool {
+    bound.is_none_or(|bound| bound.allows_read(&document_version(id, body)))
 }
 
 /// Lowercased words split at whitespace and sentence punctuation. A hyphen or

@@ -167,7 +167,7 @@ impl BranchResources<'_> {
     }
 }
 
-pub(in crate::dreamer_consolidation) fn facet(scope: Option<&Value>) -> Result<Option<EntityId>> {
+pub(crate) fn facet(scope: Option<&Value>) -> Result<Option<EntityId>> {
     let Some(Value::Map(entries)) = scope else {
         return Ok(None);
     };

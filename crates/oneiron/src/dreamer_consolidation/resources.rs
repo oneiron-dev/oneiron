@@ -14,6 +14,7 @@ use super::wake_plan::PreparedWake;
 mod prior;
 pub(super) use prior::standing;
 pub(super) mod signals;
+pub(crate) use signals::facet as claim_facet;
 mod write;
 use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
@@ -263,7 +264,10 @@ impl<'a> BranchResources<'a> {
             .insert(super::gap::branch_gap_projection(&partition, &granted));
         // An unscoped branch holds the heads its neighbourhood lists as exact
         // priors, read through this actor's scoped read at the wake's pin.
-        for (_, version) in known.into_iter().flat_map(|known| known.claim_versions()) {
+        for (_, version) in known
+            .into_iter()
+            .flat_map(super::neighbourhood::Neighbourhood::claim_versions)
+        {
             granted.readable.insert(version.clone());
             granted.writable.insert(version.clone());
         }

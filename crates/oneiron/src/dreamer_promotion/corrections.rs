@@ -78,9 +78,11 @@ pub(super) fn superseded_prior(vault: &Vault, head: EntityId) -> Result<Option<E
         .map(|edge| edge.target))
 }
 
-/// Closes each open conflict on `replacement`'s subject that named `prior`,
-/// citing `evidence` and recording `replacement` as its resolution. A marker
-/// already resolved is left as it is, so a replay closes nothing twice.
+/// Closes each open conflict on `replacement`'s subject that named `prior`
+/// on `replacement`'s own world, facet, relationship and project, citing
+/// `evidence` and recording `replacement` as its resolution. A marker a
+/// standing resolution already answers is left as it is, so a replay closes
+/// nothing twice; a proposed, refused, closed or stale one answers nothing.
 pub(super) fn close_conflicts_naming(
     vault: &Vault,
     run: &DreamerRunContext,
@@ -101,9 +103,12 @@ pub(super) fn close_conflicts_naming(
             continue;
         };
         if claim.predicate == PREDICATE_CONFLICT_RESOLVED {
-            resolved.extend(ids_at(&claim.value, "open_marker"));
+            if crate::claim::claim_surfaceable(&claim) {
+                resolved.extend(ids_at(&claim.value, "open_marker"));
+            }
         } else if claim.predicate == PREDICATE_CONFLICT_OPEN
             && claim.lifecycle == ClaimLifecycleStatus::Active
+            && same_axes(&claim, &body)
             && ids_at(&claim.value, "prior_head")
                 .chain(ids_at(&claim.value, "prior_heads"))
                 .any(|named| named == prior)
@@ -133,6 +138,19 @@ pub(super) fn close_conflicts_naming(
         }
     }
     Ok(())
+}
+
+/// Whether `marker` asks its question on `replacement`'s axes. A marker in
+/// another world, facet, relationship or project is another branch's, and a
+/// facet that does not read is no match.
+fn same_axes(marker: &crate::ClaimBody, replacement: &crate::ClaimBody) -> bool {
+    let facet = |body: &crate::ClaimBody| {
+        crate::dreamer_consolidation::resources::claim_facet(body.scope.as_ref())
+    };
+    marker.world == replacement.world
+        && marker.rel == replacement.rel
+        && marker.scope_project == replacement.scope_project
+        && matches!((facet(marker), facet(replacement)), (Ok(a), Ok(b)) if a == b)
 }
 
 /// The ids under `key` in a claim value map: one binary id, or an array.

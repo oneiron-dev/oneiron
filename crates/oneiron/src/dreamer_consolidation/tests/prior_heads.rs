@@ -141,19 +141,22 @@ fn fixture_in_project(
 }
 
 /// The Dreamer's own unvetted head, `Generated` and `Auto`, about a person
-/// the turn names ("my name is Oleksii"), so the wake lists both.
+/// the turn names ("my name is Oleksii"). The scope grants the person too, so
+/// the wake lists both.
 fn provisional_fixture(vault: &Vault) -> Result<Fixture> {
-    let named = super::super::support::encode_value(&Value::Map(vec![(
-        "name".into(),
-        "Oleksii".into(),
-    )]))?;
-    fixture_with(
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Oleksii".into())]))?;
+    let mut fx = fixture_with(
         vault,
         (ClaimSource::Generated, ClaimApprovalStatus::Auto),
         crate::claim::default_project_id(),
         false,
         &named,
-    )
+    )?;
+    fx.scope
+        .readable
+        .insert(document_version(fx.subject, &named));
+    Ok(fx)
 }
 
 fn fixture_with(
@@ -1116,7 +1119,9 @@ fn nothing_attaches_to_an_unvetted_claim_and_it_corroborates_nothing() -> Result
         if cite {
             let error = execution.expect_err("a generated claim never corroborates");
             assert!(
-                error.to_string().contains("generated claim cannot corroborate"),
+                error
+                    .to_string()
+                    .contains("generated claim cannot corroborate"),
                 "{error}"
             );
         } else {

@@ -559,7 +559,7 @@ fn neighbourhood_in(
     texts: &BTreeMap<EntityId, super::turn_text::TurnText>,
 ) -> Result<(
     super::neighbourhood::Neighbourhood,
-    Vec<(EntityId, (u8, u64, Vec<u8>))>,
+    super::neighbourhood::ListedRows,
 )> {
     let mut turns = Vec::new();
     let mut projects = BTreeSet::new();

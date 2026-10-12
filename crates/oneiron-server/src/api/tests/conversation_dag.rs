@@ -1310,6 +1310,8 @@ base_url = "{}"
 [providers.narrator]
 kind = "local-openai-compat"
 base_url = "{}"
+[roles.extraction_teacher]
+rungs = [{{ model = "extractor:extract" }}]
 [roles.dreamer_current]
 rungs = [{{ model = "narrator:narrate" }}]
 [dreamer]

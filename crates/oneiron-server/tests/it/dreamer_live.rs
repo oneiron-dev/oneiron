@@ -105,6 +105,8 @@ struct Call {
 struct Relay {
     origin: String,
     served: String,
+    /// Cut out of every answer the relay keeps.
+    key: String,
     client: reqwest::Client,
     phase: Mutex<String>,
     hold: AtomicBool,
@@ -119,6 +121,7 @@ impl Relay {
         let relay = Arc::new(Self {
             origin: live.origin.clone(),
             served: live.served.clone(),
+            key: live.key.clone(),
             client: reqwest::Client::new(),
             phase: Mutex::new(String::new()),
             hold: AtomicBool::new(false),
@@ -209,14 +212,16 @@ async fn forward(
             .unwrap_or_default()
             .to_owned()
     };
-    let wrong = status == 200 && served.iter().any(|model| *model != relay.served);
+    // An answer that names no model is not attested, so it is refused too.
+    let wrong =
+        status == 200 && (served.is_empty() || served.iter().any(|model| *model != relay.served));
     relay.calls.lock().unwrap().push(Call {
         phase: relay.phase.lock().unwrap().clone(),
         system: message(0),
         input: message(1),
         status,
         served,
-        answer: String::from_utf8_lossy(&answer).into_owned(),
+        answer: redact(&String::from_utf8_lossy(&answer), &relay.key),
     });
     relay.in_flight.fetch_sub(1, Ordering::SeqCst);
     if wrong {
@@ -230,11 +235,38 @@ async fn forward(
         .unwrap()
 }
 
+/// `text` with every copy of `key` cut out: a provider's error body may echo
+/// the key it refused.
+fn redact(text: &str, key: &str) -> String {
+    text.replace(key, "[provider key]")
+}
+
+/// Cuts the key out of every file under `out`, returning the files it was in.
+fn scrub(out: &Path, key: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for path in std::fs::read_dir(out)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file())
+    {
+        let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
+        if text.contains(key) {
+            std::fs::write(&path, redact(&text, key)).unwrap();
+            found.push(path);
+        }
+    }
+    found
+}
+
 /// The model ids an answer names: a JSON body's, or every stream event's.
 fn served_models(answer: &[u8]) -> Vec<String> {
     let text = String::from_utf8_lossy(answer);
     let mut models: Vec<String> = match serde_json::from_str::<Value>(&text) {
-        Ok(body) => body["model"].as_str().map(str::to_owned).into_iter().collect(),
+        Ok(body) => body["model"]
+            .as_str()
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
         Err(_) => text
             .lines()
             .filter_map(|line| line.strip_prefix("data:"))
@@ -294,7 +326,10 @@ summary_prompt = "Summarize these records in two plain sentences."
 fn serve(config: &Path, live: &Live, log: &Path) -> Child {
     let log = std::fs::File::create(log).unwrap();
     oneiron(config, &["serve"])
-        .env("RUST_LOG", "warn,oneiron::run_receipt=info,oneiron::dreamer=info")
+        .env(
+            "RUST_LOG",
+            "warn,oneiron::run_receipt=info,oneiron::dreamer=info",
+        )
         .env("NO_COLOR", "1")
         .env(KEY_ENV, &live.key)
         .stdout(Stdio::from(log.try_clone().unwrap()))
@@ -382,6 +417,86 @@ fn claims(vault: &Vault) -> Vec<Value> {
         .collect()
 }
 
+/// `person`'s claims, each with the replacements that close it.
+fn about(vault: &Vault, person: EntityId) -> Vec<(EntityId, oneiron::ClaimBody, Vec<EntityId>)> {
+    let rows: Vec<_> = vault
+        .claims_for_subject(&person)
+        .unwrap()
+        .into_iter()
+        .filter_map(|id| Some((id, vault.get_claim(&id).ok().flatten()?)))
+        .collect();
+    let closes = |id: EntityId| -> Vec<EntityId> {
+        vault
+            .edges_out(&id)
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.kind == oneiron::edge::EdgeKind::Supersedes)
+            .map(|edge| edge.target)
+            .collect()
+    };
+    rows.iter()
+        .map(|(id, body)| {
+            let by = rows
+                .iter()
+                .filter(|(other, _)| closes(*other).contains(id))
+                .map(|(other, _)| *other)
+                .collect();
+            (*id, body.clone(), by)
+        })
+        .collect()
+}
+
+fn names(body: &oneiron::ClaimBody, place: &str) -> bool {
+    format!("{:?}", body.value).contains(place)
+}
+
+/// The first pass's fact: an Active claim about `person` naming Lisbon.
+fn lisbon_stated(vault: &Vault, person: EntityId) -> Result<(), String> {
+    let about = about(vault, person);
+    about
+        .iter()
+        .any(|(_, body, _)| {
+            names(body, "Lisbon") && body.lifecycle == oneiron::ClaimLifecycleStatus::Active
+        })
+        .then_some(())
+        .ok_or_else(|| format!("no Active claim about the speaker names Lisbon: {about:?}"))
+}
+
+/// The correction, held once: an Active Auto claim naming Porto closes a
+/// claim naming Lisbon, no claim is closed by two replacements, and no
+/// Active claim naming Lisbon is left on the corrected predicate.
+fn corrected_once(vault: &Vault, person: EntityId) -> Result<(), String> {
+    let about = about(vault, person);
+    let active = |body: &oneiron::ClaimBody| body.lifecycle == oneiron::ClaimLifecycleStatus::Active;
+    let bound: Vec<_> = about
+        .iter()
+        .filter(|(_, prior, _)| names(prior, "Lisbon"))
+        .flat_map(|(_, prior, by)| by.iter().map(move |replacement| (prior, *replacement)))
+        .filter_map(|(prior, replacement)| {
+            let (_, body, _) = about.iter().find(|(id, _, _)| *id == replacement)?;
+            (names(body, "Porto")
+                && active(body)
+                && body.approval == oneiron::ClaimApprovalStatus::Auto
+                && prior.lifecycle == oneiron::ClaimLifecycleStatus::Superseded)
+                .then_some(body)
+        })
+        .collect();
+    if bound.is_empty() {
+        return Err(format!("no Porto claim closed a Lisbon claim: {about:?}"));
+    }
+    if let Some((id, _, by)) = about.iter().find(|(_, _, by)| by.len() > 1) {
+        return Err(format!("{} was closed by {} replacements", id.to_hex(), by.len()));
+    }
+    if about.iter().any(|(_, body, _)| {
+        names(body, "Lisbon")
+            && active(body)
+            && bound.iter().any(|porto| porto.predicate == body.predicate)
+    }) {
+        return Err(format!("an Active Lisbon claim is left beside the correction: {about:?}"));
+    }
+    Ok(())
+}
+
 /// The receipts in the server logs under `out`, one JSON row each.
 fn receipts(out: &Path) -> Vec<Value> {
     let mut logs: Vec<_> = std::fs::read_dir(out)
@@ -418,18 +533,6 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
         free_port(),
         &models_section(&relay_url, &live),
     );
-    let granted = oneiron(
-        &config,
-        &["dreamer", "grant", "--extraction-route", "third_party"],
-    )
-    .output()
-    .unwrap();
-    assert!(
-        granted.status.success(),
-        "grant: {}",
-        String::from_utf8_lossy(&granted.stderr)
-    );
-
     // Before the queue: the conversation and its summary declaration land
     // while no server runs; the server queues the turn's pass at start.
     let conversation = EntityId::now();
@@ -460,6 +563,19 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
         (person, turn)
     };
 
+    // The Dreamer's grant, on the vault the witness opened.
+    let granted = oneiron(
+        &config,
+        &["dreamer", "grant", "--extraction-route", "third_party"],
+    )
+    .output()
+    .unwrap();
+    assert!(
+        granted.status.success(),
+        "grant: {}",
+        String::from_utf8_lossy(&granted.stderr)
+    );
+
     // 1. Between queue and apply: the first call is held and never sent.
     relay.enter("held");
     relay.hold.store(true, Ordering::SeqCst);
@@ -485,7 +601,11 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     let first = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         let summaries = vault.entities_by_type(ENTITY_TYPE_SUMMARY).unwrap();
-        (claims(&vault), summaries.len())
+        (
+            claims(&vault),
+            summaries.len(),
+            lisbon_stated(&vault, person),
+        )
     };
 
     // 4. A user correction, heard by a later pass.
@@ -504,7 +624,7 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     stop(child);
     let corrected = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
-        claims(&vault)
+        (claims(&vault), corrected_once(&vault, person))
     };
 
     // 5. The correction holds once.
@@ -515,7 +635,7 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     stop(child);
     let last = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
-        claims(&vault)
+        (claims(&vault), corrected_once(&vault, person))
     };
 
     let calls = relay.calls();
@@ -529,23 +649,36 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
         "calls": calls,
         "claims_after_consolidation": first.0,
         "summaries_after_consolidation": first.1,
-        "claims_after_correction": corrected,
-        "claims_after_last_restart": last,
+        "lisbon_stated": first.2.as_ref().err(),
+        "claims_after_correction": corrected.0,
+        "corrected_once": corrected.1.as_ref().err(),
+        "claims_after_last_restart": last.0,
+        "held_after_last_restart": last.1.as_ref().err(),
         "receipts": receipts,
     });
     std::fs::write(
         live.out.join("report.json"),
-        serde_json::to_vec_pretty(&report).unwrap(),
+        redact(&serde_json::to_string_pretty(&report).unwrap(), &live.key),
     )
     .unwrap();
+    let leaked = scrub(&live.out, &live.key);
+    assert!(leaked.is_empty(), "the provider key reached {leaked:?}");
 
     assert!(
         !relay.wrong_model.load(Ordering::SeqCst),
-        "a call was answered by another model"
+        "a call was answered by another model, or by none it named"
     );
+    first.2.unwrap();
+    assert!(first.1 > 0, "the declared summary landed");
+    corrected.1.unwrap();
+    last.1.unwrap();
     assert_eq!(after_restart, consolidated, "a finished pass called again");
-    assert_eq!(relay.calls().len(), before_last, "a finished correction called again");
-    assert_eq!(last, corrected, "the correction did not hold once");
+    assert_eq!(
+        relay.calls().len(),
+        before_last,
+        "a finished correction called again"
+    );
+    assert_eq!(last.0, corrected.0, "the correction did not hold once");
     for row in receipts
         .iter()
         .filter(|row| row["event"] == "dispatched" && row["answered"] == true)
