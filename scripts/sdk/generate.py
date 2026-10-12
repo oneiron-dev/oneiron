@@ -303,7 +303,7 @@ def mcp_input_dispatch(row):
                  '    let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  '    let value = crate::api::context_board::describe_self_for_auth(server, auth, &input).await.map_err(|_| invalid())?;\n'
                  '    let output: oneiron::task_verb::TaskDescription = serde_json::from_value(value).map_err(|_| invalid())?;\n'
-                 '    let (value, source) = mcp_describe_result(server, actor, output)?;\n'
+                 '    let (value, source) = mcp_describe_result(output)?;\n'
                  '    return Ok((value, source, McpCarrierPolicy::Drain, None));\n'
                  '}\n')
     admission = row.get('admission', {})
@@ -320,7 +320,17 @@ def mcp_input_dispatch(row):
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
                  f'let output = server.{row["server_door"]}(actor.actor_ref, actor.actor_class, proof, None, input).await.map_err(mcp_facade_error)?;\n')
     else:
-        body += decode + f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
+        body += decode
+        if name == 'describe':
+            # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
+            body += ('if input.task_ref.is_none() && !input.self_target {\n'
+                     '    // The section is narrowed to this credential before its\n'
+                     "    // render cap, so its counts are the credential's rows alone.\n"
+                     '    let rows = memory.describe_rows().map_err(mcp_facade_error)?;\n'
+                     '    let (value, source) = mcp_tasks_section(server, actor, rows)?;\n'
+                     '    return Ok((value, source, McpCarrierPolicy::Drain, None));\n'
+                     '}\n')
+        body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
     if row.get('lands_turn'):
         body += 'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
     if 'mcp_result' in row:
