@@ -361,8 +361,9 @@ impl FloorWrites<'_> {
     /// against base in this transaction (Astra on #1411). Nothing is copied
     /// into a turn base no longer holds as this stretch saved it (deleted,
     /// promoted by another stretch, its conversation deleted, or its speaker
-    /// no longer the messages' own), nor what a person since erased from that
-    /// conversation said: its messages stay in the room, unsaved. A message whose order base now holds in the turn
+    /// no longer the messages' own), nor a message hard-deleted since, nor
+    /// what a person since erased from that conversation said: its messages
+    /// stay in the room, unsaved. A message whose order base now holds in the turn
     /// refuses the copy with [`OffRecordError::OffRecordCopyConflict`], and a
     /// message id base already holds without a receipt is refused; neither
     /// is ever written over or renumbered.
@@ -389,7 +390,8 @@ impl FloorWrites<'_> {
         // asks.
         let txn: &heed::RoTxn<'_> = wtxn;
         let live_body = |id: &EntityId, kind: u8| -> Result<Option<Vec<u8>>> {
-            Ok(match crate::vault::live_entity_row_in_txn(self.store, txn, id)? {
+            let row = crate::vault::live_entity_row_in_txn(self.store, txn, id)?;
+            Ok(match row {
                 crate::vault::LiveEntityRow::Live { entity_type, body }
                     if entity_type == kind && !body.is_empty() =>
                 {
@@ -431,6 +433,14 @@ impl FloorWrites<'_> {
                 return Err(Error::InvariantViolation(
                     "an off-record message to copy already names a row base holds",
                 ));
+            } else if vault.local_hard_delete_marker_exists_in_txn(wtxn, id)? {
+                // Deleted for good since it was said (a peer's tombstone can
+                // name an id base never held): never written back.
+                tracing::debug!(
+                    turn = %turn.to_hex(),
+                    "off-record copy skipped a turn holding a message since hard-deleted"
+                );
+                return Ok(Appended::nothing(BTreeSet::new()));
             } else {
                 fresh.insert(*id);
             }

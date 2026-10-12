@@ -437,8 +437,7 @@ fn a_save_copies_nothing_into_a_saved_turn_whose_speaker_changed() {
         .expect("the run speaks on into its turn");
     // A native put says the turn is the user's now.
     let body = vault.get(&turn).expect("read").expect("the saved turn");
-    let Value::Map(fields) = rmpv::decode::read_value(&mut body.as_slice()).expect("decode")
-    else {
+    let Value::Map(fields) = rmpv::decode::read_value(&mut body.as_slice()).expect("decode") else {
         panic!("a turn body is a map");
     };
     let fields = fields
@@ -470,6 +469,44 @@ fn a_save_copies_nothing_into_a_saved_turn_whose_speaker_changed() {
     assert!(
         saved.is_empty(),
         "copied into a turn that speaks as another: {saved:?}"
+    );
+    assert!(vault.get_raw(&message(1)).expect("read").is_none());
+    assert!(
+        session
+            .overlay()
+            .contains_entity(&message(1))
+            .expect("probe")
+    );
+}
+
+/// Sol on #1411: a run said a message off record into a saved turn, and a
+/// peer's hard-delete tombstone for that message's id arrived before the
+/// next save, leaving the id deleted for good with no row. The save still
+/// wrote the message under the deleted id. A save copies nothing of a turn
+/// holding a message deleted for good; the message stays in the room.
+#[test]
+fn a_save_copies_nothing_of_a_message_hard_deleted_since() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    session.save_talk_by(room.owner, None).expect("save");
+    run.dispatch(said(1, "and the boat is moored at the north pier"))
+        .expect("the run speaks on into its turn");
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 20,
+        request_id: *EntityId::now().as_bytes(),
+    };
+    vault
+        .apply_replayed_tombstone(&message(1), &tombstone.encode())
+        .expect("a peer's tombstone names the message");
+
+    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    assert!(
+        saved.is_empty(),
+        "copied a message deleted for good: {saved:?}"
     );
     assert!(vault.get_raw(&message(1)).expect("read").is_none());
     assert!(

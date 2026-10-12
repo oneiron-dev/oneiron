@@ -1209,7 +1209,12 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
         "POST",
         "/v1/core/off-record/witness",
         ada_slip,
-        Some(&named_in(elsewhere, "den", pending, "ada's word off record")),
+        Some(&named_in(
+            elsewhere,
+            "den",
+            pending,
+            "ada's word off record",
+        )),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{receipt}");
@@ -1228,7 +1233,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
         (provisional, "Mirela called"),
         (pending, "ada's word off record"),
     ] {
-        let answer = call(
+        let (status, mut answer) = call(
             &server,
             "POST",
             "/v1/core/off-record/witness",
@@ -1236,7 +1241,11 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
             Some(&named(id, text)),
         )
         .await;
-        answers.push(answer);
+        // Each response's own request id says nothing of the record.
+        if let Some(error) = answer["error"].as_object_mut() {
+            error.remove("requestId");
+        }
+        answers.push((status, answer));
     }
     assert_eq!(answers[0].0, StatusCode::BAD_REQUEST, "{answers:?}");
     assert!(
