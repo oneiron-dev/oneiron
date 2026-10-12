@@ -550,6 +550,13 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
 async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
     let room = room();
     let owner = room.owner.to_hex();
+    oneiron::campaign::register_crm_pack(
+        &room.server.vault,
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .expect("register the CRM pack");
     let (status, created) = route_json(
         room.server.clone(),
         core_request_with_authz(
