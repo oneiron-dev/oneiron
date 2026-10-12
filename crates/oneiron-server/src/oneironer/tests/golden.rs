@@ -158,21 +158,22 @@ fn the_served_stacks_goldens_replay_through_the_adapter_and_the_save() {
     // before it.
     let records = records();
     let mut room_of: BTreeMap<String, EntityId> = BTreeMap::new();
-    let mut rooms = 0_u8;
     for (at, record) in (NOW + 1..).zip(&records) {
         clock.set(at);
         let context = record["context"].as_array().expect("context");
+        let turn = EntityId::from_hex(record["turn"].as_str().expect("turn")).expect("turn id");
         let room = match context.first() {
-            // A turn with no window opens its conversation's own room.
+            // A turn with no window opens its conversation's own room, named
+            // by its id reversed: one per conversation, and none of the ids
+            // the vault seeds for itself.
             None => {
-                rooms += 1;
-                EntityId::from_bytes([0x80 + rooms; 16]).expect("room id")
+                let mut room = *turn.as_bytes();
+                room.reverse();
+                EntityId::from_bytes(room).expect("room id")
             }
             Some(earlier) => room_of[earlier["turn"].as_str().expect("turn")],
         };
-        let turn = record["turn"].as_str().expect("turn");
-        room_of.insert(turn.to_owned(), room);
-        let turn = EntityId::from_hex(turn).expect("turn id");
+        room_of.insert(turn.to_hex(), room);
         for (order, message) in (0_u32..).zip(record["messages"].as_array().expect("messages")) {
             // The goldens read every turn as the user's side.
             let message = said(
@@ -255,7 +256,10 @@ fn the_served_stacks_goldens_replay_through_the_adapter_and_the_save() {
             .filter(|mention| mention.reference == Some(MentionReference::Context))
             .count();
     }
-    assert_eq!(resolved + unresolved, context_links);
-    assert!(resolved > 0, "context links find their earlier spans");
+    // Two context links point where the earlier turn saved no span at those
+    // coordinates: a Korean name its answer never sent as a span, and a
+    // Ukrainian word its answer split in two. Neither is guessed from its
+    // surface; each keeps no antecedent and is counted.
+    assert_eq!((resolved, unresolved), (48, 2));
     eprintln!("golden replay: {links} links, {context_links} context links, {resolved} resolved");
 }

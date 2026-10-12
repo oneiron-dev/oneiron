@@ -211,7 +211,7 @@ fn a_parity_checked_shadow_saves_its_turns_tags_and_writes_no_edge_claim_or_merg
         memory.persist_extraction(&trace, &parity, 300).unwrap(),
         tags
     );
-    let mut swapped = trace.clone();
+    let mut swapped = trace;
     if let Some(output) = swapped.output.as_mut() {
         output.stack_sha16 = Some("0f0f0f0f0f0f0f0f".into());
     }
