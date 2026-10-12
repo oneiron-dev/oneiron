@@ -592,7 +592,7 @@ enum Compared {
     /// What a project may do and spend, and who is in it.
     Project {
         authority: Box<ProjectAuthority>,
-        roster: Vec<String>,
+        members: Vec<String>,
         role: ProjectRole,
         budget: Option<String>,
         budget_share: Option<ProjectBudgetShare>,
@@ -714,8 +714,13 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
         Projection::Project => rmp_serde::from_slice::<ProjectRecord>(body).map_or_else(
             |_| whole(),
             |project| Compared::Project {
-                authority: Box::new(project.authority()),
-                roster: project.roster,
+                // Who sits in the room is compared on its own, as the members
+                // the row's proof vouches for, whichever proof that is.
+                authority: Box::new(ProjectAuthority {
+                    roster: None,
+                    ..project.authority()
+                }),
+                members: project.members(),
                 role: project.role,
                 budget: project.budget,
                 budget_share: project.budget_share,
