@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::group_labels::{group_name, group_title};
-use super::pack_entry::{PreparedEntity, PreparedGroups};
+use super::pack_entry::PreparedEntity;
 use super::types::GroupKey;
 
 pub(super) fn write_markdown_groups(
@@ -35,7 +35,13 @@ pub(super) fn write_markdown_groups(
             continue;
         }
 
-        out.push_str(&markdown_header(&columns));
+        out.push('|');
+        for col in &columns {
+            out.push(' ');
+            out.push_str(col);
+            out.push(' ');
+            out.push('|');
+        }
         out.push('\n');
 
         out.push('|');
@@ -45,62 +51,17 @@ pub(super) fn write_markdown_groups(
         out.push('\n');
 
         for row in rows {
-            out.push_str(&markdown_row(row, &columns));
+            out.push('|');
+            for col in &columns {
+                let value = markdown_value_for_column(row, col);
+                out.push(' ');
+                out.push_str(&escape_markdown(&value));
+                out.push(' ');
+                out.push('|');
+            }
             out.push('\n');
         }
     }
-}
-
-/// Clears the fields of each table row whose text, or whose own header cells,
-/// read as a secret as the writer emits them (values side by side, the keys
-/// left in the header), then reads the table again, since its columns can
-/// change, until no row does. No two rows are read together.
-pub(super) fn clear_rows_read_as_emitted(groups: &mut PreparedGroups, markdown: bool) {
-    for (_, rows) in groups {
-        loop {
-            let columns = collect_columns(rows);
-            let secret = rows.iter().position(|row| {
-                !row.fields.is_empty() && row_reads_as_secret(row, &columns, markdown)
-            });
-            let Some(at) = secret else {
-                break;
-            };
-            rows[at].fields.clear();
-        }
-    }
-}
-
-fn row_reads_as_secret(row: &PreparedEntity, columns: &[String], markdown: bool) -> bool {
-    use crate::batch::secret_scan::release_reads_text;
-    if !markdown {
-        return release_reads_text(&plaintext_row(row, columns));
-    }
-    let own: Vec<String> = columns
-        .iter()
-        .filter(|column| *column == "id" || row.fields.iter().any(|(key, _)| key == *column))
-        .cloned()
-        .collect();
-    release_reads_text(&markdown_row(row, columns)) || release_reads_text(&markdown_header(&own))
-}
-
-fn markdown_header(columns: &[String]) -> String {
-    let mut line = String::from("|");
-    for col in columns {
-        line.push(' ');
-        line.push_str(col);
-        line.push_str(" |");
-    }
-    line
-}
-
-fn markdown_row(row: &PreparedEntity, columns: &[String]) -> String {
-    let mut line = String::from("|");
-    for col in columns {
-        line.push(' ');
-        line.push_str(&escape_markdown(&markdown_value_for_column(row, col)));
-        line.push_str(" |");
-    }
-    line
 }
 
 fn markdown_value_for_column(entity: &PreparedEntity, column: &str) -> String {
@@ -134,29 +95,27 @@ pub(super) fn write_plaintext_groups(out: &mut String, groups: &[(GroupKey, Vec<
 
         let columns = collect_columns(rows);
         for row in rows {
-            out.push_str(&plaintext_row(row, &columns));
+            let mut first_col = true;
+            for col in &columns {
+                if !first_col {
+                    out.push('|');
+                }
+                first_col = false;
+
+                let value = if col == "id" {
+                    row.id.clone()
+                } else {
+                    row.fields
+                        .iter()
+                        .find(|(key, _)| key == col)
+                        .map(|(_, value)| value_to_text(value, false))
+                        .unwrap_or_default()
+                };
+                out.push_str(&escape_plaintext(&value));
+            }
             out.push('\n');
         }
     }
-}
-
-fn plaintext_row(row: &PreparedEntity, columns: &[String]) -> String {
-    columns
-        .iter()
-        .map(|col| {
-            let value = if col == "id" {
-                row.id.clone()
-            } else {
-                row.fields
-                    .iter()
-                    .find(|(key, _)| key == col)
-                    .map(|(_, value)| value_to_text(value, false))
-                    .unwrap_or_default()
-            };
-            escape_plaintext(&value)
-        })
-        .collect::<Vec<_>>()
-        .join("|")
 }
 
 fn collect_columns(rows: &[PreparedEntity]) -> Vec<String> {

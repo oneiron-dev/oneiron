@@ -202,16 +202,6 @@ pub(super) fn serialize_prepared_pack(
         handles.rows(&mut prepared.results, config.format != PackFormat::Yaml);
         handles.rows(&mut prepared.neighbors, config.format != PackFormat::Yaml);
     }
-    // The fields are final: read each entity in the forms this format emits.
-    for groups in [&mut prepared.results, &mut prepared.neighbors] {
-        super::pack_preparation::clear_fields_read_as_emitted(groups, config.format);
-        if matches!(config.format, PackFormat::Markdown | PackFormat::Plaintext) {
-            super::markdown_plaintext_format::clear_rows_read_as_emitted(
-                groups,
-                config.format == PackFormat::Markdown,
-            );
-        }
-    }
     let bytes = match config.format {
         PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini => {
             super::provider_codecs::serialize_provider(config.format, prepared)

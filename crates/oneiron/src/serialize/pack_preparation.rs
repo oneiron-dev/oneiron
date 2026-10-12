@@ -351,54 +351,6 @@ fn prepare_entities(
         .collect()
 }
 
-/// Reads each entity once more after the handles settled its fields (an
-/// identity key dropped, a name replaced), in the forms `format` emits them:
-/// keys with their values, and for TOON, whose tabular rows and headers part
-/// them, its values alone and its keys alone, each after its id and at every
-/// depth. Fields that read as a secret in any of these leave, keys included.
-/// No two entities are read together.
-pub(super) fn clear_fields_read_as_emitted(groups: &mut PreparedGroups, format: PackFormat) {
-    use crate::batch::secret_scan::release_reads_whole_json as reads;
-    for row in groups.iter_mut().flat_map(|(_, rows)| rows.iter_mut()) {
-        if row.fields.is_empty() {
-            continue;
-        }
-        let mut secret = reads(&Value::Object(row.fields.iter().cloned().collect()));
-        if !secret && format == PackFormat::Toon {
-            let mut values = vec![Value::String(row.id.clone())];
-            let mut keys = values.clone();
-            for (key, value) in &row.fields {
-                keys.push(Value::String(key.clone()));
-                emitted_parts(value, &mut values, &mut keys);
-            }
-            secret = reads(&Value::Array(values)) || reads(&Value::Array(keys));
-        }
-        if secret {
-            row.fields.clear();
-        }
-    }
-}
-
-/// A field's leaves in order with no key between them (an array of byte
-/// values stays one leaf, as the release reads take it), and the keys of the
-/// objects it holds.
-fn emitted_parts(value: &Value, values: &mut Vec<Value>, keys: &mut Vec<Value>) {
-    match value {
-        Value::Object(fields) => {
-            for (key, value) in fields {
-                keys.push(Value::String(key.clone()));
-                emitted_parts(value, values, keys);
-            }
-        }
-        Value::Array(items) if !items.iter().all(|item| item.as_u64().is_some_and(|n| n < 256)) => {
-            for item in items {
-                emitted_parts(item, values, keys);
-            }
-        }
-        leaf => values.push(leaf.clone()),
-    }
-}
-
 fn should_include_projected_field(entity_type: u8, key: &str, value: &Value) -> bool {
     !(entity_type == ENTITY_TYPE_FEDERATION_GRANT && key == "member_ref" && value.is_null())
 }
