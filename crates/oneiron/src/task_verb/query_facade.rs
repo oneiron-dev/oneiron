@@ -11,7 +11,8 @@ use crate::attempt_queue::{
 use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::context_board::{
-    TaskBoardStatus, TasksSection, ack_task_in_txn, cancel_task_in_txn, expand_task, task_is_acked,
+    TaskBoardStatus, TasksSectionRows, ack_task_in_txn, cancel_task_in_txn, expand_task,
+    task_is_acked,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -58,20 +59,7 @@ impl Memory<'_> {
         let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let Some(task_ref) = task_ref else {
-            let snapshot = task_presence(self.vault())?;
-            for failure in &snapshot.read_failures {
-                tracing::warn!(
-                    task_ref = %failure.task_ref.to_hex(),
-                    stage = ?failure.stage,
-                    kind = ?failure.kind,
-                    "task presence skipped unreadable row"
-                );
-            }
-            return Ok(TaskDescription::Section(TasksSection::render_bounded(
-                &snapshot.intents,
-                &snapshot.bare_jobs,
-                snapshot.source_exhausted,
-            )));
+            return Ok(TaskDescription::Section(self.section_rows()?.render()));
         };
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
@@ -83,6 +71,36 @@ impl Memory<'_> {
         }
         Ok(TaskDescription::Card {
             lines: expand_task(&intent),
+        })
+    }
+
+    /// The rows `describe` renders its TASKS section from, before the render
+    /// cap. A host whose reader is narrower than this facade's actor keeps
+    /// the rows that reader may see and renders only those
+    /// ([`TasksSectionRows::render`]). An acknowledged failure, which the
+    /// section never renders, is not among them.
+    pub fn describe_rows(&self) -> MemoryResult<TasksSectionRows> {
+        let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        self.section_rows()
+    }
+
+    fn section_rows(&self) -> MemoryResult<TasksSectionRows> {
+        let snapshot = task_presence(self.vault())?;
+        for failure in &snapshot.read_failures {
+            tracing::warn!(
+                task_ref = %failure.task_ref.to_hex(),
+                stage = ?failure.stage,
+                kind = ?failure.kind,
+                "task presence skipped unreadable row"
+            );
+        }
+        let mut intents = snapshot.intents;
+        intents.retain(|intent| !intent.is_acked_failure());
+        Ok(TasksSectionRows {
+            intents,
+            bare_jobs: snapshot.bare_jobs,
+            source_exhausted: snapshot.source_exhausted,
         })
     }
 
@@ -597,12 +615,20 @@ impl Memory<'_> {
         provenance: Value,
     ) -> MemoryResult<(EntityId, Option<String>)> {
         let proposal_ref = self.vault().store.clock.entity_id()?;
-        let candidate = ClaimCandidate::new(
+        let mut candidate = ClaimCandidate::new(
             predicate.to_owned(),
             ClaimSubject::Entity(subject),
             value,
             1.0,
         );
+        // A parked proposal is born where its writer's TASK would be.
+        let position = self.birth_position();
+        if let Some(world) = position.claim_world() {
+            candidate = candidate.with_world(world);
+        }
+        if let Some(facet) = position.facet {
+            candidate = candidate.with_scope_stamps(facet, crate::claim::default_project_id());
+        }
         let envelope = match self.host_envelope(ClaimApprovalStatus::Proposed)? {
             Some(envelope) => envelope,
             None => WriteEnvelope::new(

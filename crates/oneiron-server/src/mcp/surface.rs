@@ -254,6 +254,10 @@ impl McpGeneratedVerbTool {
         AgentVerb::from_name(self.name).is_some_and(AgentVerb::requires_unscoped)
             || self.memory_method().is_some()
     }
+    /// A write whose records are born at the connector's own world and facet.
+    pub(crate) fn born_in_scope(self) -> bool {
+        AgentVerb::from_name(self.name).is_some_and(AgentVerb::born_in_scope)
+    }
     pub(crate) fn writes(self) -> bool {
         AgentVerb::from_name(self.name).is_some_and(AgentVerb::writes)
     }

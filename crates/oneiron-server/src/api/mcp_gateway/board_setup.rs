@@ -3,7 +3,8 @@
 use super::stream_reads::{mcp_live_task_lines, mcp_own_task_lines};
 use super::{
     McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
-    mcp_facade_error, mcp_scope_covers_entity, mcp_scoped_read, mcp_text_content,
+    mcp_facade_error, mcp_scope_covers_entity, mcp_scoped_read, mcp_scoped_tasks_section,
+    mcp_text_content,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpPageCursorState;
@@ -163,7 +164,8 @@ pub(super) struct McpBoardState {
     /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
     pub(super) epoch: u64,
     pub(super) changes: oneiron::context_board::ChangedLine,
-    /// TASKS rows the credential's REQUESTED SCOPE ceiling removed.
+    /// TASKS rows the credential's REQUESTED SCOPE withheld inside its own
+    /// world and facet (`mcp_scoped_tasks_section`).
     scope_omitted: usize,
     /// TASKS rows the engine's own render row cap truncated away. A page
     /// WINDOW fact, kept apart from the scope fact above (ONE-1704 repair).
@@ -281,10 +283,10 @@ fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Ve
 
 /// The board sections the primary keyframe renders over.
 ///
-/// TASKS comes from the section arm of the engine's own gated `describe`
-/// facade, NARROWED to this credential's world/facet ceiling before it ever
-/// reaches the renderer, so a board a narrow connector reads is never the
-/// actor-wide board. The pinned VERBS section restates the generated grammar
+/// TASKS comes from the rows of the engine's own gated `describe` facade,
+/// NARROWED to this credential's world/facet ceiling before they ever reach
+/// the renderer, so a board a narrow connector reads is never the actor-wide
+/// board. The pinned VERBS section restates the generated grammar
 /// as board state.
 fn mcp_board_sections(
     server: &Arc<SyncServer>,
@@ -292,17 +294,12 @@ fn mcp_board_sections(
 ) -> Result<(Vec<oneiron::context_board::BoardSection>, McpBoardOmissions), McpGatewayError> {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
-    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
-    let oneiron::task_verb::TaskDescription::Section(tasks) =
-        facade.describe(None).map_err(mcp_facade_error)?
-    else {
-        return Err(McpGatewayError::new(
-            -32603,
-            "engine_error",
-            "describe without a task returned a card, not the TASKS section",
-        ));
-    };
-    let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, tasks)?;
+    let rows = server
+        .vault
+        .memory(actor.actor_ref, actor.actor_class)
+        .describe_rows()
+        .map_err(mcp_facade_error)?;
+    let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows)?;
     // The engine's own footer states the render WINDOW's truncation and
     // whether its scan was exhausted. That is a different fact from the scope
     // filtering above, and the two are carried separately from here on.
@@ -456,35 +453,6 @@ fn mcp_pack_sections(
                 .then_some(section)
         })
         .collect())
-}
-
-/// Narrows one TASKS section to the credential's registered world/facet.
-///
-/// Every row passes the verified slip and registered world/facet checks,
-/// including slips whose record, kind, project or sensitivity bounds the old
-/// two-axis registry cannot express. The removed count states the omission.
-pub(super) fn mcp_scoped_tasks_section(
-    server: &Arc<SyncServer>,
-    actor: &McpResolvedActor,
-    section: oneiron::context_board::TasksSection,
-) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
-    let scoped_read = mcp_scoped_read(&server.vault, actor)?;
-    let mut kept = Vec::with_capacity(section.rows.len());
-    let mut omitted = 0_usize;
-    for row in section.rows {
-        if mcp_scope_admits_row(&server.vault, actor, &scoped_read, &row.id)? {
-            kept.push(row);
-        } else {
-            omitted += 1;
-        }
-    }
-    Ok((
-        oneiron::context_board::TasksSection {
-            rows: kept,
-            overflow: section.overflow,
-        },
-        omitted,
-    ))
 }
 
 /// True when the registered scope covers the row this board id names.

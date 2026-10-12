@@ -133,7 +133,8 @@ impl ScopedRead<'_> {
         let filter = crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
             requested,
-        )?;
+        )?
+        .under_credential_of(&self.actor_key);
         Ok((filter, policy))
     }
 

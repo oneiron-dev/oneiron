@@ -296,8 +296,14 @@ pub struct RetrievalWithPendingVectors<T> {
 impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
-    /// scoped caller's final admission gate.
-    pub(super) fn countable_suppressed(&self, store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
+    /// scoped caller's final admission gate. Nor does a TASK outside the
+    /// worlds or facets of the `credential` the run retrieves under.
+    pub(super) fn countable_suppressed(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        credential: Option<&crate::federation::Scope>,
+    ) -> Result<usize> {
         let mut count = 0;
         for id in &self.read_suppressed {
             let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
@@ -306,10 +312,21 @@ impl EntityMetadataCache {
             let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 continue;
             };
-            count += usize::from(crate::note::countable_read_suppression(
-                header.entity_type,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            ));
+            let outside = match credential {
+                Some(credential) if header.entity_type == crate::registry::ENTITY_TYPE_TASK => {
+                    !crate::federation::record_scope::task_inside_credential(
+                        store, txn, *id, &raw, credential,
+                    )?
+                }
+                _ => false,
+            };
+            count += usize::from(
+                !outside
+                    && crate::note::countable_read_suppression(
+                        header.entity_type,
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                    ),
+            );
         }
         Ok(count)
     }

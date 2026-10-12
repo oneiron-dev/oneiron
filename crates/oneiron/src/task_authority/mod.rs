@@ -212,6 +212,7 @@ pub(crate) fn put_task_authority_fact_in_txn(
             SCOPED_TO_DEFAULT_WEIGHT,
         )
         .apply(wtxn)?;
+    crate::federation::record_scope::stamp_task_fact(&vault.store, wtxn, fact_ref, fact.task_ref)?;
     Ok(fact_ref)
 }
 

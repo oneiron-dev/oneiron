@@ -38,6 +38,19 @@ pub(crate) struct ResolvedRetrievalFilter {
     pub(crate) min_confidence: f32,
     pub(crate) min_salience: f32,
     pub(crate) deny_all: bool,
+    /// The verified credential a scoped read retrieves under, if any. A TASK
+    /// the pipeline denies outside its worlds or facets adds to no
+    /// suppression count (ARCH-0067 §5, DEC-0005).
+    pub(crate) credential: Option<crate::federation::Scope>,
+}
+
+impl ResolvedRetrievalFilter {
+    /// This filter as `actor` retrieves under it, carrying its credential.
+    #[must_use]
+    pub(crate) fn under_credential_of(mut self, actor: &ScopedReadActorKey) -> Self {
+        self.credential = actor.authority_scope().cloned();
+        self
+    }
 }
 
 impl PolicyManifestResolution {
@@ -359,6 +372,7 @@ pub(crate) fn narrow_retrieval_filter(
         min_confidence: narrowed.min_confidence,
         min_salience: narrowed.min_salience,
         deny_all: narrowed.deny_all,
+        credential: None,
     })
 }
 

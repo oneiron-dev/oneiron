@@ -77,6 +77,16 @@ impl McpConnectorScope {
         self.world_ref.is_some() || self.facet_ref.is_some()
     }
 
+    /// Where a TASK this credential writes is born: its own world and facet
+    /// (ARCH-0067 §5). A vault-wide credential's TASKs keep the default birth.
+    #[must_use]
+    pub const fn birth_position(&self) -> oneiron::federation::record_scope::BirthPosition {
+        oneiron::federation::record_scope::BirthPosition {
+            world: self.world_ref,
+            facet: self.facet_ref,
+        }
+    }
+
     /// The STREAM subscription ceiling this scope admits.
     ///
     /// A vault-wide credential may reach every category. A NARROWED credential
