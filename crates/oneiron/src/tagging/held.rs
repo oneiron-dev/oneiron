@@ -29,7 +29,8 @@ pub enum HeldTagsOutcome {
     /// The tags were not read from the text the turn shows; nothing changed
     /// and the marker still waits for the tagger.
     Unread(UnreadText),
-    /// No live marker is owed for the turn under the active checkpoint.
+    /// No live marker is owed for the turn under the active checkpoint and
+    /// stack.
     NoMarker,
     /// The worker holds the marker's lease or has scheduled its retry; its own
     /// pass settles it.
@@ -93,9 +94,8 @@ pub(crate) fn settle_held_tags_in_txn(
     let Some(config) = vault.config.tagging.as_ref() else {
         return Ok(HeldTagsOutcome::NoMarker);
     };
-    let checkpoint = &config.checkpoint;
     let queue = AttemptQueue::from_store(&vault.store);
-    let key = dedupe_key(turn, checkpoint);
+    let key = dedupe_key(turn, config);
     let Some(record) = queue.pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &key)? else {
         return Ok(HeldTagsOutcome::NoMarker);
     };
@@ -171,9 +171,9 @@ pub(crate) fn settle_held_tags_in_txn(
                     turn: *turn,
                     input: &input,
                     output: tags,
-                    envelope: save::envelope(&hash, HELD_BY, config),
+                    envelope: save::envelope(&hash, HELD_BY, config, tags.stack_sha16.as_deref()),
                 };
-                save::save_in_txn(vault, txn, answer, &config.labels, now)?;
+                save::save_in_txn(vault, txn, answer, config, now)?;
             }
             (
                 TaggingOutcome::Imported {
@@ -201,7 +201,8 @@ pub(crate) fn settle_held_tags_in_txn(
     let trace = TaggingTrace {
         attempt: attempt_hex(&leased.id),
         turn: Some(*turn),
-        checkpoint: checkpoint.clone(),
+        checkpoint: config.checkpoint.clone(),
+        stack: config.stack.clone(),
         model: None,
         input_hash,
         try_number,

@@ -14,29 +14,42 @@
 //! mints; one whose own name keys elsewhere keeps its own and is merge
 //! evidence. The mood lands on the turn. The save writes no claim, no edge
 //! and no merge.
+//!
+//! A span's antecedent may sit outside the turn's spans. A context link
+//! names a span of an earlier turn the window sent: the span takes the link
+//! the engine saved for that turn at those coordinates, under the same
+//! tagger, and nothing when no such save is there, which the trace counts;
+//! no span is ever guessed from a surface. A speaker link names the turn's
+//! author, or for the addressee the one other party of a 1:1 room, and
+//! otherwise stays an unresolved decision. Either keeps only entities a
+//! world of the turn holds.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
 
-use super::input::{TurnInput, input_hash, turn_text_in_txn};
-use super::marker::TaggingMarkerConfig;
-use super::output::check_output;
+use super::input::{TurnInput, input_hash, sent_text_offset_in_txn, sole_peer, turn_text_in_txn};
+use super::marker::{TAGGING_MARKER_KIND, TaggingMarkerConfig, dedupe_key, label_kind_admitted};
+use super::output::{check_output, context_text};
 use super::provisional::{self, ProvisionalEntity};
 use super::tags::{
-    DerivationEnvelope, MentionLink, MergeEvidence, TaggedMention, TurnTags, replace_in_txn,
-    tag_set_in_txn,
+    DerivationEnvelope, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags,
+    readable_in_txn, replace_in_txn, tag_set_in_txn,
 };
+use crate::attempt_queue::AttemptQueue;
+use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::federation::record_scope::{birth_facet, scope_for_blob};
 use crate::federation::{ScopeAxis, ScopeId};
-use crate::memory::extraction::{EncoderInput, EncoderOutput};
-use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::memory::extraction::{
+    ContextLink, EncoderInput, EncoderOutput, SpeakerLink, SpeakerTarget,
+};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
 /// The save path's version, the envelope's `version`.
-const SAVE_VERSION: &str = "oneiron.tagging.save.v1";
+const SAVE_VERSION: &str = "oneiron.tagging.save.v2";
 
 /// What one save did.
 pub(super) struct Saved {
@@ -44,14 +57,20 @@ pub(super) struct Saved {
     pub(super) linked: usize,
     /// Provisional entities it minted.
     pub(super) minted: usize,
+    /// Context links that found no saved span and kept no antecedent.
+    pub(super) unresolved_context_links: usize,
+    /// Speaker links that named no one person.
+    pub(super) unresolved_speaker_links: usize,
 }
 
-/// The envelope of a tag set read from `content_hash` by `made_by` under
-/// `config`'s label table and window.
+/// The envelope of a tag set read from `content_hash` by `made_by`, of the
+/// served `stack` when the answer names one, under `config`'s label table
+/// and window.
 pub(super) fn envelope(
     content_hash: &str,
     made_by: &str,
     config: &TaggingMarkerConfig,
+    stack: Option<&str>,
 ) -> DerivationEnvelope {
     let mut hash = Sha256::new();
     hash.update(b"oneiron.tagging.params.v1\0");
@@ -67,6 +86,7 @@ pub(super) fn envelope(
     DerivationEnvelope {
         content_hash: content_hash.to_owned(),
         model_id: format!("{made_by}@{}", config.checkpoint),
+        stack: stack.map(str::to_owned),
         version: SAVE_VERSION.to_owned(),
         params_hash: format!("{:x}", hash.finalize()),
     }
@@ -89,7 +109,7 @@ pub(super) fn save_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     answer: Answer<'_>,
-    labels: &BTreeMap<String, u8>,
+    config: &TaggingMarkerConfig,
     now: u64,
 ) -> Result<Saved> {
     let Answer {
@@ -106,6 +126,12 @@ pub(super) fn save_in_txn(
     if let Some(held) = tag_set_in_txn(&vault.store, txn, &turn)?
         && held.envelope == envelope
     {
+        let kept = |wanted: fn(&MentionReference) -> bool| {
+            held.mentions
+                .iter()
+                .filter(|mention| mention.reference.as_ref().is_some_and(wanted))
+                .count()
+        };
         return Ok(Saved {
             linked: held
                 .mentions
@@ -113,25 +139,62 @@ pub(super) fn save_in_txn(
                 .filter(|mention| mention.link != MentionLink::Tag)
                 .count(),
             minted: 0,
+            unresolved_context_links: output
+                .context_links
+                .len()
+                .saturating_sub(kept(|reference| *reference == MentionReference::Context)),
+            unresolved_speaker_links: kept(|reference| {
+                matches!(reference, MentionReference::Speaker { resolved: false, .. })
+            }),
         });
     }
-    let mut antecedent_of = vec![None; output.spans.len()];
-    for link in &output.links {
-        antecedent_of[link.span] = Some(link.antecedent);
-    }
     let mut linker = Linker::new(vault, txn, turn, now)?;
+    let mut coref = vec![Coref::None; output.spans.len()];
+    for link in &output.links {
+        coref[link.span] = Coref::InTurn {
+            antecedent: link.antecedent,
+            confidence: link.confidence,
+        };
+    }
+    let mut unresolved_context_links = 0;
+    for link in &output.context_links {
+        match linker.context_link(txn, input, link, &envelope, config)? {
+            Some(found) => {
+                coref[link.span] = Coref::Context {
+                    link: found,
+                    confidence: link.confidence,
+                }
+            }
+            None => unresolved_context_links += 1,
+        }
+    }
+    let mut unresolved_speaker_links = 0;
+    for link in &output.speaker_links {
+        let found = linker.speaker_link(txn, &messages, link)?;
+        unresolved_speaker_links += usize::from(found.is_none());
+        coref[link.span] = Coref::Speaker {
+            target: link.target,
+            link: found,
+            confidence: link.confidence,
+        };
+    }
     let mut mentions: Vec<TaggedMention> = Vec::with_capacity(output.spans.len());
     let mut merge_evidence = Vec::new();
     for (index, span) in output.spans.iter().enumerate() {
         let text = input.messages[span.message].text[span.start..span.end].trim();
-        let own = labels
+        let own = config
+            .labels
             .get(&span.label)
             .copied()
             .filter(|_| !text.is_empty());
-        let antecedent = antecedent_of[index];
-        let inherited = antecedent
-            .map(|at| &mentions[at].link)
-            .filter(|link| **link != MentionLink::Tag);
+        let (antecedent, reference, link_confidence) = coref[index].decision();
+        let inherited = match &coref[index] {
+            Coref::None => None,
+            Coref::InTurn { antecedent, .. } => Some(&mentions[*antecedent].link),
+            Coref::Context { link, .. } => Some(link),
+            Coref::Speaker { link, .. } => link.as_ref(),
+        }
+        .filter(|link| **link != MentionLink::Tag);
         let link = match (inherited, own) {
             (None, None) => MentionLink::Tag,
             (None, Some(kind)) => linker.link(txn, kind, text)?,
@@ -151,7 +214,8 @@ pub(super) fn save_in_txn(
                 } else {
                     // A name that keys elsewhere than its antecedent keeps
                     // its own candidates: the pair is evidence the Dreamer
-                    // weighs, never a merge.
+                    // weighs, never a merge. Only a pair inside the turn is
+                    // kept as such, since evidence names two of its spans.
                     if inherited.kind() == Some(kind)
                         && hits.iter().all(|hit| !inherited.entities().contains(hit))
                         && let Some(at) = antecedent
@@ -159,7 +223,7 @@ pub(super) fn save_in_txn(
                         merge_evidence.push(MergeEvidence {
                             span: index,
                             antecedent: at,
-                            confidence: span.confidence,
+                            confidence: link_confidence.unwrap_or(span.confidence),
                         });
                     }
                     MentionLink::Candidates {
@@ -177,6 +241,8 @@ pub(super) fn save_in_txn(
             confidence: span.confidence,
             link,
             antecedent,
+            reference,
+            link_confidence,
         });
     }
     let saved = Saved {
@@ -185,6 +251,8 @@ pub(super) fn save_in_txn(
             .filter(|mention| mention.link != MentionLink::Tag)
             .count(),
         minted: linker.minted,
+        unresolved_context_links,
+        unresolved_speaker_links,
     };
     let tags = TurnTags {
         turn,
@@ -197,6 +265,54 @@ pub(super) fn save_in_txn(
     };
     replace_in_txn(vault, txn, &turn, Some(&tags))?;
     Ok(saved)
+}
+
+/// What a span corefers with, as the save resolved it.
+#[derive(Clone)]
+enum Coref {
+    None,
+    /// An earlier span of this turn.
+    InTurn {
+        antecedent: usize,
+        confidence: Option<f32>,
+    },
+    /// A span an earlier turn's tag set holds, and the link it holds.
+    Context { link: MentionLink, confidence: f32 },
+    /// The turn's speaker or addressee, and the person it named, if one.
+    Speaker {
+        target: SpeakerTarget,
+        link: Option<MentionLink>,
+        confidence: f32,
+    },
+}
+
+impl Coref {
+    /// What the saved mention keeps of it: its antecedent in the turn, its
+    /// reference outside it, and the decision's confidence.
+    fn decision(&self) -> (Option<usize>, Option<MentionReference>, Option<f32>) {
+        match self {
+            Self::None => (None, None, None),
+            Self::InTurn {
+                antecedent,
+                confidence,
+            } => (Some(*antecedent), None, *confidence),
+            Self::Context { confidence, .. } => {
+                (None, Some(MentionReference::Context), Some(*confidence))
+            }
+            Self::Speaker {
+                target,
+                link,
+                confidence,
+            } => (
+                None,
+                Some(MentionReference::Speaker {
+                    target: *target,
+                    resolved: link.is_some(),
+                }),
+                Some(*confidence),
+            ),
+        }
+    }
 }
 
 /// Saves a host's shadow output for `turn`, made by `model`, in the caller's
@@ -235,9 +351,9 @@ pub(crate) fn save_shadow_output_in_txn(
         turn,
         input,
         output,
-        envelope: envelope(&input_hash(input), model, config),
+        envelope: envelope(&input_hash(input), model, config, output.stack_sha16.as_deref()),
     };
-    save_in_txn(vault, txn, answer, &config.labels, now)?;
+    save_in_txn(vault, txn, answer, config, now)?;
     tag_set_in_txn(&vault.store, txn, &turn)
 }
 
@@ -347,6 +463,150 @@ impl<'v> Linker<'v> {
         )?;
         self.minted += 1;
         Ok(MentionLink::Minted { kind, entity })
+    }
+
+    /// The link a context link resolves to: the one the engine saved for
+    /// the earlier turn at the link's coordinates, kept to the entities a
+    /// world of this turn holds. `None` when no such save is there: the
+    /// earlier turn reads in no world of this turn, or has no readable tag
+    /// set, or one another tagger or decode made, or one owed a new pass;
+    /// or its message no longer shows the text the window sent; or no span
+    /// was saved at those coordinates.
+    fn context_link(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &EncoderInput,
+        link: &ContextLink,
+        envelope: &DerivationEnvelope,
+        config: &TaggingMarkerConfig,
+    ) -> Result<Option<MentionLink>> {
+        let store = &self.vault.store;
+        let (Ok(earlier), Ok(message), Some(sent)) = (
+            EntityId::from_hex(&link.turn),
+            EntityId::from_hex(&link.message),
+            context_text(input, &link.turn, &link.message),
+        ) else {
+            return Ok(None);
+        };
+        if earlier == self.turn || !self.shares_world(txn, &earlier)? {
+            return Ok(None);
+        }
+        let Some(tags) = readable_in_txn(store, txn, &earlier)? else {
+            return Ok(None);
+        };
+        let same_tagger = tags.envelope.model_id == envelope.model_id
+            && tags.envelope.stack == envelope.stack
+            && tags.envelope.version == envelope.version
+            && tags.envelope.params_hash == envelope.params_hash;
+        // A turn owed a pass may hold tags of text it no longer shows.
+        let owed = AttemptQueue::from_store(store)
+            .pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &dedupe_key(&earlier, config))?
+            .is_some();
+        if !same_tagger || owed || !tags.messages.contains(&message) {
+            return Ok(None);
+        }
+        let Some(offset) = sent_text_offset_in_txn(self.vault, txn, &message, sent)? else {
+            return Ok(None);
+        };
+        let (start, end) = (offset + link.start, offset + link.end);
+        let Some(saved) = tags.mentions.iter().find(|mention| {
+            mention.message == message && mention.start == start && mention.end == end
+        }) else {
+            return Ok(None);
+        };
+        let Some(kind) = saved.link.kind() else {
+            return Ok(Some(MentionLink::Tag));
+        };
+        let mut entities = Vec::new();
+        for entity in saved.link.entities() {
+            if self.admits(txn, kind, entity)? {
+                entities.push(*entity);
+            }
+        }
+        // This turn minted none of them: each is a candidate here.
+        Ok(Some(if entities.is_empty() {
+            MentionLink::Tag
+        } else {
+            MentionLink::Candidates { kind, entities }
+        }))
+    }
+
+    /// The link a speaker link resolves to: the turn's author for the
+    /// speaker, and for the addressee the one other party of the turn's
+    /// room, when it has exactly one. `None` when no one person is it: the
+    /// turn's messages name no single author, the room's audience is not
+    /// one other party besides them, or the person is no entity a mention
+    /// may name in a world of this turn. One member of a group is never
+    /// picked.
+    fn speaker_link(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        messages: &[EntityId],
+        link: &SpeakerLink,
+    ) -> Result<Option<MentionLink>> {
+        let store = &self.vault.store;
+        let mut authors = BTreeSet::new();
+        for message in messages {
+            for edge in
+                store.port_edges(txn, message, EdgeDirection::Out, Some(EdgeKind::AuthoredBy), None)?
+            {
+                authors.insert(edge?.target);
+            }
+        }
+        let mut authors = authors.into_iter();
+        let (Some(author), None) = (authors.next(), authors.next()) else {
+            return Ok(None);
+        };
+        let person = match link.target {
+            SpeakerTarget::Speaker => author,
+            SpeakerTarget::Addressee => {
+                let Some(room) = sole_peer(self.vault, txn, &self.turn, EdgeKind::ChildOf)? else {
+                    return Ok(None);
+                };
+                let audience = match self.vault.room_audience_members_in_txn(txn, room) {
+                    Ok(audience) => audience.into_iter().collect::<BTreeSet<_>>(),
+                    Err(
+                        error @ (Error::Storage(_)
+                        | Error::Io(_)
+                        | Error::MapFull
+                        | Error::ConcurrentWrite(_)),
+                    ) => return Err(error),
+                    // A room whose audience does not read has no one other
+                    // party.
+                    Err(_) => return Ok(None),
+                };
+                if !audience.contains(&author) {
+                    return Ok(None);
+                }
+                let mut others = audience.into_iter().filter(|id| *id != author);
+                let (Some(other), None) = (others.next(), others.next()) else {
+                    return Ok(None);
+                };
+                other
+            }
+        };
+        let Some(row) = store.port_entity_record(txn, &person)? else {
+            return Ok(None);
+        };
+        let kind = row.entity_type;
+        if !label_kind_admitted(kind) || !self.admits(txn, kind, &person)? {
+            return Ok(None);
+        }
+        Ok(Some(MentionLink::Candidates {
+            kind,
+            entities: vec![person],
+        }))
+    }
+
+    /// Whether this turn's mention may name `entity` as `kind`: a provisional
+    /// entity of that kind whose origin turn shares a world with it, or a
+    /// linkable entity ([`linkable_in_txn`]) that does.
+    fn admits(&self, txn: &heed::RoTxn<'_>, kind: u8, entity: &EntityId) -> Result<bool> {
+        if let Some(minted) = provisional::get_in_txn(&self.vault.store, txn, entity)? {
+            return Ok(minted.kind == kind && self.shares_world(txn, &minted.origin)?);
+        }
+        Ok(linkable_in_txn(&self.vault.store, txn, entity, kind)?
+            && self.shares_world(txn, entity)?)
     }
 
     /// Whether the record `id` can sit in a world the turn is in. A record

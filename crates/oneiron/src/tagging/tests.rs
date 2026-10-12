@@ -1813,7 +1813,7 @@ fn plant_settled_markers(vault: &Vault, count: u64, settled_at: u64) {
     let queue = AttemptQueue::new(vault);
     let mut txn = vault.store.env.write_txn().expect("write txn");
     let turn = EntityId::from_bytes([0x5e; 16]).expect("turn id");
-    super::marker::enqueue_marker_in_txn(vault, &mut txn, turn, CHECKPOINT, settled_at)
+    super::marker::enqueue_marker_in_txn(vault, &mut txn, turn, &shadow(CHECKPOINT), settled_at)
         .expect("marker");
     let ClaimOutcome::Claimed(leased) = queue
         .claim_kind_storage_in_txn(
@@ -3313,6 +3313,7 @@ fn trimming_history_reads_outside_the_writer_a_bounded_part_a_pass() {
                             attempt: String::new(),
                             turn: Some(*turn),
                             checkpoint: CHECKPOINT.into(),
+                            stack: None,
                             model: None,
                             input_hash: None,
                             try_number,
@@ -3398,6 +3399,7 @@ fn plant_low_range_marker(vault: &Vault, turn: EntityId) -> AttemptRecord {
     row.payload = rmp_serde::to_vec_named(&super::marker::MarkerPayload {
         turn,
         checkpoint: CHECKPOINT.into(),
+        stack: None,
     })
     .expect("payload");
     let encoded = crate::attempt_queue::encode_signal_record(&row).expect("encode");

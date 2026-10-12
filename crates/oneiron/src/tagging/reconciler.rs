@@ -97,7 +97,6 @@ impl TaggingPass {
 pub struct TaggingReconciler {
     vault: Arc<Vault>,
     encoder: Arc<dyn ExtractionEncoder>,
-    checkpoint: String,
     lease_owner: String,
     batch_size: usize,
     backoff: TaggingBackoff,
@@ -136,7 +135,6 @@ impl TaggingReconciler {
         Ok(Self {
             vault,
             encoder,
-            checkpoint: config.checkpoint.clone(),
             lease_owner: DEFAULT_LEASE_OWNER.to_owned(),
             batch_size: DEFAULT_BATCH_SIZE,
             backoff: TaggingBackoff::default(),
@@ -303,12 +301,13 @@ impl TaggingReconciler {
         let trace = TaggingTrace {
             turn: Some(payload.turn),
             checkpoint: payload.checkpoint,
+            stack: payload.stack,
             outcome: TaggingOutcome::Rekeyed,
             ..unread
         };
         // Settled first, so its dedupe entry is free for the new marker.
         self.settle_in_txn(txn, &record, &trace)?;
-        enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?;
+        enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now)?;
         Ok(())
     }
 
@@ -349,6 +348,7 @@ impl TaggingReconciler {
             Some(payload) => TaggingTrace {
                 turn: Some(payload.turn),
                 checkpoint: payload.checkpoint.clone(),
+                stack: payload.stack.clone(),
                 outcome: TaggingOutcome::Rekeyed,
                 ..unread
             },
@@ -360,7 +360,7 @@ impl TaggingReconciler {
             return Ok(());
         };
         if let EnqueueOutcome::Enqueued(owed) =
-            enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?
+            enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now)?
         {
             queue.intervene_in_txn(
                 txn,
@@ -577,12 +577,14 @@ impl TaggingReconciler {
         };
         trace.turn = Some(payload.turn);
         trace.checkpoint.clone_from(&payload.checkpoint);
-        if payload.checkpoint != self.checkpoint {
-            // Owed by another checkpoint: the active tagger owes the turn now.
+        trace.stack.clone_from(&payload.stack);
+        if !payload.owed_to(&self.config) {
+            // Owed to another checkpoint or stack: the active tagger owes the
+            // turn now.
             trace.outcome = TaggingOutcome::Rekeyed;
             self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
                 let now = self.stamp_in_txn(txn)?;
-                enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?;
+                enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now)?;
                 self.settle_in_txn(txn, record, &trace)
             })?;
             return Ok(trace);
@@ -654,22 +656,26 @@ impl TaggingReconciler {
                                 turn: payload.turn,
                                 input: &input,
                                 output: &output,
-                                envelope: save::envelope(&hash, &made_by, &self.config),
+                                envelope: save::envelope(
+                                    &hash,
+                                    &made_by,
+                                    &self.config,
+                                    output.stack_sha16.as_deref(),
+                                ),
                             };
                             let now = self.stamp_in_txn(txn)?;
-                            let saved = save::save_in_txn(
-                                &self.vault,
-                                txn,
-                                answer,
-                                &self.config.labels,
-                                now,
-                            )?;
+                            let saved =
+                                save::save_in_txn(&self.vault, txn, answer, &self.config, now)?;
                             TaggingOutcome::Saved {
                                 spans: output.spans.len(),
                                 links: output.links.len(),
                                 mood: output.vad.is_some(),
                                 linked: saved.linked,
                                 minted: saved.minted,
+                                context_links: output.context_links.len(),
+                                speaker_links: output.speaker_links.len(),
+                                unresolved_context_links: saved.unresolved_context_links,
+                                unresolved_speaker_links: saved.unresolved_speaker_links,
                             }
                         }
                     };
@@ -731,6 +737,8 @@ impl TaggingReconciler {
                 .iter()
                 .filter(|span| self.config.labels.contains_key(&span.label))
                 .count(),
+            context_links: output.context_links.len(),
+            speaker_links: output.speaker_links.len(),
         }
     }
 
@@ -859,6 +867,7 @@ impl TaggingReconciler {
         let trace = TaggingTrace {
             turn: Some(payload.turn),
             checkpoint: payload.checkpoint,
+            stack: payload.stack,
             outcome: TaggingOutcome::HandedBack {
                 reason,
                 retry_at: stamp,
@@ -927,6 +936,7 @@ fn unreadable_trace(record: &AttemptRecord, prior_retries: u32) -> TaggingTrace 
         attempt: attempt_hex(&record.id),
         turn: None,
         checkpoint: String::new(),
+        stack: None,
         model: None,
         input_hash: None,
         try_number: prior_retries.saturating_add(1),

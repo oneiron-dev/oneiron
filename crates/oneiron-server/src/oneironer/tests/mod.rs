@@ -1,6 +1,8 @@
 //! The slot's laws: configuration, the endpoint's wire and identity probe,
 //! the typed refusals, `init`, and the worker against a stub tagger server.
 
+mod golden;
+mod links;
 mod support;
 mod worker;
 
@@ -20,7 +22,8 @@ use crate::config::{
     resolve_serve_config_with_sources,
 };
 use support::{
-    Answer, CHECKPOINT, LABEL_COUNT, NONSTANDARD_STATUS, StubTagger, card, endpoint_config,
+    Answer, CHECKPOINT, LABEL_COUNT, NONSTANDARD_STATUS, STACK, StubTagger, card,
+    endpoint_config,
 };
 
 fn input(text: &str) -> EncoderInput {
@@ -31,6 +34,8 @@ fn input(text: &str) -> EncoderInput {
             text: text.into(),
         }],
         context: Vec::new(),
+        language: None,
+        speaker: None,
     }
 }
 
@@ -223,6 +228,7 @@ fn managed_mode_refuses_every_tagger_flag_by_name() {
         ("--oneironer-mode", "shadow"),
         ("--oneironer-url", "http://127.0.0.1:9100"),
         ("--oneironer-checkpoint-sha16", CHECKPOINT),
+        ("--oneironer-stack-sha16", CHECKPOINT),
         ("--oneironer-label-count", "3"),
         ("--oneironer-labels", "PERSON=PERSON"),
         ("--oneironer-timeout-ms", "250"),
@@ -574,6 +580,84 @@ fn the_local_provider_is_refused_by_name_save_mode_serves_and_none_builds_nothin
     };
     assert!(build_slot(Some(&none)).expect("none").is_none());
     assert!(build_slot(None).expect("absent").is_none());
+}
+
+/// Contract v2 at startup: a tagger serving contract v1 is refused with the
+/// version error, one whose card names no well-formed stack is refused, and
+/// a pinned stack refuses any other, as a wrong checkpoint is refused.
+#[test]
+fn a_v1_card_or_another_pinned_stack_refuses_the_tagger_at_start() {
+    let stub = StubTagger::start(Answer::Good);
+    let refusal = |config: &OneironerConfig| {
+        build_slot(Some(config))
+            .err()
+            .expect("refused")
+            .downcast_ref::<ProbeError>()
+            .cloned()
+    };
+    let mut v1 = card(CHECKPOINT);
+    v1["contract_version"] = json!(1);
+    stub.set_card(v1);
+    assert_eq!(
+        refusal(&stub.config()),
+        Some(ProbeError::WrongContract { expected: 2 })
+    );
+    let mut unnamed = card(CHECKPOINT);
+    unnamed.as_object_mut().expect("card").remove("stack_sha16");
+    stub.set_card(unnamed);
+    assert_eq!(refusal(&stub.config()), Some(ProbeError::MalformedStack));
+    stub.set_card(card(CHECKPOINT));
+    let pinned = |stack: &str| OneironerConfig {
+        stack_sha16: Some(stack.to_owned()),
+        ..stub.config()
+    };
+    assert_eq!(
+        refusal(&pinned("0f0f0f0f0f0f0f0f")),
+        Some(ProbeError::WrongStack {
+            expected: "0f0f0f0f0f0f0f0f".to_owned()
+        })
+    );
+    let slot = build_slot(Some(&pinned(STACK)))
+        .expect("built")
+        .expect("slot");
+    assert_eq!(
+        slot.card().and_then(|card| card.stack_sha16),
+        Some(STACK.to_owned())
+    );
+    let mut bad = pinned(STACK);
+    bad.stack_sha16 = Some("NOT-HEX".to_owned());
+    assert!(bad.validate().is_err());
+}
+
+/// A v2 answer is bound to the card read after it: one naming another stack
+/// fails the call, and so does a link with no confidence.
+#[test]
+fn an_answer_off_its_cards_stack_or_with_a_bare_link_fails_the_call() {
+    let stub = StubTagger::start(Answer::Good);
+    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+    let request = input("Ada sailed north");
+    assert_eq!(
+        tagger.infer(&request).expect("answer").stack_sha16.as_deref(),
+        Some(STACK)
+    );
+    let code = |tagger: &HttpTagger| match tagger.infer(&request) {
+        Err(oneiron::Error::UpstreamToolFailure { code, .. }) => code,
+        other => panic!("not a tagger failure: {other:?}"),
+    };
+    stub.set_answer_stack("0f0f0f0f0f0f0f0f");
+    assert_eq!(
+        code(&tagger),
+        "tagger answer names another stack than its model card"
+    );
+    stub.set_answer_stack(STACK);
+    stub.set_script(|_: &serde_json::Value| {
+        json!({
+            "spans": [{"message": 0, "start": 0, "end": 3, "label": "PERSON", "confidence": 0.9},
+                      {"message": 0, "start": 4, "end": 10, "label": "PERSON", "confidence": 0.9}],
+            "links": [{"span": 1, "antecedent": 0}],
+        })
+    });
+    assert_eq!(code(&tagger), "tagger extract response is not the contract");
 }
 
 #[test]

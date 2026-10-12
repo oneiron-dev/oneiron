@@ -41,12 +41,16 @@ impl ExtractionEncoder for Scripted {
             links: vec![CorefLink {
                 span: 1,
                 antecedent: 0,
+                confidence: None,
             }],
             vad: Some(Vad {
                 valence: 0.5,
                 arousal: 0.6,
                 dominance: 0.4,
             }),
+            context_links: Vec::new(),
+            speaker_links: Vec::new(),
+            stack_sha16: None,
         })
     }
 }
@@ -263,6 +267,9 @@ fn a_shadow_of_messages_sent_out_of_order_is_saved() {
                 }],
                 links: Vec::new(),
                 vad: None,
+                context_links: Vec::new(),
+                speaker_links: Vec::new(),
+                stack_sha16: None,
             })
         }
     }
