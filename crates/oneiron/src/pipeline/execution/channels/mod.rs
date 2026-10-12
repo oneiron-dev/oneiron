@@ -598,15 +598,17 @@ impl PipelineBuilder<'_> {
                 merged_components: rerank_merged_components,
                 reranked_trace_scores,
                 words_revisions,
+                unpinned_turns,
             } = self.apply_rerank_ladder(
                 rtxn,
                 &mut scores,
                 &mut metadata_cache,
+                &mut claim_gate,
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,
                     blend_components: &blend_components,
-                    claim_gate: &claim_gate,
+                    filter_config,
                     rerank_query,
                     capture_retrieval_trace,
                     trace_candidate_limit,
@@ -646,6 +648,11 @@ impl PipelineBuilder<'_> {
                     &mut claim_gate,
                 )?
             };
+            // A turn with no words to pin is not served under scores its
+            // later words were not given.
+            if !unpinned_turns.is_empty() {
+                scores.retain(|hit| !unpinned_turns.contains(&hit.id));
+            }
 
             let capabilities = self.prepare_pack_candidates(
                 rtxn,

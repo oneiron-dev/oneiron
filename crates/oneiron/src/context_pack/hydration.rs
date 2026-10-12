@@ -67,8 +67,13 @@ pub(crate) fn context_entity_matches_read_snapshot(
     }
     if let Some(vector) = &entity.vector {
         if let Some(revision) = entity.source_revision_ref
-            && vault.indexed_revision_in_txn(txn, &entity.id)?
-                != Some(crate::vault::RevisionRef(revision))
+            && !pins_indexed_frontier(
+                vault,
+                txn,
+                &entity.id,
+                header.entity_type,
+                crate::vault::RevisionRef(revision),
+            )?
         {
             return Ok(false);
         }
