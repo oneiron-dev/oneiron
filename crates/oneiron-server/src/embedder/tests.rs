@@ -754,7 +754,9 @@ fn vectors_from_a_cpu_endpoint_and_a_cuda_endpoint_are_marked_apart() {
         vec![first]
     );
     assert_eq!(
-        vault.vectors_by_provenance(EmbeddingDevice::Cuda, None).expect("cuda"),
+        vault
+            .vectors_by_provenance(EmbeddingDevice::Cuda, None)
+            .expect("cuda"),
         vec![second]
     );
 
@@ -765,9 +767,14 @@ fn vectors_from_a_cpu_endpoint_and_a_cuda_endpoint_are_marked_apart() {
         EmbeddingDevice::Remote,
         format!("{MODEL_KEY}@{}", silent.base),
     );
-    assert_eq!(vault.embedding_provenance(&third).expect("read"), Some(remote));
     assert_eq!(
-        vault.vectors_by_provenance(EmbeddingDevice::Cuda, None).expect("cuda"),
+        vault.embedding_provenance(&third).expect("read"),
+        Some(remote)
+    );
+    assert_eq!(
+        vault
+            .vectors_by_provenance(EmbeddingDevice::Cuda, None)
+            .expect("cuda"),
         vec![second]
     );
 }
