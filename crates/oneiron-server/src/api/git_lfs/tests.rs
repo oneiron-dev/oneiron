@@ -688,15 +688,16 @@ async fn a_chunk_reply_built_before_its_world_turns_device_only_is_not_released(
         )],
     ))
     .unwrap();
-    let want = oneiron::sync::chunks::encode_chunk_request(&oneiron::sync::chunks::ChunkSyncRequest {
-        oid: *oid.as_bytes(),
-        selector,
-        have: vec![],
-        want: Some(vec![
-            vault.lfs_manifest(oid).unwrap().expect("manifest").chunks[0].hash,
-        ]),
-    })
-    .unwrap();
+    let want =
+        oneiron::sync::chunks::encode_chunk_request(&oneiron::sync::chunks::ChunkSyncRequest {
+            oid: *oid.as_bytes(),
+            selector,
+            have: vec![],
+            want: Some(vec![
+                vault.lfs_manifest(oid).unwrap().expect("manifest").chunks[0].hash,
+            ]),
+        })
+        .unwrap();
     let token = format!(
         "{}scope=core:read;principal_ref={}",
         crate::test_credentials::RECIPE_PREFIX,
