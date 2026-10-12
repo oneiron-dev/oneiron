@@ -186,7 +186,21 @@ impl Vault {
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
     ) -> Result<()> {
+        self.grant_deferred_claim_auto_after(id, now, checker, |_| Ok(()))
+    }
+
+    /// The same grant, once `precheck` passes inside its transaction: the
+    /// Dreamer's live source pins, so a replacement whose cited words moved
+    /// after it was staged closes nothing.
+    pub(crate) fn grant_deferred_claim_auto_after(
+        &self,
+        id: &EntityId,
+        now: u64,
+        checker: Option<&crate::llm::BoundedAutoChecker>,
+        precheck: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         let decision = self.with_write_txn_grouped(|txn| {
+            precheck(txn)?;
             let proposal = load(self, txn, id)?.ok_or(Error::EntityNotFound)?;
             let DeferredAction::Supersede { old, old_hash } = proposal.action else {
                 return Err(Error::InvalidClaimBody("not a deferred supersession"));

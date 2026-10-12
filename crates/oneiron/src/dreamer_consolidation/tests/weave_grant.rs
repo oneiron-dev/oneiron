@@ -32,6 +32,7 @@ fn pass(
     );
     let mut sink = crate::dreamer_promotion::AttemptPromotionSink::new(vault.clone());
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

@@ -242,6 +242,7 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
         prepared_attempt: None,
     };
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -294,6 +295,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         prepared_attempt: None,
     };
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -343,6 +345,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
     no_output.writable.clear();
     let backend = ScriptedBackend::new(Vec::new());
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -576,6 +579,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
         let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -852,6 +856,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -1201,6 +1206,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         };
         let result = {
             let mut executor = ConsolidationExecutor {
+                roles: Default::default(),
                 backend: &backend,
                 guard: &guard,
                 strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -1262,6 +1268,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         ctx.now_ms = retry_at * 1_000;
         ctx.prepared_wake = Some(&retry_pin);
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -1464,6 +1471,7 @@ fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> 
         prepared_attempt: None,
     };
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

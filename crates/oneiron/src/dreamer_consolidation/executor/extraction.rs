@@ -4,19 +4,19 @@ use super::*;
 
 impl ConsolidationExecutor<'_> {
     pub(super) fn extraction_request(
-        &self,
+        call: &RoleCall<'_>,
         partition: &ConsolidationPartitionKey,
         transcript: &str,
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
-        let locality = self.inference.selected_locality().ok_or_else(|| {
+        let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
         let system = r#"Extract durable memory claims from the conversation transcript.
 Respond with JSON: {"candidates":[{"subject":"<32-hex entity id>","predicate":"<dotted.predicate>","value":<json>,"confidence":<0..1>,"evidence_refs":[{"source_id":"<32-hex id>","byte_range":[start,end]}]}]}.
 Each evidence ref names a source id and either a UTF-8 byte range in the displayed turn text (start inclusive, end exclusive) or claim_id. Only claims stated by the user or assistant; never invent evidence refs."#;
         Ok(LlmRequest {
-            model: self.model.clone(),
+            model: call.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
                 scope: scope.clone(),

@@ -53,6 +53,7 @@ mod provenance;
 pub(crate) mod redirty;
 pub(crate) mod resources;
 pub(crate) mod reviewed;
+mod roles;
 pub mod routing;
 mod scope_summary_attempt;
 pub mod selection;
@@ -76,6 +77,10 @@ pub(crate) use provenance::{
     encode_consolidation_evidence_with_locators,
 };
 pub use resources::ScopedConsolidationWrite;
+pub use roles::{
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
+    RoleBackend, RoleBackends, RoleCall,
+};
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub use support::*;
 pub(crate) use turn_text::{TurnText, cited_evidence_bytes, live_turn_text_in};

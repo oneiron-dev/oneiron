@@ -241,6 +241,7 @@ fn execute_at_pin<'a>(
     );
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -428,6 +429,7 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
         prepared_attempt: None,
     };
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -714,8 +716,15 @@ fn project_local_exact_head_attachment_keeps_its_provenance_in_the_project() -> 
     Ok(())
 }
 
+/// Gate 3 (map gap 9): an ordinary trust-compatible correction lands with
+/// its Auto grant in the pass that staged it, closes exactly its named prior
+/// and the open conflict that named it, and a replay of the same attempt (a
+/// server killed after the writes, before the attempt completed) applies
+/// nothing twice. Before, the replacement stayed Proposed with no grant and
+/// the conflict stayed open.
 #[test]
-fn fast_path_and_judge_merge_share_deferred_closure() -> Result<()> {
+fn a_correction_the_policy_allows_lands_with_its_grant_and_closes_its_conflict_once() -> Result<()>
+{
     for fast_path in [false, true] {
         let (_dir, vault) = open_vault();
         let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
@@ -734,13 +743,41 @@ fn fast_path_and_judge_merge_share_deferred_closure() -> Result<()> {
             let bytes = super::super::support::encode_value(&Value::Map(entries))?;
             crate::test_util::put_policy_manifest_bytes(&vault, id, &bytes)?;
         }
-        let mut script = vec![Ok(extract(&fx, "Alex"))];
-        if !fast_path {
-            script.push(Ok(text_response(
-                "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
-            )));
-        }
-        let backend = ScriptedBackend::new(script);
+        // An earlier pass left the question open against the head.
+        let marker = EntityId::now();
+        vault
+            .batch()
+            .claim_candidate(
+                &marker,
+                ClaimCandidate::new(
+                    crate::claim::PREDICATE_CONFLICT_OPEN,
+                    ClaimSubject::Entity(fx.subject),
+                    Value::Map(vec![(
+                        "prior_head".into(),
+                        Value::Binary(fx.head.as_bytes().to_vec()),
+                    )]),
+                    1.0,
+                ),
+                &WriteEnvelope::new(
+                    WriteActor::new(fx.subject, EdgeActorClass::Human),
+                    ClaimSource::Generated,
+                    WriteProvenance::new("an earlier escalation".into())?,
+                    ClaimApprovalStatus::Approved,
+                ),
+                occurred(3),
+                3,
+            )
+            .commit()?;
+        let script = || {
+            let mut script = vec![Ok(extract(&fx, "Alex"))];
+            if !fast_path {
+                script.push(Ok(text_response(
+                    "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+                )));
+            }
+            script
+        };
+        let backend = ScriptedBackend::new(script());
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         assert!(matches!(
             execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
@@ -750,52 +787,189 @@ fn fast_path_and_judge_merge_share_deferred_closure() -> Result<()> {
             backend.calls.load(Ordering::SeqCst),
             if fast_path { 1 } else { 2 }
         );
-        let [new] = sink.outcome.pended.as_slice() else {
-            panic!("one proposed replacement");
+        let [new] = sink.outcome.landed.as_slice() else {
+            panic!("one granted replacement: {:?}", sink.outcome);
         };
-        assert!(sink.outcome.landed.is_empty());
-        assert!(sink.outcome.rejected.is_empty());
-        let proposed = vault.get_claim(new)?.expect("persisted proposal");
-        assert_eq!(proposed.approval, ClaimApprovalStatus::Proposed);
-        assert_eq!(vault.pending_claim_supersession(new)?, Some(fx.head));
-        assert_eq!(
-            vault.get_claim(&fx.head)?.expect("old").lifecycle,
-            crate::ClaimLifecycleStatus::Active
-        );
-        assert!(
-            !vault
-                .edges_out(new)?
-                .iter()
-                .any(|edge| edge.kind == EdgeKind::Supersedes)
-        );
-        assert!(
-            vault
-                .supersede_claim(new, &fx.head, fx.run.now_ms + 1)
-                .is_err()
-        );
-        assert_eq!(vault.pending_claim_supersession(new)?, Some(fx.head));
-        assert_eq!(
-            vault.get_claim(&fx.head)?.expect("old").lifecycle,
-            crate::ClaimLifecycleStatus::Active
-        );
-        assert!(
-            !vault
-                .edges_out(new)?
-                .iter()
-                .any(|edge| edge.kind == EdgeKind::Supersedes)
-        );
-        vault.grant_deferred_claim_auto(new, fx.run.now_ms + 1)?;
-        assert_eq!(
-            vault.get_claim(&fx.head)?.expect("closed").lifecycle,
-            crate::ClaimLifecycleStatus::Superseded
-        );
-        assert!(
-            vault
-                .edges_out(new)?
-                .iter()
-                .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == fx.head)
-        );
+        let new = *new;
+        assert!(sink.outcome.pended.is_empty(), "{:?}", sink.outcome);
+        assert!(sink.outcome.rejected.is_empty(), "{:?}", sink.outcome);
+        let held = |vault: &Vault| -> Result<()> {
+            assert_eq!(
+                vault.get_claim(&new)?.expect("replacement").approval,
+                ClaimApprovalStatus::Auto
+            );
+            assert_eq!(vault.pending_claim_supersession(&new)?, None);
+            assert_eq!(
+                vault.get_claim(&fx.head)?.expect("closed").lifecycle,
+                crate::ClaimLifecycleStatus::Superseded
+            );
+            let supersedes = vault
+                .edges_out(&new)?
+                .into_iter()
+                .filter(|edge| edge.kind == EdgeKind::Supersedes)
+                .map(|edge| edge.target)
+                .collect::<Vec<_>>();
+            assert_eq!(supersedes, vec![fx.head]);
+            let resolved = vault
+                .claims_for_subject(&fx.subject)?
+                .into_iter()
+                .filter_map(|id| vault.get_claim(&id).expect("read"))
+                .filter(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_RESOLVED)
+                .collect::<Vec<_>>();
+            assert_eq!(resolved.len(), 1, "one close of the open conflict");
+            let Value::Map(rows) = &resolved[0].value else {
+                panic!("resolution map");
+            };
+            assert!(rows.contains(&(
+                "open_marker".into(),
+                Value::Binary(marker.as_bytes().to_vec())
+            )));
+            assert!(rows.contains(&(
+                "resolution".into(),
+                Value::Map(vec![(
+                    "superseded_by".into(),
+                    Value::Binary(new.as_bytes().to_vec())
+                )])
+            )));
+            Ok(())
+        };
+        held(&vault)?;
+        // The same attempt again, as a restart replays it.
+        let backend = ScriptedBackend::new(script());
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+        assert!(sink.outcome.rejected.is_empty(), "{:?}", sink.outcome);
+        held(&vault)?;
     }
+    Ok(())
+}
+
+/// Gate 3 (map gap 12): extraction and the conflict verdict are separate
+/// roles. Routed to separate backends, each role's call goes to its own, as
+/// its own model; the executor's default backend is never called. Before,
+/// every call went to the one backend the pass was built on.
+#[test]
+fn each_dreamer_role_calls_its_own_backend() -> Result<()> {
+    use crate::dreamer_consolidation::{
+        DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleBackend, RoleBackends,
+    };
+    let (_dir, vault) = open_vault();
+    let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+    let extractor = std::sync::Arc::new(ScriptedBackend::new(vec![Ok(extract(&fx, "Alex"))]));
+    let judge = std::sync::Arc::new(ScriptedBackend::new(vec![Ok(text_response(
+        "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+    ))]));
+    let unrouted = ScriptedBackend::new(Vec::new());
+    let routed = |backend: std::sync::Arc<ScriptedBackend>, model: &str| {
+        let model = crate::ModelId::new(model).expect("model");
+        RoleBackend {
+            backend,
+            model: model.clone(),
+            binding: crate::llm::HostInferenceBinding::Advertised {
+                model,
+                locality: crate::ModelLocality::OwnServer,
+            },
+        }
+    };
+    let roles = RoleBackends::default()
+        .with(
+            DREAMER_EXTRACTION_ROLE,
+            routed(std::sync::Arc::clone(&extractor), "test/extractor@r1"),
+        )
+        .with(
+            DREAMER_VERDICT_ROLE,
+            routed(std::sync::Arc::clone(&judge), "test/judge@r1"),
+        );
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let mut executor = ConsolidationExecutor {
+        roles,
+        backend: &unrouted,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: fx.run.agent_actor,
+        model: crate::ModelId::new("test/model@r1").unwrap(),
+        sink: &mut sink,
+        inference: test_inference_host(),
+        scope: Some(fx.scope.clone()),
+    };
+    let execution = block_on_ready(executor.execute(
+        &fx.attempt,
+        &mut WakeAttemptContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
+        },
+    ))?;
+    assert!(
+        matches!(execution, DreamerAttemptExecution::Completed { .. }),
+        "{execution:?}"
+    );
+    assert_eq!(extractor.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(unrouted.calls.load(Ordering::SeqCst), 0);
+    let models = |backend: &ScriptedBackend| backend.models();
+    assert_eq!(models(&extractor), vec!["test/extractor@r1".to_owned()]);
+    assert_eq!(models(&judge), vec!["test/judge@r1".to_owned()]);
+    Ok(())
+}
+
+/// Gate 3 (map gap 9): a correction of attributed truth is protected. It is
+/// staged, never applied: the replacement stays Proposed, its prior stays
+/// Active with no Supersedes edge, and the owner's run review lists it.
+#[test]
+fn a_protected_correction_stays_proposed_in_the_owners_review() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture_with_head_source(&vault, ClaimSource::UserStated)?;
+    let backend = ScriptedBackend::new(vec![
+        Ok(extract(&fx, "Alex")),
+        Ok(text_response(
+            "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+        )),
+    ]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    let [new] = sink.outcome.pended.as_slice() else {
+        panic!("one protected replacement: {:?}", sink.outcome);
+    };
+    assert!(sink.outcome.landed.is_empty(), "{:?}", sink.outcome);
+    assert_eq!(
+        vault.get_claim(new)?.expect("staged").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(vault.pending_claim_supersession(new)?, Some(fx.head));
+    assert_eq!(
+        vault.get_claim(&fx.head)?.expect("prior").lifecycle,
+        crate::ClaimLifecycleStatus::Active
+    );
+    assert!(
+        !vault
+            .edges_out(new)?
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes)
+    );
+    assert!(
+        vault
+            .pending_gate_consent_groups(64)?
+            .iter()
+            .any(
+                |group| group.dreamer_run_id.as_deref() == Some(fx.run.run_id.as_str())
+                    && group
+                        .records
+                        .iter()
+                        .any(|record| record.claim_id == *new.as_bytes())
+            ),
+        "the owner's run review lists the protected correction"
+    );
     Ok(())
 }
 
@@ -887,6 +1061,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
     );
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &second_backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -972,6 +1147,7 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
     };
     let mut sink = PromotionWriterSink::new(&vault, run);
     let inner = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

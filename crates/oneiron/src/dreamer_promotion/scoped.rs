@@ -1,6 +1,7 @@
 //! Persisted-head convergence through the existing promotion, claim Gate,
 //! semantic-edge and provenance doors. A head is never re-authored to attach
 //! evidence: its value, approval, source and original attribution stay intact.
+use super::corrections;
 use super::*;
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::dreamer_consolidation::resources::{ConsolidationFence, ScopedConsolidationWrite};
@@ -39,7 +40,23 @@ pub fn promote_scoped_consolidation(
             checker,
         ) {
             Ok(()) => outcome.landed.push(head),
-            Err(error) => outcome.rejected.push((head, error.to_string())),
+            Err(error) => {
+                outcome.rejected.push((head, error.to_string()));
+                continue;
+            }
+        }
+        // This attempt's own replacement, met again by a replay after its
+        // grant: what the grant left to close still closes, once.
+        if head == candidate.claim_id
+            && let Some(prior) = corrections::superseded_prior(vault, head)?
+        {
+            corrections::close_conflicts_naming(
+                vault,
+                run,
+                head,
+                prior,
+                &candidate.evidence_turn_refs,
+            )?;
         }
     }
     for (mut candidate, evidence) in write.candidates.into_iter().zip(write.candidate_evidence) {
@@ -56,6 +73,7 @@ pub fn promote_scoped_consolidation(
             outcome.held.push(declined);
             continue;
         }
+        let evidence_refs = candidate.evidence_turn_refs.clone();
         match promote_one(
             vault,
             run,
@@ -65,7 +83,16 @@ pub fn promote_scoped_consolidation(
             Some(&evidence),
         ) {
             Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(id),
-            Ok(ClaimApprovalStatus::Proposed) => outcome.pended.push(id),
+            Ok(ClaimApprovalStatus::Proposed) => {
+                match corrections::grant_allowed_replacement(vault, run, &write.fence, id, checker)
+                {
+                    Some(prior) => {
+                        corrections::close_conflicts_naming(vault, run, id, prior, &evidence_refs)?;
+                        outcome.landed.push(id);
+                    }
+                    None => outcome.pended.push(id),
+                }
+            }
             Ok(_) => outcome
                 .rejected
                 .push((id, "scoped promotion was not Auto".into())),

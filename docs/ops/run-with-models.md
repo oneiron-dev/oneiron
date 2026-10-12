@@ -106,8 +106,26 @@ missing:
 | a rung on `dreamer_current` | `no_model_configured` |
 | `ONEIRON_AUTH_SECRET` set (host root, machine identity) | `no_host_authority` |
 | `extraction_egress = true` under `[models]`, for any model reached over HTTP | `extraction_egress_not_allowed` |
-| vault defaults that route extraction and consolidation to where the Dreamer extracts (the seat's widest rung, or the route of the extraction teacher the vault's model manifest pins): `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
+| vault defaults that route each Dreamer role's purpose to where that role's model is served (extraction and narrative under `extraction`, the conflict verdict under `consolidation`): `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
 | with a model manifest, its extraction teacher served by `[models]` at the vault's route | `extraction_model_not_served` |
+| with a model manifest, its `generative_reasoner` (the conflict verdict) and `dreamer_current` (narrative) models served by `[models]` at the vault's route | `role_model_not_served` |
+
+Each pass calls three roles, each on its own model and run: extraction as
+`extraction_teacher`, the conflict verdict as `generative_reasoner`, and
+declared summaries as `dreamer_current`. A vault's model manifest pins each;
+without one, a role uses its own `[models.roles.*]` seat when it has one,
+else the Dreamer's (`default = "provider:model"` fills all three with one
+model). Each role's calls go out as the run `dreamer-pass/<role>`, so the
+run receipts (`oneiron::run_receipt` at info) name the role that made them.
+
+A correction the Dreamer stages (a new value for a claim it already holds)
+takes its grant in the same pass when the vault's policy allows it: the
+replacement lands Auto, the prior closes with a `Supersedes` edge, and an
+open `core.conflict.open` that named the prior closes with a
+`core.conflict.resolved` claim. One the policy protects (a critical
+predicate, or attributed truth such as a user-stated claim) stays Proposed
+and is listed in the owner's run review (`GET /v1/owner/runs`, `oneiron runs
+pending`).
 | the Dreamer's three policy rows (a fresh vault ships them) | `needs_owner_grant` |
 
 ```bash

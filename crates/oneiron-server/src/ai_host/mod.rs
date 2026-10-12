@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
+use oneiron::dreamer_consolidation::DREAMER_EXTRACTION_ROLE;
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunReceiptSink;
@@ -38,7 +39,7 @@ pub(crate) use policy::route_dreamer_extraction;
 pub use status::{AiHealth, AiStatus, IdleReason, WorkState, WorkStatus};
 
 use dreamer::{DreamerHost, DreamerStart};
-use policy::DreamerRoute;
+use policy::{DreamerRoute, dreamer_role_purpose};
 use status::StatusCell;
 use step::StepRunner;
 pub(crate) use turns::TurnGuard;
@@ -471,20 +472,28 @@ async fn start_dreamer(
             return Err(IdleReason::StartFailed);
         }
     }
-    // Each pass extracts on the teacher the vault's live manifest pins (the
-    // seat without one), so the route the owner's defaults must allow is that
-    // model's, not the seat's.
-    let teacher = match runtime.route_role(vault, dreamer::EXTRACTION_ROLE, &seat) {
-        Ok(route) => route,
-        Err(RoleRefusal::RouteNotServed { .. }) => {
-            return Err(IdleReason::ExtractionModelNotServed);
+    // Each pass calls every role on the model the vault's live manifest pins
+    // for it (else the role's seat, else the Dreamer's), so the routes the
+    // owner's defaults must allow are those models', not the seat's.
+    let routes = match dreamer::role_routes(runtime, vault, &seat) {
+        Ok(routes) => routes,
+        Err((role, RoleRefusal::RouteNotServed { .. })) => {
+            return Err(if role == DREAMER_EXTRACTION_ROLE {
+                IdleReason::ExtractionModelNotServed
+            } else {
+                IdleReason::RoleModelNotServed
+            });
         }
-        Err(refusal) => {
-            tracing::error!(%refusal, "dreamer extraction route could not be resolved");
+        Err((role, refusal)) => {
+            tracing::error!(%refusal, role = ?role, "a dreamer role's route could not be resolved");
             return Err(IdleReason::StartFailed);
         }
     };
-    let egress = match policy::dreamer_route(vault, teacher.locality, models.extraction_egress) {
+    let localities = routes
+        .iter()
+        .map(|(role, route)| (dreamer_role_purpose(*role), route.locality))
+        .collect::<Vec<_>>();
+    let egress = match policy::dreamer_route(vault, &localities, models.extraction_egress) {
         Ok(DreamerRoute::Ready { egress }) => egress,
         Ok(DreamerRoute::Blocked(reason)) => return Err(reason),
         Err(error) => {
