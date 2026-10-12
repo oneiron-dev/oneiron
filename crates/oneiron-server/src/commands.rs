@@ -35,6 +35,8 @@ mod api;
 mod credential_file;
 mod host_init;
 pub use self::host_init::host_init;
+mod host_re_root;
+pub use self::host_re_root::host_re_root;
 
 pub use self::api::api;
 mod mcp_bridge;
@@ -79,7 +81,8 @@ mod embedder_serve;
 pub use self::embedder_serve::embedder_serve;
 mod owner;
 pub use owner::{
-    backup, doctor, export, import, recover_window, restore, runs, secret_scan, secrets, whoami,
+    backup, doctor, export, import, recover_clock, recover_window, restore, runs, secret_scan,
+    secrets, whoami,
 };
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;

@@ -48,8 +48,8 @@ pub use weave_report::{
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
-pub(crate) use actor_key::RoomTurnCeiling;
 pub use actor_key::ScopedReadActorKey;
+pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, meet_clearance};
 
 /// Actor-keyed read lane for the core read surface.
 ///
@@ -59,6 +59,9 @@ pub struct ScopedRead<'a> {
     vault: &'a crate::vault::Vault,
     actor_key: ScopedReadActorKey,
     audience: Option<Vec<EntityId>>,
+    /// Peers whose own read each served row must pass; see
+    /// `ScopedRead::with_peer_reads`.
+    peer_reads: Vec<ScopedReadActorKey>,
     audience_cache: Mutex<crate::conversation::AudienceCache>,
     /// A bound room turn's ceiling once a serving snapshot narrowed it; until
     /// then the key's own. See `ScopedRead::room_ceiling_in`.

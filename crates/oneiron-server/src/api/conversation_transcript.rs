@@ -117,7 +117,7 @@ pub(crate) async fn get_core_conversation_transcript(
 
 /// The principal and actor class the credential binds: the reader recall
 /// reads as.
-fn reader(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), ApiError> {
+pub(super) fn reader(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), ApiError> {
     let actor = auth
         .principal_ref()
         .and_then(|principal| EntityId::from_hex(principal).ok());

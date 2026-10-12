@@ -20,6 +20,8 @@ use heed::RwTxn;
 use std::path::Path;
 use std::str;
 
+mod gate_claim_lookup;
+
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let mut config = VaultConfig::device();
     config.retrieval_telemetry_capture = true;

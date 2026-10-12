@@ -49,6 +49,9 @@ pub(crate) enum Reply {
     /// JSON, in chunks. [`FakeLlm::sent_before_close`] says how much of it
     /// went out before the body ended or the client hung up.
     Oversized { status: u16, bytes: usize },
+    /// A redirect with this status to `location`, which keeps the method
+    /// and body for 307 and 308.
+    Redirect { status: u16, location: String },
 }
 
 impl Reply {
@@ -235,6 +238,13 @@ async fn answer(
         Reply::Raw(body) => return sse_body(body),
         Reply::Oversized { status, bytes } => {
             return oversized(Arc::clone(&shared), status, bytes);
+        }
+        Reply::Redirect { status, location } => {
+            return Response::builder()
+                .status(status)
+                .header("location", location)
+                .body(Body::empty())
+                .unwrap();
         }
         Reply::Hold { .. } => unreachable!("resolved above"),
     };
