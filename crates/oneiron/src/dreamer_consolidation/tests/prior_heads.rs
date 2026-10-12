@@ -779,10 +779,12 @@ fn a_correction_the_policy_allows_lands_with_its_grant_and_closes_its_conflict_o
         };
         let backend = ScriptedBackend::new(script());
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
-        assert!(matches!(
-            execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
-            DreamerAttemptExecution::Completed { .. }
-        ));
+        let first = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())
+            .unwrap_or_else(|error| panic!("the pass refused: {error}; {:?}", sink.outcome));
+        assert!(
+            matches!(first, DreamerAttemptExecution::Completed { .. }),
+            "{first:?}"
+        );
         assert_eq!(
             backend.calls.load(Ordering::SeqCst),
             if fast_path { 1 } else { 2 }
@@ -837,7 +839,8 @@ fn a_correction_the_policy_allows_lands_with_its_grant_and_closes_its_conflict_o
         // The same attempt again, as a restart replays it.
         let backend = ScriptedBackend::new(script());
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
-        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())
+            .unwrap_or_else(|error| panic!("the replay refused: {error}; {:?}", sink.outcome));
         assert!(sink.outcome.rejected.is_empty(), "{:?}", sink.outcome);
         held(&vault)?;
     }

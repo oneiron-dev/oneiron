@@ -23,6 +23,22 @@ pub fn promote_scoped_consolidation(
     }
     let mut outcome = PromotionOutcome::default();
     for (head, candidate, evidence) in write.attachments {
+        // This attempt's own output, met again by a replay after it landed (a
+        // kill before the attempt completed): it already carries these words.
+        // What its grant left to close still closes, once.
+        if head == candidate.claim_id {
+            if let Some(prior) = corrections::superseded_prior(vault, head)? {
+                corrections::close_conflicts_naming(
+                    vault,
+                    run,
+                    head,
+                    prior,
+                    &candidate.evidence_turn_refs,
+                )?;
+            }
+            outcome.landed.push(head);
+            continue;
+        }
         // Imported material reaches the vault only through the owner's import
         // review (ARCH-0027), and an attachment is no claim that review could
         // hold: a head imported words restate keeps its own evidence.
@@ -40,23 +56,7 @@ pub fn promote_scoped_consolidation(
             checker,
         ) {
             Ok(()) => outcome.landed.push(head),
-            Err(error) => {
-                outcome.rejected.push((head, error.to_string()));
-                continue;
-            }
-        }
-        // This attempt's own replacement, met again by a replay after its
-        // grant: what the grant left to close still closes, once.
-        if head == candidate.claim_id
-            && let Some(prior) = corrections::superseded_prior(vault, head)?
-        {
-            corrections::close_conflicts_naming(
-                vault,
-                run,
-                head,
-                prior,
-                &candidate.evidence_turn_refs,
-            )?;
+            Err(error) => outcome.rejected.push((head, error.to_string())),
         }
     }
     for (mut candidate, evidence) in write.candidates.into_iter().zip(write.candidate_evidence) {
