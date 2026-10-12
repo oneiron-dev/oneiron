@@ -50,6 +50,8 @@ pub(crate) enum BatchOp {
         id: EntityId,
         vector: Vec<f32>,
         pending_embedding_token: Option<Vec<u8>>,
+        /// Who computed the vector; `None` when the caller does not say.
+        provenance: Option<crate::embed::EmbeddingProvenance>,
     },
     Edge {
         src: EntityId,

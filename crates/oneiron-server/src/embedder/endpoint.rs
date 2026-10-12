@@ -9,7 +9,9 @@
 //! rows, and to it this client sends what a local vault's provider would see —
 //! whole texts, each marked query or document ([`Wire::Oneiron`]). It names
 //! the model it loaded and how it makes vectors, in its listing and in every
-//! answer, and the vault holds both to what it admitted.
+//! answer, and the vault holds both to what it admitted. Each answer also
+//! names the device and runtime that computed it, which the vault marks its
+//! vectors with (ARCH-0036); an endpoint that does not say is marked `remote`.
 
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,8 +19,11 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use oneiron::config::VectorEvidenceFloors;
-use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
+use oneiron::embed::{
+    Embedder, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance, PendingEmbeddingInput,
+};
 use oneiron::error::StoreError;
+use serde_json::value::RawValue;
 
 use super::local::evidence::{self, RunProfile};
 use super::remote::RungHold;
@@ -37,6 +42,8 @@ const CHARS_PER_TOKEN: usize = 4;
 const PROBE_TEXT: &str = "oneiron embedder probe";
 /// Tool name on every upstream failure this provider reports.
 const EMBEDDER_TOOL: &str = "embedder-endpoint";
+/// The longest runtime an answer's mark may name; a longer one is not taken.
+const MAX_RUNTIME_BYTES: usize = 128;
 /// Bytes of text one request to `embedder serve` carries at most; an input
 /// over it goes alone. About 8K tokens, which a CPU host embeds well inside
 /// the default request timeout: whole texts go on that wire, and a batch of
@@ -106,6 +113,19 @@ struct EmbeddingsResponse {
     /// ([`RunProfile`]), kept as sent.
     #[serde(default)]
     profile: Option<serde_json::Value>,
+    /// The device and runtime that computed them, from `embedder serve`,
+    /// kept as raw text and read by [`answer_mark`]: a mark this build cannot
+    /// read, even one nested past the decoder's depth limit, never fails the
+    /// answer.
+    #[serde(default)]
+    provenance: Option<Box<RawValue>>,
+}
+
+/// One answer's vectors, in request order, and the device and runtime it
+/// names; `None` when it does not say.
+struct Answer {
+    vectors: Vec<Vec<f32>>,
+    mark: Option<EmbeddingProvenance>,
 }
 
 #[derive(serde::Deserialize)]
@@ -476,14 +496,21 @@ impl HttpEmbedder {
 
     /// Posts `texts` as one request, through the paid door when this remote
     /// has one; the answer is held to what the vault admitted.
-    fn post_embeddings(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Vec<Vec<f32>>> {
-        match self.paid.get() {
-            Some(door) => door.send(texts, &mut || self.post_once(texts, side)),
-            None => self.post_once(texts, side),
-        }
+    fn post_embeddings(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Answer> {
+        let Some(door) = self.paid.get() else {
+            return self.post_once(texts, side);
+        };
+        // The door settles on the vectors; the mark rides beside them.
+        let mut mark = None;
+        let vectors = door.send(texts, &mut || {
+            let answer = self.post_once(texts, side)?;
+            mark = answer.mark;
+            Ok(answer.vectors)
+        })?;
+        Ok(Answer { vectors, mark })
     }
 
-    fn post_once(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Vec<Vec<f32>>> {
+    fn post_once(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Answer> {
         let url = format!("{}/embeddings", self.endpoint);
         let body = EmbeddingsRequest {
             model: &self.model_key,
@@ -526,7 +553,21 @@ impl HttpEmbedder {
                 code: "embedder endpoint now serves another model, or makes vectors another way, than the vault admitted; restore it or run `oneiron-server reembed`".to_owned(),
             });
         }
-        self.order_rows(parsed.data, texts.len())
+        Ok(Answer {
+            vectors: self.order_rows(parsed.data, texts.len())?,
+            mark: answer_mark(parsed.provenance),
+        })
+    }
+
+    /// Each of `answer`'s vectors with the device and runtime that computed
+    /// it: the answer's own, or this endpoint's when it does not say.
+    fn marked(&self, answer: Answer) -> Vec<(Vec<f32>, EmbeddingProvenance)> {
+        let mark = answer.mark.unwrap_or_else(|| self.provenance());
+        answer
+            .vectors
+            .into_iter()
+            .map(|vector| (vector, mark.clone()))
+            .collect()
     }
 
     /// Re-orders `data` by the index each row reports.
@@ -657,6 +698,17 @@ impl Embedder for HttpEmbedder {
     }
 
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> oneiron::Result<Vec<Vec<f32>>> {
+        Ok(self
+            .embed_marked(inputs)?
+            .into_iter()
+            .map(|(vector, _)| vector)
+            .collect())
+    }
+
+    fn embed_marked(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+    ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
@@ -672,7 +724,7 @@ impl Embedder for HttpEmbedder {
             .collect::<oneiron::Result<_>>()?;
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
         match wire {
-            Wire::OpenAi => self.post_embeddings(&refs, Side::default()),
+            Wire::OpenAi => Ok(self.marked(self.post_embeddings(&refs, Side::default())?)),
             Wire::Oneiron => {
                 let side = Side {
                     input_type: Some("document"),
@@ -680,11 +732,21 @@ impl Embedder for HttpEmbedder {
                 };
                 let mut vectors = Vec::with_capacity(refs.len());
                 for request in requests(&refs, ONEIRON_REQUEST_BYTES) {
-                    vectors.extend(self.post_embeddings(request, side)?);
+                    vectors.extend(self.marked(self.post_embeddings(request, side)?));
                 }
                 Ok(vectors)
             }
         }
+    }
+
+    /// An answer that does not name its device was computed on one the vault
+    /// does not see; it is named as an offer, model at place. The URL holds no
+    /// credential or query ([`Self::from_config`] refuses one).
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::new(
+            EmbeddingDevice::Remote,
+            format!("{}@{}", self.model_key, self.endpoint),
+        )
     }
 }
 
@@ -710,11 +772,27 @@ impl QueryEmbedder for HttpEmbedder {
                     instruction: self.query_instruction.as_deref(),
                 },
             )?,
-        };
+        }
+        .vectors;
         vectors.pop().ok_or(oneiron::Error::InvariantViolation(
             "embedder endpoint answered a single query with no row",
         ))
     }
+}
+
+/// The device and runtime an answer names, when it names a device the
+/// endpoint ran on and a runtime fit to store; otherwise the endpoint did not
+/// say.
+fn answer_mark(sent: Option<Box<RawValue>>) -> Option<EmbeddingProvenance> {
+    let mark: EmbeddingProvenance = serde_json::from_str(sent?.get()).ok()?;
+    let ran_on = matches!(
+        mark.device,
+        EmbeddingDevice::Cpu | EmbeddingDevice::Cuda | EmbeddingDevice::Metal
+    );
+    let storable = !mark.runtime.is_empty()
+        && mark.runtime.len() <= MAX_RUNTIME_BYTES
+        && !mark.runtime.chars().any(char::is_control);
+    (ran_on && storable).then_some(mark)
 }
 
 /// Whether a `/models` answer says the remote has no listing route, which
@@ -797,8 +875,8 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
     // Unmarked, so any remote answers it as a document; held to the listing
     // admitted, if any (none at startup, the listed one before a move).
     match embedder.post_embeddings(&[PROBE_TEXT], Side::default()) {
-        Ok(vectors) => {
-            let got = vectors.first().map_or(0, Vec::len);
+        Ok(answer) => {
+            let got = answer.vectors.first().map_or(0, Vec::len);
             if got == embedder.common.dimensions {
                 Ok(ProbeOutcome::Ready)
             } else {
