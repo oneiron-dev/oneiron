@@ -296,7 +296,7 @@ impl<'a> ScopedRead<'a> {
             })
     }
 
-    pub(super) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    pub(crate) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };

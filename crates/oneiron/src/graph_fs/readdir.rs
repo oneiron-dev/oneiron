@@ -321,13 +321,15 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     /// A manifest grant never lists a world of its own: it only says where a
     /// reader other than the owner may read. A page can end inside a run of
     /// worlds this reader may not see, so its cursor is sealed and names none
-    /// of them.
+    /// of them. A credential dead in that snapshot lists nothing, not even a
+    /// cursor that would say how many worlds it passed over.
     fn listdir_worlds(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
-        if self.scoped_read.actor_key().vault_owner_ref().is_none()
-            && policy.diagnostics().loaded_manifest_forces_fail_closed()
+        if !self.scoped_read.proof_live_in(&rtxn)?
+            || (self.scoped_read.actor_key().vault_owner_ref().is_none()
+                && policy.diagnostics().loaded_manifest_forces_fail_closed())
         {
             return Ok(empty_page(path, self.options.mount));
         }

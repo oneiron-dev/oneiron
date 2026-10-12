@@ -387,16 +387,28 @@ fn a_world_listing_cursor_names_no_withheld_world() -> Result<()> {
     Ok(())
 }
 
-/// Sol R5-005 on #1413: the world listing never asked whether the reader's
-/// credential was still live, so the owner's lane, kept past its slip's
-/// revocation with the owner binding untouched, still listed every world.
-/// The listing and a WORLD path judge the credential in their own snapshot
-/// now, as every row read does.
+/// Sol R5-005 and R6-002 on #1413: the world listing never asked whether the
+/// reader's credential was still live, so the owner's lane, kept past its
+/// slip's revocation with the owner binding untouched, still listed every
+/// world; once that was fixed per world, a vault past one scan of WORLD rows
+/// still handed the dead credential a cursor. The listing judges the
+/// credential once in its own snapshot now and lists nothing, cursor
+/// included, and a WORLD path takes the same verdict.
 #[test]
 fn a_kept_lane_lists_no_world_after_its_credential_is_revoked() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
-    let (world, owner, other) = (test_id(0x3C), test_id(0x3D), test_id(0x3E));
-    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    let (owner, other) = (test_id(0x3D), test_id(0x3E));
+    let worlds: Vec<EntityId> = (0..=GRAPH_FS_MAX_PAGE_ENTRIES)
+        .map(|_| EntityId::now())
+        .collect();
+    for chunk in worlds.chunks(512) {
+        chunk
+            .iter()
+            .fold(vault.batch(), |batch, world| {
+                batch.put(world, ENTITY_TYPE_WORLD, time_range(1), 1, b"entity")
+            })
+            .commit()?;
+    }
     put_entity(&vault, owner, ENTITY_TYPE_PERSON)?;
     put_policy_manifest(
         &vault,
@@ -419,22 +431,23 @@ fn a_kept_lane_lists_no_world_after_its_credential_is_revoked() -> Result<()> {
     assert!(proof.is_full_vault_owner_grade());
     let kept = vault.scoped_read(vault.credential_read_key(&proof)?.expect("a read key"));
     let fs = resolver(&kept, 1024);
-    let walk = || -> Result<(Vec<String>, bool)> {
+    let walk = || -> Result<(Vec<String>, bool, bool)> {
         let page = fs.readdir("/worlds/", None)?;
         let names = page.entries().iter().map(|entry| entry.name().to_owned());
-        let visible = fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))?;
-        Ok((names.collect(), visible))
+        let visible = fs.coreutils_path_visible(&format!("/worlds/{}", worlds[0].to_hex()))?;
+        Ok((names.collect(), page.next_cursor().is_some(), visible))
     };
+    let (names, more, visible) = walk()?;
     assert_eq!(
-        walk()?,
-        (vec!["base".to_owned(), world.to_hex()], true),
+        (names.first().map(String::as_str), more, visible),
+        (Some("base"), true, true),
         "the owner's live credential"
     );
 
     vault.revoke_capability_slip(&issuer, slip_id)?;
     assert_eq!(
         walk()?,
-        (Vec::new(), false),
+        (Vec::new(), false, false),
         "the kept lane, past its credential's revocation"
     );
     Ok(())
