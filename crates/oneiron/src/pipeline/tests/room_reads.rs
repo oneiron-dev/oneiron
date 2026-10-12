@@ -908,7 +908,10 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
         "base reads its own body, got {in_base_fields}"
     );
     assert_eq!(in_base.source_revision_ref, base_revision);
-    let base_hits = vault.query().search_vector(&[1.0, 0.0, 0.0, 0.0], 10).run()?;
+    let base_hits = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .run()?;
     assert!(
         base_hits.iter().any(|hit| hit.id == claim),
         "base's vector still finds it in base"
@@ -945,7 +948,13 @@ fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Re
     // once, where a local one leaves it to idle publication.
     vault
         .batch()
-        .put(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &body("indexedvalue")?)
+        .put(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            1,
+            &body("indexedvalue")?,
+        )
         .text(&claim, &[("body", "pendingbaseword")])
         .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
         .commit()?;
@@ -995,8 +1004,7 @@ fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Re
 /// holds, base's rows and the room's. A room row outside the worlds the
 /// lane asks for then takes no place from a base row inside them.
 #[test]
-fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refuse() -> Result<()>
-{
+fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refuse() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let owner = vault
         .ensure_embedded_owner_actor()

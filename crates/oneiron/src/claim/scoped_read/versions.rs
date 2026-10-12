@@ -31,9 +31,12 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(&self.store_read(), limit, false, true)?;
+        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
+            &self.store_read(),
+            limit,
+            false,
+            true,
+        )?;
         let results = self
             .vault
             .query()
@@ -86,9 +89,12 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(&self.store_read(), limit, true, false)?;
+        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
+            &self.store_read(),
+            limit,
+            true,
+            false,
+        )?;
         let mut pipeline = self
             .vault
             .query()

@@ -616,11 +616,10 @@ impl MachineHistoryScope for crate::store::StoreRead<'_> {
         body: &ClaimBody,
     ) -> Result<Option<Option<Scope>>> {
         if self.is_union() {
-            return Ok(
-                crate::claim::history_store::machine_history_kind(&body.predicate).map(|_| None)
-            );
+            Ok(crate::claim::history_store::machine_history_kind(&body.predicate).map(|_| None))
+        } else {
+            machine_history_disclosure_scope(self.base(), txn, body)
         }
-        machine_history_disclosure_scope(self.base(), txn, body)
     }
 }
 

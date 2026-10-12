@@ -51,9 +51,9 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(&self.store_read(), limit, true, true)?;
+        let fetch_limit =
+            self.vault
+                .scoped_read_search_candidate_limit(&self.store_read(), limit, true, true)?;
         let results = self
             .vault
             .query()
@@ -251,13 +251,12 @@ impl ScopedRead<'_> {
         }
         drop(rtxn);
 
-        self.vault
-            .scoped_read_search_candidate_limit(
-                &self.store_read(),
-                requested,
-                include_text,
-                include_vector,
-            )
+        self.vault.scoped_read_search_candidate_limit(
+            &self.store_read(),
+            requested,
+            include_text,
+            include_vector,
+        )
     }
 
     pub fn filter_scored_entities(
