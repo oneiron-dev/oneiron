@@ -19,14 +19,26 @@ pub(super) fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result
 
 const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
 
+/// The read key a verified credential reads under on every `/v1` door. It is
+/// the engine's one builder, the one the facade's read lane uses: the owner's
+/// live full credential reads as the owner, and any other holder needs a live
+/// grant for relationship data. A credential that grants no read is refused.
+pub(crate) fn credential_read_key(
+    vault: &oneiron::Vault,
+    proof: &oneiron::authority::VerifiedSlip,
+) -> Result<oneiron::claim::ScopedReadActorKey, ApiError> {
+    vault
+        .credential_read_key(proof)
+        .map_err(|error| super::core_engine_error("credential read key failed", error))?
+        .ok_or_else(ApiError::unauthorized)
+}
+
 pub(crate) fn scoped_read_for_core_auth<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
     if let Some(proof) = auth.verified_slip() {
-        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(proof)
-            .ok_or_else(ApiError::unauthorized)?;
-        return Ok(vault.scoped_read(actor));
+        return Ok(vault.scoped_read(credential_read_key(vault, proof)?));
     }
     let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
     let mut key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
@@ -48,9 +60,7 @@ pub(super) fn scoped_read_for_legacy_api(
         let proof = vault
             .verified_host_root_slip(issuer)
             .map_err(|_| ApiError::unauthorized())?;
-        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof)
-            .ok_or_else(ApiError::unauthorized)?;
-        return Ok(vault.scoped_read(actor));
+        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?));
     }
     if let Some(secret) = server.config.auth_secret.as_deref() {
         let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
@@ -58,9 +68,7 @@ pub(super) fn scoped_read_for_legacy_api(
         let proof = vault
             .verified_host_root_slip(&issuer)
             .map_err(|_| ApiError::unauthorized())?;
-        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof)
-            .ok_or_else(ApiError::unauthorized)?;
-        return Ok(vault.scoped_read(actor));
+        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?));
     }
     // Explicit dev mode is not a production root-slip factory.
     scoped_read_for_actor_ref(vault, LEGACY_SCOPED_READ_ACTOR_REF)

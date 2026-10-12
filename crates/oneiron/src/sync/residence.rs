@@ -37,9 +37,11 @@ pub fn home_search_candidates(
     query: &str,
     limit: usize,
 ) -> Result<Vec<(EntityId, f32, WindowKey)>> {
-    let actor = crate::claim::ScopedReadActorKey::from_verified_slip(proof).ok_or(
-        Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied),
-    )?;
+    let actor = vault
+        .credential_read_key(proof)?
+        .ok_or(Error::sync_protocol(
+            SyncProtocolValidation::DocumentAdmissionDenied,
+        ))?;
     let candidates = vault.scoped_read_search_candidate_limit(limit, true, false)?;
     let mut results = Vec::new();
     for hit in vault

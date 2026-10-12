@@ -2,7 +2,6 @@
 
 use loro::VersionVector;
 
-use oneiron::claim::ScopedReadActorKey;
 use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window};
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{
@@ -324,8 +323,11 @@ pub(super) fn authorize_promoted_window(
         ));
     }
     let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
-    let actor =
-        ScopedReadActorKey::from_verified_slip(proof).ok_or(ProtocolError::RpcNoPrincipal)?;
+    let actor = server
+        .vault
+        .credential_read_key(proof)
+        .map_err(map_selector_filter_err)?
+        .ok_or(ProtocolError::RpcNoPrincipal)?;
     let scoped = server.vault.scoped_read(actor);
     match promotion_covers_full_window(
         &server.vault,
