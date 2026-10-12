@@ -647,6 +647,13 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
         actor.to_hex()
     ));
     let unbound = recipe("scope=core:read,core:write");
+    // Records that leave the key's claim out (Sol R2-001): the keyed store is
+    // read raw, so this credential is refused rather than read past.
+    let narrowed = recipe(&format!(
+        "scope=core:read;principal_ref={};actor_class=human;records={}",
+        actor.to_hex(),
+        actor.to_hex()
+    ));
     let address = json!({"namespace":["prefs"],"key":"theme"});
     let put = json!({"namespace":["prefs"],"key":"theme","value":{"name":"dark"},"request_id":"http-one","source":"user_stated"});
     let cases = [
@@ -675,6 +682,24 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
             json!({"prefix":["prefs"]}),
             &full,
             StatusCode::OK,
+        ),
+        (
+            "key_value_get",
+            address.clone(),
+            &narrowed,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "key_value_search",
+            json!({"namespace_prefix":["prefs"],"limit":1}),
+            &narrowed,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "key_value_namespaces",
+            json!({"prefix":["prefs"]}),
+            &narrowed,
+            StatusCode::FORBIDDEN,
         ),
         (
             "key_value_delete",
@@ -711,8 +736,8 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     assert_eq!(bodies[3]["value"], bodies[2]["item"]["value"]);
     assert_eq!(bodies[4].as_array().unwrap().len(), 1);
     assert_eq!(bodies[5], json!([["prefs"]]));
-    assert_eq!(bodies[7]["existed"], true);
-    assert_eq!(bodies[8], Value::Null);
+    assert_eq!(bodies[10]["existed"], true);
+    assert_eq!(bodies[11], Value::Null);
 }
 
 #[tokio::test]
@@ -764,6 +789,19 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
             &narrow,
             "recall",
             json!({"query": "hello"}),
+            StatusCode::FORBIDDEN,
+        ),
+        // Sol R2-002: an ask's evidence and outcomes are read raw.
+        (
+            &narrow,
+            "peek",
+            json!({"group_ref": actor.to_hex()}),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &narrow,
+            "tasks.outcomes",
+            json!({"group_ref": actor.to_hex()}),
             StatusCode::FORBIDDEN,
         ),
         (&slip, "witness", json!({}), StatusCode::FORBIDDEN),

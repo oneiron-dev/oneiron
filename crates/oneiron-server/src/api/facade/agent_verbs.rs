@@ -255,7 +255,7 @@ async fn key_value_get(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -315,7 +315,7 @@ async fn key_value_search(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -335,7 +335,7 @@ async fn key_value_namespaces(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -369,7 +369,7 @@ async fn peek(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -443,7 +443,7 @@ async fn tasks_outcomes(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
