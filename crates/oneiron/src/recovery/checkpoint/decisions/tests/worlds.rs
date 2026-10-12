@@ -95,20 +95,25 @@ fn own_default(
 
 const ALWAYS: (Option<u64>, Option<u64>) = (None, None);
 
-/// An agent reads only the worlds every owner grant about it allows. A
-/// narrower grant written since the backup is one a restore would take off,
-/// widening the read; one that repeats a grant the backup already folds
-/// narrows nothing. (The grant's `claim_of` edge no longer counts: the fold
-/// reads the grant rows, engine-prs-06.)
+/// An agent reads the newest in-force default it wrote itself, inside every
+/// owner grant about it. A narrower default learned again since the backup,
+/// its body unchanged, is one a restore would take back to the wider one,
+/// widening the read; the wider one learned again narrows nothing. (This case
+/// once narrowed with a grant's `claim_of` edge put back since the backup. The
+/// fold now reads the grant rows (engine-prs-06), so an edge narrows nothing,
+/// and a grant written since the backup is a world-access row, which the
+/// authority-row guard refuses before this decision is asked.)
 pub(super) fn world_selection_authority() -> Result<Case> {
     let (dir, vault, agent, [w1, w2]) = open_vault(config())?;
-    let (wide, narrow, repeat) = (entity(0xB4), entity(0xB5), entity(0xB6));
+    let (wide, narrower, wider) = (entity(0xB4), entity(0xB7), entity(0xB8));
     grant(&vault, wide, agent, &[w1, w2], ALWAYS)?;
+    own_default(&vault, narrower, agent, &[w1], 10)?;
+    own_default(&vault, wider, agent, &[w1, w2], 20)?;
     Case::after_backup(
         ROW,
         (dir, vault),
-        move |vault| grant(vault, repeat, agent, &[w1, w2], ALWAYS),
-        move |vault| grant(vault, narrow, agent, &[w1], ALWAYS),
+        move |vault| own_default(vault, wider, agent, &[w1, w2], 30),
+        move |vault| own_default(vault, narrower, agent, &[w1], 40),
     )
 }
 
@@ -159,12 +164,23 @@ fn admits(vault: &Vault, agent: EntityId, world: EntityId) -> Result<bool> {
     Ok(crate::pipeline::resolve_world_authority(&vault.store, &txn, &selection, NOW).is_ok())
 }
 
-/// Panics unless `guarded` refused, naming the world row.
-fn assert_refused(guarded: Result<()>, sequence: &str) {
+/// Whether a turn of `agent` that names no world reads `world` at `NOW`.
+fn admits_by_default(vault: &Vault, agent: EntityId, world: EntityId) -> Result<bool> {
+    let selection = ActiveWorldSelection {
+        agent_ref: agent,
+        selected: None,
+    };
+    let txn = vault.store.env.read_txn()?;
+    let resolved = crate::pipeline::resolve_world_authority(&vault.store, &txn, &selection, NOW)?;
+    Ok(resolved.default_subset.worlds().contains(&world))
+}
+
+/// Panics unless `guarded` refused, naming `what`.
+fn assert_refused(guarded: Result<()>, sequence: &str, what: &str) {
     match guarded {
         Ok(()) => panic!("{sequence}: a restore that widens an agent's worlds went ahead"),
         Err(error) => assert!(
-            error.to_string().contains(ROW),
+            error.to_string().contains(what),
             "{sequence}: refused for another reason: {error}"
         ),
     }
@@ -172,25 +188,25 @@ fn assert_refused(guarded: Result<()>, sequence: &str) {
 
 /// A restore never widens the worlds an agent may read, at any instant its
 /// grants and defaults decide. A narrower grant written since the backup is
-/// one an unguarded restore takes off, and the guard refuses it; so it does
-/// when that grant comes into force only after now, when it outlasts another
-/// grant as narrow that goes out of force after now, and when a narrower
-/// default learned again since the backup is the one in force. (These
-/// narrowings were once a grant's `claim_of` edge put back since the backup;
-/// the fold now reads the grant rows, so an edge narrows nothing,
-/// engine-prs-06.)
+/// one an unguarded restore takes off. It is a world-access row, so the
+/// authority-row guard refuses the restore, whether the grant is in force
+/// now, only after now, or outlasting a narrower mask. A narrower default
+/// learned again since the backup leaves every row as it was; only the world
+/// decision sees that it is the one in force, and its guard refuses the
+/// restore. (The grant cases once put a grant's `claim_of` edge back since
+/// the backup, which no row comparison saw. The fold now reads the grant rows
+/// (engine-prs-06), so an edge narrows nothing.)
 #[test]
 fn a_restore_does_not_widen_the_worlds_an_agent_may_read() -> Result<()> {
     let clock = ManualClock::new(NOW);
     let mut config = config();
     config.store_clock = clock.bundle();
     let (wide, narrow, mask) = (entity(0xB4), entity(0xB5), entity(0xB6));
+    let grant_rows = "world access";
 
     let (_dir, vault, agent, [w1, w2]) = open_vault(config.clone())?;
     grant(&vault, wide, agent, &[w1, w2], ALWAYS)?;
-    let restored = restore_after(&vault, |vault| {
-        grant(vault, narrow, agent, &[w1], ALWAYS)
-    })?;
+    let restored = restore_after(&vault, |vault| grant(vault, narrow, agent, &[w1], ALWAYS))?;
     assert!(
         !admits(&vault, agent, w2)?,
         "the narrower grant keeps the live vault off the second world"
@@ -199,22 +215,32 @@ fn a_restore_does_not_widen_the_worlds_an_agent_may_read() -> Result<()> {
         admits(&restored.unguarded, agent, w2)?,
         "an unguarded restore takes the narrower grant off"
     );
-    assert_refused(restored.guarded, "a narrower grant since the backup");
+    assert_refused(
+        restored.guarded,
+        "a narrower grant since the backup",
+        grant_rows,
+    );
 
     let (_dir, vault, agent, [w1, w2]) = open_vault(config.clone())?;
     grant(&vault, wide, agent, &[w1, w2], ALWAYS)?;
     let restored = restore_after(&vault, |vault| {
         grant(vault, narrow, agent, &[w1], (Some(NOW + 100), None))
     })?;
-    assert_refused(restored.guarded, "a narrower grant in force after now");
+    assert_refused(
+        restored.guarded,
+        "a narrower grant in force after now",
+        grant_rows,
+    );
 
     let (_dir, vault, agent, [w1, w2]) = open_vault(config.clone())?;
     grant(&vault, wide, agent, &[w1, w2], ALWAYS)?;
     grant(&vault, mask, agent, &[w1], (None, Some(NOW + 200)))?;
-    let restored = restore_after(&vault, |vault| {
-        grant(vault, narrow, agent, &[w1], ALWAYS)
-    })?;
-    assert_refused(restored.guarded, "a narrower grant outlasting a mask");
+    let restored = restore_after(&vault, |vault| grant(vault, narrow, agent, &[w1], ALWAYS))?;
+    assert_refused(
+        restored.guarded,
+        "a narrower grant outlasting a mask",
+        grant_rows,
+    );
 
     let (_dir, vault, agent, [w1, w2]) = open_vault(config)?;
     let (narrower, wider) = (entity(0xB7), entity(0xB8));
@@ -224,6 +250,14 @@ fn a_restore_does_not_widen_the_worlds_an_agent_may_read() -> Result<()> {
     let restored = restore_after(&vault, |vault| {
         own_default(vault, narrower, agent, &[w1], 30)
     })?;
-    assert_refused(restored.guarded, "a narrower default learned again");
+    assert!(
+        !admits_by_default(&vault, agent, w2)?,
+        "the narrower default keeps the live vault's turns off the second world"
+    );
+    assert!(
+        admits_by_default(&restored.unguarded, agent, w2)?,
+        "an unguarded restore takes the wider default back"
+    );
+    assert_refused(restored.guarded, "a narrower default learned again", ROW);
     Ok(())
 }
