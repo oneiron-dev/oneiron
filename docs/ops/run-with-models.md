@@ -319,6 +319,9 @@ server's run receipts. If the vault has a model manifest, its binding for the
 
 The recall scores exactly the block it would rerank: the candidates the
 reader may read, with each one's text as the reader's own read serves it.
+A message whose words live in its document (a streamed message, the
+server's own chat replies among them, or an edited one) is found but not
+reranked yet: it follows the reranked rows in its first-stage order.
 The model runs outside every vault transaction, and the scores apply only to
 that same block. A block that changed while it was scored (the vault was
 written to) is scored once more; if it changes again the recall is refused

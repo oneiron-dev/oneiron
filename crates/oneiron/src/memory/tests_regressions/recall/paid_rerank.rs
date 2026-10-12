@@ -241,41 +241,47 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
     assert!(rendered.contains(scored), "{rendered}");
 }
 
-/// Sol round 6 (R6-1): a MESSAGE whose text moved into its entity document
-/// holds none of it in its row, so its score was for no words, and the fold
-/// served its TURN at that score. Such a MESSAGE no longer stands as its
-/// TURN under a binding rerank; the TURN keeps the score of its own words.
+/// Done-means (the Engine lane's ruling on Sol round 6, R6-1): a streamed
+/// MESSAGE holds its words in its entity document, which no row revision
+/// pins, so no score can be bound to them. It is found but not reranked: it
+/// comes back after the reranked rows, as its TURN, with no score the
+/// reranker gave. Before, the reranker scored its row's empty words and its
+/// TURN took that score (R6-1); then it was dropped from the recall.
 #[cfg(feature = "sync")]
 #[test]
-fn a_message_whose_text_moved_to_its_document_lends_its_turn_no_score() {
-    use crate::entity_doc::{DocAuthorization, TextField};
+fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
     let (_dir, vault) = open_embedding_vault();
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let facade = facade_for(&vault, owner);
-    let moved = witness_turn(&facade, 0xE3, &["the lantern wick is trimmed"], 1_900);
-    witness_turn(&facade, 0xE4, &["a lantern shop that sells wicks"], 1_900);
-    let message = first_message(&vault, &moved);
-    let authenticated = vault
-        .authenticate_owner(
-            owner,
-            "principal:paid-rerank-test",
-            true,
-            crate::store::GateDecisionId::now(),
+    witness_turn(&facade, 0xE3, &["a lantern shop that sells wicks"], 1_900);
+    witness_turn(&facade, 0xE4, &["the lantern repair kit is on the shelf"], 1_900);
+    // The best lexical match of the three.
+    let streamed = "lantern lantern: the lantern wick is trimmed";
+    let stream = facade
+        .begin_message_stream(
+            &WitnessTurn {
+                conversation_ref: EntityId::from_bytes([0xE5; 16]).unwrap().to_hex(),
+                turn_ref: Some(EntityId::now().to_hex()),
+                occurred_at: 1_900,
+                messages: vec![WitnessMessage {
+                    id: Some(EntityId::now().to_hex()),
+                    ..witness_message(0, WitnessAuthor::User, "")
+                }],
+            },
+            Some(crate::memory::MessageWriteMode::Atomic),
         )
-        .expect("owner");
-    vault
-        .migrate_entity_text(
-            &message,
-            &TextField::MapField("content".into()),
-            crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
-            &DocAuthorization::Owner(&authenticated),
-        )
-        .expect("move the message's text into its document");
-    // No words score highest, then the shop's.
-    let score = |_: usize, text: &str| match text {
-        "" => 10.0,
-        text if text.contains("shop") => 5.0,
-        _ => 0.0,
+        .expect("open a stream");
+    facade.append_to_stream(stream, streamed).expect("stream words");
+    facade.finalize_stream(stream).expect("finalize the stream");
+    // Empty words score highest, then the shop's.
+    let scored = std::sync::Mutex::new(Vec::new());
+    let score = |_: usize, text: &str| {
+        scored.lock().unwrap().push(text.to_owned());
+        match text {
+            "" => 20.0,
+            text if text.contains("shop") => 10.0,
+            _ => 5.0,
+        }
     };
     let host = ScriptedReranker {
         lease: crate::BudgetGuard::new(
@@ -315,9 +321,15 @@ fn a_message_whose_text_moved_to_its_document_lends_its_turn_no_score() {
         .filter(|item| item.kind == "TURN")
         .map(|item| item.value_text.as_str())
         .collect();
+    assert_eq!(turns.len(), 3, "{turns:?}");
+    assert!(turns[0].contains("shop"), "{turns:?}");
+    assert!(turns[2].contains("wick is trimmed"), "{turns:?}");
+    let scored = scored.lock().unwrap();
     assert!(
-        turns.first().is_some_and(|text| text.contains("shop")),
-        "{turns:?}"
+        scored
+            .iter()
+            .all(|text| !text.is_empty() && !text.contains("wick is")),
+        "{scored:?}"
     );
     assert!(matches!(
         pack.retrieval_meta.rerank,

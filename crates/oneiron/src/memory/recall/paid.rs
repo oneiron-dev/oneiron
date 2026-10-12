@@ -7,6 +7,9 @@
 //! it would rerank: the admitted top-N candidates with their scores, ranks and
 //! claim bodies, and the revision each was read at, the one its item is
 //! served at (a MESSAGE recall returns as its TURN keeps that TURN's too).
+//! A MESSAGE whose words live in its entity document (a streamed or edited
+//! one) has no row revision that holds them, so it is not reranked: it
+//! follows the reranked rows in its first-stage order.
 //! Each candidate's text is then read at that revision through the
 //! reader's own scoped read, a claim's too, so nothing the reader may no
 //! longer read leaves. The host scores those texts outside every
