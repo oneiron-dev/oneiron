@@ -1214,6 +1214,99 @@ fn a_room_that_puts_back_base_indexed_body_keeps_base_vector_of_it() -> Result<(
     Ok(())
 }
 
+/// A room moves a base claim to another world, and base's idle pass
+/// publishes the words of base's newer body before the room's turn
+/// commits. A credential for the room's world alone reads base alone in the
+/// room (`scoped_read_in_session`), so neither base's new words nor the
+/// room's find the claim for it: the window's stale words reach only a
+/// reader of every world (Engine ruling on Sol R22).
+#[test]
+fn a_credential_for_one_world_finds_nothing_by_base_words_published_while_a_room_moved_its_claim()
+-> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let key = one_world_reader(&vault)?;
+    let room_world = entity_id(0xD2);
+    let claim = entity_id(0xCB);
+    let occurred = TimeRange { start: 1, end: 1 };
+    vault
+        .batch()
+        .put(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            1,
+            &local_claim_body(owner, "worldindexedvalue")?,
+        )
+        .text(&claim, &[("body", "worldindexedword")])
+        .commit()?;
+    vault
+        .batch()
+        .put(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            1,
+            &local_claim_body(owner, "worldpendingvalue")?,
+        )
+        .text(&claim, &[("body", "worldpendingneedle")])
+        .commit()?;
+    let mut moved = ClaimBody::new(
+        "test.status",
+        ClaimSubject::Entity(owner),
+        rmpv::Value::from("worldroomvalue"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    moved.world = Some(room_world);
+    let session = enter(&vault, "sess-room-world-move")?;
+    stage_in_room_then(
+        &vault,
+        &session,
+        vec![
+            claim_put(
+                claim,
+                (
+                    TimeRange { start: 10, end: 10 },
+                    10,
+                    crate::claim::encode_claim_body(&moved)?,
+                ),
+            ),
+            room_text(claim, "worldroomneedle"),
+        ],
+        || {
+            vault.set_indexed_idle_delay_ms(0)?;
+            vault.refresh_staged_indexed_at_idle(u64::MAX).map(drop)
+        },
+    )?;
+
+    let on_base = vault
+        .context_pack()
+        .search_text("worldpendingneedle", 10)
+        .run()?;
+    assert!(
+        on_base.results.iter().any(|entity| entity.id == claim),
+        "base's idle pass published its new words, got {on_base:?}"
+    );
+    let view = session.read_view()?;
+    for word in ["worldpendingneedle", "worldroomneedle"] {
+        let found = vault
+            .scoped_read_in_session(key.clone(), &view)
+            .search_text(word, 10, None)?;
+        assert!(
+            found.value.iter().all(|hit| hit.id != claim),
+            "{word} finds nothing for the credential, got {:?}",
+            found.value
+        );
+    }
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
 /// A scoped read in the room fetches as many candidates as the room's read
 /// holds, base's rows and the room's. A room row outside the worlds the
 /// lane asks for then takes no place from a base row inside them.
