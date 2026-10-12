@@ -27,7 +27,7 @@ use super::claims::{
     CalendarPassportPresence, CalendarPassportValue, PREDICATE_CALENDAR_PASSPORT,
     decode_passport_value,
 };
-use crate::claim::ClaimLifecycleStatus;
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject, claim_surfaceable};
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Raw, SideTable};
@@ -38,7 +38,14 @@ use crate::vault::Vault;
 const PASSPORT_INDEX: SideTable<[u8; 32], EntityId, Raw> =
     SideTable::new(&side_table::CALENDAR_PASSPORT_UID_INDEX);
 
-pub(crate) fn live_passports_for_event_in_txn(
+/// The admitted passports on `event`: surfaceable heads about the EVENT itself.
+///
+/// This is the revision-authority read. A writer derives a passport's next UID
+/// and SEQUENCE from these and supersedes only these, so a pending, rejected
+/// or stale proposal can neither block a revision nor steer it. The ingest
+/// diff keeps the approval-blind [`live_passports_for_event`], because the
+/// import gate files its own passports pending review.
+pub(crate) fn admitted_passports_for_event_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event: &EntityId,
@@ -46,8 +53,9 @@ pub(crate) fn live_passports_for_event_in_txn(
     let mut values = Vec::new();
     for id in vault.claims_for_subject_in_txn(txn, event)? {
         if let Some(body) = vault.get_claim_in_txn(txn, &id)?
-            && body.lifecycle == ClaimLifecycleStatus::Active
             && body.predicate == PREDICATE_CALENDAR_PASSPORT
+            && body.subject == ClaimSubject::Entity(*event)
+            && claim_surfaceable(&body)
         {
             values.push((id, decode_passport_value(&body.value)?));
         }
@@ -55,14 +63,16 @@ pub(crate) fn live_passports_for_event_in_txn(
     Ok(values)
 }
 
-pub(crate) fn live_passport_for_in_txn(
+/// The one admitted passport on `event` for exactly `(system, uid)`. Two
+/// admitted heads for one key are refused, never picked by scan order.
+pub(crate) fn admitted_passport_for_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event: &EntityId,
     system: &str,
     uid: &str,
 ) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
-    let mut matching = live_passports_for_event_in_txn(vault, txn, event)?
+    let mut matching = admitted_passports_for_event_in_txn(vault, txn, event)?
         .into_iter()
         .filter(|(_, value)| value.system == system && value.uid == uid);
     let found = matching.next();
