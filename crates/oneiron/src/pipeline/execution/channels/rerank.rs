@@ -3,8 +3,8 @@
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::builder::PipelineBuilder;
-use crate::pipeline::trace::retrieval_trace_top_scores;
 use crate::pipeline::filters::pipeline_candidate_matches_filters_and_gate;
+use crate::pipeline::trace::retrieval_trace_top_scores;
 use crate::pipeline::types::{
     ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity, TurnFold,
 };
@@ -128,8 +128,7 @@ impl PipelineBuilder<'_> {
                         .copied()
                         .zip(bound.iter().copied())
                         .partition(|(_, words)| !words.unscored);
-                    for (slot, (scored, _)) in scores.iter_mut().zip(kept.iter().chain(&unscored))
-                    {
+                    for (slot, (scored, _)) in scores.iter_mut().zip(kept.iter().chain(&unscored)) {
                         *slot = *scored;
                     }
                     block_len = kept.len();

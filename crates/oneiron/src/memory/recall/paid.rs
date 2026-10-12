@@ -439,27 +439,20 @@ impl Memory<'_> {
         let mut receipt = lane.read_receipt(None, 0)?;
         let mut texts = Vec::with_capacity(block.len());
         for candidate in block {
-            let mode = candidate
-                .revision
-                .map_or(crate::vault::ReadMode::Indexed, crate::vault::ReadMode::Pinned);
-            let item = match self.memory_item_for(
-                &lane,
-                &candidate.id,
-                None,
-                mode,
-                &[],
-                &mut receipt,
-            ) {
-                Ok(item) => item,
-                Err(error) if error.code == MEMORY_CODE_NOT_FOUND => None,
-                Err(error) => return Err(error),
-            };
-            texts.push(
-                item.map_or_else(String::new, |item| match item.predicate {
-                    Some(predicate) => format!("{predicate}: {}", item.value_text),
-                    None => item.value_text,
-                }),
+            let mode = candidate.revision.map_or(
+                crate::vault::ReadMode::Indexed,
+                crate::vault::ReadMode::Pinned,
             );
+            let item =
+                match self.memory_item_for(&lane, &candidate.id, None, mode, &[], &mut receipt) {
+                    Ok(item) => item,
+                    Err(error) if error.code == MEMORY_CODE_NOT_FOUND => None,
+                    Err(error) => return Err(error),
+                };
+            texts.push(item.map_or_else(String::new, |item| match item.predicate {
+                Some(predicate) => format!("{predicate}: {}", item.value_text),
+                None => item.value_text,
+            }));
         }
         Ok(texts)
     }

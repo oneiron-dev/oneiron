@@ -209,10 +209,7 @@ struct OwnerStatus {
     embedder: crate::owner::embedder::EmbedderReport,
 }
 
-async fn status(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<OwnerStatus> {
+async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<OwnerStatus> {
     owner(&auth, &server)?;
     let host = host(&server)?;
     let report = blocking(move || {

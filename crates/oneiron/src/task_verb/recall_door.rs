@@ -75,8 +75,7 @@ pub fn recall_at_door(
         RecallRerank::Host(host) if effort.requires_rerank() => Some(host),
         _ => None,
     };
-    let unreranked =
-        effort.requires_rerank() && matches!(door.rerank, RecallRerank::Unavailable);
+    let unreranked = effort.requires_rerank() && matches!(door.rerank, RecallRerank::Unavailable);
     // The host's scores arrive later, for the block they score.
     let preflight = PreflightReranker;
     crate::memory::check_recall_request(

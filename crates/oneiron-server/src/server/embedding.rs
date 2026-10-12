@@ -30,7 +30,9 @@ impl SyncServer {
     /// The embedder as this server serves it, for the owner: what config
     /// asks for, what the vault pins and what loaded. Blocking: it reads the
     /// vault's pins.
-    pub(crate) fn embedder_report(&self) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
+    pub(crate) fn embedder_report(
+        &self,
+    ) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
         let doctor = self.vault.doctor()?;
         Ok(crate::owner::embedder::EmbedderReport::served(
             self.embedder.as_ref().map(EmbedderSlot::config),

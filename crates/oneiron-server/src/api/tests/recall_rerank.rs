@@ -106,7 +106,13 @@ async fn rerank(State(fake): State<Fake>, Json(body): Json<Value>) -> Json<Value
 
 /// The reranker prefers [`KNOWN`] on every call.
 fn prefers_known() -> Score {
-    Arc::new(|_, document| if document.contains("brass") { 10.0 } else { 0.0 })
+    Arc::new(|_, document| {
+        if document.contains("brass") {
+            10.0
+        } else {
+            0.0
+        }
+    })
 }
 
 fn no_hook() -> OnCall {
@@ -363,7 +369,11 @@ async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
         "{settled:?}"
     );
     // Medium makes no model call, so the spent line does not touch it.
-    assert!(recall(&server, "rerank-spent", actor, "medium").await.is_ok());
+    assert!(
+        recall(&server, "rerank-spent", actor, "medium")
+            .await
+            .is_ok()
+    );
 }
 
 /// Done-means (G1 check 3): with no reranker route, high runs its expansion
@@ -660,7 +670,11 @@ async fn every_effort_through_mcp_on_the_local_embedder_and_a_loopback_reranker(
             .iter()
             .position(|text| text.as_str().unwrap().contains("sourdough"))
     };
-    assert_eq!(found("light"), None, "lexical recall cannot find a paraphrase");
+    assert_eq!(
+        found("light"),
+        None,
+        "lexical recall cannot find a paraphrase"
+    );
     assert!(found("medium").is_some(), "{efforts:?}");
     assert_eq!(efforts["medium"]["sparse"], false);
     for effort in ["high", "xhigh", "max"] {

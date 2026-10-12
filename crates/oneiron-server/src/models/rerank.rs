@@ -136,10 +136,7 @@ impl oneiron::llm::SingleSend for RerankBackend {}
 
 impl SingleRouteBackend for RerankBackend {
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
-        if stream
-            || !self.wire_models.contains_key(&request.model)
-            || parts(request).is_none()
-        {
+        if stream || !self.wire_models.contains_key(&request.model) || parts(request).is_none() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         Ok(())
@@ -178,8 +175,8 @@ impl LlmBackend for RerankBackend {
                 400..=499 => return Err(FatalLlmError::InvalidRequest.into()),
                 _ => return Err(RetryableLlmError::ServerError.into()),
             }
-            let scores = indexed_scores(&reply.body, documents.len())
-                .ok_or(FatalLlmError::EmptyResponse)?;
+            let scores =
+                indexed_scores(&reply.body, documents.len()).ok_or(FatalLlmError::EmptyResponse)?;
             let served = reply.body.get("model").cloned();
             let mut usage = match reply.body.get_mut("usage").map(JsonValue::take) {
                 Some(usage @ JsonValue::Object(_)) => usage,
