@@ -14,13 +14,12 @@
 //! The queue, the read records and the cursor commit together in the pass's
 //! one transaction, so a restart neither loses a reading nor makes it twice.
 //! A turn is read again only when its words or its saved tags change: the
-//! re-dirty door, the text publication doors (an entity document's write,
-//! its restore, an idle revision) and the tag save owe it a read, and so
-//! does a MESSAGE erased from it. A generic re-put that keeps a TURN's
-//! temporal key behind the cursor owes nothing, the same limit consolidation
-//! documents for it. The rows are derived and local, like the tag sets they
-//! point at; the sieve keeps no copy of a tag, only its place in the turn's
-//! tag set and the envelope it was read under.
+//! re-dirty door, a re-put of its TURN or MESSAGE rows, the text publication
+//! doors (an entity document's write, its restore, an idle revision) and the
+//! tag save owe it a read, and so does a MESSAGE erased from it. The rows
+//! are derived and local, like the tag sets they point at; the sieve keeps
+//! no copy of a tag, only its place in the turn's tag set and the envelope
+//! it was read under.
 
 mod chunks;
 mod policy;

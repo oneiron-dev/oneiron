@@ -57,8 +57,10 @@ pub(crate) fn erase_in_txn(
 }
 
 /// The publication hook: a TURN, or a MESSAGE inside one, whose text a
-/// write changed owes that turn a new sieve read, committed with the text.
-/// Unlike the tag and vector marks it needs no model configured.
+/// write changed or may have changed (a document write, its restore, an
+/// idle revision, a re-put of the row) owes that turn a new sieve read,
+/// committed with the text. Unlike the tag and vector marks it needs no
+/// model configured.
 pub(crate) fn mark_on_publication_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,

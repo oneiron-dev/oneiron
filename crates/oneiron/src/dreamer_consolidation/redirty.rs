@@ -124,14 +124,17 @@ pub(super) fn park_turn_in_txn(
 
 /// Puts a TURN whose words did not change back on the carrier, pending for
 /// every scope, because what a round read of it is gone: the projector's
-/// riders, whose repeated words a round held from a source since erased. A
-/// TURN no longer stored is left alone.
+/// riders and queued batch-mates of a source since erased. An id that no
+/// longer names a live TURN is left alone.
 pub(crate) fn requeue_turn_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    if store.port_entity_record(txn, turn)?.is_none() {
+    if !store
+        .port_entity_record(txn, turn)?
+        .is_some_and(|row| row.entity_type == ENTITY_TYPE_TURN)
+    {
         return Ok(());
     }
     put_carrier_in_txn(store, txn, turn)

@@ -283,7 +283,8 @@ fn witness_into(
             turn_ref: Some(turn.to_hex()),
             messages,
             occurred_at: 10,
-        })?;
+        })
+        .expect("witnessed turn");
     Ok(turn)
 }
 
@@ -415,7 +416,7 @@ fn a_turn_whose_text_lives_in_its_document_is_sieved_and_planned() -> Result<()>
     let at = vault.now_recorded_at();
     let session = seed_session(&vault, 15, at);
     let turn = seed_turn(&vault, &session, "user", "Alice arrives tomorrow.", at);
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let authenticated = vault.authenticate_owner(
         owner,
         "principal:turn-wake-test",
@@ -439,5 +440,112 @@ fn a_turn_whose_text_lives_in_its_document_is_sieved_and_planned() -> Result<()>
         .collect();
     assert!(kinds.contains(&crate::dreamer_wake::SpanKind::Date));
     assert!(kinds.contains(&crate::dreamer_wake::SpanKind::Name));
+    Ok(())
+}
+
+/// Sol R2 (P1): a round queued again under its key after its attempt
+/// completed (the same batch replayed with new words) was marked applied by
+/// a repeated completion report of the old attempt, so a repeat of the new
+/// words was consumed while the new attempt was still queued.
+#[test]
+fn a_repeated_completion_report_never_applies_a_newer_round_under_its_key() -> Result<()> {
+    use crate::attempt_queue::{CompleteAttempt, CompleteOutcome};
+    use crate::dreamer_prefilter::reopen_prefilter_rescan;
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 16, at);
+    let turn = seed_turn(&vault, &session, "user", "I live in Kyoto.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    let first = claim_micro(&vault, at + 1)?;
+    complete(&vault, &first, at + 2)?;
+
+    // The same row, rewritten under its own key, and read again.
+    vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            occurred(at),
+            at,
+            &turn_body("user", "I live in Osaka.", None),
+        )
+        .commit()?;
+    reopen_prefilter_rescan(&vault, DreamerConsolidationScope::Micro, at)?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    let attempts = micro_attempts(&vault)?;
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].dedupe_key, attempts[1].dedupe_key);
+
+    let report = AttemptQueue::new(&vault).complete(CompleteAttempt {
+        id: first.id,
+        lease_owner: OWNER.to_owned(),
+        attempt_count: first.attempt_count,
+        now: at + 4,
+    })?;
+    assert!(matches!(report, CompleteOutcome::AlreadyCompleted(_)));
+    let repeat = seed_turn(&vault, &session, "user", "I live in Osaka.", at + 5);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 5)?);
+    assert_eq!(micro_rounds(&vault)?[2], vec![repeat]);
+    Ok(())
+}
+
+/// Sol R2 (P1): erasing one turn of a queued batch retired its round but
+/// left the batch's other turns behind the watermark, and the attempt could
+/// no longer read its batch. The other live turns go back on the carrier.
+#[test]
+fn erasing_one_turn_of_a_queued_batch_plans_the_others_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 17, at);
+    let erased = seed_turn(&vault, &session, "user", "My manager is Ren.", at);
+    let kept = seed_turn(&vault, &session, "user", "Our offsite is in Sapporo.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![erased, kept]]);
+
+    vault.batch().delete(&erased).commit()?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 1)?);
+    assert_eq!(micro_rounds(&vault)?[1], vec![kept]);
+    Ok(())
+}
+
+/// Sol R2 (P1, and R1's same-key re-put P2): a turn rewritten under its own
+/// key after its round was queued left the round holding the old words,
+/// and left the sieve's spans of the old words queued. The round holds only
+/// while its turns read as they did, and the re-put owes the sieve a read.
+#[test]
+fn a_turn_rewritten_under_its_own_key_unbinds_its_round_and_is_sieved_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 18, at);
+    let turn = seed_turn(&vault, &session, "user", "I live in Kyoto.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    let kyoto = |span: &crate::dreamer_wake::SieveSpan| (span.start, span.end) == (10, 15);
+    assert!(
+        vault
+            .sieve_queue(64)?
+            .iter()
+            .any(|span| span.turn == turn && kyoto(span))
+    );
+
+    vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            occurred(at),
+            at,
+            &turn_body("user", "We moved to Osaka last year.", None),
+        )
+        .commit()?;
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let repeat = seed_turn(&vault, &session, "user", "I live in Kyoto.", at + 3);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    assert_eq!(micro_rounds(&vault)?[1], vec![repeat]);
+    assert!(
+        !vault
+            .sieve_queue(64)?
+            .iter()
+            .any(|span| span.turn == turn && kyoto(span))
+    );
     Ok(())
 }

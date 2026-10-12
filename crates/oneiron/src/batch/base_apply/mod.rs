@@ -364,6 +364,13 @@ pub(super) fn apply_ops_with_origin(
                 put_options.consent.can_resolve_pending =
                     pending_gate_consent_at_batch_start.contains(&id);
                 put_options.decision.preflight = preflight_decision_id;
+                // A TURN or MESSAGE written again may change its words under a
+                // temporal key the sieve has passed: its turn is owed a new
+                // sieve read in this commit. A new row is read where it lands.
+                let rewritten = matches!(
+                    entity_type,
+                    crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
+                ) && stored_entity_type(store, wtxn, &id)?.is_some();
                 let applied = apply_put(
                     store,
                     wtxn,
@@ -390,6 +397,9 @@ pub(super) fn apply_ops_with_origin(
                     },
                 )?;
                 consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
+                if rewritten {
+                    crate::dreamer_wake::mark_on_publication_in_txn(store, wtxn, &id)?;
+                }
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
                         store,
