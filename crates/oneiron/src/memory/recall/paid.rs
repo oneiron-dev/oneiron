@@ -39,6 +39,16 @@ use crate::task_verb::sdk::{RecallDoor, RecallRequest};
 /// before it refuses the recall.
 const RERANK_CALLS: u32 = 2;
 
+#[cfg(test)]
+thread_local! {
+    /// A test's write landing once the second pass takes the prepared scores,
+    /// before the pack is hydrated: the pass signals the first channel and
+    /// waits on the second.
+    pub(crate) static PREPARED_SCORES_TAKEN: std::cell::RefCell<
+        Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
 /// How a recall door serves high, xhigh and max.
 #[derive(Clone, Copy, Default)]
 pub enum RecallRerank<'a> {
@@ -210,6 +220,13 @@ impl Reranker for PreparedBlock {
         candidates: &[RerankCandidate<'_>],
     ) -> crate::error::Result<Vec<f32>> {
         let scores = self.prepared.rerank(query, candidates);
+        #[cfg(test)]
+        if scores.is_ok()
+            && let Some((taken, written)) = PREPARED_SCORES_TAKEN.with_borrow_mut(Option::take)
+        {
+            let _ = taken.send(());
+            let _ = written.recv();
+        }
         let flag = if scores.is_ok() {
             &self.applied
         } else {

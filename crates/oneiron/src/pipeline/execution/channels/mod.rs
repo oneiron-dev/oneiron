@@ -414,6 +414,7 @@ impl PipelineBuilder<'_> {
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
                     revisions: HashMap::new(),
+                    words_bound: Default::default(),
                     diagnostics,
                     scores: Vec::new(),
                     cited_messages: HashMap::new(),
@@ -757,6 +758,7 @@ impl PipelineBuilder<'_> {
             }
             Ok(RetrievalTxnOutput {
                 revisions,
+                words_bound: words_revisions.into_keys().collect(),
                 diagnostics,
                 scores,
                 cited_messages,

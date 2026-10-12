@@ -155,3 +155,88 @@ fn a_turn_edited_while_it_is_scored_takes_none_of_the_stale_scores() {
         Some(crate::memory::RerankReport::Applied { calls: 2, .. })
     ));
 }
+
+/// Sol round 5 (R5-1): a NOTE's prose lives in its document, which its row
+/// pin does not hold. A NOTE edited after the second pass takes its scores,
+/// before the pack is hydrated, still renders the words the reranker scored:
+/// before, the pack showed the edit, and a cut suffix passed the snapshot
+/// check as a clipped prefix of the scored words.
+#[test]
+fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
+    let scored = "the kettle whistles twice; the service account is retired.";
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    let note = facade
+        .author_take(crate::note::TakeTarget::Subject(owner), scored)
+        .expect("a take")
+        .id_hex;
+    let host = ScriptedReranker {
+        lease: crate::BudgetGuard::new(
+            "paid-rerank-test",
+            100_000,
+            crate::BudgetExhaustionPolicy::Suspend,
+        )
+        .admit()
+        .expect("a lease")
+        .lease,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        score: &|_: usize, text: &str| text.len() as f32,
+        during: &|_: usize| {},
+    };
+    let (taken, taken_rx) = std::sync::mpsc::channel();
+    let (written_tx, written) = std::sync::mpsc::channel();
+    crate::memory::recall::PREPARED_SCORES_TAKEN
+        .with_borrow_mut(|hook| *hook = Some((taken, written)));
+    let edited = std::sync::atomic::AtomicBool::new(false);
+    let (writer, note, edited_flag) = (&vault, note.as_str(), &edited);
+    let pack = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            if taken_rx.recv().is_err() {
+                return;
+            }
+            writer
+                .memory(owner, EdgeActorClass::Human)
+                .edit_note(
+                    note,
+                    &crate::note::NoteProgramEdit::WholeText {
+                        text: "the kettle whistles twice".into(),
+                        timeout_ms: 100,
+                        base: None,
+                    },
+                )
+                .expect("cut the take's suffix");
+            edited_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = written_tx.send(());
+        });
+        let pack = crate::task_verb::sdk::recall_at_door(
+            &facade,
+            crate::task_verb::sdk::RecallRequest {
+                query: "kettle".to_owned(),
+                effort: Some(crate::memory::RecallEffort::High),
+                scope: None,
+                limit: Some(10),
+                format: Some("json".to_owned()),
+                as_of: None,
+                deadline_ms: None,
+            },
+            |_| None,
+            &crate::task_verb::sdk::RecallDoor {
+                arrived: std::time::Instant::now(),
+                on_cut: None,
+                rerank: crate::memory::RecallRerank::Host(&host),
+            },
+        );
+        // A recall that never took its scores releases the writer.
+        crate::memory::recall::PREPARED_SCORES_TAKEN.with_borrow_mut(Option::take);
+        pack
+    })
+    .expect("recall");
+    assert!(edited.load(std::sync::atomic::Ordering::SeqCst), "{pack:?}");
+    assert!(matches!(
+        pack.retrieval_meta.rerank,
+        Some(crate::memory::RerankReport::Applied { .. })
+    ));
+    let rendered = pack.rendered.as_deref().expect("a json pack");
+    assert!(rendered.contains(scored), "{rendered}");
+}

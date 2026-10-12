@@ -203,6 +203,12 @@ pub(super) fn hydrate_entity(
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
+            // A NOTE's live prose is in its document, which its row pin does
+            // not hold: words a reranker scored are the pinned row's.
+            None if options.words_pinned => {
+                decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..], header.entity_type)
+                    .unwrap_or_default()
+            }
             None => {
                 let body = crate::note::live_body_in_txn(
                     &vault.store,
