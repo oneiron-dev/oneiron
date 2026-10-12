@@ -428,7 +428,7 @@ pub(super) fn replace_in_txn(
         provisional::settle_in_txn(vault, txn, entity)?;
     }
     // The sieve reads a turn's names from its tag set: a new set is a new read.
-    crate::dreamer_wake::owe_sieve_read_in_txn(vault, txn, turn)
+    crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
 }
 
 /// Removes `entity` from every tag set that names it: a link left naming

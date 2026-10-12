@@ -2,50 +2,57 @@
 //! when its material is new to the projection it already holds.
 //!
 //! This first build is deterministic. The material of a turn is its
-//! statements: each sentence's words, lowercased and stripped of punctuation,
-//! as a BLAKE3 digest. The projection holds, per consolidation partition, the
-//! statements of every round it queued. A due wake compares each partition's
-//! statements with what that partition holds; a partition with fewer new
-//! statements than the policy row asks for writes nothing, and its turns are
-//! consumed as read. A paraphrase is new material here; only the same words
-//! are held. A model-backed comparison replaces the digest later.
+//! statements, read from the text a consolidation branch reads of it (the
+//! turn's own author bucket, final words only): each sentence's whitespace
+//! tokens, lowercased, with formatting punctuation trimmed from their edges,
+//! as a BLAKE3 digest. Signs, currency and units stay in their tokens. A
+//! paraphrase is new material here; only the same words are held. A
+//! model-backed comparison replaces the digest later.
 //!
-//! A held statement names the round that queued it, and a round is queued
-//! until its consolidation attempt completes, when the completing transaction
-//! marks it applied. Both states are rows, so a restart between queue and
-//! apply neither loses the round (its attempt is still in the queue) nor
-//! doubles it (its statements are still held). A round whose attempt ended
-//! without completing holds nothing: its statements are new again. The rows
-//! are derived and local; erasing a turn takes its statements out.
+//! The projection holds, per consolidation partition, its latest round once
+//! that round's attempt has completed: the statements of the turns the
+//! attempt was given. A due wake compares each partition's statements with
+//! it; a partition with fewer new statements than the policy row asks for
+//! writes nothing, and its turns are consumed as read, riders on the round
+//! that held them. Only the latest round holds, so a return to an earlier
+//! value is new again. A queued round holds nothing until its attempt
+//! completes, so a round that ends any other way (failed, cancelled while
+//! landing, its source erased) has consumed no repeat of its words.
+//!
+//! Queued and applied state are rows: a restart between queue and apply
+//! keeps the queued attempt, and the window it planned stays read. The rows
+//! are derived and local. A round applies in the transaction that completes
+//! its attempt, at whichever door completes it. Erasing a turn retires the
+//! rounds it gave words to and puts their riders back on the shared
+//! re-dirty carrier, so a surviving repeat is read as new.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::sieve::{Chunk, turn_chunks_in_txn};
-use crate::attempt_queue::{AttemptQueue, AttemptRecord};
+use crate::attempt_queue::AttemptRecord;
 use crate::dreamer_consolidation::{
-    ConsolidationPartitionKey, ConsolidationWatermark, WorkingSetTurn, partition_turns_in_txn,
+    ConsolidationPartitionKey, ConsolidationWatermark, WorkingSetTurn, decode_partition_payload,
+    partition_turns_in_txn, projected_turn_text_in,
 };
 use crate::dreamer_runner::EnqueueDreamerAttemptOutcome;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
+use crate::store::Store;
 use crate::{EntityId, Vault};
 
 const POLICY: SideTable<(), ProjectorPolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROJECTOR_POLICY);
 const DEFAULT_POLICY: &str = include_str!("projector_policy_defaults.json");
-/// A statement the projection holds. Key: partition hash, statement digest.
-/// Value: the round that queued it.
-const HELD: SideTable<HeldKey, [u8; 32], Raw> = SideTable::new(&side_table::DREAMER_PROJECTION_HELD);
+/// The latest round queued for a partition. Key: partition hash.
+const LATEST: SideTable<[u8; 32], [u8; 32], Raw> =
+    SideTable::new(&side_table::DREAMER_PROJECTION_LATEST);
 /// A round the projector queued. Key: round id.
 const ROUND: SideTable<[u8; 32], ProjectionRound, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_ROUND);
-/// The held statements each TURN gave, for erasure. Key: TURN id.
-const GIVEN: SideTable<EntityId, Vec<HeldKey>, Named> =
+/// The rounds each TURN gave words to, for erasure. Key: TURN id.
+const GIVEN: SideTable<EntityId, Vec<[u8; 32]>, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_GIVEN);
-
-type HeldKey = ([u8; 32], [u8; 32]);
 
 /// The projector's policy row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,13 +63,16 @@ pub struct ProjectorPolicy {
     pub min_new_statements: u32,
 }
 
-/// One queued round: the attempt identity that carries it, and whether that
-/// attempt completed.
+/// One queued round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProjectionRound {
-    kind: String,
-    dedupe_key: String,
+    partition: [u8; 32],
+    /// Whether the attempt that carries it completed.
     applied: bool,
+    /// The statements of the turns its attempt was given, sorted.
+    statements: Vec<[u8; 32]>,
+    /// Turns consumed because this round held their words.
+    riders: Vec<EntityId>,
 }
 
 /// What a due wake found new.
@@ -70,8 +80,11 @@ struct ProjectionRound {
 pub(crate) struct ProjectionPlan {
     /// The turns of every partition whose material surprised the projection.
     pub(crate) turns: Vec<EntityId>,
-    /// Per surprised partition: each new statement and the turn that gave it.
-    new: BTreeMap<[u8; 32], BTreeMap<[u8; 32], EntityId>>,
+    /// Each turn read: its statements.
+    statements: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
+    /// Per partition that writes nothing: the round that held its words and
+    /// the turns that rode it.
+    riders: Vec<([u8; 32], Vec<EntityId>)>,
 }
 
 fn invalid() -> Error {
@@ -80,10 +93,12 @@ fn invalid() -> Error {
 
 fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProjectorPolicy> {
     Ok(
-        match POLICY.get(&vault.store, txn, &()).map_err(|error| match error {
-            Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid(),
-            other => other,
-        })? {
+        match POLICY
+            .get(&vault.store, txn, &())
+            .map_err(|error| match error {
+                Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid(),
+                other => other,
+            })? {
             Some(row) => row,
             None => serde_json::from_str(DEFAULT_POLICY).map_err(|_| invalid())?,
         },
@@ -119,70 +134,119 @@ pub(crate) fn plan_in_txn(
     watermark: &ConsolidationWatermark,
 ) -> Result<ProjectionPlan> {
     let policy = policy_in_txn(vault, txn)?;
-    let mut rounds = BTreeMap::new();
     let mut plan = ProjectionPlan::default();
     for partition in partition_turns_in_txn(vault, txn, window, watermark)? {
-        let scope = partition.key.partition_hash();
-        let mut new = BTreeMap::new();
+        let held = held_in_txn(&vault.store, txn, &partition.key.partition_hash())?;
+        let mut new = BTreeSet::new();
+        let mut unread = false;
+        let mut riders = Vec::new();
         for turn in &partition.turns {
-            let Some(chunks) = turn_chunks_in_txn(vault, txn, &turn.turn_id)? else {
+            // Words a branch would refuse to read are the branch's to refuse.
+            let Some(statements) = turn_statements_in_txn(vault, txn, &turn.turn_id)? else {
+                unread = true;
                 continue;
             };
-            for statement in statements(&chunks) {
-                if !new.contains_key(&statement)
-                    && !holds_in_txn(vault, txn, &(scope, statement), &mut rounds)?
+            let mut rode = false;
+            for statement in &statements {
+                if held
+                    .as_ref()
+                    .is_some_and(|(_, round)| round.statements.binary_search(statement).is_ok())
                 {
-                    new.insert(statement, turn.turn_id);
+                    rode = true;
+                } else {
+                    new.insert(*statement);
                 }
             }
+            if rode {
+                riders.push(turn.turn_id);
+            }
+            plan.statements.insert(turn.turn_id, statements);
         }
-        if new.len() >= policy.min_new_statements as usize {
+        if unread || new.len() >= policy.min_new_statements as usize {
             plan.turns
                 .extend(partition.turns.iter().map(|turn| turn.turn_id));
-            plan.new.insert(scope, new);
+        } else if let Some((round, _)) = held
+            && !riders.is_empty()
+        {
+            plan.riders.push((round, riders));
         }
     }
     Ok(plan)
 }
 
-/// Holds a plan's new statements under the rounds that queued them, in the
-/// enqueue's transaction.
+/// Records what a wake queued and what it consumed, in the enqueue's
+/// transaction: each queued round becomes its partition's latest, unapplied,
+/// holding the statements of the turns its payload carries (the screen's
+/// kept turns, never the ones it skipped), and each partition that wrote
+/// nothing rides the round that held it.
 pub(crate) fn hold_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     plan: &ProjectionPlan,
     enqueued: &[(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)],
 ) -> Result<()> {
-    let mut given: BTreeMap<EntityId, Vec<HeldKey>> = BTreeMap::new();
+    let store = &vault.store;
     for (key, outcome) in enqueued {
-        let scope = key.partition_hash();
-        let Some(new) = plan.new.get(&scope) else {
-            continue;
-        };
         let (EnqueueDreamerAttemptOutcome::Enqueued(status)
         | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
-        let Some(round) = queue_round_in_txn(vault, txn, &status.attempt)? else {
+        let Some(dedupe_key) = &status.attempt.dedupe_key else {
             continue;
         };
-        for (statement, turn) in new {
-            HELD.put(&vault.store, txn, &(scope, *statement), &round)?;
-            given.entry(*turn).or_default().push((scope, *statement));
+        let id = round_id(&status.attempt.kind, dedupe_key);
+        let partition = key.partition_hash();
+        let (_, turns, _) = decode_partition_payload(&status.payload.input)?;
+        let mut statements = BTreeSet::new();
+        for turn in &turns {
+            match plan.statements.get(turn) {
+                Some(read) => statements.extend(read),
+                None => {
+                    statements.extend(turn_statements_in_txn(vault, txn, turn)?.unwrap_or_default())
+                }
+            }
+            let mut given = GIVEN.get(store, txn, turn)?.unwrap_or_default();
+            if !given.contains(&id) {
+                given.push(id);
+                GIVEN.put(store, txn, turn, &given)?;
+            }
         }
+        let mut round = ROUND
+            .get(store, txn, &id)?
+            .unwrap_or_else(|| ProjectionRound {
+                partition,
+                applied: false,
+                statements: Vec::new(),
+                riders: Vec::new(),
+            });
+        // A replay of a completed batch is a new attempt under the same key.
+        if matches!(outcome, EnqueueDreamerAttemptOutcome::Enqueued(_)) {
+            round.applied = false;
+        }
+        round.statements = statements.into_iter().collect();
+        ROUND.put(store, txn, &id, &round)?;
+        if let Some(previous) = LATEST.get(store, txn, &partition)?
+            && previous != id
+        {
+            supersede_in_txn(store, txn, &previous)?;
+        }
+        LATEST.put(store, txn, &partition, &id)?;
     }
-    for (turn, keys) in given {
-        let mut held = GIVEN.get(&vault.store, txn, &turn)?.unwrap_or_default();
-        held.extend(keys);
-        held.sort_unstable();
-        held.dedup();
-        GIVEN.put(&vault.store, txn, &turn, &held)?;
+    for (id, riders) in &plan.riders {
+        let Some(mut round) = ROUND.get(store, txn, id)? else {
+            continue;
+        };
+        round.riders.extend(riders);
+        round.riders.sort_unstable();
+        round.riders.dedup();
+        ROUND.put(store, txn, id, &round)?;
     }
     Ok(())
 }
 
-/// The completing transaction of a Dreamer attempt marks the round it
-/// carries applied.
+/// The completing transaction of an attempt marks the round it carries
+/// applied. Every completion door reaches it; an attempt that carries no
+/// round leaves nothing to mark.
 pub(crate) fn apply_in_txn(
-    vault: &Vault,
+    store: &Store,
     txn: &mut heed::RwTxn<'_>,
     attempt: &AttemptRecord,
 ) -> Result<()> {
@@ -190,74 +254,83 @@ pub(crate) fn apply_in_txn(
         return Ok(());
     };
     let id = round_id(&attempt.kind, dedupe_key);
-    let Some(mut round) = ROUND.get(&vault.store, txn, &id)? else {
+    let Some(mut round) = ROUND.get(store, txn, &id)? else {
         return Ok(());
     };
-    round.applied = true;
-    ROUND.put(&vault.store, txn, &id, &round)
+    if !round.applied {
+        round.applied = true;
+        ROUND.put(store, txn, &id, &round)?;
+    }
+    Ok(())
 }
 
-/// Takes the statements an erased TURN gave out of the projection.
+/// Takes an erased TURN's words out of the projection: every round it gave
+/// words to holds nothing more, and the riders that round consumed are
+/// re-dirtied, so a live repeat of what the turn said is read as new.
 pub(crate) fn erase_turn_in_txn(
-    vault: &Vault,
+    store: &Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    let Some(keys) = GIVEN.get(&vault.store, txn, turn)? else {
+    let Some(given) = GIVEN.get(store, txn, turn)? else {
         return Ok(());
     };
-    for key in &keys {
-        HELD.delete(&vault.store, txn, key)?;
+    for id in &given {
+        let Some(round) = ROUND.get(store, txn, id)? else {
+            continue;
+        };
+        for rider in round.riders.iter().filter(|rider| *rider != turn) {
+            crate::dreamer_consolidation::redirty::requeue_turn_in_txn(store, txn, rider)?;
+        }
+        if LATEST.get(store, txn, &round.partition)? == Some(*id) {
+            LATEST.delete(store, txn, &round.partition)?;
+        }
+        ROUND.delete(store, txn, id)?;
     }
-    GIVEN.delete(&vault.store, txn, turn)?;
+    GIVEN.delete(store, txn, turn)?;
     Ok(())
 }
 
-/// Records the round an attempt carries, queued unless it already applied.
-fn queue_round_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    attempt: &AttemptRecord,
-) -> Result<Option<[u8; 32]>> {
-    let Some(dedupe_key) = &attempt.dedupe_key else {
-        return Ok(None);
+/// A round a newer one replaced as its partition's latest holds nothing
+/// more. It is kept only while turns ride it, for their erasure.
+fn supersede_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &[u8; 32]) -> Result<()> {
+    let Some(mut round) = ROUND.get(store, txn, id)? else {
+        return Ok(());
     };
-    let id = round_id(&attempt.kind, dedupe_key);
-    if ROUND.get(&vault.store, txn, &id)?.is_none() {
-        let round = ProjectionRound {
-            kind: attempt.kind.clone(),
-            dedupe_key: dedupe_key.clone(),
-            applied: false,
-        };
-        ROUND.put(&vault.store, txn, &id, &round)?;
+    if round.riders.is_empty() {
+        return ROUND.delete(store, txn, id).map(|_| ());
     }
-    Ok(Some(id))
+    round.statements = Vec::new();
+    ROUND.put(store, txn, id, &round)
 }
 
-/// Whether the projection holds a statement: its round applied, or its
-/// attempt is still pending under the round's dedupe key (a retry or a
-/// landing's successor carries the key on).
-fn holds_in_txn(
+/// The partition's latest round, when its attempt has completed.
+fn held_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    partition: &[u8; 32],
+) -> Result<Option<([u8; 32], ProjectionRound)>> {
+    let Some(id) = LATEST.get(store, txn, partition)? else {
+        return Ok(None);
+    };
+    Ok(ROUND
+        .get(store, txn, &id)?
+        .filter(|round| round.applied)
+        .map(|round| (id, round)))
+}
+
+/// A turn's statements, from the words a branch reads of it. `None` when a
+/// branch would refuse those words (a changed binding, a mixed bucket).
+fn turn_statements_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    key: &HeldKey,
-    rounds: &mut BTreeMap<[u8; 32], bool>,
-) -> Result<bool> {
-    let Some(id) = HELD.get(&vault.store, txn, key)? else {
-        return Ok(false);
-    };
-    if let Some(holds) = rounds.get(&id) {
-        return Ok(*holds);
+    turn: &EntityId,
+) -> Result<Option<BTreeSet<[u8; 32]>>> {
+    match projected_turn_text_in(vault, txn, turn) {
+        Ok(text) => Ok(Some(text.as_deref().map(statements).unwrap_or_default())),
+        Err(Error::InvalidClaimBody(_)) => Ok(None),
+        Err(error) => Err(error),
     }
-    let holds = match ROUND.get(&vault.store, txn, &id)? {
-        None => false,
-        Some(round) if round.applied => true,
-        Some(round) => AttemptQueue::new(vault)
-            .pending_dedupe_in_txn(txn, &round.kind, &round.dedupe_key)?
-            .is_some(),
-    };
-    rounds.insert(id, holds);
-    Ok(holds)
 }
 
 fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
@@ -269,27 +342,49 @@ fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
     *hash.finalize().as_bytes()
 }
 
-/// The statement digests of a reading: one per sentence with words in it.
-fn statements(chunks: &[Chunk]) -> BTreeSet<[u8; 32]> {
+/// Punctuation that only formats a token: trimmed from its edges. A sign,
+/// a currency symbol or a unit is part of what the token says.
+const FORMATTING: &[char] = &[
+    '"', '\'', '“', '”', '‘', '’', '«', '»', '「', '」', '『', '』', '.', ',', '!', '?', ':', ';',
+    '(', ')', '[', ']', '*', '_', '`', '…', '、', '。', '！', '？',
+];
+/// Tokens that only mark a list item or a quote.
+const BULLETS: &[&str] = &["-", "–", "—", "•", "·", ">", "+"];
+
+/// The statement digests of a text: one per sentence with words in it. A
+/// sentence ends at a line break, a CJK full stop, or `.`, `!` or `?`
+/// before whitespace or the end, so a decimal point never splits one.
+fn statements(text: &str) -> BTreeSet<[u8; 32]> {
     let mut out = BTreeSet::new();
-    for chunk in chunks {
-        for sentence in chunk
-            .text
-            .split(['.', '!', '?', '\n', '。', '！', '？'])
-        {
-            let words: Vec<String> = sentence
-                .split(|ch: char| !ch.is_alphanumeric())
-                .filter(|word| !word.is_empty())
-                .map(str::to_lowercase)
-                .collect();
-            if words.is_empty() {
-                continue;
-            }
-            let mut hash = blake3::Hasher::new();
-            hash.update(b"oneiron:dreamer-projector:statement:v1");
-            hash.update(words.join(" ").as_bytes());
-            out.insert(*hash.finalize().as_bytes());
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((at, ch)) = chars.next() {
+        let ends = match ch {
+            '\n' | '。' | '！' | '？' => true,
+            '.' | '!' | '?' => chars.peek().is_none_or(|(_, next)| next.is_whitespace()),
+            _ => false,
+        };
+        if ends {
+            out.extend(statement(&text[start..at]));
+            start = at + ch.len_utf8();
         }
     }
+    out.extend(statement(&text[start..]));
     out
+}
+
+fn statement(sentence: &str) -> Option<[u8; 32]> {
+    let tokens: Vec<String> = sentence
+        .split_whitespace()
+        .filter(|token| !BULLETS.contains(token))
+        .map(|token| token.trim_matches(FORMATTING).to_lowercase())
+        .filter(|token| !token.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return None;
+    }
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron:dreamer-projector:statement:v2");
+    hash.update(tokens.join(" ").as_bytes());
+    Some(*hash.finalize().as_bytes())
 }

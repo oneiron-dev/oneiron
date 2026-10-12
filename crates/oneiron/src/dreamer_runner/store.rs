@@ -409,10 +409,6 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
             )?;
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
-            // A projector round is applied exactly when its attempt completes.
-            if let CompleteOutcome::Completed(record) = &outcome {
-                crate::dreamer_wake::apply_projection_in_txn(self.vault, wtxn, record)?;
-            }
             Ok(outcome)
         })?;
         match outcome {

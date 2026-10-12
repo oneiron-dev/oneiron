@@ -1,8 +1,8 @@
 //! The turn wake against ARCH-0026's projector and shared-carrier lines: a
 //! wake over material the projection holds writes nothing, new material is
-//! queued once and held through a restart until its round applies, and a
-//! TURN without its conversation edge waits parked instead of stopping later
-//! turns.
+//! queued once and held from the moment its round applies, through a
+//! restart, and a TURN without its conversation edge waits parked instead of
+//! stopping later turns. Sol R1's projector repros close the file.
 use super::*;
 use crate::attempt_queue::{ClaimAttempt, ClaimOutcome};
 use crate::dreamer_runner::{CompleteDreamerAttempt, DreamerRunnerStore, FailDreamerAttempt};
@@ -69,7 +69,13 @@ fn a_wake_over_material_the_projection_holds_writes_nothing() -> Result<()> {
     let (_dir, vault) = open_vault();
     let at = vault.now_recorded_at();
     let session = seed_session(&vault, 7, at);
-    let first = seed_turn(&vault, &session, "user", "I live in Kyoto. My sister is Mia.", at);
+    let first = seed_turn(
+        &vault,
+        &session,
+        "user",
+        "I live in Kyoto. My sister is Mia.",
+        at,
+    );
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
     assert_eq!(micro_rounds(&vault)?, vec![vec![first]]);
     let record = claim_micro(&vault, at + 1)?;
@@ -89,8 +95,10 @@ fn a_wake_over_material_the_projection_holds_writes_nothing() -> Result<()> {
 }
 
 /// "A wake over new material writes once, and a restart between queue and
-/// apply neither loses nor doubles it" (packet check). A round whose attempt
-/// fails holds nothing, so the same words queue again.
+/// apply neither loses nor doubles it" (packet check): the attempt is still
+/// queued after the restart and its window is never planned again. Once it
+/// completes, its words are held through another restart. A round whose
+/// attempt fails held nothing, so the same words queue again.
 #[test]
 fn queued_material_survives_a_restart_once_and_applies_with_its_attempt() -> Result<()> {
     let (dir, vault) = open_vault();
@@ -99,11 +107,10 @@ fn queued_material_survives_a_restart_once_and_applies_with_its_attempt() -> Res
     let first = seed_turn(&vault, &session, "user", "Our offsite is in Sapporo.", at);
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
 
-    // Restart between queue and apply: the round is still queued, its
-    // material still held, and a repeat of it queues nothing new.
+    // Restart between queue and apply: the attempt is still queued, and the
+    // window it planned is read, so no wake plans it again.
     let vault = reopen(&dir, vault);
     assert_eq!(micro_rounds(&vault)?, vec![vec![first]]);
-    seed_turn(&vault, &session, "user", "Our offsite is in Sapporo.", at + 1);
     assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 1)?);
     assert_eq!(micro_attempts(&vault)?.len(), 1, "not doubled");
 
@@ -111,7 +118,13 @@ fn queued_material_survives_a_restart_once_and_applies_with_its_attempt() -> Res
     let record = claim_micro(&vault, at + 2)?;
     complete(&vault, &record, at + 3)?;
     let vault = reopen(&dir, vault);
-    seed_turn(&vault, &session, "user", "our offsite is in sapporo", at + 4);
+    seed_turn(
+        &vault,
+        &session,
+        "user",
+        "our offsite is in sapporo",
+        at + 4,
+    );
     assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
     assert_eq!(micro_attempts(&vault)?.len(), 1);
 
@@ -155,7 +168,13 @@ fn a_turn_without_its_conversation_edge_does_not_block_a_later_turns_wake() -> R
             &turn_body("user", "My manager is Ren.", None),
         )
         .commit()?;
-    let later = seed_turn(&vault, &session, "user", "I start at Acme on Monday.", at + 1);
+    let later = seed_turn(
+        &vault,
+        &session,
+        "user",
+        "I start at Acme on Monday.",
+        at + 1,
+    );
 
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 1)?);
     assert_eq!(micro_rounds(&vault)?, vec![vec![later]]);
@@ -168,5 +187,257 @@ fn a_turn_without_its_conversation_edge_does_not_block_a_later_turns_wake() -> R
         .commit()?;
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
     assert_eq!(micro_rounds(&vault)?, vec![vec![later], vec![orphan]]);
+    Ok(())
+}
+
+/// Sol R1 (P1): every statement a partition's applied rounds ever held stayed
+/// held, so a return to an earlier value (Kyoto, Osaka, Kyoto) was consumed
+/// as already projected. Only the partition's latest round holds.
+#[test]
+fn a_return_to_an_earlier_value_is_new_material() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 10, at);
+    let kyoto = seed_turn(&vault, &session, "user", "I live in Kyoto.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let osaka = seed_turn(&vault, &session, "user", "I live in Osaka.", at + 3);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    complete(&vault, &claim_micro(&vault, at + 4)?, at + 5)?;
+
+    let back = seed_turn(&vault, &session, "user", "I live in Kyoto.", at + 6);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 6)?);
+    assert_eq!(
+        micro_rounds(&vault)?,
+        vec![vec![kyoto], vec![osaka], vec![back]]
+    );
+    Ok(())
+}
+
+/// Sol R1 (P1 ×2): a repeat of a queued round's words was consumed against
+/// the pending round, so a round lost before it applied (cancelled while
+/// landing at a crash, or its source erased) stranded the repeat behind the
+/// watermark. A queued round holds nothing: the repeat queues its own round,
+/// which outlives the first source's erasure.
+#[test]
+fn a_repeat_while_its_round_is_queued_queues_its_own_round() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 11, at);
+    let first = seed_turn(&vault, &session, "user", "My manager is Ren.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    let repeat = seed_turn(&vault, &session, "user", "My manager is Ren.", at + 1);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 1)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![first], vec![repeat]]);
+
+    vault
+        .delete_room_record_unchecked_for_test(&first, crate::deletion::DeleteReason::UserDelete)?;
+    let queued: Vec<_> = micro_attempts(&vault)?
+        .into_iter()
+        .filter(|row| row.state == crate::attempt_queue::AttemptState::Queued)
+        .map(|row| {
+            let payload = decode_dreamer_attempt_payload(&row.payload)?;
+            Ok(decode_partition_payload(&payload.input)?.1)
+        })
+        .collect::<Result<_>>()?;
+    assert!(
+        queued.contains(&vec![repeat]),
+        "the repeat's round is still queued"
+    );
+    Ok(())
+}
+
+/// Sol R1 (P1, and the P2 batch-delete bypass): a repeat consumed against an
+/// applied round had nothing left once that round's source was erased. The
+/// erasure, here through the public batch delete, puts the repeat back on
+/// the shared carrier, so the next wake reads it as new.
+#[test]
+fn erasing_the_source_a_repeat_rode_on_reads_the_repeat_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 12, at);
+    let first = seed_turn(&vault, &session, "user", "My manager is Ren.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let repeat = seed_turn(&vault, &session, "user", "my manager is Ren", at + 3);
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+
+    vault.batch().delete(&first).commit()?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![first], vec![repeat]]);
+    Ok(())
+}
+
+/// One user turn witnessed into `conversation` by `person`.
+fn witness_into(
+    vault: &Vault,
+    person: EntityId,
+    conversation: EntityId,
+    messages: Vec<crate::memory::WitnessMessage>,
+) -> Result<EntityId> {
+    let turn = EntityId::now();
+    vault
+        .memory(person, EdgeActorClass::Human)
+        .witness(&crate::memory::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages,
+            occurred_at: 10,
+        })?;
+    Ok(turn)
+}
+
+/// Sol R1 (P1): the projector held a system interleave's words, which no
+/// consolidation branch reads, so the user later saying them was suppressed
+/// as already projected. Statements come from the branch's own text.
+#[test]
+fn words_a_branch_never_reads_are_never_held() -> Result<()> {
+    use super::witnessed_turns::{allow_system_rows, message};
+    use crate::memory::WitnessAuthor;
+    let (_dir, vault) = open_vault();
+    let person = EntityId::from_bytes([0x71; 16])?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
+    allow_system_rows(&vault, person)?;
+    let conversation = EntityId::from_bytes([0x72; 16])?;
+    let thanks = witness_into(
+        &vault,
+        person,
+        conversation,
+        vec![
+            message(0, WitnessAuthor::User, "Thanks.", true),
+            message(1, WitnessAuthor::System, "My manager is Ren.", true),
+        ],
+    )?;
+    let at = vault.now_recorded_at();
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+
+    let said = witness_into(
+        &vault,
+        person,
+        conversation,
+        vec![message(0, WitnessAuthor::User, "My manager is Ren.", true)],
+    )?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![thanks], vec![said]]);
+    Ok(())
+}
+
+/// Sol R1 (P1): a round held every statement of its partition, the screen's
+/// skipped turns included, so the rescan door found a skipped turn's words
+/// already projected. A round holds only the turns its attempt was given.
+#[test]
+fn a_turn_the_screen_skipped_is_not_held_by_the_round_that_left_it_out() -> Result<()> {
+    use crate::dreamer_prefilter::{PrefilterConfig, PrefilterWeights, reopen_prefilter_rescan};
+    let (_dir, vault) = open_vault();
+    let weights = PrefilterWeights {
+        len: 1.0,
+        ttr: 0.0,
+        entity_density: 0.0,
+        novelty: 0.0,
+        role: 0.0,
+    };
+    vault.set_prefilter_config(PrefilterConfig {
+        enabled: true,
+        threshold: 0.1,
+        weights,
+    })?;
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 13, at);
+    let kept = seed_turn(
+        &vault,
+        &session,
+        "user",
+        "Alice moved to Osaka yesterday.",
+        at,
+    );
+    let skipped = seed_turn(&vault, &session, "user", "Budget doubled.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![kept]]);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+
+    vault.set_prefilter_config(PrefilterConfig {
+        enabled: false,
+        threshold: 0.1,
+        weights,
+    })?;
+    reopen_prefilter_rescan(&vault, DreamerConsolidationScope::Micro, at)?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    let rounds = micro_rounds(&vault)?;
+    assert_eq!(rounds.len(), 2);
+    assert!(rounds[1].contains(&skipped));
+    Ok(())
+}
+
+/// Sol R1 (P1): the public enqueue left an edge-less turn out and reported
+/// success, but the complete-second watermark its callers settle with parks
+/// nothing, so the turn was stranded behind it. The public door refuses it.
+#[test]
+fn the_public_enqueue_refuses_a_turn_without_its_conversation_edge() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 14, at);
+    let orphan = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &orphan,
+            ENTITY_TYPE_TURN,
+            occurred(at),
+            at,
+            &turn_body("user", "My manager is Ren.", None),
+        )
+        .commit()?;
+    seed_turn(
+        &vault,
+        &session,
+        "user",
+        "I start at Acme on Monday.",
+        at + 1,
+    );
+    let scope = DreamerConsolidationScope::Micro;
+    let watermark = read_watermark(&vault, scope)?;
+    let scan = scan_dirty_turns(&vault, scope, &watermark, 10)?;
+    assert!(scan.iter().any(|turn| turn.turn_id == orphan));
+    assert!(enqueue_partition_attempts(&vault, scope, &scan, &watermark, "run", at + 2).is_err());
+    assert!(micro_attempts(&vault)?.is_empty());
+    Ok(())
+}
+
+/// Sol R1 (P1): a TURN whose `txt` moved into its document read as no text,
+/// so the sieve flagged nothing and the projector found no material, and the
+/// due wake consumed the turn unplanned. Both read the logical body.
+#[cfg(feature = "sync")]
+#[test]
+fn a_turn_whose_text_lives_in_its_document_is_sieved_and_planned() -> Result<()> {
+    use crate::entity_doc::{DocAuthorization, TextField};
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 15, at);
+    let turn = seed_turn(&vault, &session, "user", "Alice arrives tomorrow.", at);
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let authenticated = vault.authenticate_owner(
+        owner,
+        "principal:turn-wake-test",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.migrate_entity_text(
+        &turn,
+        &TextField::MapField("txt".into()),
+        crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+        &DocAuthorization::Owner(&authenticated),
+    )?;
+
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 1)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![turn]]);
+    let kinds: Vec<_> = vault
+        .sieve_queue(16)?
+        .into_iter()
+        .filter(|span| span.turn == turn)
+        .map(|span| span.kind)
+        .collect();
+    assert!(kinds.contains(&crate::dreamer_wake::SpanKind::Date));
+    assert!(kinds.contains(&crate::dreamer_wake::SpanKind::Name));
     Ok(())
 }

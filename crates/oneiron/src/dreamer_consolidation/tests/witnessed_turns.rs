@@ -184,7 +184,7 @@ fn run_context(
 /// The shipped policy (its Dreamer read grant included) plus the one permit
 /// for engine-voice `system` rows: an owner-authored `auto` ceiling bound to
 /// `writer`.
-fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
+pub(super) fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
             .expect("default policy map")

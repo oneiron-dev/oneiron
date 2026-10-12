@@ -29,8 +29,7 @@ fn witness(vault: &Vault, turn_ref: &str, text: &str) -> EntityId {
                 ENTITY_TYPE_PERSON,
                 TimeRange { start: 1, end: 1 },
                 1,
-                &rmp_serde::to_vec_named(&serde_json::json!({ "name": "speaker" }))
-                    .expect("body"),
+                &rmp_serde::to_vec_named(&serde_json::json!({ "name": "speaker" })).expect("body"),
             )
             .expect("speaker");
     }
@@ -151,12 +150,19 @@ fn a_turn_with_a_date_and_a_name_queues_both_by_score_and_a_restart_reads_nothin
     assert_eq!(queue[0].kind, SpanKind::Date, "the surer date leads");
     assert!(queue.windows(2).all(|pair| pair[0].score >= pair[1].score));
     // No model rung has run: every span waits on the novelty question.
-    assert!(queue.iter().all(|span| span.owed.contains(&SieveRung::Novelty)));
+    assert!(
+        queue
+            .iter()
+            .all(|span| span.owed.contains(&SieveRung::Novelty))
+    );
 
     drop(vault);
     let vault = open(dir.path(), false);
     assert_eq!(vault.sieve_queue(usize::MAX).expect("queue"), queue);
-    assert_eq!(vault.sieve_pass(NOW + 1).expect("pass"), SievePass::default());
+    assert_eq!(
+        vault.sieve_pass(NOW + 1).expect("pass"),
+        SievePass::default()
+    );
     assert_eq!(vault.sieve_queue(usize::MAX).expect("queue"), queue);
 
     // The cursor stood: a new turn is the only thing the next pass reads.
@@ -221,5 +227,8 @@ fn saved_tags_stand_in_for_the_rule_names_once_the_tagger_saves_them() {
         ]
     );
     // Read once: the next pass finds nothing owed.
-    assert_eq!(vault.sieve_pass(NOW + 2).expect("pass"), SievePass::default());
+    assert_eq!(
+        vault.sieve_pass(NOW + 2).expect("pass"),
+        SievePass::default()
+    );
 }

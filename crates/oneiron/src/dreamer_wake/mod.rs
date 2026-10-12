@@ -25,50 +25,87 @@ pub use self::driver::*;
 pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::policy::*;
+pub use self::projector::ProjectorPolicy;
+pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;
 pub use self::recipe::*;
 pub use self::scheduling::*;
-pub use self::types::*;
-pub use self::projector::ProjectorPolicy;
+pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
 pub use self::sieve::{
     RuleClass, SievePass, SievePolicy, SieveRung, SieveSpan, SpanBand, SpanKind, SpanOrigin,
 };
-pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;
-pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
+pub use self::types::*;
 
-/// The erase hook, in the erasing transaction before the graph is torn down:
-/// an erased TURN leaves the sieve and the projection, and a TURN whose
-/// MESSAGE is erased leaves them too and is owed a new read of the words it
-/// keeps.
+/// The erase hook, in the erasing transaction before the graph is torn down.
+/// The shared physical tear calls it for every delete door (facade, batch,
+/// cascade), and the soft erase beside its other derived-state hooks. An
+/// erased TURN leaves the sieve and the projection; a TURN whose MESSAGE is
+/// erased leaves them too and is owed a new read of the words it keeps.
 pub(crate) fn erase_in_txn(
-    vault: &crate::Vault,
+    store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &crate::EntityId,
 ) -> crate::Result<()> {
-    use crate::ports::EntityStoreRead;
-    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
-    let Some(row) = vault.store.port_entity_record(txn, id)? else {
-        return Ok(());
-    };
-    let turns = match row.entity_type {
-        ENTITY_TYPE_TURN => vec![*id],
-        ENTITY_TYPE_MESSAGE => vault.filtered_edge_peers(
-            txn,
-            crate::ports::EdgeDirection::Out,
-            id,
-            crate::edge::EdgeKind::PartOf,
-            Some(ENTITY_TYPE_TURN),
-            "dreamer erased message turns",
-        )?,
-        _ => return Ok(()),
-    };
+    let turns = text_turns_in_txn(store, txn, id)?;
     for turn in &turns {
-        sieve::erase_turn_in_txn(vault, txn, turn)?;
-        projector::erase_turn_in_txn(vault, txn, turn)?;
+        sieve::erase_turn_in_txn(store, txn, turn)?;
+        projector::erase_turn_in_txn(store, txn, turn)?;
         if turn != id {
-            sieve::owe_read_in_txn(vault, txn, turn)?;
+            sieve::owe_read_in_txn(store, txn, turn)?;
         }
     }
     Ok(())
+}
+
+/// The publication hook: a TURN, or a MESSAGE inside one, whose text a
+/// write changed owes that turn a new sieve read, committed with the text.
+/// Unlike the tag and vector marks it needs no model configured.
+pub(crate) fn mark_on_publication_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &crate::EntityId,
+) -> crate::Result<()> {
+    for turn in text_turns_in_txn(store, txn, entity)? {
+        sieve::owe_read_in_txn(store, txn, &turn)?;
+    }
+    Ok(())
+}
+
+/// The TURNs whose words `id` is: itself for a TURN, every TURN a MESSAGE is
+/// part of (each `PartOf` edge, however many), none for anything else.
+fn text_turns_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &crate::EntityId,
+) -> crate::Result<Vec<crate::EntityId>> {
+    use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    let Some(row) = store.port_entity_record(txn, id)? else {
+        return Ok(Vec::new());
+    };
+    match row.entity_type {
+        ENTITY_TYPE_TURN => Ok(vec![*id]),
+        ENTITY_TYPE_MESSAGE => {
+            let mut turns = Vec::new();
+            let edges = store.port_edges(
+                txn,
+                id,
+                EdgeDirection::Out,
+                Some(crate::edge::EdgeKind::PartOf),
+                None,
+            )?;
+            for edge in edges {
+                let target = edge?.target;
+                if store
+                    .port_entity_record(txn, &target)?
+                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_TURN)
+                {
+                    turns.push(target);
+                }
+            }
+            Ok(turns)
+        }
+        _ => Ok(Vec::new()),
+    }
 }
 
 // `settlement` is impl-only: it re-opens `impl DreamerWakeDriver` and owns no

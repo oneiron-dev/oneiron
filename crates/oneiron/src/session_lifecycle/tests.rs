@@ -494,7 +494,10 @@ fn in_txn_planner_parks_an_edgeless_turn_and_plans_every_other_turn() {
     assert_eq!(payloads.len(), 1);
     let (_, turns, _) = decode_partition_payload(&payloads[0].input).expect("decode partition");
     assert_eq!(turns, vec![a, tie, after]);
-    assert!(meso_remaining(&vault).is_empty(), "the edge-less turn waits parked");
+    assert!(
+        meso_remaining(&vault).is_empty(),
+        "the edge-less turn waits parked"
+    );
 
     vault
         .batch()

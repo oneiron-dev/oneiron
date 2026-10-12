@@ -54,11 +54,58 @@ const MONTHS: &str = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?
 /// Words a capitalized run never starts with or holds: sentence openers and
 /// the calendar's own words, which the date rules read.
 const NOT_NAMES: &[&str] = &[
-    "a", "an", "and", "but", "he", "how", "i", "i'll", "i'm", "i've", "i'd", "if", "it", "it's",
-    "my", "no", "ok", "she", "so", "that", "that's", "the", "then", "there", "there's", "they",
-    "this", "we", "we'll", "we've", "what", "when", "why", "you", "you'll", "you're", "yes",
-    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january",
-    "february", "march", "april", "june", "july", "august", "september",
+    "a",
+    "an",
+    "and",
+    "but",
+    "he",
+    "how",
+    "i",
+    "i'll",
+    "i'm",
+    "i've",
+    "i'd",
+    "if",
+    "it",
+    "it's",
+    "my",
+    "no",
+    "ok",
+    "she",
+    "so",
+    "that",
+    "that's",
+    "the",
+    "then",
+    "there",
+    "there's",
+    "they",
+    "this",
+    "we",
+    "we'll",
+    "we've",
+    "what",
+    "when",
+    "why",
+    "you",
+    "you'll",
+    "you're",
+    "yes",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "january",
+    "february",
+    "march",
+    "april",
+    "june",
+    "july",
+    "august",
+    "september",
 ];
 
 /// The compiled date patterns, built once per sieve pass.
@@ -121,11 +168,8 @@ impl Rules {
     /// Every date and name span of `text`, in text order, none overlapping.
     pub(super) fn spans(&self, text: &str) -> Vec<RuleSpan> {
         let code = code_ranges(text);
-        let outside = |start: usize, end: usize| {
-            !code
-                .iter()
-                .any(|&(from, to)| start < to && from < end)
-        };
+        let outside =
+            |start: usize, end: usize| !code.iter().any(|&(from, to)| start < to && from < end);
         let mut dates: Vec<RuleSpan> = self
             .dates
             .iter()
@@ -136,15 +180,19 @@ impl Rules {
                     class: *class,
                 })
             })
-            .chain(temporal_phrase_spans(text).into_iter().map(|phrase| RuleSpan {
-                start: phrase.start,
-                end: phrase.end,
-                class: if phrase.resolved {
-                    RuleClass::RelativeDate
-                } else {
-                    RuleClass::VagueDate
-                },
-            }))
+            .chain(
+                temporal_phrase_spans(text)
+                    .into_iter()
+                    .map(|phrase| RuleSpan {
+                        start: phrase.start,
+                        end: phrase.end,
+                        class: if phrase.resolved {
+                            RuleClass::RelativeDate
+                        } else {
+                            RuleClass::VagueDate
+                        },
+                    }),
+            )
             .filter(|span| outside(span.start, span.end))
             .collect();
         let mut spans = longest_first(&mut dates);
@@ -242,7 +290,9 @@ fn words(text: &str) -> Vec<Word> {
         while end < chars.len() {
             let ch = chars[end].1;
             let joins = matches!(ch, '\'' | '’' | '-')
-                && chars.get(end + 1).is_some_and(|(_, next)| next.is_alphanumeric());
+                && chars
+                    .get(end + 1)
+                    .is_some_and(|(_, next)| next.is_alphanumeric());
             if ch.is_alphanumeric() || joins {
                 end += 1;
             } else {

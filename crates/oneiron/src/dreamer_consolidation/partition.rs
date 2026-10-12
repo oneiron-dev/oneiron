@@ -350,9 +350,10 @@ fn partition_attempt_input(
 ///
 /// The caller still owns watermark settlement. Exact partition-batch replays
 /// coalesce on advisory dedupe keys; overlapping batches remain distinct.
-/// Missing, malformed, or no-longer-admissible turn rows abort the whole round.
-/// A turn without its conversation edge is left out: the settlement that
-/// passes it parks it on its carrier until the edge lands.
+/// Missing, malformed, or no-longer-admissible turn rows abort the whole round,
+/// and so does a turn without its conversation edge: the complete-second
+/// [`advance_watermark`](super::advance_watermark) this door's callers settle
+/// with parks nothing, so passing such a turn would strand it.
 pub fn enqueue_partition_attempts(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -363,6 +364,14 @@ pub fn enqueue_partition_attempts(
 ) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
     let turn_ids: Vec<_> = dirty_turns.iter().map(|turn| turn.turn_id).collect();
     vault.with_write_txn_grouped(|wtxn| {
+        if read_partition_turns_in_txn(vault, wtxn, scope, &turn_ids)?
+            .iter()
+            .any(|turn| turn.conversation.is_none())
+        {
+            return Err(invalid_consolidation(
+                "dreamer planned turn has no conversation",
+            ));
+        }
         enqueue_partition_attempts_in_txn(
             vault,
             wtxn,
@@ -399,7 +408,9 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
 }
 
 /// [`enqueue_partition_attempts_in_txn`], naming the partition each attempt
-/// plans.
+/// plans. A turn without its conversation edge is left out: every caller
+/// settles through [`advance_watermark_in_txn`](super::watermark::advance_watermark_in_txn),
+/// which parks it on its carrier until the edge lands.
 pub(crate) fn enqueue_partition_plans_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

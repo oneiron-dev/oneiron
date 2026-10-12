@@ -23,7 +23,8 @@ fn invalid() -> Error {
 pub struct SievePolicy {
     /// Turns one pass reads; the rest wait for the next pass.
     pub max_turns_per_pass: u32,
-    /// Timeline rows one pass steps over looking for turns.
+    /// Timeline rows one pass's forward scan steps over looking for turns.
+    /// The late sweep of the cursor's own second is not capped by it.
     pub max_scan_per_pass: u32,
     /// Interest of a date span at full confidence.
     pub date_interest: u32,
@@ -85,10 +86,12 @@ impl SievePolicy {
 }
 
 pub(super) fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<SievePolicy> {
-    let policy = match POLICY.get(&vault.store, txn, &()).map_err(|error| match error {
-        Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid(),
-        other => other,
-    })? {
+    let policy = match POLICY
+        .get(&vault.store, txn, &())
+        .map_err(|error| match error {
+            Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid(),
+            other => other,
+        })? {
         Some(row) => row,
         None => serde_json::from_str(DEFAULT_POLICY).map_err(|_| invalid())?,
     };

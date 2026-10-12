@@ -262,10 +262,11 @@ impl Vault {
     /// closes an N-turn grain; turns that landed together are due when any of
     /// their ordinals is. A due window goes to the projector's surprise check
     /// partition by partition: a partition whose material the projection
-    /// already holds writes nothing, and the rest are queued with their
-    /// material held. Either way the window is read: the watermark passes it.
-    /// Sieve, enqueue, held material and Micro watermark land in one
-    /// transaction, so a crash cannot queue a window twice or lose one.
+    /// already holds writes nothing, its turns riding the round that holds
+    /// it, and the rest are queued as their partitions' latest rounds.
+    /// Either way the window is read: the watermark passes it. Sieve,
+    /// enqueue, projector rows and Micro watermark land in one transaction,
+    /// so a crash cannot queue a window twice or lose one.
     ///
     /// An imported TURN belongs to its import's one review (ARCH-0027): it is
     /// never planned here and never counts. A TURN without its conversation

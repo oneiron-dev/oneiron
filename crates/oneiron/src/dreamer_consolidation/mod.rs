@@ -78,7 +78,9 @@ pub(crate) use provenance::{
 pub use resources::ScopedConsolidationWrite;
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub use support::*;
-pub(crate) use turn_text::{TurnText, cited_evidence_bytes, live_turn_text_in};
+pub(crate) use turn_text::{
+    TurnText, cited_evidence_bytes, live_turn_text_in, projected_turn_text_in,
+};
 pub(crate) use wake_plan::AttemptPreparation;
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};
 pub use watermark::*;

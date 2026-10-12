@@ -1,5 +1,5 @@
-//! A TURN's words as the sieve and the projector read them: one chunk per
-//! source row, each with the digest that versions it.
+//! A TURN's words as the sieve reads them: one chunk per source row, each
+//! with the digest that versions it.
 
 use crate::dreamer_consolidation::decode_turn_body;
 use crate::error::Result;
@@ -33,9 +33,10 @@ impl Chunk {
 }
 
 /// The chunks of a live TURN, `None` when it is absent, deleted, archived or
-/// not a TURN. A TURN whose body carries `txt|text` reads as that one chunk,
-/// as a consolidation branch reads it. A witnessed TURN reads its visible
-/// MESSAGE rows in message order, the words its saved tags index.
+/// not a TURN. A TURN whose logical body carries `txt|text` (a document's
+/// text when the field lives in one) reads as that one chunk, as a
+/// consolidation branch reads it. A witnessed TURN reads its visible MESSAGE
+/// rows in message order, the words its saved tags index.
 pub(crate) fn turn_chunks_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -44,13 +45,16 @@ pub(crate) fn turn_chunks_in_txn(
     let Some(members) = crate::tagging::turn_members_in_txn(vault, txn, turn)? else {
         return Ok(None);
     };
-    let LiveEntityRow::Live { entity_type, body } = live_entity_row_in_txn(&vault.store, txn, turn)?
+    let LiveEntityRow::Live { entity_type, .. } = live_entity_row_in_txn(&vault.store, txn, turn)?
     else {
         return Ok(None);
     };
     if entity_type != ENTITY_TYPE_TURN {
         return Ok(None);
     }
+    let Some(body) = crate::ports::safe_read_text(vault, txn, turn)? else {
+        return Ok(None);
+    };
     if let Some(text) = decode_turn_body(&body).text {
         return Ok(Some(vec![Chunk::new(*turn, text)]));
     }

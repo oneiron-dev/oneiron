@@ -14,9 +14,13 @@
 //! The queue, the read records and the cursor commit together in the pass's
 //! one transaction, so a restart neither loses a reading nor makes it twice.
 //! A turn is read again only when its words or its saved tags change: the
-//! re-dirty door and the tag save owe it a read. The rows are derived and
-//! local, like the tag sets they point at; the sieve keeps no copy of a tag,
-//! only its place in the turn's tag set and the envelope it was read under.
+//! re-dirty door, the text publication doors (an entity document's write,
+//! its restore, an idle revision) and the tag save owe it a read, and so
+//! does a MESSAGE erased from it. A generic re-put that keeps a TURN's
+//! temporal key behind the cursor owes nothing, the same limit consolidation
+//! documents for it. The rows are derived and local, like the tag sets they
+//! point at; the sieve keeps no copy of a tag, only its place in the turn's
+//! tag set and the envelope it was read under.
 
 mod chunks;
 mod policy;
@@ -28,7 +32,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) use chunks::{Chunk, turn_chunks_in_txn};
+use chunks::{Chunk, turn_chunks_in_txn};
 pub use policy::SievePolicy;
 pub use rules::RuleClass;
 
@@ -36,6 +40,7 @@ use crate::error::Result;
 use crate::ports::{EntityStoreRead, EntityTime, TimelineQuery};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::Store;
 use crate::{EntityId, Vault};
 
 /// The version of the rules in [`rules`]. Readings and spans name it, so a
@@ -173,22 +178,22 @@ impl Vault {
 /// Owes `turn` a new read in the caller's transaction: its words or its saved
 /// tags changed.
 pub(crate) fn owe_read_in_txn(
-    vault: &Vault,
+    store: &Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    OWED.put(&vault.store, txn, turn, &())
+    OWED.put(store, txn, turn, &())
 }
 
 /// Takes `turn` out of the sieve in an erasing transaction: its spans, its
 /// reading and any read it was owed.
 pub(crate) fn erase_turn_in_txn(
-    vault: &Vault,
+    store: &Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    retire_in_txn(vault, txn, turn)?;
-    OWED.delete(&vault.store, txn, turn)?;
+    retire_in_txn(store, txn, turn)?;
+    OWED.delete(store, txn, turn)?;
     Ok(())
 }
 
@@ -211,7 +216,14 @@ pub(crate) fn sieve_pass_in_txn(
     let mut left = policy.max_turns_per_pass as usize;
     let owed = OWED.scan_keys(&vault.store, txn, &[])?;
     for turn in owed.iter().take(left) {
-        reader.read_in_txn(vault, txn, turn, &mut pass)?;
+        // An owed read admits the turn as the scans do: a turn the live
+        // sieve does not read (imported, or a role GATE-10 keeps out) keeps
+        // no spans here.
+        if sieved_turn_in_txn(vault, txn, turn)? {
+            reader.read_in_txn(vault, txn, turn, &mut pass)?;
+        } else {
+            pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;
+        }
         OWED.delete(&vault.store, txn, turn)?;
     }
     if owed.len() >= left {
@@ -246,14 +258,14 @@ fn sieved_turn_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Re
 }
 
 /// Removes a turn's reading and every span it queued.
-fn retire_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<usize> {
-    let Some(held) = READ.get(&vault.store, txn, turn)? else {
+fn retire_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<usize> {
+    let Some(held) = READ.get(store, txn, turn)? else {
         return Ok(0);
     };
     for key in &held.spans {
-        QUEUE.delete(&vault.store, txn, key)?;
+        QUEUE.delete(store, txn, key)?;
     }
-    READ.delete(&vault.store, txn, turn)?;
+    READ.delete(store, txn, turn)?;
     Ok(held.spans.len())
 }
 
@@ -269,6 +281,8 @@ impl Reader {
     /// Reads the rows that landed in the cursor's own second after it moved
     /// on, behind it in id order: a same-second write the forward scan never
     /// sees. A turn the sieve has read is skipped here; its changes are owed.
+    /// The sweep reads the whole second up to the cursor, never a first page
+    /// of it, and a sweep the budget cuts short keeps the cursor in place.
     fn sweep_late_in_txn(
         &self,
         vault: &Vault,
@@ -282,22 +296,25 @@ impl Reader {
             end: Bound::Included(at.learned_at),
             ..Default::default()
         };
-        let second = vault
-            .store
-            .port_entity_timeline(txn, query)?
-            .take(self.policy.max_scan_per_pass as usize)
-            .collect::<Result<Vec<_>>>()?;
+        let mut behind = Vec::new();
+        for entry in vault.store.port_entity_timeline(txn, query)? {
+            let entry = entry?;
+            if entry.id >= at.turn {
+                break;
+            }
+            behind.push(entry.id);
+        }
         let mut read = 0;
-        for entry in second.iter().take_while(|entry| entry.id < at.turn) {
+        for id in &behind {
             if read >= left {
                 pass.more = true;
                 break;
             }
             // A turn that reads gone has nothing to hold its place; it costs
             // the budget nothing, so it can never keep a pass coming back.
-            if !READ.contains(&vault.store, txn, &entry.id)?
-                && sieved_turn_in_txn(vault, txn, &entry.id)?
-                && self.read_in_txn(vault, txn, &entry.id, pass)?
+            if !READ.contains(&vault.store, txn, id)?
+                && sieved_turn_in_txn(vault, txn, id)?
+                && self.read_in_txn(vault, txn, id, pass)?
             {
                 read += 1;
             }
@@ -363,7 +380,7 @@ impl Reader {
         pass: &mut SievePass,
     ) -> Result<bool> {
         let Some(chunks) = turn_chunks_in_txn(vault, txn, turn)? else {
-            pass.spans_retired += retire_in_txn(vault, txn, turn)?;
+            pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;
             return Ok(false);
         };
         let reading = chunks::reading_digest(&chunks);
@@ -387,7 +404,7 @@ impl Reader {
         if let (Some(tags), NameSource::SavedTags { envelope }) = (&tags, names) {
             spans.extend(self.tag_spans(turn, &chunks, tags, envelope));
         }
-        pass.spans_retired += retire_in_txn(vault, txn, turn)?;
+        pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;
         let mut keys = Vec::with_capacity(spans.len());
         for span in spans {
             let key = ((u32::MAX - span.score).to_be_bytes(), span.id);

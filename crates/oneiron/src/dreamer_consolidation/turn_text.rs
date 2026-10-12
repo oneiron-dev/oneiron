@@ -223,7 +223,51 @@ pub(super) fn collect_in(
     turn_body: &[u8],
     withheld: &mut usize,
 ) -> Result<TurnText> {
-    let vault = read.vault();
+    collect_with(read.vault(), txn, turn, turn_body, withheld, |ids| {
+        message_reader(read)?.get_entities_parts_in_txn(txn, ids)
+    })
+}
+
+/// The text a consolidation branch reads of one stored TURN, by the same
+/// projection, with every row read unscoped in the caller's transaction:
+/// the projector's material ([`crate::dreamer_wake`]). A branch reads all of
+/// these words or refuses the turn, so no reader sees fewer. `None` when the
+/// TURN is gone or has no text.
+pub(crate) fn projected_turn_text_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<String>> {
+    use crate::ports::EntityStore;
+    // The logical body: a document-backed `txt` reads as its document.
+    let Some(row) = vault.port_entity_get(txn, turn)? else {
+        return Ok(None);
+    };
+    if row.entity_type != ENTITY_TYPE_TURN {
+        return Ok(None);
+    }
+    let text = collect_with(vault, txn, turn, &row.body, &mut 0, |ids| {
+        ids.iter()
+            .map(|id| {
+                Ok(vault
+                    .port_entity_get(txn, id)?
+                    .map(|row| (row.entity_type, row.learned_at, row.body)))
+            })
+            .collect()
+    })?;
+    Ok(text.into_text())
+}
+
+/// [`collect_in`] over any reader of the MESSAGE rows: `read_rows` returns
+/// each id's `(type, learned_at, logical body)`, `None` where it is withheld.
+fn collect_with(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    turn_body: &[u8],
+    withheld: &mut usize,
+    read_rows: impl FnOnce(&[EntityId]) -> Result<Vec<Option<SourceRow>>>,
+) -> Result<TurnText> {
     let facts = decode_turn_body(turn_body);
     if facts.text.is_some() {
         return Ok(TurnText {
@@ -277,7 +321,7 @@ pub(super) fn collect_in(
     }
     ids.sort_unstable();
     ids.dedup();
-    let rows = message_reader(read)?.get_entities_parts_in_txn(txn, &ids)?;
+    let rows = read_rows(&ids)?;
     let unreadable = rows.iter().filter(|row| row.is_none()).count();
     if unreadable != 0 {
         *withheld += unreadable;

@@ -265,8 +265,8 @@ impl Vault {
                 vector_refill::clear(&self.store, &mut txn, &input.entity)?;
             }
             // A moved frontier of a turn's text owes the tagger a pass again,
-            // committed with the frontier (ARCH-0036), and the turn a vector
-            // of its new text (ARCH-0004).
+            // committed with the frontier (ARCH-0036), the turn a vector of
+            // its new text (ARCH-0004), and the sieve a new read.
             crate::tagging::mark_on_publication_in_txn(
                 self,
                 &mut txn,
@@ -279,6 +279,7 @@ impl Vault {
                 &input.entity,
                 input.entity_type,
             )?;
+            crate::dreamer_wake::mark_on_publication_in_txn(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
             if self.config.tagging.is_some() {
                 self.store.notify_attempt_observers();

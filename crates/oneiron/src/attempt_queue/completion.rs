@@ -12,6 +12,9 @@ impl AttemptQueue<'_> {
     /// Completes an attempt, retires its dedupe entry, and stamps its pack
     /// receipt in the caller's transaction. The caller must abort on error.
     /// Already-completed attempts are idempotent, as in [`Self::complete`].
+    /// Every completion door ends here, so a Dreamer projector round its
+    /// attempt carries is applied here too, and again (idempotently) when an
+    /// already-completed attempt is reported.
     pub(crate) fn complete_storage_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -22,7 +25,10 @@ impl AttemptQueue<'_> {
         };
         let mut record = decode_record(&raw_record, input.id)?;
         match record.state {
-            AttemptState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
+            AttemptState::Completed => {
+                crate::dreamer_wake::apply_projection_in_txn(self.store, wtxn, &record)?;
+                Ok(CompleteOutcome::AlreadyCompleted(record))
+            }
             AttemptState::Leased => {
                 validate_lease_owner(&input.lease_owner)?;
                 validate_transition_lease(
@@ -47,6 +53,7 @@ impl AttemptQueue<'_> {
                     &record,
                     &input.lease_owner,
                 )?;
+                crate::dreamer_wake::apply_projection_in_txn(self.store, wtxn, &record)?;
                 Ok(CompleteOutcome::Completed(record))
             }
             state => Err(invalid_transition("complete", state.as_str())),
