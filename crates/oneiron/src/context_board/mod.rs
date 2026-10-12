@@ -102,7 +102,7 @@ pub use plugin::{
 };
 pub use tasks::{
     CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow,
-    TasksSection, expand_task, failed_lane, fold_up_status, render_tasks_section,
+    TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status, render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
 
