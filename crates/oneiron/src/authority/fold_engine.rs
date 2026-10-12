@@ -47,6 +47,9 @@ struct FoldLocalInputs<'a> {
     observations: Option<&'a AuthorityLocalObservations>,
     retire_device_ops: bool,
     pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    /// The handoffs valid on their own rows; only these settle. None settles
+    /// every handoff the fold holds.
+    handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldLocalInputs<'_> {
@@ -54,6 +57,7 @@ impl FoldLocalInputs<'_> {
         observations: None,
         retire_device_ops: true,
         pre_handoff_entries: None,
+        handoff_candidates: None,
     };
 }
 
@@ -267,6 +271,7 @@ fn fold_authority_log_inner(
                 FoldLocalInputs {
                     retire_device_ops: false,
                     pre_handoff_entries: Some(&allowed),
+                    handoff_candidates: Some(&candidates),
                     ..local
                 },
             );
@@ -303,6 +308,7 @@ fn fold_authority_log_inner(
             consent_arm,
             pre_handoff_entries: local.pre_handoff_entries,
         },
+        local.handoff_candidates,
     );
     let mut fold = apply_stale_roster_window(
         entries,
@@ -450,6 +456,7 @@ fn has_re_root_ancestor(
 fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
+    handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
 ) -> AuthorityFold {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
@@ -574,16 +581,29 @@ fn fold_authority_log_once(
         issues.push(AuthorityFoldIssue::InvalidAncestry(hash));
     }
 
-    reject_below_concurrent_tier_floors(&mut states, &by_hash, &entry_ancestors, &mut issues);
     // A handoff's predecessor stays retired on every branch, not only its own.
-    // Fences close before confirmations contend, so a retired key's
-    // confirmation never wins a nonce collision against the new root's.
+    // Fences close before concurrent floors and confirmations contend, so a
+    // retired key's floor or confirmation never prunes the new root's rows.
     let retirements = super::retired_signers::settle_handoffs(
         &mut states,
         &by_hash,
         &entry_ancestors,
+        handoffs,
         &mut issues,
-        |states, present| federation_confirm_losers(states, &by_hash, present),
+        |states, present| {
+            let mut losers =
+                below_concurrent_tier_floors(states, &by_hash, &entry_ancestors, present);
+            let fallen = |hash: &AuthorityEntryHash| {
+                losers.contains_key(hash)
+                    || entry_ancestors
+                        .get(hash)
+                        .is_some_and(|past| losers.keys().any(|loser| past.contains(loser)))
+            };
+            let confirms =
+                federation_confirm_losers(states, &by_hash, &|hash| present(hash) && !fallen(hash));
+            losers.extend(confirms);
+            losers
+        },
     );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
@@ -714,24 +734,25 @@ fn fold_authority_log_once(
     }
 }
 
-/// The confirmations that lose a collision among the rows `present` keeps.
-/// Confirmations are consumable across branches, not only in ancestry, and
-/// only entries already proven against their live roster contend.
+/// The confirmations that lose a collision among the rows `present` keeps,
+/// with why. Confirmations are consumable across branches, not only in
+/// ancestry, and only entries already proven against their live roster
+/// contend.
 fn federation_confirm_losers(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     present: &dyn Fn(&AuthorityEntryHash) -> bool,
-) -> BTreeSet<AuthorityEntryHash> {
+) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue> {
     let mut ids = BTreeSet::new();
     let mut nonces = BTreeSet::new();
-    let mut rejected = BTreeSet::new();
+    let mut rejected = BTreeMap::new();
     // Hash order is a stable choice among otherwise valid concurrent asks.
     for hash in states.keys().filter(|hash| present(hash)) {
         if let AuthorityOp::FederationConfirm(action) = &entries[hash].op {
             let vault = states[hash].vault_id;
             if ids.contains(&(vault, action.confirm_id)) || nonces.contains(&(vault, action.nonce))
             {
-                rejected.insert(*hash);
+                rejected.insert(*hash, AuthorityFoldIssue::InvalidEntry(*hash));
             } else {
                 ids.insert((vault, action.confirm_id));
                 nonces.insert((vault, action.nonce));

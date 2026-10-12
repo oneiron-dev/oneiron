@@ -253,7 +253,7 @@ pub(in crate::batch) fn apply_put(
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         if replicated {
-            validate_replicated_authority_log_for_local_vault(store, wtxn, &id, data)?;
+            validate_replicated_authority_log_for_local_vault(store, wtxn, &id, data, posture)?;
         } else {
             crate::authority::validate_authority_log_entry_body_bytes(data)?;
         }

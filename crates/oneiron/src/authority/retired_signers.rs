@@ -6,8 +6,8 @@
 //! there, and could install a second root. Retirement is therefore judged
 //! across branches, and it fails closed:
 //! - A handoff takes effect only on its own rows: it and its whole ancestry
-//!   fold, and no confirmation collision prunes them. A pruned handoff
-//!   installs nothing and retires nothing.
+//!   fold on their own, and no confirmation collision or concurrent tier
+//!   floor prunes them. A pruned handoff installs nothing and retires nothing.
 //! - Its fence holds every key in its parents' rosters, live or revoked,
 //!   except its successor. Such a key signs nothing that stands outside the
 //!   handoff and its own ancestry. No later handoff or merge widens that line,
@@ -129,21 +129,32 @@ impl Retirements {
 }
 
 /// Settles the handoffs in `states` (see the module doc), drops what they
-/// refuse, and returns the closed fences. `contend` names the confirmations
-/// that lose a collision among the rows it is shown. Fences close first, so a
-/// fenced key's confirmation never wins one; a handoff whose own rows then
-/// lose one is pruned, and the fold settles again without it.
+/// refuse, and returns the closed fences. Only `eligible` handoffs, those
+/// valid on their own rows, take part when the fold has such a set; any other
+/// handoff is refused at once and fences nothing. `contend` names the rows
+/// that lose to a concurrent restriction (a tier floor, a confirmation
+/// collision) among the rows it is shown, with why. Fences close first, so a
+/// fenced key's row never wins one; a handoff whose own rows then lose one is
+/// pruned, and the fold settles again without it until nothing more is.
 pub(super) fn settle_handoffs(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    eligible: Option<&BTreeSet<AuthorityEntryHash>>,
     issues: &mut Vec<AuthorityFoldIssue>,
     contend: impl Fn(
         &BTreeMap<AuthorityEntryHash, FoldState>,
         &dyn Fn(&AuthorityEntryHash) -> bool,
-    ) -> BTreeSet<AuthorityEntryHash>,
+    ) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
-    let mut pruned = BTreeMap::new();
+    let mut pruned: BTreeMap<_, _> = states
+        .keys()
+        .filter(|hash| {
+            matches!(entries[*hash].op, AuthorityOp::ReRoot { .. })
+                && eligible.is_some_and(|eligible| !eligible.contains(*hash))
+        })
+        .map(|handoff| (*handoff, AuthorityFoldIssue::UnsettledHandoff(*handoff)))
+        .collect();
     loop {
         let mut refused = pruned.clone();
         let retirements = close_fences(states, entries, ancestors, &mut refused);
@@ -152,13 +163,17 @@ pub(super) fn settle_handoffs(
         let lost: Vec<_> = retirements
             .fences
             .iter()
-            .filter(|fence| !fence.line.is_disjoint(&losers))
-            .map(|fence| fence.handoff)
+            .filter(|fence| losers.keys().any(|loser| fence.line.contains(loser)))
+            .map(|fence| {
+                let issue = losers
+                    .get(&fence.handoff)
+                    .cloned()
+                    .unwrap_or(AuthorityFoldIssue::InvalidAncestry(fence.handoff));
+                (fence.handoff, issue)
+            })
             .collect();
         if lost.is_empty() {
-            for loser in losers {
-                refused.insert(loser, AuthorityFoldIssue::InvalidEntry(loser));
-            }
+            refused.extend(losers);
             let gone = with_descendants(states, &refused, ancestors);
             states.retain(|hash, _| {
                 if let Some(issue) = refused.get(hash) {
@@ -170,10 +185,7 @@ pub(super) fn settle_handoffs(
             });
             return retirements;
         }
-        pruned.extend(
-            lost.into_iter()
-                .map(|handoff| (handoff, AuthorityFoldIssue::InvalidAncestry(handoff))),
-        );
+        pruned.extend(lost);
     }
 }
 
@@ -304,6 +316,27 @@ pub(super) fn entry_signer_keys(entry: &AuthorityLogEntry) -> impl Iterator<Item
         .chain(entry.cosigns.iter().map(|cosign| &cosign.public_key))
 }
 
+/// The row stored as authority history at `hash`'s id, if one is. A row of
+/// another kind at that id, or one that does not decode, is none.
+pub(crate) fn stored_authority_row(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    hash: &AuthorityEntryHash,
+) -> crate::error::Result<Option<AuthorityLogEntry>> {
+    let id = authority_log_entity_id_from_hash(hash)?;
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+        return Ok(None);
+    };
+    if crate::batch::EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_AUTHORITY_LOG)
+    {
+        return Ok(None);
+    }
+    Ok(raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| decode_authority_log_entry_body(body).ok()))
+}
+
 /// Whether `entry` is already in the log at its own id, stored as an
 /// authority row. A resident row is history, not a new signature: replaying
 /// it adds no authority, so no door refuses it for its signer, whatever a
@@ -315,17 +348,10 @@ pub(crate) fn authority_row_resident(
     txn: &heed::RoTxn<'_>,
     entry: &AuthorityLogEntry,
 ) -> crate::error::Result<bool> {
-    let id = authority_log_entity_id(entry)?;
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-        return Ok(false);
-    };
-    Ok(crate::batch::EntityMetadataHeader::parse(&raw)
-        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG)
-        && raw
-            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            .is_some_and(|body| {
-                decode_authority_log_entry_body(body).is_ok_and(|row| row == *entry)
-            }))
+    Ok(
+        stored_authority_row(store, txn, &authority_entry_hash(entry)?)?
+            .is_some_and(|row| row == *entry),
+    )
 }
 
 impl AuthorityFold {
@@ -341,5 +367,40 @@ impl AuthorityFold {
     ) -> bool {
         !self.valid_entries.contains(hash)
             && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key))
+    }
+
+    /// Whether `entry` stands on a retired key: it, or a row in its ancestry
+    /// that this fold does not hold, is signed by a key a handoff retired.
+    /// The fold refuses such a row with its descendants, so a door refuses a
+    /// new row that descends from one, whoever signs it. `row` reads an
+    /// ancestor by hash, stored or arriving beside `entry`; the walk stops at
+    /// rows this fold holds, whose ancestry it holds too.
+    pub(crate) fn stands_on_retired_key(
+        &self,
+        hash: &AuthorityEntryHash,
+        entry: &AuthorityLogEntry,
+        row: &mut dyn FnMut(&AuthorityEntryHash) -> crate::error::Result<Option<AuthorityLogEntry>>,
+    ) -> crate::error::Result<bool> {
+        if self.signed_by_retired_key(hash, entry) {
+            return Ok(true);
+        }
+        if self.retired_keys.is_empty() {
+            return Ok(false);
+        }
+        let mut seen = BTreeSet::new();
+        let mut stack = entry.parent_hashes.clone();
+        while let Some(parent) = stack.pop() {
+            if self.valid_entries.contains(&parent) || !seen.insert(parent) {
+                continue;
+            }
+            let Some(ancestor) = row(&parent)? else {
+                continue;
+            };
+            if self.signed_by_retired_key(&parent, &ancestor) {
+                return Ok(true);
+            }
+            stack.extend(ancestor.parent_hashes.iter().copied());
+        }
+        Ok(false)
     }
 }
