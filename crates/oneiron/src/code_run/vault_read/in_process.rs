@@ -160,7 +160,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .include_vectors(false)
             .edge_hop(edge_hop)
             .max_neighbors(max_neighbors)
-            .field_profile(FieldProfile::Standard);
+            .field_profile(FieldProfile::Standard)
+            .caller_off_device(self.scoped_read.off_device());
         if let Some(model) = request.executor_model.as_deref() {
             builder = builder
                 .skill_executor(model)

@@ -139,7 +139,7 @@ pub(super) fn hydrate_entity(
         match crate::claim::decode_claim_body(&live_raw[ENTITY_METADATA_HEADER_LEN..], true) {
             Ok(body) if claim_surfaceable(&body) => {}
             _ => {
-                *claims_suppressed += 1;
+                *claims_suppressed += suppression(vault, rtxn, &options, &id)?;
                 return Ok(None);
             }
         }
@@ -179,7 +179,7 @@ pub(super) fn hydrate_entity(
                 match &decoded_here {
                     Some(body) if claim_surfaceable(body) => gated_claim_body = Some(body),
                     _ => {
-                        *claims_suppressed += 1;
+                        *claims_suppressed += suppression(vault, rtxn, &options, &id)?;
                         return Ok(None);
                     }
                 }
@@ -268,6 +268,19 @@ pub(super) fn hydrate_entity(
         edges,
         vector,
     }))
+}
+
+/// One suppressed claim's share of `claims_suppressed`: none for a claim a
+/// device-local world keeps, in a pack for a caller off this device.
+fn suppression(
+    vault: &Vault,
+    rtxn: &RoTxn<'_>,
+    options: &HydrateOptions<'_>,
+    id: &EntityId,
+) -> Result<usize> {
+    let kept =
+        options.off_device && crate::settings::device_local_keeps_in(&vault.store, rtxn, id)?;
+    Ok(usize::from(!kept))
 }
 
 /// Projects an already-decoded CLAIM body into the hydrated-fields map —

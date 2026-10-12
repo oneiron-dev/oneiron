@@ -247,6 +247,42 @@ pub(super) struct ClaimStatusGateCache {
     pub(super) body_loads: usize,
 }
 
+impl ClaimStatusGateCache {
+    /// The claims the gate suppressed that the caller may count: for a caller
+    /// off this device, none a device-local world keeps (DEC-0005).
+    pub(super) fn countable_suppressed(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        off_device: bool,
+    ) -> Result<usize> {
+        let flagged = device_local_flags(store, txn, off_device)?;
+        let mut count = 0;
+        for (id, decision) in &self.decisions {
+            if decision.is_none()
+                && !crate::settings::device_local_keeps_among(store, txn, &flagged, id)?
+            {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+}
+
+/// The device-local worlds whose rows a caller's counts leave out: every
+/// flagged one for a caller off this device, none for one on it.
+fn device_local_flags(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    off_device: bool,
+) -> Result<BTreeSet<EntityId>> {
+    if off_device {
+        crate::settings::device_only_worlds_in(store, txn)
+    } else {
+        Ok(BTreeSet::new())
+    }
+}
+
 pub(crate) struct PipelineOutput {
     pub(crate) vector_completed: bool,
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
@@ -296,10 +332,20 @@ pub struct RetrievalWithPendingVectors<T> {
 impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
-    /// scoped caller's final admission gate.
-    pub(super) fn countable_suppressed(&self, store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
+    /// scoped caller's final admission gate. Nor, for a caller off this
+    /// device, does a row a device-local world keeps (DEC-0005).
+    pub(super) fn countable_suppressed(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        off_device: bool,
+    ) -> Result<usize> {
+        let flagged = device_local_flags(store, txn, off_device)?;
         let mut count = 0;
         for id in &self.read_suppressed {
+            if crate::settings::device_local_keeps_among(store, txn, &flagged, id)? {
+                continue;
+            }
             let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
                 continue;
             };

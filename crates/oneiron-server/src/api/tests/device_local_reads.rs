@@ -5,9 +5,9 @@
 
 use super::*;
 use axum::extract::ConnectInfo;
-use oneiron::EntityId;
+use oneiron::{ClaimApprovalStatus, EntityId};
 use serde_json::json;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Where a request comes from: the peer its connection reports, and the
 /// proxy forwarding header it carries, if any.
@@ -16,6 +16,15 @@ struct Origin {
     peer: SocketAddr,
     forwarded: Option<(&'static str, &'static str)>,
 }
+
+const HERE: Origin = Origin {
+    peer: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40100),
+    forwarded: None,
+};
+const AWAY: Origin = Origin {
+    peer: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7)), 40100),
+    forwarded: None,
+};
 
 struct Caller {
     server: Arc<SyncServer>,
@@ -75,6 +84,62 @@ impl Caller {
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
         body.to_string()
     }
+
+    async fn discover(&self, from: Origin) -> Value {
+        let (status, body) = self.call(from, "GET", "/api/core/discover", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    }
+}
+
+/// A server over a vault with its embedded owner, the owner's credential, and
+/// `grower`, the PERSON the claims are about: claims about the owner go to a
+/// pack's L2 base instead of its results.
+fn serve() -> (tempfile::TempDir, Arc<SyncServer>, Caller, EntityId) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                auth_secret: Some("device-local".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let grower = EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &grower,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"grower",
+        )
+        .unwrap();
+    let (slip, key) = crate::test_credentials::credential(
+        &server,
+        &format!("principal_ref={};actor_class=human", owner.to_hex()),
+    );
+    let caller = Caller {
+        server: Arc::clone(&server),
+        slip,
+        key,
+    };
+    (dir, server, caller, grower)
+}
+
+/// Brings the text index up to every claim written so far.
+fn index(server: &SyncServer) {
+    server.vault.set_indexed_idle_delay_ms(0).unwrap();
+    server
+        .vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
 }
 
 fn put_world(vault: &oneiron::Vault) -> EntityId {
@@ -100,13 +165,34 @@ fn put_orchid_claim(
     world: Option<EntityId>,
     text: &str,
 ) -> EntityId {
+    put_claim_as(
+        server,
+        subject,
+        predicate,
+        world,
+        text,
+        ClaimApprovalStatus::Auto,
+        101,
+    )
+}
+
+/// [`put_orchid_claim`] at `approval`, learned at `learned_at`.
+fn put_claim_as(
+    server: &SyncServer,
+    subject: EntityId,
+    predicate: &str,
+    world: Option<EntityId>,
+    text: &str,
+    approval: ClaimApprovalStatus,
+    learned_at: u64,
+) -> EntityId {
     let id = EntityId::now();
     let mut body = oneiron::ClaimBody::new(
         predicate,
         oneiron::ClaimSubject::Entity(subject),
         rmpv::Value::from(text),
         0.8,
-        oneiron::ClaimApprovalStatus::Auto,
+        approval,
         oneiron::ClaimLifecycleStatus::Active,
     )
     .unwrap();
@@ -120,7 +206,7 @@ fn put_orchid_claim(
                 start: 100,
                 end: 100,
             },
-            101,
+            learned_at,
         )
         .unwrap();
     server
@@ -134,35 +220,10 @@ fn put_orchid_claim(
 
 #[tokio::test]
 async fn a_caller_off_this_device_reads_no_device_local_world() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault =
-        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let kept_world = put_world(&vault);
-    let server = Arc::new(
-        SyncServer::new(
-            vault,
-            crate::config::SyncServerConfig {
-                auth_secret: Some("device-local".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    );
+    let (_dir, server, caller, grower) = serve();
+    let kept_world = put_world(&server.vault);
     // A pack gives a world's claims at most half its claim budget, so the
-    // portable claim is base reality's; claims about the owner go to the L2
-    // base, so these are about someone else.
-    let grower = EntityId::now();
-    server
-        .vault
-        .put_entity(
-            &grower,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"grower",
-        )
-        .unwrap();
+    // portable claim is base reality's.
     let kept = put_orchid_claim(
         &server,
         grower,
@@ -177,28 +238,8 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         None,
         "orchid ledger open",
     );
-    server.vault.set_indexed_idle_delay_ms(0).unwrap();
-    server
-        .vault
-        .refresh_staged_indexed_at_idle(u64::MAX)
-        .unwrap();
-    let (slip, key) = crate::test_credentials::credential(
-        &server,
-        &format!("principal_ref={};actor_class=human", owner.to_hex()),
-    );
-    let caller = Caller {
-        server: Arc::clone(&server),
-        slip,
-        key,
-    };
-    let here = Origin {
-        peer: "127.0.0.1:40100".parse().unwrap(),
-        forwarded: None,
-    };
-    let away = Origin {
-        peer: "192.0.2.7:40100".parse().unwrap(),
-        forwarded: None,
-    };
+    index(&server);
+    let (here, away) = (HERE, AWAY);
     // A proxy on this device that marks the traffic it forwards.
     let proxied = Origin {
         forwarded: Some(("x-forwarded-for", "192.0.2.7")),
@@ -308,4 +349,108 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
             assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         }
     }
+}
+
+/// Every count of withheld rows an answer carries.
+fn suppression_counts(body: &Value) -> Vec<u64> {
+    ["/stats/claims_suppressed", "/narrowing/suppressed_count"]
+        .into_iter()
+        .filter_map(|pointer| body.pointer(pointer).and_then(Value::as_u64))
+        .collect()
+}
+
+/// Sol R1 F3: retrieval counts a claim its status gate holds back before any
+/// scoped read sees the row. A caller off this device gets no such count for
+/// a device-local claim; a caller on it still does.
+#[tokio::test]
+async fn a_caller_off_this_device_counts_no_device_local_claim() {
+    let (_dir, server, caller, grower) = serve();
+    let kept_world = put_world(&server.vault);
+    // Proposed claims: the status gate holds each one back.
+    for (predicate, world, text) in [
+        ("test.orchid_kept", Some(kept_world), "orchid ledger kept"),
+        ("test.orchid_open", None, "orchid ledger open"),
+    ] {
+        put_claim_as(
+            &server,
+            grower,
+            predicate,
+            world,
+            text,
+            ClaimApprovalStatus::Proposed,
+            101,
+        );
+    }
+    put_orchid_claim(
+        &server,
+        grower,
+        "test.orchid_shown",
+        None,
+        "orchid ledger shown",
+    );
+    index(&server);
+    server
+        .vault
+        .set_world_device_only(kept_world, true)
+        .unwrap();
+
+    for uri in ["/v1/core/query", "/v1/core/context-pack"] {
+        let here: Value = serde_json::from_str(&caller.answer(HERE, uri).await).unwrap();
+        let away: Value = serde_json::from_str(&caller.answer(AWAY, uri).await).unwrap();
+        let (here, away) = (suppression_counts(&here), suppression_counts(&away));
+        assert!(!away.is_empty(), "{uri}: no count");
+        // The portable proposal still counts off this device.
+        assert!(away.iter().all(|count| *count >= 1), "{uri}: {away:?}");
+        assert_eq!(
+            here.iter().map(|count| count - 1).collect::<Vec<_>>(),
+            away,
+            "{uri}: here {here:?}"
+        );
+    }
+}
+
+/// Sol R1 F4: discovery counts the vault's rows, dates its last activity and
+/// names its predicate namespaces. A caller off this device learns none of
+/// that from a device-local world.
+#[tokio::test]
+async fn discovery_off_this_device_counts_no_device_local_row() {
+    let (_dir, server, caller, grower) = serve();
+    let kept_world = put_world(&server.vault);
+    // The newest row in the vault.
+    let latest = 4_000_000_000;
+    put_claim_as(
+        &server,
+        grower,
+        "keptspace.orchid",
+        Some(kept_world),
+        "orchid ledger kept",
+        ClaimApprovalStatus::Auto,
+        latest,
+    );
+    put_orchid_claim(
+        &server,
+        grower,
+        "openspace.orchid",
+        None,
+        "orchid ledger open",
+    );
+    server
+        .vault
+        .set_world_device_only(kept_world, true)
+        .unwrap();
+
+    let (here, away) = (caller.discover(HERE).await, caller.discover(AWAY).await);
+    let count = |body: &Value, kind: u8| body["counts"][kind.to_string()].as_u64().unwrap_or(0);
+    for kind in [
+        oneiron::registry::ENTITY_TYPE_CLAIM,
+        oneiron::registry::ENTITY_TYPE_WORLD,
+    ] {
+        assert_eq!(count(&here, kind), count(&away, kind) + 1, "type {kind}");
+    }
+    let namespaces = |body: &Value| body["predicate_namespaces"].to_string();
+    assert!(namespaces(&here).contains("keptspace"), "{here}");
+    assert!(!namespaces(&away).contains("keptspace"), "{away}");
+    assert!(namespaces(&away).contains("openspace"), "{away}");
+    assert_eq!(here["last_activity"], json!(latest));
+    assert!(away["last_activity"].as_u64().unwrap() < latest, "{away}");
 }

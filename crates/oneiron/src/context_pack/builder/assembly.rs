@@ -117,7 +117,9 @@ impl<'a> ContextPackBuilder<'a> {
         lane: &crate::claim::ScopedRead<'_>,
     ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, PackRunStatus)> {
         let disclosure = self.disclosure.clone();
-        let run = self.run_unfinalized()?;
+        let run = self
+            .caller_off_device(lane.off_device())
+            .run_unfinalized()?;
         let status = PackRunStatus {
             vector_completed: run.vector_completed,
             temporal_hints: run.temporal_hints,
@@ -344,6 +346,7 @@ impl<'a> ContextPackBuilder<'a> {
                 edge_cache: None,
                 claim_bodies: Some(&claim_bodies),
                 clamp,
+                off_device: self.off_device,
             };
             let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
@@ -459,6 +462,7 @@ impl<'a> ContextPackBuilder<'a> {
                 edge_cache,
                 claim_bodies: Some(&claim_bodies),
                 clamp,
+                off_device: self.off_device,
             };
 
             if self.include_edges && self.edge_hop > 0 {

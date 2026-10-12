@@ -280,6 +280,7 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
             edge_cache: None,
             claim_bodies: None,
             clamp: None,
+            off_device: false,
         },
         &mut claims_suppressed,
     ) {

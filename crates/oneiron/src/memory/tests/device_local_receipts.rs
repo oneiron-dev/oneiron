@@ -1,7 +1,8 @@
-//! Sol on the device-local reads (F2): a caller off this device learns
+//! Sol on the device-local reads (F2, F5): a caller off this device learns
 //! nothing of a device-local claim from the gate's receipts or its consent
 //! tray, on the Memory doors and the live-view adapters alike, and such a
-//! claim takes no place in a page.
+//! claim takes no place in a page. Nor does it learn how a claim it was
+//! served has changed since.
 
 use super::*;
 use crate::claim::{CallerLocality, ClaimBody, ClaimSubject};
@@ -133,5 +134,50 @@ fn a_caller_off_this_device_reads_no_receipt_or_consent_of_a_device_local_claim(
             .unwrap();
             assert_eq!(pending.len(), seen, "{locality:?}");
         }
+    }
+}
+
+#[test]
+fn a_caller_off_this_device_learns_no_later_state_of_a_device_local_claim() {
+    let (_dir, vault) = open_vault();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    // A claim a session was served, retracted since. A board read reports
+    // each served row whose state moved.
+    let id = EntityId::now();
+    let mut body = ClaimBody::new(
+        "test.device_local_lifecycle",
+        ClaimSubject::Entity(owner),
+        rmpv::Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Retracted,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault
+        .put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    vault.set_world_device_only(world, true).unwrap();
+
+    for (locality, state) in [
+        (
+            CallerLocality::OnDevice,
+            Some(crate::context_board::ServedLifecycle::Retracted),
+        ),
+        (CallerLocality::OffDevice, None),
+    ] {
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner).at(locality));
+        assert_eq!(read.read_set_lifecycle(&id).unwrap(), state, "{locality:?}");
     }
 }

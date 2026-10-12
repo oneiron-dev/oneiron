@@ -175,11 +175,16 @@ impl<'a> ScopedRead<'a> {
         self.audience_conjunct_in(txn, id, raw)
     }
 
+    /// Whether this read serves a caller off this device.
+    pub(crate) fn off_device(&self) -> bool {
+        self.actor_key.off_device()
+    }
+
     /// Whether a device-local world keeps `id` from this read: a caller off
     /// this device reads none of its rows (DEC-0005), neither the revision
     /// `raw` a door serves nor the row as it stands. A row whose world cannot
     /// be read stays here too.
-    fn device_withholds_in(
+    pub(super) fn device_withholds_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,

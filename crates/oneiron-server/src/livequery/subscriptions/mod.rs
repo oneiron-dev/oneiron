@@ -52,20 +52,30 @@ pub(crate) trait LiveQuerySource: Send + Sync {
     /// Validate/export the scoped document's updates since this VV. `false`
     /// means the cursor is past retention and requires full-state resync.
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError>;
-    /// Retained, authority-scoped pushes outside the delivery ring.
+    /// The device-only flag generation, read before a derivation: a push
+    /// derived under another one may hold a row a world flagged since keeps
+    /// on this device, so it is never delivered again.
+    fn device_only_generation(&self) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    /// Retained, authority-scoped pushes outside the delivery ring, only when
+    /// each one was derived under `generation`.
     fn replay(
         &self,
         _view: &ScopedView,
         _channel: Channel,
         _cursor: &Cursor,
+        _generation: u64,
     ) -> Result<Option<Vec<Push>>, AppError> {
         Ok(None)
     }
+    /// Retains `pushes`, derived under `generation`.
     fn record(
         &self,
         _view: &ScopedView,
         _channel: Channel,
         _pushes: &[Push],
+        _generation: u64,
     ) -> Result<(), AppError> {
         Ok(())
     }
@@ -143,9 +153,38 @@ struct Subscription {
     coalesced_bytes: usize,
     acked: Option<Cursor>,
     needs_resync: bool,
+    /// The device-only generation read before the derivation this ring was
+    /// opened from. Under another one the ring is retired, never replayed.
+    generation: u64,
 }
 
 impl Subscription {
+    /// Retire every retained push for one gap at the last cursor sent: the
+    /// client resubscribes and gets a fresh snapshot.
+    fn resync(&mut self, id: u64) {
+        if let Some(cursor) = self
+            .ring
+            .back()
+            .map(|p| p.cursor.clone())
+            .or_else(|| self.acked.clone())
+        {
+            self.ring.clear();
+            self.coalesced.clear();
+            self.coalesced_bytes = 0;
+            self.ring.push_back(Push {
+                subscription_id: id,
+                cursor,
+                kind: "gap",
+                result: None,
+            });
+            self.bytes = push_bytes(self.ring.make_contiguous()).unwrap_or(4096);
+            let _ = self
+                .budget
+                .resize(self.metadata_bytes + self.bytes.max(4096));
+        }
+        self.needs_resync = true;
+    }
+
     /// Retire owner-feed payloads without retiring the exact cursors that
     /// named them. Capacity/budget overflow becomes an explicit gap, never a
     /// silent loss of ACK eligibility.
@@ -338,6 +377,10 @@ impl LiveQueries {
             oneiron::EntityId::from_hex(world)
                 .map_err(|_| AppError::bad_request("invalid worldRef", Some("scopedView")))?;
         }
+        // Read before any derivation below. A ring or journal push derived
+        // under another generation may hold a row a world flagged since keeps
+        // on this device: a resume then gets a gap and a fresh snapshot.
+        let generation = self.source.device_only_generation()?;
         let mut state = self.state.lock().map_err(|_| state_error())?;
         let new_subscription = !state.subs.contains_key(&id);
         let mut latest = None;
@@ -373,7 +416,10 @@ impl LiveQueries {
                 // A retained ring may predate an indexed publication. Re-read
                 // the authorized view before returning it, even for an acked
                 // cursor: the hub may not have drained the notice yet.
-                if self.source.can_resume(cursor)? && !sub.needs_resync {
+                if self.source.can_resume(cursor)?
+                    && !sub.needs_resync
+                    && sub.generation == generation
+                {
                     let derived = self.source.derive(&view, channel)?;
                     if fingerprint(&derived.value)? == sub.current {
                         if sub.acked.as_ref() == Some(cursor) {
@@ -426,7 +472,7 @@ impl LiveQueries {
         if channel != Channel::OwnerFeed
             && let Some(cursor) = cursor
             && self.source.can_resume(cursor)?
-            && let Some(mut replay) = self.source.replay(&view, channel, cursor)?
+            && let Some(mut replay) = self.source.replay(&view, channel, cursor, generation)?
         {
             for push in &mut replay {
                 push.subscription_id = id;
@@ -447,7 +493,7 @@ impl LiveQueries {
                     result: Some(derived.value.clone()),
                 };
                 self.source
-                    .record(&view, channel, std::slice::from_ref(&catch_up))?;
+                    .record(&view, channel, std::slice::from_ref(&catch_up), generation)?;
                 replay.push(catch_up);
             }
             let bytes = push_bytes(&replay)?;
@@ -478,6 +524,7 @@ impl LiveQueries {
                         coalesced_bytes: 0,
                         acked: Some(cursor.clone()),
                         needs_resync: false,
+                        generation,
                     },
                 );
                 state.reindex();
@@ -524,7 +571,7 @@ impl LiveQueries {
             bytes.max(4096) + metadata_bytes,
         )?;
         let current = fingerprint(&derived.value)?;
-        self.source.record(&view, channel, &pushes)?;
+        self.source.record(&view, channel, &pushes, generation)?;
         state.subs.insert(
             id,
             Subscription {
@@ -541,6 +588,7 @@ impl LiveQueries {
                 coalesced_bytes: 0,
                 acked: None,
                 needs_resync: false,
+                generation,
             },
         );
         state.reindex();
@@ -592,7 +640,19 @@ impl LiveQueries {
     }
 
     pub(crate) fn buffered(&self) -> Result<Vec<Push>, AppError> {
+        let generation = self.source.device_only_generation()?;
         let mut state = self.state.lock().map_err(|_| state_error())?;
+        // A ring opened under another device-only generation may hold a row a
+        // world flagged since keeps on this device. Owner feeds re-derive
+        // below; every other ring is retired for a gap before it is sent.
+        for (id, sub) in &mut state.subs {
+            if sub.channel != Channel::OwnerFeed
+                && !sub.needs_resync
+                && sub.generation != generation
+            {
+                sub.resync(*id);
+            }
+        }
         let owner_ids: Vec<_> = state
             .subs
             .iter()
@@ -728,6 +788,7 @@ impl LiveQueries {
                 }
             }
         }
+        let generation = self.source.device_only_generation()?;
         for (id, echo) in affected {
             let sub = &state.subs[&id];
             if sub.needs_resync {
@@ -749,8 +810,12 @@ impl LiveQueries {
                 kind: "data",
                 result: Some(derived.value),
             };
-            self.source
-                .record(&sub.view, sub.channel, std::slice::from_ref(&push))?;
+            self.source.record(
+                &sub.view,
+                sub.channel,
+                std::slice::from_ref(&push),
+                generation,
+            )?;
             let bytes = push_bytes(std::slice::from_ref(&push))?;
             let retained = if sub.channel == Channel::OwnerFeed {
                 // Retire the old body, not its issued cursor. A delayed ACK

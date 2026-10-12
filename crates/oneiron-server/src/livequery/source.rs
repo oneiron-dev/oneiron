@@ -400,6 +400,7 @@ impl LiveQuerySource for BoundSource {
         view: &ScopedView,
         channel: Channel,
         pushes: &[subscriptions::Push],
+        generation: u64,
     ) -> Result<(), AppError> {
         let _server = self.server()?;
         if channel == Channel::OwnerFeed {
@@ -415,7 +416,7 @@ impl LiveQuerySource for BoundSource {
         let CursorDocument {
             journal, history, ..
         } = &mut *state;
-        if !history.record(journal, view, channel, pushes)? {
+        if !history.record(journal, view, channel, pushes, generation)? {
             // Expire Loro and payload retention together, so a missing journal
             // is never presented as a retained cursor with a silent gap.
             state.doc = LoroDoc::new();
@@ -449,6 +450,7 @@ impl LiveQuerySource for BoundSource {
         view: &ScopedView,
         channel: Channel,
         cursor: &Cursor,
+        generation: u64,
     ) -> Result<Option<Vec<subscriptions::Push>>, AppError> {
         if channel == Channel::OwnerFeed {
             return Ok(None);
@@ -460,7 +462,18 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        super::history::History::replay(&state.journal, view, channel, cursor)
+        super::history::History::replay(&state.journal, view, channel, cursor, generation)
+    }
+
+    fn device_only_generation(&self) -> Result<u64, AppError> {
+        // Read on every delivery: no credential check, which each derivation
+        // and resume makes anyway.
+        self.server
+            .upgrade()
+            .ok_or_else(AppError::unauthorized)?
+            .vault()
+            .device_only_generation()
+            .map_err(|_| AppError::internal_server_error("device-only generation read failed"))
     }
 
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError> {
@@ -517,11 +530,11 @@ mod remediation_tests {
             kind: "data",
             result: Some(json!([1])),
         };
-        source.record(&view, Channel::Receipts, &[push]).unwrap();
+        source.record(&view, Channel::Receipts, &[push], 0).unwrap();
         assert!(source.can_resume(&anchor).unwrap());
         tier.close(7).unwrap();
         let replay = source
-            .replay(&view, Channel::Receipts, &anchor)
+            .replay(&view, Channel::Receipts, &anchor, 0)
             .unwrap()
             .unwrap();
         assert_eq!(replay.len(), 1);
@@ -529,7 +542,7 @@ mod remediation_tests {
         assert_eq!(replay[0].result, Some(json!([1])));
         assert!(
             source
-                .replay(&view, Channel::PendingConsent, &anchor)
+                .replay(&view, Channel::PendingConsent, &anchor, 0)
                 .unwrap()
                 .is_none()
         );
@@ -572,6 +585,7 @@ mod remediation_tests {
                     kind: "snapshot",
                     result: Some(json!([])),
                 }],
+                0,
             )
             .unwrap();
         assert!(!source.can_resume(&cursor).unwrap());

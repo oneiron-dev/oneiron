@@ -48,6 +48,9 @@ pub struct PipelineBuilder<'a> {
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
     pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
+    /// Whether the run reads for a caller off this device; see
+    /// [`Self::caller_off_device`].
+    pub(super) off_device: bool,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,
@@ -120,6 +123,7 @@ impl<'a> PipelineBuilder<'a> {
             criticality: None,
             authority_filter: None,
             scoped_note_reader: None,
+            off_device: false,
             since_filter: None,
             occurred_range: None,
             learned_range: None,
@@ -210,7 +214,16 @@ impl<'a> PipelineBuilder<'a> {
 
     /// A scoped read provides the authenticated actor, not a candidate list.
     pub(crate) fn scoped_note_reader(mut self, key: crate::claim::ScopedReadActorKey) -> Self {
+        self.off_device |= key.off_device();
         self.scoped_note_reader = Some(key);
+        self
+    }
+
+    /// Reads for a caller off this device: the suppressions the run counts
+    /// leave out every row a device-local world keeps (DEC-0005), so a count
+    /// never hints at one. It only narrows.
+    pub(crate) fn caller_off_device(mut self, off_device: bool) -> Self {
+        self.off_device |= off_device;
         self
     }
 

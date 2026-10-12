@@ -240,6 +240,7 @@ impl PipelineBuilder<'_> {
         let mut capabilities = attempt.capabilities;
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
+        let mut claims_suppressed = attempt.claims_suppressed;
         let mut read_suppressed = attempt.read_suppressed;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
         let mut cosine_ghosts_dampened = attempt.cosine_ghosts_dampened;
@@ -255,13 +256,9 @@ impl PipelineBuilder<'_> {
         self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
 
         let mut claim_bodies = HashMap::new();
-        let mut claims_suppressed = 0_usize;
         for (id, decision) in claim_gate.decisions {
-            match decision {
-                Some(body) => {
-                    claim_bodies.insert(id, body);
-                }
-                None => claims_suppressed += 1,
+            if let Some(body) = decision {
+                claim_bodies.insert(id, body);
             }
         }
 
@@ -327,13 +324,10 @@ impl PipelineBuilder<'_> {
                 replay_inputs = retry.replay_inputs;
                 ppr_expand_executed = retry.ppr_expand_executed;
                 claim_bodies.clear();
-                claims_suppressed = 0;
+                claims_suppressed = retry.claims_suppressed;
                 for (id, decision) in &claim_gate.decisions {
-                    match decision {
-                        Some(body) => {
-                            claim_bodies.insert(*id, body.clone());
-                        }
-                        None => claims_suppressed += 1,
+                    if let Some(body) = decision {
+                        claim_bodies.insert(*id, body.clone());
                     }
                 }
                 second_insufficient = matches!(

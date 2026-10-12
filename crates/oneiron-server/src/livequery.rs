@@ -252,4 +252,7 @@ mod socket_tests;
 mod production_tests;
 
 #[cfg(test)]
+mod device_local_tests;
+
+#[cfg(test)]
 mod production_socket_tests;

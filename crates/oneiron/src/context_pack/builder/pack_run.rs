@@ -42,6 +42,10 @@ pub(in crate::context_pack) struct HydrateOptions<'a> {
     /// OF-365 disclosure clamp: hydrated edge lists filter non-admitted
     /// targets next to the off-record fence check.
     pub(in crate::context_pack) clamp: Option<&'a DisclosureContext>,
+    /// Whether the pack is for a caller off this device: a claim hydration
+    /// suppresses that a device-local world keeps adds nothing to
+    /// `claims_suppressed` (DEC-0005).
+    pub(in crate::context_pack) off_device: bool,
 }
 
 /// Where this assembly's retrieval-run telemetry lives, CAPTURED ONCE at run

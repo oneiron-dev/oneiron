@@ -512,6 +512,15 @@ impl Vault {
         Ok(true)
     }
 
+    /// The device-only flag generation: it moves whenever a world's flag is
+    /// set or cleared. A host holding rows it read for a later delivery reads
+    /// it before that read, and delivers them only while it has not moved.
+    #[cfg(feature = "sync")]
+    pub fn device_only_generation(&self) -> Result<u64> {
+        let rtxn = self.store.env.read_txn()?;
+        device_only_generation_in(&self.store, &rtxn)
+    }
+
     /// Whether `world` is flagged device-only on this device.
     pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
@@ -524,6 +533,21 @@ impl Vault {
     pub fn device_local_keeps(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         device_local_keeps_in(&self.store, &rtxn, id)
+    }
+
+    /// The rows of `ids` a caller off this device may count or name: each one
+    /// no device-local world keeps ([`Self::device_local_keeps`]), judged in
+    /// one read.
+    pub fn off_device_readable(&self, ids: Vec<EntityId>) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let flagged = device_only_worlds_in(&self.store, &rtxn)?;
+        let mut readable = Vec::with_capacity(ids.len());
+        for id in ids {
+            if !device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
+                readable.push(id);
+            }
+        }
+        Ok(readable)
     }
 
     /// Reads the persisted customization settings, or the default four-layer model.
@@ -679,8 +703,18 @@ pub(crate) fn device_local_keeps_in(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let flagged = device_only_worlds_in(store, txn)?;
-    match device_only_withholds(store, txn, &flagged, id) {
+    device_local_keeps_among(store, txn, &device_only_worlds_in(store, txn)?, id)
+}
+
+/// [`device_local_keeps_in`] against `flagged`, the flag set read once in
+/// `txn` for many rows.
+pub(crate) fn device_local_keeps_among(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    flagged: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+) -> Result<bool> {
+    match device_only_withholds(store, txn, flagged, id) {
         Err(Error::CorruptedIndex(_)) => Ok(true),
         held => held,
     }

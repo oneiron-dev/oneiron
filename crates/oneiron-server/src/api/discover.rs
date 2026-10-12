@@ -8,6 +8,7 @@ use super::SKILL_PACK_MIME_TYPE;
 use super::SKILL_PACK_NAME;
 use super::SKILL_PACK_RESOLUTION;
 use super::check_api_auth;
+use crate::auth::Locality;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ErrorCode;
@@ -373,13 +374,20 @@ pub(crate) struct RateLimitStatus {
 )]
 pub(crate) async fn discover(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
     check_api_auth(&headers, &server)?;
-    discover_response(&server).map(Json)
+    discover_response(&server, locality).map(Json)
 }
 
-pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> {
+/// The vault's inventory as a caller at `locality` may learn it: one off
+/// this device counts, dates and names no row a device-local world keeps
+/// (DEC-0005).
+pub(crate) fn discover_response(
+    server: &SyncServer,
+    locality: oneiron::claim::CallerLocality,
+) -> Result<DiscoverResponse, ApiError> {
     let mut counts = BTreeMap::new();
     let mut personas = Vec::new();
     let mut conversations = Vec::new();
@@ -398,6 +406,17 @@ pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse,
                 tracing::error!(error = %e, entity_type, "discover count scan failed");
             })
             .map_err(|_| ApiError::internal_server_error("discover count scan failed"))?;
+        let ids = if locality == oneiron::claim::CallerLocality::OffDevice {
+            server
+                .vault
+                .off_device_readable(ids)
+                .inspect_err(|e| {
+                    tracing::error!(error = %e, entity_type, "discover locality scan failed");
+                })
+                .map_err(|_| ApiError::internal_server_error("discover count scan failed"))?
+        } else {
+            ids
+        };
 
         if ids.is_empty() {
             continue;
