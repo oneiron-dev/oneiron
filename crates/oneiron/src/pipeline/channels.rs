@@ -11,6 +11,7 @@ use crate::store::StoreRead;
 use crate::temporal::TemporalAnchorMode;
 
 use super::filters::pipeline_candidate_matches_filters_and_gate;
+use super::population::{indexed_text_population, indexed_vector_population};
 use super::support::{
     combine_proximity, compute_radius, effective_range_width, interval_distance,
     learned_anchor_range, midpoint, point_interval_distance, resolve_sigma_secs, sigmoid,
@@ -740,18 +741,6 @@ pub(super) fn scoped_text_channel_limit(
     Ok(requested.max(indexed_text_population(store, rtxn)?))
 }
 
-/// The text documents `store` can match, bounded from above.
-pub(crate) fn indexed_text_population(store: &StoreRead<'_>, rtxn: &RoTxn<'_>) -> Result<usize> {
-    let mut indexed_docs = crate::bm25::read_total_docs(store, rtxn)?;
-    if store.is_union() {
-        // A room stages the count it read when it indexed, and base keeps
-        // growing on record: base's own count bounds what base adds since.
-        indexed_docs =
-            indexed_docs.saturating_add(crate::bm25::read_total_docs(store.base(), rtxn)?);
-    }
-    usize::try_from(indexed_docs).map_err(|_| Error::IndexOverflow("bm25 total docs"))
-}
-
 pub(super) fn scoped_vector_channel_limit(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
@@ -762,18 +751,6 @@ pub(super) fn scoped_vector_channel_limit(
         return Ok(requested);
     }
     Ok(requested.max(indexed_vector_population(store, rtxn)?))
-}
-
-/// The vectors `store` can score, bounded from above.
-pub(crate) fn indexed_vector_population(store: &StoreRead<'_>, rtxn: &RoTxn<'_>) -> Result<usize> {
-    // A room stages its graph's count with its graph, and base keeps growing
-    // on record: the walk runs on base's graph and scores the room's vectors
-    // beside it, so both bound it.
-    let staged = store
-        .vectors
-        .staged_rows()
-        .map_or(0, |staged| staged.rows.len());
-    Ok(crate::hnsw::hnsw_entity_count(store.base(), rtxn)?.saturating_add(staged))
 }
 
 pub(super) fn truncate_widened_channel_results_to_scope(
