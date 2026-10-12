@@ -280,8 +280,16 @@ pub(crate) fn scoped_read_grant_reads_world(
                 scoped_read_world_matches_claim(value, world)
             }
             Some(
-                "claim_scope" | "claimScope" | "scope" | "facet" | "facet_ref" | "facetRef"
-                | "entity_types" | "max_sensitivity_band" | "include_stale" | "min_confidence"
+                "claim_scope"
+                | "claimScope"
+                | "scope"
+                | "facet"
+                | "facet_ref"
+                | "facetRef"
+                | "entity_types"
+                | "max_sensitivity_band"
+                | "include_stale"
+                | "min_confidence"
                 | "min_salience",
             ) => true,
             _ => false,

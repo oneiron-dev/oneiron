@@ -524,7 +524,8 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
             .is_some_and(|row| row.body.is_some());
         let readable = lane.is_entity_readable(&id).expect("readability");
         assert_eq!(
-            point, readable,
+            point,
+            readable,
             "{}: the point read and the predicate agree",
             id.to_hex()
         );

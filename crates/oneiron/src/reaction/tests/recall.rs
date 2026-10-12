@@ -359,9 +359,16 @@ fn a_kept_owner_lane_reads_no_reaction_after_its_revocation() {
     let signals = room.vault.reactions_since(room.alice, 0).unwrap();
     let pills = |lane: &crate::claim::ScopedRead<'_>| {
         lane.reaction_pills(&[room.message], room.alice)
-            .map(|pills| pills.get(&room.message).is_some_and(|pills| !pills.is_empty()))
+            .map(|pills| {
+                pills
+                    .get(&room.message)
+                    .is_some_and(|pills| !pills.is_empty())
+            })
     };
-    assert!(pills(&lane).unwrap(), "the bound owner reads Bob's and Erin's");
+    assert!(
+        pills(&lane).unwrap(),
+        "the bound owner reads Bob's and Erin's"
+    );
     assert!(lane.is_reaction_signal_readable(&signals[0]).unwrap());
     assert!(!lane.reaction_lines(&room.message).unwrap().is_empty());
 

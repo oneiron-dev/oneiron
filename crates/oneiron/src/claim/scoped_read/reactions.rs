@@ -144,11 +144,9 @@ impl ScopedRead<'_> {
         let policy = self.live_policy_manifest_in(&rtxn)?;
         Ok(
             self.is_entity_readable_with_policy_in(&rtxn, &policy, &signal.message)?
-                && self.at_every_claim_status()?.is_entity_readable_with_policy_in(
-                    &rtxn,
-                    &policy,
-                    &signal.reaction,
-                )?
+                && self
+                    .at_every_claim_status()?
+                    .is_entity_readable_with_policy_in(&rtxn, &policy, &signal.reaction)?
                 && self.disclosed_in(&rtxn, disclosure, &signal.message)?
                 && self.disclosed_in(&rtxn, disclosure, &signal.reaction)?,
         )
