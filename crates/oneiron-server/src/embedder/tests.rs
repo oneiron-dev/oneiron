@@ -746,11 +746,19 @@ fn vectors_from_a_cpu_endpoint_and_a_cuda_endpoint_are_marked_apart() {
     assert_eq!(fill_from(&cpu), 1);
     let second = put_claim(&vault, 0xE8, "a claim the CUDA endpoint embeds");
     assert_eq!(fill_from(&cuda), 1);
-    assert_eq!(vault.embedding_provenance(&first).expect("read"), Some(on_cpu));
-    assert_eq!(vault.embedding_provenance(&second).expect("read"), Some(on_cuda));
+    assert_eq!(
+        vault.embedding_provenance(&first).expect("read"),
+        Some(on_cpu)
+    );
+    assert_eq!(
+        vault.embedding_provenance(&second).expect("read"),
+        Some(on_cuda)
+    );
     // The doctor's selection (`oneiron doctor --vectors-from <device>`).
     assert_eq!(
-        vault.vectors_by_provenance(EmbeddingDevice::Cpu, None).expect("cpu"),
+        vault
+            .vectors_by_provenance(EmbeddingDevice::Cpu, None)
+            .expect("cpu"),
         vec![first]
     );
     assert_eq!(
@@ -778,7 +786,11 @@ fn vectors_from_a_cpu_endpoint_and_a_cuda_endpoint_are_marked_apart() {
         deep = json!([deep]);
     }
     silent.serve_on(json!({ "device": deep, "runtime": "candle 0.11.0 q8_0" }));
-    let fourth = put_claim(&vault, 0xEA, "a claim an endpoint marks past the depth limit");
+    let fourth = put_claim(
+        &vault,
+        0xEA,
+        "a claim an endpoint marks past the depth limit",
+    );
     assert_eq!(fill_from(&silent), 1);
     assert_eq!(
         vault.embedding_provenance(&fourth).expect("read"),
