@@ -5270,17 +5270,21 @@ fn an_epoch_summary_stays_home_when_its_source_history_spans_windows() -> crate:
     Ok(())
 }
 
-/// Sol round 10 on #1384: an epoch is judged by its stored lineage whatever
-/// bytes its window carries. A peer's rejected CLAIM wins nested epoch E's
-/// carrier; E still derives from a CLAIM in private world W, so the summary
-/// written from E stays out of a Base export.
+/// Sol rounds 10 and 11 on #1384: a summary leaves only beside the records
+/// it was written from, not beside what a peer put at their ids. In one base
+/// window a peer's CLAIM wins the carrier of a nested epoch whose source is a
+/// CLAIM in private world W, of a nested epoch born in W, and of a CLAIM in W
+/// itself. The vault refused each write, so the stored records stand, and no
+/// summary written from them leaves through a Base export.
 #[test]
-fn an_epoch_summary_stays_home_when_a_nested_epoch_is_retyped() -> crate::Result<()> {
+fn an_epoch_summary_stays_home_when_a_peer_rewrote_a_source_carrier() -> crate::Result<()> {
     let member = entity_id(0x32);
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
     let world = local_world_id(0x5d);
-    let (person, claim) = (entity_id(0xd1), entity_id(0xd2));
+    let (person, claim, moved) = (entity_id(0xd1), entity_id(0xd2), entity_id(0xd9));
     let (nested, outer) = (entity_id(0xd3), entity_id(0xd4));
+    let (born_in_w, over) = (entity_id(0xd5), entity_id(0xd6));
+    let from_moved = entity_id(0xd8);
     let key = WindowKey::new("2026-03");
     let at = key.start_timestamp().unwrap() + 60;
     let occurred = TimeRange { start: at, end: at };
@@ -5292,17 +5296,22 @@ fn an_epoch_summary_stays_home_when_a_nested_epoch_is_retyped() -> crate::Result
         b"world",
     )?;
     vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
-    let mut body = ClaimBody::new(
-        "selector.private_fact",
-        ClaimSubject::Entity(person),
-        Value::from("the private world fact"),
-        1.0,
-        ClaimApprovalStatus::Proposed,
-        ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    body.world = Some(world.entity_id());
-    vault.put_claim(&claim, &body, occurred, at)?;
+    for (id, fact) in [
+        (claim, "the private world fact"),
+        (moved, "the other private world fact"),
+    ] {
+        let mut body = ClaimBody::new(
+            "selector.private_fact",
+            ClaimSubject::Entity(person),
+            Value::from(fact),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = Some(world.entity_id());
+        vault.put_claim(&id, &body, occurred, at)?;
+    }
     vault
         .batch()
         .put(
@@ -5321,10 +5330,41 @@ fn an_epoch_summary_stays_home_when_a_nested_epoch_is_retyped() -> crate::Result
             &epoch_summary_bytes(2, "the run repeated what it learned")?,
         )
         .edge(&outer, EdgeKind::DerivedFrom, &nested, 1.0)
+        .put(
+            &born_in_w,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(3, "the run met the person in its world")?,
+        )
+        .edge(&born_in_w, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &over,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(4, "the run recalled its world")?,
+        )
+        .edge(&over, EdgeKind::DerivedFrom, &born_in_w, 1.0)
+        .put(
+            &from_moved,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(5, "the run learned the other private world fact")?,
+        )
+        .edge(&from_moved, EdgeKind::DerivedFrom, &moved, 1.0)
         .commit()?;
+    let placement = crate::compaction::EpochPlacement {
+        world: Some(world.entity_id()),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, born_in_w))?;
     let doc = create_window_doc("source", &key);
     crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
-    insert_blob(&doc, nested, &claim_blob(None));
+    for id in [nested, born_in_w, moved] {
+        insert_blob(&doc, id, &claim_blob(None));
+    }
     doc.commit();
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
     let sent = import_ids(
@@ -5333,9 +5373,14 @@ fn an_epoch_summary_stays_home_when_a_nested_epoch_is_retyped() -> crate::Result
             .unwrap(),
     );
     assert!(sent.contains(&person), "the selector exports");
+    let left = [(outer, "outer"), (over, "over"), (from_moved, "from_moved")]
+        .into_iter()
+        .filter(|(id, _)| sent.contains(id))
+        .map(|(_, name)| name)
+        .collect::<Vec<_>>();
     assert!(
-        !sent.contains(&outer),
-        "the outer summary stays home with its nested epoch's private source"
+        left.is_empty(),
+        "summaries left beside a peer's carrier, not their sources: {left:?}"
     );
     Ok(())
 }

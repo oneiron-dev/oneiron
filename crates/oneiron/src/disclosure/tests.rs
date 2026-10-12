@@ -590,7 +590,7 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
     };
     let top = crate::federation::Scope::top();
     assert!(discloses(&top, summary)? && discloses(&top, nested)?);
-    let mut summaries_only = top.clone();
+    let mut summaries_only = top;
     summaries_only.bands = crate::federation::ScopeAxis::Some([ENTITY_TYPE_SUMMARY].into());
     assert!(
         !discloses(&summaries_only, summary)? && !discloses(&summaries_only, nested)?,
