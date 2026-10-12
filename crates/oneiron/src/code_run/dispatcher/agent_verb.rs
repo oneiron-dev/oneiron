@@ -57,13 +57,9 @@ impl HostSelfDispatcher<'_> {
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
-        // halted) halts the bridge, so no later call reaches this door. One
-        // whose kept answer the door refused does not halt it, so a write
-        // past it gets that refusal too: the step cannot close without the
-        // kept write, and nothing past the refusal may commit.
-        if let Some(refused) = self.earlier_write_refused(site)? {
-            return Ok(SelfDispatchOutcome::Denied(refused));
-        }
+        // halted) halts the bridge, and `dispatch_bound` refuses every call
+        // past one whose kept answer the door refused, so no later call
+        // reaches this door.
         let ordinal = site.earlier.iter().filter(is_write).count() as u64;
         let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
         if let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? {
@@ -102,27 +98,32 @@ impl HostSelfDispatcher<'_> {
         Ok(outcome)
     }
 
-    /// The refusal the door gave an earlier write of this step in place of
-    /// its kept answer, if it gave one.
-    fn earlier_write_refused(
+    /// A step past a write that did not meet its receipt can no longer close,
+    /// so it commits nothing more: every later call gets the refusal that
+    /// write got in place of its kept answer, or an error where it got none.
+    /// A write that kept no receipt (refused before its door ran) made
+    /// nothing to meet.
+    pub(super) fn refusal_past_an_unmet_write(
         &self,
         site: ExecutorCallSite<'_>,
     ) -> Result<Option<SelfDeniedResult>> {
         for (ordinal, made) in (0_u64..).zip(site.earlier.iter().filter(is_write)) {
             let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
-            let receipt = self.storage.get_code_run_replay_record(&receipt_id)?;
-            let met = receipt
-                .as_ref()
-                .and_then(|receipt| receipt.bridge_calls.first())
-                .is_some_and(|kept| {
-                    row_identity(kept) == row_identity(made) && answered_as_kept(kept, made)
-                });
-            if !met
-                && let Ok(SelfDispatchOutcome::Denied(refused)) =
-                    decode_self_dispatch_outcome(&made.outcome)
-            {
-                return Ok(Some(refused));
+            let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? else {
+                continue;
+            };
+            let met = receipt.bridge_calls.first().is_some_and(|kept| {
+                row_identity(kept) == row_identity(made) && answered_as_kept(kept, made)
+            });
+            if met {
+                continue;
             }
+            return match decode_self_dispatch_outcome(&made.outcome) {
+                Ok(SelfDispatchOutcome::Denied(refused)) => Ok(Some(refused)),
+                _ => Err(Error::InvariantViolation(
+                    "a step went on past a write that did not meet its receipt",
+                )),
+            };
         }
         Ok(None)
     }

@@ -308,6 +308,16 @@ impl<'a> HostSelfDispatcher<'a> {
         if !matches!(call, SelfCall::Context(_)) {
             self.enforce_off_record_effect_policy(call.effect())?;
         }
+        // A step that can no longer close commits nothing more.
+        if let Some(site) = site
+            && !matches!(call, SelfCall::Context(_))
+            && let Some(refused) = self.refusal_past_an_unmet_write(site)?
+        {
+            return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                effect: call.effect(),
+                ..refused
+            }));
+        }
         // A bound door rules on every call the run serves itself, not only on
         // the verb calls it runs, so its ceiling and credential hold at each.
         // A verb call meets it in `dispatch_agent_verb`: at the door's own

@@ -505,6 +505,50 @@ fn a_retry_past_a_refused_kept_answer_writes_nothing() {
     assert_eq!(retried.answers, vec![refused.clone(), refused]);
 }
 
+/// Review repro (Sol R8, #1405): past a resumed write whose kept answer the
+/// door refused, the guest spoke, and the bubble committed although the step
+/// could no longer close. Every call past such a write now gets its refusal,
+/// so nothing more commits.
+#[test]
+fn a_bubble_past_a_refused_kept_answer_speaks_nothing() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    run.stop_after(vec![create_task()]);
+    let messages = || {
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .len()
+    };
+    let before = messages();
+
+    run.door
+        .refuses_kept
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut spoke = resumed_step(vec![
+        create_task(),
+        SelfCall::Speak(SelfSpeechCall::new("still here")),
+    ]);
+    let outcome = run.resume(&run.config, &mut spoke);
+    assert!(
+        matches!(
+            outcome,
+            Err(EngineExecutorError::Engine(Error::InvariantViolation(_)))
+        ),
+        "a step whose write was refused does not close: {outcome:?}"
+    );
+    assert_eq!(messages(), before, "nothing is spoken past the refusal");
+    assert_eq!(
+        spoke.answers.pop().expect("the bubble's answer"),
+        SelfDispatchOutcome::Denied(crate::code_run::SelfDeniedResult {
+            effect: SelfEffect::Speak,
+            outcome: "read_refused".to_owned(),
+            reason_codes: Vec::new(),
+        })
+    );
+}
+
 /// A host door that admits a run's own calls until it closes, as a connector
 /// credential stops admitting them once it is revoked.
 struct ClosingDoor {
