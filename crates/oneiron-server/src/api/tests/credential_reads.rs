@@ -468,6 +468,26 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
         .vault
         .open_standing_block(&owner, agent, world, "identity", 64)
         .unwrap();
+    // The default policy's rules do not name the standing family, and an
+    // undeclared predicate pends on the criticality floor.
+    super::context_board_history::edit_vault_policy(&server, 199, |entries| {
+        use rmpv::Value as Mp;
+        let Some((_, Mp::Array(rules))) =
+            entries.iter_mut().find(|(key, _)| key.as_str() == Some("rules"))
+        else {
+            panic!("the vault policy carries rules");
+        };
+        rules.push(Mp::Map(vec![
+            (Mp::from("prefix"), Mp::from("companion.standing.")),
+            (
+                Mp::from("axes"),
+                Mp::Map(vec![
+                    (Mp::from("criticality"), Mp::from("normal")),
+                    (Mp::from("sensitivity"), Mp::from("normal")),
+                ]),
+            ),
+        ]));
+    });
     let mut claim = oneiron::ClaimBody::new(
         "companion.standing.tone",
         oneiron::ClaimSubject::Entity(agent),
