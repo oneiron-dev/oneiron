@@ -23,10 +23,15 @@ pub(super) struct RerankLadderInputs<'a> {
     pub(super) trace_candidate_limit: usize,
 }
 
-/// What the rerank hook produced; both are `None` when it did not run.
+/// What the rerank hook produced; both options are `None`, and the map
+/// empty, when it did not run.
 pub(super) struct RerankApplied {
     pub(super) merged_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     pub(super) reranked_trace_scores: Option<Vec<ScoredEntity>>,
+    /// The revision of the words each block candidate was scored at. The
+    /// block is served at these, so a TURN shows the words its score is
+    /// for, not those its messages hold by the time its item is read.
+    pub(super) words_revisions: HashMap<EntityId, crate::vault::RevisionRef>,
 }
 
 impl PipelineBuilder<'_> {
@@ -52,11 +57,13 @@ impl PipelineBuilder<'_> {
     // is 1.0 this is the legacy ladder.
     pub(super) fn apply_rerank_ladder(
         &self,
+        rtxn: &heed::RoTxn<'_>,
         scores: &mut [ScoredEntity],
         inputs: RerankLadderInputs<'_>,
     ) -> Result<RerankApplied> {
         let mut rerank_merged_components = None;
         let mut reranked_trace_scores = None;
+        let mut words_revisions = HashMap::new();
         // Empty block: reranking zero candidates is a semantic no-op —
         // never invoke the host impl, so an otherwise-empty retrieval
         // cannot fail on reranker behavior and no needless work happens
@@ -84,10 +91,10 @@ impl PipelineBuilder<'_> {
                 ladder.push(base);
             }
             ladder.sort_unstable_by(|left, right| right.total_cmp(left));
-            let candidates: Vec<RerankCandidate<'_>> = scores[..block_len]
-                .iter()
-                .enumerate()
-                .map(|(index, scored)| RerankCandidate {
+            let mut candidates: Vec<RerankCandidate<'_>> = Vec::with_capacity(block_len);
+            for (index, scored) in scores[..block_len].iter().enumerate() {
+                let revision = self.words_revision(rtxn, &scored.id)?;
+                candidates.push(RerankCandidate {
                     id: scored.id,
                     score: scored.score,
                     rank: (index + 1).min(u32::MAX as usize) as u32,
@@ -96,9 +103,14 @@ impl PipelineBuilder<'_> {
                         .decisions
                         .get(&scored.id)
                         .and_then(|decision| decision.as_ref()),
-                })
-                .collect();
+                    revision,
+                });
+            }
             let rerank_scores = reranker.rerank(query, &candidates)?;
+            words_revisions = candidates
+                .iter()
+                .filter_map(|candidate| Some((candidate.id, candidate.revision?)))
+                .collect();
             drop(candidates);
             if rerank_scores.len() != block_len {
                 return Err(Error::InvariantViolation(
@@ -161,6 +173,36 @@ impl PipelineBuilder<'_> {
         Ok(RerankApplied {
             merged_components: rerank_merged_components,
             reranked_trace_scores,
+            words_revisions,
         })
+    }
+
+    /// The revision of the words `id` holds in this transaction (see
+    /// [`RerankCandidate::revision`]).
+    fn words_revision(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<crate::vault::RevisionRef>> {
+        use crate::ports::EntityStoreRead;
+        let kind = self
+            .vault
+            .store
+            .port_entity_record(rtxn, id)?
+            .map(|row| row.entity_type);
+        if kind == Some(crate::registry::ENTITY_TYPE_TURN) {
+            return Ok(crate::vault::entity_revision::served_turn_text_in_txn(
+                self.vault,
+                rtxn,
+                id,
+                crate::vault::ReadMode::Indexed,
+            )?
+            .map(|text| text.revision));
+        }
+        match self.vault.indexed_revision_in_txn(rtxn, id) {
+            Ok(revision) => Ok(revision),
+            Err(Error::EntityNotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 }

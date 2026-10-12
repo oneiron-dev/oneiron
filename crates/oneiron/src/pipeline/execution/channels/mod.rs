@@ -597,7 +597,9 @@ impl PipelineBuilder<'_> {
             let RerankApplied {
                 merged_components: rerank_merged_components,
                 reranked_trace_scores,
+                words_revisions,
             } = self.apply_rerank_ladder(
+                rtxn,
                 &mut scores,
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
@@ -729,9 +731,14 @@ impl PipelineBuilder<'_> {
             // A hit whose indexed revision cannot be read has no pin, so it
             // leaves the pack instead of failing the run. A MESSAGE whose text
             // moved into an entity document is one: the migration replaced its
-            // body without retaining the revision its state still names.
+            // body without retaining the revision its state still names. A
+            // reranked hit is pinned where its words were scored.
             let mut revisions = HashMap::new();
             for hit in &scores {
+                if let Some(revision) = words_revisions.get(&hit.id) {
+                    revisions.insert(hit.id, *revision);
+                    continue;
+                }
                 match self.vault.indexed_revision_in_txn(rtxn, &hit.id) {
                     Ok(Some(revision)) => {
                         revisions.insert(hit.id, revision);

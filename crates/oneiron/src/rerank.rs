@@ -28,6 +28,12 @@ pub struct RerankCandidate<'a> {
     /// D19 gate (borrowed from the pipeline's gate cache). `None` for
     /// non-claim entities.
     pub claim: Option<&'a ClaimBody>,
+    /// The revision of the words retrieval read the candidate at: a TURN's
+    /// text revision, which commits to the state of every message its words
+    /// come from, or any other row's indexed revision. A host that reads the
+    /// candidate's text outside the transaction pins its read here; `None`
+    /// when there is nothing to pin.
+    pub revision: Option<crate::vault::RevisionRef>,
 }
 
 /// Host-injected top-N reranker (1186-D1/D2: impl app-side, seam

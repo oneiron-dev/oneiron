@@ -349,6 +349,15 @@ fn fingerprint(query: &str, candidates: &[RerankCandidate<'_>]) -> Result<[u8; 3
         hash.update(candidate.id.as_bytes());
         hash.update(candidate.score.to_bits().to_le_bytes());
         hash.update(candidate.rank.to_le_bytes());
+        // The revision the candidate was read at: a row whose words changed
+        // keeps its id, and can keep its score and rank.
+        match candidate.revision {
+            Some(revision) => {
+                hash.update([1]);
+                hash.update(revision.0);
+            }
+            None => hash.update([0]),
+        }
         let claim = match candidate.claim {
             Some(body) => crate::claim::encode_claim_body(body)?,
             None => Vec::new(),

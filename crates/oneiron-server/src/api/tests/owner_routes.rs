@@ -402,9 +402,12 @@ async fn owner_backup_rehearse_and_status_through_the_route() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn owner_status_reports_a_refused_embedder_load_and_its_reason() {
     let models = tempfile::tempdir().unwrap();
+    // As config resolves a local section that names only its files: the
+    // space is the files' model.
     let config = crate::config::EmbedderConfig {
         provider: crate::config::EmbedderProvider::Local,
         dimensions: 1024,
+        model_id: format!("oneiron-dev/no-such-embedding-model@{}", "0".repeat(40)),
         local: crate::config::LocalEmbedderConfig {
             repo: "oneiron-dev/no-such-embedding-model".to_owned(),
             revision: "0".repeat(40),

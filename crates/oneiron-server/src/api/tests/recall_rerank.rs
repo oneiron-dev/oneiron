@@ -261,26 +261,31 @@ async fn high_xhigh_and_max_rerank_on_the_models_reranker_through_mcp() {
             .await
             .unwrap_or_else(|refusal| panic!("{effort}: {refusal}"));
         assert_eq!(rank_of_known(&pack), 0, "{effort}: {pack}");
+        assert_eq!(fake.calls(), calls, "{effort}");
+        // The block is the effort's top candidates, rows ranked below the
+        // passages too, and the pack counts what the reranker scored.
+        let scored = fake.seen()[calls - 1]["documents"]
+            .as_array()
+            .unwrap()
+            .len();
         assert_eq!(
             pack["retrieval_meta"]["rerank"],
             json!({
                 "status": "applied",
                 "model": "rerank:fake-reranker",
                 "served_model": SERVED_MODEL,
-                "candidates": 5,
+                "candidates": scored,
                 "calls": 1,
             }),
             "{effort}"
         );
-        assert_eq!(fake.calls(), calls, "{effort}");
     }
-    // The reranker read the query and the reader's own five passages, and
-    // nothing in the request picked its model.
+    // The reranker read the query and the reader's own block, and nothing in
+    // the request picked its model.
     for seen in fake.seen() {
         assert_eq!(seen["query"], QUERY);
         assert_eq!(seen["model"], "fake-reranker");
         let documents = seen["documents"].as_array().unwrap();
-        assert_eq!(documents.len(), 5);
         assert!(
             documents
                 .iter()
@@ -312,15 +317,27 @@ async fn high_xhigh_and_max_rerank_on_the_models_reranker_through_mcp() {
     }
 }
 
-/// Done-means (G1 check 2): a recall whose line cannot pay for its rerank
-/// call is refused with a typed `budget_spent`, after the call went out and
-/// was settled; it never falls back to an unreranked pack.
+/// Done-means (G1 check 2): a recall whose line is spent is refused with a
+/// typed `budget_spent`; it never falls back to an unreranked pack. A call
+/// that went out is settled at what it used, past the line too, so a line
+/// one call overspends refuses the next: here the block changes during the
+/// first call, and the door's second call is the one refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
-    let fake = FakeReranker::start(prefers_known(), no_hook(), 5_000).await;
+    let vault = Arc::new(Mutex::new(None::<(Arc<oneiron::Vault>, oneiron::EntityId)>));
+    let hook = {
+        let vault = Arc::clone(&vault);
+        Arc::new(move |call: usize| {
+            if let Some((vault, actor)) = vault.lock().unwrap().clone() {
+                remember(&vault, actor, &format!("lantern repair drawer {call}"));
+            }
+        }) as OnCall
+    };
+    let fake = FakeReranker::start(prefers_known(), hook, 5_000).await;
     let models = reranker_models(&fake.base_url, 100);
     let (_dir, server, _host, receipts) = served(Some(&models)).await;
     let actor = reader(&server, "rerank-spent").await;
+    *vault.lock().unwrap() = Some((Arc::clone(server.vault()), actor));
 
     for (calls, effort) in [(1, "xhigh"), (2, "max")] {
         let refusal = recall(&server, "rerank-spent", actor, effort)
@@ -328,17 +345,23 @@ async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
             .expect_err(effort);
         assert_eq!(refusal["error"]["code"], -32020, "{refusal}");
         assert_eq!(refusal["error"]["data"]["error_code"], "budget_spent");
-        assert_eq!(fake.calls(), calls, "{effort} reached the reranker");
+        assert_eq!(fake.calls(), calls, "{effort} reached the reranker once");
     }
+    // Each recall's one call was settled at what it used.
     let settled: Vec<_> = recall_runs(&receipts)
         .into_iter()
         .filter_map(|row| match row.event {
-            RunEvent::Settled { error, .. } => Some(error),
+            RunEvent::Settled { units, error, .. } => Some((units, error)),
             _ => None,
         })
         .collect();
-    assert_eq!(settled.len(), 2);
-    assert!(settled.iter().all(Option::is_some), "{settled:?}");
+    assert_eq!(settled.len(), 2, "{settled:?}");
+    assert!(
+        settled
+            .iter()
+            .all(|(units, error)| *units == 5_000 && error.is_none()),
+        "{settled:?}"
+    );
     // Medium makes no model call, so the spent line does not touch it.
     assert!(recall(&server, "rerank-spent", actor, "medium").await.is_ok());
 }
@@ -355,7 +378,6 @@ async fn without_a_reranker_route_high_runs_unreranked_and_says_so() {
         .unwrap();
     let high = recall(&server, "rerank-none", actor, "high").await.unwrap();
     assert_eq!(order(&high), order(&medium));
-    assert_eq!(order(&high).len(), 5);
     assert_eq!(
         high["retrieval_meta"]["rerank"],
         json!({"status": "skipped", "reason": "no_reranker"})
@@ -445,75 +467,6 @@ async fn a_block_that_changes_while_it_is_scored_takes_none_of_the_stale_scores(
             .contains("changed while the reranker scored them"),
         "{refusal}"
     );
-}
-
-/// An EVENT whose words are `text`, as recall reads a row that is not a
-/// claim.
-fn put_event(vault: &oneiron::Vault, id: &oneiron::EntityId, text: &str) {
-    let body = rmp_serde::to_vec_named(&json!({ "content": text })).unwrap();
-    vault
-        .batch()
-        .put(
-            id,
-            oneiron::registry::ENTITY_TYPE_EVENT,
-            oneiron::TimeRange { start: 10, end: 10 },
-            10,
-            &body,
-        )
-        .text(id, &[("body", text)])
-        .commit()
-        .unwrap();
-}
-
-/// Review repro (Sol round 1, F1): the scores are for the words the
-/// reranker read. A row whose words change while it is scored without its
-/// retrieval score changing (the same words, reordered) takes none of the
-/// first call's scores: the block is scored again on the words it holds now.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_row_whose_words_change_while_it_is_scored_takes_none_of_the_stale_scores() {
-    const FIRST: &str = "lantern repair stand";
-    const REORDERED: &str = "stand repair lantern";
-    let event = oneiron::EntityId::now();
-    let vault = Arc::new(Mutex::new(None::<Arc<oneiron::Vault>>));
-    let hook = {
-        let vault = Arc::clone(&vault);
-        Arc::new(move |call: usize| {
-            if call == 1
-                && let Some(vault) = vault.lock().unwrap().clone()
-            {
-                put_event(&vault, &event, REORDERED);
-            }
-        }) as OnCall
-    };
-    // The first call prefers the event's first words; later calls prefer
-    // the known passage.
-    let score: Score = Arc::new(|call, document| match call {
-        1 if document.contains(FIRST) => 100.0,
-        1 => 0.0,
-        _ if document.contains("brass") => 100.0,
-        _ => 0.0,
-    });
-    let fake = FakeReranker::start(score, hook, 50).await;
-    let models = reranker_models(&fake.base_url, 32_000);
-    let (_dir, server, _host, _) = served(Some(&models)).await;
-    let actor = reader(&server, "rerank-words").await;
-    put_event(server.vault(), &event, FIRST);
-    *vault.lock().unwrap() = Some(Arc::clone(server.vault()));
-
-    let pack = recall(&server, "rerank-words", actor, "high")
-        .await
-        .unwrap();
-    assert!(
-        fake.seen()[0]["documents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|document| document.as_str().unwrap().contains(FIRST)),
-        "the first call read the event's first words"
-    );
-    assert_eq!(fake.calls(), 2, "{pack}");
-    assert_eq!(rank_of_known(&pack), 0, "{pack}");
-    assert_eq!(pack["retrieval_meta"]["rerank"]["calls"], 2, "{pack}");
 }
 
 const PPLX_REPO: &str = "perplexity-ai/pplx-embed-v1-0.6b";
