@@ -1136,6 +1136,71 @@ fn a_room_keeps_the_vector_base_publishes_for_the_body_it_restaged() -> Result<(
     Ok(())
 }
 
+/// The same base claim, with its new body's vector waiting for idle
+/// publication. A room puts back the body base indexed, with its words and
+/// no vector, and base's idle pass publishes its new body and that body's
+/// vector before the room's turn commits. That vector describes base's new
+/// body, not the room's, so it does not find the claim in the room.
+#[test]
+fn a_room_that_puts_back_base_indexed_body_hides_the_vector_of_its_new_one() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xC8);
+    let occurred = TimeRange { start: 1, end: 1 };
+    let indexed = owner_claim_body(owner, "indexedvalue")?;
+    vault
+        .batch()
+        .put(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &indexed)
+        .text(&claim, &[("body", "putbackbaseword")])
+        .commit()?;
+    vault
+        .batch()
+        .put(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            1,
+            &owner_claim_body(owner, "pendingvalue")?,
+        )
+        .commit()?;
+    vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+    let session = enter(&vault, "sess-room-put-back-idle")?;
+    stage_in_room_then(
+        &vault,
+        &session,
+        vec![
+            claim_put(claim, (occurred, 1, indexed)),
+            room_text(claim, "putbackneedle"),
+        ],
+        || {
+            vault.set_indexed_idle_delay_ms(0)?;
+            vault.refresh_staged_indexed_at_idle(u64::MAX).map(drop)
+        },
+    )?;
+
+    let base_hits = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .run()?;
+    assert!(
+        base_hits.iter().any(|hit| hit.id == claim),
+        "base's idle pass published the vector, got {base_hits:?}"
+    );
+    let fields = room_pack_fields(&vault, &session, claim, "putbackneedle")?;
+    assert!(
+        fields.contains("indexedvalue") && !fields.contains("pendingvalue"),
+        "the room reads the body it put back, got {fields}"
+    );
+    assert!(
+        !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "base's vector of its new body does not find the room's"
+    );
+    session.close()?;
+    Ok(())
+}
+
 /// A scoped read in the room fetches as many candidates as the room's read
 /// holds, base's rows and the room's. A room row outside the worlds the
 /// lane asks for then takes no place from a base row inside them.

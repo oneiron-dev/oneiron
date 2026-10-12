@@ -302,6 +302,32 @@ pub(crate) fn publish_room_revision(
     Ok(changed)
 }
 
+/// Whether the vectors `store` holds and writes for `id` are embedded from
+/// `body`: `(held, later)`. A vector it holds was embedded from the indexed
+/// body, and one it writes later (an embedding, or its idle pass) from the
+/// live body. A body that cannot be read back is another.
+pub(crate) fn vectors_embed_body(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<(bool, bool)> {
+    let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok((false, false));
+    };
+    let later = live.get(ENTITY_METADATA_HEADER_LEN..) == Some(body);
+    let held = match state(store, txn, id)? {
+        Some(current) if current.live != current.indexed => {
+            current.has_doc
+                && doc_raw(&fork_revision(store, txn, id, current.indexed)?)?
+                    .get(ENTITY_METADATA_HEADER_LEN..)
+                    == Some(body)
+        }
+        _ => later,
+    };
+    Ok((held, later))
+}
+
 pub(crate) fn storage_manages_text(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
