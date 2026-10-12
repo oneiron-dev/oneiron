@@ -206,33 +206,21 @@ impl SyncClient {
         crate::sync::window::raw_update_verdict(&self.manager, key, update)
     }
 
-    /// Whether an outgoing document data frame carries text a device-only
-    /// world now keeps here. NOTE frames answer to their own authority; a
-    /// frame that cannot be judged stays.
-    pub(crate) fn document_frame_withheld(&self, frame: &[u8]) -> bool {
-        if frame.first() != Some(&transport::TAG_DOCUMENT) {
-            return false;
+    /// Whether an outgoing frame carries what a device-only world now keeps
+    /// here, judged as it is released: a window UPDATE by the raw verdict
+    /// (a frame that cannot be read stays), a document data frame by its
+    /// text ([`crate::sync::documents::document_frame_withheld`]).
+    pub(crate) fn frame_withheld(&self, frame: &[u8]) -> bool {
+        if frame.first() == Some(&transport::TAG_WINDOW_SYNC) {
+            return frame
+                .get(1..)
+                .and_then(|payload| transport::decode_window_sync(payload).ok())
+                .is_none_or(|(key, sub_tag, update)| {
+                    sub_tag == transport::window_sub_tags::UPDATE
+                        && self.update_verdict(key, update) != UpdateVerdict::Portable
+                });
         }
-        let Ok(document) = transport::decode_document(&frame[1..]) else {
-            return false;
-        };
-        if !matches!(
-            document.kind,
-            transport::document_sub_tags::UPDATE | transport::document_sub_tags::STATE
-        ) {
-            return false;
-        }
-        (|| -> Result<bool> {
-            let _accepting = self.vault.device_only_acceptance();
-            let rtxn = self.vault.store.env.read_txn()?;
-            if self.vault.get_entity_type_in_txn(&rtxn, &document.entity)?
-                == Some(crate::registry::ENTITY_TYPE_NOTE)
-            {
-                return Ok(false);
-            }
-            crate::sync::documents::text_withheld(&self.vault, &rtxn, document.entity)
-        })()
-        .unwrap_or(true)
+        crate::sync::documents::document_frame_withheld(&self.vault, frame)
     }
 
     /// Returns the live window for `key` if loaded — registry lookup only,

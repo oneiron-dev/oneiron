@@ -429,6 +429,7 @@ async fn handle_connection(
                     }
                 }
                 if window_update_withheld(&server, &data)
+                    || oneiron::sync::documents::document_frame_withheld(server.vault(), &data)
                     || (data.first() == Some(&oneiron::sync::transport::TAG_LFS_CHUNK_SYNC)
                         && super::lfs_chunks::chunk_reply_withheld(&server, &mut conn_state))
                 {

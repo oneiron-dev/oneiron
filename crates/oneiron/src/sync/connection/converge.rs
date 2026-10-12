@@ -180,7 +180,7 @@ impl SyncConnection {
                             // earlier frame waits on the socket.
                             for resp in responses
                                 .into_iter()
-                                .filter(|frame| !client.document_frame_withheld(frame))
+                                .filter(|frame| !client.frame_withheld(frame))
                             {
                                 write
                                     .send(Message::Binary(resp.into()))

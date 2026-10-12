@@ -64,7 +64,7 @@ impl SyncConnection {
                                     // earlier frame waits on the socket.
                                     for resp in responses
                                         .into_iter()
-                                        .filter(|frame| !client.document_frame_withheld(frame))
+                                        .filter(|frame| !client.frame_withheld(frame))
                                     {
                                         let send_result =
                                             write.send(Message::Binary(resp.into())).await;
@@ -185,7 +185,7 @@ impl SyncConnection {
                                 },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
-                            let withheld = client.document_frame_withheld(&frame);
+                            let withheld = client.frame_withheld(&frame);
                             let subscribed = (|| -> crate::error::Result<bool> {
                                 let rtxn = client.vault.store.env.read_txn()?;
                                 Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))? && !withheld)

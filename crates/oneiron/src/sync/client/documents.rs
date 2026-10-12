@@ -82,7 +82,7 @@ impl SyncClient {
                     doc.pending_frames()
                         .map_err(storage)?
                         .into_iter()
-                        .filter(|frame| !self.document_frame_withheld(frame)),
+                        .filter(|frame| !self.frame_withheld(frame)),
                 );
                 Ok(out)
             }

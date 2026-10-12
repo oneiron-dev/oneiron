@@ -484,6 +484,7 @@ impl Vault {
     /// A flag commit holds the other side, so a flag committed before a
     /// verdict accepts is always one it read. Hold it over reads only: never
     /// across a write or an async send.
+    #[cfg(feature = "sync")]
     pub(crate) fn device_only_acceptance(&self) -> std::sync::RwLockReadGuard<'_, ()> {
         self.store
             .device_only_flag_lock
