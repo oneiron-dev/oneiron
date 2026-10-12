@@ -408,7 +408,7 @@ fn carries_live_uid(
 }
 
 /// Whether an admitted passport on `event_ref` carries `uid` from any system.
-fn carries_admitted_uid(
+pub(super) fn carries_admitted_uid(
     vault: &Vault,
     event_ref: &EntityId,
     uid: &str,
