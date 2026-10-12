@@ -448,12 +448,15 @@ impl Vault {
                 "base reality cannot be device-only".to_owned(),
             ));
         }
-        let _flags = self
-            .store
-            .device_only_flag_lock
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.with_write_txn_grouped(|wtxn| {
+        // The flag lock is taken under the writer and released only after the
+        // commit is durable: a release verdict reading the flags waits for it,
+        // and never needs the writer while it holds the read side.
+        let _flags = self.with_write_txn(|wtxn| {
+            let flags = self
+                .store
+                .device_only_flag_lock
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if self.get_entity_type_in_txn(wtxn, &world)?
                 != Some(crate::registry::ENTITY_TYPE_WORLD)
             {
@@ -472,8 +475,20 @@ impl Vault {
                 .unwrap_or(0)
                 .wrapping_add(1);
             DEVICE_ONLY_GENERATION.put(&self.store, wtxn, &(), &generation)?;
-            Ok(())
-        })
+            Ok(flags)
+        })?;
+        Ok(())
+    }
+
+    /// Held by a release verdict from its first flag read to its acceptance.
+    /// A flag commit holds the other side, so a flag committed before a
+    /// verdict accepts is always one it read. Hold it over reads only: never
+    /// across a write or an async send.
+    pub(crate) fn device_only_acceptance(&self) -> std::sync::RwLockReadGuard<'_, ()> {
+        self.store
+            .device_only_flag_lock
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Whether `world` is flagged device-only on this device.

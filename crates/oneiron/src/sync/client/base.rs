@@ -223,6 +223,7 @@ impl SyncClient {
             return false;
         }
         (|| -> Result<bool> {
+            let _accepting = self.vault.device_only_acceptance();
             let rtxn = self.vault.store.env.read_txn()?;
             if self.vault.get_entity_type_in_txn(&rtxn, &document.entity)?
                 == Some(crate::registry::ENTITY_TYPE_NOTE)

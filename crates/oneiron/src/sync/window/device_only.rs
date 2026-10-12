@@ -91,14 +91,7 @@ pub fn raw_update_verdict(
 ) -> UpdateVerdict {
     let verdict = (|| -> Result<UpdateVerdict> {
         let vault = manager.vault();
-        let flag_lock = || {
-            vault
-                .store
-                .device_only_flag_lock
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        };
-        let accepting = flag_lock();
+        let accepting = vault.device_only_acceptance();
         let (mut generation, mut flagged) = flagged_worlds(vault)?;
         if flagged.is_empty() {
             return Ok(UpdateVerdict::Portable);
@@ -109,7 +102,7 @@ pub fn raw_update_verdict(
             if verdict != UpdateVerdict::Portable {
                 return Ok(verdict);
             }
-            let accepting = flag_lock();
+            let accepting = vault.device_only_acceptance();
             let (now, now_flagged) = flagged_worlds(vault)?;
             if now == generation || now_flagged.is_empty() {
                 return Ok(UpdateVerdict::Portable);

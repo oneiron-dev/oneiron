@@ -151,6 +151,7 @@ pub fn serve_chunk_request(
 /// is standing authority to export.
 pub fn lfs_object_withheld(vault: &Vault, oid: LfsOid) -> Result<bool> {
     use crate::ports::{EdgeDirection, EdgeStoreRead};
+    let _accepting = vault.device_only_acceptance();
     let object = vault.lfs_object(oid)?.ok_or_else(invalid)?;
     let txn = vault.store.env.read_txn()?;
     let flagged = crate::settings::device_only_worlds_in(&vault.store, &txn)?;
