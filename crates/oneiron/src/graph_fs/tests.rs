@@ -387,6 +387,59 @@ fn a_world_listing_cursor_names_no_withheld_world() -> Result<()> {
     Ok(())
 }
 
+/// Sol R5-005 on #1413: the world listing never asked whether the reader's
+/// credential was still live, so the owner's lane, kept past its slip's
+/// revocation with the owner binding untouched, still listed every world.
+/// The listing and a WORLD path judge the credential in their own snapshot
+/// now, as every row read does.
+#[test]
+fn a_kept_lane_lists_no_world_after_its_credential_is_revoked() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (world, owner, other) = (test_id(0x3C), test_id(0x3D), test_id(0x3E));
+    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, owner, ENTITY_TYPE_PERSON)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x93),
+        encode_policy_manifest(vec![core_read_base_grant(&other.to_hex())]),
+    )?;
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer)?;
+    vault.bind_host_owner_for_test(&issuer, owner)?;
+    let slip_id = *blake3::hash(b"the owner's world credential").as_bytes();
+    let mut claims = root.claims.clone();
+    claims.slip_id = slip_id;
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let tag = b"owner-worlds";
+    let signature = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &signature)?;
+    assert!(proof.is_full_vault_owner_grade());
+    let kept = vault.scoped_read(vault.credential_read_key(&proof)?.expect("a read key"));
+    let fs = resolver(&kept, 1024);
+    let walk = || -> Result<(Vec<String>, bool)> {
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))?;
+        Ok((names.collect(), visible))
+    };
+    assert_eq!(
+        walk()?,
+        (vec!["base".to_owned(), world.to_hex()], true),
+        "the owner's live credential"
+    );
+
+    vault.revoke_capability_slip(&issuer, slip_id)?;
+    assert_eq!(
+        walk()?,
+        (Vec::new(), false),
+        "the kept lane, past its credential's revocation"
+    );
+    Ok(())
+}
+
 #[test]
 fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(telemetry_config());

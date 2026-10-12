@@ -491,7 +491,7 @@ impl GraphFsResolver<'_, '_> {
                 .scoped_read
                 .is_entity_readable_with_policy_in(rtxn, policy, id);
         }
-        Ok(self.world_visible(policy, Some(*id)))
+        self.world_visible(rtxn, policy, Some(*id))
     }
 
     pub(super) fn coreutils_result_cap(&self) -> usize {

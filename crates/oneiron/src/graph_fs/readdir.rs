@@ -1,4 +1,4 @@
-//! Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir helpers, and the resolver policy helper.
+//! Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir helpers.
 
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
@@ -317,12 +317,15 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     /// The vault's worlds this reader may walk into, base first, then each
-    /// WORLD row by id ([`Self::world_visible`]). A manifest grant never
-    /// lists a world of its own: it only says where a reader other than the
-    /// owner may read. A page can end inside a run of worlds this reader may
-    /// not see, so its cursor is sealed and names none of them.
+    /// WORLD row by id ([`Self::world_visible`]), all judged in one snapshot.
+    /// A manifest grant never lists a world of its own: it only says where a
+    /// reader other than the owner may read. A page can end inside a run of
+    /// worlds this reader may not see, so its cursor is sealed and names none
+    /// of them.
     fn listdir_worlds(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let policy = self.policy()?;
+        self.scoped_read.persist_grant_clock()?;
+        let rtxn = self.scoped_read.vault().store.env.read_txn()?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         if self.scoped_read.actor_key().vault_owner_ref().is_none()
             && policy.diagnostics().loaded_manifest_forces_fail_closed()
         {
@@ -332,23 +335,25 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let after: Option<WorldPosition> = scope.open(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         if after.is_none()
-            && self.world_visible(&policy, None)
+            && self.world_visible(&rtxn, &policy, None)?
             && !builder.try_push(GraphFsEntry::directory("base"))
         {
             return Ok(builder.finish(None));
         }
 
         let after = after.and_then(|position| position.0);
-        let rows = self.scoped_read.vault().entities_by_type_page(
-            ENTITY_TYPE_WORLD,
-            after.as_ref(),
-            GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1),
-        )?;
+        let rows = self
+            .scoped_read
+            .vault()
+            .store
+            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_WORLD, after)?
+            .take(GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1))
+            .collect::<Result<Vec<_>>>()?;
         let has_more_rows = rows.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
         let mut next_cursor = None;
         let (mut last_listed, mut last_scanned) = (after, after);
         for id in rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES) {
-            if self.world_visible(&policy, Some(id)) {
+            if self.world_visible(&rtxn, &policy, Some(id))? {
                 if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
                     next_cursor = builder
                         .last_entry_name()
@@ -365,31 +370,32 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         Ok(builder.finish(next_cursor))
     }
 
-    /// Whether this reader may walk into `world` (`None` is base reality),
-    /// judged as claim admission judges a claim's world: the worlds the read
-    /// asked for and its credential's Scope must admit it; the owner then
-    /// reads every world of their vault (ARCH-0057). Any other reader reads
-    /// where a read grant for it reads the world
-    /// ([`crate::gate::scoped_read_grant_reads_world`]), anywhere while the
-    /// manifest holds no read grant, and, with a credential no grant names,
-    /// wherever that credential reads.
+    /// Whether this reader may walk into `world` (`None` is base reality) in
+    /// `rtxn`, judged as claim admission judges a claim's world: the
+    /// credential must be live and the worlds the read asked for and its
+    /// Scope must admit it; the owner then reads every world of their vault
+    /// (ARCH-0057). Any other reader reads where a read grant for it reads
+    /// the world ([`crate::gate::scoped_read_grant_reads_world`]), anywhere
+    /// while the manifest holds no read grant, and, with a credential no
+    /// grant names, wherever that credential reads.
     pub(super) fn world_visible(
         &self,
+        rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         world: Option<EntityId>,
-    ) -> bool {
+    ) -> Result<bool> {
         let key = self.scoped_read.actor_key();
-        if !self.scoped_read.world_within_ceilings(world) {
-            return false;
+        if !self.scoped_read.world_readable_in(rtxn, world)? {
+            return Ok(false);
         }
         if key.vault_owner_ref().is_some() {
-            return true;
+            return Ok(true);
         }
         if policy.diagnostics().loaded_manifest_forces_fail_closed() {
-            return false;
+            return Ok(false);
         }
         if !policy.has_scoped_read_grants() {
-            return true;
+            return Ok(true);
         }
         let mut matched = false;
         for grant in policy.scoped_grants() {
@@ -398,10 +404,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             matched = true;
             if crate::gate::scoped_read_grant_reads_world(grant, world) {
-                return true;
+                return Ok(true);
             }
         }
-        key.authority_scope().is_some() && !matched
+        Ok(key.authority_scope().is_some() && !matched)
     }
 
     fn listdir_entities(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
@@ -702,12 +708,6 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             builder.set_last_temporal_cursor(temporal);
         }
         Ok(builder.finish(next_cursor))
-    }
-
-    pub(super) fn policy(&self) -> Result<PolicyManifestResolution> {
-        self.scoped_read.persist_grant_clock()?;
-        let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        self.scoped_read.live_policy_manifest_in(&rtxn)
     }
 }
 
