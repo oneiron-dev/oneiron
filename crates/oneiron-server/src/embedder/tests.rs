@@ -194,6 +194,8 @@ struct MockState {
     model: Mutex<String>,
     /// The profile they list and answer with; none until a row sets one.
     profile: Mutex<Value>,
+    /// The device and runtime they answer with; none until a row sets one.
+    mark: Mutex<Value>,
     requests: Mutex<Vec<Value>>,
 }
 
@@ -208,6 +210,10 @@ impl MockState {
 
     fn profile(&self) -> Value {
         self.profile.lock().expect("mock profile lock").clone()
+    }
+
+    fn mark(&self) -> Value {
+        self.mark.lock().expect("mock mark lock").clone()
     }
 }
 
@@ -235,6 +241,7 @@ impl MockEndpoint {
             behaviour: Mutex::new(behaviour),
             model: Mutex::new(MOCK_MODEL.to_owned()),
             profile: Mutex::new(Value::Null),
+            mark: Mutex::new(Value::Null),
             requests: Mutex::new(Vec::new()),
         });
         let app = Router::new()
@@ -274,6 +281,11 @@ impl MockEndpoint {
     /// settings that leave its transform as it was lists and answers it.
     fn serve_profile(&self, profile: Value) {
         *self.state.profile.lock().expect("mock profile lock") = profile;
+    }
+
+    /// Answers as a server computing on `mark`'s device and runtime does.
+    fn serve_on(&self, mark: Value) {
+        *self.state.mark.lock().expect("mock mark lock") = mark;
     }
 
     fn requests(&self) -> Vec<Value> {
@@ -418,6 +430,7 @@ async fn mock_embeddings(
             "model_id": state.model(),
             "transform": transform,
             "profile": state.profile(),
+            "provenance": state.mark(),
         })));
     }
     Ok(axum::Json(json!({ "data": rows })))
@@ -633,10 +646,14 @@ fn an_alias_moved_to_another_revision_is_refused_and_nothing_is_stored() {
 /// alias that came back with another revision behind it still had its answers
 /// stored. Its answers are now held to the vault's model and to the transform
 /// the vault admitted from its provider; a refused answer falls back to the
-/// provider, as any failed remote answer does.
+/// provider, as any failed remote answer does. Each vector is marked with the
+/// endpoint that answered for it (ARCH-0036), never the one first asked.
 #[test]
 fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
-    use oneiron::embed::EmbedderLocality;
+    use oneiron::embed::{EmbedderLocality, EmbeddingDevice, EmbeddingProvenance};
+    let answered_by = |base: &str| {
+        EmbeddingProvenance::new(EmbeddingDevice::Remote, format!("{MODEL_KEY}@{base}"))
+    };
     let primary = MockEndpoint::start(MockBehaviour::OneironWire);
     let remote = MockEndpoint::start(MockBehaviour::OneironWire);
     let dir = tempfile::tempdir().expect("vault dir");
@@ -669,6 +686,10 @@ fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
         vault.embedding_locality(&first).expect("read"),
         Some(EmbedderLocality::OwnerServer)
     );
+    assert_eq!(
+        vault.embedding_provenance(&first).expect("read"),
+        Some(answered_by(&remote.base))
+    );
 
     remote.serve_model(OTHER_REVISION);
     let second = put_claim(&vault, 0xE6, "a claim the moved alias would embed");
@@ -681,6 +702,105 @@ fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
     assert_eq!(
         vault.embedding_locality(&second).expect("read"),
         Some(EmbedderLocality::OnDevice)
+    );
+    assert_eq!(
+        vault.embedding_provenance(&second).expect("read"),
+        Some(answered_by(&primary.base))
+    );
+}
+
+/// The owner's ruling (EMBED-DEVICE, ARCH-0036): behind a shared endpoint a
+/// vault still marks each vector with the device that computed it, so a CPU's
+/// vectors and a GPU's are told apart and one set can be patched. Each answer
+/// of `embedder serve` names its device and runtime; an endpoint that does not
+/// say, or names no device it ran on or a runtime unfit to store, is marked
+/// `remote`.
+#[test]
+fn vectors_from_a_cpu_endpoint_and_a_cuda_endpoint_are_marked_apart() {
+    use oneiron::embed::{EmbeddingDevice, EmbeddingProvenance};
+    let on_cpu = EmbeddingProvenance::new(EmbeddingDevice::Cpu, "candle 0.11.0 q8_0 x86_64+avx2");
+    let on_cuda = EmbeddingProvenance::new(EmbeddingDevice::Cuda, "candle 0.11.0 q8_0");
+    let cpu = MockEndpoint::start(MockBehaviour::OneironWire);
+    cpu.serve_on(serde_json::to_value(&on_cpu).expect("mark"));
+    let cuda = MockEndpoint::start(MockBehaviour::OneironWire);
+    cuda.serve_on(serde_json::to_value(&on_cuda).expect("mark"));
+    let silent = MockEndpoint::start(MockBehaviour::OneironWire);
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = test_vault(dir.path());
+    let fill_from = |endpoint: &MockEndpoint| {
+        let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+            Arc::clone(&vault),
+            endpoint.embedder() as Arc<dyn oneiron::embed::Embedder>,
+        );
+        let mut filled = 0;
+        loop {
+            let report = reconciler.reconcile_once().expect("filled");
+            if report.leased == 0 {
+                return filled;
+            }
+            filled += report.filled;
+        }
+    };
+    fill_from(&silent);
+    let first = put_claim(&vault, 0xE7, "a claim the CPU endpoint embeds");
+    assert_eq!(fill_from(&cpu), 1);
+    let second = put_claim(&vault, 0xE8, "a claim the CUDA endpoint embeds");
+    assert_eq!(fill_from(&cuda), 1);
+    assert_eq!(
+        vault.embedding_provenance(&first).expect("read"),
+        Some(on_cpu)
+    );
+    assert_eq!(
+        vault.embedding_provenance(&second).expect("read"),
+        Some(on_cuda)
+    );
+    // The doctor's selection (`oneiron doctor --vectors-from <device>`).
+    assert_eq!(
+        vault
+            .vectors_by_provenance(EmbeddingDevice::Cpu, None)
+            .expect("cpu"),
+        vec![first]
+    );
+    assert_eq!(
+        vault
+            .vectors_by_provenance(EmbeddingDevice::Cuda, None)
+            .expect("cuda"),
+        vec![second]
+    );
+
+    silent.serve_on(json!({ "device": "cuda", "runtime": "x".repeat(129) }));
+    let third = put_claim(&vault, 0xE9, "a claim an endpoint marks unfit to store");
+    assert_eq!(fill_from(&silent), 1);
+    let remote = EmbeddingProvenance::new(
+        EmbeddingDevice::Remote,
+        format!("{MODEL_KEY}@{}", silent.base),
+    );
+    assert_eq!(
+        vault.embedding_provenance(&third).expect("read"),
+        Some(remote.clone())
+    );
+    // A mark this build cannot read never fails the answer (review repro: a
+    // mark nested past the decoder's depth limit refused the whole answer).
+    let mut deep = json!("cuda");
+    for _ in 0..200 {
+        deep = json!([deep]);
+    }
+    silent.serve_on(json!({ "device": deep, "runtime": "candle 0.11.0 q8_0" }));
+    let fourth = put_claim(
+        &vault,
+        0xEA,
+        "a claim an endpoint marks past the depth limit",
+    );
+    assert_eq!(fill_from(&silent), 1);
+    assert_eq!(
+        vault.embedding_provenance(&fourth).expect("read"),
+        Some(remote)
+    );
+    assert_eq!(
+        vault
+            .vectors_by_provenance(EmbeddingDevice::Cuda, None)
+            .expect("cuda"),
+        vec![second]
     );
 }
 

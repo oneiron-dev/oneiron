@@ -134,8 +134,8 @@ impl Vault {
                 Some(_) => None,
                 None if !embeddable => None,
                 None => match embedder {
-                    Some(embedder) => match embedder.embed_revision(&input) {
-                        Ok(vector) => Some(vector),
+                    Some(embedder) => match embedder.embed_revision_marked(&input) {
+                        Ok(marked) => Some(marked),
                         Err(
                             error @ (Error::InvalidConfig(_)
                             | Error::DimensionMismatch { .. }
@@ -189,14 +189,14 @@ impl Vault {
             }
             let generated_vector = staged.vector.is_none() && embedder.is_some();
             let vector = match staged.vector {
-                Some(vector) => Some(vector),
+                Some(vector) => Some((vector, staged.provenance)),
                 // The staged vector the work started from is gone, and the copy
                 // read before is not written in its place.
                 None if snapshot_staged => {
                     report.superseded.push(input.entity);
                     continue;
                 }
-                None => generated,
+                None => generated.map(|(vector, provenance)| (vector, Some(provenance))),
             };
             let codes = super::phonetic::take_phonetic(
                 &self.store,
@@ -222,11 +222,12 @@ impl Vault {
                 },
             ];
             let wrote_vector = vector.is_some();
-            if let Some(vector) = vector {
+            if let Some((vector, provenance)) = vector {
                 ops.push(BatchOp::Vector {
                     id: input.entity,
                     vector,
                     pending_embedding_token: staged.pending_embedding_token,
+                    provenance,
                 });
             }
             if let Err(error) = apply_ops(
@@ -357,8 +358,8 @@ impl Vault {
         for input in candidates {
             let vector = match input.payload() {
                 None => None,
-                Some(_) => match embedder.embed_revision(&input) {
-                    Ok(vector) => Some(vector),
+                Some(_) => match embedder.embed_revision_marked(&input) {
+                    Ok(marked) => Some(marked),
                     Err(
                         error @ (Error::InvalidConfig(_)
                         | Error::DimensionMismatch { .. }
@@ -378,7 +379,7 @@ impl Vault {
                 continue;
             }
             match vector {
-                Some(vector) => {
+                Some((vector, provenance)) => {
                     if let Err(error) = apply_ops(
                         &self.store,
                         &self.config,
@@ -388,6 +389,7 @@ impl Vault {
                             id: input.entity,
                             vector,
                             pending_embedding_token: None,
+                            provenance: Some(provenance),
                         }],
                         self.text_index_trusted
                             .load(std::sync::atomic::Ordering::Acquire),
@@ -475,6 +477,7 @@ pub(crate) fn drop_vector_state(
         crate::hnsw::increment_vector_version(&vault.store, txn)?;
     }
     crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
+    crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;
     vault.store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
     {

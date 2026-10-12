@@ -35,7 +35,7 @@ use std::time::Instant;
 
 use candle_core::{DType, Device};
 use candle_nn::VarBuilder;
-use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
+use oneiron::embed::{Embedder, EmbedderLocality, EmbeddingProvenance, PendingEmbeddingInput};
 use tokenizers::Tokenizer;
 
 use self::evidence::RunProfile;
@@ -71,6 +71,8 @@ pub(crate) struct LocalEmbedder {
     transform: String,
     /// The settings it runs with that its evidence floors depend on.
     profile: RunProfile,
+    /// The device and runtime its vectors are marked with.
+    provenance: EmbeddingProvenance,
     /// Inputs one forward packs, at most.
     batch_size: usize,
     /// Tokens one forward packs, at most ([`FORWARD_TOKENS`]).
@@ -319,6 +321,7 @@ impl LocalEmbedder {
             tokenizer,
             transform,
             profile: RunProfile::of(config),
+            provenance: device::provenance(&run_device, config.local.quant),
             batch_size: config.batch_size.max(1),
             forward_tokens: FORWARD_TOKENS,
             truncations: AtomicU64::new(0),
@@ -585,6 +588,10 @@ impl Embedder for LocalEmbedder {
             .map(|input| self.common.document_text(input))
             .collect::<oneiron::Result<_>>()?;
         self.embed_documents(&texts)
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        self.provenance.clone()
     }
 }
 

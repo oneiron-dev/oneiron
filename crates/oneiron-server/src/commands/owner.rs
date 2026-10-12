@@ -80,6 +80,8 @@ pub fn doctor(args: DoctorArgs) -> anyhow::Result<()> {
 /// `config_errors` beside it, and backups are read with the defaults if the
 /// `[backup]` section itself is what fails.
 fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
+    let vectors_from = args.vectors_from;
+    let vectors_runtime = args.vectors_runtime;
     let serve = ServeArgs {
         config: args.config,
         vault_path: Some(args.path.clone()),
@@ -127,10 +129,31 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
     });
     let plan = BackupPlan::new(&args.path, backup.dir_for(&args.path), backup.keep);
     let every = backup.enabled.then_some(backup.every_hours);
+    // A vault that holds vectors opens only under its own model (bug repro:
+    // doctor opened every vault under none and failed on each that holds
+    // vectors). It is read without opening the vault; opening under it pins
+    // nothing new. A vault that cannot be read, or whose stored id is not one
+    // a vault opens under, is opened as before, and the doctor reports it.
+    vault_config.embedding_model = oneiron::Vault::stored_embedding_model(&args.path)
+        .ok()
+        .flatten()
+        .filter(|model| oneiron::store::validate_embedding_model_id(model).is_ok());
     let mut report = match oneiron::Vault::open_owned(&args.path, vault_config) {
         Ok(vault) => {
             let doctor = vault.doctor()?;
             let mut report = serde_json::to_value(&doctor)?;
+            // Which device and runtime computed the stored vectors, so one
+            // device's can be found and embedded again (ARCH-0036).
+            report["vector_provenance"] =
+                serde_json::to_value(vault.embedding_provenance_counts()?)?;
+            if let Some(device) = vectors_from {
+                let ids = vault.vectors_by_provenance(device, vectors_runtime.as_deref())?;
+                report["vectors_from"] = serde_json::json!({
+                    "device": device,
+                    "runtime": vectors_runtime,
+                    "ids": ids.iter().map(oneiron::EntityId::to_hex).collect::<Vec<_>>(),
+                });
+            }
             report["location"] =
                 serde_json::to_value(location::locate(&args.path, Some(&vault), &plan, every)?)?;
             report["embedder"] = serde_json::to_value(EmbedderReport::unobserved(

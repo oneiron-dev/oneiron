@@ -280,6 +280,13 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
         &self,
         input: &oneiron::memory::IndexedRevisionInput,
     ) -> oneiron::Result<Vec<f32>> {
+        Ok(oneiron::memory::IndexedRevisionEmbedder::embed_revision_marked(self, input)?.0)
+    }
+
+    fn embed_revision_marked(
+        &self,
+        input: &oneiron::memory::IndexedRevisionInput,
+    ) -> oneiron::Result<(Vec<f32>, oneiron::embed::EmbeddingProvenance)> {
         // The engine's own projection, the one it decided this revision is
         // embeddable by; it never asks for a revision with nothing to embed.
         let payload = input.payload().ok_or(oneiron::Error::InvariantViolation(
@@ -287,7 +294,7 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
         ))?;
         let values = self
             .provider
-            .embed(&[oneiron::embed::PendingEmbeddingInput {
+            .embed_marked(&[oneiron::embed::PendingEmbeddingInput {
                 entity_id: input.entity,
                 payload,
                 pending_embedding_token: input.source_revision_ref.0.to_vec(),
@@ -302,6 +309,10 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
             ));
         }
         Ok(value)
+    }
+
+    fn provenance(&self) -> oneiron::embed::EmbeddingProvenance {
+        self.provider.provenance()
     }
 }
 impl SyncServer {

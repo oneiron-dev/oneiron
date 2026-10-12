@@ -29,6 +29,7 @@ use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
 use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind, role_key};
 
 mod anthropic;
+mod broker;
 mod catalog;
 mod declared;
 mod driven;
@@ -49,6 +50,7 @@ mod status;
 #[cfg(test)]
 mod tests;
 
+pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 pub use declared::DeclaredRun;
 pub use ladder::OfferLadder;
 pub use offer::ServedOffer;
@@ -142,13 +144,21 @@ impl ModelRuntime {
 
     #[must_use]
     pub fn build(config: Option<&ModelsConfig>) -> Self {
+        Self::build_with_keys(config, None)
+    }
+
+    /// [`build`](Self::build), with the custody door a `key_secret`
+    /// provider's calls read their key at. Without one, such a provider is
+    /// unavailable.
+    #[must_use]
+    pub fn build_with_keys(config: Option<&ModelsConfig>, keys: Option<Arc<dyn KeyDoor>>) -> Self {
         let Some(config) = config else {
             return Self::unconfigured();
         };
         let mut status = ModelsStatus::default();
         let mut built = BTreeMap::new();
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config) {
+            match build_provider(name, provider, config, keys.as_ref()) {
                 Ok(Some(backend)) => {
                     built.insert(name.clone(), backend);
                     status.providers.push(ProviderStatus::ready(name, provider));
@@ -302,16 +312,27 @@ pub fn undeclared_run(
 }
 
 /// One provider's wire backend. Each sends one request per call (its
-/// transport is `SingleSend`), so a run's gate can wrap it.
+/// transport is `SingleSend`, or the credential broker for a `key_secret`
+/// key), so a run's gate can wrap it.
 fn build_provider(
     name: &str,
     provider: &ProviderConfig,
     config: &ModelsConfig,
+    keys: Option<&Arc<dyn KeyDoor>>,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
         .map(|model| catalog_entry(model, provider))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    if provider.key_secret.is_some() && provider.kind.generates() {
+        return Ok(Some(Arc::new(broker::broker_backend(
+            provider,
+            catalog,
+            output_cap(provider),
+            config.broker.as_ref(),
+            keys,
+        )?)));
+    }
     let backend: Arc<dyn SingleRouteBackend> = match provider.kind {
         ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
@@ -319,11 +340,7 @@ fn build_provider(
                 OpenAiCompatConfig::from_catalog(catalog),
                 openai::OpenAiHttp {
                     http,
-                    cap: OutputCap {
-                        field: provider.output_limit_field.key(),
-                        ceiling: provider.max_output_tokens,
-                        fallback: None,
-                    },
+                    cap: output_cap(provider),
                 },
             ))
         }
@@ -333,11 +350,7 @@ fn build_provider(
                 AnthropicMessagesConfig::from_catalog(catalog),
                 anthropic::AnthropicHttp {
                     http,
-                    cap: OutputCap {
-                        field: "max_tokens",
-                        ceiling: provider.max_output_tokens,
-                        fallback: Some(anthropic::DEFAULT_MAX_OUTPUT_TOKENS),
-                    },
+                    cap: output_cap(provider),
                 },
             ))
         }
@@ -353,12 +366,35 @@ fn build_reranker(
     provider: &ProviderConfig,
     models: &[ModelRef],
 ) -> anyhow::Result<Arc<dyn SingleRouteBackend>> {
+    // The credential broker sends chat calls only. A rerank call sent without
+    // it would carry no key, while its offer says the broker holds one.
+    if provider.key_secret.is_some() {
+        anyhow::bail!(
+            "a reranker cannot use a key_secret key yet: the credential broker sends chat calls only"
+        );
+    }
     let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
     let wire_models = models
         .iter()
         .map(|model| Ok((engine_model_id(model, provider)?, model.model.clone())))
         .collect::<anyhow::Result<_>>()?;
     Ok(Arc::new(rerank::RerankBackend::new(http, wire_models)))
+}
+
+/// The output ceiling a provider's wire carries.
+fn output_cap(provider: &ProviderConfig) -> OutputCap {
+    match provider.kind {
+        ProviderKind::AnthropicCompat => OutputCap {
+            field: "max_tokens",
+            ceiling: provider.max_output_tokens,
+            fallback: Some(anthropic::DEFAULT_MAX_OUTPUT_TOKENS),
+        },
+        _ => OutputCap {
+            field: provider.output_limit_field.key(),
+            ceiling: provider.max_output_tokens,
+            fallback: None,
+        },
+    }
 }
 
 /// `model` on `provider` as a rung at `position`: the offer a run admits its

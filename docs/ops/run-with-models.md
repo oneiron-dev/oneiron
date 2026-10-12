@@ -73,13 +73,43 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
-`local-openai-compat`, `oneironer`), `base_url`, `key_env`, `headers`
+`local-openai-compat`, `oneironer`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
+
+A `key_secret` names a vault secret instead of a variable: the key stays in
+the vault's custody (T0), and only the credential broker sends it. The broker is
+a separate process that runs as its own OS user, adds the key to one request,
+sends it once over verified TLS (no redirect, no retry, no proxy) and strips the
+key from the reply. Each call reads the key at the custody door, so register the
+secret with a binding for the effector `broker:model` at T0 (doored). Run
+the broker with `oneiron-broker serve --socket <path> --client-uid <the
+server's uid>` (add `--extra-roots <pem>` for a private CA), and name it:
+
+```toml
+[models.broker]
+socket = "/run/oneiron-broker/broker.sock"   # absolute; its directory is the fence
+uid = 991                                    # the broker's user, never the server's
+
+[models.providers.paid]
+kind = "openai-compat"
+base_url = "https://api.example.com"         # https only
+key_secret = "provider-key"
+```
+
+A declared run's paid keys must sit at T0, so its teacher calls go out this way.
+A `key_secret` provider answers whole replies only for now: a streamed call to it
+is refused before it starts.
+
+The broker holds `<socket>.lock` while it serves, so a second broker on the same
+path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
+the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
+for the user that runs it, and `newuidmap`. A Linux host that is meant to prove the
+broker runs it; there, a missing prerequisite fails the run instead of skipping it.
 
 `max_output_tokens` is a ceiling on every call to that provider: it is sent
 when a call names no limit, and a larger limit is cut down to it. An
@@ -302,6 +332,7 @@ unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in
 for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
 `budget_spent`), and a reranker that refuses, fails or answers out of shape
 with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
-rungs cannot serve (a key variable unset) refuses the same way. The request
+rungs cannot serve (a key variable unset, or a `key_secret` provider: the
+broker sends chat calls only for now) refuses the same way. The request
 never names the model, the endpoint or the lease; the server holds them, for
 MCP, HTTP and WebSocket recall alike.
