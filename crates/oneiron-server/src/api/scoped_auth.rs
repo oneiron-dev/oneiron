@@ -10,11 +10,11 @@ use axum::http::HeaderMap;
 ///
 /// These routes read the whole vault under one actor ref, so they stay a
 /// trust-root surface: scoped `/v1` delegation tokens do not reach them.
-pub(super) fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result<(), ApiError> {
+pub(super) fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result<CoreAuth, ApiError> {
     if server.managed_issuer.is_some() {
-        return CoreAuth::for_server(headers, server).map(drop);
+        return CoreAuth::for_server(headers, server);
     }
-    require_owner_auth(headers, &server.config, server.vault().as_ref()).map(drop)
+    require_owner_auth(headers, &server.config, server.vault().as_ref())
 }
 
 const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
@@ -69,7 +69,23 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
     Ok(vault.scoped_read(key))
 }
 
-pub(super) fn scoped_read_for_legacy_api(
+/// The legacy read lane for the credential [`check_api_auth`] admitted. A
+/// verified slip reads under its own key, through the one builder, so an
+/// agent's full-scope slip reads a relationship's rows here only on a grant,
+/// as on `/v1`, and every read checks that slip's liveness. A credential that
+/// verifies no slip is the server's own secret and reads as the host root.
+pub(super) fn scoped_read_for_legacy_api<'a>(
+    server: &'a SyncServer,
+    auth: &CoreAuth,
+) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
+    if let Some(proof) = auth.verified_slip() {
+        let vault = server.vault().as_ref();
+        return Ok(vault.scoped_read(credential_read_key(vault, proof)?));
+    }
+    scoped_read_for_host_root(server)
+}
+
+pub(super) fn scoped_read_for_host_root(
     server: &SyncServer,
 ) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
     let vault = server.vault().as_ref();

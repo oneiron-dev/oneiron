@@ -638,3 +638,34 @@ async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
         }
     }
 }
+
+/// Astra #1413-001: the legacy `/api` reads admitted any full-scope slip and
+/// then read under the server's own host root, so the vault's agent read a
+/// relationship's words there that `/v1` withholds. They read under the
+/// presented credential now: the agent's full-scope slip reads the spaced
+/// message on neither door, and the host root and the bound owner still read
+/// it.
+#[tokio::test]
+async fn legacy_api_reads_under_the_presented_credential() {
+    let room = room();
+    let agent = format!("principal_ref={};actor_class=agent", room.agent.to_hex());
+    let owner = format!("principal_ref={};actor_class=human", room.owner.to_hex());
+    let entity = format!("/api/entity/{}?view=full", room.spaced.to_hex());
+    for (recipe, reads) in [
+        (agent.as_str(), false),
+        ("jti=owner-bearer", true),
+        (owner.as_str(), true),
+    ] {
+        let (status, body) = route_json(
+            room.server.clone(),
+            core_request_with_authz("GET", &entity, test_bearer(recipe), None),
+        )
+        .await;
+        assert_eq!(
+            status == StatusCode::OK && body.to_string().contains(SPACED),
+            reads,
+            "{recipe}: {status} {body}"
+        );
+    }
+    assert!(!room.reads(&agent, "/v1/core/query").await.0);
+}
