@@ -218,7 +218,11 @@ fn a_save_copies_nothing_into_a_saved_turn_since_deleted() {
     let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
     run.dispatch(said(1, "and the boat is moored at the north pier"))
         .expect("the run speaks on into its turn");
-    assert!(vault.delete_entity(&turn).expect("delete the saved turn"));
+    // Deleted as any room door deletes it: a shell keeps its header and edges.
+    let deleted = vault
+        .delete_room_record_unchecked_for_test(&turn, crate::DeleteReason::UserDelete)
+        .expect("delete the saved turn");
+    assert!(deleted.existed);
 
     let saved = session.save_talk_by(room.owner, None).expect("save again");
     assert!(saved.is_empty(), "copied into a deleted turn: {saved:?}");
