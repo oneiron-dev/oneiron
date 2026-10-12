@@ -26469,7 +26469,7 @@
      "path": "src/pipeline/channels.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -26691,6 +26691,16 @@
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/temporal_bound.rs",
+     "purpose": "The scoped temporal bound (ARCH-0004 #temporal-bound): how far a scoped call's temporal channel widens, the…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/facet_status_world.rs",
@@ -26758,7 +26768,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/temporal.rs",
@@ -26838,7 +26848,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 5,
       "fn": 12,
       "re-export": 1,
@@ -40160,7 +40170,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40638,7 +40648,7 @@
    },
    "over_bar": 35,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2467,
+   "source_files": 2468,
    "test_files": 783
   },
   "oneiron-android": {
