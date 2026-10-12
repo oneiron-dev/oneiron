@@ -12042,7 +12042,8 @@
       "TaskIntentPresence",
       "TaskRow",
       "TasksOverflow",
-      "TasksSection"
+      "TasksSection",
+      "TasksSectionRows"
      ],
      "path": "src/context_board/tasks/projection.rs",
      "purpose": "Typed TASKS state: board status, intent and job presence, the ladder projection, and the overflow footer",
@@ -12050,8 +12051,8 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 1,
-      "fn": 11,
-      "struct": 6
+      "fn": 12,
+      "struct": 7
      }
     },
     {
@@ -17450,16 +17451,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BirthPosition",
       "ScopeView",
       "ScopedRecord"
      ],
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 4,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -18434,7 +18436,7 @@
      "path": "src/gate/retrieval_filter.rs",
      "purpose": "Retrieval authority projection and narrowing, independent of result filtering",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 1
      }
     },
@@ -22888,6 +22890,17 @@
      "surface": {
       "crate-vis": 16,
       "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/birth_position.rs",
+     "purpose": "Where a host binds a writer's TASKs to be born",
+     "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -36158,7 +36171,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -36447,7 +36460,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 11
+      "fn": 12
      }
     },
     {
@@ -36544,7 +36557,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -40053,7 +40066,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 102,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40615,7 +40628,7 @@
    },
    "over_bar": 34,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2465,
+   "source_files": 2466,
    "test_files": 783
   },
   "oneiron-android": {
@@ -49635,7 +49648,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -49655,7 +49668,7 @@
      "path": "src/api/mcp_gateway/board_setup.rs",
      "purpose": "Board state, setup grammar, and page preflight",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -50019,7 +50032,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/board_stream_publisher.rs",
@@ -50393,7 +50406,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -50413,7 +50426,7 @@
      "path": "src/auth/slips.rs",
      "purpose": "HTTP/session holder proof and projection of the single log-backed slip",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -51936,7 +51949,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "McpBoardSnapshot",
@@ -51953,7 +51966,7 @@
      "surface": {
       "crate-vis": 6,
       "enum": 3,
-      "fn": 16,
+      "fn": 17,
       "struct": 5
      }
     },
@@ -52188,7 +52201,7 @@
      "purpose": "MCP endpoint surface: modes, verb bindings, and the registered tool listing",
      "surface": {
       "const": 14,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 4,
       "fn": 16,
       "struct": 3
