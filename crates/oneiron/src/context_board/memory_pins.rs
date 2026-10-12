@@ -113,7 +113,7 @@ impl MemoriesSection {
                 let value = if crate::batch::export::claim_reads_as_secret(&claim) {
                     serde_json::Value::String("[redacted]".to_owned())
                 } else {
-                    crate::batch::export::served_messagepack_json(claim.value.clone())
+                    crate::batch::export::served_messagepack_json(claim.value)
                 };
                 row.snippet = Some(value.to_string());
             }

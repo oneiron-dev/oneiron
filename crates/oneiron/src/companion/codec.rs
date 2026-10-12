@@ -78,11 +78,11 @@ pub(crate) fn companion_value_projection(value: &Value) -> Value {
 fn projected_json(value: Value) -> JsonValue {
     match value {
         Value::Boolean(value) => JsonValue::Bool(value),
-        Value::Integer(value) => value
-            .as_i64()
-            .map(JsonValue::from)
-            .or_else(|| value.as_u64().map(JsonValue::from))
-            .unwrap_or(JsonValue::Null),
+        Value::Integer(value) => match (value.as_i64(), value.as_u64()) {
+            (Some(signed), _) => JsonValue::from(signed),
+            (None, Some(unsigned)) => JsonValue::from(unsigned),
+            (None, None) => JsonValue::Null,
+        },
         Value::F32(value) => serde_json::json!(value),
         Value::F64(value) => serde_json::json!(value),
         Value::String(value) => value.into_str().map_or(JsonValue::Null, JsonValue::String),
