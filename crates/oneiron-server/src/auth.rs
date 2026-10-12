@@ -68,6 +68,19 @@ pub(crate) trait RevokedTokenJtis {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         Err(())
     }
+    /// The 401 for a request [`Self::verify_slip`] refused only because the
+    /// vault's proof clock sits ahead of this host's clock, or `None` for any
+    /// other refusal. It names what authentication would take on this host's
+    /// clock now; a route's own authorization is not judged here.
+    fn proof_clock_refusal(
+        &self,
+        _slip: &oneiron::authority::CapabilitySlip,
+        _timestamp: u64,
+        _nonce: &[u8],
+        _signature: &[u8],
+    ) -> Option<ApiError> {
+        None
+    }
 }
 
 /// The server-local persistent registry: one `sync_state` row per revoked
@@ -82,6 +95,30 @@ impl RevokedTokenJtis for oneiron::Vault {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         self.verify_logged_capability_slip_request(slip, timestamp, signature, nonce)
             .map_err(drop)
+    }
+
+    fn proof_clock_refusal(
+        &self,
+        slip: &oneiron::authority::CapabilitySlip,
+        timestamp: u64,
+        nonce: &[u8],
+        signature: &[u8],
+    ) -> Option<ApiError> {
+        let (ahead, verified) = self
+            .proof_clock_ahead(slip, timestamp, signature, nonce)
+            .ok()
+            .flatten()?;
+        // Named only for a slip this transport would take on the host's clock.
+        CoreAuth::from_verified(verified, slip.caveats.is_empty()).ok()?;
+        tracing::warn!(
+            proof_clock = ahead.floor,
+            wall_clock = ahead.wall,
+            ahead_secs = ahead.floor.saturating_sub(ahead.wall),
+            "refused a holder proof that is fresh on this host's clock: the vault's proof clock \
+             is ahead of it, as after a host clock that ran ahead and was set back; stop \
+             `oneiron serve` and run `oneiron recover-clock`"
+        );
+        Some(ApiError::proof_clock_ahead())
     }
 
     fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
@@ -299,6 +336,13 @@ impl CoreAuth {
         if scope != CoreScope::Read {
             self.require_unrestricted_record_scope()?;
         }
+        self.require_granted(scope)
+    }
+
+    /// [`Self::require`] for a caller that already judged the record bounds
+    /// its write carries (`require_record_scope_carried`): only the grant is
+    /// left to check.
+    pub(crate) fn require_granted(&self, scope: CoreScope) -> Result<(), ApiError> {
         if self.scopes.contains(&scope) {
             Ok(())
         } else {

@@ -380,6 +380,8 @@ pub struct Memory<'v> {
     /// The write origin a host bound, when one did: claim doors stamp it in
     /// place of the caller's declared source.
     pub(super) host_origin: Option<HostWriteOrigin>,
+    /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
+    pub(super) birth_position: crate::federation::record_scope::BirthPosition,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -426,6 +428,7 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            birth_position: Default::default(),
         }
     }
 
@@ -453,6 +456,7 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            birth_position: Default::default(),
         }
     }
 }
@@ -485,6 +489,7 @@ impl<'v> Memory<'v> {
                 read_proof: self.read_proof.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
+                birth_position: self.birth_position,
             },
         })
     }

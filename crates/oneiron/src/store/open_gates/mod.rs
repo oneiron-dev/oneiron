@@ -32,6 +32,7 @@ pub(crate) use self::open_version_keys::{
     DefaultPolicySeedMode, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HnswCompatibilityState,
     MODEL_ID_KEY, TEXT_INDEX_SCHEMA_VERSION, VECTOR_VERSION_KEY,
 };
+pub(crate) use self::read_only_door::read_existing_embedding_model;
 pub(in crate::store) use self::read_only_door::read_existing_vault_meta;
 // Test-only seam (gate/mod.rs precedent): the store test suite names these
 // bare through `use super::*`, but no non-test code outside `open_gates/`

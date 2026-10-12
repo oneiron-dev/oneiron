@@ -110,7 +110,7 @@
         "session_id": "session_id"
       },
       "mcp_required_fields": [],
-      "mcp_result": "mcp_describe_result(server, actor, output)?",
+      "mcp_result": "mcp_describe_result(output)?",
       "admission": {
         "unrestricted_record_scope": true,
         "readable": [
@@ -154,7 +154,7 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "born",
       "section": true
     },
     {
