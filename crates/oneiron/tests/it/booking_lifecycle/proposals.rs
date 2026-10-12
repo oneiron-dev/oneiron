@@ -143,7 +143,15 @@ fn propose_passport(fixture: &Fixture, booking: EntityId, uid: &str, last_sequen
     let id = fixture.vault.new_entity_id().expect("claim id");
     fixture
         .vault
-        .put_claim(&id, &proposal, TimeRange { start: NOW, end: NOW }, NOW)
+        .put_claim(
+            &id,
+            &proposal,
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+        )
         .expect("the passport proposal is stored pending review");
 }
 
