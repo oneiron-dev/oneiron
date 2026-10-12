@@ -40,6 +40,11 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// step returns, and later calls and recorded-output reads in the step
     /// are refused fail-closed.
     pub(super) hard_failure: Option<Error>,
+    /// Whether a call failed with no response the bridge could record. Its
+    /// bridge position keeps no row, so no later row can checkpoint; later
+    /// calls and recorded-output reads in the step are refused as after a
+    /// hard failure.
+    left_a_gap: bool,
 }
 
 impl<'a, 's> RecordingJsHost<'a, 's> {
@@ -62,6 +67,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             bridge_calls: Vec::new(),
             durable_wait: None,
             hard_failure: None,
+            left_a_gap: false,
         }
     }
 
@@ -88,6 +94,32 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         Ok(self)
     }
 
+    /// A recorded-output read answers where the step's next bridge call
+    /// would: a step that can no longer close reads nothing more, past a
+    /// halted bridge or past a write that did not meet its receipt, in this
+    /// attempt or before. A bound door then rules on it as on any other call
+    /// the run serves.
+    fn admit_recorded_read(&self) -> Result<()> {
+        let refused =
+            |code: &str| Error::InvalidConfig(format!("recorded output read refused: {code}"));
+        if self.hard_failure.is_some() || self.left_a_gap {
+            return Err(refused("host_bridge_halted"));
+        }
+        let site = ExecutorCallSite {
+            run_id: self.run_id,
+            seq: self.next_seq,
+            step_start: self.step_start,
+            earlier: &self.bridge_calls,
+        };
+        if let Some(refusal) = self.gated_write.refusal_past_an_unmet_write(site, None)? {
+            return Err(refused(&refusal.outcome));
+        }
+        self.gated_write
+            .admit_run_call(RunCall::RecordedOutput)?
+            .map_err(|refusal| refused(&refusal.code))?;
+        Ok(())
+    }
+
     fn budget(&self) -> Option<BudgetLegibilityEnvelope> {
         self.legibility.as_ref().map(ExecutorLegibility::envelope)
     }
@@ -108,36 +140,16 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor recoverable output storage unavailable".into(),
         ))?;
-        // A read answers where the step's next bridge call would: a step that
-        // can no longer close reads nothing more, past a halted bridge or past
-        // a write that did not meet its receipt, in this attempt or before.
-        let halted = if self.hard_failure.is_some() {
-            Some("host_bridge_halted".to_owned())
-        } else {
-            self.gated_write
-                .refusal_past_an_unmet_write(
-                    ExecutorCallSite {
-                        run_id: self.run_id,
-                        seq: self.next_seq,
-                        step_start: self.step_start,
-                        earlier: &self.bridge_calls,
-                    },
-                    None,
-                )?
-                .map(|refused| refused.outcome)
-        };
-        if let Some(code) = halted {
-            return Err(Error::InvalidConfig(format!(
-                "recorded output read refused: {code}"
-            )));
+        // The run's recorded outputs hold what its calls read. A gate's
+        // rejection of reading them back halts the bridge, as at a call.
+        if let Err(err) = self.admit_recorded_read() {
+            let Error::Gate(GateError::GateWriteRejected { outcome, .. }) = &err else {
+                return Err(err);
+            };
+            let refused = Error::InvalidConfig(format!("recorded output read refused: {outcome}"));
+            self.hard_failure = Some(err);
+            return Err(refused);
         }
-        // The run's recorded outputs hold what its calls read: a bound door
-        // rules on reading them back as on any other call the run serves.
-        self.gated_write
-            .admit_run_call(RunCall::RecordedOutput)?
-            .map_err(|refusal| {
-                Error::InvalidConfig(format!("recorded output read refused: {}", refusal.code))
-            })?;
         for (seq, output) in &self.recoverable {
             if !path.starts_with(&format!("/mnt/outputs/.oneiron-context-ref/{seq}/")) {
                 continue;
@@ -192,10 +204,11 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome));
         }
-        if self.hard_failure.is_some() {
-            // Fail-closed after the first hard failure: no further gate
-            // dispatches; the guest sees a typed Failed response (budget
-            // attached) and the replay row records exactly that.
+        if self.hard_failure.is_some() || self.left_a_gap {
+            // Fail-closed after the first hard failure or unrecorded call:
+            // no further gate dispatches; the guest sees a typed Failed
+            // response (budget attached) and the replay row records exactly
+            // that.
             let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: "host_bridge_halted".to_owned(),
@@ -226,6 +239,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
                     // Infrastructure failure: no guest-visible response
                     // exists for this call at all.
+                    self.left_a_gap = true;
                     return Err(err);
                 };
                 let row = CodeRunBridgeCall::record(
