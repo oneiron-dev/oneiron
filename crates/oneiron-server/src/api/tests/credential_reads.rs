@@ -554,7 +554,7 @@ async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
         room.server.clone(),
         core_request_with_authz(
             "POST",
-            "/v1/core/campaigns",
+            "/campaigns",
             test_bearer(&format!("principal_ref={owner};actor_class=human")),
             Some(&json!({ "name": "credkey outreach" })),
         ),
@@ -604,7 +604,7 @@ async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
             room.agent_recipe(None),
         ),
         (
-            format!("/v1/core/campaigns/{campaign}"),
+            format!("/campaigns/{campaign}"),
             format!("scope=core:read;principal_ref={owner};actor_class=human"),
         ),
         (
