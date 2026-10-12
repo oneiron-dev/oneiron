@@ -11,7 +11,7 @@ impl ScopedRead<'_> {
     /// one grouped line per glyph (`👍×8 (Anna, Ben, +6)`), first put first.
     pub fn reaction_lines(&self, record: &EntityId) -> Result<Vec<String>> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
+        let policy = self.live_policy_manifest_in(&rtxn)?;
         self.reaction_lines_in(&rtxn, &policy, None, record)
     }
 
@@ -81,7 +81,7 @@ impl ScopedRead<'_> {
         disclosure: Option<&DisclosureContext>,
     ) -> Result<()> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
+        let policy = self.live_policy_manifest_in(&rtxn)?;
         for entity in &mut pack.results {
             if !matches!(entity.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 continue;
@@ -103,14 +103,15 @@ impl ScopedRead<'_> {
 
     /// [`crate::Vault::reaction_pills`] under this read, in one snapshot: only
     /// messages this read reads get pills, and a pill counts only the
-    /// reactions it reads, each under its whole admission.
+    /// reactions it reads, each under its whole admission. Like every read on
+    /// this lane, an owner lane refuses once its binding is gone.
     pub fn reaction_pills(
         &self,
         messages: &[EntityId],
         viewer: EntityId,
     ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.policy_manifest_in(&rtxn)?;
+        let policy = self.live_policy_manifest_in(&rtxn)?;
         let mut readable = Vec::with_capacity(messages.len());
         for message in messages {
             if self.is_entity_readable_with_policy_in(&rtxn, &policy, message)? {
@@ -140,12 +141,17 @@ impl ScopedRead<'_> {
         disclosure: Option<&DisclosureContext>,
     ) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
-        Ok(self.is_entity_readable_in(&rtxn, &signal.message)?
-            && self
-                .at_every_claim_status()?
-                .is_entity_readable_in(&rtxn, &signal.reaction)?
-            && self.disclosed_in(&rtxn, disclosure, &signal.message)?
-            && self.disclosed_in(&rtxn, disclosure, &signal.reaction)?)
+        let policy = self.live_policy_manifest_in(&rtxn)?;
+        Ok(
+            self.is_entity_readable_with_policy_in(&rtxn, &policy, &signal.message)?
+                && self.at_every_claim_status()?.is_entity_readable_with_policy_in(
+                    &rtxn,
+                    &policy,
+                    &signal.reaction,
+                )?
+                && self.disclosed_in(&rtxn, disclosure, &signal.message)?
+                && self.disclosed_in(&rtxn, disclosure, &signal.reaction)?,
+        )
     }
 }
 
