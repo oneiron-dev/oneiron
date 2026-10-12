@@ -154,7 +154,12 @@ pub(super) fn reject_retired_signer_forks(
     let kept_fences = |considered: &[AuthorityEntryHash]| -> Vec<Fence> {
         let candidates: Vec<(AuthorityEntryHash, Fence)> = considered
             .iter()
-            .map(|handoff| (*handoff, fence_of(handoff, states, entries, ancestors, &handoffs)))
+            .map(|handoff| {
+                (
+                    *handoff,
+                    fence_of(handoff, states, entries, ancestors, &handoffs),
+                )
+            })
             .collect();
         let fenced_by =
             |hash: &AuthorityEntryHash, fence: &Fence| fence.signed_outside(hash, entries);
