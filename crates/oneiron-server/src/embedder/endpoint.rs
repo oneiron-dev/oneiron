@@ -657,10 +657,31 @@ impl Embedder for HttpEmbedder {
     }
 
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> oneiron::Result<Vec<Vec<f32>>> {
+        self.embed_documents(inputs, &|_| Ok(()))
+    }
+
+    fn embed_released(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Vec<Vec<f32>>> {
+        self.embed_documents(inputs, release)
+    }
+}
+
+impl HttpEmbedder {
+    /// Embeds `inputs` as documents, one request or several, each sent only
+    /// once `release` lets the rows it carries leave.
+    fn embed_documents(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Vec<Vec<f32>>> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
         let wire = self.wire()?;
+        let rows: Vec<oneiron::EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         let texts: Vec<String> = inputs
             .iter()
             .map(|input| {
@@ -672,14 +693,20 @@ impl Embedder for HttpEmbedder {
             .collect::<oneiron::Result<_>>()?;
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
         match wire {
-            Wire::OpenAi => self.post_embeddings(&refs, Side::default()),
+            Wire::OpenAi => {
+                release(&rows)?;
+                self.post_embeddings(&refs, Side::default())
+            }
             Wire::Oneiron => {
                 let side = Side {
                     input_type: Some("document"),
                     instruction: None,
                 };
                 let mut vectors = Vec::with_capacity(refs.len());
+                let mut sent = 0;
                 for request in requests(&refs, ONEIRON_REQUEST_BYTES) {
+                    release(&rows[sent..sent + request.len()])?;
+                    sent += request.len();
                     vectors.extend(self.post_embeddings(request, side)?);
                 }
                 Ok(vectors)

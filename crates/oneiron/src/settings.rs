@@ -492,6 +492,26 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Whether every row of `rows` may leave this device now: none is one a
+    /// device-local world keeps (DEC-0005), or whose world cannot be read.
+    /// Read under the flag lock, so a flag committed before it answers is
+    /// one it read. A sender asks right before the bytes go, and holds no
+    /// answer across a later send.
+    #[cfg(feature = "sync")]
+    pub fn rows_may_leave_device(&self, rows: &[EntityId]) -> Result<bool> {
+        let _acceptance = self.device_only_acceptance();
+        let rtxn = self.store.env.read_txn()?;
+        let flagged = device_only_worlds_in(&self.store, &rtxn)?;
+        for row in rows {
+            match device_only_withholds(&self.store, &rtxn, &flagged, row) {
+                Ok(false) => {}
+                Ok(true) | Err(Error::CorruptedIndex(_)) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(true)
+    }
+
     /// Whether `world` is flagged device-only on this device.
     pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
