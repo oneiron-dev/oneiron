@@ -523,11 +523,7 @@ impl Vault {
     /// kept too.
     pub fn device_local_keeps(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_only_worlds_in(&self.store, &rtxn)?;
-        match device_only_withholds(&self.store, &rtxn, &flagged, id) {
-            Err(Error::CorruptedIndex(_)) => Ok(true),
-            held => held,
-        }
+        device_local_keeps_in(&self.store, &rtxn, id)
     }
 
     /// Reads the persisted customization settings, or the default four-layer model.
@@ -675,6 +671,19 @@ pub(crate) fn device_only_worlds_in(
         .into_iter()
         .map(|HexId(world)| world)
         .collect())
+}
+
+/// [`Vault::device_local_keeps`], read in the caller's transaction.
+pub(crate) fn device_local_keeps_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let flagged = device_only_worlds_in(store, txn)?;
+    match device_only_withholds(store, txn, &flagged, id) {
+        Err(Error::CorruptedIndex(_)) => Ok(true),
+        held => held,
+    }
 }
 
 /// The device-only flag generation: it moves whenever a flag is set or

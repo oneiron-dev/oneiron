@@ -61,8 +61,9 @@ impl Caller {
         )
     }
 
-    /// The ids a query or pack answered with, under `field`.
-    async fn ids(&self, from: Origin, uri: &str, field: &str) -> Vec<String> {
+    /// A query or pack's whole answer, so an id anywhere in it (a result, an
+    /// L2 base, a neighbor) counts as read.
+    async fn answer(&self, from: Origin, uri: &str) -> String {
         let (status, body) = self
             .call(
                 from,
@@ -72,12 +73,7 @@ impl Caller {
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-        body[field]
-            .as_array()
-            .unwrap_or_else(|| panic!("{uri} answers {field}: {body}"))
-            .iter()
-            .filter_map(|item| item["id"].as_str().map(str::to_owned))
-            .collect()
+        body.to_string()
     }
 }
 
@@ -154,17 +150,29 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         .unwrap(),
     );
     // A pack gives a world's claims at most half its claim budget, so the
-    // portable claim is base reality's.
+    // portable claim is base reality's; claims about the owner go to the L2
+    // base, so these are about someone else.
+    let grower = EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &grower,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"grower",
+        )
+        .unwrap();
     let kept = put_orchid_claim(
         &server,
-        owner,
+        grower,
         "test.orchid_kept",
         Some(kept_world),
         "orchid ledger kept",
     );
     let open = put_orchid_claim(
         &server,
-        owner,
+        grower,
         "test.orchid_open",
         None,
         "orchid ledger open",
@@ -224,16 +232,16 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         .unwrap();
 
     for (from, on_device) in [(here, true), (away, false), (proxied, false)] {
-        for (uri, field) in [
-            ("/v1/core/query", "items"),
-            ("/v1/core/context-pack", "results"),
-        ] {
-            let ids = caller.ids(from, uri, field).await;
-            assert!(ids.contains(&open.to_hex()), "{uri} from {from:?}: {ids:?}");
+        for uri in ["/v1/core/query", "/v1/core/context-pack"] {
+            let answer = caller.answer(from, uri).await;
+            assert!(
+                answer.contains(&open.to_hex()),
+                "{uri} from {from:?}: {answer}"
+            );
             assert_eq!(
-                ids.contains(&kept.to_hex()),
+                answer.contains(&kept.to_hex()),
                 on_device,
-                "{uri} from {from:?}: {ids:?}"
+                "{uri} from {from:?}: {answer}"
             );
         }
         let (status, body) = caller

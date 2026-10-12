@@ -108,7 +108,9 @@ pub fn scoped_subscription_pending(
             {
                 continue;
             }
-            if !readable_at(vault, Some(row.claim_id), locality)? {
+            if locality == CallerLocality::OffDevice
+                && crate::settings::device_local_keeps_in(&vault.store, &txn, &id)?
+            {
                 continue;
             }
             selected.push(row);

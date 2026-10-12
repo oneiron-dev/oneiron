@@ -568,7 +568,7 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
         !first
             .clone()
             .at(CallerLocality::OnDevice)
-            .same_authority(&later.clone().at(CallerLocality::OffDevice))
+            .same_authority(&later.at(CallerLocality::OffDevice))
     );
     let mut narrowed = CapabilitySlip::from_token(&token).unwrap();
     narrowed
