@@ -25,6 +25,12 @@ pub struct DispatchBinding {
     /// custody and price. Two offers on one subject and route that are paid
     /// differently never start each other's leases.
     pub offer: String,
+    /// The digest of the exact request bytes the call sends, when the host
+    /// built them before admission (a credential broker's call binds its
+    /// request this way, ARCH-0069 `#broker-digest`). `None` when the call is
+    /// admitted from the engine request alone. A lease bound to one request
+    /// never starts another.
+    pub request_digest: Option<String>,
 }
 
 /// Why [`BudgetGuard::begin_dispatch`] refused to start a lease. Every
@@ -55,6 +61,10 @@ pub enum DispatchRefused {
     /// locality, even at the same subject and route.
     #[error("call goes out under another offer than its lease")]
     OfferMismatch,
+    /// The call sends other request bytes than the lease was granted for, or
+    /// binds a request where the lease bound none, or the reverse.
+    #[error("call sends another request than its lease")]
+    RequestMismatch,
 }
 
 impl From<DispatchRefused> for BudgetDenied {
@@ -111,9 +121,9 @@ impl BudgetGuard {
 
     /// Starts the one call a bound lease was granted for, before any byte
     /// leaves. It checks the issuer, that the lease is open and not yet
-    /// started, and that `call` is the bound subject, route and offer; then
-    /// marks the lease started in the same critical section. From then on an
-    /// abort charges the reservation.
+    /// started, and that `call` is the bound subject, route, offer and
+    /// request; then marks the lease started in the same critical section.
+    /// From then on an abort charges the reservation.
     pub fn begin_dispatch(
         &self,
         lease: &BudgetLease,
@@ -142,6 +152,9 @@ impl BudgetGuard {
         }
         if binding.offer != call.offer || binding.locality != call.locality {
             return Err(DispatchRefused::OfferMismatch);
+        }
+        if binding.request_digest != call.request_digest {
+            return Err(DispatchRefused::RequestMismatch);
         }
         record.dispatched = true;
         Ok(())

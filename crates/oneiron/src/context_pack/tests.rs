@@ -2211,3 +2211,84 @@ fn pack_vectors_follow_the_selected_indexed_frontier() -> Result<()> {
     );
     Ok(())
 }
+
+/// Sol R6 on #1401: a TASK born in a world sits in that world for a pack
+/// too. Once the world goes stale, a base TASK's edge no longer brings the
+/// TASK born there in as a neighbor, as it would not bring a CLAIM in that
+/// world; while the world is live, it does.
+#[test]
+fn a_stale_worlds_task_is_no_neighbor() -> Result<()> {
+    // The shipped default policy, under which a writer's create mints its TASK.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    // A received foreign world: only that range carries a stale stamp.
+    let world = EntityId::from_bytes_unchecked([0xF5; 16]);
+    let writer = EntityId::from_bytes_unchecked([0x5E; 16]);
+    vault.put_entity(
+        &writer,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"writer",
+    )?;
+    let mint = |world: Option<EntityId>| {
+        vault
+            .memory(writer, crate::EdgeActorClass::Human)
+            .with_birth_position(crate::federation::record_scope::BirthPosition {
+                world,
+                facet: None,
+            })
+            .tasks_create(&crate::task_verb::TaskCreateSpec::new(
+                rmpv::Value::from("lantern work"),
+                None,
+                None,
+                Some(2),
+            ))
+            .expect("the writer creates a TASK")
+            .task_ref
+            .expect("the create mints a TASK")
+    };
+    let base = mint(None);
+    let born = mint(Some(world));
+    vault
+        .batch()
+        .text(&base, &[("body", "harbor lantern")])
+        .commit()?;
+    vault.put_edge(&base, crate::edge::EdgeKind::Supports, &born, 0.9)?;
+    let neighbors = || -> Result<Vec<EntityId>> {
+        Ok(vault
+            .context_pack()
+            .search_text("lantern", 10)
+            .filter_types(&[crate::registry::ENTITY_TYPE_TASK])
+            .world(crate::pipeline::WorldScope::All)
+            .edge_hop(1)
+            .run()?
+            .neighbors
+            .into_iter()
+            .map(|entity| entity.id)
+            .collect())
+    };
+    assert!(
+        neighbors()?.contains(&born),
+        "a live world's TASK is a neighbor"
+    );
+
+    let stamp = crate::federation::encode_world_stale_stamp(crate::federation::WorldStaleStamp {
+        reason: crate::federation::FederationStaleReason::Disconnected,
+        disconnect_epoch: 1,
+        stamped_at_secs: 9,
+    });
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_state.put(
+            wtxn,
+            &crate::federation::federation_stale_key(world),
+            &stamp,
+        )?;
+        Ok(())
+    })?;
+    assert!(
+        !neighbors()?.contains(&born),
+        "a stale world's TASK came in as a neighbor"
+    );
+    Ok(())
+}
