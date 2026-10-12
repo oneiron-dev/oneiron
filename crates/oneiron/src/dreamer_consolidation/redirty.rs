@@ -131,9 +131,9 @@ pub(crate) fn requeue_turn_in_txn(
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    if !store
+    if store
         .port_entity_record(txn, turn)?
-        .is_some_and(|row| row.entity_type == ENTITY_TYPE_TURN)
+        .is_none_or(|row| row.entity_type != ENTITY_TYPE_TURN)
     {
         return Ok(());
     }
