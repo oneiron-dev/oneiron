@@ -506,10 +506,14 @@ fn reaction_records(
         }
     }
     let targets: Vec<EntityId> = pairs.iter().map(|(_, target, _)| *target).collect();
-    let pills = server
-        .vault
-        .reaction_pills(&targets, viewer)
-        .map_err(|e| core_engine_error("reaction listing failed", e))?;
+    // A credential reads each reaction under its own key, as it reads the
+    // record; the server's own secret reads them all.
+    let pills = match auth.verified_slip() {
+        Some(_) => crate::api::scoped_read_for_core_auth(&server.vault, auth)?
+            .reaction_pills(&targets, viewer),
+        None => server.vault.reaction_pills(&targets, viewer),
+    }
+    .map_err(|e| core_engine_error("reaction listing failed", e))?;
     let records = pairs
         .into_iter()
         .filter_map(|(turn, target, groups_children)| {

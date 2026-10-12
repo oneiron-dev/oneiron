@@ -2,9 +2,9 @@
 use super::*;
 use crate::context_pack::ContextPack;
 use crate::disclosure::DisclosureContext;
-use crate::reaction::{REACTIONS_FIELD, ReactionSignal};
+use crate::reaction::{REACTIONS_FIELD, ReactionPill, ReactionSignal};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 impl ScopedRead<'_> {
     /// The current reactions on one conversation record this read may see,
@@ -99,6 +99,28 @@ impl ScopedRead<'_> {
             }
         }
         Ok(())
+    }
+
+    /// [`crate::Vault::reaction_pills`] under this read, in one snapshot: only
+    /// messages this read reads get pills, and a pill counts only the
+    /// reactions it reads, each under its whole admission.
+    pub fn reaction_pills(
+        &self,
+        messages: &[EntityId],
+        viewer: EntityId,
+    ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
+        let rtxn = self.grant_read_txn()?;
+        let policy = self.policy_manifest_in(&rtxn)?;
+        let mut readable = Vec::with_capacity(messages.len());
+        for message in messages {
+            if self.is_entity_readable_with_policy_in(&rtxn, &policy, message)? {
+                readable.push(*message);
+            }
+        }
+        self.vault
+            .reaction_pills_in(&rtxn, &readable, viewer, |row| {
+                self.is_entity_readable_with_policy_in(&rtxn, &policy, &row.id)
+            })
     }
 
     /// Whether this read may see a reaction signal: the reacted record and

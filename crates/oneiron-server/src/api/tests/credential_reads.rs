@@ -701,7 +701,11 @@ async fn reaction_signals_read_under_the_credential() {
     let mut said = Vec::new();
     for (content, metadata, at) in [
         ("agent kettle credkey", None, 4),
-        ("agent lantern credkey", Some(json!({ "rel": room.space.to_hex() })), 5),
+        (
+            "agent lantern credkey",
+            Some(json!({ "rel": room.space.to_hex() })),
+            5,
+        ),
     ] {
         let message = oneiron::EntityId::now();
         room.server
@@ -795,4 +799,53 @@ async fn reaction_signals_read_under_the_credential() {
         heard(&signals(full, false).await, spaced_reaction),
         ["reaction.put"]
     );
+}
+
+/// The rulings' sweep after Astra #1413-002: a records listing's reaction
+/// pills were read under the room's audience alone, so a reader whose grant
+/// reads messages and turns but no claim still saw who reacted and how. A
+/// pill counts only the reactions the caller's own key reads now; the owner's
+/// still counts them all.
+#[tokio::test]
+async fn reaction_pills_read_under_the_credential() {
+    let room = room();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    room.server
+        .vault
+        .react(oneiron::reaction::ReactionInput {
+            message: room.unscoped,
+            by: room.owner,
+            glyph: "👀".to_owned(),
+            occurred_at: now,
+            actor: oneiron::WriteActor::new(room.owner, oneiron::EdgeActorClass::Human),
+        })
+        .expect("the owner reacts");
+    super::context_board_history::restrict_principal_read_types(
+        &room.server,
+        room.agent,
+        &[
+            oneiron::registry::ENTITY_TYPE_MESSAGE,
+            oneiron::registry::ENTITY_TYPE_TURN,
+        ],
+    );
+    for (viewer, class, pill) in [(room.agent, "agent", false), (room.owner, "human", true)] {
+        let recipe = format!("principal_ref={};actor_class={class}", viewer.to_hex());
+        let uri = format!(
+            "/v1/core/conversations/{}/records?with=reactions&viewer={}",
+            room.room.to_hex(),
+            viewer.to_hex()
+        );
+        let (status, body) = route_json(
+            room.server.clone(),
+            core_request_with_authz("GET", &uri, test_bearer(&recipe), None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{recipe}: {body}");
+        let body = body.to_string();
+        assert!(body.contains(&room.unscoped.to_hex()), "{recipe}: {body}");
+        assert_eq!(body.contains("👀"), pill, "{recipe}: {body}");
+    }
 }
