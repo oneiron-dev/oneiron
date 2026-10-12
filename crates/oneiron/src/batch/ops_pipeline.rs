@@ -356,10 +356,24 @@ pub(crate) fn apply_ops_session(
     }
     let overlay = route.overlay();
 
-    // The ids this apply puts, and those it indexes: a put's revision is
-    // published once its text or vector is staged with it.
-    let mut put = HashSet::new();
-    let mut indexed = HashSet::new();
+    // A room indexes what it stages at once and runs no idle pass: a row this
+    // apply puts and indexes is published as it is staged. Reads here see
+    // the overlay as it was before the apply, so this is known up front.
+    let texts: HashSet<EntityId> = entries
+        .iter()
+        .filter_map(|entry| match &entry.op {
+            BatchOp::Text { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let vectors: HashSet<EntityId> = entries
+        .iter()
+        .filter_map(|entry| match &entry.op {
+            BatchOp::Vector { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let mut published = Vec::new();
     for entry in entries {
         match &entry.op {
             BatchOp::Put {
@@ -425,15 +439,29 @@ pub(crate) fn apply_ops_session(
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).
-                stage_entity_body_row(
-                    view,
-                    wtxn,
-                    id,
-                    *entity_type,
-                    entry.occurred,
-                    entry.learned_at,
-                    data,
-                )?;
+                if texts.contains(id) || vectors.contains(id) {
+                    if stage_published_body_row(
+                        view,
+                        wtxn,
+                        id,
+                        *entity_type,
+                        entry.occurred,
+                        entry.learned_at,
+                        data,
+                    )? {
+                        published.push(*id);
+                    }
+                } else {
+                    stage_entity_body_row(
+                        view,
+                        wtxn,
+                        id,
+                        *entity_type,
+                        entry.occurred,
+                        entry.learned_at,
+                        data,
+                    )?;
+                }
                 stage_entity_index_rows(
                     view,
                     wtxn,
@@ -442,7 +470,6 @@ pub(crate) fn apply_ops_session(
                     entry.occurred,
                     entry.learned_at,
                 )?;
-                put.insert(*id);
             }
             BatchOp::Edge {
                 src,
@@ -463,7 +490,6 @@ pub(crate) fn apply_ops_session(
             }
             BatchOp::Text { id, fields } => {
                 crate::bm25::index_text(view, wtxn, analyzer, id, fields)?;
-                indexed.insert(*id);
             }
             BatchOp::Vector {
                 id,
@@ -472,7 +498,6 @@ pub(crate) fn apply_ops_session(
                 ..
             } => {
                 stage_vector_row(view, config, wtxn, id, vector, provenance.as_ref())?;
-                indexed.insert(*id);
                 // `pending_rebuild` can only come back false: the legacy arm
                 // that would set it needs a base `&Store` this call does not
                 // have. Passing a local sink states that and keeps the shared
@@ -499,8 +524,16 @@ pub(crate) fn apply_ops_session(
         }
         overlay.stage_journal_entry(entry)?;
     }
-    for id in put.intersection(&indexed) {
-        crate::vault::entity_revision::publish_staged_revision(view, wtxn, id)?;
+    // A published row's text or vector the apply did not restage belongs to
+    // another revision, and is not read beside this one.
+    for id in published {
+        if !texts.contains(&id) {
+            crate::bm25::deindex_text(view, wtxn, &id)?;
+        }
+        if !vectors.contains(&id) {
+            crate::store::ManifestDbs::vectors(view).delete(wtxn, id.as_bytes())?;
+            crate::embed::record_embedding_device_in_txn(view, wtxn, &id, None)?;
+        }
     }
     Ok(())
 }

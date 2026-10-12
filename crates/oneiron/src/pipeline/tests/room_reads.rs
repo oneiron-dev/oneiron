@@ -718,10 +718,57 @@ fn owner_claim_body(owner: EntityId, value: &str) -> Result<Vec<u8>> {
     crate::claim::encode_claim_body(&body)
 }
 
+/// Stages `body` for `claim` in the room, found by `word`: the room's put
+/// and its text, with no vector.
+fn replace_in_room(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    claim: EntityId,
+    (occurred, learned_at, body): (TimeRange, u64, Vec<u8>),
+    word: &str,
+) -> Result<()> {
+    stage_in_room(
+        vault,
+        session,
+        vec![
+            BatchOp::Put {
+                id: claim,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred,
+                learned_at,
+                data: body,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            },
+            BatchOp::Text {
+                id: claim,
+                fields: vec![("body".to_owned(), word.to_owned())],
+            },
+        ],
+    )
+}
+
+/// The ids a vector search in the room returns for `query`.
+fn vector_hits_in_room(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    query: [f32; 4],
+) -> Result<Vec<EntityId>> {
+    let view = session.read_view()?;
+    let hits = vault
+        .query()
+        .search_vector(&query, 10)
+        .reading(view.read())
+        .run()?;
+    Ok(hits.iter().map(|hit| hit.id).collect())
+}
+
 /// A room that replaces a base claim's body indexes the replacement at
 /// once, so the replacement is the revision the room has indexed. A pack
 /// and the owner's recall in the room find the claim by the room's words
-/// and read the room's body, at the room's revision. Base reads its own.
+/// and read the room's body, at the room's revision; base's vector, which
+/// the room did not restage, no longer finds it there. Base reads its own.
 #[test]
 fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -740,29 +787,21 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
             &owner_claim_body(owner, "basevalue")?,
         )
         .text(&claim, &[("body", "replacementbaseword")])
+        .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
         .edge(&claim, crate::EdgeKind::ClaimOf, &owner, 1.0)
         .commit()?;
     let base_revision = vault.indexed_revision(&claim)?.map(|revision| revision.0);
     let session = enter(&vault, "sess-room-replacement")?;
-    stage_in_room(
+    replace_in_room(
         &vault,
         &session,
-        vec![
-            BatchOp::Put {
-                id: claim,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred: TimeRange { start: 10, end: 10 },
-                learned_at: 10,
-                data: owner_claim_body(owner, "roomvalue")?,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            },
-            BatchOp::Text {
-                id: claim,
-                fields: vec![("body".to_owned(), "roomreplacementneedle".to_owned())],
-            },
-        ],
+        claim,
+        (
+            TimeRange { start: 10, end: 10 },
+            10,
+            owner_claim_body(owner, "roomvalue")?,
+        ),
+        "roomreplacementneedle",
     )?;
     let fields = |entity: &crate::context_pack::ContextEntity| {
         serde_json::to_string(&entity.fields).expect("fields json")
@@ -790,6 +829,10 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
         in_room.source_revision_ref
     );
     drop(view);
+    assert!(
+        !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "base's vector belongs to base's body, not the room's"
+    );
 
     let recalled = vault
         .memory(owner, crate::edge::EdgeActorClass::Human)
@@ -829,6 +872,91 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
         "base reads its own body, got {in_base_fields}"
     );
     assert_eq!(in_base.source_revision_ref, base_revision);
+    let base_hits = vault.query().search_vector(&[1.0, 0.0, 0.0, 0.0], 10).run()?;
+    assert!(
+        base_hits.iter().any(|hit| hit.id == claim),
+        "base's vector still finds it in base"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// Base holds a claim whose body changed after it was indexed: its text and
+/// vector still name the old body. A room that stages that same body again,
+/// with the room's words and no vector, indexes it at once. A pack in the
+/// room reads the body the room indexed, and the old body's vector no
+/// longer finds it there.
+#[test]
+fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xDB);
+    let occurred = TimeRange { start: 1, end: 1 };
+    vault
+        .batch()
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            1,
+            &owner_claim_body(owner, "indexedvalue")?,
+        )
+        .text(&claim, &[("body", "pendingbaseword")])
+        .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
+        .edge(&claim, crate::EdgeKind::ClaimOf, &owner, 1.0)
+        .commit()?;
+    let pending = owner_claim_body(owner, "pendingvalue")?;
+    vault
+        .batch()
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &pending)
+        .commit()?;
+    let on_base = vault
+        .context_pack()
+        .search_text("pendingbaseword", 10)
+        .run()?;
+    let in_base = on_base
+        .results
+        .iter()
+        .find(|entity| entity.id == claim)
+        .unwrap_or_else(|| panic!("base's words find the claim, got {on_base:?}"));
+    assert!(
+        serde_json::to_string(&in_base.fields)
+            .expect("fields json")
+            .contains("indexedvalue"),
+        "base has not indexed its new body yet"
+    );
+    let session = enter(&vault, "sess-room-pending-retry")?;
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
+        (occurred, 1, pending),
+        "roomretryneedle",
+    )?;
+
+    let view = session.read_view()?;
+    let pack = vault
+        .context_pack()
+        .search_text("roomretryneedle", 10)
+        .reading(view.read())
+        .run()?;
+    let in_room = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == claim)
+        .unwrap_or_else(|| panic!("the room's words find the claim, got {pack:?}"));
+    let fields = serde_json::to_string(&in_room.fields).expect("fields json");
+    assert!(
+        fields.contains("pendingvalue") && !fields.contains("indexedvalue"),
+        "the room reads the body it indexed, got {fields}"
+    );
+    drop(view);
+    assert!(
+        !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "the old body's vector does not find it in the room"
+    );
     session.close()?;
     Ok(())
 }

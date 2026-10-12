@@ -31,7 +31,9 @@ pub(super) use self::apply::apply_put;
 #[cfg(test)]
 pub(crate) use self::put_staging::wiped_rows;
 pub(crate) use self::put_staging::{delete_entity_index_rows, stage_entity_index_rows};
-pub(super) use self::put_staging::{stage_edge_rows, stage_entity_body_row};
+pub(super) use self::put_staging::{
+    stage_edge_rows, stage_entity_body_row, stage_published_body_row,
+};
 pub(super) use self::request::{ClaimCandidateRequest, PutContext, PutOptions, PutRequest, PutRow};
 
 /// The final `BatchOp::Put` this batch stages for one entity: where it lands
