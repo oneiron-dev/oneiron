@@ -1119,8 +1119,9 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
     let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
     let gil = person(&server, "Gil");
     crate::test_credentials::bind_actor(server.vault(), "secret", gil, "human");
+    // Ada holds no binding of her own: the host key binds one person, Gil,
+    // and Ada acts before the vault is shared.
     let ada = person(&server, "Ada");
-    crate::test_credentials::bind_actor(server.vault(), "secret", ada, "human");
     let room = conversation(&server, owner_id, &[owner_id, gil]);
     // Ada's room, which Gil is not in, and three of her words there.
     let elsewhere = conversation(&server, owner_id, &[owner_id, ada]);
@@ -1156,44 +1157,6 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
             .delete_room_record_unchecked_for_test(&id, reason)
             .unwrap();
     }
-    let proof = server
-        .vault()
-        .authenticate_owner(
-            owner_id,
-            &owner_id.to_hex(),
-            true,
-            oneiron::store::GateDecisionId::now(),
-        )
-        .unwrap();
-    server
-        .vault()
-        .initialize_shared_vault(
-            &proof,
-            42,
-            None,
-            &[
-                InitialSharedMember {
-                    member_ref: owner_id,
-                    role: Some(FederationGrantRole::Owner),
-                },
-                InitialSharedMember {
-                    member_ref: gil,
-                    role: Some(FederationGrantRole::Viewer),
-                },
-                InitialSharedMember {
-                    member_ref: ada,
-                    role: Some(FederationGrantRole::Viewer),
-                },
-            ],
-            10,
-        )
-        .unwrap();
-    // An id a save holds for a provisional entity, with no entity row.
-    let provisional = EntityId::now();
-    server
-        .vault()
-        .hold_provisional_id_for_test(&provisional, "Mirela", &elsewhere)
-        .unwrap();
     // An id Ada's own stretch in her room holds, off record.
     let named_in = |room: EntityId, session_ref: &str, id: EntityId, text: &str| {
         let mut body = turn(room, session_ref, 100, text);
@@ -1218,6 +1181,40 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{receipt}");
+    let proof = server
+        .vault()
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault()
+        .initialize_shared_vault(
+            &proof,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner_id,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: gil,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            10,
+        )
+        .unwrap();
+    // An id a save holds for a provisional entity, with no entity row.
+    let provisional = EntityId::now();
+    server
+        .vault()
+        .hold_provisional_id_for_test(&provisional, "Mirela", &elsewhere)
+        .unwrap();
 
     let viewer = slip("gil", gil, "human");
     let (status, started) = start(&server, viewer.clone(), room, "porch").await;
