@@ -128,6 +128,18 @@ async fn get(server: &Arc<SyncServer>, path: &str) -> Value {
     value
 }
 
+/// The conversation list, read as the vault's owner.
+async fn list(server: &Arc<SyncServer>, path: &str) -> Value {
+    let request = Request::builder()
+        .uri(path)
+        .header(AUTHORIZATION, owner_reader_bearer(server))
+        .body(Body::empty())
+        .unwrap();
+    let (status, value) = route_json(server.clone(), request).await;
+    assert_eq!(status, StatusCode::OK, "{value:?}");
+    value
+}
+
 #[tokio::test]
 async fn dag_routes_roundtrip_trunk_thread_fork_scope_migration_and_auth() {
     let (_dir, server, actor) = setup();
@@ -886,7 +898,7 @@ async fn list_preview_falls_back_only_through_selected_dag_ancestors() {
     )
     .await;
     assert_eq!(thread["head"], hidden_head["id"]);
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let list = list(&server, "/v1/core/conversations?limit=20").await;
     let row = list["items"]
         .as_array()
         .unwrap()
@@ -964,7 +976,7 @@ async fn list_preview_traverses_deleted_selected_shells_without_losing_other_roo
         }
         expected.push((room["id"].as_str().unwrap().to_owned(), text));
     }
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     for (id, text) in expected {
         let row = rows.iter().find(|row| row["id"] == id).unwrap();
@@ -1067,7 +1079,7 @@ async fn selected_preview_lifecycle_matrix_keeps_retained_shape_separate_from_co
                         .unwrap();
                     assert!(server.vault.is_deleted_shell(&session).unwrap());
                 }
-                let list = get(&server, "/v1/core/conversations?limit=20").await;
+                let list = list(&server, "/v1/core/conversations?limit=20").await;
                 let rows = list["items"].as_array().unwrap();
                 let selected = rows.iter().find(|row| row["id"] == room["id"]).unwrap();
                 let expected = if !head_deleted {
@@ -1115,7 +1127,7 @@ async fn empty_room_remains_listable_after_dag_read() {
     let dag = get(&server, &empty_records).await;
     assert!(dag["head"].is_null());
     assert_eq!(dag["main_line"], json!([]));
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     assert!(
         rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
@@ -1165,7 +1177,7 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
     .await;
     assert!(dag["head"].is_null());
     assert_eq!(dag["main_line"], json!([]));
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     assert!(
         rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
