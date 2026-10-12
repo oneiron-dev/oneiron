@@ -103,6 +103,32 @@ impl TemporalWindow {
     }
 }
 
+/// The rows a temporal call's rounds have collected, in the order the
+/// collectors found them: each axis nearest first, then the spanners best
+/// first. A reader's counts ask about them in that order, so they ask first
+/// about the rows the scope walk reaches first.
+#[derive(Default)]
+pub(super) struct TemporalCandidates {
+    seen: HashSet<EntityId>,
+    ids: Vec<EntityId>,
+}
+
+impl TemporalCandidates {
+    pub(super) fn insert(&mut self, id: EntityId) {
+        if self.seen.insert(id) {
+            self.ids.push(id);
+        }
+    }
+
+    pub(super) fn count(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub(super) fn ids(&self) -> &[EntityId] {
+        &self.ids
+    }
+}
+
 /// The rows a scoped call's reader may read: the call's candidate predicate,
 /// asked at most once per row, by the channel's rounds and by the scope walk
 /// after them alike. A row it refuses never counts toward either of the
@@ -139,12 +165,12 @@ impl<'p, 'f> ReadableRows<'p, 'f> {
         Ok(reads)
     }
 
-    /// Whether the reader may read at least `count` of `ids`.
+    /// Whether the reader may read at least `count` of `ids`, asked in order.
     pub(super) fn read_at_least(
         &self,
         store: &Store,
         rtxn: &RoTxn<'_>,
-        ids: &HashSet<EntityId>,
+        ids: &[EntityId],
         count: usize,
     ) -> Result<bool> {
         if ids.len() < count {
@@ -263,40 +289,41 @@ pub(super) fn execute_temporal_for_reader<'r, 'p, 'f>(
 /// Each side of the anchor is read nearest first, so a side that already
 /// holds `cap` rows inside the window keeps them over any farther row; only
 /// a side short of it, with a row past the window but inside the widest one,
-/// can add one. Without a widest window to probe, assume it can.
+/// can add one. Without a widest window to probe, assume it can. A ring the
+/// probe cannot read may hold a row too: the rounds then run as they would
+/// without the probe, and a collection that reaches the ring meets its error.
 pub(super) fn axis_can_grow(
     store: &Store,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext<'_>,
     [forward_full, backward_full]: [bool; 2],
-) -> Result<bool> {
+) -> bool {
     let Some((widest_start, widest_end)) = collection.widest else {
-        return Ok(true);
+        return true;
     };
-    let has_row = |start, end| -> Result<bool> {
+    let has_row = |start, end| {
         let query = TimelineQuery {
             axis,
             start,
             end,
             ..Default::default()
         };
-        Ok(store
-            .port_entity_timeline(rtxn, query)?
-            .next()
-            .transpose()?
-            .is_some())
+        let first = store
+            .port_entity_timeline(rtxn, query)
+            .and_then(|mut rows| rows.next().transpose());
+        !matches!(first, Ok(None))
     };
-    Ok((!forward_full
+    (!forward_full
         && widest_end > collection.window_end
         && has_row(
             Bound::Excluded(collection.window_end),
             Bound::Included(widest_end),
-        )?)
+        ))
         || (!backward_full
             && widest_start < collection.window_start
             && has_row(
                 Bound::Included(widest_start),
                 Bound::Excluded(collection.window_start),
-            )?))
+            ))
 }

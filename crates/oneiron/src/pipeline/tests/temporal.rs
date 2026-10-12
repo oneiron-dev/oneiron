@@ -401,7 +401,7 @@ fn a_reader_of_every_row_gets_what_the_plain_temporal_channel_returns() -> Resul
         }
         for (n, days) in beyond.iter().enumerate() {
             let at = anchor
-                .checked_add_signed(-days * 86_400)
+                .checked_add_signed(-i64::from(*days) * 86_400)
                 .expect("a day near the anchor");
             batch = batch.put(
                 &row(near + n),
@@ -431,6 +431,62 @@ fn a_reader_of_every_row_gets_what_the_plain_temporal_channel_returns() -> Resul
             "{limit} asked, {near} near, {beyond:?} beyond"
         );
     }
+    Ok(())
+}
+
+/// A reader's channel probes the ring past its window, which no call that
+/// stops in that window reads. A damaged index key there must not fail a
+/// call the plain channel answers (Sol #1409 R4): the probe takes it for a
+/// row, and the window, already holding the bound, stops anyway.
+#[test]
+fn a_damaged_key_past_a_full_window_fails_no_reader() -> Result<()> {
+    use super::super::temporal_bound::temporal_widening_bound;
+
+    let bound = temporal_widening_bound(1);
+    let now = crate::unix_seconds_now();
+    let anchor = now - 30 * 86_400;
+    let (_dir, vault) = open_test_vault();
+    let row = |n: usize| {
+        let mut bytes = [0x5f; 16];
+        bytes[12..].copy_from_slice(&u32::try_from(n).expect("n").to_be_bytes());
+        EntityId::from_bytes(bytes).expect("row id")
+    };
+    let mut batch = vault.batch();
+    for n in 0..bound {
+        let at = TimeRange {
+            start: anchor,
+            end: anchor,
+        };
+        batch = batch.put(&row(n), 1, at, anchor, b"payload");
+    }
+    batch.commit()?;
+    // A short occurred-start key eight days out: past the first window,
+    // inside the last round's.
+    let mut damaged = (anchor + 8 * 86_400).to_be_bytes().to_vec();
+    damaged.extend_from_slice(b"short");
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .temporal_occurred_start
+            .put(wtxn, &damaged, &[])?;
+        Ok(())
+    })?;
+    let reads =
+        |_: &crate::store::Store, _: &heed::RoTxn<'_>, _: &EntityId| -> Result<bool> { Ok(true) };
+    let config = reader_temporal_config(anchor, 1);
+    let plain = {
+        let rtxn = vault.store.env.read_txn()?;
+        super::super::channels::execute_temporal(
+            &vault.store,
+            &rtxn,
+            &config,
+            now,
+            &mut super::super::types::EntityMetadataCache::default(),
+            None,
+        )?
+    };
+    assert_eq!(plain.len(), bound);
+    assert_eq!(reader_temporal_rows(&vault, &config, now, &reads)?, plain);
     Ok(())
 }
 

@@ -1,5 +1,4 @@
 use crate::ports::EntityStoreRead;
-use std::collections::HashSet;
 
 use heed::RoTxn;
 
@@ -16,7 +15,7 @@ use super::support::{
     combine_proximity, compute_radius, effective_range_width, interval_distance,
     learned_anchor_range, midpoint, point_interval_distance, resolve_sigma_secs, sigmoid,
 };
-use super::temporal_bound::{ReadableRows, TemporalWindow, axis_can_grow};
+use super::temporal_bound::{ReadableRows, TemporalCandidates, TemporalWindow, axis_can_grow};
 use super::types::{
     ADAPTIVE_ROUNDS, ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, ClaimStatusGateCache, EntityMetadata,
     EntityMetadataCache, MAX_TEMPORAL_SEEK_BUFFER, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
@@ -139,7 +138,7 @@ pub(super) fn temporal_window(
     let mut sigma = sigma_initial;
     let mut settled_sigma = None;
     let mut previous_radius = None;
-    let mut candidates = HashSet::<EntityId>::new();
+    let mut candidates = TemporalCandidates::default();
     // With a reader, the collectors say whether the last round's window could
     // add a row; until one says it could not, assume it could.
     let widest = reader.filter(|_| config.adaptive).map(|_| {
@@ -180,8 +179,11 @@ pub(super) fn temporal_window(
 
         let last = !config.adaptive || round + 1 == ADAPTIVE_ROUNDS;
         if let Some(reader) = reader {
+            // A last round needs no count to settle sigma: unsettled, the
+            // request falls back to that round's sigma anyway.
             if settled_sigma.is_none()
-                && reader.read_at_least(store, rtxn, &candidates, config.limit)?
+                && !last
+                && reader.read_at_least(store, rtxn, candidates.ids(), config.limit)?
             {
                 settled_sigma = Some(sigma);
             }
@@ -192,15 +194,15 @@ pub(super) fn temporal_window(
             // sigma, which needs no collection.
             if last
                 || (!can_grow && settled_sigma.is_some())
-                || (can_grow && reader.read_at_least(store, rtxn, &candidates, rows)?)
+                || (can_grow && reader.read_at_least(store, rtxn, candidates.ids(), rows)?)
             {
                 break;
             }
         } else {
-            if settled_sigma.is_none() && candidates.len() >= config.limit {
+            if settled_sigma.is_none() && candidates.count() >= config.limit {
                 settled_sigma = Some(sigma);
             }
-            if last || candidates.len() >= rows {
+            if last || candidates.count() >= rows {
                 break;
             }
         }
@@ -222,7 +224,7 @@ pub(super) fn temporal_window(
 
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
-    for id in candidates {
+    for &id in candidates.ids() {
         checkpoint(deadline)?;
         let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
             continue;
@@ -251,7 +253,7 @@ pub(super) fn collect_temporal_candidates(
     collection: TemporalCandidateCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     scoring: &TemporalScoringContext,
-    out: &mut HashSet<EntityId>,
+    out: &mut TemporalCandidates,
 ) -> Result<bool> {
     let deadline = collection.deadline;
     let radius = collection.radius;
@@ -463,7 +465,7 @@ fn collect_occurred_candidates(
     collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     query_range: Option<(u64, u64)>,
-    out: &mut HashSet<EntityId>,
+    out: &mut TemporalCandidates,
 ) -> Result<bool> {
     let mut can_grow = false;
     for axis in [TimeAxis::OccurredStart, TimeAxis::OccurredEnd] {
@@ -493,7 +495,7 @@ fn collect_query_occurred_candidates(
     collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
     query_range: (u64, u64),
-    out: &mut HashSet<EntityId>,
+    out: &mut TemporalCandidates,
 ) -> Result<bool> {
     let TemporalIndexCollectionContext {
         window_start,
@@ -560,13 +562,13 @@ fn collect_query_occurred_candidates(
     for row in rows.into_iter().take(cap) {
         out.insert(row.id);
     }
-    axis_can_grow(
+    Ok(axis_can_grow(
         store,
         axis,
         rtxn,
         collection,
         [forward_rows >= cap, backward_rows >= cap],
-    )
+    ))
 }
 
 pub(super) fn collect_index_candidates(
@@ -574,7 +576,7 @@ pub(super) fn collect_index_candidates(
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext<'_>,
-    out: &mut HashSet<EntityId>,
+    out: &mut TemporalCandidates,
 ) -> Result<bool> {
     let TemporalIndexCollectionContext {
         window_start,
@@ -627,7 +629,13 @@ pub(super) fn collect_index_candidates(
         out.insert(row.id);
     }
 
-    axis_can_grow(store, axis, rtxn, collection, [forward_full, backward_full])
+    Ok(axis_can_grow(
+        store,
+        axis,
+        rtxn,
+        collection,
+        [forward_full, backward_full],
+    ))
 }
 
 fn next_temporal_index_row<I>(iter: &mut I) -> Result<Option<TemporalIndexRow>>
