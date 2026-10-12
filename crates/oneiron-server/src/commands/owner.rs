@@ -1,6 +1,6 @@
 //! The owner's own commands on a stopped vault: doctor, backup, restore,
-//! window recovery, export, the secret scan switch, registering and rotating
-//! a secret, import consent and agent-run consent.
+//! window and clock recovery, export, the secret scan switch, registering and
+//! rotating a secret, import consent and agent-run consent.
 //!
 //! Holding the vault's writer lease is the owner proof here, the same local
 //! door the embedded export uses; a running `serve` answers the same actions
@@ -13,14 +13,15 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverWindowArgs, RestoreArgs, RunsCommand,
-    SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs, SecretScanSwitch,
-    SecretsCommand, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverClockArgs, RecoverWindowArgs,
+    RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
+    SecretScanSwitch, SecretsCommand, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
 };
 use crate::owner::backup::{self, BackupPlan};
+use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
 
 fn emit(value: &impl Serialize) -> anyhow::Result<()> {
@@ -78,6 +79,8 @@ pub fn doctor(args: DoctorArgs) -> anyhow::Result<()> {
 /// `config_errors` beside it, and backups are read with the defaults if the
 /// `[backup]` section itself is what fails.
 fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
+    let vectors_from = args.vectors_from;
+    let vectors_runtime = args.vectors_runtime;
     let serve = ServeArgs {
         config: args.config,
         vault_path: Some(args.path.clone()),
@@ -123,9 +126,30 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
     });
     let plan = BackupPlan::new(&args.path, backup.dir_for(&args.path), backup.keep);
     let every = backup.enabled.then_some(backup.every_hours);
+    // A vault that holds vectors opens only under its own model (bug repro:
+    // doctor opened every vault under none and failed on each that holds
+    // vectors). It is read without opening the vault; opening under it pins
+    // nothing new. A vault that cannot be read, or whose stored id is not one
+    // a vault opens under, is opened as before, and the doctor reports it.
+    vault_config.embedding_model = oneiron::Vault::stored_embedding_model(&args.path)
+        .ok()
+        .flatten()
+        .filter(|model| oneiron::store::validate_embedding_model_id(model).is_ok());
     let mut report = match oneiron::Vault::open_owned(&args.path, vault_config) {
         Ok(vault) => {
             let mut report = serde_json::to_value(vault.doctor()?)?;
+            // Which device and runtime computed the stored vectors, so one
+            // device's can be found and embedded again (ARCH-0036).
+            report["vector_provenance"] =
+                serde_json::to_value(vault.embedding_provenance_counts()?)?;
+            if let Some(device) = vectors_from {
+                let ids = vault.vectors_by_provenance(device, vectors_runtime.as_deref())?;
+                report["vectors_from"] = serde_json::json!({
+                    "device": device,
+                    "runtime": vectors_runtime,
+                    "ids": ids.iter().map(oneiron::EntityId::to_hex).collect::<Vec<_>>(),
+                });
+            }
             report["location"] =
                 serde_json::to_value(location::locate(&args.path, Some(&vault), &plan, every)?)?;
             report
@@ -243,6 +267,63 @@ pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
         quarantined: report.quarantine_path,
         rebuilt: report.obligations,
     })
+}
+
+#[derive(Serialize)]
+struct RecoveredClock {
+    /// Where the clock holder proofs are judged on stood.
+    old_floor: String,
+    /// Where it stands now: this host's clock.
+    new_floor: String,
+    /// How far ahead it was, in seconds.
+    gap_secs: u64,
+    /// No proof signed before this is admitted again.
+    not_before: String,
+}
+
+/// Lets agents back in after the host clock ran ahead and was set back:
+/// while the vault's proof clock sits ahead, every fresh holder proof gets
+/// 401. Holding the writer lease keeps a running `serve` out; the engine
+/// refuses when the clock is not ahead, or when lowering it would reopen a
+/// proof it no longer remembers.
+pub fn recover_clock(args: RecoverClockArgs) -> anyhow::Result<()> {
+    use oneiron::authority::ProofClockRecovery;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(&config, "then run this again")?;
+    let owner = local_owner(&vault)?;
+    match vault.recover_proof_clock(&owner)? {
+        ProofClockRecovery::Recovered {
+            old_floor,
+            new_floor,
+            not_before,
+        } => emit(&RecoveredClock {
+            old_floor: rfc3339_secs(old_floor),
+            new_floor: rfc3339_secs(new_floor),
+            gap_secs: old_floor - new_floor,
+            not_before: rfc3339_secs(not_before),
+        }),
+        ProofClockRecovery::NotAhead { floor, wall } => anyhow::bail!(
+            "nothing to recover: the vault's proof clock ({}) is not ahead of this host's \
+             clock ({})",
+            rfc3339_secs(floor),
+            rfc3339_secs(wall)
+        ),
+        ProofClockRecovery::Forgotten {
+            floor,
+            forgotten_before,
+            wall,
+        } => anyhow::bail!(
+            "not recovered: agents connected while the host clock was ahead, and the vault \
+             no longer remembers every proof it admitted then (up to {}): the clock stayed \
+             ahead for over a day, or an older version kept each proof for a minute only. \
+             It must keep refusing every proof signed before then, so lowering its clock \
+             would not let agents in. Agents get in again once this host's clock ({}) \
+             reaches {}",
+            rfc3339_secs(forgotten_before),
+            rfc3339_secs(wall),
+            rfc3339_secs(floor)
+        ),
+    }
 }
 
 #[derive(Serialize)]

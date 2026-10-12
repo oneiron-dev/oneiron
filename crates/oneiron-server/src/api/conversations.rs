@@ -11,8 +11,8 @@ use super::core_body_for_write;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_list_limit;
-use super::count_live_entities_by_type;
 use super::encode_core_body;
+use super::facade::ROOM_TURN_HEADER;
 use super::is_deleted_shell_for_core_list;
 use super::json_payload;
 use super::parse_entity_id_param;
@@ -25,6 +25,8 @@ use super::stage_core_entity_put;
 use super::write_core_entity;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
+use crate::error::ApiError;
+use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
 use crate::projection;
@@ -38,8 +40,14 @@ use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
+use axum::http::HeaderMap;
 use axum::response::Json;
 use oneiron::EdgeKind;
+use oneiron::claim::ScopedReadReceipt;
+use oneiron::memory::{
+    ConversationListFilter, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError,
+};
 use oneiron::registry::ENTITY_TYPE_CONVERSATION;
 use oneiron::registry::ENTITY_TYPE_TURN;
 use serde::{Deserialize, Serialize};
@@ -111,155 +119,155 @@ pub(crate) struct ConversationListRow {
     last_message_snippet: Option<String>,
 }
 
-pub(crate) type ConversationsListResponse = PaginatedResponse<ConversationListRow>;
+/// One list page and the receipt of the reads that produced it.
+#[derive(Debug, Serialize)]
+pub(crate) struct ConversationsListResponse {
+    #[serde(flatten)]
+    page: PaginatedResponse<ConversationListRow>,
+    narrowing: ScopedReadReceipt,
+}
 
-/// List conversation entities, optionally filtered by effective kind and external id.
+/// List the conversations the reader may read, optionally filtered by
+/// effective kind and external id.
+///
+/// The list reads as the credential's principal on the read lane recall and
+/// the transcript use (ARCH-0006a, DEC-0005): a conversation the reader may
+/// not read is left out, a preview quotes only a message or turn it may read,
+/// and the response carries the read's receipt.
 #[utoipa::path(
     get,
     path = "/v1/core/conversations",
     params(CoreListQuery),
     responses(
-        (status = 200, description = "Conversation entities.", body = Object, content_type = "application/json"),
-        (status = 400, description = "Invalid list query.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 200, description = "The conversations the reader may read, each with a preview of the latest message it may read, and the read's `narrowing` receipt.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Invalid list query, or a room turn header.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read, or names no principal and actor class.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Conversation listing failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 pub(crate) async fn list_core_conversations(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
     query: Result<Query<ConversationListQuery>, QueryRejection>,
 ) -> Result<Json<ConversationsListResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
-    let query = query_params(query)?;
-    let params = CoreListQuery {
-        limit: query.limit,
-        after: query.after,
-        view: query.view,
-        count_mode: query.count_mode,
-    };
-    if query.kind.is_none() && query.external_id.is_none() {
-        return list_conversations_unfiltered(&server.vault, params);
-    }
-    let after = params
-        .after
-        .as_deref()
-        .map(|v| parse_entity_id_param(v, "after"))
-        .transpose()?;
-    let (ids, next) = server
-        .vault
-        .conversations_page(
-            query.kind,
-            query.external_id.as_deref(),
-            after.as_ref(),
-            core_list_limit(params.limit),
+    // The read is not bounded by a room's ceiling, so a request made inside a
+    // room turn is refused rather than read outside it.
+    if headers.contains_key(ROOM_TURN_HEADER) {
+        return Err(ApiError::bad_request(
+            "the conversation list is not served inside a room turn",
+            Some(ROOM_TURN_HEADER),
         )
-        .map_err(|e| core_engine_error("conversation list failed", e))?;
-    let items = project_conversation_ids(&server.vault, ids, params.view.unwrap_or(View::Summary))?;
-    let meta = match params.count_mode {
-        CountMode::None => ResponseMeta::none(),
-        CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
-        CountMode::Exact => {
-            let mut cursor = None;
-            let mut count = 0;
-            loop {
-                let (page, next) = server
-                    .vault
-                    .conversations_page(
-                        query.kind,
-                        query.external_id.as_deref(),
-                        cursor.as_ref(),
-                        1000,
-                    )
-                    .map_err(|e| core_engine_error("conversation count failed", e))?;
-                count += page.len() as u64;
-                cursor = next;
-                if cursor.is_none() {
-                    break;
-                }
-            }
-            ResponseMeta::new(count, CountMode::Exact)
-        }
-    };
-    Ok(Json(PaginatedResponse::new(
-        items,
-        next.map(|id| id.to_hex()),
-        meta,
-    )))
-}
-
-/// The generic list projection's `standard` view omits ids. Keep the
-/// in-memory ids from the page so every view can receive its preview.
-fn list_conversations_unfiltered(
-    vault: &oneiron::Vault,
-    params: CoreListQuery,
-) -> Result<Json<ConversationsListResponse>, EnvelopedApiError> {
-    let after = params
+        .into());
+    }
+    let query = query_params(query)?;
+    let after = query
         .after
         .as_deref()
-        .map(|id| parse_entity_id_param(id, "after"))
+        .map(|after| parse_entity_id_param(after, "after"))
         .transpose()?;
-    let (ids, next) = collect_live_entity_page(
-        vault,
-        after,
-        core_list_limit(params.limit),
-        |after, limit| {
-            vault
-                .entities_by_type_page(ENTITY_TYPE_CONVERSATION, after, limit)
-                .map_err(|e| core_engine_error("conversation list failed", e).into())
-        },
-    )?;
-    let items = project_conversation_ids(vault, ids, params.view.unwrap_or(View::Summary))?;
-    let meta = match params.count_mode {
+    let (actor, class) = super::conversation_transcript::reader(&auth)?;
+    let proof = auth.verified_slip().cloned();
+    let view = query.view.unwrap_or(View::Summary);
+    let count_mode = query.count_mode;
+    let read = tokio::task::spawn_blocking(move || {
+        let memory = server.vault.memory(actor, class);
+        let memory = match &proof {
+            Some(proof) => memory.with_read_proof(proof),
+            None => memory,
+        };
+        let filter = ConversationListFilter {
+            kind: query.kind,
+            external_id: query.external_id.as_deref(),
+        };
+        memory.conversation_list(
+            filter,
+            after.as_ref(),
+            core_list_limit(query.limit),
+            matches!(count_mode, CountMode::Exact),
+        )
+    })
+    .await
+    .unwrap_or_else(|error| {
+        tracing::warn!(%error, "conversation list failed to join");
+        Err(MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            "the conversation list did not finish",
+            &["Retry the call."],
+        ))
+    })
+    .map_err(refusal)?;
+    let page = read.value;
+    let items: Vec<_> = page
+        .rows
+        .into_iter()
+        .filter_map(|row| list_row(row, view))
+        .collect();
+    let meta = match count_mode {
         CountMode::None => ResponseMeta::none(),
         CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
-        CountMode::Exact => ResponseMeta::new(
-            count_live_entities_by_type(vault, ENTITY_TYPE_CONVERSATION)?,
-            CountMode::Exact,
-        ),
+        CountMode::Exact => ResponseMeta::new(page.total.unwrap_or_default(), CountMode::Exact),
     };
-    Ok(Json(PaginatedResponse::new(items, next, meta)))
+    Ok(Json(ConversationsListResponse {
+        page: PaginatedResponse::new(items, page.next.map(|id| id.to_hex()), meta),
+        narrowing: read.receipt,
+    }))
 }
 
-fn project_conversation_ids(
-    vault: &oneiron::Vault,
-    ids: Vec<oneiron::EntityId>,
+/// One conversation the lane admitted, in the requested view, with its
+/// preview. The full view says when the conversation occurred: an imported
+/// one, when its session started.
+fn list_row(
+    listed: oneiron::memory::ConversationListRow,
     view: View,
-) -> Result<Vec<ConversationListRow>, EnvelopedApiError> {
-    let mut items = Vec::with_capacity(ids.len());
-    for id in ids {
-        if is_deleted_shell_for_core_list(vault, &id)? {
-            continue;
-        }
-        let Some(item) = projection::project_entity(vault, &id, view)
-            .map_err(|e| core_engine_error("conversation projection failed", e))?
-        else {
-            continue;
-        };
-        let Value::Object(mut entity) = item else {
-            continue;
-        };
-        // The full view says when the conversation occurred: an imported
-        // one, when its session started.
-        if view == View::Full {
-            let occurred = vault
-                .get_occurred(&id)
-                .map_err(|e| core_engine_error("conversation projection failed", e))?;
-            entity.insert(
-                "occurred".to_owned(),
-                serde_json::json!({ "start": occurred.start, "end": occurred.end }),
-            );
-        }
-        items.push(ConversationListRow {
-            entity,
-            last_message_snippet: vault
-                .conversation_last_message_snippet(&id)
-                .map_err(|e| core_engine_error("conversation preview failed", e))?,
-        });
+) -> Option<ConversationListRow> {
+    let row = listed.row;
+    let Value::Object(mut entity) = projection::project_entity_parts(
+        &row.id,
+        row.entity_type,
+        row.learned_at,
+        row.body.as_deref().unwrap_or_default(),
+        view,
+    ) else {
+        return None;
+    };
+    if view == View::Full {
+        entity.insert(
+            "occurred".to_owned(),
+            serde_json::json!({ "start": row.occurred.start, "end": row.occurred.end }),
+        );
     }
-    Ok(items)
+    Some(ConversationListRow {
+        entity,
+        last_message_snippet: listed.last_message_snippet,
+    })
+}
+
+/// The engine's refusal in the core error envelope, with the receipt of the
+/// read that refused.
+fn refusal(error: MemoryError) -> EnvelopedApiError {
+    let receipt = error.read_receipt.clone();
+    let api = match error.code.as_str() {
+        MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => ApiError::new(
+            error.message,
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            error.suggestions,
+        ),
+        _ => {
+            tracing::error!(code = %error.code, error = %error.message, "conversation list failed");
+            ApiError::internal_server_error("conversation listing failed")
+        }
+    };
+    let enveloped = EnvelopedApiError::from(api);
+    match receipt {
+        Some(receipt) => enveloped.with_read_receipt(*receipt),
+        None => enveloped,
+    }
 }
 
 /// Create a conversation entity.
@@ -558,3 +566,6 @@ pub(crate) fn count_live_conversation_turns(
     }
     Ok(total)
 }
+
+#[cfg(test)]
+mod tests;
