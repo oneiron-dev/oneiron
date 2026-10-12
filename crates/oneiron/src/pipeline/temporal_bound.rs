@@ -153,7 +153,12 @@ impl<'p, 'f> ReadableRows<'p, 'f> {
         }
     }
 
-    pub(super) fn reads(&self, store: &StoreRead<'_>, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    pub(super) fn reads(
+        &self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
         if let Some(&reads) = self.answers()?.get(id) {
             return Ok(reads);
         }
@@ -227,7 +232,12 @@ impl<'r, 'p, 'f> WindowCut<'r, 'p, 'f> {
         }
     }
 
-    pub(super) fn keeps(&self, store: &StoreRead<'_>, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    pub(super) fn keeps(
+        &self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
         let Some(&position) = self.positions.get(id) else {
             return Ok(false);
         };

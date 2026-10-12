@@ -271,7 +271,8 @@ fn a_row_the_reader_may_not_read_takes_no_place_in_the_bound() -> Result<()> {
     }
     batch.commit()?;
     let (inside, hidden) = (row(bound), row(0));
-    let reads = |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, id: &EntityId| Ok(*id != hidden);
+    let reads =
+        |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, id: &EntityId| Ok(*id != hidden);
     let found = || -> Result<Vec<EntityId>> {
         Ok(vault
             .query()
@@ -301,9 +302,10 @@ fn a_row_the_reader_may_not_read_does_not_settle_sigma() -> Result<()> {
     let back = anchor - 10 * 86_400;
     put_entity(&vault, entity_id(0xE2), 1, back, back, back)?;
     let hidden = entity_id(0xE0);
-    let reads = |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, id: &EntityId| -> Result<bool> {
-        Ok(*id != hidden)
-    };
+    let reads = |_: &crate::store::StoreRead<'_>,
+                 _: &heed::RoTxn<'_>,
+                 id: &EntityId|
+     -> Result<bool> { Ok(*id != hidden) };
     let config = reader_temporal_config(anchor, 1);
     let rows = |vault: &Vault| reader_temporal_rows(vault, &config, now, &reads);
     let absent = rows(&vault)?;
@@ -343,7 +345,8 @@ fn a_row_the_reader_may_not_read_does_not_stop_the_window() -> Result<()> {
     let (inside, hidden) = (row(0), entity_id(0xE0));
     let back = anchor - 8 * 86_400;
     put_entity(&vault, inside, 1, back, back, back)?;
-    let reads = |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, id: &EntityId| Ok(*id != hidden);
+    let reads =
+        |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, id: &EntityId| Ok(*id != hidden);
     let found = || -> Result<Vec<EntityId>> {
         Ok(vault
             .query()
@@ -375,8 +378,10 @@ fn a_reader_of_every_row_gets_what_the_plain_temporal_channel_returns() -> Resul
     let bound = temporal_widening_bound(1);
     let now = crate::unix_seconds_now();
     let anchor = now - 30 * 86_400;
-    let reads =
-        |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, _: &EntityId| -> Result<bool> { Ok(true) };
+    let reads = |_: &crate::store::StoreRead<'_>,
+                 _: &heed::RoTxn<'_>,
+                 _: &EntityId|
+     -> Result<bool> { Ok(true) };
     // (rows asked for, rows within minutes of the anchor, days back of the
     // rows past them; a negative day is after the anchor). Five days back
     // and six after: the first window's sigma ranks the newer row above the
@@ -471,8 +476,10 @@ fn a_damaged_key_past_a_full_window_fails_no_reader() -> Result<()> {
             .put(wtxn, &damaged, &[])?;
         Ok(())
     })?;
-    let reads =
-        |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, _: &EntityId| -> Result<bool> { Ok(true) };
+    let reads = |_: &crate::store::StoreRead<'_>,
+                 _: &heed::RoTxn<'_>,
+                 _: &EntityId|
+     -> Result<bool> { Ok(true) };
     let config = reader_temporal_config(anchor, 1);
     let plain = {
         let rtxn = vault.store.env.read_txn()?;

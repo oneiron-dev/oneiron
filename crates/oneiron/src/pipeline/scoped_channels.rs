@@ -127,11 +127,13 @@ impl PipelineBuilder<'_> {
             &reader,
         )?;
         let memory = self.memory_category;
-        let kept =
-            |store: &crate::store::StoreRead<'_>, txn: &RoTxn<'_>, id: &crate::EntityId| -> Result<bool> {
-                Ok(cut.keeps(store, txn, id)?
-                    && (!memory || CapabilityLane::Memory.admits(store, txn, id)?))
-            };
+        let kept = |store: &crate::store::StoreRead<'_>,
+                    txn: &RoTxn<'_>,
+                    id: &crate::EntityId|
+         -> Result<bool> {
+            Ok(cut.keeps(store, txn, id)?
+                && (!memory || CapabilityLane::Memory.admits(store, txn, id)?))
+        };
         let filters = PipelineFilterConfig {
             candidate_filter: Some(&kept),
             ..filters
