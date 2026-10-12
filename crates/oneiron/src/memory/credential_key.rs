@@ -68,7 +68,9 @@ impl Vault {
     /// owner: a manifest never narrows the person on their own vault
     /// (ARCH-0057), and every read still checks that the credential is
     /// unexpired and unrevoked in its own snapshot. A narrower credential,
-    /// the owner's too, reads only what it grants.
+    /// the owner's too, reads only what it grants; the owner's skips the
+    /// relationship gate only while the owner binding holds in the read's
+    /// own snapshot.
     ///
     /// Any other holder reads a relationship-scoped or private row only on a
     /// live grant for its relationship (ARCH-0006a rule 2), and an unscoped
@@ -100,7 +102,7 @@ impl Vault {
                 ScopedReadActorKey::vault_owner(holder).while_live(proof),
             ));
         }
-        Ok(Some(key))
+        Ok(Some(key.exempt_while_owner(holder)))
     }
 }
 

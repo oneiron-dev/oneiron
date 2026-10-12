@@ -448,6 +448,98 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     );
 }
 
+/// Astra #1413-003: a narrower credential of the owner's skipped the
+/// relationship gate, but its key kept no tie to the owner binding, so a lane
+/// built while the binding held still read a relationship's words after it
+/// was revoked. The exemption is judged in each read's own snapshot now: the
+/// kept lane withholds them after the revoke, as a fresh lane from the same
+/// credential does, and both still read the owner's unscoped words.
+#[test]
+fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
+    use crate::claim::PointRead;
+    use crate::federation::ScopeAxis;
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x6D);
+    let (spaced, unscoped) = (EntityId::now(), EntityId::now());
+    let mut messages = Vec::new();
+    for (order, (id, content, rel)) in [
+        (spaced, "harbor lantern exemption", Some([0x6E; 16])),
+        (unscoped, "kettle stove exemption", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut message = witness_message(order as u32, WitnessAuthor::User, content);
+        message.id = Some(id.to_hex());
+        message.metadata = rel.map(|space| {
+            serde_json::json!({ "rel": EntityId::from_bytes(space).unwrap().to_hex() })
+        });
+        messages.push(message);
+    }
+    facade_for(&vault, owner)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x6F; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages,
+            occurred_at: 1500,
+        })
+        .expect("witness the owner's words");
+
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .bind_host_owner_for_test(&issuer, owner)
+        .expect("bind the owner");
+    let mut claims = root.claims.clone();
+    claims.slip_id = *blake3::hash(b"narrower owner credential").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    claims.scope.verbs = ScopeAxis::Some(std::collections::BTreeSet::from(["read".into()]));
+    let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+    let tag = b"narrower-owner";
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            tag,
+            &issuer.binding_proof(&slip, tag).expect("binding proof"),
+        )
+        .expect("verify");
+    assert!(!proof.is_full_vault_owner_grade());
+    let lane_of = || {
+        vault.scoped_read(
+            vault
+                .credential_read_key(&proof)
+                .expect("judge the credential")
+                .expect("a read key"),
+        )
+    };
+    let reads = |lane: &crate::claim::ScopedRead<'_>, id: EntityId| {
+        let point = lane
+            .read(&[PointRead::id(id)], None)
+            .expect("point read")
+            .value[0]
+            .as_ref()
+            .is_some_and(|row| row.body.is_some());
+        let readable = lane.is_entity_readable(&id).expect("readability");
+        assert_eq!(point, readable, "{id}: the point read and the predicate agree");
+        readable
+    };
+    let kept = lane_of();
+    assert!(reads(&kept, spaced), "the bound owner's narrower credential");
+    assert!(reads(&kept, unscoped));
+
+    vault
+        .revoke_host_actor_for_test(&issuer)
+        .expect("revoke the owner binding");
+    let fresh = lane_of();
+    for (lane, which) in [(&kept, "kept"), (&fresh, "fresh")] {
+        assert!(!reads(lane, spaced), "the {which} lane, past the revoke");
+        assert!(reads(lane, unscoped), "the {which} lane keeps unscoped words");
+    }
+}
+
 /// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
 ///
 /// `evaluate_deletion_gate` folds the owner binding in a read txn it then

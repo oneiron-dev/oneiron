@@ -20,6 +20,9 @@ pub struct ScopedReadActorKey {
     authority: Option<crate::federation::Scope>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
+    /// Set only on a narrower credential of the owner's; see
+    /// [`Self::exempt_while_owner`].
+    pub(super) owner_exemption: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
@@ -259,6 +262,7 @@ impl ScopedReadActorKey {
             proof: None,
             authority: None,
             owner: None,
+            owner_exemption: None,
             room_turn: None,
             worlds: None,
         })
@@ -291,6 +295,7 @@ impl ScopedReadActorKey {
             proof: None,
             authority: None,
             owner: Some(owner),
+            owner_exemption: None,
             room_turn: None,
             worlds: None,
         }
@@ -350,6 +355,20 @@ impl ScopedReadActorKey {
         Self {
             unscoped_rows_open: true,
             ..self.require_access_grants(principal_ref)
+        }
+    }
+
+    /// A narrower credential of the vault owner's: it reads a relationship's
+    /// rows as the owner does only while `owner` is still the vault's bound
+    /// owner in the read's own snapshot, so a lane kept past a revocation
+    /// loses the exemption with the binding. Otherwise it reads under the gate
+    /// any other holder's key does ([`Self::require_relationship_grants`]).
+    /// It never takes the owner's floor.
+    #[must_use]
+    pub(crate) fn exempt_while_owner(self, owner: EntityId) -> Self {
+        Self {
+            owner_exemption: Some(owner),
+            ..self.require_relationship_grants(Some(owner))
         }
     }
 

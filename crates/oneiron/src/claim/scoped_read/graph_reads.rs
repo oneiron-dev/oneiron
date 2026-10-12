@@ -390,7 +390,7 @@ impl ScopedRead<'_> {
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
             )
-            && !(self.actor_key.enforce_access_grants
+            && !(self.relationship_gated_in(txn)?
                 && matches!(
                     header.entity_type,
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
@@ -444,7 +444,7 @@ impl ScopedRead<'_> {
             let scope_erased = matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
-            ) || (self.actor_key.enforce_access_grants
+            ) || (self.relationship_gated_in(txn)?
                 && matches!(
                     header.entity_type,
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
