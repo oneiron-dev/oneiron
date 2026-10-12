@@ -314,21 +314,12 @@ pub(crate) fn refuse_held_id_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if holds_id_in_txn(dbs, txn, id)? {
+    if PROVISIONAL.contains(dbs, txn, id)? {
         return Err(Error::InvariantViolation(
             "an entity write names a provisional entity's id",
         ));
     }
     Ok(())
-}
-
-/// Whether a provisional entity holds `id`, reading only.
-pub(crate) fn holds_id_in_txn(
-    dbs: &impl crate::store::ManifestDbs,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    PROVISIONAL.contains(dbs, txn, id)
 }
 
 fn hint_key(entity: &ProvisionalEntity, id: &EntityId) -> ([u8; 1], [u8; 32], EntityId) {

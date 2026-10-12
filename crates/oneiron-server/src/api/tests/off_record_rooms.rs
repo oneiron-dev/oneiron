@@ -1108,8 +1108,8 @@ async fn a_rostered_viewer_speaks_off_record_and_not_on_record() {
 /// another for its own text, another for a row of another kind; a provisional
 /// entity's id failed inside the vault; a deleted id, or one another room's
 /// stretch holds, let the word land. So a guessed id told its kind and whether
-/// a guessed text was right. Every such id now gets one refusal, and the
-/// Viewer's words still land, with or without an id of their own.
+/// a guessed text was right. A participant now names no message id: every id,
+/// held or new, gets one refusal, and the Viewer's words still land.
 #[tokio::test]
 async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
     use oneiron::federation::{FederationGrantRole, InitialSharedMember};
@@ -1229,6 +1229,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
         (hard, "ada's word 2"),
         (provisional, "Mirela called"),
         (pending, "ada's word off record"),
+        (EntityId::now(), "a word with an id of its own"),
     ] {
         let (status, mut answer) = call(
             &server,
@@ -1251,18 +1252,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
     );
 
     say(&server, viewer.clone(), room, "porch", 101, SECRET_WORDS).await;
-    let (status, receipt) = call(
-        &server,
-        "POST",
-        "/v1/core/off-record/witness",
-        viewer.clone(),
-        Some(&named(EntityId::now(), "a word with an id of its own")),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{receipt}");
     let (status, file) = act(&server, "export", viewer, room, "porch").await;
     assert_eq!(status, StatusCode::OK, "{file}");
-    let mut kept_words = words(&file);
-    kept_words.sort_unstable();
-    assert_eq!(kept_words, ["a word with an id of its own", SECRET_WORDS]);
+    assert_eq!(words(&file), [SECRET_WORDS]);
 }

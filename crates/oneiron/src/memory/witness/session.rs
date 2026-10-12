@@ -315,15 +315,17 @@ impl Memory<'_> {
     /// The overlay landing's guards in its writer, ahead of the shared door,
     /// and the speaker's PERSON byline, once an erased PERSON is refused.
     ///
-    /// An id this call names that the room does not hold must be one base
+    /// A participant speaking by the room's roster alone (`rostered`) names
+    /// no message id: the stretch gives each message its own. Any id they
+    /// named would be read by the shared door and the staging, so its kind,
+    /// its body, or whatever holds it would shape the answer (Astra and Sol
+    /// on #1411). The refusal comes before anything reads the id, and is the
+    /// same whatever the vault holds. Nothing is lost: this door mints a
+    /// fresh turn for every call, so a named id never made a retry land.
+    ///
+    /// Any other door's id that the room does not hold must be one base
     /// never gave out: a hard-deleted id is refused, as the base writer
-    /// refuses it, so a save cannot bring it back. A participant speaking by
-    /// the room's roster alone (`rostered`) may read nothing of the vault
-    /// through a message id either: every id the vault holds, deleted, holds
-    /// for a provisional entity, or another stretch holds, whatever its kind
-    /// or body, gets the same refusal before the shared door or the staging
-    /// reads it (Astra and Sol on #1411). An id the room holds is the
-    /// stretch's own, and the shared door checks it as a retry.
+    /// refuses it, so a save cannot bring it back.
     pub(super) fn overlay_guards_in_txn(
         &self,
         plan: &WitnessPlan<'_>,
@@ -331,31 +333,18 @@ impl Memory<'_> {
         rostered: bool,
         wtxn: &heed::RoTxn<'_>,
     ) -> MemoryResult<Option<EntityId>> {
-        let view = sink.read_view()?;
+        if rostered && plan.turn.messages.iter().any(|message| message.id.is_some()) {
+            return Err(MemoryError::bad_request_with(
+                "a participant names no message id in an off-record stretch",
+                &["Leave the message id out, and the stretch gives the message one."],
+            ));
+        }
         for id in plan.message_ids() {
-            if sink.overlay.contains_entity(&id)? {
-                continue;
-            }
-            let deleted = self
-                .vault
-                .local_hard_delete_marker_exists_in_txn(wtxn, &id)?;
-            if rostered
-                && (deleted
-                    || crate::ports::EntityStoreRead::port_entity_raw(
-                        &self.vault.store,
-                        wtxn,
-                        &id,
-                    )?
-                    .is_some()
-                    || crate::tagging::holds_id_in_txn(&view, wtxn, &id)?
-                    || self.vault.store.off_record_sessions.contains_entity(&id)?)
+            if !sink.overlay.contains_entity(&id)?
+                && self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
             {
-                return Err(MemoryError::bad_request_with(
-                    "a witnessed message id must be new, or one this stretch holds",
-                    &["Leave the message id out, and the stretch gives the message one."],
-                ));
-            }
-            if deleted {
                 return Err(hard_deleted_refusal(&id));
             }
         }
