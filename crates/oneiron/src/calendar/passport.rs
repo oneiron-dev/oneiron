@@ -397,11 +397,7 @@ pub fn all_live_inbound_passports_absent(
 
 /// Whether a live passport on `event_ref`, pending or not, carries `uid` from
 /// any system.
-fn carries_live_uid(
-    vault: &Vault,
-    event_ref: &EntityId,
-    uid: &str,
-) -> Result<bool, CalendarError> {
+fn carries_live_uid(vault: &Vault, event_ref: &EntityId, uid: &str) -> Result<bool, CalendarError> {
     Ok(live_passports_for_event(vault, event_ref)?
         .iter()
         .any(|(_, value)| value.uid == uid))
@@ -414,9 +410,11 @@ pub(super) fn carries_admitted_uid(
     uid: &str,
 ) -> Result<bool, CalendarError> {
     let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    Ok(admitted_passports_for_event_in_txn(vault, &rtxn, event_ref)?
-        .iter()
-        .any(|(_, value)| value.uid == uid))
+    Ok(
+        admitted_passports_for_event_in_txn(vault, &rtxn, event_ref)?
+            .iter()
+            .any(|(_, value)| value.uid == uid),
+    )
 }
 
 /// Index key digest: SHA-256 of the UID, mirroring `comm.rs::party_index_key`.
