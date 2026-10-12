@@ -52,7 +52,8 @@ pub(crate) fn companion_value_projection(value: &Value) -> Value {
         }
         Value::Map(entries) => {
             let mut kept: Vec<(Value, Value)> = Vec::with_capacity(entries.len());
-            let mut at = std::collections::HashMap::with_capacity(entries.len());
+            let mut at: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::with_capacity(entries.len());
             for (key, value) in entries {
                 let Some(key) = key.as_str() else {
                     continue;

@@ -284,14 +284,32 @@ fn a_body_the_write_door_refuses_is_withheld_whole_from_every_context_output() -
         let asset = crate::test_util::entity(at);
         vault
             .batch()
-            .put(&asset, ENTITY_TYPE_ASSET, TimeRange { start: 1, end: 1 }, 1, &body)
+            .put(
+                &asset,
+                ENTITY_TYPE_ASSET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
             .text(&asset, &[("body", "l2needle")])
             .commit()?;
     }
     let refused = crate::test_util::entity(0x61);
     let kept = crate::test_util::entity(0x62);
-    claim_with_text(&vault, refused, subject, rmpv::Value::Map(keyed), "l2needle")?;
-    claim_with_text(&vault, kept, subject, accepted("kept claim words"), "l2needle")?;
+    claim_with_text(
+        &vault,
+        refused,
+        subject,
+        rmpv::Value::Map(keyed),
+        "l2needle",
+    )?;
+    claim_with_text(
+        &vault,
+        kept,
+        subject,
+        accepted("kept claim words"),
+        "l2needle",
+    )?;
     let full = || {
         assembly(&vault, subject)
             .field_profile(crate::context_pack::FieldProfile::Full)

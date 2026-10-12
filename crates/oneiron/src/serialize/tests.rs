@@ -518,10 +518,8 @@ fn fields_that_spell_a_phrase_together_leave_no_context_writer() {
         .into_owned();
         assert!(!text.contains("sausage"), "{format:?}: {text}");
     }
-    let projected = project_pack_for_json_response(
-        pack,
-        &savings_config(PackFormat::Json, FieldProfile::Full),
-    );
+    let projected =
+        project_pack_for_json_response(pack, &savings_config(PackFormat::Json, FieldProfile::Full));
     let results = format!("{:?}", projected.results);
     assert!(!results.contains("sausage"), "{results}");
 }

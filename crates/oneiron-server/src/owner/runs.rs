@@ -369,7 +369,10 @@ mod tests {
         let mut entries: Vec<_> = (20_u8..)
             .zip(phrase.split(' '))
             .map(|(at, word)| {
-                let key = b"PROSE".iter().chain([&at]).map(|&byte| rmpv::Value::from(byte));
+                let key = b"PROSE"
+                    .iter()
+                    .chain([&at])
+                    .map(|&byte| rmpv::Value::from(byte));
                 (rmpv::Value::Array(key.collect()), rmpv::Value::from(word))
             })
             .collect();
@@ -379,7 +382,10 @@ mod tests {
             (rmpv::Value::from("password"), rmpv::Value::from("changeme")),
         ]);
         let agent = EntityId::now();
-        for (run, value) in [("refused-run", rmpv::Value::Map(entries)), ("kept-run", accepted)] {
+        for (run, value) in [
+            ("refused-run", rmpv::Value::Map(entries)),
+            ("kept-run", accepted),
+        ] {
             vault
                 .park_run_proposal_for_test(run, agent, EntityId::now(), value)
                 .unwrap();
