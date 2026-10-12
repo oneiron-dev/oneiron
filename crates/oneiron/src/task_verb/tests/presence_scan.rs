@@ -270,6 +270,8 @@ fn deferred_task_read_failure_is_reported_without_poisoning_section() {
 /// of a TASK born in another, which its own point read withholds. The bound
 /// handle describes only the TASKs its credential reads; an unbound handle,
 /// and the rows a host cuts for its own reader, still hold the whole board.
+/// Sol R8-003: a bare job is an attempt, so an entity that only shares its
+/// id proves nothing about it; the bound handle shows no bare job.
 #[test]
 fn a_credential_bound_handle_describes_only_the_tasks_it_reads() {
     let (_dir, vault) = open_vault();
@@ -297,6 +299,24 @@ fn a_credential_bound_handle_describes_only_the_tasks_it_reads() {
             .expect("the create mints a TASK")
     };
     let (kept, withheld) = (born_in(near, 120), born_in(far, 121));
+    let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+        .enqueue_with_task_ref(
+            EnqueueAttempt {
+                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: None,
+                now: 120,
+            },
+            Some(EntityId::from_bytes([0x10; 16]).expect("owner id").to_hex()),
+        )
+        .expect("enqueue a job whose TASK is gone")
+    else {
+        panic!("attempt must enqueue");
+    };
+    let job = attempt_hex(attempt.id);
+    // A readable PERSON that only shares the job's id.
+    put_person(&vault, EntityId::from_hex(&job).expect("job id bytes"));
 
     let issuer = crate::test_support::test_host_issuer();
     let mut claims = vault
@@ -308,7 +328,10 @@ fn a_credential_bound_handle_describes_only_the_tasks_it_reads() {
     claims.holder_ref = own.to_hex();
     claims.actor_class = Some("agent".into());
     claims.scope = crate::federation::scope_codec::read_preset();
-    claims.scope.worlds = [crate::federation::ScopeId(near)].into_iter().collect();
+    claims.scope.worlds = [near, crate::claim::base_world_id()]
+        .into_iter()
+        .map(crate::federation::ScopeId)
+        .collect();
     let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
     let tag = b"one-world-tasks";
     let proof = vault
@@ -334,9 +357,9 @@ fn a_credential_bound_handle_describes_only_the_tasks_it_reads() {
         ids.sort();
         ids
     };
-    let mut both = vec![kept.to_hex(), withheld.to_hex()];
-    both.sort();
-    assert_eq!(listed(&unbound), both);
+    let mut every = vec![kept.to_hex(), withheld.to_hex(), job];
+    every.sort();
+    assert_eq!(listed(&unbound), every);
     assert_eq!(listed(&bound), vec![kept.to_hex()]);
     assert_eq!(
         bound.describe_rows().expect("rows").intents.len(),
