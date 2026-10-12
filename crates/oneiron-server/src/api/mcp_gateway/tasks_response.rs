@@ -20,9 +20,9 @@ use std::sync::Arc;
 fn mcp_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
-    section: oneiron::context_board::TasksSection,
+    rows: oneiron::context_board::TasksSectionRows,
 ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
-    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, section)?;
+    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows)?;
     // The footer type is `oneiron::context_board::tasks::TasksOverflow`,
     // whose module is private and which `context_board` does not
     // re-export, so the method item cannot be named from this crate.
@@ -71,17 +71,18 @@ fn mcp_tasks_section(
     ))
 }
 
-/// `describe`'s MCP result: the section arm through the scoped TASKS
-/// projection above, the card arm as the engine encodes it, one page of lines.
+/// `describe`'s MCP result for one card, as the engine encodes it, one page
+/// of lines. The section is narrowed from its rows (`mcp_tasks_section`),
+/// never from a section the engine already capped.
 fn mcp_describe_result(
-    server: &Arc<SyncServer>,
-    actor: &McpResolvedActor,
     description: oneiron::task_verb::TaskDescription,
 ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
     match description {
-        oneiron::task_verb::TaskDescription::Section(section) => {
-            mcp_tasks_section(server, actor, section)
-        }
+        oneiron::task_verb::TaskDescription::Section(_) => Err(McpGatewayError::new(
+            -32603,
+            "engine_error",
+            "describe of one task returned the TASKS section",
+        )),
         oneiron::task_verb::TaskDescription::SelfCard { tail } => {
             let value =
                 serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
@@ -807,12 +808,14 @@ pub(crate) async fn execute_agent_verb_input(
             format!("{tool} input names unknown field `{field}`"),
         ));
     }
+    // A narrowed connector's TASKs are born in its own world and facet.
     let memory = crate::api::credential_memory(
         &server.vault,
         actor.auth.as_ref(),
         actor.actor_ref,
         actor.actor_class,
-    );
+    )
+    .with_birth_position(actor.scope.birth_position());
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
@@ -866,14 +869,21 @@ pub(crate) async fn execute_agent_verb_input(
                     .map_err(|_| invalid())?;
                 let output: oneiron::task_verb::TaskDescription =
                     serde_json::from_value(value).map_err(|_| invalid())?;
-                let (value, source) = mcp_describe_result(server, actor, output)?;
+                let (value, source) = mcp_describe_result(output)?;
                 return Ok((value, source, McpCarrierPolicy::Drain, None));
             }
             let input: oneiron::task_verb::sdk::DescribeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            if input.task_ref.is_none() && !input.self_target {
+                // The section is narrowed to this credential before its
+                // render cap, so its counts are the credential's rows alone.
+                let rows = memory.describe_rows().map_err(mcp_facade_error)?;
+                let (value, source) = mcp_tasks_section(server, actor, rows)?;
+                return Ok((value, source, McpCarrierPolicy::Drain, None));
+            }
             let output =
                 oneiron::task_verb::sdk::describe(&memory, input).map_err(mcp_facade_error)?;
-            let (value, source) = mcp_describe_result(server, actor, output)?;
+            let (value, source) = mcp_describe_result(output)?;
             Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "tasks.create" => {

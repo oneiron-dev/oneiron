@@ -36,10 +36,11 @@ impl ScopedRead<'_> {
         &self,
         policy: &PolicyManifestResolution,
     ) -> Result<ResolvedRetrievalFilter> {
-        crate::gate::narrow_retrieval_filter(
+        Ok(crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
             None,
-        )
+        )?
+        .under_credential_of(&self.actor_key))
     }
 
     pub(super) fn is_entity_readable_with_filter_in(

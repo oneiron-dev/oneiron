@@ -286,6 +286,69 @@ fn repeated_proposal_creates_park_on_one_proposal_row() {
     assert_eq!(open_create_proposal_census(&vault, own), 1);
 }
 
+/// A parked ask is born where its TASK would be (ARCH-0067 §5), so the same
+/// ask from a surface bound to another world or facet parks its own proposal
+/// there, where that surface's reviewers can see it. A retry from the same
+/// surface still lands on the one already waiting.
+#[test]
+fn a_proposed_create_parks_one_proposal_per_birth_position() {
+    let (_dir, vault) = open_vault();
+    let own = consult_peer(&vault, 0xE2);
+    let rate = TaskCreateRateLimit {
+        limit: 0,
+        window_seconds: u64::MAX,
+    };
+    let world = EntityId::from_bytes([0x5A; 16]).expect("world id");
+    let other_world = EntityId::from_bytes([0x5B; 16]).expect("world id");
+    let facet = EntityId::from_bytes([0x5C; 16]).expect("facet id");
+    let park = |world, facet| {
+        vault
+            .memory(own, EdgeActorClass::Agent)
+            .with_birth_position(crate::federation::record_scope::BirthPosition { world, facet })
+            .tasks_create_with_rate_limit(&spec(120), rate)
+            .expect("the Proposed-ceiling create parks")
+            .proposal_ref
+            .expect("the create parks a proposal")
+    };
+
+    let in_world = park(Some(world), None);
+    assert_eq!(
+        park(Some(world), None),
+        in_world,
+        "a same-surface retry lands on the parked ask"
+    );
+    let parked = [
+        (in_world, Some(world), None),
+        (park(Some(other_world), None), Some(other_world), None),
+        (park(None, None), None, None),
+        (park(None, Some(facet)), None, Some(facet)),
+    ];
+
+    assert_eq!(
+        park(Some(crate::claim::base_world_id()), None),
+        parked[2].0,
+        "base reality named outright is the same birth as no world"
+    );
+
+    let refs: std::collections::BTreeSet<EntityId> = parked.iter().map(|row| row.0).collect();
+    assert_eq!(
+        refs.len(),
+        parked.len(),
+        "each birth position parks its own ask"
+    );
+    for (proposal, world, facet) in parked {
+        let body = vault
+            .get_claim(&proposal)
+            .expect("claim body")
+            .expect("the parked proposal is stored");
+        assert_eq!(body.world, world);
+        if let Some(facet) = facet {
+            assert_eq!(body.scope_facet, facet);
+        }
+    }
+    assert_eq!(open_create_proposal_census(&vault, own), parked.len());
+}
+
 /// The dedupe index is claims-ABOUT-subject, so a row naming this actor may
 /// have been written by anyone. A foreign-produced proposal with an identical
 /// payload is not this caller's parked ask: the Proposed-ceiling create parks its

@@ -187,8 +187,7 @@ impl AgentVerb {
     pub const fn requires_unscoped(self) -> bool {
         matches!(
             self,
-            Self::TasksCreate
-                | Self::Witness
+            Self::Witness
                 | Self::ClaimUpsert
                 | Self::Recall
                 | Self::Export
@@ -213,6 +212,9 @@ impl AgentVerb {
                 | Self::RoomsClaim
                 | Self::RoomsSpeak
         )
+    }
+    pub const fn born_in_scope(self) -> bool {
+        matches!(self, Self::TasksCreate)
     }
     pub const fn writes(self) -> bool {
         matches!(
