@@ -397,6 +397,13 @@ impl ScopedReadActorKey {
         self.authority.as_ref()
     }
 
+    /// Whether the read's verified credential grants only some worlds.
+    pub(crate) fn has_world_ceiling(&self) -> bool {
+        self.authority
+            .as_ref()
+            .is_some_and(|granted| !matches!(granted.worlds, crate::federation::ScopeAxis::All))
+    }
+
     #[must_use]
     pub fn actor_ref(&self) -> &str {
         &self.actor_ref

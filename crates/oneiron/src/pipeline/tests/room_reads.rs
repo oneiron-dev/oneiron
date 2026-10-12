@@ -487,18 +487,12 @@ fn a_text_search_in_the_room_finds_base_rows_indexed_after_it_cleared_base_text(
     Ok(())
 }
 
-/// A credential that reads one world names no count of a row outside it
-/// (DEC-0005: no name, no count). A claim only the room holds carries no
-/// record-scope stamp to place it. So the room's read withholds it and
-/// counts nothing, as the same read outside the room, where it does not
-/// exist.
-#[test]
-fn a_credential_for_one_world_counts_no_claim_the_room_holds() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
+/// A reader whose verified credential grants `world` alone, not base.
+fn one_world_reader(vault: &Vault) -> Result<crate::claim::ScopedReadActorKey> {
     let holder = entity_id(0xD1);
-    put_entity(&vault, holder, ENTITY_TYPE_PERSON, 1, 1, 1)?;
+    put_entity(vault, holder, ENTITY_TYPE_PERSON, 1, 1, 1)?;
     let world = entity_id(0xD2);
-    put_entity(&vault, world, ENTITY_TYPE_WORLD, 1, 1, 1)?;
+    put_entity(vault, world, ENTITY_TYPE_WORLD, 1, 1, 1)?;
     let issuer = crate::authority::HostSlipIssuer::from_secret(b"room count fixture")?;
     let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
     claims.slip_id = [0xD3; 32];
@@ -511,25 +505,52 @@ fn a_credential_for_one_world_counts_no_claim_the_room_holds() -> Result<()> {
     let slip = vault.mint_capability_slip(&issuer, claims)?;
     let binding = b"room-count";
     let signature = issuer.binding_proof(&slip, binding)?;
-    let verified = vault.verify_capability_slip(&issuer.public_key(), &slip, binding, &signature)?;
-    let key = crate::claim::ScopedReadActorKey::from_verified_slip(&verified).expect("slip reader");
+    let verified =
+        vault.verify_capability_slip(&issuer.public_key(), &slip, binding, &signature)?;
+    Ok(crate::claim::ScopedReadActorKey::from_verified_slip(&verified).expect("slip reader"))
+}
 
+/// Stages a base-reality claim only the room holds, found by `word`.
+fn stage_room_claim(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    claim: EntityId,
+    word: &str,
+) -> Result<()> {
+    stage_in_room(
+        vault,
+        session,
+        vec![
+            BatchOp::Put {
+                id: claim,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange { start: 10, end: 10 },
+                learned_at: 10,
+                data: active_claim_body(None),
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            },
+            BatchOp::Text {
+                id: claim,
+                fields: vec![("body".to_owned(), word.to_owned())],
+            },
+        ],
+    )
+}
+
+/// A credential that reads one world names no count of a row outside it
+/// (DEC-0005: no name, no count). A claim only the room holds carries no
+/// record-scope stamp to place it. So the room's read withholds it and
+/// counts nothing, as the same read outside the room, where it does not
+/// exist.
+#[test]
+fn a_credential_for_one_world_counts_no_claim_the_room_holds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let key = one_world_reader(&vault)?;
     let session = enter(&vault, "sess-room-claim-count")?;
     let claim = entity_id(0xD4);
-    stage_in_room(
-        &vault,
-        &session,
-        vec![BatchOp::Put {
-            id: claim,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred: TimeRange { start: 10, end: 10 },
-            learned_at: 10,
-            data: active_claim_body(None),
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }],
-    )?;
+    stage_room_claim(&vault, &session, claim, "roomclaimcountneedle")?;
 
     let outside = vault
         .scoped_read(key.clone())
@@ -541,8 +562,44 @@ fn a_credential_for_one_world_counts_no_claim_the_room_holds() -> Result<()> {
     let inside = vault
         .scoped_read_in_session(key, &view)
         .get_entity_parts_with_receipt(&claim, None)?;
-    assert!(inside.value.is_none(), "the credential cannot read base reality");
-    assert_eq!(inside.receipt.suppressed_count, 0, "and names no count of the room's claim");
+    assert!(
+        inside.value.is_none(),
+        "the credential cannot read base reality"
+    );
+    assert_eq!(
+        inside.receipt.suppressed_count, 0,
+        "and names no count of the room's claim"
+    );
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// The same credential's search in the room counts nothing either, where
+/// the pipeline drops the room's claim before the read admits its hits.
+#[test]
+fn a_credential_for_one_world_searching_the_room_counts_no_claim_it_holds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let key = one_world_reader(&vault)?;
+    let session = enter(&vault, "sess-room-claim-search-count")?;
+    let claim = entity_id(0xD5);
+    stage_room_claim(&vault, &session, claim, "roomclaimsearchneedle")?;
+    let strict = crate::gate::RetrievalFilter {
+        min_confidence: Some(0.95),
+        ..crate::gate::RetrievalFilter::default()
+    };
+
+    let view = session.read_view()?;
+    let inside = vault.scoped_read_in_session(key, &view).search_text(
+        "roomclaimsearchneedle",
+        10,
+        Some(&strict),
+    )?;
+    assert!(inside.value.is_empty(), "got {:?}", inside.value);
+    assert_eq!(
+        inside.receipt.suppressed_count, 0,
+        "the search names no count of the room's claim"
+    );
     drop(view);
     session.close()?;
     Ok(())

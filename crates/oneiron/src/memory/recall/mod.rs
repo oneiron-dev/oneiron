@@ -744,8 +744,10 @@ impl Memory<'_> {
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }
-                if let Some(view) = session_view.as_ref() {
-                    pipeline = pipeline.reading(view.read());
+                // The lane decides what the room reads: a credential it cannot
+                // place the room's rows for reads base alone.
+                if session_view.is_some() {
+                    pipeline = pipeline.reading(lane.store_read());
                 }
 
                 if let Some(deadline) = execution.deadline {
@@ -829,8 +831,8 @@ impl Memory<'_> {
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     builder = builder.in_session(telemetry);
                 }
-                if let Some(view) = session_view.as_ref() {
-                    builder = builder.reading(view.read());
+                if session_view.is_some() {
+                    builder = builder.reading(lane.store_read());
                 }
                 if let Some(deadline) = execution.deadline {
                     builder = builder.deadline(deadline);

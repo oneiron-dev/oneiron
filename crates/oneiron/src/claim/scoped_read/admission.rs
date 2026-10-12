@@ -31,6 +31,11 @@ impl crate::vault::Vault {
         actor_key: ScopedReadActorKey,
         view: &'a crate::store::SessionStoreView<'a>,
     ) -> ScopedRead<'a> {
+        // A room's rows carry no record-scope stamp (`stamp_put` writes base
+        // only), and a missing stamp is not inferred. A credential that
+        // reads only some worlds cannot place them, so it reads base alone:
+        // the room's rows have no name and no count for it (DEC-0005).
+        let session_view = (!actor_key.has_world_ceiling()).then_some(view);
         ScopedRead {
             vault: self,
             actor_key,
@@ -39,7 +44,7 @@ impl crate::vault::Vault {
             audience_cache: Mutex::new(Default::default()),
             room_ceiling: Mutex::new(None),
             room_ceilings_built: AtomicUsize::new(0),
-            session_view: Some(view),
+            session_view,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
         }
@@ -460,12 +465,6 @@ impl ScopedRead<'_> {
         };
         if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
             return Ok(false);
-        }
-        // A row a room holds carries no stamp (`stamp_put` writes base only),
-        // and a missing stamp is not inferred: it has no position the
-        // credential reads, so it has no count either.
-        if self.store_read().room_holds(id)? {
-            return Ok(true);
         }
         // Every record that is not a claim is base reality, stamped or not
         // (as `revision_world` reads it): a row replayed with no stamp is no
