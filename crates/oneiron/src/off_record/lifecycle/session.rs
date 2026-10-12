@@ -14,6 +14,7 @@ use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::vault::VaultId;
 
 use super::on_record::OnRecordSaver;
+use super::participant::RunParticipant;
 use super::registry::{
     OffRecordSessionEntry, live_session_entry, session_entry_state, vet_off_record_session_ref,
 };
@@ -66,9 +67,25 @@ pub struct OffRecordSession<'vault> {
     pub(in crate::off_record) vault: &'vault Vault,
     pub(super) session_ref: String,
     pub(super) entry: Arc<OffRecordSessionEntry>,
+    /// The participant a run's handle acts as; `None` on every other handle.
+    pub(super) participant: Option<RunParticipant>,
 }
 
 impl<'vault> OffRecordSessionVault<'vault> {
+    /// A handle on the stretch `entry` registers under `session_ref`.
+    pub(super) fn handle(
+        &self,
+        session_ref: String,
+        entry: Arc<OffRecordSessionEntry>,
+    ) -> OffRecordSession<'vault> {
+        OffRecordSession {
+            vault: self.vault,
+            session_ref,
+            entry,
+            participant: None,
+        }
+    }
+
     /// Enters anonymous mode. No session content or receipt is retained, and
     /// the mode cannot be flipped or promoted into persistence.
     pub fn enter_anonymous(
@@ -79,11 +96,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
         let entry = self
             .vault
             .enter_anonymous_session_entry(session_ref, backend)?;
-        Ok(OffRecordSession {
-            vault: self.vault,
-            session_ref: session_ref.to_owned(),
-            entry,
-        })
+        Ok(self.handle(session_ref.to_owned(), entry))
     }
 
     pub fn enter(
@@ -97,11 +110,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
             self.vault.config.off_record_overlay_budget_bytes,
             None,
         )?;
-        Ok(OffRecordSession {
-            vault: self.vault,
-            session_ref: session_ref.to_owned(),
-            entry,
-        })
+        Ok(self.handle(session_ref.to_owned(), entry))
     }
 
     /// Acquires a handle on an ALREADY-LIVE session (ONE-1729).
@@ -130,11 +139,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
             }));
         }
         drop(state);
-        Ok(OffRecordSession {
-            vault: self.vault,
-            session_ref: session_ref.to_owned(),
-            entry,
-        })
+        Ok(self.handle(session_ref.to_owned(), entry))
     }
 
     /// Explicit budget override used by bounded hosts and the byte-exact
@@ -148,11 +153,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
         let entry =
             self.vault
                 .enter_off_record_session_entry(session_ref, backend, budget_bytes, None)?;
-        Ok(OffRecordSession {
-            vault: self.vault,
-            session_ref: session_ref.to_owned(),
-            entry,
-        })
+        Ok(self.handle(session_ref.to_owned(), entry))
     }
 }
 
@@ -370,16 +371,17 @@ impl OffRecordSession<'_> {
     ) -> Result<Vec<ScoredEntity>> {
         route.revalidate()?;
         let profile = crate::config::Bm25RankProfile::default();
+        let admit = |txn: &heed::RoTxn<'_>| self.participant_in_txn(txn);
         let (search, holds_room_rows) = if room {
             let view = self.read_view()?;
             let search = self
                 .vault
-                .search_text_scored(&view, query, limit, &profile)?;
+                .search_text_scored(&view, query, limit, &profile, admit)?;
             (search, view.read().holds_room_rows())
         } else {
             let search =
                 self.vault
-                    .search_text_scored(&self.vault.store, query, limit, &profile)?;
+                    .search_text_scored(&self.vault.store, query, limit, &profile, admit)?;
             (search, false)
         };
 
@@ -522,6 +524,7 @@ impl OffRecordSession<'_> {
                 let overlay = self.entry.overlay.clone();
                 let segment = self.vault.with_write_txn_grouped(|wtxn| {
                     let segment = overlay.install_txn_segment()?;
+                    self.participant_in_txn(wtxn)?;
                     route.revalidate()?;
                     let view = self.vault.store.session_view(overlay.clone())?;
                     accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
@@ -645,10 +648,12 @@ impl OffRecordSession<'_> {
     ) -> Result<(Option<V>, Option<V>)> {
         let overlay = self.overlay_counter_delta(counter, key)?;
         let rtxn = self.vault.store.env.read_txn()?;
+        self.participant_in_txn(&rtxn)?;
         Ok((counter.get(&self.vault.store, &rtxn, key)?, overlay))
     }
 
-    /// Composed side-table read over overlay ∪ base.
+    /// Composed side-table read over overlay ∪ base. A run's handle reads
+    /// only while its participant is in the room, checked in the read.
     pub(crate) fn side_table_get<K: SideKey, V, C: SideCodec<V>>(
         &self,
         table: &SideTable<K, V, C>,
@@ -656,6 +661,7 @@ impl OffRecordSession<'_> {
     ) -> Result<Option<V>> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
+        self.participant_in_txn(&rtxn)?;
         table.get(&view, &rtxn, key)
     }
 

@@ -136,14 +136,18 @@ impl<'a> HostSelfDispatcher<'a> {
     /// # Errors
     ///
     /// Propagates the session's own typed refusals when the room is closing
-    /// or gone, plus [`crate::Error::InvalidClaimBody`] for a blank
-    /// `run_ref`.
+    /// or gone, or `actor` is not in the stretch's room, plus
+    /// [`crate::Error::InvalidClaimBody`] for a blank `run_ref`.
     pub fn for_off_record_session(
         session: &'a OffRecordSession<'a>,
         actor: WriteActor,
         run_ref: impl Into<String>,
     ) -> Result<Self> {
-        Self::bound(ExecutorStorage::for_session(session)?, actor, run_ref)
+        Self::bound(
+            ExecutorStorage::for_session(session, actor.entity_ref())?,
+            actor,
+            run_ref,
+        )
     }
 
     fn bound(
@@ -216,6 +220,12 @@ impl<'a> HostSelfDispatcher<'a> {
         self.storage.vault_id()
     }
 
+    /// The participant a session-bound dispatcher acts as, or `None` for a
+    /// canonical run.
+    pub(crate) fn participant(&self) -> Option<EntityId> {
+        self.storage.participant()
+    }
+
     /// The session-owned conversation container for K-EXEC turns, created by
     /// the session machinery at session ENTRY (one shell per live session,
     /// enforced there — R-20260807-02 rider 1) and read from the session's
@@ -271,12 +281,23 @@ impl<'a> HostSelfDispatcher<'a> {
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
-        let run_id = site.map(|site| site.run_id);
         // The descriptor bridge answers before the policy probe: that probe is
         // itself a vault read, and `self.context` must perform none.
-        if !matches!(call, SelfCall::Context(_)) {
-            self.enforce_off_record_effect_policy(call.effect())?;
+        if matches!(call, SelfCall::Context(_)) {
+            return self.dispatch_effect(call, site);
         }
+        self.storage.answered(|| {
+            self.enforce_off_record_effect_policy(call.effect())?;
+            self.dispatch_effect(call, site)
+        })
+    }
+
+    fn dispatch_effect(
+        &self,
+        call: SelfCall,
+        site: Option<ExecutorCallSite<'_>>,
+    ) -> Result<SelfDispatchOutcome> {
+        let run_id = site.map(|site| site.run_id);
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
             SelfCall::AgentsPut(call) => {
@@ -362,7 +383,10 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
     /// 0. the run's `SessionWriteRoute` was captured at RUN ENTRY, in
     ///    [`HostSelfDispatcher::for_off_record_session`] — not here, and never
     ///    per dispatch;
-    /// 1. mode-scoped effect policy, below, before anything else;
+    /// 1. mode-scoped effect policy, below, before anything else but the
+    ///    run's participant: a session-bound run's call is answered only
+    ///    while they are in the room, checked before the call and again once
+    ///    it is done (`ExecutorStorage::answered`);
     /// 2. host envelope, then the write gate;
     /// 3. for on-record supersede only, ONE-1936's stale-target guard inside
     ///    its own transaction;

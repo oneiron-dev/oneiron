@@ -176,7 +176,8 @@ impl SessionVault<'_> {
             "executor speaks in the room",
             None,
         )?;
-        let storage = ExecutorStorage::for_session(&self.session)?;
+        let storage =
+            ExecutorStorage::for_session(&self.session, self.actor.unwrap_or_else(EntityId::now))?;
         let record = CodeRunReplayRecord::new(
             EntityId::now(),
             CodeRunDeterminism::new(1_719_000_004_000, [0xCE; 32]),
