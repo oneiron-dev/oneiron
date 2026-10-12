@@ -5,6 +5,9 @@ mod agent_credentials;
 mod ai_serve;
 mod api_cli;
 mod booking_agent_api;
+// The broker runs as a second user through a user namespace: Linux only.
+#[cfg(target_os = "linux")]
+mod broker_paid_leg;
 mod campaign_surface_oracle;
 mod code_mode_compaction;
 mod core_discover;

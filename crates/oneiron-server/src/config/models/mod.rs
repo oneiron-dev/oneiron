@@ -56,6 +56,16 @@ pub(crate) struct ModelsFile {
     workflows: WorkflowFile,
     #[serde(default)]
     code_mode: CodeModeFile,
+    broker: Option<BrokerFile>,
+}
+
+/// `[models.broker]`: where the credential broker listens, and the OS user it
+/// runs as.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrokerFile {
+    socket: Option<PathBuf>,
+    uid: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -118,6 +128,21 @@ pub struct ModelsConfig {
     pub chat: ChatSettings,
     pub workflows: WorkflowSettings,
     pub code_mode: CodeModeSettings,
+    /// The credential broker that sends every `key_secret` provider's calls.
+    pub broker: Option<BrokerConfig>,
+}
+
+/// The credential broker (ARCH-0069 `#broker-design`): a separate process,
+/// running as its own OS user, that adds a provider key to one request and
+/// sends it. `oneiron-broker serve --socket <socket> --client-uid <this
+/// server's uid>` runs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrokerConfig {
+    /// Its Unix socket, an absolute path.
+    pub socket: PathBuf,
+    /// The OS user it runs as. Each connection checks the peer is this user,
+    /// and this server refuses a broker that runs as its own user.
+    pub uid: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,6 +309,16 @@ impl ModelsFile {
                 oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS
             );
         }
+        let broker = self.broker.map(BrokerFile::resolve).transpose()?;
+        if broker.is_none()
+            && let Some(name) = providers
+                .iter()
+                .find_map(|(name, provider)| provider.key_secret.as_ref().map(|_| name))
+        {
+            anyhow::bail!(
+                "models.providers.{name}.key_secret needs [models.broker]: the socket and the user of the credential broker that sends its calls"
+            );
+        }
         Ok(ModelsConfig {
             providers,
             roles,
@@ -293,7 +328,21 @@ impl ModelsFile {
             chat,
             workflows,
             code_mode,
+            broker,
         })
+    }
+}
+
+impl BrokerFile {
+    fn resolve(self) -> anyhow::Result<BrokerConfig> {
+        let socket = self
+            .socket
+            .filter(|socket| socket.is_absolute())
+            .ok_or_else(|| anyhow::anyhow!("models.broker.socket must be an absolute path"))?;
+        let uid = self
+            .uid
+            .ok_or_else(|| anyhow::anyhow!("models.broker.uid is required"))?;
+        Ok(BrokerConfig { socket, uid })
     }
 }
 
@@ -387,6 +436,13 @@ fn validate_ladders(
 }
 
 impl ModelsConfig {
+    /// A `[models]` section's body on its own, as a host that embeds this
+    /// crate writes it. `base` resolves relative prompt files.
+    pub fn from_toml(text: &str, base: Option<&Path>) -> anyhow::Result<Self> {
+        let file: ModelsFile = toml::from_str(text)?;
+        file.resolve(base)
+    }
+
     /// The ladder for `role`, if any rung serves it.
     #[must_use]
     pub fn ladder(&self, role: ModelRole) -> Option<&[Rung]> {

@@ -81,8 +81,8 @@ impl OutputLimitField {
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_CONTEXT_TOKENS: u64 = 128_000;
-/// Headers that carry credentials. Keys arrive through `key_env`, never as a
-/// literal in a config file.
+/// Headers that carry credentials. Keys arrive through `key_env` or
+/// `key_secret`, never as a literal in a config file.
 const CREDENTIAL_HEADERS: [&str; 4] = [
     "authorization",
     "x-api-key",
@@ -97,6 +97,7 @@ pub(super) struct ProviderFile {
     kind: Option<ProviderKind>,
     base_url: Option<String>,
     key_env: Option<String>,
+    key_secret: Option<String>,
     #[serde(default)]
     headers: BTreeMap<String, String>,
     timeout_secs: Option<u64>,
@@ -116,6 +117,11 @@ pub struct ProviderConfig {
     pub base_url: String,
     /// Name of the environment variable holding the key. `None` sends no key.
     pub key_env: Option<String>,
+    /// Name of the vault secret holding the key instead (ARCH-0069
+    /// `#broker-design`). The key stays in the vault's custody at T0: each
+    /// call reads it at the custody door and hands it, with that one request,
+    /// to the credential broker `[models.broker]` names, which sends it.
+    pub key_secret: Option<String>,
     /// Extra non-credential headers sent on every call.
     pub headers: BTreeMap<String, String>,
     pub timeout_secs: u64,
@@ -151,10 +157,13 @@ impl ProviderFile {
                 "models.providers.{name}.key_env must name an environment variable (A-Z, 0-9, _); put the key itself in that variable, never in the config file"
             );
         }
+        if let Some(key_secret) = &self.key_secret {
+            validate_key_secret(name, kind, &base_url, key_secret, self.key_env.is_some())?;
+        }
         for header in self.headers.keys() {
             if CREDENTIAL_HEADERS.contains(&header.to_ascii_lowercase().as_str()) {
                 anyhow::bail!(
-                    "models.providers.{name}.headers.{header} would hold a credential; set key_env instead"
+                    "models.providers.{name}.headers.{header} would hold a credential; set key_env or key_secret instead"
                 );
             }
         }
@@ -191,6 +200,7 @@ impl ProviderFile {
             kind,
             base_url,
             key_env: self.key_env,
+            key_secret: self.key_secret,
             headers: self.headers,
             timeout_secs,
             context_tokens,
@@ -203,6 +213,37 @@ impl ProviderFile {
             revision,
         })
     }
+}
+
+/// A key the credential broker sends: one way to name the key, a generating
+/// provider, and an `https` origin, the only scheme the broker sends to.
+fn validate_key_secret(
+    name: &str,
+    kind: ProviderKind,
+    base_url: &str,
+    key_secret: &str,
+    has_key_env: bool,
+) -> anyhow::Result<()> {
+    if has_key_env {
+        anyhow::bail!("models.providers.{name}: set key_env or key_secret, not both");
+    }
+    if key_secret.is_empty()
+        || key_secret.len() > 256
+        || !key_secret.bytes().all(|b| b.is_ascii_graphic())
+    {
+        anyhow::bail!(
+            "models.providers.{name}.key_secret must name a vault secret (printable ASCII, no spaces); put the key itself in the vault, never in the config file"
+        );
+    }
+    if !kind.generates() {
+        anyhow::bail!("models.providers.{name}.key_secret applies to generating providers only");
+    }
+    if !base_url.starts_with("https://") {
+        anyhow::bail!(
+            "models.providers.{name}.key_secret: the credential broker sends over https only"
+        );
+    }
+    Ok(())
 }
 
 fn validate_base_url(name: &str, kind: ProviderKind, url: &str) -> anyhow::Result<()> {
