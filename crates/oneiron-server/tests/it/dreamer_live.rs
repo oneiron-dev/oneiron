@@ -21,7 +21,8 @@
 //!    server while it is held (between queue and apply);
 //! 2. serves until the passes land, and kills the server (after apply);
 //! 3. serves again: a finished pass makes no call;
-//! 4. witnesses a user correction and serves until it is consolidated;
+//! 4. witnesses a user correction in a later conversation and serves until
+//!    it is consolidated;
 //! 5. serves again: the correction holds once.
 //!
 //! Every model call goes through a relay that forwards it unchanged and keeps
@@ -641,13 +642,15 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
         )
     };
 
-    // 4. A user correction, heard by a later pass.
+    // 4. A user correction in a later conversation, heard by a later pass.
+    // The first conversation's summary moved it onto the record DAG, which
+    // the witness door no longer appends to.
     let second_turn = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         witness(
             &vault,
             person,
-            conversation,
+            EntityId::now(),
             "A correction: I moved last month. I live in Porto now, not Lisbon.",
         )
     };
