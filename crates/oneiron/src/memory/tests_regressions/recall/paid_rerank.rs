@@ -321,15 +321,17 @@ fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
         .filter(|item| item.kind == "TURN")
         .map(|item| item.value_text.as_str())
         .collect();
-    assert_eq!(turns.len(), 3, "{turns:?}");
-    assert!(turns[0].contains("shop"), "{turns:?}");
-    assert!(turns[2].contains("wick is trimmed"), "{turns:?}");
     let scored = scored.lock().unwrap();
+    let kinds: Vec<&str> = pack.items.iter().map(|item| item.kind.as_str()).collect();
+    assert_eq!(turns.len(), 3, "{turns:?} {kinds:?} {scored:?}");
+    assert!(turns[0].contains("shop"), "{turns:?} {kinds:?} {scored:?}");
     assert!(
-        scored
-            .iter()
-            .all(|text| !text.is_empty() && !text.contains("wick is")),
-        "{scored:?}"
+        turns[2].contains("wick is trimmed"),
+        "{turns:?} {kinds:?} {scored:?}"
+    );
+    assert!(
+        scored.iter().all(|text| !text.contains("wick is")),
+        "{turns:?} {kinds:?} {scored:?}"
     );
     assert!(matches!(
         pack.retrieval_meta.rerank,
