@@ -455,6 +455,48 @@ fn a_removed_agents_write_is_refused_alike_once_its_person_is_purged() {
     assert!(vault.get_raw(&id).expect("read the claim").is_none());
 }
 
+/// Sol on engine-prs-01, round 6: the roster check read a deleted room's
+/// membership through the room's body door, which refuses a deleted room
+/// with `EntityNotFound`. A run whose agent was removed, and whose room the
+/// owner then deleted, was told that, not `NotInRoom`. A deleted room has
+/// no one in it, as an absent one has no one.
+#[test]
+fn a_removed_agents_run_is_refused_alike_once_the_room_is_deleted() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_on_record(&vault);
+    let run = bind_run(&session, &room);
+    let storage = ExecutorStorage::for_session(&session, room.agent).expect("bind the storage");
+    vault
+        .leave_member(
+            room.id,
+            room.agent,
+            WriteActor::new(room.owner, EdgeActorClass::Human),
+            50,
+        )
+        .expect("the owner removes the agent");
+    assert!(
+        vault.delete_entity(&room.id).expect("the owner deletes the room"),
+        "the room existed"
+    );
+
+    let refused = [
+        run.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            EntityId::now(),
+            said_in_the_room(&room),
+            range(60),
+            60,
+        )))
+        .err(),
+        storage.get_code_run_replay_record(&EntityId::now()).err(),
+    ];
+    assert!(
+        refused
+            .iter()
+            .all(|refused| not_in_room(refused.as_ref(), room.agent)),
+        "{refused:?}"
+    );
+}
+
 /// Astra on #1406, P2: a base write checked the saver before the run's
 /// participant. Once the owner's credential was revoked, a run whose agent
 /// had been removed was told `SavingStopped`, with the saver named, and once

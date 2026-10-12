@@ -748,7 +748,11 @@ pub(super) fn is_member_in_txn(
     room: EntityId,
     actor: EntityId,
 ) -> Result<bool> {
-    if vault.get_entity_type_in_txn(txn, &room)? != Some(ENTITY_TYPE_CONVERSATION) {
+    // A deleted room keeps its shell and has no one in it, as an absent one
+    // has no one: the liveness the room's body door refuses on, read first.
+    if crate::vault::live_entity_row_in_txn(&vault.store, txn, &room)?.live_type()
+        != Some(ENTITY_TYPE_CONVERSATION)
+    {
         return Ok(false);
     }
     Ok(vault.members_in_txn(txn, room)?.contains(&actor))
