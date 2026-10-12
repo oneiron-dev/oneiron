@@ -126,21 +126,20 @@ impl Memory<'_> {
     }
 
     /// `rows` cut to what a handle bound to a read credential reads: each
-    /// TASK and job by the credential's point read, and a row id that names
-    /// no entity, which no read can prove, dropped. An unbound handle keeps
-    /// them all.
+    /// TASK by the credential's point read. A bare job is an attempt, not an
+    /// entity, so no entity read proves it, and the cut drops it. An unbound
+    /// handle keeps them all.
     fn credential_rows(&self, mut rows: TasksSectionRows) -> MemoryResult<TasksSectionRows> {
         let ids: Vec<EntityId> = rows
             .intents
             .iter()
-            .map(|intent| intent.id.as_str())
-            .chain(rows.bare_jobs.iter().map(|job| job.id.as_str()))
-            .filter_map(|id| EntityId::from_hex(id).ok())
+            .filter_map(|intent| EntityId::from_hex(&intent.id).ok())
             .collect();
         if let Some(readable) = self.credential_readable_ids(&ids)? {
-            let reads = |id: &str| EntityId::from_hex(id).is_ok_and(|id| readable.contains(&id));
-            rows.intents.retain(|intent| reads(&intent.id));
-            rows.bare_jobs.retain(|job| reads(&job.id));
+            rows.intents.retain(|intent| {
+                EntityId::from_hex(&intent.id).is_ok_and(|id| readable.contains(&id))
+            });
+            rows.bare_jobs.clear();
         }
         Ok(rows)
     }
