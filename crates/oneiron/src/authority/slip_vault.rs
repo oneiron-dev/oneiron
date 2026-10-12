@@ -665,6 +665,7 @@ impl Vault {
 
     /// Revokes the actor the host root binds, as unbinding the owner does;
     /// the host root and the slips it minted stay live.
+    #[cfg(test)]
     pub(crate) fn revoke_host_actor_for_test(&self, issuer: &HostSlipIssuer) -> Result<()> {
         let fold = self.authority_fold()?;
         let now = self.now_recorded_at();
