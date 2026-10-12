@@ -324,6 +324,12 @@ impl<'a> ScopedRead<'a> {
         self.vault
     }
 
+    /// Whether this read sees a room's rows: false outside a room, and for
+    /// a credential that reads base alone in one.
+    pub(crate) fn reads_room(&self) -> bool {
+        self.session_view.is_some()
+    }
+
     /// The content this read sees: its room's overlay ∪ base, or base alone.
     /// A reader handed it reads what this read admits from, with no code of
     /// its own for the room.

@@ -487,26 +487,37 @@ fn a_text_search_in_the_room_finds_base_rows_indexed_after_it_cleared_base_text(
     Ok(())
 }
 
-/// A reader whose verified credential grants `world` alone, not base.
+/// A verified credential for `holder`, the host root's narrowed to `worlds`.
+fn read_credential(
+    vault: &Vault,
+    holder: EntityId,
+    actor_class: &str,
+    worlds: &[EntityId],
+) -> Result<crate::authority::VerifiedSlip> {
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"room count fixture")?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = [0xD3; 32];
+    claims.holder_ref = holder.to_hex();
+    claims.actor_class = Some(actor_class.into());
+    claims.scope.worlds = crate::federation::ScopeAxis::Some(
+        worlds
+            .iter()
+            .map(|world| crate::federation::ScopeId(*world))
+            .collect(),
+    );
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let binding = b"room-count";
+    let signature = issuer.binding_proof(&slip, binding)?;
+    vault.verify_capability_slip(&issuer.public_key(), &slip, binding, &signature)
+}
+
+/// A reader whose verified credential grants one world alone, not base.
 fn one_world_reader(vault: &Vault) -> Result<crate::claim::ScopedReadActorKey> {
     let holder = entity_id(0xD1);
     put_entity(vault, holder, ENTITY_TYPE_PERSON, 1, 1, 1)?;
     let world = entity_id(0xD2);
     put_entity(vault, world, ENTITY_TYPE_WORLD, 1, 1, 1)?;
-    let issuer = crate::authority::HostSlipIssuer::from_secret(b"room count fixture")?;
-    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
-    claims.slip_id = [0xD3; 32];
-    claims.holder_ref = holder.to_hex();
-    claims.actor_class = Some("agent".into());
-    claims.scope = crate::federation::scope_codec::read_preset();
-    claims.scope.worlds = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-        crate::federation::ScopeId(world),
-    ]));
-    let slip = vault.mint_capability_slip(&issuer, claims)?;
-    let binding = b"room-count";
-    let signature = issuer.binding_proof(&slip, binding)?;
-    let verified =
-        vault.verify_capability_slip(&issuer.public_key(), &slip, binding, &signature)?;
+    let verified = read_credential(vault, holder, "agent", &[world])?;
     Ok(crate::claim::ScopedReadActorKey::from_verified_slip(&verified).expect("slip reader"))
 }
 
@@ -601,6 +612,93 @@ fn a_credential_for_one_world_searching_the_room_counts_no_claim_it_holds() -> R
         "the search names no count of the room's claim"
     );
     drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// A credential that grants base reality alone reads base alone in a room,
+/// and its recall there seeds from base alone. A word the room staged on a
+/// base claim chooses nothing for it: not a seed, and not one more row it
+/// was refused, so its receipt counts the same as for a word nobody wrote.
+#[test]
+fn a_base_only_credentials_recall_in_the_room_seeds_nothing_by_the_rooms_words() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xD6);
+    let mut body = ClaimBody::new(
+        "test.seed",
+        ClaimSubject::Entity(owner),
+        rmpv::Value::from("v"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    // Replicated: the fixture isolates the room's read, not the write gate.
+    vault
+        .batch()
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::claim::encode_claim_body(&body)?,
+        )
+        .text(&claim, &[("body", "seedbaseword")])
+        .edge(&claim, crate::EdgeKind::ClaimOf, &owner, 1.0)
+        .commit()?;
+    let base_only = read_credential(&vault, owner, "human", &[crate::claim::base_world_id()])?;
+    let session = enter(&vault, "sess-room-seed-words")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![BatchOp::Text {
+            id: claim,
+            fields: vec![("body".to_owned(), "seedroomword".to_owned())],
+        }],
+    )?;
+    let owners = || vault.memory(owner, crate::edge::EdgeActorClass::Human);
+    let scope = crate::memory::RecallScope::default();
+    let the_room = owners()
+        .recall_in_session(
+            &session,
+            "seedroomword",
+            crate::memory::Effort::Light,
+            &scope,
+            10,
+            None,
+            None,
+        )
+        .expect("the owner's recall in the room");
+    assert_eq!(the_room.items.len(), 1, "the room's word finds the claim");
+
+    let credentials = |word: &str| {
+        owners()
+            .with_read_proof(&base_only)
+            .recall_in_session(
+                &session,
+                word,
+                crate::memory::Effort::Medium,
+                &scope,
+                10,
+                None,
+                None,
+            )
+            .expect("the credential's recall in the room")
+    };
+    let by_the_rooms_word = credentials("seedroomword");
+    let by_no_word = credentials("seednobodysword");
+    assert!(
+        by_the_rooms_word.items.is_empty(),
+        "got {:?}",
+        by_the_rooms_word.items
+    );
+    assert_eq!(
+        by_the_rooms_word.narrowing.suppressed_count, by_no_word.narrowing.suppressed_count,
+        "the room's word counts no row the credential was refused"
+    );
     session.close()?;
     Ok(())
 }

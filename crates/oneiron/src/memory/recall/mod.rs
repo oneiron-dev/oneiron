@@ -685,7 +685,13 @@ impl Memory<'_> {
             let hits = match (session, route.as_ref()) {
                 (Some(session), Some(route)) => {
                     let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
-                    let raw = session.search_text_routed(route, query, limit)?;
+                    // Seeds come from what the lane reads: a reader that
+                    // reads base alone in the room seeds from base alone.
+                    let raw = if lane.reads_room() {
+                        session.search_text_routed(route, query, limit)?
+                    } else {
+                        session.search_base_text_routed(route, query, limit)?
+                    };
                     let scored = lane.filter_scored_entities(raw)?;
                     receipt.restrict_with(&scored.receipt);
                     scored.value

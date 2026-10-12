@@ -345,22 +345,49 @@ impl OffRecordSession<'_> {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
+        self.search_text_routed_over(route, query, limit, true)
+    }
+
+    /// [`Self::search_text_routed`] over base's postings alone, for a reader
+    /// that reads base alone in this room (a credential that cannot place
+    /// the room's rows): the room's words choose nothing it reads. Its run
+    /// still goes through the room's door.
+    pub(crate) fn search_base_text_routed(
+        &self,
+        route: &SessionWriteRoute,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        self.search_text_routed_over(route, query, limit, false)
+    }
+
+    fn search_text_routed_over(
+        &self,
+        route: &SessionWriteRoute,
+        query: &str,
+        limit: usize,
+        room: bool,
+    ) -> Result<Vec<ScoredEntity>> {
         route.revalidate()?;
-        let view = self.read_view()?;
-        let search = self.vault.search_text_scored(
-            &view,
-            query,
-            limit,
-            &crate::config::Bm25RankProfile::default(),
-        )?;
-        let holds_room_rows = view.read().holds_room_rows();
-        drop(view);
+        let profile = crate::config::Bm25RankProfile::default();
+        let (search, holds_room_rows) = if room {
+            let view = self.read_view()?;
+            let search = self
+                .vault
+                .search_text_scored(&view, query, limit, &profile)?;
+            (search, view.read().holds_room_rows())
+        } else {
+            let search =
+                self.vault
+                    .search_text_scored(&self.vault.store, query, limit, &profile)?;
+            (search, false)
+        };
 
         let telemetry = self.retrieval_telemetry(route)?;
-        // The search read the room. While the room holds rows of its own,
-        // its run may name them, and base holds no reference to a live
-        // overlay row (the taint guard covers references): on record, such a
-        // run keeps no row in base, though its saver must still hold.
+        // A search that read the room may name its rows while it holds any,
+        // and base holds no reference to a live overlay row (the taint guard
+        // covers references): on record, such a run keeps no row in base,
+        // though its saver must still hold.
         if !self.vault.store.retrieval_telemetry_capture_enabled() {
             telemetry.revalidate_without_capture()?;
             return Ok(search.scores);
