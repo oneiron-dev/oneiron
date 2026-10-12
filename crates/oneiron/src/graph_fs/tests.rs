@@ -125,14 +125,21 @@ fn core_read_world_grant(actor_ref: &str, world: EntityId) -> Value {
     ])
 }
 
-/// A `core:read` grant whose canonical Scope reads only `worlds`, and whose
-/// selectors, if `selector` names one, read only that world.
-fn core_read_grant_in(actor_ref: &str, worlds: &[EntityId], selector: Option<EntityId>) -> Value {
+/// A `core:read` grant whose canonical Scope reads only `worlds` and admits
+/// only `verb`, and whose selectors, if `selector` names one, read only that
+/// world.
+fn core_read_grant_in(
+    actor_ref: &str,
+    worlds: &[EntityId],
+    selector: Option<EntityId>,
+    verb: &str,
+) -> Value {
     let mut scope = crate::federation::scope_codec::read_preset();
     scope.worlds = worlds
         .iter()
         .map(|world| crate::federation::ScopeId(*world))
         .collect();
+    scope.verbs = [verb.to_owned()].into_iter().collect();
     let mut grant = vec![
         (Value::from("actor_ref"), Value::from(actor_ref)),
         (Value::from("effector"), Value::from("core:read")),
@@ -257,7 +264,7 @@ fn worlds_list_under_the_readers_own_authority() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
     let (first, second, subject) = (test_id(0x34), test_id(0x35), test_id(0x36));
     let (agent, holder) = (test_id(0x37), test_id(0x38));
-    let (scoped, crossed) = (test_id(0x3A), test_id(0x3B));
+    let (scoped, crossed, effect) = (test_id(0x3A), test_id(0x3B), test_id(0x3F));
     put_entity(&vault, first, ENTITY_TYPE_WORLD)?;
     put_entity(&vault, second, ENTITY_TYPE_WORLD)?;
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
@@ -268,8 +275,9 @@ fn worlds_list_under_the_readers_own_authority() -> Result<()> {
         test_id(0x91),
         encode_policy_manifest(vec![
             core_read_world_grant(&agent.to_hex(), first),
-            core_read_grant_in(&scoped.to_hex(), &[second], None),
-            core_read_grant_in(&crossed.to_hex(), &[first], Some(second)),
+            core_read_grant_in(&scoped.to_hex(), &[second], None, "read"),
+            core_read_grant_in(&crossed.to_hex(), &[first], Some(second), "read"),
+            core_read_grant_in(&effect.to_hex(), &[second], None, "effect"),
         ]),
     )?;
     let walk = |read: &ScopedRead<'_>| -> Result<(Vec<String>, [bool; 2])> {
@@ -309,6 +317,13 @@ fn worlds_list_under_the_readers_own_authority() -> Result<()> {
         walk(&crossed)?,
         (Vec::new(), [false, false]),
         "a selector outside the grant's Scope reads no world"
+    );
+    let effect = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(effect.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&effect)?,
+        (Vec::new(), [false, false]),
+        "a grant whose Scope admits no read reads no world"
     );
 
     let issuer = crate::test_support::test_host_issuer();
