@@ -535,7 +535,7 @@ pub(crate) fn apply_ops_session(
     // The apply that indexes a row the room put publishes its revision, and
     // hides an index of another body that it did not restage (see above).
     for id in texts.union(&vectors) {
-        if !view.read().room_holds(id)? {
+        if !view.entities.stages_row(id.as_bytes()) {
             continue;
         }
         if !crate::vault::entity_revision::publish_room_revision(view, wtxn, id)? {

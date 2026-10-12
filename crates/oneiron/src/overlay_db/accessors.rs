@@ -78,6 +78,18 @@ impl OverlayDb {
         Some(overlay.snapshot.staged_rows(overlay.keyspace))
     }
 
+    /// Whether this accessor's room stages a row of its own at `key` (not a
+    /// deletion), in the snapshot its reads compose: an active segment's
+    /// writes included.
+    pub(crate) fn stages_row(&self, key: &[u8]) -> bool {
+        self.overlay.as_ref().is_some_and(|overlay| {
+            matches!(
+                overlay.snapshot.lookup_single(overlay.keyspace, key),
+                SnapshotLookup::Present(_)
+            )
+        })
+    }
+
     pub(crate) fn get<'txn>(
         &self,
         txn: &'txn RoTxn<'_>,
