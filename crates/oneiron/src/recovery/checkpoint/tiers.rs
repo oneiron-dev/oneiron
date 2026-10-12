@@ -36,6 +36,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 Runtime
             } else if [
                 b"provider_confidence/".as_slice(),
+                // Who computed each vector: derived with the vectors it
+                // describes, which a restore embeds again.
+                b"embedding/device/",
                 b"ppr_community_cache:",
                 // The thread projection is a cache over the reply chain; a
                 // restore folds it again from the restored edges (OF-296).

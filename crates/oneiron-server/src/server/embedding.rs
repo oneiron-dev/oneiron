@@ -149,7 +149,7 @@ impl SyncServer {
             )
             .with_batch_size(config.batch_size)
             .with_lease_duration_ms(config.lease_ms);
-            if let Some(remote) = slot.remote_rung()? {
+            if let Some(remote) = slot.remote_rung(server.run_receipts())? {
                 reconciler = reconciler.with_remote_rung(remote)?;
             }
             Ok(reconciler)
@@ -290,6 +290,10 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
             ));
         }
         Ok(value)
+    }
+
+    fn provenance(&self) -> oneiron::embed::EmbeddingProvenance {
+        self.provider.provenance()
     }
 }
 impl SyncServer {

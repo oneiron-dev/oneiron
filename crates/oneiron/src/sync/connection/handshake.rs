@@ -189,14 +189,16 @@ impl SyncConnection {
         // Sync pulls the full root snapshot. The upgrade therefore proves an
         // unattenuated logged slip with a fresh holder signature; a device-key
         // lease or an issuer secret never grants this read. Each reconnect has
-        // its own nonce, so it cannot replay a previous upgrade's proof.
+        // its own nonce, so it cannot replay a previous upgrade's proof. It
+        // is signed on the wall clock, as every holder signs: the recording
+        // clock may still hold a floor a host clock that ran ahead left.
         let url = &self.config.client_config.server_url;
         let mut request = url
             .into_client_request()
             .map_err(|e| format!("WS connect failed: {e}"))?;
         if let Some(credential) = &self.config.client_config.transport_credential {
             credential
-                .sign_upgrade(self.manager.vault().now_recorded_at(), &mut request)
+                .sign_upgrade(self.manager.vault().store.clock.wall_now(), &mut request)
                 .map_err(str::to_owned)?;
         } else if !self.config.client_config.auth_token.is_empty() {
             let header_value = format!("Bearer {}", self.config.client_config.auth_token)

@@ -459,8 +459,13 @@ pub(crate) fn apply_ops_session(
             BatchOp::Text { id, fields } => {
                 crate::bm25::index_text(view, wtxn, analyzer, id, fields)?;
             }
-            BatchOp::Vector { id, vector, .. } => {
-                stage_vector_row(view, config, wtxn, id, vector)?;
+            BatchOp::Vector {
+                id,
+                vector,
+                provenance,
+                ..
+            } => {
+                stage_vector_row(view, config, wtxn, id, vector, provenance.as_ref())?;
                 // `pending_rebuild` can only come back false: the legacy arm
                 // that would set it needs a base `&Store` this call does not
                 // have. Passing a local sink states that and keeps the shared

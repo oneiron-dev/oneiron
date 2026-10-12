@@ -1,8 +1,11 @@
 mod cold_attach;
+mod device;
 mod eligibility;
 mod locality;
 mod turn;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
+pub use device::{EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount};
+pub(crate) use device::{clear_all_embedding_devices_in_txn, record_embedding_device_in_txn};
 pub(crate) use eligibility::{
     embeddable_payload, embeddable_payload_in_txn, indexed_payload, joined_turn_text,
     turn_text_in_txn,
@@ -86,6 +89,11 @@ pub trait Embedder: Send + Sync {
     fn dimensions(&self) -> usize;
     fn locality(&self) -> EmbedderLocality;
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>>;
+    /// The device and runtime that compute what [`Self::embed`] returns,
+    /// stored beside each vector it fills. Unknown unless overridden.
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::unknown()
+    }
 }
 
 /// Tri-state PII egress verdict for one pending entity (ONE-EMBED E6).
@@ -383,12 +391,7 @@ impl PendingEmbeddingReconciler {
                     }
                     report.routed_remote += remote_work.len();
                     report.embedded += vectors.len();
-                    self.fill_batch(
-                        &remote_work,
-                        &vectors,
-                        rung.embedder.locality(),
-                        &mut report,
-                    )?;
+                    self.fill_batch(&remote_work, &vectors, rung.embedder.as_ref(), &mut report)?;
                 }
                 Err(e) => {
                     tracing::warn!(?e, "remote embed failed; falling back to local");
@@ -437,18 +440,20 @@ impl PendingEmbeddingReconciler {
             ));
         }
         report.embedded += vectors.len();
-        self.fill_batch(work, &vectors, self.embedder.locality(), report)
+        self.fill_batch(work, &vectors, self.embedder.as_ref(), report)
     }
 
     fn fill_batch(
         &self,
         work: &[LeasedPendingEmbedding],
         vectors: &[Vec<f32>],
-        locality: EmbedderLocality,
+        embedder: &dyn Embedder,
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
+        let locality = embedder.locality();
+        let provenance = embedder.provenance();
         for (item, vector) in work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(item, vector, locality)? {
+            if self.complete_leased_work(item, vector, locality, &provenance)? {
                 report.filled += 1;
             } else {
                 report.stale_fills += 1;
@@ -568,6 +573,7 @@ impl PendingEmbeddingReconciler {
         work: &LeasedPendingEmbedding,
         vector: &[f32],
         locality: EmbedderLocality,
+        provenance: &EmbeddingProvenance,
     ) -> Result<bool> {
         let mut filled_current = false;
         self.vault.with_write_txn_grouped(|wtxn| {
@@ -584,6 +590,7 @@ impl PendingEmbeddingReconciler {
                     id: work.input.entity_id,
                     vector: vector.to_vec(),
                     pending_embedding_token: Some(work.input.pending_embedding_token.clone()),
+                    provenance: Some(provenance.clone()),
                 }],
                 self.vault
                     .text_index_trusted
@@ -642,11 +649,16 @@ impl PendingEmbeddingReconciler {
 /// not a production filter — a filter here would silently absorb a routing bug
 /// instead of surfacing it. The base-only `PendingEmbeddingReconciler` needs no
 /// equivalent: it reads base rows session content never enters.
+///
+/// `admit` runs first in the write's own transaction: a retrieval in a room
+/// on record lands its jobs, as every other landing does, only while its
+/// route stands and its saver holds. A refusal there enqueues nothing.
 #[cfg(feature = "sync")]
 pub(crate) fn enqueue_pending_embedding_jobs(
     vault: &crate::Vault,
     ids: &[EntityId],
     priority: u8,
+    admit: &dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
@@ -661,6 +673,7 @@ pub(crate) fn enqueue_pending_embedding_jobs(
          embeds inline and must never enqueue a background job"
     );
     vault.with_write_txn_grouped(|wtxn| {
+        admit(wtxn)?;
         for id in ids {
             if vault
                 .store
