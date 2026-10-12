@@ -10,7 +10,10 @@ use axum::http::HeaderMap;
 ///
 /// These routes read the whole vault under one actor ref, so they stay a
 /// trust-root surface: scoped `/v1` delegation tokens do not reach them.
-pub(super) fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result<CoreAuth, ApiError> {
+pub(super) fn check_api_auth(
+    headers: &HeaderMap,
+    server: &SyncServer,
+) -> Result<CoreAuth, ApiError> {
     if server.managed_issuer.is_some() {
         return CoreAuth::for_server(headers, server);
     }
