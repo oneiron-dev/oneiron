@@ -261,9 +261,9 @@ fn key_forms(key: &str) -> Vec<String> {
 /// `text` with every form of `key` cut out: a provider's error body may echo
 /// the key it refused.
 fn redact(text: &str, key: &str) -> String {
-    key_forms(key)
-        .iter()
-        .fold(text.to_owned(), |text, form| text.replace(form, "[provider key]"))
+    key_forms(key).iter().fold(text.to_owned(), |text, form| {
+        text.replace(form, "[provider key]")
+    })
 }
 
 /// Cuts the key out of every file under `out`, returning the files it was in.
@@ -493,7 +493,8 @@ fn lisbon_stated(vault: &Vault, person: EntityId) -> Result<(), String> {
 /// Active claim naming Lisbon is left on the corrected predicate.
 fn corrected_once(vault: &Vault, person: EntityId) -> Result<(), String> {
     let about = about(vault, person);
-    let active = |body: &oneiron::ClaimBody| body.lifecycle == oneiron::ClaimLifecycleStatus::Active;
+    let active =
+        |body: &oneiron::ClaimBody| body.lifecycle == oneiron::ClaimLifecycleStatus::Active;
     let bound: Vec<_> = about
         .iter()
         .filter(|(_, prior, _)| names(prior, "Lisbon"))
@@ -511,14 +512,20 @@ fn corrected_once(vault: &Vault, person: EntityId) -> Result<(), String> {
         return Err(format!("no Porto claim closed a Lisbon claim: {about:?}"));
     }
     if let Some((id, _, by)) = about.iter().find(|(_, _, by)| by.len() > 1) {
-        return Err(format!("{} was closed by {} replacements", id.to_hex(), by.len()));
+        return Err(format!(
+            "{} was closed by {} replacements",
+            id.to_hex(),
+            by.len()
+        ));
     }
     if about.iter().any(|(_, body, _)| {
         names(body, "Lisbon")
             && active(body)
             && bound.iter().any(|porto| porto.predicate == body.predicate)
     }) {
-        return Err(format!("an Active Lisbon claim is left beside the correction: {about:?}"));
+        return Err(format!(
+            "an Active Lisbon claim is left beside the correction: {about:?}"
+        ));
     }
     Ok(())
 }

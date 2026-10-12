@@ -1143,6 +1143,109 @@ fn nothing_attaches_to_an_unvetted_claim_and_it_corroborates_nothing() -> Result
     Ok(())
 }
 
+/// A pass that wrote a new claim about a person its listing named, killed
+/// before its attempt settled, replays on its memoized answer (Sol r1). The
+/// new claim is a head the replay holds, but the listing never shows it and
+/// the call never asks under it, so the replay's request is the first run's.
+/// Before, the replay's scope gained the new head and the call went out again.
+#[test]
+fn a_replay_after_writing_about_a_listed_person_never_calls_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let actor = vault.dreamer_authority()?;
+    policy(&vault, actor.entity_ref(), true)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, turns, _) = admitted_attempt_fixture(
+        &vault,
+        &store,
+        0x5A,
+        &[("user", "my name is Oleksii and I live in Lisbon")],
+    )?;
+    let person = EntityId::now();
+    let owner = EntityId::now();
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Oleksii".into())]))?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let head = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate(
+            &head,
+            ClaimCandidate::new(
+                "profile.name",
+                ClaimSubject::Entity(person),
+                "Oleksii".into(),
+                0.9,
+            ),
+            &WriteEnvelope::new(
+                WriteActor::new(owner, EdgeActorClass::Human),
+                ClaimSource::UserStated,
+                WriteProvenance::new("owner statement".into())?,
+                ClaimApprovalStatus::Approved,
+            ),
+            occurred(2),
+            2,
+        )
+        .commit()?;
+    let backend = ScriptedBackend::new(vec![Ok(text_response(
+        serde_json::json!({"candidates": [{
+            "subject": person.to_hex(), "predicate": "residence.city", "value": "Lisbon",
+            "confidence": 0.9,
+            "evidence_refs": [{"source_id": turns[0].to_hex(), "byte_range": [0, 1]}],
+        }]})
+        .to_string(),
+    ))]);
+    let run = DreamerRunContext {
+        run_id: admitted.status.attempt.run_id.clone().expect("queued run"),
+        attempt_id: admitted.status.attempt.id,
+        agent_actor: actor,
+        now_ms: 21_000,
+    };
+    let mut sink = PromotionWriterSink::new(&vault, run);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+        inference: test_inference_host(),
+        scope: None,
+    };
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
+    };
+    let first = block_on_ready(executor.execute(&admitted, &mut ctx))?;
+    assert!(
+        matches!(first, DreamerAttemptExecution::Completed { .. }),
+        "{first:?}"
+    );
+    let written = vault.claims_for_subject(&person)?;
+    assert_eq!(written.len(), 2, "the pass wrote one new claim beside the head");
+    let replay = block_on_ready(executor.execute(&admitted, &mut ctx))
+        .unwrap_or_else(|error| panic!("the replay refused: {error}"));
+    assert!(
+        matches!(replay, DreamerAttemptExecution::Completed { .. }),
+        "{replay:?}"
+    );
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1, "one paid call");
+    assert_eq!(vault.claims_for_subject(&person)?, written);
+    Ok(())
+}
+
 #[test]
 fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
     let (_dir, vault) = open_vault();

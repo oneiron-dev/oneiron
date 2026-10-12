@@ -121,7 +121,7 @@ impl ConsolidationExecutor<'_> {
         let rules = failure_rules::load(ctx.vault)?;
         let call = self.role(DREAMER_EXTRACTION_ROLE);
         let mut request =
-            Self::extraction_request(&call, &partition, &transcript, resources.scope())?;
+            Self::extraction_request(&call, &partition, &transcript, &resources.request_scope())?;
         if let Some(rules) = &rules {
             rules.bind(Stage::Extraction, &mut request);
         }

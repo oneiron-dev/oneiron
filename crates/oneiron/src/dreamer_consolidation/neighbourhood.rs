@@ -70,9 +70,12 @@ type Pins = Vec<(EntityId, Vec<EntityId>)>;
 
 /// Per attempt, the entity and claim ids its extraction listed. A replay
 /// after a kill lists the same ones, so its request matches the one an
-/// earlier run memoized: the people it named and the claims it wrote or
-/// closed since never change what it shows its model, and it never pays
-/// for the call twice. Ids only; the text is read again at each wake.
+/// earlier run memoized: the people it named and the claims it wrote since
+/// never enter what it shows its model or the scope it asks under, and it
+/// never pays for the call twice. A listed claim it closed itself drops out
+/// of the listing, so that replay calls once more; its content-addressed
+/// candidate ids then meet its own landed correction, which applies nothing
+/// twice. Ids only; the text is read again at each wake.
 const PINS: SideTable<[u8; 16], Pins, LegacyJson> =
     SideTable::new(&side_table::DREAMER_NEIGHBOURHOOD);
 
@@ -125,6 +128,13 @@ impl Neighbourhood {
             }
         }
         out
+    }
+
+    /// The exact versions of the heads the branch holds but the listing does
+    /// not show: what the passage names now, beyond what a pinned listing
+    /// lists.
+    pub(super) fn unlisted_versions(&self) -> impl Iterator<Item = &ScopeResource> {
+        self.unlisted.iter().map(|claim| &claim.version)
     }
 
     /// Whether the branch may hold `claim`, listed or not.

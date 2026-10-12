@@ -462,6 +462,18 @@ impl<'a> BranchResources<'a> {
         &self.known
     }
 
+    /// The scope the extraction call asks under: the branch's, less the
+    /// heads it holds that the listing does not show. The model never reads
+    /// those, and a replay's request stays the one its first run memoized.
+    pub(super) fn request_scope(&self) -> Scope {
+        let mut scope = self.scope.clone();
+        for version in self.known.unlisted_versions() {
+            scope.readable.remove(version);
+            scope.writable.remove(version);
+        }
+        scope
+    }
+
     /// The extraction input: the known entities with the claims this branch
     /// holds as priors, then each turn.
     pub(super) fn transcript(&self, scope: &Scope, turns: &[EntityId]) -> Result<String> {
