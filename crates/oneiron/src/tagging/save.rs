@@ -353,7 +353,7 @@ pub(crate) fn save_shadow_output_in_txn(
     };
     let unchanged = current.messages.len() == input.messages.len()
         && read(&current.messages) == read(&input.messages);
-    if !unchanged || check_output(input, output).is_err() {
+    if !unchanged || check_output(input, output, config.stack.as_deref()).is_err() {
         return Ok(None);
     }
     let answer = Answer {
@@ -547,11 +547,11 @@ impl<'v> Linker<'v> {
 
     /// The link a speaker link resolves to: the turn's author for the
     /// speaker, and for the addressee the one other party of the turn's
-    /// room, when it has exactly one, now and when the turn was said. `None`
-    /// when no one person is it: the turn's messages name no single author,
-    /// the room's audience is not one other party besides them, or the
-    /// person is no entity a mention may name in a world of this turn. One
-    /// member of a group is never picked.
+    /// room, when it is a room of two that has only ever held the two of
+    /// them. `None` when no one person is it: the turn's messages name no
+    /// single author, the room is not such a pair, or the person is no
+    /// entity a mention may name in a world of this turn. One member of a
+    /// group is never picked.
     fn speaker_link(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -581,11 +581,8 @@ impl<'v> Linker<'v> {
                 let Some(room) = sole_peer(self.vault, txn, &self.turn, EdgeKind::ChildOf)? else {
                     return Ok(None);
                 };
-                let Some(said) = store.port_entity_record(txn, &self.turn)? else {
-                    return Ok(None);
-                };
-                let read = |audience: Result<Vec<EntityId>>| match audience {
-                    Ok(audience) => Ok(Some(audience.into_iter().collect::<BTreeSet<_>>())),
+                let read = |audience: Result<BTreeSet<EntityId>>| match audience {
+                    Ok(audience) => Ok(Some(audience)),
                     Err(
                         error @ (Error::Storage(_)
                         | Error::Io(_)
@@ -596,20 +593,21 @@ impl<'v> Linker<'v> {
                     // party.
                     Err(_) => Ok(None),
                 };
-                // The room's audience now and its roster when the turn was
-                // said must be the same pair: someone who has left since
-                // could have been the one spoken to, so a roster that moved
-                // keeps the decision unresolved.
-                let (Some(audience), Some(then)) = (
-                    read(self.vault.room_audience_members_in_txn(txn, room))?,
+                // The room's audience now must be everyone its ledger has
+                // ever held: someone who has left could have been the one
+                // spoken to, and a second-precision clock cannot tell
+                // whether they left before the turn was said.
+                let (Some(audience), Some(ever)) = (
                     read(
                         self.vault
-                            .membership_at_in_txn(txn, room, said.occurred.start),
+                            .room_audience_members_in_txn(txn, room)
+                            .map(|audience| audience.into_iter().collect()),
                     )?,
+                    read(self.vault.ever_members_in_txn(txn, room))?,
                 ) else {
                     return Ok(None);
                 };
-                if audience != then || !audience.contains(&author) {
+                if audience != ever || !audience.contains(&author) {
                     return Ok(None);
                 }
                 let mut others = audience.into_iter().filter(|id| *id != author);

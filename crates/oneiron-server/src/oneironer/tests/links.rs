@@ -340,8 +340,9 @@ fn a_context_link_to_an_unsaved_span_is_counted_and_an_answer_off_the_contract_i
 }
 
 /// A turn said in a room of three keeps its addressee unresolved after one
-/// of the others leaves: the one other party left now was not the only one
-/// there when the turn was said.
+/// of the others leaves: the one other party left now may not have been the
+/// only one there when the turn was said, so a room that has ever held a
+/// third person is no pair.
 #[test]
 fn an_addressee_in_a_room_someone_has_left_since_stays_unresolved() {
     let stub = StubTagger::start(Answer::Good);

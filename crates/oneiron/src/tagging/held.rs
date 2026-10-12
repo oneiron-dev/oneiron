@@ -4,7 +4,7 @@
 use super::history::record_in_txn;
 use super::input::{TurnInput, turn_text_in_txn};
 use super::marker::{TAGGING_MARKER_KIND, TaggingMode, dedupe_key};
-use super::output::{OutputRefusal, check_output};
+use super::output::{OutputRefusal, check_moved_output, check_output, check_span_order};
 use super::save::{self, Answer};
 use super::trace::{SkipReason, TaggingOutcome, TaggingTrace, attempt_hex};
 use crate::attempt_queue::{
@@ -22,7 +22,7 @@ const HELD_BY: &str = "held";
 #[derive(Debug, Clone, PartialEq)]
 pub enum HeldTagsOutcome {
     /// The marker completed with no tagger call.
-    Completed(TaggingTrace),
+    Completed(Box<TaggingTrace>),
     /// The tags break a contract rule for the turn's current text; nothing
     /// changed and the marker still waits for the tagger.
     Refused(OutputRefusal),
@@ -119,20 +119,33 @@ pub(crate) fn settle_held_tags_in_txn(
         TurnInput::Ready { input, .. } => Some(input.messages.as_slice()),
     };
     let moved;
-    let tags = match sent.zip(shown) {
-        Some((sent, shown)) => match onto_shown(shown, sent, tags) {
-            Ok(tags) => {
-                moved = tags;
-                &moved
+    let (tags, as_sent) = match sent.zip(shown) {
+        Some((sent, shown)) => {
+            // The spans index the messages as sent: the order rule holds
+            // there, not once they move onto the turn's own message order.
+            if let Err(refusal) = check_span_order(tags) {
+                return Ok(HeldTagsOutcome::Refused(refusal));
             }
-            Err(unread) => return Ok(HeldTagsOutcome::Unread(unread)),
-        },
-        None => tags,
+            match onto_shown(shown, sent, tags) {
+                Ok(tags) => {
+                    moved = tags;
+                    (&moved, true)
+                }
+                Err(unread) => return Ok(HeldTagsOutcome::Unread(unread)),
+            }
+        }
+        None => (tags, false),
     };
-    if let TurnInput::Ready { input, .. } = &read
-        && let Err(refusal) = check_output(input, tags)
-    {
-        return Ok(HeldTagsOutcome::Refused(refusal));
+    if let TurnInput::Ready { input, .. } = &read {
+        let stack = config.stack.as_deref();
+        let checked = if as_sent {
+            check_moved_output(input, tags, stack)
+        } else {
+            check_output(input, tags, stack)
+        };
+        if let Err(refusal) = checked {
+            return Ok(HeldTagsOutcome::Refused(refusal));
+        }
     }
     let claimed = queue.claim_id_storage_in_txn(
         txn,
@@ -213,7 +226,7 @@ pub(crate) fn settle_held_tags_in_txn(
     // the job ledger with every try it retried.
     record_in_txn(vault, txn, &trace, now)?;
     queue.prune_settled_in_txn(txn, leased.id)?;
-    Ok(HeldTagsOutcome::Completed(trace))
+    Ok(HeldTagsOutcome::Completed(Box::new(trace)))
 }
 
 /// Moves tags whose spans index `sent` onto `shown`, the turn's text, by

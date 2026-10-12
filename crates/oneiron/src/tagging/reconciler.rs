@@ -628,7 +628,7 @@ impl TaggingReconciler {
                 return self.retry(record, prior_retries, TaggingFailure::Panicked, trace);
             }
         };
-        if let Err(refusal) = check_output(&input, &output) {
+        if let Err(refusal) = check_output(&input, &output, self.config.stack.as_deref()) {
             let failure = TaggingFailure::Refused { refusal };
             return self.retry(record, prior_retries, failure, trace);
         }

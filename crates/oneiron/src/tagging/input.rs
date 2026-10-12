@@ -54,9 +54,8 @@ enum ContextText {
     /// Its text lives in an entity document, which only a whole-document read
     /// can give: the window ends here.
     Unbounded,
-    /// The newest characters of its text that fit, how many, and its
-    /// stored author.
-    Text(String, usize, Vec<u8>),
+    /// The newest characters of its text that fit, and how many.
+    Text(String, usize),
 }
 
 /// The MESSAGE-body keys the input needs; every other key is ignored. The
@@ -331,8 +330,10 @@ fn live_window_in_txn(
 }
 
 /// An earlier turn's newest visible text, at most `budget` characters, oldest
-/// message first; the side its kept messages' authors name ([`turn_role`]);
-/// the characters it used; and whether the window ends with it. Its messages are ordered from their stored rows without copying any
+/// message first; the side named by the authors of every message it shows
+/// text in ([`turn_role`]), kept or not, since the budget trims text and
+/// never a stored fact; the characters it used; and whether the window ends
+/// with it. Its messages are ordered from their stored rows without copying any
 /// text, then read newest first only until the budget is spent, each through
 /// [`context_message_in_txn`], so a large earlier turn costs the window what
 /// it keeps of it. `None` for a turn with more than [`MAX_CONTEXT_MESSAGES`]
@@ -352,6 +353,7 @@ fn context_text_in_txn(
         return Ok(Some((Vec::new(), None, 0, false)));
     }
     let mut places = Vec::new();
+    let mut authors = Vec::new();
     for (examined, edge) in store
         .port_edges(txn, turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)?
         .enumerate()
@@ -372,13 +374,15 @@ fn context_text_in_txn(
             .get(ENTITY_METADATA_HEADER_LEN..)
             .and_then(super::body::message_fields);
         if let Some(place) = place.filter(|place| place.is_visible) {
+            if !place.stale && !place.content.is_empty() && !hidden_in_txn(vault, txn, &id)? {
+                authors.push(place.author.to_vec());
+            }
             places.push((place.order, *id.as_bytes()));
         }
     }
     places.sort_unstable_by_key(|place| Reverse(*place));
     let mut remaining = budget;
     let mut kept = Vec::new();
-    let mut authors = Vec::new();
     let mut ends = false;
     for (_, id) in places {
         if remaining == 0 {
@@ -391,9 +395,8 @@ fn context_text_in_txn(
                 ends = true;
                 break;
             }
-            ContextText::Text(text, chars, author) => {
+            ContextText::Text(text, chars) => {
                 remaining = remaining.saturating_sub(chars);
-                authors.push(author);
                 kept.push(EncoderMessage {
                     id: id.to_hex(),
                     text,
@@ -418,13 +421,13 @@ fn context_message_in_txn(
     id: &EntityId,
     budget: usize,
 ) -> Result<ContextText> {
-    let (content, author) = match context_row_in_txn(vault, txn, id)? {
+    let content = match context_row_in_txn(vault, txn, id)? {
         ContextRow::Nothing => return Ok(ContextText::Nothing),
         ContextRow::Unbounded => return Ok(ContextText::Unbounded),
-        ContextRow::Shown { content, author } => (content, author),
+        ContextRow::Shown(content) => content,
     };
     Ok(match super::body::newest_chars(&content, budget) {
-        Some((text, chars)) => ContextText::Text(text.to_owned(), chars, author),
+        Some((text, chars)) => ContextText::Text(text.to_owned(), chars),
         None => ContextText::Nothing,
     })
 }
@@ -436,16 +439,13 @@ enum ContextRow {
     /// Its text lives in an entity document.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     Unbounded,
-    /// Its visible, non-empty text and its author, as stored.
-    Shown { content: Vec<u8>, author: Vec<u8> },
+    /// Its visible, non-empty text, as stored.
+    Shown(Vec<u8>),
 }
 
 fn context_row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<ContextRow> {
     let store = &vault.store;
-    if vault.archive_tombstone_in_txn(txn, id)?.is_some()
-        || vault.port_tombstone_is_deleted(txn, id)?
-        || crate::ports::stale_in_txn(store, txn, id)?
-    {
+    if hidden_in_txn(vault, txn, id)? {
         return Ok(ContextRow::Nothing);
     }
     #[cfg(feature = "sync")]
@@ -464,10 +464,15 @@ fn context_row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Re
     if message.stale || !message.is_visible || message.content.is_empty() {
         return Ok(ContextRow::Nothing);
     }
-    Ok(ContextRow::Shown {
-        content: message.content.to_vec(),
-        author: message.author.to_vec(),
-    })
+    Ok(ContextRow::Shown(message.content.to_vec()))
+}
+
+/// Whether an earlier MESSAGE is archived, deleted or stale: it shows no
+/// text, whatever its row holds.
+fn hidden_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(vault.archive_tombstone_in_txn(txn, id)?.is_some()
+        || vault.port_tombstone_is_deleted(txn, id)?
+        || crate::ports::stale_in_txn(&vault.store, txn, id)?)
 }
 
 /// Where the text the window sent for an earlier MESSAGE starts in the text
@@ -481,7 +486,7 @@ pub(super) fn sent_text_offset_in_txn(
     id: &EntityId,
     sent: &str,
 ) -> Result<Option<usize>> {
-    let ContextRow::Shown { content, .. } = context_row_in_txn(vault, txn, id)? else {
+    let ContextRow::Shown(content) = context_row_in_txn(vault, txn, id)? else {
         return Ok(None);
     };
     Ok(content

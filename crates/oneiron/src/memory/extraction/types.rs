@@ -125,14 +125,14 @@ struct WireVad {
     arousal: f32,
     dominance: f32,
 }
-fn strict_vad<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<Vad>, D::Error> {
-    Ok(Option::<WireVad>::deserialize(deserializer)?.map(|vad| Vad {
-        valence: vad.valence,
-        arousal: vad.arousal,
-        dominance: vad.dominance,
-    }))
+fn strict_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Vad>, D::Error> {
+    Ok(
+        Option::<WireVad>::deserialize(deserializer)?.map(|vad| Vad {
+            valence: vad.valence,
+            arousal: vad.arousal,
+            dominance: vad.dominance,
+        }),
+    )
 }
 /// Hosts own checkpoint execution. No engine implementation guesses model outputs.
 pub trait ExtractionEncoder: Send + Sync {
@@ -178,9 +178,12 @@ pub struct EncoderGolden {
     pub output: EncoderOutput,
 }
 /// A successful model-pinned parity check. Constructible only by comparison.
+/// It names the model and the served stack its outputs named: a head swap
+/// at one checkpoint keeps the model id, so the stack tells the two apart.
 #[derive(Debug, Clone)]
 pub struct EncoderParity {
     pub(super) model: String,
+    pub(super) stack: Option<String>,
 }
 impl EncoderParity {
     pub fn verify(traces: &[ShadowTrace], goldens: &[EncoderGolden]) -> crate::Result<Self> {
@@ -190,11 +193,13 @@ impl EncoderParity {
             ));
         }
         let model = traces[0].model.clone();
+        let stack = goldens[0].output.stack_sha16.clone();
         let mut seen = std::collections::BTreeSet::new();
         for (trace, golden) in traces.iter().zip(goldens) {
             if !seen.insert(&trace.input_hash)
                 || trace.model != model
                 || golden.model != model
+                || golden.output.stack_sha16 != stack
                 || trace.input_hash != golden.input_hash
                 || trace.output.as_ref() != Some(&golden.output)
                 || trace.failure.is_some()
@@ -204,6 +209,6 @@ impl EncoderParity {
                 ));
             }
         }
-        Ok(Self { model })
+        Ok(Self { model, stack })
     }
 }

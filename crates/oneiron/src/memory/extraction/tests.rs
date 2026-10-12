@@ -168,7 +168,9 @@ fn shadow_has_no_store_delta_matches_golden_and_failure_never_fails_witness() {
 /// A parity-checked shadow lands as the turn's tag set: the name links to
 /// the entity its identity key names as a candidate, the pronoun takes its
 /// antecedent's link, and the mood lands on the turn. No edge, claim or
-/// merge is written, and saving it again changes nothing.
+/// merge is written, and saving it again changes nothing. The receipt is
+/// for the stack its goldens named: a head swap at the same checkpoint keeps
+/// the model id, and its trace is not saved on that receipt.
 #[test]
 fn a_parity_checked_shadow_saves_its_turns_tags_and_writes_no_edge_claim_or_merge() {
     let dir = tempfile::tempdir().unwrap();
@@ -209,6 +211,11 @@ fn a_parity_checked_shadow_saves_its_turns_tags_and_writes_no_edge_claim_or_merg
         memory.persist_extraction(&trace, &parity, 300).unwrap(),
         tags
     );
+    let mut swapped = trace.clone();
+    if let Some(output) = swapped.output.as_mut() {
+        output.stack_sha16 = Some("0f0f0f0f0f0f0f0f".into());
+    }
+    assert!(memory.persist_extraction(&swapped, &parity, 400).is_err());
 }
 
 fn entity_count(vault: &Vault) -> u64 {

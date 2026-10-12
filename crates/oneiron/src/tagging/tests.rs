@@ -22,6 +22,7 @@ use crate::{EntityId, ModelId, Vault, VaultConfig};
 
 const CHECKPOINT: &str = "0123456789abcdef";
 const OTHER_CHECKPOINT: &str = "fedcba9876543210";
+const STACK: &str = "00112233445566ff";
 const NOW: u64 = 1_790_000_000;
 const ROOM: &str = "51515151515151515151515151515151";
 
@@ -570,7 +571,9 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             spans: 2,
             links: 1,
             mood: true,
-            mapped_spans: 1
+            mapped_spans: 1,
+            context_links: 0,
+            speaker_links: 0
         }
     )));
     // Every turn settled once, and its marker left the job ledger with the
@@ -1649,6 +1652,36 @@ fn a_lease_is_stamped_at_least_at_the_committed_clock_floor() {
     assert!(matches!(
         pass.traces[0].outcome,
         TaggingOutcome::Shadowed { .. }
+    ));
+}
+
+/// Sol on contract v2: held tags settle only a marker owed to the stack they
+/// name. With a stack pinned, tags naming another stack, or none, are
+/// refused and the marker waits for its own stack's pass.
+#[test]
+fn held_tags_from_another_stack_leave_a_pinned_stacks_marker_waiting() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut pinned = config(false);
+    pinned.tagging = Some(shadow(CHECKPOINT).with_stack(STACK));
+    let vault = Arc::new(Vault::open(dir.path(), pinned).expect("open vault"));
+    let turn = witness(&vault, "Ada sailed north");
+    let mut tags = held(3);
+    for other in [None, Some("0f0f0f0f0f0f0f0f")] {
+        tags.stack_sha16 = other.map(str::to_owned);
+        assert_eq!(
+            vault
+                .complete_tagging_with_held_tags(&turn, &tags)
+                .expect("refused"),
+            HeldTagsOutcome::Refused(OutputRefusal::OtherStack)
+        );
+    }
+    assert_eq!(count(&vault, AttemptState::Queued), 1);
+    tags.stack_sha16 = Some(STACK.to_owned());
+    assert!(matches!(
+        vault
+            .complete_tagging_with_held_tags(&turn, &tags)
+            .expect("completed"),
+        HeldTagsOutcome::Completed(_)
     ));
 }
 

@@ -451,11 +451,9 @@ fn an_import_that_holds_its_tags_makes_no_tagger_call() {
         .expect("import");
 
     assert!(matches!(
-        outcome,
-        HeldTagsOutcome::Completed(TaggingTrace {
-            outcome: TaggingOutcome::Imported { spans: 1, .. },
-            ..
-        })
+        &outcome,
+        HeldTagsOutcome::Completed(trace)
+            if matches!(trace.outcome, TaggingOutcome::Imported { spans: 1, .. })
     ));
     let turn = EntityId::from_hex("76767676767676767676767676767676").expect("turn id");
     let saved = tags(&vault, &turn);
@@ -482,6 +480,40 @@ fn an_import_that_holds_its_tags_makes_no_tagger_call() {
     assert_eq!(outcome, HeldTagsOutcome::Refused(OutputRefusal::BadOffsets));
     worker.drain_once().expect("drain");
     assert_eq!(tagger.calls(), 1);
+}
+
+/// Sol on contract v2: held spans come in the order of the messages as sent,
+/// which need not be the turn's message order. Spans read from messages sent
+/// last first are saved, not refused for their order once they move onto
+/// the turn's text.
+#[test]
+fn held_tags_from_messages_sent_last_first_are_saved() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path());
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+    let landed = turn(
+        "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        &[(1, "Bob replied"), (0, "Ada called")],
+    );
+    let held = EncoderOutput {
+        spans: vec![name_span(0, 0, 3), name_span(1, 0, 3)],
+        links: Vec::new(),
+        vad: None,
+        context_links: Vec::new(),
+        speaker_links: Vec::new(),
+        stack_sha16: None,
+    };
+
+    let (_, outcome) = memory
+        .witness_with_held_tags(&landed, &held)
+        .expect("import");
+
+    assert!(
+        matches!(outcome, HeldTagsOutcome::Completed(_)),
+        "{outcome:?}"
+    );
+    let turn = EntityId::from_hex("7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e").expect("turn id");
+    assert_eq!(tags(&vault, &turn).mentions.len(), 2);
 }
 
 /// A span an importer holds for a name, labelled as the label table maps it.

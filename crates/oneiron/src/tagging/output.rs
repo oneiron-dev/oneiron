@@ -33,14 +33,33 @@ pub enum OutputRefusal {
     /// Spans are out of (message, start, end) order, or two share
     /// coordinates.
     SpanOrder,
+    /// The answer names another stack than the one the marker is owed to.
+    OtherStack,
 }
 
-/// The rules `Memory::witness_with_shadow` applies to an answer, applied to
-/// the same contract types.
+/// The rules an answer meets before it settles a marker owed to `stack`,
+/// when one is pinned: `Memory::witness_with_shadow`'s rules, applied to the
+/// same contract types, and the pinned stack named.
 pub(super) fn check_output(
     input: &EncoderInput,
     output: &EncoderOutput,
+    stack: Option<&str>,
 ) -> Result<(), OutputRefusal> {
+    check_span_order(output)?;
+    check_moved_output(input, output, stack)
+}
+
+/// [`check_output`] for held spans moved onto the turn's message order from
+/// the order a witness sent them in: the order rule holds where the spans
+/// were made, so the caller asks [`check_span_order`] there.
+pub(super) fn check_moved_output(
+    input: &EncoderInput,
+    output: &EncoderOutput,
+    stack: Option<&str>,
+) -> Result<(), OutputRefusal> {
+    if stack.is_some_and(|stack| output.stack_sha16.as_deref() != Some(stack)) {
+        return Err(OutputRefusal::OtherStack);
+    }
     if output.spans.len() > MAX_ROWS {
         return Err(OutputRefusal::TooManyRows);
     }
@@ -64,17 +83,10 @@ pub(super) fn check_output(
     check_links(input, output)
 }
 
-/// The link rules: spans come in (message, start, end) order and never share
-/// coordinates, so an index or a later context link's coordinates name one
-/// span. Each link of the three kinds names a span of the answer, carries a
-/// confidence in 0..1 where it has one, and is the only link its span
-/// carries. An in-turn link points back; a context link names a turn and a
-/// message the input sent as context, and offsets on character boundaries of
-/// that message's text as sent.
-pub(crate) fn check_links(
-    input: &EncoderInput,
-    output: &EncoderOutput,
-) -> Result<(), OutputRefusal> {
+/// The order rule: spans come in (message, start, end) order and never
+/// share coordinates, so an index or a later context link's coordinates name
+/// one span.
+pub(crate) fn check_span_order(output: &EncoderOutput) -> Result<(), OutputRefusal> {
     let at = |span: &NerSpan| (span.message, span.start, span.end);
     if output
         .spans
@@ -83,6 +95,18 @@ pub(crate) fn check_links(
     {
         return Err(OutputRefusal::SpanOrder);
     }
+    Ok(())
+}
+
+/// The link rules: each link of the three kinds names a span of the answer,
+/// carries a confidence in 0..1 where it has one, and is the only link its
+/// span carries. An in-turn link points back; a context link names a turn
+/// and a message the input sent as context, and offsets on character
+/// boundaries of that message's text as sent.
+pub(crate) fn check_links(
+    input: &EncoderInput,
+    output: &EncoderOutput,
+) -> Result<(), OutputRefusal> {
     if output.links.len() > MAX_ROWS
         || output.context_links.len() > MAX_ROWS
         || output.speaker_links.len() > MAX_ROWS

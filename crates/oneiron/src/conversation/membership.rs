@@ -183,21 +183,26 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         conversation: EntityId,
     ) -> Result<Vec<EntityId>> {
-        self.membership_at_in_txn(txn, conversation, u64::MAX)
-    }
-    /// [`Self::membership_at`] in the caller's snapshot.
-    pub(crate) fn membership_at_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        conversation: EntityId,
-        at: u64,
-    ) -> Result<Vec<EntityId>> {
         body::body_in(self, txn, conversation)?;
         Ok(
-            members_at_rows(&rows_in(&self.store, txn, conversation)?, at)
+            members_at_rows(&rows_in(&self.store, txn, conversation)?, u64::MAX)
                 .into_iter()
                 .collect(),
         )
+    }
+    /// Everyone `conversation`'s ledger has ever joined, in the caller's
+    /// snapshot, whether or not they have left since.
+    pub(crate) fn ever_members_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+    ) -> Result<BTreeSet<EntityId>> {
+        body::body_in(self, txn, conversation)?;
+        Ok(rows_in(&self.store, txn, conversation)?
+            .into_iter()
+            .filter(|row| row.action == MembershipAction::Join)
+            .map(|row| row.person)
+            .collect())
     }
     /// Where in `conversation`'s ledger the join that opened `person`'s
     /// current membership sits, in the caller's snapshot; `None` when they
