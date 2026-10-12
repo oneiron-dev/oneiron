@@ -51,7 +51,7 @@ impl SessionRetrievalTelemetry<'_> {
 
     /// Even when capture is disabled, a room read must reject a stale route.
     pub(crate) fn revalidate_without_capture(&self) -> Result<()> {
-        self.landing.revalidate()
+        self.landing.route.revalidate()
     }
 
     /// Registers this assembly's retrieval-run row, provisional or published.
@@ -64,7 +64,7 @@ impl SessionRetrievalTelemetry<'_> {
             return self.revalidate_without_capture();
         }
         match self.landing.route.target() {
-            RouteTarget::Discard => self.landing.revalidate(),
+            RouteTarget::Discard => self.landing.route.revalidate(),
             RouteTarget::Overlay => self.staged(|view, wtxn| {
                 if provisional {
                     view.record_context_pack_provisional_retrieval_run_in_txn(wtxn, record)
@@ -86,7 +86,7 @@ impl SessionRetrievalTelemetry<'_> {
         finalize: crate::store::RetrievalRunFinalize<'_>,
     ) -> Result<()> {
         match self.landing.route.target() {
-            RouteTarget::Discard => self.landing.revalidate(),
+            RouteTarget::Discard => self.landing.route.revalidate(),
             RouteTarget::Overlay => self.staged(move |view, wtxn| {
                 view.finalize_context_pack_retrieval_run_in_txn(wtxn, finalize)
             }),
@@ -102,7 +102,7 @@ impl SessionRetrievalTelemetry<'_> {
     /// may still clean up its own row, but Discard must not mutate base at all.
     pub(crate) fn discard_run(&self, run_id: crate::store::RetrievalRunId) -> Result<()> {
         match self.landing.route.target() {
-            RouteTarget::Discard => self.landing.revalidate(),
+            RouteTarget::Discard => self.landing.route.revalidate(),
             RouteTarget::Overlay => {
                 self.staged(|view, wtxn| view.delete_retrieval_run_in_txn(wtxn, run_id))
             }
@@ -153,7 +153,7 @@ impl SessionRetrievalTelemetry<'_> {
         run_id: crate::store::RetrievalRunId,
         write: impl FnOnce(&dyn Fn(&heed::RoTxn<'_>) -> Result<()>) -> Result<()>,
     ) -> Result<()> {
-        self.landing.revalidate()?;
+        self.landing.route.revalidate()?;
         write(&|txn| self.landing.in_txn(txn))?;
         if let Err(stale) = self.landing.route.revalidate() {
             self.vault.store.delete_retrieval_run(run_id)?;

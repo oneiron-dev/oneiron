@@ -106,16 +106,7 @@ impl Landing<'_, '_, '_> {
     pub(super) fn in_overlay_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
         self.session.participant_in_txn(txn)?;
         self.route.revalidate()
-    }
-
-    /// The route checked before a writer opens, or with no writer at all,
-    /// after a run's participant: a run removed from the room hears only
-    /// that.
-    pub(super) fn revalidate(&self) -> Result<()> {
-        self.session.admit_participant()?;
-        self.route.revalidate()
-    }
-}
+    }}
 
 impl<'vault> OffRecordSession<'vault> {
     /// Flips the stretch on record for the owner: later turns are saved as

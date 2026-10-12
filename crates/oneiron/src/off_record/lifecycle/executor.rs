@@ -156,9 +156,6 @@ impl OffRecordSession<'_> {
         route: &SessionWriteRoute,
         actor: crate::WriteActor,
     ) -> Result<crate::memory::WitnessReceipt> {
-        // A run removed from the room hears that first, before the witness
-        // reads the room's route or session.
-        self.admit_participant()?;
         route.require_recording(&self.session_ref)?;
         let memory = self.vault.memory(actor.entity_ref(), actor.actor_class());
         let turn = crate::memory::WitnessTurn {
@@ -242,13 +239,11 @@ impl OffRecordSession<'_> {
     ///
     /// The write runs the returned landing first in its own transaction:
     /// `route` must still stand there, and a room on record takes writes only
-    /// while the saver `route` lands under holds. A run removed from the room
-    /// is refused as that before either is read.
+    /// while the saver `route` lands under holds.
     fn base_write_vault<'r>(
         &self,
         route: &'r SessionWriteRoute,
     ) -> Result<(&Vault, Landing<'r, '_, '_>)> {
-        self.admit_participant()?;
         route.revalidate()?;
         match route.target() {
             RouteTarget::Base => Ok((self.vault, self.landing(route)?)),

@@ -52,7 +52,9 @@ fn room_on_record_as(
             crate::store::GateDecisionId::now(),
         )
         .expect("owner proof");
-    session.flip_on_record_as(&bind(proof)).expect("from here on");
+    session
+        .flip_on_record_as(&bind(proof))
+        .expect("from here on");
     (Room { id, owner, agent }, session)
 }
 
@@ -433,7 +435,10 @@ fn a_removed_agents_write_is_refused_alike_once_its_person_is_purged() {
         )
         .expect("the owner purges the agent");
     assert!(
-        vault.get_raw(&room.agent).expect("read the agent").is_none(),
+        vault
+            .get_raw(&room.agent)
+            .expect("read the agent")
+            .is_none(),
         "the agent's PERSON is gone"
     );
 
@@ -464,22 +469,31 @@ fn a_removed_agents_run_hears_nothing_of_the_saver() {
     let issuer = HostSlipIssuer::from_secret(b"room saver slip fixture").expect("issuer");
     let mut slip_id = None;
     let (room, session) = room_on_record_as(&vault, |proof| {
-        let mut claims = vault.ensure_host_root_slip(&issuer).expect("root slip").claims;
+        let mut claims = vault
+            .ensure_host_root_slip(&issuer)
+            .expect("root slip")
+            .claims;
         claims.slip_id = *blake3::hash(b"room-saver-owner-slip").as_bytes();
         claims.parent_id = None;
         claims.holder_ref = proof.actor().to_hex();
         claims.actor_class = Some("human".into());
-        let slip = vault.mint_capability_slip(&issuer, claims).expect("the owner's slip");
+        let slip = vault
+            .mint_capability_slip(&issuer, claims)
+            .expect("the owner's slip");
         slip_id = Some(slip.claims.slip_id);
         let verified = vault
             .verify_capability_slip(
                 &issuer.public_key(),
                 &slip,
                 b"room-saver",
-                &issuer.binding_proof(&slip, b"room-saver").expect("binding proof"),
+                &issuer
+                    .binding_proof(&slip, b"room-saver")
+                    .expect("binding proof"),
             )
             .expect("verify the slip");
-        vault.bind_owner_credential(proof, verified).expect("bind the owner's slip")
+        vault
+            .bind_owner_credential(proof, verified)
+            .expect("bind the owner's slip")
     });
     let run = bind_run(&session, &room);
     let storage = ExecutorStorage::for_session(&session, room.agent).expect("bind the storage");
@@ -488,7 +502,9 @@ fn a_removed_agents_run_hears_nothing_of_the_saver() {
         let output =
             CodeRunRawOutput::from_bytes(format!("/mnt/outputs/{name}.txt"), raw.as_bytes())
                 .expect("raw output");
-        storage.put_code_run_raw_output(&output, raw.as_bytes()).err()
+        storage
+            .put_code_run_raw_output(&output, raw.as_bytes())
+            .err()
     };
     let put_claim = || {
         run.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
@@ -515,7 +531,9 @@ fn a_removed_agents_run_hears_nothing_of_the_saver() {
         .expect("revoke the owner's slip");
     let refused = [put_claim(), note("revoked")];
     assert!(
-        refused.iter().all(|refused| not_in_room(refused.as_ref(), room.agent)),
+        refused
+            .iter()
+            .all(|refused| not_in_room(refused.as_ref(), room.agent)),
         "{refused:?}"
     );
 
@@ -549,7 +567,9 @@ fn a_removed_agents_run_hears_nothing_of_the_saver() {
     );
     let refused = [put_claim(), note("stopped"), run.dispatch(spoken(1)).err()];
     assert!(
-        refused.iter().all(|refused| not_in_room(refused.as_ref(), room.agent)),
+        refused
+            .iter()
+            .all(|refused| not_in_room(refused.as_ref(), room.agent)),
         "{refused:?}"
     );
 }

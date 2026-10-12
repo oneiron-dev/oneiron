@@ -3,9 +3,10 @@
 //! participant, and only while they are on the room's roster: every
 //! transaction its handle opens checks that again, in that transaction. Once
 //! they are removed the run does nothing more in the room, while the room,
-//! its saver and everyone else's runs go on. The check answers first, in
-//! each door and in each transaction, so a removed run learns nothing of
-//! what changed in the room, its saver or its own row since.
+//! its saver and everyone else's runs go on. The check comes first in each
+//! transaction, and each call of the run is checked again before it is
+//! answered, so a removed run learns nothing of what changed in the room,
+//! its saver or its own row since.
 
 use std::sync::Arc;
 
@@ -54,9 +55,9 @@ impl<'vault> OffRecordSession<'vault> {
     }
 
     /// Refuses, in a fresh snapshot, a run whose participant is no longer in
-    /// its room. A run's door makes this check before it reads anything else
-    /// of the room, its mode, route, saver or session, so a removed run hears
-    /// only that it is not in the room, whatever has changed there since.
+    /// its room. A run's calls make this check before they run and again
+    /// before they answer, so a removed run hears only that it is not in the
+    /// room, whatever has changed there since.
     pub(crate) fn admit_participant(&self) -> Result<()> {
         if matches!(self.participant, Some(RunParticipant { room: Some(_), .. })) {
             self.participant_in_txn(&self.vault.store.env.read_txn()?)?;

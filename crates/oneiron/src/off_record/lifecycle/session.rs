@@ -346,7 +346,6 @@ impl OffRecordSession<'_> {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
-        self.admit_participant()?;
         route.revalidate()?;
         let view = self.read_view()?;
         let search = self.vault.search_text_scored(
@@ -419,7 +418,6 @@ impl OffRecordSession<'_> {
         &'session self,
         route: &'session SessionWriteRoute,
     ) -> Result<SessionRetrievalTelemetry<'session>> {
-        self.admit_participant()?;
         route.revalidate()?;
         Ok(SessionRetrievalTelemetry {
             vault: self.vault,
@@ -479,7 +477,6 @@ impl OffRecordSession<'_> {
         value: &V,
         accepts_current: impl FnOnce(Option<&V>) -> Result<()>,
     ) -> Result<()> {
-        self.admit_participant()?;
         route.require_recording(&self.session_ref)?;
         match route.target() {
             RouteTarget::Discard => unreachable!("anonymous recording refused above"),
@@ -552,7 +549,6 @@ impl OffRecordSession<'_> {
         CK: SideKey,
         CC: SideCodec<CV>,
     {
-        self.admit_participant()?;
         route.require_recording(&self.session_ref)?;
         let target = route.target();
         if target == RouteTarget::Discard {
@@ -621,14 +617,12 @@ impl OffRecordSession<'_> {
     }
 
     /// Composed side-table read over overlay ∪ base. A run's handle reads
-    /// only while its participant is in the room, checked before the view
-    /// and again in the read.
+    /// only while its participant is in the room, checked in the read.
     pub(crate) fn side_table_get<K: SideKey, V, C: SideCodec<V>>(
         &self,
         table: &SideTable<K, V, C>,
         key: &K,
     ) -> Result<Option<V>> {
-        self.admit_participant()?;
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
         self.participant_in_txn(&rtxn)?;
