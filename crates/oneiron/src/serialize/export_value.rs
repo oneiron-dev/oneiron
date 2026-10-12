@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::credential_nulling::{credential_key, null_credentials, reference_carries_credential};
 use crate::batch::secret_scan::{
     decode_members, nested_past_decoder, release_joined_messagepack, release_joined_strings,
-    scan_file_content, scan_undecoded_body,
+    release_reads_whole, scan_file_content, scan_undecoded_body,
 };
 use crate::error::{Error, Result};
 
@@ -116,7 +116,12 @@ impl ExportBody {
             if null_credential_references(&mut exported) {
                 return Self::Nulled;
             }
-            return Self::MessagePack(exported);
+            // Read whole once every reference is restored: the tree an
+            // importer rebuilds carries no secret spread over its parts.
+            return match exported.to_msgpack() {
+                Ok(tree) if !release_reads_whole(&tree) => Self::MessagePack(exported),
+                _ => Self::Nulled,
+            };
         }
         match std::str::from_utf8(bytes) {
             Ok(text) if safe_text(text, 0) => Self::Utf8(text.to_owned()),
@@ -321,6 +326,7 @@ fn safe_text(text: &str, depth: usize) -> bool {
         return false;
     }
     match decode_members(text.as_bytes()) {
+        Some(value) if release_reads_whole(&value) => false,
         // Text holds no codec's id slot: its tree is read as an ASSET body's.
         Some(value) => export_value(
             &value,

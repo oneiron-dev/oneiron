@@ -1,5 +1,7 @@
 //! Unconditional credential removal before any context/export format writer.
-use crate::batch::secret_scan::{release_credential_field, release_joined_json, scan_file_content};
+use crate::batch::secret_scan::{
+    release_credential_field, release_joined_json, release_reads_whole_json, scan_file_content,
+};
 use serde_json::{Map, Value};
 
 /// A field name whose value no export carries: this writer's own names, and
@@ -43,8 +45,14 @@ fn writer_credential_key(key: &str) -> bool {
 }
 
 /// No option can bypass this transform. Recursion stops closed, not by returning the input.
+/// A structure that still reads as a secret once its parts are judged, read
+/// whole as the release walks read it, is nulled whole.
 pub(crate) fn null_credentials(key: &str, value: &Value) -> Value {
-    null_at_depth(key, value, 0, false)
+    let nulled = null_at_depth(key, value, 0, false);
+    if matches!(nulled, Value::Array(_) | Value::Object(_)) && release_reads_whole_json(&nulled) {
+        return Value::Null;
+    }
+    nulled
 }
 
 /// The whole-vault document pass. Its typed MessagePack trees were judged by the

@@ -261,6 +261,66 @@ fn byte_values(items: impl Iterator<Item = Option<u64>>) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// The release doors' reading of a whole decoded value once its parts are
+/// judged: every text it carries, one per line in order, at any depth (each
+/// string and map key, binary and extension bytes, each array of byte values).
+/// A walk that judges each part, and each array's items joined, can still
+/// leave a secret spread over parts it keeps apart (a phrase one word per
+/// nested item), as the write door reads it in a body's raw bytes; a value
+/// that reads as one leaves whole-redacted.
+pub(crate) fn release_reads_whole(value: &rmpv::Value) -> bool {
+    let mut text = String::new();
+    messagepack_leaves(value, &mut text);
+    detect(&text, Door::Release).is_some()
+}
+
+/// [`release_reads_whole`] over a JSON value.
+pub(crate) fn release_reads_whole_json(value: &serde_json::Value) -> bool {
+    let mut text = String::new();
+    json_leaves(value, &mut text);
+    detect(&text, Door::Release).is_some()
+}
+
+fn messagepack_leaves(value: &rmpv::Value, out: &mut String) {
+    use rmpv::Value;
+    match value {
+        Value::String(text) => push_line(out, text.as_bytes()),
+        Value::Binary(bytes) | Value::Ext(_, bytes) => push_line(out, bytes),
+        Value::Array(values) => match byte_values(values.iter().map(Value::as_u64)) {
+            Some(bytes) if !bytes.is_empty() => push_line(out, &bytes),
+            _ => values
+                .iter()
+                .for_each(|value| messagepack_leaves(value, out)),
+        },
+        Value::Map(entries) => entries.iter().for_each(|(key, value)| {
+            messagepack_leaves(key, out);
+            messagepack_leaves(value, out);
+        }),
+        _ => {}
+    }
+}
+
+fn json_leaves(value: &serde_json::Value, out: &mut String) {
+    use serde_json::Value;
+    match value {
+        Value::String(text) => push_line(out, text.as_bytes()),
+        Value::Array(values) => match byte_values(values.iter().map(Value::as_u64)) {
+            Some(bytes) if !bytes.is_empty() => push_line(out, &bytes),
+            _ => values.iter().for_each(|value| json_leaves(value, out)),
+        },
+        Value::Object(fields) => fields.iter().for_each(|(key, value)| {
+            push_line(out, key.as_bytes());
+            json_leaves(value, out);
+        }),
+        _ => {}
+    }
+}
+
+fn push_line(out: &mut String, bytes: &[u8]) {
+    out.push_str(&String::from_utf8_lossy(bytes));
+    out.push('\n');
+}
+
 /// The write door's text rules over text a stream scanner joined across a
 /// chunk edge. Like the batch door, it follows the owner's switch: its caller
 /// reads it.
@@ -390,7 +450,16 @@ fn detect(haystack: &str, door: Door) -> Option<&'static str> {
 /// Returns whether any bytes were removed. `null` is the export representation;
 /// the serving representation is the fixed, non-authoritative redaction marker.
 pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) -> bool {
-    sanitize_json(value, null, Door::Release)
+    let changed = sanitize_json(value, null, Door::Release);
+    if release_reads_whole_json(value) {
+        *value = if null {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String("[redacted]".into())
+        };
+        return true;
+    }
+    changed
 }
 
 fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool {
@@ -452,7 +521,16 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
 /// Scan MessagePack before any lossy JSON projection. Safe binary and extension
 /// values retain their original type on raw transports.
 pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bool) -> bool {
-    sanitize_messagepack(value, null, Door::Release)
+    let changed = sanitize_messagepack(value, null, Door::Release);
+    if release_reads_whole(value) {
+        *value = if null {
+            rmpv::Value::Nil
+        } else {
+            rmpv::Value::from("[redacted]")
+        };
+        return true;
+    }
+    changed
 }
 
 fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool {

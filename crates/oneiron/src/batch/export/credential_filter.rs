@@ -385,7 +385,8 @@ mod tests {
         let (_dir, vault) = vault_with_scan_off()?;
         let words: Vec<&[u8]> = PHRASE.split(' ').map(str::as_bytes).collect();
         // One word per item: MessagePack binary, MessagePack byte values, the
-        // two mixed, and JSON byte values.
+        // two mixed, byte values each in an array of its own, and JSON byte
+        // values bare and wrapped.
         let binary = |word: &[u8]| rmpv::Value::Binary(word.to_vec());
         let numbers =
             |word: &[u8]| rmpv::Value::Array(word.iter().map(|&b| rmpv::Value::from(b)).collect());
@@ -397,6 +398,10 @@ mod tests {
                 .enumerate()
                 .map(|(at, word)| if at == 6 { numbers(word) } else { binary(word) })
                 .collect(),
+            words
+                .iter()
+                .map(|word| rmpv::Value::Array(vec![numbers(word)]))
+                .collect(),
         ];
         let mut bodies = Vec::new();
         for value in items.map(rmpv::Value::Array) {
@@ -404,10 +409,22 @@ mod tests {
             rmpv::encode::write_value(&mut body, &value).unwrap();
             bodies.push(body);
         }
-        bodies.push(
-            serde_json::to_vec(&serde_json::json!({ "words": words }))
-                .map_err(|_| Error::InvariantViolation("fixture JSON"))?,
-        );
+        let wrapped: Vec<Vec<&[u8]>> = words.iter().map(|word| vec![*word]).collect();
+        for value in [
+            serde_json::json!({ "words": words }),
+            serde_json::json!(wrapped),
+        ] {
+            // The context writers' walk reads the same values.
+            let written = crate::serialize::null_credentials("", &value);
+            assert!(
+                !carries_sausage(written.to_string().as_bytes()),
+                "{written}"
+            );
+            bodies.push(
+                serde_json::to_vec(&value)
+                    .map_err(|_| Error::InvariantViolation("fixture JSON"))?,
+            );
+        }
         for body in &bodies {
             assert!(carries_sausage(body));
             let id = put_asset(&vault, body)?;
