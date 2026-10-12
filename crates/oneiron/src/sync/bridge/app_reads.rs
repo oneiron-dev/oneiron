@@ -1,4 +1,5 @@
 //! Bounded-page adapters for authority-scoped app subscription channels.
+use crate::claim::CallerLocality;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MemoryReceipt, PendingWrite};
 use crate::{EntityId, Error, Result, Vault};
@@ -11,6 +12,17 @@ fn validate_limit(limit: usize) -> Result<()> {
         return Err(Error::CorruptedIndex("invalid app subscription limit"));
     }
     Ok(())
+}
+
+/// Whether a caller at `locality` may learn of `claim` at all: off this
+/// device, a device-local claim is not there to count or name.
+fn readable_at(vault: &Vault, claim: Option<[u8; 16]>, locality: CallerLocality) -> Result<bool> {
+    match claim {
+        Some(claim) if locality == CallerLocality::OffDevice => {
+            Ok(!vault.device_local_keeps(&EntityId::from_bytes(claim)?)?)
+        }
+        _ => Ok(true),
+    }
 }
 
 fn in_world(vault: &Vault, claim: Option<[u8; 16]>, world: Option<&str>) -> Result<bool> {
@@ -28,6 +40,7 @@ pub fn scoped_subscription_receipts(
     vault: &Vault,
     actor: &str,
     world: Option<&str>,
+    locality: CallerLocality,
     limit: usize,
 ) -> Result<Vec<MemoryReceipt>> {
     validate_limit(limit)?;
@@ -38,7 +51,10 @@ pub fn scoped_subscription_receipts(
         let exhausted = page.len() < PAGE_SIZE;
         before = page.last().map(|row| row.decision_id);
         for row in page {
-            if row.actor_ref.as_deref() != Some(actor) || !in_world(vault, row.claim_id, world)? {
+            if row.actor_ref.as_deref() != Some(actor)
+                || !in_world(vault, row.claim_id, world)?
+                || !readable_at(vault, row.claim_id, locality)?
+            {
                 continue;
             }
             output.push(MemoryReceipt {
@@ -67,6 +83,7 @@ pub fn scoped_subscription_pending(
     vault: &Vault,
     actor: &str,
     world: Option<&str>,
+    locality: CallerLocality,
     limit: usize,
 ) -> Result<Vec<PendingWrite>> {
     validate_limit(limit)?;
@@ -89,6 +106,9 @@ pub fn scoped_subscription_pending(
                 .get_claim_in_txn(&txn, &id)?
                 .is_none_or(|claim| claim.world.map(|id| id.to_hex()).as_deref() != world)
             {
+                continue;
+            }
+            if !readable_at(vault, Some(row.claim_id), locality)? {
                 continue;
             }
             selected.push(row);

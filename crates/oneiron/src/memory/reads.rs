@@ -309,9 +309,29 @@ impl Memory<'_> {
         })
     }
 
-    /// Lists gated writes parked for consent, newest lane state first.
+    /// Lists gated writes parked for consent, newest lane state first. A
+    /// caller off this device sees none about a device-local claim, and none
+    /// takes a place in its page.
     pub fn pending_writes(&self, limit: usize) -> MemoryResult<Vec<PendingWrite>> {
-        let records = self.vault.pending_gate_consents(limit)?;
+        let off_device = self.locality == crate::claim::CallerLocality::OffDevice;
+        let mut records =
+            self.vault
+                .pending_gate_consents(if off_device { usize::MAX } else { limit })?;
+        if off_device {
+            let mut admitted = Vec::new();
+            for record in records {
+                if admitted.len() == limit {
+                    break;
+                }
+                if !self
+                    .vault
+                    .device_local_keeps(&EntityId::from_bytes(record.claim_id)?)?
+                {
+                    admitted.push(record);
+                }
+            }
+            records = admitted;
+        }
         Ok(records
             .into_iter()
             .map(|record| PendingWrite {
@@ -324,9 +344,32 @@ impl Memory<'_> {
             .collect())
     }
 
-    /// Lists gate decision receipts.
+    /// Lists gate decision receipts. A caller off this device sees none about
+    /// a device-local claim, and none takes a place in its page.
     pub fn receipts(&self, limit: usize) -> MemoryResult<Vec<MemoryReceipt>> {
-        let records = self.vault.gate_decisions(limit)?;
+        let mut records = Vec::new();
+        let mut before = None;
+        while records.len() < limit {
+            let page = self.vault.store.gate_decisions_page(before, limit)?;
+            let exhausted = page.len() < limit;
+            before = page.last().map(|record| record.decision_id);
+            for record in page {
+                if records.len() == limit {
+                    break;
+                }
+                let kept = self.locality == crate::claim::CallerLocality::OffDevice
+                    && match record.claim_id {
+                        Some(id) => self.vault.device_local_keeps(&EntityId::from_bytes(id)?)?,
+                        None => false,
+                    };
+                if !kept {
+                    records.push(record);
+                }
+            }
+            if exhausted || before.is_none() {
+                break;
+            }
+        }
         Ok(records
             .into_iter()
             .map(|record| MemoryReceipt {

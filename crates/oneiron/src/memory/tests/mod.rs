@@ -8,6 +8,7 @@
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
+mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
 mod self_grant;

@@ -204,6 +204,7 @@ impl LiveQuerySource for BoundSource {
                         .principal_ref()
                         .ok_or_else(AppError::unauthorized)?,
                     view.world_ref.as_deref(),
+                    self.auth.locality(),
                     limit,
                 )
                 .map_err(|_| AppError::internal_server_error("scoped receipts read failed"))?,
@@ -215,6 +216,7 @@ impl LiveQuerySource for BoundSource {
                         .principal_ref()
                         .ok_or_else(AppError::unauthorized)?,
                     view.world_ref.as_deref(),
+                    self.auth.locality(),
                     limit,
                 )
                 .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?,

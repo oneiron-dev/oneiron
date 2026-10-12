@@ -463,10 +463,13 @@ impl CoreAuth {
         self.implicit_all_scopes && (self.verified_slip.is_some() || self.principal_ref.is_none())
     }
 
-    /// Reconnect matches the exact verified instrument and projected principal.
-    /// Holder proofs have fresh nonces; verification-time remaining TTL can change.
+    /// Reconnect matches the exact verified instrument and projected principal,
+    /// from the same side of this device: an off-device socket never resumes
+    /// a session an on-device one read. Holder proofs have fresh nonces;
+    /// verification-time remaining TTL can change.
     pub(crate) fn same_authority(&self, other: &Self) -> bool {
-        self.instrument.is_some()
+        self.locality == other.locality
+            && self.instrument.is_some()
             && self.instrument == other.instrument
             && self.principal == other.principal
             && self.principal_ref == other.principal_ref
