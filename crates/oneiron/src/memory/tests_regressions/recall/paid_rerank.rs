@@ -240,3 +240,87 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
     let rendered = pack.rendered.as_deref().expect("a json pack");
     assert!(rendered.contains(scored), "{rendered}");
 }
+
+/// Sol round 6 (R6-1): a MESSAGE whose text moved into its entity document
+/// holds none of it in its row, so its score was for no words, and the fold
+/// served its TURN at that score. Such a MESSAGE no longer stands as its
+/// TURN under a binding rerank; the TURN keeps the score of its own words.
+#[cfg(feature = "sync")]
+#[test]
+fn a_message_whose_text_moved_to_its_document_lends_its_turn_no_score() {
+    use crate::entity_doc::{DocAuthorization, TextField};
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    let moved = witness_turn(&facade, 0xE3, &["the lantern wick is trimmed"], 1_900);
+    witness_turn(&facade, 0xE4, &["a lantern shop that sells wicks"], 1_900);
+    let message = first_message(&vault, &moved);
+    let authenticated = vault
+        .authenticate_owner(
+            owner,
+            "principal:paid-rerank-test",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    vault
+        .migrate_entity_text(
+            &message,
+            &TextField::MapField("content".into()),
+            crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+            &DocAuthorization::Owner(&authenticated),
+        )
+        .expect("move the message's text into its document");
+    // No words score highest, then the shop's.
+    let score = |_: usize, text: &str| match text {
+        "" => 10.0,
+        text if text.contains("shop") => 5.0,
+        _ => 0.0,
+    };
+    let host = ScriptedReranker {
+        lease: crate::BudgetGuard::new(
+            "paid-rerank-test",
+            100_000,
+            crate::BudgetExhaustionPolicy::Suspend,
+        )
+        .admit()
+        .expect("a lease")
+        .lease,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        score: &score,
+        during: &|_: usize| {},
+    };
+    let pack = crate::task_verb::sdk::recall_at_door(
+        &facade,
+        crate::task_verb::sdk::RecallRequest {
+            query: "lantern".to_owned(),
+            effort: Some(crate::memory::RecallEffort::High),
+            scope: None,
+            limit: Some(10),
+            format: None,
+            as_of: None,
+            deadline_ms: None,
+        },
+        |_| None,
+        &crate::task_verb::sdk::RecallDoor {
+            arrived: std::time::Instant::now(),
+            on_cut: None,
+            rerank: crate::memory::RecallRerank::Host(&host),
+        },
+    )
+    .expect("recall");
+    let turns: Vec<&str> = pack
+        .items
+        .iter()
+        .filter(|item| item.kind == "TURN")
+        .map(|item| item.value_text.as_str())
+        .collect();
+    assert!(
+        turns.first().is_some_and(|text| text.contains("shop")),
+        "{turns:?}"
+    );
+    assert!(matches!(
+        pack.retrieval_meta.rerank,
+        Some(crate::memory::RerankReport::Applied { .. })
+    ));
+}

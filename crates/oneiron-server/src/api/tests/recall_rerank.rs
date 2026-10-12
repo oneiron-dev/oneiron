@@ -405,6 +405,47 @@ enabled = false
     assert_eq!(refusal["error"]["data"]["error_code"], "model_unavailable");
 }
 
+/// Sol round 6 (R6-2): a vault manifest that binds the reranker to a model
+/// `[models]` serves only for chat sent the rerank call down that chat route,
+/// past the rerank protocol and a provider the reranker refuses. Only a
+/// reranker rung answers the role; this call is refused unsent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_manifest_bound_chat_model_never_answers_as_the_reranker() {
+    let reranker = FakeReranker::start(prefers_known(), no_hook(), 10).await;
+    let chat = crate::fake_llm::FakeLlm::start(vec![], None).await;
+    let models = models_toml(&format!(
+        r#"
+[providers.rerank]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.local]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.reranker]
+model = "rerank:fake-reranker"
+[roles.generative_reasoner]
+model = "local:chat"
+[dreamer]
+enabled = false
+"#,
+        reranker.base_url, chat.base_url
+    ));
+    let (_dir, server, _host, _) = served(Some(&models)).await;
+    crate::ai_host::test_support::pin_every_role(
+        server.vault(),
+        "local/chat@live",
+        oneiron::ModelLocality::OwnServer,
+    );
+    let actor = reader(&server, "rerank-pinned-chat").await;
+    let refusal = recall(&server, "rerank-pinned-chat", actor, "high")
+        .await
+        .expect_err("a chat model is not a reranker");
+    assert_eq!(refusal["error"]["data"]["error_code"], "model_unavailable");
+    let sent: Vec<String> = chat.seen().into_iter().map(|seen| seen.path).collect();
+    assert!(sent.is_empty(), "{sent:?}");
+    assert_eq!(reranker.calls(), 0);
+}
+
 /// Done-means (G1 check 4): scores apply only to the block they scored. A
 /// write that changes the block during the first call sends the new block to
 /// the reranker; the first call's scores, which put the known passage last,

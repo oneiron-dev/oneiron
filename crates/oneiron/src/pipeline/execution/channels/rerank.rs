@@ -39,10 +39,12 @@ pub(super) struct RerankApplied {
     /// The run serves those rows at these, so a TURN shows the words its
     /// score is for, not those its messages hold by the time it is read.
     pub(super) words_revisions: HashMap<EntityId, RevisionRef>,
-    /// For a reranker that binds words, each TURN of the block, or that a
-    /// scored MESSAGE folds into, whose messages showed no words to pin: the
-    /// run does not serve it under scores its later words were not given.
-    pub(super) unpinned_turns: HashSet<EntityId>,
+    /// For a reranker that binds words, the rows the run does not serve
+    /// under scores their served words were not given: each TURN of the
+    /// block, or that a scored MESSAGE folds into, whose messages showed no
+    /// words to pin, and each scored MESSAGE whose row does not hold the
+    /// words its TURN serves of it.
+    pub(super) unpinned: HashSet<EntityId>,
 }
 
 /// What a binding reranker's candidate is bound to (see [`RerankCandidate`]).
@@ -50,7 +52,9 @@ pub(super) struct RerankApplied {
 struct BoundWords {
     revision: Option<RevisionRef>,
     turn: Option<(EntityId, RevisionRef)>,
-    /// The TURN the candidate is served as, when it holds no words to pin.
+    /// The row the run does not serve under the candidate's score: the TURN
+    /// it is served as, when that holds no words to pin, or the MESSAGE
+    /// itself, when its row does not hold the words that TURN serves.
     unpinned: Option<EntityId>,
 }
 
@@ -86,7 +90,7 @@ impl PipelineBuilder<'_> {
         let mut rerank_merged_components = None;
         let mut reranked_trace_scores = None;
         let mut words_revisions = HashMap::new();
-        let mut unpinned_turns = HashSet::new();
+        let mut unpinned = HashSet::new();
         // Empty block: reranking zero candidates is a semantic no-op —
         // never invoke the host impl, so an otherwise-empty retrieval
         // cannot fail on reranker behavior and no needless work happens
@@ -135,7 +139,7 @@ impl PipelineBuilder<'_> {
             let mut candidates: Vec<RerankCandidate<'_>> = Vec::with_capacity(block_len);
             for (index, scored) in scores[..block_len].iter().enumerate() {
                 let words = bound.get(index).copied().unwrap_or_default();
-                unpinned_turns.extend(words.unpinned);
+                unpinned.extend(words.unpinned);
                 candidates.push(RerankCandidate {
                     id: scored.id,
                     score: scored.score,
@@ -222,7 +226,7 @@ impl PipelineBuilder<'_> {
             merged_components: rerank_merged_components,
             reranked_trace_scores,
             words_revisions,
-            unpinned_turns,
+            unpinned,
         })
     }
 
@@ -275,6 +279,18 @@ impl PipelineBuilder<'_> {
             metadata_cache,
             claim_gate,
         )? {
+            return Ok(words);
+        }
+        // A MESSAGE whose text moved into its entity document, or whose row
+        // has no revision to read, was scored for words other than those its
+        // TURN serves of it: it does not stand as that TURN.
+        #[cfg(feature = "sync")]
+        let document_backed =
+            crate::entity_doc::has_record_head(&self.vault.store, rtxn, id)?;
+        #[cfg(not(feature = "sync"))]
+        let document_backed = false;
+        if words.revision.is_none() || document_backed {
+            words.unpinned = Some(*id);
             return Ok(words);
         }
         match self.turn_words(rtxn, &turn)? {

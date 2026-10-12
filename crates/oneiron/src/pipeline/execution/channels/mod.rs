@@ -602,7 +602,7 @@ impl PipelineBuilder<'_> {
                 merged_components: rerank_merged_components,
                 reranked_trace_scores,
                 words_revisions,
-                unpinned_turns,
+                unpinned,
             } = self.apply_rerank_ladder(
                 rtxn,
                 &mut scores,
@@ -638,6 +638,12 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
+            // A row whose words its score was not given is not served under
+            // it: a MESSAGE before it stands as its TURN, and a TURN the fold
+            // makes of one after.
+            if !unpinned.is_empty() {
+                scores.retain(|hit| !unpinned.contains(&hit.id));
+            }
             let cited_messages = if self.turn_fold == TurnFold::Off {
                 HashMap::new()
             } else {
@@ -652,10 +658,8 @@ impl PipelineBuilder<'_> {
                     &mut claim_gate,
                 )?
             };
-            // A turn with no words to pin is not served under scores its
-            // later words were not given.
-            if !unpinned_turns.is_empty() {
-                scores.retain(|hit| !unpinned_turns.contains(&hit.id));
+            if !unpinned.is_empty() {
+                scores.retain(|hit| !unpinned.contains(&hit.id));
             }
 
             let capabilities = self.prepare_pack_candidates(
