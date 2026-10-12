@@ -740,6 +740,21 @@ fn owner_claim_body(owner: EntityId, value: &str) -> Result<Vec<u8>> {
     crate::claim::encode_claim_body(&body)
 }
 
+/// A claim on `owner` that a local put writes with no envelope. A local
+/// body change leaves base's index to idle publication, where a replicated
+/// one drops the old body's text at once.
+fn local_claim_body(owner: EntityId, value: &str) -> Result<Vec<u8>> {
+    let body = ClaimBody::new(
+        "test.status",
+        ClaimSubject::Entity(owner),
+        rmpv::Value::from(value),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    crate::claim::encode_claim_body(&body)
+}
+
 /// The room's put of `claim` holding `body`, under the given stamps.
 fn claim_put(claim: EntityId, (occurred, learned_at, body): (TimeRange, u64, Vec<u8>)) -> BatchOp {
     BatchOp::Put {
@@ -813,11 +828,34 @@ fn vector_hits_in_room(
     Ok(hits.iter().map(|hit| hit.id).collect())
 }
 
+/// The room embeds `other` after it hid base's vector of `hidden`, base's
+/// only graph node: the room's walk enters base's graph there (Sol R21).
+/// The room's turn commits, and its search finds `other`, never `hidden`.
+fn embed_past_a_hidden_entry(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    hidden: EntityId,
+    other: EntityId,
+) -> Result<()> {
+    stage_in_room(
+        vault,
+        session,
+        vec![room_put(other), room_vector(other, [1.0, 0.0, 0.0, 0.0])],
+    )?;
+    let hits = vector_hits_in_room(vault, session, [1.0, 0.0, 0.0, 0.0])?;
+    assert!(
+        hits.contains(&other) && !hits.contains(&hidden),
+        "the room finds the row it embedded and not the one it hid, got {hits:?}"
+    );
+    Ok(())
+}
+
 /// A room that replaces a base claim's body indexes the replacement at
 /// once, so the replacement is the revision the room has indexed. A pack
 /// and the owner's recall in the room find the claim by the room's words
 /// and read the room's body, at the room's revision; base's vector, which
-/// the room did not restage, no longer finds it there. Base reads its own.
+/// the room did not restage, no longer finds it there, and the room still
+/// embeds another row. Base reads its own.
 #[test]
 fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -882,6 +920,7 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
         !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
         "base's vector belongs to base's body, not the room's"
     );
+    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xC9))?;
 
     let recalled = vault
         .memory(owner, crate::edge::EdgeActorClass::Human)
@@ -946,19 +985,7 @@ fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Re
         .expect("the vault's owner");
     let claim = entity_id(0xDB);
     let occurred = TimeRange { start: 1, end: 1 };
-    let body = |value: &str| -> Result<Vec<u8>> {
-        let body = ClaimBody::new(
-            "test.status",
-            ClaimSubject::Entity(owner),
-            rmpv::Value::from(value),
-            0.9,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        crate::claim::encode_claim_body(&body)
-    };
-    // Local writes: a replicated body change drops the old body's text at
-    // once, where a local one leaves it to idle publication.
+    let body = |value: &str| local_claim_body(owner, value);
     vault
         .batch()
         .put(
@@ -1016,8 +1043,8 @@ fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Re
 /// Base holds a claim it has indexed and not embedded yet. A room replaces
 /// its body with the room's words and no vector, and before the room's turn
 /// commits, base's embedding of its own body lands. That vector describes
-/// base's body, so it does not find the claim in the room; base's search
-/// finds it.
+/// base's body, so it does not find the claim in the room, and the room
+/// still embeds another row; base's search finds it.
 #[test]
 fn a_room_hides_a_base_vector_that_lands_while_its_turn_is_open() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1063,6 +1090,7 @@ fn a_room_hides_a_base_vector_that_lands_while_its_turn_is_open() -> Result<()> 
         !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
         "base's vector of its own body does not find the room's"
     );
+    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xCA))?;
     let base_hits = vault
         .query()
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
@@ -1088,7 +1116,6 @@ fn a_room_keeps_the_vector_base_publishes_for_the_body_it_restaged() -> Result<(
         .expect("the vault's owner");
     let claim = entity_id(0xC7);
     let occurred = TimeRange { start: 1, end: 1 };
-    // Local writes: the new body waits for idle publication.
     vault
         .batch()
         .put(
@@ -1096,11 +1123,11 @@ fn a_room_keeps_the_vector_base_publishes_for_the_body_it_restaged() -> Result<(
             ENTITY_TYPE_CLAIM,
             occurred,
             1,
-            &owner_claim_body(owner, "indexedvalue")?,
+            &local_claim_body(owner, "indexedvalue")?,
         )
         .text(&claim, &[("body", "idleoldword")])
         .commit()?;
-    let pending = owner_claim_body(owner, "pendingvalue")?;
+    let pending = local_claim_body(owner, "pendingvalue")?;
     vault
         .batch()
         .put(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &pending)
@@ -1149,7 +1176,7 @@ fn a_room_that_puts_back_base_indexed_body_hides_the_vector_of_its_new_one() -> 
         .expect("the vault's owner");
     let claim = entity_id(0xC8);
     let occurred = TimeRange { start: 1, end: 1 };
-    let indexed = owner_claim_body(owner, "indexedvalue")?;
+    let indexed = local_claim_body(owner, "indexedvalue")?;
     vault
         .batch()
         .put(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &indexed)
@@ -1162,7 +1189,7 @@ fn a_room_that_puts_back_base_indexed_body_hides_the_vector_of_its_new_one() -> 
             ENTITY_TYPE_CLAIM,
             occurred,
             1,
-            &owner_claim_body(owner, "pendingvalue")?,
+            &local_claim_body(owner, "pendingvalue")?,
         )
         .commit()?;
     vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;

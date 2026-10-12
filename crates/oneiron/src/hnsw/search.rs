@@ -318,7 +318,7 @@ fn beam_search_graph(
         || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &entry_point)?.is_some()
     {
         results.push(entry);
-        if check_existence && !crate::vault_cleanup::is_archived_in_txn(store, txn, &entry_point)? {
+        if check_existence && is_match(store, txn, &entry_point)? {
             visible.push(entry);
         }
     }
@@ -379,7 +379,7 @@ fn beam_search_graph(
             if check_existence
                 && (visible.len() < ef
                     || distance < visible.peek().map_or(f32::INFINITY, |entry| entry.distance))
-                && !crate::vault_cleanup::is_archived_in_txn(store, txn, &neighbor_id)?
+                && is_match(store, txn, &neighbor_id)?
             {
                 visible.push(candidate);
                 if visible.len() > ef {
@@ -406,6 +406,14 @@ fn beam_search_graph(
     };
     found.sort_unstable();
     Ok(found)
+}
+
+/// Whether a node the walk scored can be a match: not archived, and not a
+/// row the reading room hides (the walk passes through it, see
+/// [`load_vector_into`]).
+fn is_match(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(!store.vectors().hides(id.as_bytes())
+        && !crate::vault_cleanup::is_archived_in_txn(store, txn, id)?)
 }
 
 #[allow(clippy::too_many_arguments)]

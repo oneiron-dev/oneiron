@@ -90,6 +90,32 @@ impl OverlayDb {
         })
     }
 
+    /// Whether this accessor's room hides base's row at `key` (see
+    /// [`Self::hide_base_row`]), in the snapshot its reads compose.
+    pub(crate) fn hides(&self, key: &[u8]) -> bool {
+        self.overlay.as_ref().is_some_and(|overlay| {
+            matches!(
+                overlay.snapshot.lookup_single(overlay.keyspace, key),
+                SnapshotLookup::Tombstone
+            )
+        })
+    }
+
+    /// [`Self::get`], with base's row where this accessor's room hides it. A
+    /// walk over a graph the room inherits from base reads this way: a row
+    /// the room hides is still a node of that graph, and the walk passes
+    /// through it, but it is never a result.
+    pub(crate) fn get_unhidden<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        key: &[u8],
+    ) -> Result<Option<Cow<'txn, [u8]>>> {
+        if self.hides(key) {
+            return Ok(self.base.get(txn, key)?.map(Cow::Borrowed));
+        }
+        self.get(txn, key)
+    }
+
     pub(crate) fn get<'txn>(
         &self,
         txn: &'txn RoTxn<'_>,
