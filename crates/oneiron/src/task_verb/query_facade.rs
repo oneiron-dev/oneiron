@@ -66,15 +66,23 @@ impl Memory<'_> {
             let rows = self.credential_rows(self.section_rows()?)?;
             return Ok(TaskDescription::Section(rows.render()));
         };
-        if self
-            .credential_readable_ids(&[task_ref])?
-            .is_some_and(|readable| readable.is_empty())
-        {
+        // The credential is judged before the card is read, so a task it
+        // does not read names no failure of its own, and again after, so a
+        // card read past a revocation is never served.
+        let unread = || -> MemoryResult<bool> {
+            Ok(self
+                .credential_readable_ids(&[task_ref])?
+                .is_some_and(|readable| readable.is_empty()))
+        };
+        if unread()? {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
         };
+        if unread()? {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        }
         // An acked failure has left the TASKS surface (the renderer drops it);
         // the typed read verbs must agree, so it has no card by id either.
         if intent.is_acked_failure() {
