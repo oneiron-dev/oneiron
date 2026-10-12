@@ -61,6 +61,9 @@ test)
   if [ "$full" = true ]; then
     run cargo nextest run --locked --workspace --all-features --profile full --no-fail-fast
     run cargo test --locked --doc --workspace --exclude oneiron-bench --all-features
+    # The full gate is the reference Linux host's run: the broker's paid-leg fixture runs with the
+    # broker as a second OS user, and a host that cannot run one fails here instead of skipping.
+    run scripts/ci/broker-fixture.sh
     exit 0
   fi
   [ ${#others[@]} -gt 0 ] && run cargo nextest run --locked "${others[@]}" --all-features --no-fail-fast --no-tests=pass
