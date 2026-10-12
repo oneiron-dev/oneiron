@@ -718,35 +718,62 @@ fn owner_claim_body(owner: EntityId, value: &str) -> Result<Vec<u8>> {
     crate::claim::encode_claim_body(&body)
 }
 
+/// The room's put of `claim` holding `body`, under the given stamps.
+fn claim_put(claim: EntityId, (occurred, learned_at, body): (TimeRange, u64, Vec<u8>)) -> BatchOp {
+    BatchOp::Put {
+        id: claim,
+        entity_type: ENTITY_TYPE_CLAIM,
+        occurred,
+        learned_at,
+        data: body,
+        allow_maintenance: false,
+        allow_reserved_predicate: false,
+        hub_sync_imported: false,
+    }
+}
+
+fn room_text(id: EntityId, word: &str) -> BatchOp {
+    BatchOp::Text {
+        id,
+        fields: vec![("body".to_owned(), word.to_owned())],
+    }
+}
+
 /// Stages `body` for `claim` in the room, found by `word`: the room's put
 /// and its text, with no vector.
 fn replace_in_room(
     vault: &Vault,
     session: &OffRecordSession<'_>,
     claim: EntityId,
-    (occurred, learned_at, body): (TimeRange, u64, Vec<u8>),
+    put: (TimeRange, u64, Vec<u8>),
     word: &str,
 ) -> Result<()> {
     stage_in_room(
         vault,
         session,
-        vec![
-            BatchOp::Put {
-                id: claim,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred,
-                learned_at,
-                data: body,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            },
-            BatchOp::Text {
-                id: claim,
-                fields: vec![("body".to_owned(), word.to_owned())],
-            },
-        ],
+        vec![claim_put(claim, put), room_text(claim, word)],
     )
+}
+
+/// The fields a pack in the room hydrates for `claim`, found by `word`.
+fn room_pack_fields(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    claim: EntityId,
+    word: &str,
+) -> Result<String> {
+    let view = session.read_view()?;
+    let pack = vault
+        .context_pack()
+        .search_text(word, 10)
+        .reading(view.read())
+        .run()?;
+    let entity = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == claim)
+        .unwrap_or_else(|| panic!("{word} finds the claim in the room, got {pack:?}"));
+    Ok(serde_json::to_string(&entity.fields).expect("fields json"))
 }
 
 /// The ids a vector search in the room returns for `query`.
@@ -936,23 +963,11 @@ fn a_room_that_restages_a_pending_base_body_reads_it_at_its_own_revision() -> Re
         "roomretryneedle",
     )?;
 
-    let view = session.read_view()?;
-    let pack = vault
-        .context_pack()
-        .search_text("roomretryneedle", 10)
-        .reading(view.read())
-        .run()?;
-    let in_room = pack
-        .results
-        .iter()
-        .find(|entity| entity.id == claim)
-        .unwrap_or_else(|| panic!("the room's words find the claim, got {pack:?}"));
-    let fields = serde_json::to_string(&in_room.fields).expect("fields json");
+    let fields = room_pack_fields(&vault, &session, claim, "roomretryneedle")?;
     assert!(
         fields.contains("pendingvalue") && !fields.contains("indexedvalue"),
         "the room reads the body it indexed, got {fields}"
     );
-    drop(view);
     assert!(
         !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
         "the old body's vector does not find it in the room"
@@ -1027,6 +1042,126 @@ fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refus
         "the room's nearer claim in another world takes no place from it"
     );
     drop(view);
+    session.close()?;
+    Ok(())
+}
+
+/// Two puts of one row in one room apply, the second restoring the body
+/// base holds, with the room's words. The row's last put decides what the
+/// room indexed: a pack in the room reads base's body by those words, and
+/// base's vector, which belongs to that body, still finds the row there.
+#[test]
+fn a_rooms_last_put_of_a_row_decides_the_revision_it_indexed() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xDC);
+    let occurred = TimeRange { start: 1, end: 1 };
+    let kept = owner_claim_body(owner, "keptvalue")?;
+    vault
+        .batch()
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &kept)
+        .text(&claim, &[("body", "keptbaseword")])
+        .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
+        .commit()?;
+    let session = enter(&vault, "sess-room-two-puts")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![
+            claim_put(
+                claim,
+                (
+                    TimeRange { start: 10, end: 10 },
+                    10,
+                    owner_claim_body(owner, "passingvalue")?,
+                ),
+            ),
+            claim_put(claim, (occurred, 1, kept)),
+            room_text(claim, "twoputneedle"),
+        ],
+    )?;
+
+    let fields = room_pack_fields(&vault, &session, claim, "twoputneedle")?;
+    assert!(
+        fields.contains("keptvalue") && !fields.contains("passingvalue"),
+        "the room reads the body its last put staged, got {fields}"
+    );
+    assert!(
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "and base's vector of that body still finds it"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// A room that hid a row's text took it out of the BM25 totals it stages.
+/// On record, base indexes another row, which those totals never counted.
+/// Back off record, the room replaces that row as well, with a vector and
+/// no text: hiding its text takes it out of totals that never held it,
+/// and the write lands.
+#[test]
+fn a_room_hides_the_text_of_a_row_base_indexed_after_its_totals() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let base_claim = |id: EntityId, word: &str| -> Result<()> {
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &owner_claim_body(owner, "basevalue")?,
+            )
+            .text(&id, &[("body", word)])
+            .commit()
+    };
+    let first = entity_id(0xDD);
+    base_claim(first, "hiddenfirstword")?;
+    let session = enter(&vault, "sess-room-hidden-totals")?;
+    let replace_with_vector = |id: EntityId| -> Result<()> {
+        stage_in_room(
+            &vault,
+            &session,
+            vec![
+                claim_put(
+                    id,
+                    (
+                        TimeRange { start: 10, end: 10 },
+                        10,
+                        owner_claim_body(owner, "roomvalue")?,
+                    ),
+                ),
+                room_vector(id, [1.0, 0.0, 0.0, 0.0]),
+            ],
+        )
+    };
+    replace_with_vector(first)?;
+    session.flip_on_record()?;
+    let later = entity_id(0xDE);
+    base_claim(later, "hiddenlaterword")?;
+    session.flip_off_record()?;
+
+    replace_with_vector(later)?;
+    let view = session.read_view()?;
+    let by_words = vault
+        .query()
+        .search_text("hiddenlaterword", 10)
+        .reading(view.read())
+        .run()?;
+    assert!(
+        by_words.iter().all(|hit| hit.id != later),
+        "base's words for the old body no longer find it in the room, got {by_words:?}"
+    );
+    drop(view);
+    assert!(
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&later),
+        "the room's vector finds it"
+    );
     session.close()?;
     Ok(())
 }

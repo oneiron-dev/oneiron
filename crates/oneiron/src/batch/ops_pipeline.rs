@@ -373,7 +373,7 @@ pub(crate) fn apply_ops_session(
             _ => None,
         })
         .collect();
-    let mut published = Vec::new();
+    let mut published = HashSet::new();
     for entry in entries {
         match &entry.op {
             BatchOp::Put {
@@ -440,7 +440,7 @@ pub(crate) fn apply_ops_session(
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).
                 if texts.contains(id) || vectors.contains(id) {
-                    if stage_published_body_row(
+                    let moved = stage_published_body_row(
                         view,
                         wtxn,
                         id,
@@ -448,8 +448,12 @@ pub(crate) fn apply_ops_session(
                         entry.occurred,
                         entry.learned_at,
                         data,
-                    )? {
-                        published.push(*id);
+                    )?;
+                    // A row's last put decides what the room indexed.
+                    if moved {
+                        published.insert(*id);
+                    } else {
+                        published.remove(id);
                     }
                 } else {
                     stage_entity_body_row(

@@ -253,13 +253,17 @@ fn capture(
         return Ok(publish && current.has_doc && !metadata_only);
     };
     if prior.as_deref() == Some(new_raw) {
-        // The same body again: a revision still pending is published as is.
-        if !publish || current.live == current.indexed {
+        if !publish {
             return Ok(false);
         }
+        // The same body again. A revision still pending is published as is,
+        // and the state is written even unchanged: an earlier put of the row
+        // in the same room apply may have staged another, which no read here
+        // sees.
+        let moved = current.live != current.indexed;
         current.indexed = current.live;
         put_state(store, txn, id, &current)?;
-        return Ok(true);
+        return Ok(moved);
     }
     let doc = if current.has_doc {
         load_doc(store, txn, id)?
