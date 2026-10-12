@@ -154,7 +154,7 @@ impl DepthSearchRequest<'_> {
         }
         scoped
             .vault()
-            .scoped_read_search_candidate_limit(self.limit, text, !text)
+            .scoped_read_search_candidate_limit(&scoped.store_read(), self.limit, text, !text)
     }
 
     pub(super) fn narrow_hits(

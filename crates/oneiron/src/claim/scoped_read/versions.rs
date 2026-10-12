@@ -33,7 +33,7 @@ impl ScopedRead<'_> {
         }
         let fetch_limit = self
             .vault
-            .scoped_read_search_candidate_limit(limit, false, true)?;
+            .scoped_read_search_candidate_limit(&self.store_read(), limit, false, true)?;
         let results = self
             .vault
             .query()
@@ -88,7 +88,7 @@ impl ScopedRead<'_> {
         }
         let fetch_limit = self
             .vault
-            .scoped_read_search_candidate_limit(limit, true, false)?;
+            .scoped_read_search_candidate_limit(&self.store_read(), limit, true, false)?;
         let mut pipeline = self
             .vault
             .query()

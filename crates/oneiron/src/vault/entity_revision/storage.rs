@@ -273,6 +273,25 @@ pub(crate) fn capture_entity_revision(
     put_state(store, txn, id, &current)
 }
 
+/// A room indexes what it stages at once and runs no idle pass, so the
+/// revision a room's put staged is indexed as soon as that put's text or
+/// vector is: its indexed frontier moves to its live one. Base keeps its
+/// deferred interval.
+pub(crate) fn publish_staged_revision(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(mut current) = state(store, txn, id)? else {
+        return Ok(());
+    };
+    if current.live == current.indexed {
+        return Ok(());
+    }
+    current.indexed = current.live;
+    put_state(store, txn, id, &current)
+}
+
 pub(crate) fn storage_manages_text(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,

@@ -5,6 +5,7 @@ mod capabilities;
 pub(crate) use capabilities::capability_hit;
 mod builder;
 mod channels;
+pub(crate) use channels::{indexed_text_population, indexed_vector_population};
 mod corpus_filter;
 mod criticality;
 mod execution;

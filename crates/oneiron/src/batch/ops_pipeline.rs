@@ -356,6 +356,10 @@ pub(crate) fn apply_ops_session(
     }
     let overlay = route.overlay();
 
+    // The ids this apply puts, and those it indexes: a put's revision is
+    // published once its text or vector is staged with it.
+    let mut put = HashSet::new();
+    let mut indexed = HashSet::new();
     for entry in entries {
         match &entry.op {
             BatchOp::Put {
@@ -438,6 +442,7 @@ pub(crate) fn apply_ops_session(
                     entry.occurred,
                     entry.learned_at,
                 )?;
+                put.insert(*id);
             }
             BatchOp::Edge {
                 src,
@@ -458,6 +463,7 @@ pub(crate) fn apply_ops_session(
             }
             BatchOp::Text { id, fields } => {
                 crate::bm25::index_text(view, wtxn, analyzer, id, fields)?;
+                indexed.insert(*id);
             }
             BatchOp::Vector {
                 id,
@@ -466,6 +472,7 @@ pub(crate) fn apply_ops_session(
                 ..
             } => {
                 stage_vector_row(view, config, wtxn, id, vector, provenance.as_ref())?;
+                indexed.insert(*id);
                 // `pending_rebuild` can only come back false: the legacy arm
                 // that would set it needs a base `&Store` this call does not
                 // have. Passing a local sink states that and keeps the shared
@@ -491,6 +498,9 @@ pub(crate) fn apply_ops_session(
             }
         }
         overlay.stage_journal_entry(entry)?;
+    }
+    for id in put.intersection(&indexed) {
+        crate::vault::entity_revision::publish_staged_revision(view, wtxn, id)?;
     }
     Ok(())
 }

@@ -703,3 +703,202 @@ fn a_base_only_credentials_recall_in_the_room_seeds_nothing_by_the_rooms_words()
     session.close()?;
     Ok(())
 }
+
+/// A claim on the owner holding `value`, as the owner states it.
+fn owner_claim_body(owner: EntityId, value: &str) -> Result<Vec<u8>> {
+    let mut body = ClaimBody::new(
+        "test.replacement",
+        ClaimSubject::Entity(owner),
+        rmpv::Value::from(value),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    crate::claim::encode_claim_body(&body)
+}
+
+/// A room that replaces a base claim's body indexes the replacement at
+/// once, so the replacement is the revision the room has indexed. A pack
+/// and the owner's recall in the room find the claim by the room's words
+/// and read the room's body, at the room's revision. Base reads its own.
+#[test]
+fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xD7);
+    // Replicated: the fixture isolates the room's read, not the write gate.
+    vault
+        .batch()
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &owner_claim_body(owner, "basevalue")?,
+        )
+        .text(&claim, &[("body", "replacementbaseword")])
+        .edge(&claim, crate::EdgeKind::ClaimOf, &owner, 1.0)
+        .commit()?;
+    let base_revision = vault.indexed_revision(&claim)?.map(|revision| revision.0);
+    let session = enter(&vault, "sess-room-replacement")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![
+            BatchOp::Put {
+                id: claim,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange { start: 10, end: 10 },
+                learned_at: 10,
+                data: owner_claim_body(owner, "roomvalue")?,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            },
+            BatchOp::Text {
+                id: claim,
+                fields: vec![("body".to_owned(), "roomreplacementneedle".to_owned())],
+            },
+        ],
+    )?;
+    let fields = |entity: &crate::context_pack::ContextEntity| {
+        serde_json::to_string(&entity.fields).expect("fields json")
+    };
+
+    let view = session.read_view()?;
+    let pack = vault
+        .context_pack()
+        .search_text("roomreplacementneedle", 10)
+        .reading(view.read())
+        .run()?;
+    let in_room = pack
+        .results
+        .iter()
+        .find(|entity| entity.id == claim)
+        .unwrap_or_else(|| panic!("the room's words find the claim, got {pack:?}"));
+    let in_room_fields = fields(in_room);
+    assert!(
+        in_room_fields.contains("roomvalue") && !in_room_fields.contains("basevalue"),
+        "the room's pack reads the room's body, got {in_room_fields}"
+    );
+    assert!(
+        in_room.source_revision_ref.is_some() && in_room.source_revision_ref != base_revision,
+        "at the room's revision, got {:?}",
+        in_room.source_revision_ref
+    );
+    drop(view);
+
+    let recalled = vault
+        .memory(owner, crate::edge::EdgeActorClass::Human)
+        .recall_in_session(
+            &session,
+            "roomreplacementneedle",
+            crate::memory::Effort::Light,
+            &crate::memory::RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("the owner's recall in the room");
+    let values: Vec<_> = recalled
+        .items
+        .iter()
+        .map(|item| item.value_text.as_str())
+        .collect();
+    assert!(
+        values.iter().any(|value| value.contains("roomvalue"))
+            && !values.iter().any(|value| value.contains("basevalue")),
+        "the owner's recall in the room reads the room's body, got {values:?}"
+    );
+
+    let on_base = vault
+        .context_pack()
+        .search_text("replacementbaseword", 10)
+        .run()?;
+    let in_base = on_base
+        .results
+        .iter()
+        .find(|entity| entity.id == claim)
+        .unwrap_or_else(|| panic!("base's words find the claim, got {on_base:?}"));
+    let in_base_fields = fields(in_base);
+    assert!(
+        in_base_fields.contains("basevalue") && !in_base_fields.contains("roomvalue"),
+        "base reads its own body, got {in_base_fields}"
+    );
+    assert_eq!(in_base.source_revision_ref, base_revision);
+    session.close()?;
+    Ok(())
+}
+
+/// A scoped read in the room fetches as many candidates as the room's read
+/// holds, base's rows and the room's. A room row outside the worlds the
+/// lane asks for then takes no place from a base row inside them.
+#[test]
+fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refuse() -> Result<()>
+{
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let world = entity_id(0xD8);
+    put_entity(&vault, world, ENTITY_TYPE_WORLD, 1, 1, 1)?;
+    let base_claim = entity_id(0xD9);
+    vault
+        .batch()
+        .put(
+            &base_claim,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &active_claim_body(None),
+        )
+        .vector(&base_claim, &[0.8, 0.6, 0.0, 0.0])
+        .commit()?;
+    let base_only = || crate::pipeline::WorldAuthoritySet::new(true, []);
+    let key = crate::claim::ScopedReadActorKey::vault_owner(owner);
+    let outside = vault
+        .scoped_read(key.clone())
+        .within_worlds(base_only()?)
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1, None)?;
+    assert_eq!(
+        outside.value.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![base_claim],
+        "base's read finds its claim"
+    );
+
+    let session = enter(&vault, "sess-room-scoped-bound")?;
+    let room_claim = entity_id(0xDA);
+    stage_in_room(
+        &vault,
+        &session,
+        vec![
+            BatchOp::Put {
+                id: room_claim,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange { start: 10, end: 10 },
+                learned_at: 10,
+                data: active_claim_body(Some(world)),
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            },
+            room_vector(room_claim, [1.0, 0.0, 0.0, 0.0]),
+        ],
+    )?;
+    let view = session.read_view()?;
+    let inside = vault
+        .scoped_read_in_session(key, &view)
+        .within_worlds(base_only()?)
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1, None)?;
+    assert_eq!(
+        inside.value.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![base_claim],
+        "the room's nearer claim in another world takes no place from it"
+    );
+    drop(view);
+    session.close()?;
+    Ok(())
+}

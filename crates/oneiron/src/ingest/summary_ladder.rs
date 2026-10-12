@@ -78,7 +78,12 @@ impl ScopedRead<'_> {
         // page before document membership is checked below.
         let candidates_limit =
             self.vault()
-                .scoped_read_search_candidate_limit(limit, true, vector.is_some())?;
+                .scoped_read_search_candidate_limit(
+                    &self.store_read(),
+                    limit,
+                    true,
+                    vector.is_some(),
+                )?;
         // Separate kind lanes avoid a dominant index hiding candidates from the
         // other level before fusion. Distinct lexical/vector ranks can accumulate
         // on the *same* entity, unlike two disjoint kind-only lists.
