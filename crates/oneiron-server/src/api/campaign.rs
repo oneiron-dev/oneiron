@@ -161,6 +161,10 @@ pub(crate) fn dispatch(
     verb: &str,
     body: Value,
 ) -> Result<Json<Value>, ApiError> {
+    // The surface reads its records raw, under no credential key, so a
+    // credential narrowed to some records is refused on reads as `require`
+    // refuses it on writes: its records cannot bound what comes back.
+    auth.require_unrestricted_record_scope()?;
     auth.require(scope)?;
     let actor = surface_actor(auth)?;
     let facade = super::credential_memory(

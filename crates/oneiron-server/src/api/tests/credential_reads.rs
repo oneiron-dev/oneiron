@@ -518,3 +518,98 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
         .expect("revoke the grant");
     assert!(!standing_quotes(&server, agent, world).await);
 }
+
+/// Sol R1-006..008: doors that read a record raw, under no credential key,
+/// answered a credential whose records leave that record out: a room's roster
+/// and its DAG, a campaign its holder owns, and a companion profile on a live
+/// profile grant. Each now refuses the narrowed credential, as the room's
+/// transcript and turns already did, and the holder's unnarrowed credential
+/// still reads.
+#[tokio::test]
+async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
+    let room = room();
+    let owner = room.owner.to_hex();
+    let (status, created) = route_json(
+        room.server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/campaigns",
+            test_bearer(&format!("principal_ref={owner};actor_class=human")),
+            Some(&json!({ "name": "credkey outreach" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let campaign = created
+        .pointer("/body/campaign_ref")
+        .or_else(|| created.pointer("/body/record/campaign_ref"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("no campaign_ref: {created}"))
+        .to_owned();
+    let (principal, person, persona) = (
+        seeded_test_entity_id(0x2401_0021),
+        seeded_test_entity_id(0x2401_0022),
+        seeded_test_entity_id(0x2401_0023),
+    );
+    seed_companion_profile_access(
+        &room.server,
+        seeded_test_entity_id(0x2401_0024),
+        principal,
+        person,
+        persona,
+    );
+    let profile = oneiron::PsychProfile::new(
+        persona,
+        "compact tier",
+        "retrieval text tier",
+        "Narrative profile tier.",
+        vec![seeded_test_entity_id(0x2401_0025)],
+        oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("confidence"),
+    )
+    .expect("profile");
+    room.server
+        .vault
+        .put_psych_profile(&persona, &profile)
+        .expect("put psych profile");
+
+    let room_ref = room.room.to_hex();
+    let doors = [
+        (
+            format!("/v1/core/conversations/{room_ref}/members"),
+            room.agent_recipe(None),
+        ),
+        (
+            format!("/v1/core/conversations/{room_ref}/records"),
+            room.agent_recipe(None),
+        ),
+        (
+            format!("/v1/core/campaigns/{campaign}"),
+            format!("scope=core:read;principal_ref={owner};actor_class=human"),
+        ),
+        (
+            format!(
+                "/v1/companion/profiles/{}?person_ref={}",
+                persona.to_hex(),
+                person.to_hex()
+            ),
+            format!(
+                "scope=companion:profile:read;principal_ref={}",
+                principal.to_hex()
+            ),
+        ),
+    ];
+    for (uri, recipe) in doors {
+        let narrowed = format!("{recipe};records={}", room.unscoped.to_hex());
+        for (recipe, expected) in [
+            (recipe, StatusCode::OK),
+            (narrowed, StatusCode::FORBIDDEN),
+        ] {
+            let (status, body) = route_json(
+                room.server.clone(),
+                core_request_with_authz("GET", &uri, test_bearer(&recipe), None),
+            )
+            .await;
+            assert_eq!(status, expected, "{uri} on {recipe}: {body}");
+        }
+    }
+}
