@@ -405,13 +405,20 @@ impl Vault {
     /// `swap` returns but the replacement's directory cannot be found at this
     /// vault's path, the swap is refused with both marks left as they were:
     /// the caller must not take either directory to be where it put it.
-    /// Reopen the replacement before it mints or retires a key.
+    /// Reopen the replacement before it mints or retires a key. A vault that
+    /// admitted an agent request, or recovered its proof clock, after the
+    /// replacement was made refuses it, and nothing moves: the replacement
+    /// would not know those proofs.
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,
         swap: impl FnOnce() -> std::io::Result<()>,
     ) -> Result<()> {
-        self.store.swap_out(&replacement.store, swap)
+        self.store.swap_out(
+            &replacement.store,
+            |txn| crate::authority::refuse_moved_proof_freshness(self, txn, replacement),
+            swap,
+        )
     }
     /// An owner's activation of the archived vault at `path` as a side vault
     /// of `source`, the vault that replaced it. Its key custody forks as a

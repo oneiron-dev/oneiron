@@ -169,6 +169,50 @@ A restore refuses, and changes nothing, when:
 
 The restore runs from the CLI only, because the server cannot swap out the vault it is serving.
 
+## Agents refused after the host clock ran ahead
+
+Each agent request carries a holder proof signed with the agent's clock time, and the vault
+takes it only within 60 seconds of its proof clock. That clock follows this host's clock but
+never runs back, so a replayed proof cannot get in. If the host clock jumps ahead while an
+agent calls (a bad NTP answer, a VM restored with the wrong time) and is then set back, the
+proof clock stays ahead. Every agent then gets 401 until the host clock catches up, and a
+restart does not help. You can tell this 401 from a bad credential: its message says
+`proof_clock_ahead` and names the command below, and the server log gives both clocks.
+
+```sh
+# stop `oneiron serve` first
+oneiron recover-clock
+```
+
+It moves the proof clock back to this host's clock and prints where it stood, where it stands
+now, and the gap in seconds:
+
+```json
+{
+  "old_floor": "2027-10-11T07:02:11.000Z",
+  "new_floor": "2026-10-11T07:05:40.000Z",
+  "gap_secs": 31535791,
+  "not_before": "2026-10-11T07:05:40.000Z"
+}
+```
+
+No proof signed before `not_before` gets in again. The vault also keeps the nonce of every
+proof it admitted while the clock was ahead, so none of those can be replayed either. Start
+`oneiron serve` again, and agents get in with their next request. Only the proof clock moves.
+The clock that stamps what the vault records stays where the jump left it until the host clock
+catches up, so anything recorded meanwhile carries that later time.
+
+It refuses, and changes nothing, when:
+
+- the vault is in use (stop `serve`);
+- the proof clock is not ahead of this host's clock: there is nothing to recover;
+- the host clock stayed ahead for more than a day while agents connected, or agents connected
+  while it was ahead under a version without `recover-clock` (it kept a nonce for a minute).
+  The vault keeps a proof's nonce for a day, so it no longer remembers every proof from that
+  time. It must keep refusing every proof signed up to the time the refusal names, which is
+  still ahead of the host clock, so lowering its clock would not let agents in. They get in
+  again once the host clock reaches the proof clock.
+
 ## Export
 
 ```sh
@@ -301,7 +345,9 @@ save. An anonymous session keeps nothing at all and cannot be saved or put on re
   `"off_record"` goes back.
 - `POST /v1/owner/off-record/close` ends it.
 
-The session lives in the server process: a restart ends it, and only saved turns remain.
+The session lives in the server process: a restart ends it, and only saved turns remain. These
+routes keep no wire receipt (the per-route and per-caller call counts other routes keep), so
+nothing records that a session ran.
 
 ### Everyone in a room (ARCH-0052 D5, the notice model)
 
@@ -330,10 +376,12 @@ you are on that room's roster; a name you pick for `POST /v1/owner/off-record` m
 with `room:`.
 
 Every save, export and suggestion posts a notice to the room (`saved_talk`, `saved_turn`,
-`saving_from_here`, `exported`, `save_suggested`), with who and when, never the content. Your
-own `promote` and `mode` above post one too when the stretch runs in a room. A stretch you start
-with `POST /v1/owner/off-record` has no room, so it posts none. Someone outside the room gets the
-same 404 as for a stretch that does not exist.
+`saving_from_here`, `exported`, `save_suggested`), with who and when, never the content. A save
+that finds nothing new to keep posts one too. Your own `promote` and `mode` above post one too
+when the stretch runs in a room. A 1:1 with your own companion posts none: a stretch you start
+with `POST /v1/owner/off-record` has no room, and a room that holds only you and this vault's own
+agents has nobody else to tell. Someone outside the room gets the same 404 as for a stretch that
+does not exist.
 
 A save keeps what the room showed you, as an export does: the visible messages of the turns your
 membership shows you. An agent's hidden messages (its own reasoning) and turn summaries stay out.

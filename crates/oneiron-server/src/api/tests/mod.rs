@@ -285,6 +285,19 @@ pub(super) fn owner_bearer() -> String {
     test_bearer("jti=owner-bearer")
 }
 
+/// The dev-mode credential a local page reads as the vault's owner with: an
+/// unverified bearer naming the embedded owner as a human reader.
+pub(super) fn owner_reader_bearer(server: &SyncServer) -> String {
+    let owner = server
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    format!(
+        "Bearer v2.scope=core:read;principal_ref={};actor_class=human.00",
+        owner.to_hex()
+    )
+}
+
 pub(super) fn core_request(
     method: &str,
     uri: &str,
