@@ -315,35 +315,6 @@ where
     Ok((ids, next_cursor))
 }
 
-pub(crate) fn count_live_entities_by_type(
-    vault: &oneiron::Vault,
-    entity_type: u8,
-) -> Result<u64, EnvelopedApiError> {
-    let mut after = None;
-    let mut total = 0_u64;
-    loop {
-        let ids = vault
-            .entities_by_type_page(entity_type, after.as_ref(), CORE_MAX_LIST_LIMIT)
-            .map_err(|error| {
-                tracing::error!(error = %error, entity_type, "core list count failed");
-                core_engine_error("core list count failed", error)
-            })?;
-        if ids.is_empty() {
-            break;
-        }
-        for id in &ids {
-            if !is_deleted_shell_for_core_list(vault, id)? {
-                total = total.saturating_add(1);
-            }
-        }
-        after = ids.last().copied();
-        if ids.len() < CORE_MAX_LIST_LIMIT {
-            break;
-        }
-    }
-    Ok(total)
-}
-
 pub(crate) fn is_deleted_shell_for_core_list(
     vault: &oneiron::Vault,
     id: &oneiron::EntityId,
