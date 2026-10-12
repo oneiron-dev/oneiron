@@ -473,10 +473,11 @@ fn stored_scope(
 /// The world the stored row `id` of `kind`, with body `data`, sits in: what
 /// every read that checks a world asks. A CLAIM names its own; a TASK and its
 /// authority facts sit where `stamp_task_birth` settled them, and an epoch
-/// SUMMARY where `settle_epoch_birth` did; every other record, and any other
-/// SUMMARY, is base reality (`Some(None)`). `None` where the row cannot prove
-/// its world (an erased CLAIM, a TASK whose stamp is gone or was never
-/// settled), which a read narrowed on worlds keeps out.
+/// SUMMARY where its birth stamp says (`settle_epoch_birth`); every other
+/// record, and any other SUMMARY, is base reality (`Some(None)`). `None` where
+/// the row cannot prove its world (an erased CLAIM, a TASK or epoch SUMMARY
+/// whose stamp is gone or was never settled), which a read narrowed on worlds
+/// keeps out.
 pub(crate) fn record_world_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -489,25 +490,16 @@ pub(crate) fn record_world_in(
             .ok()
             .map(|body| body.world));
     }
-    let settled = |worlds: &BTreeSet<ScopeId>| {
-        worlds
-            .first()
-            .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id()))
-    };
-    if kind == crate::registry::ENTITY_TYPE_SUMMARY {
-        return Ok(Some(
-            match stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds) {
-                Some(ScopeAxis::Some(worlds)) if worlds.len() == 1 => settled(&worlds).flatten(),
-                _ => None,
-            },
-        ));
-    }
-    if kind != crate::registry::ENTITY_TYPE_TASK {
+    let epoch = kind == crate::registry::ENTITY_TYPE_SUMMARY
+        && crate::compaction::decode_epoch_summary_body(data).is_ok();
+    if kind != crate::registry::ENTITY_TYPE_TASK && !epoch {
         return Ok(Some(None));
     }
     let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
     Ok(match worlds {
-        Some(ScopeAxis::Some(worlds)) if worlds.len() == 1 => settled(&worlds),
+        Some(ScopeAxis::Some(worlds)) if worlds.len() == 1 => worlds
+            .first()
+            .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
     })
 }
