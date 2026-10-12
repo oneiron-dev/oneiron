@@ -31,6 +31,44 @@ pub fn claim_reads_as_secret(body: &crate::claim::ClaimBody) -> bool {
     crate::batch::secret_scan::release_parts_read_whole(&parts)
 }
 
+/// Whether the write door, scanning On, refuses these stored body bytes. A
+/// door whose projection no read can follow exactly (context hydration, the
+/// owner's run review) serves none of such a body, whatever the owner's
+/// switch was when it was stored.
+pub fn write_door_refuses_body(bytes: &[u8]) -> bool {
+    crate::batch::secret_scan::scan_write_payload(bytes).is_err()
+}
+
+/// [`write_door_refuses_body`] over a claim as the write door reads a claim
+/// candidate: its encoding.
+pub fn write_door_refuses_claim(body: &crate::claim::ClaimBody) -> bool {
+    match crate::claim::encode_claim_body(body) {
+        Ok(bytes) => write_door_refuses_body(&bytes),
+        Err(_) => true,
+    }
+}
+
+/// Decoded MessagePack as a memory read serves it, as JSON. Its parts are
+/// judged before the projection drops a float's width; then the projection
+/// itself, still as MessagePack (a binary nulled, a non-text key dropped, a
+/// repeated key folded, each number at its width), is read as the JSON it
+/// becomes; then that JSON, for a credential the projection spells.
+pub(crate) fn served_messagepack_json(value: rmpv::Value) -> Value {
+    released_messagepack_json(value, false).0
+}
+
+/// [`served_messagepack_json`] with nulls in place of markers when `null`
+/// (the export representation), and whether anything was removed.
+fn released_messagepack_json(mut value: rmpv::Value, null: bool) -> (Value, bool) {
+    use crate::batch::secret_scan::{sanitize_credentials, sanitize_messagepack_credentials};
+    let mut removed = sanitize_messagepack_credentials(&mut value, null);
+    let mut projected = crate::companion::companion_value_projection(&value);
+    removed |= sanitize_messagepack_credentials(&mut projected, null);
+    let mut json = crate::companion::companion_value_to_json(&projected);
+    removed |= sanitize_credentials(&mut json, null);
+    (json, removed)
+}
+
 /// Filter a legacy raw transport without changing safe payload bytes or types.
 pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     // The original bytes go back only when no member of them is redacted: a
@@ -78,11 +116,10 @@ fn unchanged_or_marker(bytes: Vec<u8>, marker: &[u8]) -> Vec<u8> {
 /// A credential in a non-structured body replaces the entire body.
 pub fn redacted_memory_body(bytes: &[u8]) -> Value {
     let mut cursor = std::io::Cursor::new(bytes);
-    let mut value = if let Ok(mut value) = rmpv::decode::read_value(&mut cursor)
+    let mut value = if let Ok(value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == bytes.len() as u64
     {
-        crate::batch::secret_scan::sanitize_messagepack_credentials(&mut value, false);
-        crate::companion::companion_value_to_json(&value)
+        served_messagepack_json(value)
     } else if let Ok(value) = serde_json::from_slice(bytes) {
         value
     } else if crate::batch::secret_scan::scan_undecoded_body(bytes).is_some() {
@@ -137,12 +174,12 @@ impl Vault {
             let mut body = if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
                 nulled = true;
                 Value::Null
-            } else if let Ok(mut value) = rmpv::decode::read_value(&mut cursor)
+            } else if let Ok(value) = rmpv::decode::read_value(&mut cursor)
                 && cursor.position() == bytes.len() as u64
             {
-                nulled |=
-                    crate::batch::secret_scan::sanitize_messagepack_credentials(&mut value, true);
-                crate::companion::companion_value_to_json(&value)
+                let (value, removed) = released_messagepack_json(value, true);
+                nulled |= removed;
+                value
             } else if let Ok(value) = serde_json::from_slice(bytes) {
                 value
             } else if crate::batch::secret_scan::scan_undecoded_body(bytes).is_some() {

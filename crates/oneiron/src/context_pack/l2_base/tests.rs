@@ -6,7 +6,7 @@ use crate::context_pack::{ContextPackBuilder, PackFormat};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 
 fn fixture() -> (tempfile::TempDir, Vault, EntityId) {
@@ -33,13 +33,13 @@ fn claim_with_text(
     vault: &Vault,
     id: EntityId,
     subject: EntityId,
-    value: &str,
+    value: impl Into<rmpv::Value>,
     text: &str,
 ) -> Result<()> {
     let body = ClaimBody::new(
         "profile.preference",
         ClaimSubject::Entity(subject),
-        rmpv::Value::from(value),
+        value.into(),
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
@@ -229,6 +229,97 @@ fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<
         assert!(!text.contains("l2-private-material"), "{format:?}");
         assert!(!text.contains("provider-private-material"), "{format:?}");
         assert!(text.contains("safe-value"), "{format:?}");
+    }
+    Ok(())
+}
+
+/// The public BIP39 test vector, as a recovery phrase's words.
+const PHRASE: &str = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+#[test]
+fn a_body_the_write_door_refuses_is_withheld_whole_from_every_context_output() -> Result<()> {
+    let (_dir, vault, subject) = fixture();
+    let id = crate::vault::embedded_owner_actor_id()?;
+    let owner =
+        vault.authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, crate::batch::secret_scan::SecretScanMode::Off, 10)?;
+    let field = |key: String, value: &str| (rmpv::Value::from(key), rmpv::Value::from(value));
+    let words = PHRASE.split(' ').enumerate();
+    // Sol R8: a word per field and the phrase whole under a key the context
+    // handles drop; then a word per field behind keys that Markdown and
+    // Plaintext rows leave out, and the phrase whole under a credential name.
+    let mut handled: Vec<_> = words
+        .clone()
+        .map(|(at, word)| match at {
+            0..6 => field(format!("{:02}", at + 1), word),
+            _ => field(format!("~{:02}", at + 1), word),
+        })
+        .collect();
+    handled.insert(6, field("identity_key".into(), PHRASE));
+    let mut keyed: Vec<_> = words
+        .map(|(at, word)| field(format!("PROSE{:02}", at + 1), word))
+        .collect();
+    keyed.push(field("password".into(), PHRASE));
+    // Bodies the write door accepts: a credential field holding a stand-in
+    // the write door allows and every release door still clears.
+    let accepted = |title: &str| {
+        rmpv::Value::Map(vec![
+            field("title".into(), title),
+            field("password".into(), "changeme"),
+        ])
+    };
+    let assets = [
+        (rmpv::Value::Map(handled), true),
+        (rmpv::Value::Map(keyed.clone()), true),
+        (accepted("kept asset words"), false),
+    ];
+    for (at, (value, refused)) in (0x50..).zip(assets) {
+        let mut body = Vec::new();
+        rmpv::encode::write_value(&mut body, &value).unwrap();
+        assert_eq!(
+            crate::batch::secret_scan::scan_write_payload(&body).is_err(),
+            refused,
+            "{value}"
+        );
+        let asset = crate::test_util::entity(at);
+        vault
+            .batch()
+            .put(&asset, ENTITY_TYPE_ASSET, TimeRange { start: 1, end: 1 }, 1, &body)
+            .text(&asset, &[("body", "l2needle")])
+            .commit()?;
+    }
+    let refused = crate::test_util::entity(0x61);
+    let kept = crate::test_util::entity(0x62);
+    claim_with_text(&vault, refused, subject, rmpv::Value::Map(keyed), "l2needle")?;
+    claim_with_text(&vault, kept, subject, accepted("kept claim words"), "l2needle")?;
+    let full = || {
+        assembly(&vault, subject)
+            .field_profile(crate::context_pack::FieldProfile::Full)
+            .max_item_tokens(0)
+    };
+
+    let pack = full().run()?;
+    let l2 = pack.l2_base.as_ref().expect("L2 prefix");
+    assert_eq!(l2.evidence_ids(), &[kept], "L2: {}", l2.body);
+    assert!(!l2.body.contains("sausage"), "L2: {}", l2.body);
+    assert!(!l2.body.contains("changeme"), "L2: {}", l2.body);
+    assert!(l2.body.contains("kept claim words"), "L2: {}", l2.body);
+    assert!(pack.results.iter().all(|row| row.id != refused));
+    for format in [
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Plaintext,
+        PackFormat::OpenaiCompat,
+        PackFormat::AnthropicMessages,
+        PackFormat::Gemini,
+    ] {
+        let text = String::from_utf8(full().format(format).run_serialized()?).unwrap();
+        assert!(!text.contains("sausage"), "{format:?}: {text}");
+        assert!(!text.contains("changeme"), "{format:?}: {text}");
+        assert!(text.contains("kept asset words"), "{format:?}: {text}");
+        assert!(text.contains("kept claim words"), "{format:?}: {text}");
     }
     Ok(())
 }

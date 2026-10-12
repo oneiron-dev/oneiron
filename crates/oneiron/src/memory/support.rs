@@ -10,7 +10,6 @@ use rmpv::Value;
 use crate::Vault;
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
-use crate::companion::companion_value_to_json;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -302,15 +301,11 @@ pub(super) fn decode_body_json(bytes: &[u8]) -> Option<serde_json::Value> {
         return None;
     }
     let mut cursor = bytes;
-    let mut value = rmpv::decode::read_value(&mut cursor).ok()?;
+    let value = rmpv::decode::read_value(&mut cursor).ok()?;
     if !cursor.is_empty() {
         return None;
     }
-    // The MessagePack is read before the projection drops a float's width.
-    crate::batch::export::redact_messagepack_credentials(&mut value);
-    let mut value = companion_value_to_json(&value);
-    crate::batch::export::redact_credentials(&mut value);
-    Some(value)
+    Some(crate::batch::export::served_messagepack_json(value))
 }
 
 pub(crate) fn facade_provenance(verb: &str) -> Value {

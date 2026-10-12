@@ -87,9 +87,10 @@ pub(crate) fn context_entity_matches_read_snapshot(
 /// via `options.claim_bodies` and are NOT re-decoded). Fail-closed: a type-0
 /// record whose body is missing or fails the pinned CLAIM ABI decode is
 /// excluded — it never surfaces with empty fields — and counted in
-/// `claims_suppressed`, exactly like a status-gated claim. Bodies of every
-/// other type byte stay opaque and are projected through the generic
-/// best-effort field decode, unchanged.
+/// `claims_suppressed`, exactly like a status-gated claim, and so is one whose
+/// body the write door refuses. Bodies of every other type byte stay opaque
+/// and are projected through the generic best-effort field decode, unchanged;
+/// one the write door refuses hydrates no field.
 pub(super) fn hydrate_entity(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
@@ -187,6 +188,17 @@ pub(super) fn hydrate_entity(
         }
     }
 
+    // A claim the write door refuses, stored while the owner's scan was off,
+    // is withheld as an undecodable one is: no read can follow this door's
+    // projection and its writers exactly (a float's width, a dropped key), so
+    // none of such a body is served.
+    if gated_claim_body.is_some()
+        && crate::batch::export::write_door_refuses_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+    {
+        *claims_suppressed += 1;
+        return Ok(None);
+    }
+
     let critical = gated_claim_body.is_some_and(|body| {
         options.policy.criticality_for_predicate(&body.predicate)
             == crate::gate::PolicyCriticality::Critical
@@ -206,15 +218,27 @@ pub(super) fn hydrate_entity(
                     header.entity_type,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                 )?;
-                let mut fields =
-                    decode_entity_fields(&body, header.entity_type).unwrap_or_default();
-                if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-                    fields.insert(
-                        "markdown".to_owned(),
-                        serde_json::Value::String(vault.note_text_in_txn(rtxn, id)?),
-                    );
+                let markdown = if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+                    Some(vault.note_text_in_txn(rtxn, id)?)
+                } else {
+                    None
+                };
+                // A body the write door refuses (a note's text is its body
+                // too) hydrates no field, as one no decoder reads hydrates none.
+                let refused = crate::batch::export::write_door_refuses_body(&body)
+                    || markdown.as_ref().is_some_and(|text| {
+                        crate::batch::export::write_door_refuses_body(text.as_bytes())
+                    });
+                if refused {
+                    HashMap::new()
+                } else {
+                    let mut fields =
+                        decode_entity_fields(&body, header.entity_type).unwrap_or_default();
+                    if let Some(markdown) = markdown {
+                        fields.insert("markdown".to_owned(), serde_json::Value::String(markdown));
+                    }
+                    fields
                 }
-                fields
             }
         })
     } else {

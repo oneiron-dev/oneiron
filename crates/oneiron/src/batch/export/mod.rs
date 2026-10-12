@@ -1,8 +1,10 @@
 mod credential_filter;
 pub use credential_filter::{
     claim_reads_as_secret, redact_credentials, redact_messagepack_credentials,
-    redacted_memory_body, redacted_memory_payload,
+    redacted_memory_body, redacted_memory_payload, write_door_refuses_body,
+    write_door_refuses_claim,
 };
+pub(crate) use credential_filter::served_messagepack_json;
 mod export_authority;
 mod export_egress;
 mod export_enumerate;
