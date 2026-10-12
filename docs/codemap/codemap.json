@@ -8750,7 +8750,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 8,
       "re-export": 1,
       "struct": 1,
@@ -8855,7 +8855,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 1
      }
     },
@@ -8880,7 +8880,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -8914,7 +8914,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/tests_room_saver.rs",
@@ -23572,7 +23572,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "HostWriteOrigin",
@@ -23581,7 +23581,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "fn": 11,
       "struct": 2
      }
@@ -23862,7 +23862,7 @@
      "path": "src/memory/witness/base.rs",
      "purpose": "Base witness landing: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -23894,7 +23894,7 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -23904,7 +23904,7 @@
      "path": "src/memory/witness/session.rs",
      "purpose": "Session overlay landing: journal staging from the door's authorized values, room-shell claim",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -24623,8 +24623,18 @@
      "path": "src/off_record/lifecycle/on_record.rs",
      "purpose": "A room on record (ARCH-0052 D5)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/participant.rs",
+     "purpose": "A run's session handle, bound to the participant it acts as (Codex burn engine-prs-01)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -24655,7 +24665,7 @@
      "path": "src/off_record/lifecycle/room.rs",
      "purpose": "Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 11,
       "type": 1
      }
@@ -24670,7 +24680,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 11,
       "struct": 2
      }
@@ -26459,7 +26469,7 @@
      "path": "src/pipeline/channels.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -26681,6 +26691,16 @@
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/temporal_bound.rs",
+     "purpose": "The scoped temporal bound (ARCH-0004 #temporal-bound): how far a scoped call's temporal channel widens, the…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/facet_status_world.rs",
@@ -26748,7 +26768,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/temporal.rs",
@@ -26828,7 +26848,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 5,
       "fn": 12,
       "re-export": 1,
@@ -40087,7 +40107,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40150,7 +40170,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40626,9 +40646,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 34,
+   "over_bar": 35,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2466,
+   "source_files": 2468,
    "test_files": 783
   },
   "oneiron-android": {

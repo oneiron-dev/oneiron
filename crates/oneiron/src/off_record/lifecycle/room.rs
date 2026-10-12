@@ -83,11 +83,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
             self.vault.config.off_record_overlay_budget_bytes,
             Some((room, by)),
         )?;
-        Ok(OffRecordSession {
-            vault: self.vault,
-            session_ref: key,
-            entry,
-        })
+        Ok(self.handle(key, entry))
     }
 
     /// Binds the stretch `session_ref` in `room` for `actor`, who must be on
@@ -752,13 +748,17 @@ pub(super) fn is_member_in_txn(
     room: EntityId,
     actor: EntityId,
 ) -> Result<bool> {
-    if vault.get_entity_type_in_txn(txn, &room)? != Some(ENTITY_TYPE_CONVERSATION) {
+    // A deleted room keeps its shell and has no one in it, as an absent one
+    // has no one: the liveness the room's body door refuses on, read first.
+    if crate::vault::live_entity_row_in_txn(&vault.store, txn, &room)?.live_type()
+        != Some(ENTITY_TYPE_CONVERSATION)
+    {
         return Ok(false);
     }
     Ok(vault.members_in_txn(txn, room)?.contains(&actor))
 }
 
-fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
+pub(super) fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
     Error::OffRecord(OffRecordError::OffRecordNotInRoom {
         session_ref: session_ref.to_owned(),
         actor_ref: actor.to_hex(),
