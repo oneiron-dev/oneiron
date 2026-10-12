@@ -2,7 +2,7 @@
 //! nothing of a device-local claim from the gate's receipts or its consent
 //! tray, on the Memory doors and the live-view adapters alike, and such a
 //! claim takes no place in a page. Nor does it learn how a claim it was
-//! served has changed since.
+//! served, or one it proposed, has changed since.
 
 use super::*;
 use crate::claim::{CallerLocality, ClaimBody, ClaimSubject};
@@ -151,8 +151,8 @@ fn a_caller_off_this_device_learns_no_later_state_of_a_device_local_claim() {
             b"world",
         )
         .unwrap();
-    // A claim a session was served, retracted since. A board read reports
-    // each served row whose state moved.
+    // A claim a session was served, or proposed, retracted since. A board
+    // read reports each served row whose state moved, and each own proposal.
     let id = EntityId::now();
     let mut body = ClaimBody::new(
         "test.device_local_lifecycle",
@@ -179,5 +179,23 @@ fn a_caller_off_this_device_learns_no_later_state_of_a_device_local_claim() {
         let read =
             vault.scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner).at(locality));
         assert_eq!(read.read_set_lifecycle(&id).unwrap(), state, "{locality:?}");
+        // Sol R2 F5: the session's own proposals fold apart from that read.
+        let session: crate::context_board::SessionReadSet =
+            serde_json::from_value(serde_json::json!({
+                "rows": {},
+                "loaded_skills": {},
+                "proposal_count": 0,
+                "own_proposals": [format!("claim:{}", id.to_hex())],
+            }))
+            .unwrap();
+        let mut line = crate::context_board::ChangedLine::default();
+        session
+            .fold_own_changes(&vault, Some(owner), locality, &mut line, 16)
+            .unwrap();
+        assert_eq!(
+            line.events.len(),
+            usize::from(state.is_some()),
+            "{locality:?}"
+        );
     }
 }

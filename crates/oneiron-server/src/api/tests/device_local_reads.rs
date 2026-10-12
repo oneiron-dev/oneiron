@@ -41,12 +41,27 @@ impl Caller {
         uri: &str,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
+        self.call_keyed(from, method, uri, body, None).await
+    }
+
+    /// [`Caller::call`] under an `Idempotency-Key`, if `key` names one.
+    async fn call_keyed(
+        &self,
+        from: Origin,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+        key: Option<&str>,
+    ) -> (StatusCode, Value) {
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
             .header(CONTENT_TYPE, "application/json");
         if let Some((name, value)) = from.forwarded {
             request = request.header(name, value);
+        }
+        if let Some(key) = key {
+            request = request.header("Idempotency-Key", key);
         }
         let request = request
             .body(body.map_or_else(Body::empty, |body| Body::from(body.to_string())))
@@ -525,4 +540,147 @@ async fn a_pack_off_this_device_reads_a_device_local_match_as_no_match() {
         }
     };
     assert_eq!(empty("marigold").await, empty("zinnia").await);
+}
+
+/// Sol R2 F6: a keyed board retry replays its first success. A board that
+/// told a session off this device how a claim it was served changed goes out
+/// again on this device, but not off it once the claim's world is
+/// device-local, though no document of the board names the claim.
+#[tokio::test]
+async fn a_keyed_board_retry_off_this_device_replays_no_device_local_row() {
+    let (_dir, server, caller, grower) = serve();
+    let world = put_world(&server.vault);
+    let claim = put_orchid_claim(
+        &server,
+        grower,
+        "test.orchid_retried",
+        Some(world),
+        "orchid ledger retried",
+    );
+    index(&server);
+    let (status, read) = caller
+        .call(
+            AWAY,
+            "POST",
+            "/v1/core/query",
+            Some(json!({"query": "orchid", "view": "standard", "session_id": "kept"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["items"][0]["id"], claim.to_hex(), "{read}");
+    server.vault.retract_claim(&claim, 3).unwrap();
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let turn = EntityId::now();
+    let author = rmp_serde::to_vec_named(&json!({ "actor": owner.to_hex() })).unwrap();
+    server
+        .vault
+        .put_entity(
+            &turn,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &author,
+        )
+        .unwrap();
+    let board = json!({"session": {"session_id": "kept"}, "turn": {"id": turn.to_hex()}});
+    let keyed = |from| {
+        let (caller, board) = (&caller, board.clone());
+        async move {
+            caller
+                .call_keyed(
+                    from,
+                    "POST",
+                    "/v1/core/context-board",
+                    Some(board),
+                    Some("kept-board"),
+                )
+                .await
+        }
+    };
+
+    let (status, first) = keyed(AWAY).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        first["changed"][1],
+        json!(format!("{}: retracted", claim.to_hex())),
+        "{first}"
+    );
+    server.vault.set_world_device_only(world, true).unwrap();
+    let (status, refused) = keyed(AWAY).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused}"
+    );
+    let (status, replayed) = keyed(HERE).await;
+    assert_eq!(status, StatusCode::OK, "{replayed}");
+    assert_eq!(replayed, first);
+}
+
+/// Sol R2 F3: a setup page is continued from the board it retained, which
+/// told this connector, off this device, how a claim it was served changed.
+/// Once the claim's world is device-local the cursor is refused, never
+/// answered from that board.
+#[tokio::test]
+async fn a_setup_page_off_this_device_continues_no_board_naming_a_device_local_row() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let actor = EntityId::now();
+    register_mcp_actor(&server, "kept-pages", actor, oneiron::EdgeActorClass::Human).await;
+    let world = put_world(&server.vault);
+    let claim = put_orchid_claim(
+        &server,
+        actor,
+        "test.orchid_paged",
+        Some(world),
+        "orchid ledger paged",
+    );
+    index(&server);
+    let call = |path: &'static str, tool: &'static str, arguments: Value| {
+        let server = Arc::clone(&server);
+        async move {
+            let arguments = mcp_merge_args(mcp_endpoint_envelope(actor, "read_board"), arguments);
+            route_json(
+                server,
+                mcp_endpoint_call_request(path, "kept-pages", tool, tool, arguments),
+            )
+            .await
+        }
+    };
+
+    let (status, read) = call(
+        MCP_TOOL_FIRST_PATH,
+        "memory.query",
+        json!({"arguments": {"request": {"query": "orchid", "view": "standard"}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(
+        read["result"]["structuredContent"]["output"]["response"]["items"][0]["id"],
+        claim.to_hex(),
+        "{read}"
+    );
+    server.vault.retract_claim(&claim, 3).unwrap();
+    let (status, first) = call("/mcp", "setup_oneiron", json!({"page": {"limit": 1}})).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let first = &first["result"]["structuredContent"];
+    assert!(
+        first
+            .to_string()
+            .contains(&format!("{}: retracted", claim.to_hex())),
+        "{first}"
+    );
+    let cursor = first["meta"]["page"]["cursor"].as_str().unwrap().to_owned();
+    server.vault.set_world_device_only(world, true).unwrap();
+    let (status, refused) = call(
+        "/mcp",
+        "setup_oneiron",
+        json!({"page": {"limit": 1, "cursor": cursor}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{refused}");
+    assert!(refused.get("result").is_none(), "{refused}");
+    assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
 }
