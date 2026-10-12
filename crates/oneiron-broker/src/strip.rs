@@ -15,9 +15,12 @@
 //! that could spell a form, holding a backslash or a `%`, is also read
 //! through every chain of up to [`DEPTH`] such decodings, and every form is
 //! searched in every reading. Only the source bytes of each match become
-//! [`MARKER`]. The broker sends only a key in the alphabet such a run holds
-//! ([`admits`]), so a part-encoded echo never splits across runs. The whole
-//! reply is buffered first, so a form cannot split across reads.
+//! [`MARKER`]. A run that some chain of [`DEPTH`] decodings leaves still
+//! decodable could hide a form deeper than that, so the whole run becomes
+//! [`MARKER`]: text encoded that deep is over-redacted, never passed. The
+//! broker sends only a key in the alphabet such a run holds ([`admits`]), so a
+//! part-encoded echo never splits across runs. The whole reply is buffered
+//! first, so a form cannot split across reads.
 //!
 //! The rule works on bytes, never through a parsed JSON tree: each decoded
 //! reading sits in a buffer wiped on drop.
@@ -47,7 +50,8 @@ pub fn strip(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
     out
 }
 
-/// How many decodings, one on another, a run is read through.
+/// How many decodings, one on another, a run is read through. A run still
+/// decodable after that many goes whole.
 const DEPTH: usize = 3;
 
 /// Whether the rule can be trusted with `key`: each byte is one a URL-like
@@ -62,7 +66,8 @@ pub(crate) fn admits(key: &[u8]) -> bool {
         && memchr::memmem::find(MARKER, key).is_none()
 }
 
-/// Whether `bytes` holds any form of `key`.
+/// Whether `bytes` holds any form of `key`, or a run encoded too deep to rule
+/// one out.
 #[must_use]
 pub(crate) fn contains_key(key: &[u8], bytes: &[u8]) -> bool {
     strip(key, bytes).as_slice() != bytes
@@ -238,7 +243,8 @@ type Decoding = (u8, fn(&[u8]) -> Decoded);
 /// in each reading through up to [`DEPTH`] decodings (JSON-unescaped or
 /// percent-decoded, in any order), replaced at the match's source bytes only:
 /// one [`MARKER`] per stretch of marked bytes. A match marks one bit per run
-/// byte, so overlapping and repeated matches cost no more room.
+/// byte, so overlapping and repeated matches cost no more room. A reading
+/// [`DEPTH`] decodings deep that can still be decoded marks the whole run.
 fn strip_run(forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec<u8>) {
     let mut marked = vec![0_u64; run.len().div_ceil(64)];
     search(forms, run, None, 0, run.len(), &mut marked);
@@ -261,6 +267,7 @@ fn strip_run(forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec<u8>) {
 /// deep whose bytes' sources start at `starts` in the run of `run_len` bytes
 /// (the run itself when `None`), then reads it through each decoding that
 /// changes it. Depth first, so only one chain of readings is held at a time.
+/// At [`DEPTH`], a reading that can still be decoded marks every run byte.
 fn search(
     forms: &[Zeroizing<Vec<u8>>],
     text: &[u8],
@@ -291,6 +298,9 @@ fn search(
         }
     }
     if depth == DEPTH {
+        if still_decodes(text) {
+            marked.fill(u64::MAX);
+        }
         return;
     }
     let decodings: [Decoding; 2] = [(b'\\', json_unescaped_from), (b'%', percent_decoded_from)];
@@ -308,6 +318,20 @@ fn search(
         };
         search(forms, &decoded, Some(&from), depth + 1, run_len, marked);
     }
+}
+
+/// Whether a decoding would still read an escape in `text`: a `%` and two hex
+/// digits, or a JSON escape. It allocates nothing, so failing closed costs no
+/// room beyond the search.
+fn still_decodes(text: &[u8]) -> bool {
+    memchr::memchr2_iter(b'\\', b'%', text).any(|at| {
+        if text[at] == b'%' {
+            text.get(at + 1..at + 3)
+                .is_some_and(|pair| pair.iter().all(u8::is_ascii_hexdigit))
+        } else {
+            escape_len(&text[at..]) > 1
+        }
+    })
 }
 
 /// `run` JSON-unescaped, and for each unescaped byte where in `run` its

@@ -44,10 +44,15 @@ fn echoes(key: &str) -> Vec<Vec<u8>> {
     echoes
 }
 
+/// How many decodings the oracle reads through: past the rule's own limit,
+/// so it sees what the rule leaves unread.
+const ORACLE_DEPTH: usize = 8;
+const _: () = assert!(ORACLE_DEPTH > super::DEPTH);
+
 /// Whether `text` still gives the key away, read as a client could read it:
-/// through any chain of up to three decodings (JSON escapes, percent-encoding,
-/// in any order), then as is or decoded from any base64 run in that reading,
-/// at any offset.
+/// through any chain of up to [`ORACLE_DEPTH`] decodings (JSON escapes,
+/// percent-encoding, in any order), then as is or decoded from any base64 run
+/// in that reading, at any offset.
 fn leaks(text: &[u8], key: &str) -> bool {
     let contains = |haystack: &[u8]| {
         haystack
@@ -55,15 +60,15 @@ fn leaks(text: &[u8], key: &str) -> bool {
             .any(|window| window == key.as_bytes())
     };
     readings(text).iter().any(|reading| {
-        contains(reading) || base64_readings(reading).any(|decoded| contains(&decoded))
+        contains(reading) || base64_readings(reading, key.len()).any(|decoded| contains(&decoded))
     })
 }
 
-/// `text` and each reading of it through up to three decodings.
+/// `text` and each reading of it through up to [`ORACLE_DEPTH`] decodings.
 fn readings(text: &[u8]) -> Vec<Vec<u8>> {
     let mut all = vec![text.to_vec()];
     let mut level = all.clone();
-    for _ in 0..3 {
+    for _ in 0..ORACLE_DEPTH {
         level = level
             .iter()
             .flat_map(|reading| [json_unescaped(reading), percent_decoded(reading)])
@@ -74,10 +79,11 @@ fn readings(text: &[u8]) -> Vec<Vec<u8>> {
     all
 }
 
-/// Every base64 run of `text`, read at each start offset and each end, in
-/// both alphabets, leniently: a key inside a longer encoded text shows up in
-/// one of those readings.
-fn base64_readings(text: &[u8]) -> impl Iterator<Item = Vec<u8>> + '_ {
+/// Every base64 run of `text` at least `shortest` long, read at each start
+/// offset and each end, in both alphabets, leniently: a key inside a longer
+/// encoded text shows up in one of those readings. A run shorter than the key
+/// cannot encode it.
+fn base64_readings(text: &[u8], shortest: usize) -> impl Iterator<Item = Vec<u8>> + '_ {
     let lenient = |alphabet: &base64::alphabet::Alphabet| {
         GeneralPurpose::new(
             alphabet,
@@ -91,6 +97,7 @@ fn base64_readings(text: &[u8]) -> impl Iterator<Item = Vec<u8>> + '_ {
         lenient(&base64::alphabet::URL_SAFE),
     ];
     text.split(|byte| !(byte.is_ascii_alphanumeric() || b"+/-_".contains(byte)))
+        .filter(move |run| run.len() >= shortest)
         .flat_map(|run| (0..4).flat_map(move |skip| (0..4).map(move |cut| (run, skip, cut))))
         .filter_map(|(run, skip, cut)| run.get(skip..run.len().checked_sub(cut)?))
         .flat_map(move |window| {
@@ -320,16 +327,16 @@ fn percent_component(text: &str) -> String {
         .collect()
 }
 
-/// Each character as JSON's `\uXXXX`, or only every other one.
+/// Each character as JSON's `\uXXXX`, or only every other one, with each
+/// backslash and quote left between escaped as JSON must.
 fn json_spelled(text: &str, every: usize) -> String {
     text.chars()
         .enumerate()
-        .map(|(index, c)| {
-            if index % every == 0 {
-                format!("\\u{:04x}", u32::from(c))
-            } else {
-                c.to_string()
-            }
+        .map(|(index, c)| match c {
+            c if index % every == 0 => format!("\\u{:04x}", u32::from(c)),
+            '\\' => "\\\\".to_owned(),
+            '"' => "\\\"".to_owned(),
+            c => c.to_string(),
         })
         .collect()
 }
@@ -381,6 +388,14 @@ fn a_base64_echo_spelled_in_percent_bytes_is_redacted() {
     }
 }
 
+/// A number below `below`, drawn from `state` with a fixed-seed generator.
+fn draw(state: &mut u64, below: usize) -> usize {
+    *state = state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    usize::try_from(*state >> 33).unwrap_or_default() % below
+}
+
 /// Keys from the broker's alphabet: fixed ones, then a spread drawn from it
 /// with a fixed seed.
 fn alphabet_keys() -> Vec<String> {
@@ -394,13 +409,7 @@ fn alphabet_keys() -> Vec<String> {
     let mut state: u64 = 0x1407_5eed;
     for len in [8, 9, 10, 13, 16, 21, 32, 47] {
         let key: String = (0..len)
-            .map(|_| {
-                state = state
-                    .wrapping_mul(6_364_136_223_846_793_005)
-                    .wrapping_add(1_442_695_040_888_963_407);
-                let index = usize::try_from(state >> 33).unwrap_or_default() % ALPHABET.len();
-                char::from(ALPHABET[index])
-            })
+            .map(|_| char::from(ALPHABET[draw(&mut state, ALPHABET.len())]))
             .collect();
         keys.push(key);
     }
@@ -466,4 +475,165 @@ fn every_inner_form_in_every_outer_spelling_is_redacted() {
             }
         }
     }
+}
+
+#[test]
+fn a_key_nested_past_the_reading_depth_goes_with_its_run() {
+    // Astra's re-check on #1407: the key's base64 in a URL query, that URL in
+    // three nested `next` parameters, each value URL-component encoded once:
+    // four percent layers on the token. A client reads each `next` once, then
+    // the token, then its base64.
+    let mut url = format!(
+        "https://provider.example/echo?token={}",
+        percent_component(&STANDARD.encode(URL_KEY))
+    );
+    for host in ["relay1.example", "relay2.example", "relay3.example"] {
+        url = format!("https://{host}/go?next={}", percent_component(&url));
+    }
+    let client_reads = |url: &str| -> Option<Vec<u8>> {
+        let param = |url: &reqwest::Url, name: &str| {
+            url.query_pairs()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.into_owned())
+        };
+        let mut current = reqwest::Url::parse(url).ok()?;
+        for _ in 0..3 {
+            current = reqwest::Url::parse(&param(&current, "next")?).ok()?;
+        }
+        STANDARD.decode(param(&current, "token")?).ok()
+    };
+    assert_eq!(client_reads(&url).as_deref(), Some(URL_KEY.as_bytes()));
+    let body = format!(
+        "{{\"choices\":[{{\"message\":{{\"content\":\"{url}\"}}}}],\"usage\":{{\"input_tokens\":3}}}}"
+    );
+    assert_eq!(body.len(), 324, "Astra's body: {body}");
+    assert!(leaks(body.as_bytes(), URL_KEY));
+    let stripped = strip(URL_KEY.as_bytes(), body.as_bytes());
+    assert!(
+        !leaks(&stripped, URL_KEY),
+        "{}",
+        String::from_utf8_lossy(&stripped)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&stripped).expect("still json");
+    let content = parsed["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or_default();
+    assert_eq!(content, "[redacted]");
+    assert_eq!(client_reads(content), None);
+    assert_eq!(parsed["usage"]["input_tokens"], 3);
+    // The same URL as a header value, say `Location`.
+    let stripped = strip(URL_KEY.as_bytes(), url.as_bytes());
+    assert_eq!(stripped.as_slice(), MARKER);
+}
+
+#[test]
+fn a_key_split_across_two_chains_of_decodings_goes_with_its_run() {
+    // Astra's re-check on #1407: one part of the key read back through JSON,
+    // percent, JSON, the other through percent, JSON, percent. Each part is
+    // three decodings deep; the whole key only shows in a four-step reading.
+    let key = "sk-test-sentinel-0000";
+    let (head, tail) = key.split_at(8);
+    let json = |text: &str| json_spelled(text, 1);
+    let echo = format!(
+        "{}{}",
+        json(&percent_every_byte(&json(head))),
+        percent_every_byte(&json(&percent_every_byte(tail)))
+    );
+    let four_steps = percent_decoded(&json_unescaped(&percent_decoded(&json_unescaped(
+        echo.as_bytes(),
+    ))));
+    assert_eq!(four_steps, key.as_bytes());
+    let body = format!("{{\"error\":{{\"message\":\"bad key: {echo}\"}},\"n\":1}}");
+    let header = format!("Bearer error=\"invalid_token\", error_description=\"{echo}\"");
+    for text in [body.as_str(), header.as_str()] {
+        assert!(leaks(text.as_bytes(), key), "the oracle must see {text}");
+        let stripped = strip(key.as_bytes(), text.as_bytes());
+        assert!(
+            !leaks(&stripped, key),
+            "{text} survived as {}",
+            String::from_utf8_lossy(&stripped)
+        );
+        // The run goes whole; the text around it stays.
+        let (before, after) = text.split_once(&echo).unwrap_or_default();
+        assert_eq!(
+            String::from_utf8_lossy(&stripped),
+            format!("{before}[redacted]{after}")
+        );
+    }
+}
+
+#[test]
+fn a_key_in_any_chain_of_encodings_is_redacted_or_goes_with_its_run() {
+    // Random alphabet keys, each form in a random chain of one to six layers.
+    // A key no deeper than the rule reads is redacted at its own bytes, and
+    // the words beside it in its run stay; a deeper one takes its run along.
+    // The text outside the run always stays.
+    //
+    // Each layer comes off with one of the rule's two decodings and spells
+    // every escape of the layer below it, so a reading takes the layers off
+    // in one order only.
+    let layers: [(&str, Spelling); 4] = [
+        ("percent component", percent_component),
+        ("json every other char", |text| json_spelled(text, 2)),
+        ("percent every byte", percent_every_byte),
+        ("json every char", |text| json_spelled(text, 1)),
+    ];
+    let mut state: u64 = 0x1407_dee9;
+    let mut seen = [0_usize; 2];
+    for key in alphabet_keys() {
+        let mut inner = vec![key.clone()];
+        for engine in [&STANDARD, &URL_SAFE_NO_PAD] {
+            inner.push(engine.encode(&key));
+            inner.push(engine.encode(format!("u:{key}")));
+        }
+        for _ in 0..16 {
+            let mut echo = inner[draw(&mut state, inner.len())].clone();
+            let mut chain = Vec::new();
+            for _ in 0..=draw(&mut state, 6) {
+                // A long echo takes only the first, lighter layer, so the
+                // oracle stays quick.
+                let choices = if echo.len() > 200 { 1 } else { layers.len() };
+                let (name, layer) = layers[draw(&mut state, choices)];
+                let next = layer(&echo);
+                if next != echo {
+                    chain.push(name);
+                    echo = next;
+                }
+            }
+            let run = format!("w0rds~{echo}~m0re");
+            let body = format!("{{\"note\":\"outside {run} outside\",\"n\":1}}");
+            let header = format!("error_description=\"outside {run} outside\"");
+            for text in [body.as_str(), header.as_str()] {
+                assert!(
+                    leaks(text.as_bytes(), &key),
+                    "the oracle must see {chain:?}: {text}"
+                );
+                let stripped = strip(key.as_bytes(), text.as_bytes());
+                let stripped = String::from_utf8_lossy(&stripped);
+                assert!(
+                    !leaks(stripped.as_bytes(), &key),
+                    "{key} / {chain:?}: {text} survived as {stripped}"
+                );
+                let (before, after) = text.split_once(&run).unwrap_or_default();
+                let left = stripped
+                    .strip_prefix(before)
+                    .and_then(|rest| rest.strip_suffix(after));
+                let Some(left) = left else {
+                    panic!("{key} / {chain:?}: the text outside the run went: {stripped}");
+                };
+                if chain.len() > super::DEPTH {
+                    assert_eq!(left, "[redacted]", "{key} / {chain:?}");
+                } else {
+                    assert!(
+                        left.starts_with("w0rds~")
+                            && left.ends_with("~m0re")
+                            && left.contains("[redacted]"),
+                        "{key} / {chain:?}: {left}"
+                    );
+                }
+                seen[usize::from(chain.len() > super::DEPTH)] += 1;
+            }
+        }
+    }
+    assert!(seen.iter().all(|&count| count > 20), "{seen:?}");
 }
