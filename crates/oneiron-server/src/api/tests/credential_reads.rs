@@ -445,7 +445,13 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
     ] {
         server
             .vault
-            .put_entity(&id, kind, oneiron::TimeRange { start: 1, end: 1 }, 1, b"fixture")
+            .put_entity(
+                &id,
+                kind,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"fixture",
+            )
             .unwrap();
     }
     let owner_ref = server.vault.ensure_embedded_owner_actor().unwrap();

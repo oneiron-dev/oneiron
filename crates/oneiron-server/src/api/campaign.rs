@@ -163,8 +163,12 @@ pub(crate) fn dispatch(
 ) -> Result<Json<Value>, ApiError> {
     auth.require(scope)?;
     let actor = surface_actor(auth)?;
-    let facade =
-        super::credential_memory(&server.vault, Some(auth), actor, oneiron::EdgeActorClass::Human);
+    let facade = super::credential_memory(
+        &server.vault,
+        Some(auth),
+        actor,
+        oneiron::EdgeActorClass::Human,
+    );
     let reply = invoke_campaign_surface(
         &facade,
         SurfaceCall {

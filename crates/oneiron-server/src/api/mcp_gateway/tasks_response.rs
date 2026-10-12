@@ -807,7 +807,12 @@ pub(crate) async fn execute_agent_verb_input(
             format!("{tool} input names unknown field `{field}`"),
         ));
     }
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let memory = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    );
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
