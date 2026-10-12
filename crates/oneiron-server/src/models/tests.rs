@@ -979,7 +979,7 @@ fn sse_events_decode_across_reads_and_every_line_end() {
 /// A vault-held key's rung refuses, before its permit starts, a call that
 /// could only fail before anything is sent: no broker socket at the
 /// configured path (nothing there, or a file that is not a socket), a
-/// same-user child that exits before it listens, or a custody door that
+/// same-user child that exits before it serves, or a custody door that
 /// would not release the key to the broker. None reads the key, and none is
 /// charged.
 #[cfg(unix)]
@@ -1005,7 +1005,7 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
     // A separate-user broker: any uid but this process's own.
     let uid = std::fs::metadata(dir.path()).unwrap().uid().wrapping_add(1);
     let socket = dir.path().join("broker.sock");
-    // A same-user child that exits before it listens.
+    // A same-user child that exits before it serves.
     let child = config(
         "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{ model = \"paid:teacher\" }]\n[broker]\nprogram = \"/bin/false\"\n",
     );
@@ -1018,7 +1018,7 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
         ("no path", true),
         ("a plain file", true),
         ("a door that refuses", false),
-        ("a child that never listens", true),
+        ("a child that never serves", true),
     ];
     for (case, holds) in cases {
         match case {
@@ -1033,7 +1033,7 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
             holds,
             reads: AtomicUsize::new(0),
         });
-        let config = if case == "a child that never listens" {
+        let config = if case == "a child that never serves" {
             &child
         } else {
             &config

@@ -104,11 +104,12 @@ key_secret = "provider-key"
 Where no separate user exists, as on macOS, leave out `socket` and `uid`: the
 server then starts the broker as its own child, under its own user, at the first
 `key_secret` call. The child makes itself non-dumpable (`PT_DENY_ATTACH` on
-macOS), so another process of that user cannot read or trace its memory, and it
-serves only the server that started it. Its calls' receipts say `same_user`, and
-the provider's entry in the model status carries `"unproven": true`, the badge.
-A separate user stays the first choice. The child is the `oneiron-broker` beside
-the server's binary, or:
+macOS), so another process of that user cannot read or trace its memory. It
+binds no socket file: it takes calls only over a socket pair the server made when
+it started it, so it serves that server alone. Its calls' receipts say
+`same_user`, and the provider's entry in the model status carries
+`"unproven": true`, the badge. A separate user stays the first choice. The child
+is the `oneiron-broker` beside the server's binary, or:
 
 ```toml
 [models.broker]

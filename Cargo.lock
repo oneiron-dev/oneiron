@@ -7963,6 +7963,7 @@ dependencies = [
  "memchr",
  "rcgen",
  "reqwest 0.12.28",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

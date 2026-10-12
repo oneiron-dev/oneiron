@@ -21,7 +21,10 @@
 //! P2 and N4b run again with the same-user child of `#broker-same-user-open`
 //! (BROKER-MAC = A), which the runtime starts from the same binary. Its
 //! receipts say `same_user`, and neither the runner nor the daemon that
-//! started it can read its memory, though both share its uid.
+//! started it can read its memory, though both share its uid. The child binds
+//! no path and holds no listening socket, and a listener at the old child
+//! socket path gets nothing: the daemon reaches the child only over the
+//! channel it made at the start.
 //!
 //! The broker runs as the first uid of this user's `/etc/subuid` range, in a
 //! user namespace that maps that uid and this one to themselves. A host that
@@ -30,7 +33,7 @@
 //! `ONEIRON_BROKER_FIXTURE=require`, which makes it fail instead. A broker
 //! that does not start on a host that can always fails.
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -1153,20 +1156,257 @@ fn seize(pid: u32) -> std::io::Result<()> {
     }
 }
 
-/// BROKER-MAC: a socket another process of this uid put at the child's path
-/// never passes for the child, which says it listens on its own pipe.
+/// What a channel case's runner reads its case from. Unset, the runner is a
+/// no-op, as it is in a normal test run.
+const CHANNEL_RUNNER_ENV: &str = "ONEIRON_BROKER_CHANNEL_RUNNER";
+
+/// BROKER-MAC: the same-user child binds no path and holds no listening
+/// socket; it takes its calls over the channel the daemon made. The case runs
+/// in a user and network namespace of its own, where every Unix socket is the
+/// case's or the child's, so the child's own sockets can be told apart.
 #[test]
-fn same_user_a_socket_at_the_childs_path_is_not_the_child() {
-    let _one = one_child();
-    let child = oneiron_broker::ChildBroker::new(
-        env!("CARGO_BIN_EXE_oneiron-broker").into(),
-        &[],
-        Duration::from_secs(20),
-    )
-    .expect("child");
-    let _impostor = std::os::unix::net::UnixListener::bind(child.socket()).expect("impostor");
-    let started = Instant::now();
-    assert!(child.ensure().is_err(), "the impostor passed for the child");
-    assert!(started.elapsed() < Duration::from_secs(10));
-    assert_eq!(child_broker_pid(), None, "the refused child is gone");
+fn same_user_the_child_binds_no_path_and_holds_no_listener() {
+    if let Err(reason) = own_network() {
+        let reason = format!("this host cannot give a case its own network: {reason}");
+        assert!(
+            std::env::var("ONEIRON_BROKER_FIXTURE").as_deref() != Ok("require"),
+            "{reason}"
+        );
+        eprintln!("skipped: {reason}");
+        return;
+    }
+    run_channel_case("census", true);
+}
+
+/// BROKER-MAC: a listener of this uid at the old child socket path, put
+/// there after the child served, gets no connection and no bytes during a
+/// full paid call, which the real child sends.
+#[test]
+fn same_user_a_listener_at_the_old_child_path_gets_nothing() {
+    run_channel_case("impostor", false);
+}
+
+/// Runs the channel `case` in this test binary again, with a temporary
+/// directory of its own, inside a new user and network namespace when
+/// `namespace`, and asserts it passed.
+fn run_channel_case(case: &str, namespace: bool) {
+    let tmp = tempfile::tempdir().expect("runner tmp");
+    let exe = std::env::current_exe().expect("test binary");
+    let mut runner = if namespace {
+        let mut unshare = Command::new("unshare");
+        unshare
+            .args(["--user", "--map-root-user", "--net", "--"])
+            .arg(&exe);
+        unshare
+    } else {
+        Command::new(&exe)
+    };
+    runner
+        .args(["--exact", "broker_paid_leg::channel_runner", "--nocapture"])
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("TMPDIR", tmp.path())
+        .env(CHANNEL_RUNNER_ENV, case)
+        .stdin(Stdio::null());
+    let ran = runner.output().expect("runner");
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&ran.stdout),
+        String::from_utf8_lossy(&ran.stderr),
+    );
+    assert!(
+        ran.status.success() && stdout.lines().any(|line| line == "RUNNER DONE"),
+        "the {case} case failed ({}):\n{stdout}\n{stderr}",
+        ran.status
+    );
+}
+
+/// Whether this user can make a user and network namespace and bring its
+/// loopback up, or why not.
+fn own_network() -> Result<(), String> {
+    let ran = Command::new("unshare")
+        .args(["--user", "--map-root-user", "--net", "--"])
+        .args(["ip", "link", "set", "lo", "up"])
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("unshare: {error}"))?;
+    if ran.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "unshare --net failed ({}): {}",
+            ran.status,
+            String::from_utf8_lossy(&ran.stderr).trim()
+        ))
+    }
+}
+
+/// The runner of the channel cases: a no-op unless one of them started it.
+#[tokio::test(flavor = "multi_thread")]
+async fn channel_runner() {
+    let Ok(case) = std::env::var(CHANNEL_RUNNER_ENV) else {
+        return;
+    };
+    match case.as_str() {
+        "census" => census().await,
+        "impostor" => impostor().await,
+        other => panic!("no channel case {other}"),
+    }
+    println!("RUNNER DONE");
+}
+
+/// In a network namespace of its own, after a full paid call: some socket
+/// is the live child's (its end of the channel), none of the child's sockets
+/// listens or is bound to a path, and the daemon's temporary directory holds
+/// no socket file.
+async fn census() {
+    let up = Command::new("ip")
+        .args(["link", "set", "lo", "up"])
+        .status()
+        .expect("ip");
+    assert!(up.success(), "the namespace's loopback did not come up");
+    let f = fixture_in(Mode::SameUser).expect("the same-user fixture");
+    f.run("census", 20)
+        .generate(SMALL, request(SMALL, "hi"))
+        .await
+        .expect("the child's call");
+    let child = f.broker_pid();
+    // Read on both sides of the table, so a socket of this process that
+    // opened or closed meanwhile is never counted as the child's.
+    let before = own_sockets();
+    let table = unix_sockets();
+    let after = own_sockets();
+    let child_sockets: Vec<&UnixSocket> = table
+        .iter()
+        .filter(|socket| !before.contains(&socket.inode) && !after.contains(&socket.inode))
+        .collect();
+    assert!(!child_sockets.is_empty(), "no socket of the child: {table:?}");
+    for socket in &child_sockets {
+        assert!(
+            !socket.listening,
+            "the child holds a listening socket: {socket:?}"
+        );
+        assert!(socket.path.is_empty(), "the child bound a path: {socket:?}");
+    }
+    let tmp = std::env::temp_dir();
+    let files: Vec<PathBuf> = walk(&tmp)
+        .into_iter()
+        .filter(|path| {
+            std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_socket())
+        })
+        .collect();
+    assert!(
+        files.is_empty(),
+        "socket files under the daemon's temporary directory: {files:?}"
+    );
+    assert!(alive(child), "the child is gone");
+}
+
+/// After the child served a first call, a listener of this uid is renamed
+/// over the old child socket path. A second paid call goes out with the key
+/// through the real child, and the listener gets no connection.
+async fn impostor() {
+    let f = fixture_in(Mode::SameUser).expect("the same-user fixture");
+    let run = f.run("impostor", 20);
+    run.generate(SMALL, request(SMALL, "first"))
+        .await
+        .expect("the first call");
+    let path = old_child_socket(&std::env::temp_dir());
+    let parked = path.with_file_name("impostor.sock");
+    let impostor = std::os::unix::net::UnixListener::bind(&parked).expect("impostor");
+    impostor.set_nonblocking(true).expect("nonblocking");
+    std::fs::rename(&parked, &path).expect("over the old child socket path");
+    let second = run.generate(SMALL, request(SMALL, "second")).await;
+    match impostor.accept() {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        Ok((mut stream, _)) => {
+            let mut got = Vec::new();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("timeout");
+            let _ = stream.read_to_end(&mut got);
+            panic!(
+                "the daemon connected to the listener at {} and sent it {} bytes",
+                path.display(),
+                got.len()
+            );
+        }
+        Err(error) => panic!("accept: {error}"),
+    }
+    let answer = second.expect("the second call, through the child");
+    assert_eq!(text_of(&answer.message), "an answer");
+    assert_eq!(f.keyed(&f.fake.seen()), 2, "both calls carried the key");
+    assert_eq!(f.reads(), 2, "one key read per call");
+}
+
+/// The old child socket path: `broker.sock` in the `oneiron-broker-<id>`
+/// directory under the daemon's temporary directory `tmp`, where the child
+/// listened before it took its calls over a channel. A daemon that made no
+/// such directory gets one made here, empty.
+fn old_child_socket(tmp: &Path) -> PathBuf {
+    let made = std::fs::read_dir(tmp)
+        .expect("tmp")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("oneiron-broker-"))
+        });
+    let dir = made.unwrap_or_else(|| {
+        let dir = tmp.join("oneiron-broker-0000000000000000");
+        std::fs::create_dir(&dir).expect("the old child directory");
+        set_mode(&dir, 0o700);
+        dir
+    });
+    dir.join("broker.sock")
+}
+
+/// A Unix socket of this network namespace, as `/proc/net/unix` lists it.
+#[derive(Debug)]
+struct UnixSocket {
+    inode: u64,
+    listening: bool,
+    path: String,
+}
+
+/// Every Unix socket of this network namespace.
+fn unix_sockets() -> Vec<UnixSocket> {
+    // `__SO_ACCEPTCON`: the Flags of a listening socket.
+    const ACCEPTING: u32 = 1 << 16;
+    let table = std::fs::read_to_string("/proc/net/unix").expect("/proc/net/unix");
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            // `Num RefCount Protocol Flags Type St Inode [Path]`
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let flags = u32::from_str_radix(fields.get(3)?, 16).ok()?;
+            Some(UnixSocket {
+                inode: fields.get(6)?.parse().ok()?,
+                listening: flags & ACCEPTING != 0,
+                path: fields.get(7..).unwrap_or_default().join(" "),
+            })
+        })
+        .collect()
+}
+
+/// The inodes of the sockets this process holds.
+fn own_sockets() -> std::collections::HashSet<u64> {
+    std::fs::read_dir("/proc/self/fd")
+        .expect("/proc/self/fd")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let target = std::fs::read_link(entry.path()).ok()?;
+            target
+                .to_str()?
+                .strip_prefix("socket:[")?
+                .strip_suffix(']')?
+                .parse()
+                .ok()
+        })
+        .collect()
 }

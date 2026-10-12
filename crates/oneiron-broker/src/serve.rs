@@ -1,12 +1,18 @@
 //! The broker's side of the socket: one call per connection, from the daemon's
-//! uid only.
+//! uid only. The same-user child takes each connection from its parent over
+//! the channel it inherited instead ([`serve_channel`]).
 
-use std::io;
+use std::io::{self, IoSliceMut};
+use std::mem::MaybeUninit;
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rustix::io::Errno;
+use rustix::net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, recvmsg};
+use tokio::io::Interest;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Semaphore;
 use zeroize::Zeroizing;
@@ -26,7 +32,7 @@ const FRAME_DEADLINE: Duration = Duration::from_secs(10);
 const LIVENESS_PROBE: Duration = Duration::from_secs(1);
 
 /// The line a same-user child writes to its stdout, a pipe only its parent
-/// holds, once it listens. The parent waits for it, not for the socket.
+/// holds, once it serves its channel. The parent waits for it.
 pub const LISTENING: &[u8] = b"listening\n";
 
 /// A broker serving one daemon.
@@ -39,10 +45,6 @@ pub struct ServeConfig {
     pub socket: PathBuf,
     /// The daemon's uid, the only peer served.
     pub client_uid: u32,
-    /// The daemon's pid, for a same-user child: its uid is the daemon's, so
-    /// only the pid tells the daemon from another process of that user. A
-    /// child writes [`LISTENING`] to its stdout once it listens.
-    pub client_pid: Option<u32>,
     /// How calls are sent.
     pub policy: SendPolicy,
 }
@@ -89,12 +91,6 @@ pub async fn serve(config: ServeConfig) -> io::Result<()> {
     let listener = UnixListener::bind(&config.socket)?;
     // Any local user may connect; only the daemon's uid is answered.
     std::fs::set_permissions(&config.socket, std::fs::Permissions::from_mode(0o666))?;
-    if config.client_pid.is_some() {
-        use std::io::Write as _;
-        let mut stdout = std::io::stdout().lock();
-        stdout.write_all(LISTENING)?;
-        stdout.flush()?;
-    }
     let permits = Arc::new(Semaphore::new(MAX_CONCURRENT));
     loop {
         let stream = match listener.accept().await {
@@ -108,13 +104,7 @@ pub async fn serve(config: ServeConfig) -> io::Result<()> {
         };
         // The kernel names the peer. Anyone but the daemon is closed on before
         // a byte is read.
-        let daemon = stream.peer_cred().is_ok_and(|cred| {
-            cred.uid() == config.client_uid
-                && config.client_pid.is_none_or(|pid| {
-                    cred.pid().and_then(|peer| u32::try_from(peer).ok()) == Some(pid)
-                })
-        });
-        if !daemon {
+        if stream.peer_cred().ok().map(|cred| cred.uid()) != Some(config.client_uid) {
             continue;
         }
         let permit = Arc::clone(&permits)
@@ -127,6 +117,85 @@ pub async fn serve(config: ServeConfig) -> io::Result<()> {
             drop(permit);
         });
     }
+}
+
+/// Serves the daemon that started this process as its same-user child
+/// (`#broker-same-user-open`), over `channel`, the end of a socket pair the
+/// daemon made and the child inherited. Each call comes on a socket of its
+/// own, whose descriptor the daemon passes over the channel, so the child
+/// binds no path and listens on nothing, and no other process can reach it.
+/// It writes [`LISTENING`] to its stdout once it serves, and returns when the
+/// daemon closes its end.
+pub(crate) async fn serve_channel(
+    channel: std::os::unix::net::UnixStream,
+    policy: &SendPolicy,
+) -> io::Result<()> {
+    let sender = Arc::new(Sender::new(policy).map_err(io::Error::other)?);
+    channel.set_nonblocking(true)?;
+    let channel = UnixStream::from_std(channel)?;
+    {
+        use std::io::Write as _;
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(LISTENING)?;
+        stdout.flush()?;
+    }
+    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT));
+    loop {
+        channel.readable().await?;
+        let fds = match channel.try_io(Interest::READABLE, || receive(&channel)) {
+            Ok(Some(fds)) => fds,
+            Ok(None) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(error) => return Err(error),
+        };
+        // A message with no socket, or more than one, passes nothing.
+        let Ok([fd]) = <[OwnedFd; 1]>::try_from(fds) else {
+            continue;
+        };
+        let stream = std::os::unix::net::UnixStream::from(fd);
+        let Ok(stream) = stream
+            .set_nonblocking(true)
+            .and_then(|()| UnixStream::from_std(stream))
+        else {
+            continue;
+        };
+        // Taken at once, so the channel never fills while calls wait for a
+        // slot.
+        let permits = Arc::clone(&permits);
+        let sender = Arc::clone(&sender);
+        tokio::spawn(async move {
+            let Ok(_permit) = permits.acquire_owned().await else {
+                return;
+            };
+            handle(stream, &sender).await;
+        });
+    }
+}
+
+/// The descriptors that came with the channel's next byte, or `None` once
+/// the daemon has closed its end. The child starts no process, so they need
+/// no close-on-exec.
+fn receive(channel: &UnixStream) -> io::Result<Option<Vec<OwnedFd>>> {
+    let mut byte = [0; 1];
+    let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
+    let mut control = RecvAncillaryBuffer::new(&mut space);
+    let received = loop {
+        let mut iov = [IoSliceMut::new(&mut byte)];
+        match recvmsg(channel, &mut iov, &mut control, RecvFlags::empty()) {
+            Err(Errno::INTR) => {}
+            received => break received?,
+        }
+    };
+    if received.bytes == 0 {
+        return Ok(None);
+    }
+    let mut fds = Vec::new();
+    for message in control.drain() {
+        if let RecvAncillaryMessage::ScmRights(passed) = message {
+            fds.extend(passed);
+        }
+    }
+    Ok(Some(fds))
 }
 
 /// Serves one call. A frame that cannot be read gets no reply: the daemon

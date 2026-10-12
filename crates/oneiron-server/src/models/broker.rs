@@ -163,7 +163,7 @@ impl BrokerSite {
                     program,
                     extra_roots,
                     Duration::from_secs(timeout),
-                )?)))
+                ))))
             }
         }
     }
@@ -291,8 +291,10 @@ impl BrokerBackend {
         Ok((header, bytes))
     }
 
-    /// Connects and checks the broker's user, reads the key at the door, and
-    /// makes the one broker call. Nothing reads the key before the peer check.
+    /// Connects to the broker (a host's broker must run as its user; the
+    /// child gets its socket over its channel), reads the key at the door,
+    /// and makes the one broker call. Nothing reads the key before the broker
+    /// is reached.
     async fn send(
         &self,
         header: &CallHeader,
