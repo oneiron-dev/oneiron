@@ -163,7 +163,9 @@ async fn claim_upsert(
 /// The lease is not a client input, and a bearer slip is not one. At high,
 /// xhigh and max the door admits the recall on a line of its own and
 /// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,
-/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes.
+/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no
+/// reranker route the recall runs unreranked and reports
+/// `skipped / no_reranker` in `retrieval_meta.rerank`.
 async fn recall(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
