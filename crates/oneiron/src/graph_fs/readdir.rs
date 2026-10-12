@@ -2,7 +2,6 @@
 
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use crate::batch::EntityMetadataHeader;
@@ -316,22 +315,12 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         builder.finish(next_cursor)
     }
 
+    /// The vault's worlds this reader may walk into, base first, then each
+    /// WORLD row by id ([`Self::world_visible`]). A manifest grant never
+    /// lists a world of its own: it only says where a reader other than the
+    /// owner may read.
     fn listdir_worlds(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
         let policy = self.policy()?;
-        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
-            return Ok(empty_page(path, self.options.mount));
-        }
-
-        let names = if policy.has_scoped_read_grants() {
-            self.world_names_from_matching_grants(&policy)
-        } else {
-            return self.listdir_world_rows(path, cursor);
-        };
-        let entries = names.into_iter().map(GraphFsEntry::directory).collect();
-        Ok(self.fixed_page(path, entries, cursor))
-    }
-
-    fn listdir_world_rows(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
         let after = cursor.unwrap_or_default();
         let after_world = if after.is_empty() || after == "base" {
             None
@@ -340,7 +329,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         };
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
-        if after.is_empty() && !builder.try_push(GraphFsEntry::directory("base")) {
+        if after.is_empty()
+            && self.world_visible(&policy, None)
+            && !builder.try_push(GraphFsEntry::directory("base"))
+        {
             return Ok(builder.finish(None));
         }
 
@@ -350,35 +342,62 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1),
         )?;
         let has_more_rows = rows.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
+        let mut last_scanned = None;
         for id in rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES) {
-            if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
+            if self.world_visible(&policy, Some(id))
+                && !builder.try_push(GraphFsEntry::directory(id.to_hex()))
+            {
                 next_cursor = builder.last_entry_name();
                 break;
             }
+            last_scanned = Some(id.to_hex());
         }
         if next_cursor.is_none() && has_more_rows {
-            next_cursor = builder.last_entry_name();
+            next_cursor = last_scanned;
         }
         Ok(builder.finish(next_cursor))
     }
 
-    pub(super) fn world_names_from_matching_grants(
+    /// Whether this reader may walk into `world` (`None` is base reality),
+    /// judged as claim admission judges a claim's world: the worlds the read
+    /// asked for and its credential's Scope must admit it; the owner then
+    /// reads every world of their vault (ARCH-0057). Any other reader reads
+    /// where a read grant for it names the world, anywhere while the manifest
+    /// holds no read grant, and, with a credential no grant names, wherever
+    /// that credential reads.
+    pub(super) fn world_visible(
         &self,
         policy: &PolicyManifestResolution,
-    ) -> Vec<String> {
-        let mut names = BTreeSet::new();
+        world: Option<EntityId>,
+    ) -> bool {
+        let key = self.scoped_read.actor_key();
+        if !self.scoped_read.world_within_ceilings(world) {
+            return false;
+        }
+        if key.vault_owner_ref().is_some() {
+            return true;
+        }
+        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return false;
+        }
+        if !policy.has_scoped_read_grants() {
+            return true;
+        }
+        let name = world.map_or_else(|| "base".to_owned(), |world| world.to_hex());
+        let mut matched = false;
         for grant in policy.scoped_grants() {
-            if !read_grant_matches_actor(grant, self.scoped_read.actor_key()) {
+            if !read_grant_matches_actor(grant, key) {
                 continue;
             }
+            matched = true;
             if grant.receipt_required || grant.budget.is_some() {
                 continue;
             }
-            if let Some(name) = grant_scope_world_name(grant.scope.as_ref()) {
-                names.insert(name);
+            if grant_scope_world_name(grant.scope.as_ref()).as_deref() == Some(name.as_str()) {
+                return true;
             }
         }
-        names.into_iter().collect()
+        key.authority_scope().is_some() && !matched
     }
 
     fn listdir_entities(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {

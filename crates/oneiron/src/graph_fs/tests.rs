@@ -215,6 +215,73 @@ fn worlds_readdir_omits_excluded_worlds_entirely() -> Result<()> {
     Ok(())
 }
 
+/// Astra #1413-004: the world listing took the manifest's read grants for
+/// the whole list of worlds, so the owner's own key, which no manifest
+/// narrows, listed none of them while only an agent held a grant. Worlds are
+/// listed, and a WORLD's path judged, by the reader's own authority now: the
+/// owner walks into every world, the agent only into its grant's, and a
+/// credential no grant names only into the worlds it grants.
+#[test]
+fn worlds_list_under_the_readers_own_authority() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (first, second, subject) = (test_id(0x34), test_id(0x35), test_id(0x36));
+    let (agent, holder) = (test_id(0x37), test_id(0x38));
+    put_entity(&vault, first, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, second, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    put_claim(&vault, test_id(0x44), subject, Some(first), 10)?;
+    put_claim(&vault, test_id(0x45), subject, Some(second), 11)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x91),
+        encode_policy_manifest(vec![core_read_world_grant(&agent.to_hex(), first)]),
+    )?;
+    let walk = |read: &ScopedRead<'_>| -> Result<(Vec<String>, [bool; 2])> {
+        let fs = resolver(read, 1024);
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = [first, second].map(|world| {
+            fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))
+                .expect("path visibility")
+        });
+        Ok((names.collect(), visible))
+    };
+
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner));
+    assert_eq!(
+        walk(&owner)?,
+        (
+            vec!["base".to_owned(), first.to_hex(), second.to_hex()],
+            [true, true]
+        ),
+        "no manifest grant narrows the owner's worlds"
+    );
+    let agent = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::new(agent.to_hex()).expect("actor key"),
+    );
+    assert_eq!(walk(&agent)?, (vec![first.to_hex()], [true, false]));
+
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer)?;
+    let mut claims = root.claims.clone();
+    claims.slip_id = *blake3::hash(b"one world credential").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.scope.worlds = crate::federation::ScopeAxis::Some(
+        [crate::federation::ScopeId(second)].into_iter().collect(),
+    );
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let tag = b"one-world";
+    let signature = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &signature)?;
+    let narrowed = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("a read key"),
+    );
+    assert_eq!(walk(&narrowed)?, (vec![second.to_hex()], [false, true]));
+    Ok(())
+}
+
 #[test]
 fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(telemetry_config());

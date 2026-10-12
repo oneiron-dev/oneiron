@@ -420,6 +420,24 @@ impl ScopedRead<'_> {
         }
     }
 
+    /// Whether the worlds this read asked for and its credential's Scope
+    /// both admit `world` (`None` is base reality): the world ceilings every
+    /// row it serves lies under, before any manifest's say.
+    pub(crate) fn world_within_ceilings(&self, world: Option<EntityId>) -> bool {
+        if self
+            .actor_key
+            .worlds
+            .as_ref()
+            .is_some_and(|worlds| !worlds.admits(world))
+        {
+            return false;
+        }
+        let id = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+        self.actor_key
+            .authority_scope()
+            .is_none_or(|scope| scope.worlds.contains(&id))
+    }
+
     fn outside_asked_worlds(&self, row: &EntityRecord) -> bool {
         let Some(worlds) = &self.actor_key.worlds else {
             return false;

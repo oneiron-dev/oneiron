@@ -493,14 +493,7 @@ impl GraphFsResolver<'_, '_> {
                 .scoped_read
                 .is_entity_readable_with_policy_in(rtxn, policy, id);
         }
-        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
-            return Ok(false);
-        }
-        if !policy.has_scoped_read_grants() {
-            return Ok(true);
-        }
-        let visible_worlds = self.world_names_from_matching_grants(policy);
-        Ok(visible_worlds.iter().any(|world| world == &id.to_hex()))
+        Ok(self.world_visible(policy, Some(*id)))
     }
 
     pub(super) fn coreutils_result_cap(&self) -> usize {
