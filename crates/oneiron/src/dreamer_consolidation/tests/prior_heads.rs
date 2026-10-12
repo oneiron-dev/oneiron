@@ -131,6 +131,38 @@ fn fixture_in_project(
     project: EntityId,
     nested: bool,
 ) -> Result<Fixture> {
+    fixture_with(
+        vault,
+        (source, ClaimApprovalStatus::Approved),
+        project,
+        nested,
+        b"person",
+    )
+}
+
+/// The Dreamer's own unvetted head, `Generated` and `Auto`, about a person
+/// the turn names ("my name is Oleksii"), so the wake lists both.
+fn provisional_fixture(vault: &Vault) -> Result<Fixture> {
+    let named = super::super::support::encode_value(&Value::Map(vec![(
+        "name".into(),
+        "Oleksii".into(),
+    )]))?;
+    fixture_with(
+        vault,
+        (ClaimSource::Generated, ClaimApprovalStatus::Auto),
+        crate::claim::default_project_id(),
+        false,
+        &named,
+    )
+}
+
+fn fixture_with(
+    vault: &Vault,
+    (source, approval): (ClaimSource, ClaimApprovalStatus),
+    project: EntityId,
+    nested: bool,
+    subject_body: &[u8],
+) -> Result<Fixture> {
     let actor = vault.dreamer_authority()?;
     policy(vault, actor.entity_ref(), true)?;
     let store = DreamerRunnerStore::new(vault);
@@ -138,15 +170,14 @@ fn fixture_in_project(
         admitted_attempt_fixture(vault, &store, 0x58, &[("user", "my name is Oleksii")])?;
     let subject = EntityId::now();
     let owner = EntityId::now();
-    for id in [subject, owner] {
-        vault.put_entity(&id, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
-    }
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, subject_body)?;
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let head = EntityId::now();
     let envelope = WriteEnvelope::new(
         WriteActor::new(owner, EdgeActorClass::Human),
         source,
         WriteProvenance::new("owner statement".into())?,
-        ClaimApprovalStatus::Approved,
+        approval,
     );
     let mut candidate = ClaimCandidate::new(
         "profile.name",
@@ -974,6 +1005,136 @@ fn a_protected_correction_stays_proposed_in_the_owners_review() -> Result<()> {
             ),
         "the owner's run review lists the protected correction"
     );
+    Ok(())
+}
+
+/// Engine ruling 2026-10-12, check (a): the Dreamer's own unvetted claim
+/// stands provisionally. The wake lists it, a correction naming it lands
+/// with its grant, and the claim closes. Before, the listing skipped it, the
+/// branch never held it, and the correction landed beside it with nothing
+/// closed.
+#[test]
+fn a_correction_closes_the_dreamers_own_unvetted_claim() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = provisional_fixture(&vault)?;
+    let pin = PreparedWake::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    let backend = ScriptedBackend::new(vec![
+        Ok(text_response(
+            serde_json::json!({"candidates": [{
+                "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
+                "corrects": fx.head.to_hex(), "confidence": 0.9,
+                "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+            }]})
+            .to_string(),
+        )),
+        Ok(text_response(
+            "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+        )),
+    ]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let execution = execute_at_pin(
+        &vault,
+        &fx,
+        &backend,
+        &mut sink,
+        fx.scope.clone(),
+        Some(&pin),
+    )
+    .unwrap_or_else(|error| panic!("the pass refused: {error}; {:?}", sink.outcome));
+    assert!(
+        matches!(execution, DreamerAttemptExecution::Completed { .. }),
+        "{execution:?}"
+    );
+    let [new] = sink.outcome.landed.as_slice() else {
+        panic!("one granted replacement: {:?}", sink.outcome);
+    };
+    assert!(sink.outcome.pended.is_empty(), "{:?}", sink.outcome);
+    assert!(sink.outcome.rejected.is_empty(), "{:?}", sink.outcome);
+    let replacement = vault.get_claim(new)?.expect("replacement");
+    assert_eq!(replacement.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(replacement.value, Value::from("Alex"));
+    assert_eq!(
+        vault.get_claim(&fx.head)?.expect("closed").lifecycle,
+        crate::ClaimLifecycleStatus::Superseded
+    );
+    let supersedes = vault
+        .edges_out(new)?
+        .into_iter()
+        .filter(|edge| edge.kind == EdgeKind::Supersedes)
+        .map(|edge| edge.target)
+        .collect::<Vec<_>>();
+    assert_eq!(supersedes, vec![fx.head]);
+    Ok(())
+}
+
+/// Engine ruling 2026-10-12, check (b): nothing builds on a provisional
+/// claim. A candidate restating it attaches nothing and writes nothing; a
+/// candidate citing it as evidence is refused (GATE-11). Either way its bytes,
+/// its support and its subject's claims stay as they were. Without the
+/// guard, the restatement attached to it as support.
+#[test]
+fn nothing_attaches_to_an_unvetted_claim_and_it_corroborates_nothing() -> Result<()> {
+    for cite in [false, true] {
+        let (_dir, vault) = open_vault();
+        let fx = provisional_fixture(&vault)?;
+        let raw = vault.get_raw(&fx.head)?.expect("head");
+        let support = vault.edges_in(&fx.head)?.len();
+        let pin = PreparedWake::capture_with_grants(
+            &vault,
+            DreamerConsolidationScope::Micro,
+            Some(&fx.scope),
+        )?;
+        let candidate = if cite {
+            serde_json::json!({
+                "subject": fx.subject.to_hex(), "predicate": "profile.nickname", "value": "Ollie",
+                "confidence": 0.9,
+                "evidence_refs": [{"source_id": fx.head.to_hex(), "claim_id": fx.head.to_hex()}],
+            })
+        } else {
+            serde_json::json!({
+                "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Oleksii",
+                "confidence": 0.9,
+                "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+            })
+        };
+        let backend = ScriptedBackend::new(vec![Ok(text_response(
+            serde_json::json!({ "candidates": [candidate] }).to_string(),
+        ))]);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        let execution = execute_at_pin(
+            &vault,
+            &fx,
+            &backend,
+            &mut sink,
+            fx.scope.clone(),
+            Some(&pin),
+        );
+        if cite {
+            let error = execution.expect_err("a generated claim never corroborates");
+            assert!(
+                error.to_string().contains("generated claim cannot corroborate"),
+                "{error}"
+            );
+        } else {
+            let execution = execution?;
+            assert!(
+                matches!(execution, DreamerAttemptExecution::Completed { .. }),
+                "{execution:?}"
+            );
+        }
+        assert!(
+            sink.outcome.landed.is_empty() && sink.outcome.pended.is_empty(),
+            "{:?}",
+            sink.outcome
+        );
+        assert_eq!(vault.get_raw(&fx.head)?, Some(raw));
+        assert_eq!(vault.edges_in(&fx.head)?.len(), support);
+        assert_eq!(vault.claims_for_subject(&fx.subject)?, vec![fx.head]);
+    }
     Ok(())
 }
 

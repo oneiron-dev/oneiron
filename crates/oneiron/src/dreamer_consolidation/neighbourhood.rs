@@ -82,6 +82,9 @@ pub(crate) struct Neighbourhood {
     /// Heads the branch may hold that a pinned listing does not show: what
     /// the passage names now, beyond what the attempt listed first.
     unlisted: Vec<KnownClaim>,
+    /// Pinned ids the Dreamer can no longer read, erased or withheld since
+    /// the attempt listed them. The pin drops them for good.
+    gone: BTreeSet<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,14 +142,42 @@ impl Neighbourhood {
 }
 
 /// Pins what `attempt` lists, unless an earlier run of it already did.
-/// Called before its extraction call goes out.
+/// Called before its extraction call goes out. A pinned id the rebuild found
+/// gone leaves the pin for good, so no later replay reads it again; a request
+/// without it may miss its memo, at the cost of one call.
 pub(super) fn pin(vault: &Vault, attempt: AttemptId, listed: &Neighbourhood) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
-        if PINS.get(&vault.store, txn, attempt.as_bytes())?.is_none() {
-            PINS.put(&vault.store, txn, attempt.as_bytes(), &listed.pins())?;
+        match PINS.get(&vault.store, txn, attempt.as_bytes())? {
+            None => PINS.put(&vault.store, txn, attempt.as_bytes(), &listed.pins())?,
+            Some(pins) if !listed.gone.is_empty() => {
+                let kept: Pins = pins
+                    .into_iter()
+                    .filter(|(id, _)| !listed.gone.contains(id))
+                    .map(|(id, claims)| {
+                        let claims = claims
+                            .into_iter()
+                            .filter(|claim| !listed.gone.contains(claim))
+                            .collect();
+                        (id, claims)
+                    })
+                    .collect();
+                PINS.put(&vault.store, txn, attempt.as_bytes(), &kept)?;
+            }
+            Some(_) => {}
         }
         Ok(())
     })
+}
+
+/// Drops what `attempt` listed. Called in the transaction that settles or
+/// abandons it, once it can no longer replay.
+pub(crate) fn unpin_neighbourhood_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+) -> Result<()> {
+    PINS.delete(&vault.store, txn, attempt.as_bytes())?;
+    Ok(())
 }
 
 /// What one branch reads around its passage. `turns` holds each TURN's stored body and frozen
@@ -174,7 +205,7 @@ pub(super) fn discover_in(
         return Ok((
             Neighbourhood {
                 entities: fresh,
-                unlisted: Vec::new(),
+                ..Neighbourhood::default()
             },
             rows,
         ));
@@ -185,10 +216,15 @@ pub(super) fn discover_in(
     let device_only = BTreeSet::new();
     let ids: Vec<_> = pins.iter().map(|(id, _)| *id).collect();
     let mut entities = Vec::new();
+    let mut gone = BTreeSet::new();
     for ((id, claims), row) in pins.into_iter().zip(read.get_entities_parts_in_txn(txn, &ids)?) {
-        let Some((_, _, body)) = row.filter(|row| NAMED_KINDS.contains(&row.0)) else {
+        let Some((kind, _, body)) = row else {
+            gone.insert(id);
             continue;
         };
+        if !NAMED_KINDS.contains(&kind) {
+            continue;
+        }
         let mut entity = KnownEntity {
             id,
             label: label(&body),
@@ -196,10 +232,11 @@ pub(super) fn discover_in(
         };
         if let Some(axes) = passage.axes {
             for (claim, row) in claims.iter().zip(read.get_entities_parts_in_txn(txn, &claims)?) {
-                if let Some(row) = row
-                    && let Some(known) =
-                        listable(id, *claim, &row, axes, passage.bound, &device_only)
-                {
+                let Some(row) = row else {
+                    gone.insert(*claim);
+                    continue;
+                };
+                if let Some(known) = listable(id, *claim, &row, axes, passage.bound, &device_only) {
                     entity.claims.push(known);
                     rows.push((*claim, row));
                 }
@@ -216,7 +253,14 @@ pub(super) fn discover_in(
         .flat_map(|entity| entity.claims)
         .filter(|claim| !listed.contains(&claim.id))
         .collect();
-    Ok((Neighbourhood { entities, unlisted }, rows))
+    Ok((
+        Neighbourhood {
+            entities,
+            unlisted,
+            gone,
+        },
+        rows,
+    ))
 }
 
 /// The bounded listing the passage names at this snapshot.

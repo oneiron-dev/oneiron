@@ -70,6 +70,7 @@ mod tests;
 pub use conflict::*;
 pub use executor::*;
 pub use gap::*;
+pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub use provenance::*;
