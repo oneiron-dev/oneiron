@@ -344,6 +344,21 @@ impl ApiError {
         )
     }
 
+    /// A 401 for a holder proof that is fresh on the host's clock but not on
+    /// the vault's proof clock, which a host clock that ran ahead left ahead.
+    /// The credential is fine; the owner's clock recovery lets it back in.
+    pub fn proof_clock_ahead() -> Self {
+        Self::new(
+            "request is not authorized: proof_clock_ahead: the vault's clock for holder proofs \
+             is ahead of this host's clock, so every fresh proof is refused",
+            ApiErrorDetails::Unauthorized,
+            [
+                "The host clock ran ahead and was set back. Stop `oneiron serve`, run \
+                 `oneiron recover-clock`, then start the server again.",
+            ],
+        )
+    }
+
     pub fn forbidden_scope(required_scope: impl Into<String>) -> Self {
         let required_scope = required_scope.into();
         Self::new(

@@ -12,7 +12,7 @@ use super::super::{
     DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
 };
 use super::declaration::{DeclarationEditor, LeaseUnit, RunDeclaration};
-use super::gate::GatedBackend;
+use super::gate::{Dispatch, GatedBackend};
 use super::host::{AllocationRefusal, HostAccount, OfferBinding, PaidConnector};
 use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
@@ -242,8 +242,31 @@ impl RunAdmission {
     /// key's rung, then the run's line and, for a host-paid offer, the
     /// vault's allocation.
     pub fn admit(&self, call: RunCall<'_>) -> Result<RunPermit, RunDenied> {
+        self.admit_bound(call, None)
+    }
+
+    /// Admits one model call whose offer's backend builds its exact request
+    /// bytes before it sends, as a credential broker's adapter does (ARCH-0069
+    /// `#broker-run-admission`). The permit binds `request_digest`, the
+    /// backend's [`SingleRouteBackend::request_digest`] for the call, so the
+    /// gate starts it only for those bytes.
+    pub fn admit_request(
+        &self,
+        call: RunCall<'_>,
+        request_digest: &str,
+    ) -> Result<RunPermit, RunDenied> {
+        self.admit_bound(call, Some(request_digest.to_owned()))
+    }
+
+    fn admit_bound(
+        &self,
+        call: RunCall<'_>,
+        request_digest: Option<String>,
+    ) -> Result<RunPermit, RunDenied> {
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self.inner.admit_model(&declaration, revision, call);
+        let admitted = self
+            .inner
+            .admit_model(&declaration, revision, call, request_digest);
         self.inner.receipt_for(
             revision,
             call.selector,
@@ -289,13 +312,19 @@ impl RunAdmission {
     }
 
     /// Admits, sends through `gated` and settles one model call. A call
-    /// dropped before it ends settles as failed.
+    /// dropped before it ends settles as failed. A backend that names the
+    /// digest of its request bytes gets a permit bound to them.
     pub async fn call(
         &self,
         gated: &GatedBackend,
         call: RunCall<'_>,
     ) -> Result<LlmResponse, RunCallError> {
-        let permit = self.admit(call)?;
+        // A request the backend cannot build is admitted unbound: the gate's
+        // preflight then refuses it with a denial row.
+        let permit = match gated.request_digest(call.request) {
+            Some(digest) => self.admit_request(call, &digest)?,
+            None => self.admit(call)?,
+        };
         match gated.generate(call.request.clone(), permit.lease()).await {
             Ok(response) => {
                 permit.settle(CallOutcome::Answered(&response.usage))?;
@@ -429,13 +458,17 @@ impl RunInner {
 
     pub(super) fn dispatched(
         &self,
-        lease: &BudgetLease,
-        subject: &str,
+        dispatch: Dispatch,
         route: &str,
-        request_digest: String,
         served_model: Option<String>,
         answered: bool,
     ) {
+        let Dispatch {
+            lease,
+            model,
+            digest: request_digest,
+            broker_isolation,
+        } = dispatch;
         let admitted_under = self.lock_calls().get_mut(lease.id()).map(|facts| {
             facts.request_digest = Some(request_digest.clone());
             facts.served_model.clone_from(&served_model);
@@ -446,10 +479,11 @@ impl RunInner {
             revision,
             RunEvent::Dispatched {
                 lease: lease.id().to_owned(),
-                subject: subject.to_owned(),
+                subject: model.as_str().to_owned(),
                 route: route.to_owned(),
                 request_digest,
                 served_model,
+                broker_isolation,
                 answered,
             },
         );

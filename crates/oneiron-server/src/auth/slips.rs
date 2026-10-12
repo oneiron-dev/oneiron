@@ -49,14 +49,15 @@ impl CoreAuth {
         vault: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
+        let signature = proof.signature()?;
+        let nonce = proof.nonce.as_bytes();
         let verified = vault
-            .verify_slip(
-                &slip,
-                proof.timestamp,
-                proof.nonce.as_bytes(),
-                &proof.signature()?,
-            )
-            .map_err(|_| ApiError::unauthorized())?;
+            .verify_slip(&slip, proof.timestamp, nonce, &signature)
+            .map_err(|()| {
+                vault
+                    .proof_clock_refusal(&slip, proof.timestamp, nonce, &signature)
+                    .unwrap_or_else(ApiError::unauthorized)
+            })?;
         // These transports can call auth more than once per request; they must
         // not perform one-shot effects. The atomic consuming door owns those.
         if verified.claims().single_use {
@@ -156,6 +157,30 @@ impl CoreAuth {
         if let Some(proof) = self.verified_slip() {
             let mut required = oneiron::federation::Scope::top();
             required.verbs = proof.scope().verbs.clone();
+            if !proof.claims().records.is_empty()
+                || !proof.claims().channels.is_empty()
+                || !required.is_narrowing_of(proof.scope())
+            {
+                return Err(ApiError::forbidden_scope("record-scope"));
+            }
+        }
+        Ok(())
+    }
+    /// A write whose records are born at `worlds` and `facets` carries those
+    /// two axes of the credential's record bounds and no other. The proof may
+    /// narrow worlds and facets to cover them; any other narrowing, and any
+    /// record or channel caveat, fails closed as in
+    /// [`Self::require_unrestricted_record_scope`].
+    pub(crate) fn require_record_scope_carried(
+        &self,
+        worlds: oneiron::federation::ScopeAxis<oneiron::federation::ScopeId>,
+        facets: oneiron::federation::ScopeAxis<oneiron::federation::ScopeId>,
+    ) -> Result<(), ApiError> {
+        if let Some(proof) = self.verified_slip() {
+            let mut required = oneiron::federation::Scope::top();
+            required.verbs = proof.scope().verbs.clone();
+            required.worlds = worlds;
+            required.facets = facets;
             if !proof.claims().records.is_empty()
                 || !proof.claims().channels.is_empty()
                 || !required.is_narrowing_of(proof.scope())

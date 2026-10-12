@@ -383,6 +383,8 @@ pub struct Memory<'v> {
     /// The write origin a host bound, when one did: claim doors stamp it in
     /// place of the caller's declared source.
     pub(super) host_origin: Option<HostWriteOrigin>,
+    /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
+    pub(super) birth_position: crate::federation::record_scope::BirthPosition,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -429,6 +431,7 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            birth_position: Default::default(),
         }
     }
 
@@ -456,6 +459,7 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            birth_position: Default::default(),
         }
     }
 }
@@ -488,6 +492,7 @@ impl<'v> Memory<'v> {
                 read_proof: self.read_proof.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
+                birth_position: self.birth_position,
             },
         })
     }
@@ -669,17 +674,24 @@ impl Memory<'_> {
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
         self.vault.write_txn_door(callback, |wtxn| {
-            verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
-            if let Some(creation) = self.vault.shared_vault_creation_in_txn(wtxn)? {
-                self.vault.authorize_shared_vault_write_in_txn(
-                    wtxn,
-                    creation.vault_id,
-                    &crate::WriteActor::new(self.actor, self.actor_class),
-                    &crate::federation::SharedVaultWrite::Content(crate::federation::Scope::top()),
-                )?;
-            }
+            self.verify_actor_write_in_txn(wtxn)?;
             write(wtxn)
         })
+    }
+
+    /// The actor checks [`Self::with_verified_actor_write_txn_as`] runs in its
+    /// transaction, for a writer that must run its own check before them.
+    pub(crate) fn verify_actor_write_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        if let Some(creation) = self.vault.shared_vault_creation_in_txn(txn)? {
+            self.vault.authorize_shared_vault_write_in_txn(
+                txn,
+                creation.vault_id,
+                &crate::WriteActor::new(self.actor, self.actor_class),
+                &crate::federation::SharedVaultWrite::Content(crate::federation::Scope::top()),
+            )?;
+        }
+        Ok(())
     }
 
     pub(super) fn resolve_ref(&self, reference: &str) -> MemoryResult<EntityId> {

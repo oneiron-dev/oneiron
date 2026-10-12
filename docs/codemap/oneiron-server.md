@@ -76,14 +76,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/conversation_dag/mod.rs` | src | m | 16 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
 | `src/api/conversation_dag/types.rs` | src | m | 32 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
 | `src/api/conversation_members.rs` | src | s | 5 crate-vis | — | Room membership routes |
-| `src/api/conversation_transcript.rs` | src | s | 3 crate-vis | — | `GET /v1/core/conversations/{conversation_id}/transcript`: one conversation's turns and their messages in… |
+| `src/api/conversation_transcript.rs` | src | s | 4 crate-vis | — | `GET /v1/core/conversations/{conversation_id}/transcript`: one conversation's turns and their messages in… |
 | `src/api/conversation_transcript/tests.rs` | test | s | — | — | A loopback page reads an imported coding session from the vault alone, with the dev-mode credential a local… |
 | `src/api/conversations.rs` | src | m | 12 crate-vis | — | — |
+| `src/api/conversations/tests.rs` | test | s | — | — | The conversation list reads as a named reader, on the read lane recall and the transcript use (ARCH-0006a… |
 | `src/api/core/batch.rs` | src | s | 11 crate-vis | — | Batch-write DTOs, route handler, and entity-put staging |
 | `src/api/core/hydrate.rs` | src | m | 22 crate-vis | — | Hydrate and short-id hydrate DTOs, routes, and mappers |
 | `src/api/core/mod.rs` | src | s | 7 crate-vis | — | — |
 | `src/api/core/propose.rs` | src | s | 3 crate-vis | — | Proposal-only cloud leg |
-| `src/api/core/query.rs` | src | m | 16 crate-vis | — | Query/list/capability routes and their paging helpers |
+| `src/api/core/query.rs` | src | m | 15 crate-vis | — | Query/list/capability routes and their paging helpers |
 | `src/api/core/read_receipt.rs` | src | s | 4 crate-vis | — | OpenAPI shape for the engine-owned mandatory read receipt |
 | `src/api/core/widen.rs` | src | s | 3 crate-vis | — | Host-only landing of a frozen widen proposal |
 | `src/api/core/write_shape.rs` | src | s | 19 crate-vis | — | Create-entity DTOs, announcement normalization, and body field helpers |
@@ -116,9 +117,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/llm.rs` | src | s | 1 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/tests.rs` | test | m | — | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 10 crate-vis | — | Tool execution dispatch across actors |
-| `src/api/mcp_gateway/admission.rs` | src | m | 7 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/admission.rs` | src | m | 8 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 4 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
-| `src/api/mcp_gateway/board_setup.rs` | src | m | 17 crate-vis | — | Board state, setup grammar, and page preflight |
+| `src/api/mcp_gateway/board_setup.rs` | src | m | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | s | 2 crate-vis | — | Code mode's `self.memory.<verb>`: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/envelope.rs` | src | s | 14 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 6 crate-vis | — | Execute-code and board-verb executors |
@@ -141,7 +142,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openapi/security.rs` | src | s | 2 crate-vis | — | Security-scheme wiring and schema property-description helper |
 | `src/api/openapi_registry.rs` | src | m | 1 crate-vis | — | OpenAPI ApiDoc registration for the HTTP API |
 | `src/api/org_admin.rs` | src | s | 2 crate-vis | — | Owner-only setup and the Console's closed organization action list |
-| `src/api/owner_routes.rs` | src | m | 2 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
+| `src/api/owner_routes.rs` | src | m | 3 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
 | `src/api/pairing.rs` | src | s | 11 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
 | `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
@@ -156,7 +157,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/auth_idempotency.rs` | test | m | — | — | OpenAPI route auth, v1/legacy auth plane + revocation + scopes, core idempotency middleware semantics |
 | `src/api/tests/billing_usage.rs` | test | s | — | — | Provider money facts, runtime metering boundaries, and removed wallet routes |
 | `src/api/tests/board_host_events.rs` | test | L | — | — | Router proofs for session observations and turn-local capability riders |
-| `src/api/tests/board_stream_publisher.rs` | test | m | — | — | Own-task events reach STREAM subscribers through serve's board publisher |
+| `src/api/tests/board_stream_publisher.rs` | test | L | — | — | Own-task events reach STREAM subscribers through serve's board publisher |
 | `src/api/tests/companion.rs` | test | L | — | — | Companion profile access grants, tiers/missing/stale/refresh reads, register CRUD/retire/end-relationship |
 | `src/api/tests/context_board_history.rs` | test | m | 1 crate-vis | — | Board history on the board's own surface (ARCH-0067 §3): hydrations that name their TURN record its board… |
 | `src/api/tests/context_board_standing.rs` | test | m | — | — | The real session endpoint cannot fill context before a registered standing floor |
@@ -178,7 +179,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mcp_source_gate.rs` | test | s | — | — | — |
 | `src/api/tests/mcp_tool_endpoints.rs` | test | L | — | — | Tool-first vs /mcp listings, setup keyframe, execute_code retirement, narrowed admission, arg gating |
 | `src/api/tests/memory_reason_repairs.rs` | test | s | — | — | — |
-| `src/api/tests/mod.rs` | test | L | 51 crate-vis | — | — |
+| `src/api/tests/mod.rs` | test | L | 52 crate-vis | — | — |
 | `src/api/tests/off_record_rooms.rs` | test | L | — | — | ARCH-0052 D5, the notice model (owner ruling 2026-10-10, O1 = A): anyone in a room may start an off-record… |
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
 | `src/api/tests/owner_healer.rs` | test | m | — | — | `/v1/owner` safety and repair: the owner rotates a secret (ARCH-0069 S6), reads the three signed healer… |
@@ -200,15 +201,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/surface_routes.rs` | test | XL | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
 | `src/api/tests/vad_and_error_mapping.rs` | test | m | — | — | Turn/message VAD annotate routes plus core-engine-error to HTTP status mapping matrix |
 | `src/api/vad.rs` | src | m | 9 crate-vis | — | — |
-| `src/auth.rs` | src | m | 29 crate-vis | — | HTTP authentication for log-backed version-two capability slips |
+| `src/auth.rs` | src | m | 30 crate-vis | — | HTTP authentication for log-backed version-two capability slips |
 | `src/auth/binding_admission.rs` | src | s | 1 crate-vis | — | Consume holder proofs at the network door, once per request or upgrade |
-| `src/auth/slips.rs` | src | s | 11 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
+| `src/auth/slips.rs` | src | s | 12 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
 | `src/auth/tests.rs` | test | m | — | — | Authentication tests use real logged mints and holder signatures |
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
+| `src/bin/oneiron-broker.rs` | src | s | — | — | `oneiron-broker serve`: the credential broker, run as its own OS user |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
 | `src/cli.rs` | src | m | 18 struct · 8 enum · 3 fn · 1 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DreamerCommand, DreamerGrantArgs, EmbedderCommand +18 | — |
-| `src/cli/owner_args.rs` | src | m | 16 struct · 5 enum | BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportNotesArgs, ImportSourceArgs +13 | Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan… |
+| `src/cli/owner_args.rs` | src | m | 17 struct · 5 enum | BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportNotesArgs, ImportSourceArgs +14 | Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan… |
 | `src/commands.rs` | src | L | 1 struct · 11 fn · 1 const · 9 re-export · 1 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | L | 1 fn · 22 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | s | 5 crate-vis | — | A file holding a credential, readable by its owner alone |
@@ -226,7 +228,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/init.rs` | src | m | 1 fn | — | First-run embedder and tagger choices, using the same config and providers as serve |
 | `src/commands/mcp_bridge.rs` | src | m | 1 fn | — | `oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's… |
 | `src/commands/msgpack_json.rs` | src | s | 2 crate-vis | — | JSON renderings of MessagePack claim values for command output |
-| `src/commands/owner.rs` | src | m | 10 fn · 1 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window recovery, export, the secret… |
+| `src/commands/owner.rs` | src | m | 11 fn · 1 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the… |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
 | `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
 | `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
@@ -244,8 +246,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 2 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
 | `src/config/mod.rs` | src | s | 9 mod · 11 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 6 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
-| `src/config/models/mod.rs` | src | m | 6 struct · 1 fn · 2 re-export · 2 crate-vis | ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
-| `src/config/models/provider.rs` | src | s | 1 struct · 2 enum · 2 fn · 3 crate-vis | OutputLimitField, ProviderConfig, ProviderKind | One provider entry: how to reach a model server, as data |
+| `src/config/models/mod.rs` | src | m | 7 struct · 2 fn · 2 re-export · 2 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
+| `src/config/models/provider.rs` | src | m | 1 struct · 2 enum · 2 fn · 3 crate-vis | OutputLimitField, ProviderConfig, ProviderKind | One provider entry: how to reach a model server, as data |
 | `src/config/models/tests.rs` | test | s | — | — | — |
 | `src/config/oneironer.rs` | src | m | 3 struct · 2 enum · 8 fn · 2 crate-vis | OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity and label table |
 | `src/config/privacy_tests.rs` | test | s | — | — | — |
@@ -259,12 +261,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/control_keys.rs` | src | s | 2 struct · 1 enum · 6 fn · 1 const · 1 mod | ControlKeys, KeyError, KeyRecord | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |
 | `src/control_keys/http.rs` | src | s | 1 fn | — | Optional private control-plane router; tenant bearer auth remains separate |
 | `src/control_keys/tests.rs` | test | s | — | — | — |
-| `src/embedder/endpoint.rs` | src | m | 13 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
+| `src/embedder/admitted.rs` | src | s | 3 crate-vis | — | A remote embedder's requests under run admission (ARCH-0053 `#run-admission`) |
+| `src/embedder/endpoint.rs` | src | L | 15 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
 | `src/embedder/local/batcher.rs` | src | s | 7 crate-vis | — | Tokenisation and packing |
 | `src/embedder/local/bench.rs` | src | s | 4 crate-vis | — | Throughput and query latency of the local provider on synthetic text, the numbers its PR bodies report |
 | `src/embedder/local/cpu_q8.rs` | src | m | 8 crate-vis | — | Q8_0 projections on the CPU that read each weight once per forward pass |
-| `src/embedder/local/device.rs` | src | s | 3 crate-vis | — | Which candle device the local provider runs on, and at what precision |
+| `src/embedder/local/device.rs` | src | s | 4 crate-vis | — | Which candle device the local provider runs on, and at what precision |
 | `src/embedder/local/evidence.rs` | src | s | 7 crate-vis | — | Where vector evidence starts in a shipped model's space, and the profile its floors hold for |
 | `src/embedder/local/isq.rs` | src | s | 7 crate-vis | — | Quantise-at-load, in one function |
 | `src/embedder/local/mod.rs` | src | m | 23 crate-vis | — | The `local` provider: the model runs in this process, on candle |
@@ -281,7 +284,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/serve/tests.rs` | test | m | — | — | — |
 | `src/embedder/tests.rs` | test | XL | — | — | Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server |
 | `src/embedder/tests/turns.rs` | test | m | — | — | Turns are the embedding unit (ARCH-0004): a witnessed conversation is found by what it meant, through the… |
-| `src/error/mod.rs` | src | m | 4 struct · 2 enum · 26 fn · 1 const · 1 re-export · 1 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
+| `src/error/mod.rs` | src | m | 4 struct · 2 enum · 27 fn · 1 const · 1 re-export · 1 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
 | `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
 | `src/feedback_delivery.rs` | src | s | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
@@ -339,7 +342,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
 | `src/managed/state_serve.rs` | src | m | 3 struct · 20 fn · 1 type · 1 const · 1 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 2 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
-| `src/mcp/actors.rs` | src | s | 5 struct · 3 enum · 16 fn · 6 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
+| `src/mcp/actors.rs` | src | m | 5 struct · 3 enum · 17 fn · 6 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
 | `src/mcp/args.rs` | src | s | 3 struct · 1 enum | McpActorClass, McpActorMetadata, McpConsentMetadata, McpToolScope | MCP actor and consent metadata: the envelope every endpoint tool call carries |
 | `src/mcp/booking_inputs.rs` | src | s | 4 crate-vis | — | JSON schemas for the booking agent API's operation inputs (BK-08), merged into the OpenAPI components |
 | `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
@@ -355,20 +358,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/registry.rs` | src | m | 1 struct · 21 fn · 3 crate-vis | McpConnectorActorRegistry | MCP connector actor registry: cursors, board epochs, and stream proxy |
 | `src/mcp/results.rs` | src | s | 3 struct · 1 enum · 9 fn | McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError | MCP result envelopes: metadata, board keyframes, and setup payloads |
 | `src/mcp/schema_parts.rs` | src | s | 7 crate-vis | — | Shared JSON-schema fragments: actors, scopes, consent, and envelope pieces |
-| `src/mcp/surface.rs` | src | m | 3 struct · 4 enum · 16 fn · 14 const · 9 crate-vis | McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily | MCP endpoint surface: modes, verb bindings, and the registered tool listing |
+| `src/mcp/surface.rs` | src | m | 3 struct · 4 enum · 16 fn · 14 const · 10 crate-vis | McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily | MCP endpoint surface: modes, verb bindings, and the registered tool listing |
 | `src/mcp/tests.rs` | test | XL | — | — | — |
 | `src/mcp/tool_catalog.rs` | src | s | 2 enum · 3 const · 3 crate-vis | McpToolValidationError, McpValidatedToolArgs | MCP tool-argument constants and the validated arguments the endpoint decoder produces |
 | `src/mcp/validate.rs` | src | s | 2 crate-vis | — | Validation of the actor and consent metadata every MCP tool call carries |
 | `src/mcp/validators.rs` | src | s | 5 crate-vis | — | Small field validators shared by every MCP argument type |
-| `src/models/anthropic.rs` | src | s | 2 crate-vis | — | The Anthropic-compatible transport: any `/v1/messages` server |
+| `src/models/anthropic.rs` | src | s | 3 crate-vis | — | The Anthropic-compatible transport: any `/v1/messages` server |
+| `src/models/broker.rs` | src | m | 1 struct · 1 trait · 1 fn · 1 const · 2 crate-vis | KeyDoor, VaultKeyDoor | A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker… |
 | `src/models/catalog.rs` | src | s | 3 crate-vis | — | Config model references to engine catalog rows |
 | `src/models/declared.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | DeclaredRun | A declared run on this server's models (ARCH-0053 `#run-declaration`): the host that states a run's… |
 | `src/models/driven.rs` | src | s | 2 crate-vis | — | A stream whose items an async producer pushes, polled in place |
 | `src/models/http.rs` | src | s | 10 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
 | `src/models/ladder.rs` | src | m | 1 struct · 5 fn · 4 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
-| `src/models/mod.rs` | src | m | 2 struct · 9 fn · 8 re-export · 2 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
+| `src/models/mod.rs` | src | m | 2 struct · 10 fn · 9 re-export · 2 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
 | `src/models/offer.rs` | src | s | 1 struct · 1 crate-vis | ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
-| `src/models/openai.rs` | src | s | 1 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
+| `src/models/openai.rs` | src | s | 2 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
 | `src/models/output_cap.rs` | src | s | 2 crate-vis | — | A provider's output ceiling on the wire |
 | `src/models/raw.rs` | src | s | 7 crate-vis | — | The raw `/v1/llm` routes' models and their own meter |
 | `src/models/receipts.rs` | src | s | 1 struct · 1 const · 2 crate-vis | LoggedReceipts | Where the server's run receipts go by default: one structured log line per row |
@@ -426,7 +430,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/windows.rs` | src | s | 8 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
 | `src/server/windows/tests.rs` | test | s | — | — | — |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
-| `src/test_credentials.rs` | src | s | 10 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
+| `src/test_credentials.rs` | src | s | 11 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/keys.rs` | src | s | 9 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
 | `src/usage/ledger.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
@@ -450,6 +454,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/ai_serve.rs` | test | m | 9 crate-vis | — | The shipped binary with no model, and with one: without `[models]` every model-free path works and the… |
 | `tests/it/api_cli.rs` | test | s | — | — | `oneiron api call` through the shipped binary: a literal `--data` body and an `@FILE` body reach an… |
 | `tests/it/booking_agent_api.rs` | test | L | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
+| `tests/it/broker_paid_leg.rs` | test | L | — | — | RSG-006's paid leg (ARCH-0069 `#broker-design`, ARCH-0053 `#training-fixture-cases`) on the real… |
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |
 | `tests/it/core_discover.rs` | test | s | — | — | — |
 | `tests/it/first_owner_bootstrap.rs` | test | s | — | — | Fresh self-host pairing through the shipped offline command and HTTP door |
@@ -464,7 +469,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/owner_backup.rs` | test | s | — | — | The owner's backup loop through the shipped `oneiron` binary: back up, change the vault, rehearse (live… |
 | `tests/it/remote_pairing.rs` | test | m | — | — | A paired `oneiron_remote::OneironClient` against the real router |
 | `tests/it/reopen_after_restart.rs` | test | s | 5 crate-vis | — | Text saved through `oneiron serve` survives a restart (prune e2e row 4): witness one invented line, stop the… |
-| `tests/it/slip_clock.rs` | test | s | — | — | An agent's holder proof is judged on wall time, not on time the vault was seen running (perf pass, 2026-10-11) |
+| `tests/it/slip_clock.rs` | test | m | — | — | An agent's holder proof is judged on wall time, not on time the vault was seen running (perf pass, 2026-10-11) |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
 | `tests/managed_mode.rs` | test | XL | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |

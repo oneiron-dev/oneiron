@@ -9,7 +9,8 @@
 //! or export posts a notice to the room's own timeline, naming who and what,
 //! never the content. An agent may suggest a save: the suggestion is a notice
 //! everyone sees, and it saves nothing. A stretch the owner entered alone has
-//! no room. It is the 1:1 with their own companion, and it posts no notice.
+//! no room. It is the 1:1 with their own companion, and it posts no notice;
+//! nor does a room that holds only the owner and the vault's own agents.
 //!
 //! Each room names its own stretches: the registry keys one as
 //! [`room_session_key`], so a name taken in one room says nothing about
@@ -82,11 +83,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
             self.vault.config.off_record_overlay_budget_bytes,
             Some((room, by)),
         )?;
-        Ok(OffRecordSession {
-            vault: self.vault,
-            session_ref: key,
-            entry,
-        })
+        Ok(self.handle(key, entry))
     }
 
     /// Binds the stretch `session_ref` in `room` for `actor`, who must be on
@@ -178,7 +175,7 @@ impl OffRecordSession<'_> {
         // A saver who left the room has stopped saving, read or not.
         self.lapse_saver()?;
         let mut record = session_entry_state(&self.entry)?.record.clone();
-        let windows = self.sight(room, actor, None)?;
+        let windows = self.sight_in_txn(&self.vault.store.env.read_txn()?, room, actor, None)?;
         record.promoted_turns.clear();
         record
             .notices
@@ -186,21 +183,19 @@ impl OffRecordSession<'_> {
         Ok(record)
     }
 
-    /// `actor`'s membership windows in `room`, read AFTER whatever they
-    /// filter: someone removed, or whose `credential` was revoked, before
-    /// this read is refused, and anything said after they left falls
+    /// `actor`'s membership windows in `room`, read in `txn` AFTER whatever
+    /// they filter: someone removed, or whose `credential` was revoked,
+    /// before this read is refused, and anything said after they left falls
     /// outside the windows it returns.
-    fn sight(
+    fn sight_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         room: EntityId,
         actor: EntityId,
         credential: Option<&VerifiedSlip>,
     ) -> Result<Vec<MembershipWindow>> {
-        let txn = self.vault.store.env.read_txn()?;
         if let Some(credential) = credential
-            && !self
-                .vault
-                .capability_slip_is_live_in_txn(&txn, credential)?
+            && !self.vault.capability_slip_is_live_in_txn(txn, credential)?
         {
             return Err(Error::OffRecord(
                 OffRecordError::OffRecordPromoteUnauthenticated {
@@ -209,10 +204,10 @@ impl OffRecordSession<'_> {
                 },
             ));
         }
-        if !is_member_in_txn(self.vault, &txn, room, actor)? {
+        if !is_member_in_txn(self.vault, txn, room, actor)? {
             return Err(not_in_room(&self.session_ref, actor));
         }
-        self.vault.windows_in_txn(&txn, room, actor)
+        self.vault.windows_in_txn(txn, room, actor)
     }
 
     /// An agent in the room suggests a save. Everyone in the room sees the
@@ -221,8 +216,13 @@ impl OffRecordSession<'_> {
     pub fn suggest_save_by(&self, agent: EntityId) -> Result<()> {
         self.require_in_room(agent)?;
         let mut state = self.recording_state()?;
-        let at = self.vault.store.clock.now_recorded_at();
-        post_notice(&mut state, OffRecordNoticeAct::SaveSuggested, agent, at);
+        let hearing = Hearing::now(self.vault, state.record.room);
+        post_notice(
+            &mut state,
+            OffRecordNoticeAct::SaveSuggested,
+            agent,
+            hearing,
+        );
         self.entry.publish_state(&state);
         Ok(())
     }
@@ -245,14 +245,18 @@ impl OffRecordSession<'_> {
         let room = self.require_in_room(person)?;
         let mut state = self.recording_state()?;
         let gathered = self.gather_talk(&state)?;
-        let windows = self.sight(room, person, credential)?;
+        // Who hears the export is read with the sight that admits it.
+        let (windows, hearing) = {
+            let txn = self.vault.store.env.read_txn()?;
+            let windows = self.sight_in_txn(&txn, room, person, credential)?;
+            (windows, Hearing::in_txn(self.vault, &txn, Some(room)))
+        };
         let talk = OffRecordTalk {
             session_ref: self.session_ref.clone(),
             room: state.record.room,
             turns: gathered.finish(Some(windows.as_slice())),
         };
-        let at = self.vault.store.clock.now_recorded_at();
-        post_notice(&mut state, OffRecordNoticeAct::Exported, person, at);
+        post_notice(&mut state, OffRecordNoticeAct::Exported, person, hearing);
         self.entry.publish_state(&state);
         Ok(talk)
     }
@@ -350,20 +354,21 @@ impl OffRecordSession<'_> {
                 }
             }
             drop(snapshot);
-            if plans.is_empty() {
-                return Ok(Vec::new());
-            }
-            let saved = self.promote_plans(&mut state, plans, |wtxn| {
-                authority(self.vault, wtxn)?;
-                match room {
-                    Some(room) => {
-                        require_sight_in_txn(self.vault, wtxn, &self.session_ref, room, by, &times)
-                    }
-                    None => Ok(()),
+            let check = |txn: &heed::RoTxn<'_>| {
+                authority(self.vault, txn)?;
+                if let Some(room) = room {
+                    require_sight_in_txn(self.vault, txn, &self.session_ref, room, by, &times)?;
                 }
-            })?;
-            let at = self.vault.store.clock.now_recorded_at();
-            post_notice(&mut state, OffRecordNoticeAct::SavedTalk, by, at);
+                Ok(Hearing::in_txn(self.vault, txn, room))
+            };
+            // A save that finds nothing new keeps nothing, and the room still
+            // hears it, on the same checks a save that keeps something runs.
+            let (saved, hearing) = if plans.is_empty() {
+                (Vec::new(), check(&self.vault.store.env.read_txn()?)?)
+            } else {
+                self.promote_plans(&mut state, plans, |wtxn| check(wtxn))?
+            };
+            post_notice(&mut state, OffRecordNoticeAct::SavedTalk, by, hearing);
             self.entry.publish_state(&state);
             saved
         };
@@ -509,24 +514,87 @@ impl Talk {
     }
 }
 
-/// Posts a notice to the room's timeline. A stretch with no room is the
-/// owner's 1:1 with their own companion: no other person is there to hear it.
+/// Who hears an act in a room, and when. A stretch with no room, and a room
+/// whose roster is one owner of this vault and the vault's own agents, is
+/// the owner's 1:1 with their own companion: no other person is there to
+/// hear it.
+#[derive(Clone, Copy)]
+pub(super) struct Hearing {
+    heard: bool,
+    at: u64,
+}
+
+impl Hearing {
+    /// The hearing of an act that keeps a copy, read in the transaction that
+    /// admitted it: someone who leaves once the copy is kept still had it
+    /// noticed.
+    pub(super) fn in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, room: Option<EntityId>) -> Self {
+        let heard = room.is_some_and(|room| {
+            heard_by_another_in_txn(vault, txn, room).unwrap_or_else(heard_unread)
+        });
+        Self {
+            heard,
+            at: vault.store.clock.now_recorded_at(),
+        }
+    }
+
+    /// The hearing of an act that keeps nothing, on the roster as it reads
+    /// now.
+    pub(super) fn now(vault: &Vault, room: Option<[u8; 16]>) -> Self {
+        let heard = room.is_some_and(|room| {
+            let read = || -> Result<bool> {
+                let txn = vault.store.env.read_txn()?;
+                heard_by_another_in_txn(vault, &txn, EntityId::from_bytes(room)?)
+            };
+            read().unwrap_or_else(heard_unread)
+        });
+        Self {
+            heard,
+            at: vault.store.clock.now_recorded_at(),
+        }
+    }
+}
+
+/// Posts a notice to the room's timeline, when someone there hears it.
 pub(super) fn post_notice(
     state: &mut OffRecordSessionEntryState,
     act: OffRecordNoticeAct,
     by: EntityId,
-    at: u64,
+    hearing: Hearing,
 ) {
-    if state.record.room.is_some() {
-        if state.record.notices.len() >= MAX_ROOM_NOTICES {
-            state.record.notices.remove(0);
-        }
-        state.record.notices.push(OffRecordNotice {
-            act,
-            by: *by.as_bytes(),
-            at,
-        });
+    if state.record.room.is_none() || !hearing.heard {
+        return;
     }
+    if state.record.notices.len() >= MAX_ROOM_NOTICES {
+        state.record.notices.remove(0);
+    }
+    state.record.notices.push(OffRecordNotice {
+        act,
+        by: *by.as_bytes(),
+        at: hearing.at,
+    });
+}
+
+/// Whether, in `txn`, `room`'s roster holds anyone but one owner of this
+/// vault and the vault's own agents: another person, a second owner, or
+/// someone else's agent.
+fn heard_by_another_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<bool> {
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let mut owners = 0_usize;
+    for member in vault.members_in_txn(txn, room)? {
+        if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &member)? {
+            owners += 1;
+        } else if !crate::disclosure::is_vault_agent_in(vault, txn, &fold, &member)? {
+            return Ok(true);
+        }
+    }
+    Ok(owners > 1)
+}
+
+/// A roster that does not read counts as heard, so the notice posts.
+fn heard_unread(error: Error) -> bool {
+    tracing::warn!(error = %error, "a room's roster did not read; its notice posts");
+    true
 }
 
 /// The refusal of an unbound save or flip on a stretch in a room: there it
@@ -680,13 +748,17 @@ pub(super) fn is_member_in_txn(
     room: EntityId,
     actor: EntityId,
 ) -> Result<bool> {
-    if vault.get_entity_type_in_txn(txn, &room)? != Some(ENTITY_TYPE_CONVERSATION) {
+    // A deleted room keeps its shell and has no one in it, as an absent one
+    // has no one: the liveness the room's body door refuses on, read first.
+    if crate::vault::live_entity_row_in_txn(&vault.store, txn, &room)?.live_type()
+        != Some(ENTITY_TYPE_CONVERSATION)
+    {
         return Ok(false);
     }
     Ok(vault.members_in_txn(txn, room)?.contains(&actor))
 }
 
-fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
+pub(super) fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
     Error::OffRecord(OffRecordError::OffRecordNotInRoom {
         session_ref: session_ref.to_owned(),
         actor_ref: actor.to_hex(),

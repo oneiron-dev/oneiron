@@ -218,6 +218,9 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
     /// Stranded edit proposal. Key: id16 + hash32.
     EDIT_SETTLE_STRANDED_PROPOSAL: VaultMeta b"edit_settle:stranded:v1:" Named;
+    /// The device family and runtime that computed the current embedding vector, outside the space
+    /// identity (ARCH-0036). Key: id16.
+    EMBEDDING_DEVICE: VaultMeta b"embedding/device/" Named;
     /// Where the current reconciled embedding vector was filled (on-device/owner-server/third-party).
     /// Key: id16.
     EMBEDDING_LOCALITY: VaultMeta b"embedding/locality/" Raw;

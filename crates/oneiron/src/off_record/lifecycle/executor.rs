@@ -5,7 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
-use super::on_record::SaverCheck;
+use super::on_record::Landing;
 use super::session::OffRecordSession;
 use super::types::ExecutorUtterance;
 use crate::error::OffRecordError;
@@ -175,24 +175,40 @@ impl OffRecordSession<'_> {
             }],
             occurred_at,
         };
-        let result = match host_turn_ref {
-            Some(turn_ref) => {
-                memory.witness_into_session_with_host_turn(self, &turn, None, turn_ref)
-            }
-            None => memory.witness_into_session(self, &turn, None),
+        // The run's own checks, first in each transaction the witness opens
+        // (its container probes and the one that lands the turn): its
+        // participant is still in the room, and the route it bound at run
+        // entry still stands. Their refusal travels back as the typed error
+        // it was.
+        let refused = std::cell::Cell::new(None);
+        let admit = |txn: &heed::RoTxn<'_>| {
+            self.participant_in_txn(txn)
+                .and_then(|()| route.revalidate())
+                .map_err(|error| {
+                    let shown = crate::memory::MemoryError::new(
+                        crate::memory::MEMORY_CODE_INVALID_STATE,
+                        error.to_string(),
+                        &["Bind a new run to the room."],
+                    );
+                    refused.set(Some(error));
+                    shown
+                })
         };
-        result
+        memory
+            .witness_into_session_for_run(self, &turn, None, host_turn_ref, admit)
             // The door reports a code+message `MemoryError`. A CEILING refusal
             // is a policy verdict the caller must be able to route on, so it
             // travels back out as the typed gate denial it was (ONE-1686) —
             // flattening it into an invariant violation would turn "the owner's
             // policy refused this bubble" into "the engine is broken". Every
-            // other refusal this entry OWNS is raised typed above, and the turn
-            // is built here from executor-controlled parts, so anything else
-            // the door rejects does mean an executor-side invariant broke.
+            // other refusal this entry OWNS is raised typed, above or in
+            // `admit`, and the turn is built here from executor-controlled
+            // parts, so anything else the door rejects does mean an
+            // executor-side invariant broke.
             .map_err(|error| {
-                error
-                    .gate_denial_error()
+                refused
+                    .take()
+                    .or_else(|| error.gate_denial_error())
                     .unwrap_or(Error::InvariantViolation(
                         "executor witness door rejected the session turn",
                     ))
@@ -230,13 +246,7 @@ impl OffRecordSession<'_> {
     ) -> Result<(&Vault, Landing<'r, '_, '_>)> {
         route.revalidate()?;
         match route.target() {
-            RouteTarget::Base => Ok((
-                self.vault,
-                Landing {
-                    route,
-                    saver: self.saver_check_for(route)?,
-                },
-            )),
+            RouteTarget::Base => Ok((self.vault, self.landing(route)?)),
             RouteTarget::Overlay | RouteTarget::Discard => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.session_ref.clone(),
@@ -369,24 +379,5 @@ impl OffRecordSession<'_> {
             gate_body,
             |txn| landing.in_txn(txn),
         )
-    }
-}
-
-/// A base write's first step in its transaction: the run's route still
-/// stands and, in a room on record, its saver still holds.
-struct Landing<'r, 's, 'vault> {
-    route: &'r SessionWriteRoute,
-    saver: Option<SaverCheck<'s, 'vault>>,
-}
-
-impl Landing<'_, '_, '_> {
-    fn in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
-        if let Some(saver) = &self.saver {
-            saver.in_txn(txn)?;
-        }
-        // The route is checked again here, not only before the writer: a
-        // room that went off record, or whose saving stopped, while this
-        // write waited for the writer keeps nothing of it.
-        self.route.revalidate()
     }
 }

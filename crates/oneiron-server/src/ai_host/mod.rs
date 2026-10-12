@@ -16,7 +16,8 @@ use oneiron_driver::{HintPusher, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig};
 use crate::models::{
-    LoggedReceipts, ModelRuntime, ModelsStatus, RawInference, RoleCall, RoleRefusal, Seat,
+    KeyDoor, LoggedReceipts, ModelRuntime, ModelsStatus, RawInference, RoleCall, RoleRefusal, Seat,
+    VaultKeyDoor,
 };
 use crate::server::SyncServer;
 
@@ -317,7 +318,9 @@ impl AiHost {
         receipts: Arc<dyn RunReceiptSink>,
     ) -> Self {
         recover_dead_leases(&vault);
-        let runtime = Arc::new(ModelRuntime::build(models).with_receipts(receipts));
+        let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
+        let runtime =
+            Arc::new(ModelRuntime::build_with_keys(models, Some(keys)).with_receipts(receipts));
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
             handle: handle.clone(),

@@ -431,6 +431,9 @@ pub struct NapiMemoryItem {
     pub salience: Option<f64>,
     /// For a TURN item, the messages whose words the query matched, best first.
     pub cited_messages: Vec<NapiCitedMessage>,
+    /// For a TURN or MESSAGE item, the conversation it is in (32 hex), when
+    /// the reader may read that conversation.
+    pub conversation_id: Option<String>,
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
