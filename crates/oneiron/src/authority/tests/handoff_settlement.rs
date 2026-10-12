@@ -493,7 +493,10 @@ fn loser<'a>(
 ) -> &'a AuthorityLogEntry {
     let mut all = entries.to_vec();
     all.extend([first.clone(), second.clone()]);
-    if fold_authority_log(&all).valid_entries.contains(&hash(first)) {
+    if fold_authority_log(&all)
+        .valid_entries
+        .contains(&hash(first))
+    {
         second
     } else {
         first
