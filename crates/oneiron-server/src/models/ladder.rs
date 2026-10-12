@@ -167,20 +167,29 @@ impl OfferLadder {
     }
 
     /// Admits `request` as a call of `rung` under `run`: its own permit,
-    /// bound to that rung's model, route, locality and offer.
+    /// bound to that rung's model, route, locality and offer, and to the
+    /// exact request bytes when the rung's backend builds them first (a
+    /// broker rung).
     fn admit(
         &self,
         run: &RunAdmission,
         rung: &LadderRung,
         request: &LlmRequest,
         selector: Option<&str>,
+        stream: bool,
     ) -> LlmResult<(LlmRequest, RunPermit)> {
         let call = rung.bind(request.clone());
-        let permit = run.admit(RunCall {
+        let run_call = RunCall {
             selector: Some(selector.unwrap_or(self.name.as_str())),
             request: &call,
             offer: &rung.offer.binding,
-        })?;
+        };
+        // A request the backend cannot build is admitted unbound: the gate's
+        // preflight then refuses it with a denial row, before any byte leaves.
+        let permit = match rung.offer.backend.request_digest(&call, stream) {
+            Ok(Some(digest)) => run.admit_request(run_call, &digest)?,
+            Ok(None) | Err(_) => run.admit(run_call)?,
+        };
         Ok((call, permit))
     }
 
@@ -209,7 +218,7 @@ impl OfferLadder {
         self.admits(&request)?;
         let mut last = None;
         for (index, rung) in self.rungs.iter().enumerate() {
-            let (call, permit) = self.admit(run, rung, &request, selector)?;
+            let (call, permit) = self.admit(run, rung, &request, selector, false)?;
             let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             match gate.generate(call, permit.lease()).await {
                 Ok(mut response) => {
@@ -242,7 +251,7 @@ impl OfferLadder {
         selector: Option<&str>,
     ) -> LlmResult<LlmStream<'static>> {
         self.admits(&request)?;
-        let first = self.admit(run, &self.rungs[0], &request, selector)?;
+        let first = self.admit(run, &self.rungs[0], &request, selector, true)?;
         let (ladder, run) = (Arc::clone(self), run.clone());
         let selector = selector.map(str::to_owned);
         Ok(LlmStream::new(Driven::new(move |events| async move {
@@ -265,7 +274,7 @@ impl OfferLadder {
         for (index, rung) in self.rungs.iter().enumerate() {
             let next = match admitted.take() {
                 Some(first) => Ok(first),
-                None => self.admit(run, rung, request, selector),
+                None => self.admit(run, rung, request, selector, true),
             };
             let (call, permit) = match next {
                 Ok(next) => next,

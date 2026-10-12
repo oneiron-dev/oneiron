@@ -206,6 +206,7 @@ impl OfferBinding {
             route: self.route.key(),
             locality: self.locality,
             offer: identity(self),
+            request_digest: None,
         }
     }
 }
@@ -236,6 +237,7 @@ impl PaidConnector {
             route: self.route.key(),
             locality: self.locality,
             offer: identity(self),
+            request_digest: None,
         }
     }
 }
