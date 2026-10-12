@@ -106,8 +106,8 @@ pub(crate) fn redirty_turn_in_txn(
     turn: &EntityId,
 ) -> Result<()> {
     put_carrier_in_txn(&vault.store, txn, turn)?;
-    // Changed words are new work for the sieve too.
-    crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
+    // Changed words are new work for the sieve too, and end their hold.
+    crate::dreamer_wake::words_changed_in_txn(&vault.store, txn, turn)
 }
 
 /// Parks an edge-less TURN a scope cursor is passing on the same carrier: its

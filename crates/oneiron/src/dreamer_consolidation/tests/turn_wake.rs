@@ -2,7 +2,7 @@
 //! wake over material the projection holds writes nothing, new material is
 //! queued once and held from the moment its round applies, through a
 //! restart, and a TURN without its conversation edge waits parked instead of
-//! stopping later turns. Sol R1's projector repros close the file.
+//! stopping later turns. Sol's projector repros close the file.
 use super::*;
 use crate::attempt_queue::{ClaimAttempt, ClaimOutcome};
 use crate::dreamer_runner::{CompleteDreamerAttempt, DreamerRunnerStore, FailDreamerAttempt};
@@ -82,7 +82,13 @@ fn a_wake_over_material_the_projection_holds_writes_nothing() -> Result<()> {
     complete(&vault, &record, at + 2)?;
 
     // The same words again, punctuated and cased differently: held material.
-    seed_turn(&vault, &session, "user", "i live in kyoto!", at + 3);
+    seed_turn(
+        &vault,
+        &session,
+        "user",
+        "i live in kyoto! my sister is mia",
+        at + 3,
+    );
     assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
     assert_eq!(micro_attempts(&vault)?.len(), 1, "no round for held words");
 
@@ -274,7 +280,7 @@ fn witness_into(
     person: EntityId,
     conversation: EntityId,
     messages: Vec<crate::memory::WitnessMessage>,
-) -> Result<EntityId> {
+) -> EntityId {
     let turn = EntityId::now();
     vault
         .memory(person, EdgeActorClass::Human)
@@ -285,7 +291,7 @@ fn witness_into(
             occurred_at: 10,
         })
         .expect("witnessed turn");
-    Ok(turn)
+    turn
 }
 
 /// Sol R1 (P1): the projector held a system interleave's words, which no
@@ -308,7 +314,7 @@ fn words_a_branch_never_reads_are_never_held() -> Result<()> {
             message(0, WitnessAuthor::User, "Thanks.", true),
             message(1, WitnessAuthor::System, "My manager is Ren.", true),
         ],
-    )?;
+    );
     let at = vault.now_recorded_at();
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
     complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
@@ -318,7 +324,7 @@ fn words_a_branch_never_reads_are_never_held() -> Result<()> {
         person,
         conversation,
         vec![message(0, WitnessAuthor::User, "My manager is Ren.", true)],
-    )?;
+    );
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
     assert_eq!(micro_rounds(&vault)?, vec![vec![thanks], vec![said]]);
     Ok(())
@@ -417,6 +423,7 @@ fn a_turn_whose_text_lives_in_its_document_is_sieved_and_planned() -> Result<()>
     let session = seed_session(&vault, 15, at);
     let turn = seed_turn(&vault, &session, "user", "Alice arrives tomorrow.", at);
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    crate::test_util::bind_test_owner(&vault, owner);
     let authenticated = vault.authenticate_owner(
         owner,
         "principal:turn-wake-test",
@@ -547,5 +554,123 @@ fn a_turn_rewritten_under_its_own_key_unbinds_its_round_and_is_sieved_again() ->
             .iter()
             .any(|span| span.turn == turn && kyoto(span))
     );
+    Ok(())
+}
+
+/// Sol R2 and R3 (P1): the latest round held every statement of its batch,
+/// so Kyoto then Osaka in one batch held Kyoto too, and a later return to
+/// Kyoto was consumed. A text comparison cannot order statements, so only
+/// the batch's latest turn holds.
+#[test]
+fn a_value_superseded_inside_one_batch_is_new_material_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 19, at);
+    let kyoto = seed_turn(&vault, &session, "user", "I live in Kyoto.", at);
+    let osaka = seed_turn(&vault, &session, "user", "I live in Osaka.", at + 1);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 1)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![kyoto, osaka]]);
+    complete(&vault, &claim_micro(&vault, at + 2)?, at + 3)?;
+
+    let back = seed_turn(&vault, &session, "user", "I live in Kyoto.", at + 4);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+    assert_eq!(micro_rounds(&vault)?[1], vec![back]);
+    Ok(())
+}
+
+/// Engine ruling on Sol R2's batched reversal: only the held turn's whole
+/// statement set said again is held. Part of it is new material, since a
+/// text comparison cannot tell what the rest of the held turn changed.
+#[test]
+fn part_of_the_held_words_is_new_material() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 20, at);
+    let first = seed_turn(
+        &vault,
+        &session,
+        "user",
+        "I live in Kyoto. My sister is Mia.",
+        at,
+    );
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+
+    let part = seed_turn(&vault, &session, "user", "i live in kyoto!", at + 3);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![first], vec![part]]);
+    Ok(())
+}
+
+/// Engine ruling on Sol R2's batched reversal: a repeat rides the held turn
+/// as of its wake. A turn between the two that is queued later, here a
+/// parked turn whose conversation edge lands, may have changed the value the
+/// repeat returned to, so the repeat is planned again.
+#[test]
+fn a_repeat_is_planned_again_when_a_turn_before_it_is_queued_later() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 21, at);
+    let kyoto = seed_turn(&vault, &session, "user", "I live in Kyoto.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let parked = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &parked,
+            ENTITY_TYPE_TURN,
+            occurred(at + 3),
+            at + 3,
+            &turn_body("user", "I live in Osaka.", None),
+        )
+        .commit()?;
+    let back = seed_turn(&vault, &session, "user", "I live in Kyoto.", at + 4);
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+
+    vault
+        .batch()
+        .edge(&parked, EdgeKind::ChildOf, &session, 1.0)
+        .commit()?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 5)?);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 6)?);
+    assert_eq!(
+        micro_rounds(&vault)?,
+        vec![vec![kyoto], vec![parked], vec![back]]
+    );
+    Ok(())
+}
+
+/// Sol R3 (P1): a held turn rewritten after its round was queued, then
+/// rewritten back after its attempt completed on the changed words, read as
+/// it did when queued, so its round held words its attempt never read and a
+/// return to them was consumed. Publishing a held turn's words ends its hold
+/// for good.
+#[test]
+fn a_held_turn_rewritten_and_restored_holds_nothing() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 22, at);
+    let turn = seed_turn(&vault, &session, "user", "I live in Kyoto.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    let rewrite = |text: &str| {
+        vault
+            .batch()
+            .put(
+                &turn,
+                ENTITY_TYPE_TURN,
+                occurred(at),
+                at,
+                &turn_body("user", text, None),
+            )
+            .commit()
+    };
+    rewrite("I live in Osaka.")?;
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    rewrite("I live in Kyoto.")?;
+
+    let back = seed_turn(&vault, &session, "user", "I live in Kyoto.", at + 3);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    assert_eq!(micro_rounds(&vault)?[1], vec![back]);
     Ok(())
 }

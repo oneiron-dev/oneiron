@@ -104,10 +104,12 @@ side_tables! {
     DREAMER_PROACTIVITY_STATE: VaultMeta b"dreamer:proactivity:state:v1" LegacyJson;
     /// The projector rounds one TURN gave words to, for erasure. Key: id16(turn).
     DREAMER_PROJECTION_GIVEN: VaultMeta b"dreamer:projection:given:v1:" Named;
-    /// The latest projector round queued for one consolidation partition. Key: hash32(partition).
-    DREAMER_PROJECTION_LATEST: VaultMeta b"dreamer:projection:latest:v1:" Raw;
-    /// One projector round: its partition, statements and riders, and whether it applied. Key:
-    /// hash32(round).
+    /// The latest TURN the projector queued, vault-wide, its round, and whether it holds. Key: ().
+    DREAMER_PROJECTION_LATEST: VaultMeta b"dreamer:projection:latest:v1" Named;
+    /// A TURN consumed as a repeat of the held TURN: the round it rode and the TURN it repeated.
+    /// Key: u64be + id16.
+    DREAMER_PROJECTION_RIDER: VaultMeta b"dreamer:projection:rider:v1:" Named;
+    /// One projector round: its turns and riders, and whether it applied. Key: hash32(round).
     DREAMER_PROJECTION_ROUND: VaultMeta b"dreamer:projection:round:v1:" Named;
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson;

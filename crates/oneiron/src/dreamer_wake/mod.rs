@@ -48,7 +48,7 @@ pub(crate) fn erase_in_txn(
     let turns = text_turns_in_txn(store, txn, id)?;
     for turn in &turns {
         sieve::erase_turn_in_txn(store, txn, turn)?;
-        projector::erase_turn_in_txn(store, txn, turn)?;
+        projector::erase_turn_in_txn(store, txn, turn, turn == id)?;
         if turn != id {
             sieve::owe_read_in_txn(store, txn, turn)?;
         }
@@ -58,7 +58,7 @@ pub(crate) fn erase_in_txn(
 
 /// The publication hook: a TURN, or a MESSAGE inside one, whose text a
 /// write changed or may have changed (a document write, its restore, an
-/// idle revision, a re-put of the row) owes that turn a new sieve read,
+/// idle revision, a re-put of the row) has its turn's words changed,
 /// committed with the text. Unlike the tag and vector marks it needs no
 /// model configured.
 pub(crate) fn mark_on_publication_in_txn(
@@ -67,9 +67,20 @@ pub(crate) fn mark_on_publication_in_txn(
     entity: &crate::EntityId,
 ) -> crate::Result<()> {
     for turn in text_turns_in_txn(store, txn, entity)? {
-        sieve::owe_read_in_txn(store, txn, &turn)?;
+        words_changed_in_txn(store, txn, &turn)?;
     }
     Ok(())
+}
+
+/// A TURN whose words changed owes the sieve a new read and holds nothing
+/// in the projection more, in the commit that changes them.
+pub(crate) fn words_changed_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &crate::EntityId,
+) -> crate::Result<()> {
+    sieve::owe_read_in_txn(store, txn, turn)?;
+    projector::unhold_in_txn(store, txn, turn)
 }
 
 /// The TURNs whose words `id` is: itself for a TURN, every TURN a MESSAGE is

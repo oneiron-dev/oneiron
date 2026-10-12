@@ -260,13 +260,12 @@ impl Vault {
     /// The continuous sieve reads what landed first, in the same commit. A
     /// turn's ordinal is its place in the unread window, so the Nth new turn
     /// closes an N-turn grain; turns that landed together are due when any of
-    /// their ordinals is. A due window goes to the projector's surprise check
-    /// partition by partition: a partition whose material the projection
-    /// already holds writes nothing, its turns riding the round that holds
-    /// it, and the rest are queued as their partitions' latest rounds.
-    /// Either way the window is read: the watermark passes it. Sieve,
-    /// enqueue, projector rows and Micro watermark land in one transaction,
-    /// so a crash cannot queue a window twice or lose one.
+    /// their ordinals is. A due window goes to the projector's surprise check:
+    /// a window that only repeats the turn the projection holds writes
+    /// nothing, its repeats riding that turn's round, and any other window is
+    /// queued whole. Either way the window is read: the watermark passes it.
+    /// Sieve, enqueue, projector rows and Micro watermark land in one
+    /// transaction, so a crash cannot queue a window twice or lose one.
     ///
     /// An imported TURN belongs to its import's one review (ARCH-0027): it is
     /// never planned here and never counts. A TURN without its conversation
@@ -317,7 +316,7 @@ impl Vault {
                     .filter(|at| first_live.is_none_or(|live| *at < live))
                     .max()
             };
-            let mut queued = false;
+            let mut held = None;
             if due {
                 let plan = super::projector::plan_in_txn(self, txn, &window, &watermark)?;
                 let enqueued = enqueue_partition_plans_in_txn(
@@ -329,13 +328,18 @@ impl Vault {
                     None,
                     now,
                 )?;
-                super::projector::hold_in_txn(self, txn, &plan, &enqueued)?;
-                queued = !enqueued.is_empty();
+                held = Some((plan, enqueued));
             }
             if let Some(through) = through {
                 advance_watermark_in_txn(self, txn, scope, through)?;
             }
-            Ok(queued)
+            // After the settlement, which consumes every carrier up to where
+            // it moves: a rider the projector puts back waits for a later wake.
+            let Some((plan, enqueued)) = held else {
+                return Ok(false);
+            };
+            super::projector::hold_in_txn(self, txn, &plan, &enqueued)?;
+            Ok(!enqueued.is_empty())
         })?;
         if queued {
             self.store.notify_attempt_observers();
