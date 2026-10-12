@@ -73,13 +73,46 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
-`local-openai-compat`, `oneironer`), `base_url`, `key_env`, `headers`
+`local-openai-compat`, `oneironer`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
+
+A `key_secret` names a vault secret instead of a variable: the key stays in
+the vault's custody (T0), and only the credential broker sends it. The broker is
+a separate process that runs as its own OS user, adds the key to one request,
+sends it once over verified TLS (no redirect, no retry, no proxy) and strips the
+key from the reply. Each call reads the key at the custody door, so register the
+secret with a binding for the effector `broker:model` at T0 (doored). Run
+the broker with `oneiron-broker serve --socket <path> --client-uid <the
+server's uid>` (add `--extra-roots <pem>` for a private CA), and name it:
+
+```toml
+[models.broker]
+socket = "/run/oneiron-broker/broker.sock"   # absolute; its directory is the fence
+uid = 991                                    # the broker's user, never the server's
+
+[models.providers.paid]
+kind = "openai-compat"
+base_url = "https://api.example.com"         # https only
+key_secret = "provider-key"
+```
+
+A declared run's paid keys must sit at T0, so its teacher calls go out this way.
+A `key_secret` provider answers whole replies only for now: a streamed call to it
+is refused before it starts.
+
+The broker holds `<socket>.lock` while it serves, so a second broker on the same
+path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
+the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
+for the user that runs it, and `newuidmap`. A Linux host that is meant to prove the
+broker runs it; there, a missing prerequisite fails the run instead of skipping it.
+The full gate (`SCOPE_FULL=true scripts/ci/run_scoped.sh test`) runs it after the
+workspace tests, so the host that runs the full gate needs the range and
+`newuidmap`.
 
 `max_output_tokens` is a ceiling on every call to that provider: it is sent
 when a call names no limit, and a larger limit is cut down to it. An
