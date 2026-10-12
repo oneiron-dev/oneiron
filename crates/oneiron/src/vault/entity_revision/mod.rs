@@ -13,7 +13,9 @@ mod storage;
 mod turn_text;
 #[cfg(test)]
 pub(crate) use turn_text::HISTORY_SEARCHES;
-pub(crate) use turn_text::{served_turn_text_in_txn, turn_row_for_text_revision_in_txn};
+pub(crate) use turn_text::{
+    message_has_document_in_txn, served_turn_text_in_txn, turn_row_for_text_revision_in_txn,
+};
 mod types;
 mod vector_refill;
 pub(crate) use vector_refill::schedule_vector_refills;

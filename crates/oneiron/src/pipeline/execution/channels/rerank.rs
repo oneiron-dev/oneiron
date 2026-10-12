@@ -294,19 +294,18 @@ impl PipelineBuilder<'_> {
             Err(error) => return Err(error),
         };
         // A streamed or edited MESSAGE holds its words in its entity
-        // document, which its row revision does not pin.
-        if kind == Some(ENTITY_TYPE_MESSAGE) {
-            #[cfg(feature = "sync")]
-            let document_backed =
-                crate::entity_doc::has_record_head(&self.vault.store, rtxn, id)?;
-            #[cfg(not(feature = "sync"))]
-            let document_backed = false;
-            if revision.is_none() || document_backed {
-                return Ok(BoundWords {
-                    unscored: true,
-                    ..BoundWords::default()
-                });
-            }
+        // document, which its row revision does not pin; a build without
+        // `sync` reads no document, but still sees that it has one.
+        if kind == Some(ENTITY_TYPE_MESSAGE)
+            && (revision.is_none()
+                || crate::vault::entity_revision::message_has_document_in_txn(
+                    self.vault, rtxn, id,
+                )?)
+        {
+            return Ok(BoundWords {
+                unscored: true,
+                ..BoundWords::default()
+            });
         }
         let mut words = BoundWords {
             revision,

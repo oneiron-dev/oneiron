@@ -336,3 +336,117 @@ fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
         Some(crate::memory::RerankReport::Applied { .. })
     ));
 }
+
+/// Sol round 7 (R7-1): a build without `sync` reads no entity document, but a
+/// `sync` process sharing the vault may move a message's words into one. The
+/// message's retained row still holds its old words, so the reranker scored
+/// those, and its TURN, which shows none of them here, took that score.
+/// Such a message is not reranked in this build either: it follows the
+/// reranked rows.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn a_message_moved_to_its_document_by_a_sync_process_is_not_reranked() {
+    use crate::side_table::{self, HexId, Named, SideTable};
+    const DOCUMENT_HEADS: SideTable<HexId, rmpv::Value, Named> =
+        SideTable::new(&side_table::ENTITY_DOC_HEAD);
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    witness_turn(&facade, 0xE6, &["a kettle shop that sells handles"], 1_900);
+    let moved = witness_turn(
+        &facade,
+        0xE7,
+        &["the kettle has a brass handle", "keep it quiet"],
+        1_900,
+    );
+    let message = first_message(&vault, &moved);
+    vault
+        .pinned_short_ref(&message)
+        .expect("pin the message's row");
+    let raw = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, &message)
+            .expect("read the message row")
+            .expect("the message row")
+            .to_vec()
+    };
+    let (header, body) = raw.split_at(crate::batch::ENTITY_METADATA_HEADER_LEN);
+    let rmpv::Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut std::io::Cursor::new(body)).expect("message body")
+    else {
+        panic!("a message body is a map");
+    };
+    fields.retain(|(key, _)| key.as_str() != Some("content"));
+    fields.push((
+        rmpv::Value::from("entity_doc_ref"),
+        rmpv::Value::from(message.to_hex()),
+    ));
+    let mut pointer = header.to_vec();
+    rmpv::encode::write_value(&mut pointer, &rmpv::Value::Map(fields)).expect("encode");
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, message.as_bytes(), &pointer)?;
+            DOCUMENT_HEADS.put(&vault.store, wtxn, &HexId(message), &rmpv::Value::Nil)
+        })
+        .expect("move the message's text out of its row, as a sync process does");
+    // The moved words score highest, then the shop's.
+    let scored = std::sync::Mutex::new(Vec::new());
+    let score = |_: usize, text: &str| {
+        scored.lock().unwrap().push(text.to_owned());
+        if text.contains("brass") {
+            20.0
+        } else if text.contains("shop") {
+            10.0
+        } else {
+            5.0
+        }
+    };
+    let host = ScriptedReranker {
+        lease: crate::BudgetGuard::new(
+            "paid-rerank-test",
+            100_000,
+            crate::BudgetExhaustionPolicy::Suspend,
+        )
+        .admit()
+        .expect("a lease")
+        .lease,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        score: &score,
+        during: &|_: usize| {},
+    };
+    let pack = crate::task_verb::sdk::recall_at_door(
+        &facade,
+        crate::task_verb::sdk::RecallRequest {
+            query: "kettle".to_owned(),
+            effort: Some(crate::memory::RecallEffort::High),
+            scope: None,
+            limit: Some(10),
+            format: None,
+            as_of: None,
+            deadline_ms: None,
+        },
+        |_| None,
+        &crate::task_verb::sdk::RecallDoor {
+            arrived: std::time::Instant::now(),
+            on_cut: None,
+            rerank: crate::memory::RecallRerank::Host(&host),
+        },
+    )
+    .expect("recall");
+    let turns: Vec<&str> = pack
+        .items
+        .iter()
+        .filter(|item| item.kind == "TURN")
+        .map(|item| item.value_text.as_str())
+        .collect();
+    assert_eq!(
+        turns.first(),
+        Some(&"a kettle shop that sells handles"),
+        "{turns:?}"
+    );
+    let scored = scored.lock().unwrap();
+    assert!(
+        scored.iter().all(|text| !text.contains("brass")),
+        "{scored:?}"
+    );
+}
