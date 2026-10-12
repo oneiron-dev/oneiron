@@ -791,7 +791,9 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
             json!({"query": "hello"}),
             StatusCode::FORBIDDEN,
         ),
-        // Sol R2-002: an ask's evidence and outcomes are read raw.
+        // Sol R2-002/003: an ask's evidence and outcomes, and the channel
+        // identity a preflight routes through, are read raw.
+        (&narrow, "can", json!({}), StatusCode::FORBIDDEN),
         (
             &narrow,
             "peek",
