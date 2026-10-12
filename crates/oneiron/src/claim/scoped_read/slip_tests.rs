@@ -223,9 +223,10 @@ fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
 
 /// Astra #1384c: an epoch summary sits in the world its birth stamp proves.
 /// A replica arrives unstamped, so a slip narrowed to base reality cannot
-/// place it and counts it nowhere: its receipt is an absent id's. A summary
-/// born here in base reality, and one that is no epoch, read as base; one
-/// born in world W reads in W and not in base.
+/// place it and counts it nowhere: its receipt is an absent id's, and its
+/// retrieval neither finds nor counts it. A summary born here in base
+/// reality, and one that is no epoch, read as base; one born in world W reads
+/// in W and not in base.
 #[test]
 fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
     use crate::compaction::{
@@ -259,7 +260,17 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
         .put_replicated(&replica, ENTITY_TYPE_SUMMARY, at, 1, &epoch(1)?)
         .put(&base_born, ENTITY_TYPE_SUMMARY, at, 1, &epoch(2)?)
         .put(&world_born, ENTITY_TYPE_SUMMARY, at, 1, &epoch(3)?)
-        .put(&plain, ENTITY_TYPE_SUMMARY, at, 1, b"a summary written by hand")
+        .put(
+            &plain,
+            ENTITY_TYPE_SUMMARY,
+            at,
+            1,
+            b"a summary written by hand",
+        )
+        .text(&replica, &[("body", "harbor ledger")])
+        .text(&base_born, &[("body", "harbor ledger")])
+        .text(&world_born, &[("body", "harbor ledger")])
+        .text(&plain, &[("body", "harbor ledger")])
         .commit()?;
     assert!(
         vault.record_scope(&replica)?.is_none(),
@@ -313,8 +324,34 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
         "a base-only slip cannot place the replica, so it reads as absent"
     );
     assert!(unplaced.single().is_none());
-    for (id, what) in [(base_born, "a base-born epoch"), (plain, "a summary that is no epoch")] {
-        assert!(read(&base_only, id)?.single().is_some(), "{what} reads as base");
+    let found = |proof: &crate::authority::VerifiedSlip| -> Result<(Vec<EntityId>, usize)> {
+        let hits = vault
+            .scoped_read(ScopedReadActorKey::from_verified_slip(proof).expect("read proof"))
+            .search_text("harbor", 10, None)?;
+        Ok((hits.iter().map(|hit| hit.id).collect(), hits.receipt.suppressed_count))
+    };
+    let (in_base, counted) = found(&base_only)?;
+    assert!(
+        in_base.contains(&base_born) && in_base.contains(&plain),
+        "a base-only retrieval finds the base summaries"
+    );
+    assert!(
+        !in_base.contains(&replica) && !in_base.contains(&world_born),
+        "a base-only retrieval returns neither the replica nor the W-born epoch"
+    );
+    assert_eq!(counted, 0, "a base-only retrieval counts the replica nowhere");
+    assert!(
+        found(&in_world)?.0.contains(&world_born),
+        "a W-only retrieval finds the W-born epoch"
+    );
+    for (id, what) in [
+        (base_born, "a base-born epoch"),
+        (plain, "a summary that is no epoch"),
+    ] {
+        assert!(
+            read(&base_only, id)?.single().is_some(),
+            "{what} reads as base"
+        );
     }
     assert!(
         read(&in_world, world_born)?.single().is_some(),
