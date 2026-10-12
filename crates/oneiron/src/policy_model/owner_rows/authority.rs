@@ -80,11 +80,13 @@ struct LiveMembers {
 /// reads the deletion tombstone too.
 fn personal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
     let owner = crate::vault::embedded_owner_actor_id()?;
-    Ok(if crate::consent::person_is_live_in_txn(vault, txn, &owner)? {
-        vec![owner]
-    } else {
-        Vec::new()
-    })
+    Ok(
+        if crate::consent::person_is_live_in_txn(vault, txn, &owner)? {
+            vec![owner]
+        } else {
+            Vec::new()
+        },
+    )
 }
 
 /// `None` for a personal vault. A shared vault whose creating owner holds no

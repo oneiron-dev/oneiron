@@ -260,9 +260,9 @@ fn close_fences(
         })
         .collect();
     let mut closed: Vec<Option<bool>> = vec![None; count];
-    while let Some(next) = (0..count).find(|&i| {
-        closed[i].is_none() && fencers[i].iter().all(|&outer| closed[outer].is_some())
-    }) {
+    while let Some(next) = (0..count)
+        .find(|&i| closed[i].is_none() && fencers[i].iter().all(|&outer| closed[outer].is_some()))
+    {
         let shut = !fencers[next]
             .iter()
             .any(|&outer| closed[outer] == Some(true));
