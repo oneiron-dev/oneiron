@@ -669,3 +669,130 @@ async fn legacy_api_reads_under_the_presented_credential() {
     }
     assert!(!room.reads(&agent, "/v1/core/query").await.0);
 }
+
+/// The reaction signal events `body` carries for `reaction`, sorted.
+fn heard(body: &Value, reaction: oneiron::EntityId) -> Vec<String> {
+    let mut events: Vec<String> = body["signals"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|signal| signal["reaction"] == reaction.to_hex())
+        .map(|signal| signal["event"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    events.sort();
+    events
+}
+
+/// Astra #1413-002: the signal feed admitted a reacted message under the
+/// credential, but the reaction under the room's audience alone, so a
+/// credential whose records leave the reaction out heard of it. The feed
+/// admits the reaction CLAIM as it admits any record now, and a removal
+/// still reaches a credential that reads the reaction. A full-scope slip
+/// that is not the owner's reads its feed under its own key too: a reaction
+/// on a relationship's message reaches it only on a live grant.
+#[tokio::test]
+async fn reaction_signals_read_under_the_credential() {
+    let room = room();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let owner = oneiron::WriteActor::new(room.owner, oneiron::EdgeActorClass::Human);
+    let mut said = Vec::new();
+    for (content, metadata, at) in [
+        ("agent kettle credkey", None, 4),
+        ("agent lantern credkey", Some(json!({ "rel": room.space.to_hex() })), 5),
+    ] {
+        let message = oneiron::EntityId::now();
+        room.server
+            .vault
+            .memory(room.agent, oneiron::EdgeActorClass::Agent)
+            .rooms_speak(&oneiron::memory::WitnessTurn {
+                conversation_ref: room.room.to_hex(),
+                turn_ref: Some(oneiron::EntityId::now().to_hex()),
+                messages: vec![oneiron::memory::WitnessMessage {
+                    id: Some(message.to_hex()),
+                    author: oneiron::memory::WitnessAuthor::Companion,
+                    message_type: "text".into(),
+                    content: content.into(),
+                    metadata,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: at,
+            })
+            .expect("the agent speaks");
+        let reaction = room
+            .server
+            .vault
+            .react(oneiron::reaction::ReactionInput {
+                message,
+                by: room.owner,
+                glyph: "👀".to_owned(),
+                occurred_at: now,
+                actor: owner,
+            })
+            .expect("the owner reacts")
+            .id;
+        said.push((message, reaction));
+    }
+    let [(words, reaction), (spaced, spaced_reaction)] = said[..] else {
+        unreachable!("two messages were said");
+    };
+    let signals = |recipe: String, in_room: bool| {
+        let mut request = json!({ "query": "credkey", "limit": 20, "signals_since": 0 });
+        if in_room {
+            request["conversation_id"] = json!(room.room.to_hex());
+        }
+        let server = room.server.clone();
+        async move {
+            let (status, body) = route_json(
+                server,
+                core_request_with_authz(
+                    "POST",
+                    "/v1/core/context-pack",
+                    test_bearer(&recipe),
+                    Some(&request),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{recipe}: {body}");
+            body
+        }
+    };
+
+    let left_out = room.agent_recipe(Some(&[words]));
+    let named = room.agent_recipe(Some(&[words, reaction]));
+    let body = signals(left_out.clone(), true).await;
+    assert!(
+        !body.to_string().contains(&reaction.to_hex()),
+        "records that leave the reaction out hear nothing of it: {body}"
+    );
+    assert_eq!(
+        heard(&signals(named.clone(), true).await, reaction),
+        ["reaction.put"]
+    );
+    room.server
+        .vault
+        .remove_reaction(words, room.owner, "👀", owner)
+        .expect("the owner removes the reaction");
+    assert_eq!(
+        heard(&signals(named, true).await, reaction),
+        ["reaction.put", "reaction.revoked"],
+        "a removal reaches a credential that reads the reaction"
+    );
+    assert!(heard(&signals(left_out, true).await, reaction).is_empty());
+
+    let full = format!("principal_ref={};actor_class=agent", room.agent.to_hex());
+    let body = signals(full.clone(), false).await;
+    assert!(
+        heard(&body, spaced_reaction).is_empty(),
+        "no grant hears of a reaction on a relationship's message: {body}"
+    );
+    assert!(!body.to_string().contains(&spaced.to_hex()), "{body}");
+    room.grant(seeded_test_entity_id(0x2401_0031));
+    assert_eq!(
+        heard(&signals(full, false).await, spaced_reaction),
+        ["reaction.put"]
+    );
+}
