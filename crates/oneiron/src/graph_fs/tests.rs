@@ -257,9 +257,8 @@ fn worlds_list_under_the_readers_own_authority() -> Result<()> {
         ),
         "no manifest grant narrows the owner's worlds"
     );
-    let agent = vault.scoped_read(
-        crate::claim::ScopedReadActorKey::new(agent.to_hex()).expect("actor key"),
-    );
+    let agent = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(agent.to_hex()).expect("actor key"));
     assert_eq!(walk(&agent)?, (vec![first.to_hex()], [true, false]));
 
     let issuer = crate::test_support::test_host_issuer();

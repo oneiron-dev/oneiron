@@ -471,9 +471,9 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     {
         let mut message = witness_message(order as u32, WitnessAuthor::User, content);
         message.id = Some(id.to_hex());
-        message.metadata = rel.map(|space| {
-            serde_json::json!({ "rel": EntityId::from_bytes(space).unwrap().to_hex() })
-        });
+        message.metadata = rel.map(
+            |space| serde_json::json!({ "rel": EntityId::from_bytes(space).unwrap().to_hex() }),
+        );
         messages.push(message);
     }
     facade_for(&vault, owner)
@@ -523,11 +523,17 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
             .as_ref()
             .is_some_and(|row| row.body.is_some());
         let readable = lane.is_entity_readable(&id).expect("readability");
-        assert_eq!(point, readable, "{id}: the point read and the predicate agree");
+        assert_eq!(
+            point, readable,
+            "{id}: the point read and the predicate agree"
+        );
         readable
     };
     let kept = lane_of();
-    assert!(reads(&kept, spaced), "the bound owner's narrower credential");
+    assert!(
+        reads(&kept, spaced),
+        "the bound owner's narrower credential"
+    );
     assert!(reads(&kept, unscoped));
 
     vault
@@ -536,7 +542,10 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     let fresh = lane_of();
     for (lane, which) in [(&kept, "kept"), (&fresh, "fresh")] {
         assert!(!reads(lane, spaced), "the {which} lane, past the revoke");
-        assert!(reads(lane, unscoped), "the {which} lane keeps unscoped words");
+        assert!(
+            reads(lane, unscoped),
+            "the {which} lane keeps unscoped words"
+        );
     }
 }
 
