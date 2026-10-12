@@ -143,10 +143,11 @@ impl ResidenceRpc {
             .into_client_request()
             .map_err(|_| refused())?;
         // The upgrade proves the device's transport slip, as the sync
-        // socket does; the bind below then attenuates it to the actor.
+        // socket does, signed on the wall clock as it is; the bind below
+        // then attenuates it to the actor.
         if let Some(credential) = &config.transport_credential {
             credential
-                .sign_upgrade(vault.now_recorded_at(), &mut request)
+                .sign_upgrade(vault.store.clock.wall_now(), &mut request)
                 .map_err(|_| refused())?;
         } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)

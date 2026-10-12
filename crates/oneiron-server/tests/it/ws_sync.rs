@@ -1775,6 +1775,15 @@ async fn run_sync_connection_once(
 ) -> Vec<SyncEvent> {
     let client_dir = tempfile::tempdir().unwrap();
     let client_vault = open_vault(client_dir.path());
+    run_sync_connection_from(client_vault, server_url, auth_token, transport_credential).await
+}
+
+async fn run_sync_connection_from(
+    client_vault: Arc<oneiron::Vault>,
+    server_url: String,
+    auth_token: &str,
+    transport_credential: Option<SyncTransportCredential>,
+) -> Vec<SyncEvent> {
     let config = ConnectionConfig {
         client_config: SyncClientConfig {
             server_url,
@@ -1850,6 +1859,58 @@ async fn sync_connection_sends_holder_proof_on_upgrade() {
         "client must surface the rejected connection; events: {events:?}"
     );
 
+    handle.abort();
+}
+
+/// A client whose host clock ran a year ahead and was set back keeps its
+/// recording clock at the jumped time, but signs its upgrade on its wall
+/// clock, as every holder signs, so a server on the right time takes it.
+#[tokio::test]
+async fn a_client_whose_clock_ran_ahead_signs_its_upgrade_on_its_wall_clock() {
+    const YEAR: u64 = 365 * 24 * 60 * 60;
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("ahead-secret")),
+    )
+    .await;
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"ahead-secret").unwrap();
+    let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        b"ahead-secret",
+    ));
+    let credential = SyncTransportCredential::new(slip.to_token().unwrap(), key);
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let clock = oneiron::store::ports::ManualClock::new(now + YEAR);
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let client_dir = tempfile::tempdir().unwrap();
+    let client_vault = Arc::new(oneiron::Vault::open(client_dir.path(), config).unwrap());
+    assert!(client_vault.now_recorded_at() >= now + YEAR);
+    clock.set(now);
+    assert!(
+        client_vault.now_recorded_at() >= now + YEAR,
+        "the recording clock keeps the jumped time"
+    );
+
+    let events = run_sync_connection_from(
+        client_vault,
+        format!("ws://{addr}/ws"),
+        "",
+        Some(credential),
+    )
+    .await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::StatusChanged(SyncStatus::Synced))),
+        "events: {events:?}"
+    );
     handle.abort();
 }
 

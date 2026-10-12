@@ -95,7 +95,7 @@ async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     let token = slip.to_token().unwrap();
     let headers = || {
         Request::builder()
-            .uri("/v1/core/conversations")
+            .uri("/v1/core/outbound/capabilities")
             .header(AUTHORIZATION, format!("Bearer {token}"))
     };
     let (status, _) = route_json(server.clone(), headers().body(Body::empty()).unwrap()).await;
@@ -124,7 +124,7 @@ async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     let (status, _) = route_json(
         server.clone(),
         Request::builder()
-            .uri("/v1/core/conversations")
+            .uri("/v1/core/outbound/capabilities")
             .header(
                 AUTHORIZATION,
                 format!("Bearer {}", foreign.to_token().unwrap()),
@@ -161,7 +161,7 @@ async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     let (status, _) = route_json(
         server.clone(),
         Request::builder()
-            .uri("/v1/core/conversations")
+            .uri("/v1/core/outbound/capabilities")
             .header(
                 AUTHORIZATION,
                 format!("Bearer {}", tampered.to_token().unwrap()),
@@ -538,7 +538,7 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
     let token = slip.to_token().unwrap();
     let request = |proof: &str| {
         Request::builder()
-            .uri("/v1/core/conversations")
+            .uri("/v1/core/outbound/capabilities")
             .header(AUTHORIZATION, format!("Bearer {token}"))
             .header("x-oneiron-binding", proof)
             .body(Body::empty())

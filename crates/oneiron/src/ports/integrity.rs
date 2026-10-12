@@ -122,6 +122,7 @@ fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
         .put(txn, &stale_key(id), &revision.to_be_bytes())?;
     crate::bm25::deindex_text(store, txn, id)?;
     let had_vector = store.vectors.delete(txn, id.as_bytes())?;
+    crate::embed::record_embedding_device_in_txn(store, txn, id, None)?;
     crate::hnsw::hnsw_deindex(store, txn, id)?;
     if had_vector {
         crate::hnsw::increment_vector_version(store, txn)?;
