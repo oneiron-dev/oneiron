@@ -62,6 +62,7 @@
 
 mod executor;
 mod on_record;
+mod participant;
 mod promotion;
 mod registry;
 mod room;

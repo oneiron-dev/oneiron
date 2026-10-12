@@ -111,7 +111,7 @@ impl SessionRetrievalTelemetry<'_> {
     }
 
     /// One staged overlay write, under the captured route, revalidated INSIDE
-    /// the transaction that publishes it.
+    /// the transaction that publishes it, with a run's participant.
     ///
     /// Base writer FIRST, then the segment permit — the overlay's own
     /// documented order, and the only one that cannot deadlock against a
@@ -128,7 +128,7 @@ impl SessionRetrievalTelemetry<'_> {
         let overlay = self.landing.route.overlay();
         let segment = self.vault.with_write_txn_grouped(|wtxn| {
             let segment = overlay.install_txn_segment()?;
-            self.landing.route.revalidate()?;
+            self.landing.in_overlay_txn(wtxn)?;
             let view = self.vault.store.session_view(overlay.clone())?;
             apply(&view, wtxn)?;
             Ok(segment)

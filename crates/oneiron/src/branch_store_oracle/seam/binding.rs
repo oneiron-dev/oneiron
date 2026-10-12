@@ -452,8 +452,11 @@ pub(in crate::branch_store_oracle) fn binding_mismatch_directions(
 pub(in crate::branch_store_oracle) fn apply_through_a_route_captured_before_a_flip(
     session: &SessionVault<'_>,
 ) -> SeamResult<()> {
-    let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
-        .expect("capture the run's route at run entry");
+    let storage = crate::code_run::ExecutorStorage::for_session(
+        &session.session,
+        session.actor.unwrap_or_else(EntityId::now),
+    )
+    .expect("capture the run's route at run entry");
     session
         .session
         .flip_on_record()
@@ -477,8 +480,11 @@ pub(in crate::branch_store_oracle) fn apply_through_a_route_captured_before_a_fl
 pub(in crate::branch_store_oracle) fn search_through_a_route_captured_before_a_flip(
     session: &SessionVault<'_>,
 ) -> SeamResult<()> {
-    let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
-        .expect("capture the run's route at run entry");
+    let storage = crate::code_run::ExecutorStorage::for_session(
+        &session.session,
+        session.actor.unwrap_or_else(EntityId::now),
+    )
+    .expect("capture the run's route at run entry");
     session
         .session
         .flip_on_record()
@@ -542,7 +548,10 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
 ) -> Result<Option<crate::error::ErrorKind>> {
     use crate::code_run::{CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage};
 
-    let storage = ExecutorStorage::for_session(&session.session)?;
+    let storage = ExecutorStorage::for_session(
+        &session.session,
+        session.actor.unwrap_or_else(EntityId::now),
+    )?;
     let run_id = EntityId::now();
     let record = CodeRunReplayRecord::new(
         run_id,

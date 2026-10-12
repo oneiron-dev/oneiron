@@ -1241,18 +1241,33 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
     Ok(())
 }
 
-/// A room holding the vault's owner, with one message nobody saved in its
-/// stretch, which the owner has then put on record.
+/// A room holding the vault's owner and an agent, with one message nobody
+/// saved in its stretch, which the owner has then put on record. Answers the
+/// room, the owner and the agent a run acts as.
 fn a_room_on_record_with_an_unsaved_message(
     vault: &Vault,
-) -> Result<(EntityId, crate::WriteActor, OffRecordSession<'_>)> {
+) -> Result<(
+    EntityId,
+    crate::WriteActor,
+    crate::WriteActor,
+    OffRecordSession<'_>,
+)> {
     use crate::conversation::{ConversationBody, HistoryChoice};
 
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let agent = EntityId::now();
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room agent",
+    )?;
     let room = EntityId::now();
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
     vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    vault.join_member(room, agent, by, 3, HistoryChoice::Share)?;
     let session = vault.off_record_session_vault().enter_in_room(
         "lamp",
         OffRecordBackendClass::Local,
@@ -1284,7 +1299,12 @@ fn a_room_on_record_with_an_unsaved_message(
     let proof =
         vault.authenticate_owner(owner, "principal:room-owner", true, GateDecisionId::now())?;
     session.flip_on_record_as(&proof)?;
-    Ok((room, by, session))
+    Ok((
+        room,
+        by,
+        crate::WriteActor::new(agent, EdgeActorClass::Agent),
+        session,
+    ))
 }
 
 /// A search for the message nobody saved.
@@ -1305,8 +1325,8 @@ fn a_bound_runs_search_leaves_no_base_trace_once_the_saver_left() -> Result<()> 
     use crate::code_run::{HostSelfDispatcher, SelfDispatcher};
 
     let (_tmp, vault) = temp_vault();
-    let (room, by, session) = a_room_on_record_with_an_unsaved_message(&vault)?;
-    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-run")?;
+    let (room, by, agent, session) = a_room_on_record_with_an_unsaved_message(&vault)?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, agent, "lamp-run")?;
     vault.leave_member(room, by.entity_ref(), by, 50)?;
 
     let base_runs_before = vault.retrieval_runs(64)?.len();
@@ -1339,8 +1359,8 @@ fn a_saver_who_left_and_joined_again_does_not_revive_the_saving() -> Result<()> 
     use crate::conversation::HistoryChoice;
 
     let (_tmp, vault) = temp_vault();
-    let (room, by, session) = a_room_on_record_with_an_unsaved_message(&vault)?;
-    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-run")?;
+    let (room, by, agent, session) = a_room_on_record_with_an_unsaved_message(&vault)?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, agent, "lamp-run")?;
     vault.leave_member(room, by.entity_ref(), by, 50)?;
     vault.join_member(room, by.entity_ref(), by, 55, HistoryChoice::Share)?;
 
@@ -1419,9 +1439,20 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
     let reader = seed_recallable_base_turn(&vault, "forwardedlanternneedle");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    // The run acts as an agent who stays: a run whose own participant left
+    // is refused `NotInRoom` before any effect (Codex burn engine-prs-01).
+    let agent = EntityId::now();
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room agent",
+    )?;
     let room = EntityId::now();
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
     vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    vault.join_member(room, agent, by, 3, HistoryChoice::Share)?;
     let session = vault.off_record_session_vault().enter_in_room(
         "lamp-door",
         OffRecordBackendClass::Local,
@@ -1436,8 +1467,12 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
         actor: reader,
         calls: AtomicUsize::new(0),
     });
-    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-door-run")?
-        .with_agent_verb_door(door.clone());
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        crate::WriteActor::new(agent, EdgeActorClass::Agent),
+        "lamp-door-run",
+    )?
+    .with_agent_verb_door(door.clone());
     vault.leave_member(room, owner, by, 50)?;
 
     let base_runs_before = vault.retrieval_runs(64)?.len();
