@@ -125,6 +125,35 @@ fn core_read_world_grant(actor_ref: &str, world: EntityId) -> Value {
     ])
 }
 
+/// A `core:read` grant whose canonical Scope reads only `worlds`, and whose
+/// selectors, if `selector` names one, read only that world.
+fn core_read_grant_in(actor_ref: &str, worlds: &[EntityId], selector: Option<EntityId>) -> Value {
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.worlds = worlds
+        .iter()
+        .map(|world| crate::federation::ScopeId(*world))
+        .collect();
+    let mut grant = vec![
+        (Value::from("actor_ref"), Value::from(actor_ref)),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(&scope).expect("scope fixture"),
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ];
+    if let Some(world) = selector {
+        grant.push((
+            Value::from("selectors"),
+            Value::Map(vec![(
+                Value::from("world_ref"),
+                Value::from(world.to_hex()),
+            )]),
+        ));
+    }
+    Value::Map(grant)
+}
+
 // Kept local instead of `test_util`: this exercises `BatchOp::Put` through `apply_ops`.
 fn put_policy_manifest(vault: &crate::Vault, id: EntityId, data: Vec<u8>) -> Result<()> {
     let ops = vec![BatchOp::Put {
@@ -220,12 +249,15 @@ fn worlds_readdir_omits_excluded_worlds_entirely() -> Result<()> {
 /// narrows, listed none of them while only an agent held a grant. Worlds are
 /// listed, and a WORLD's path judged, by the reader's own authority now: the
 /// owner walks into every world, the agent only into its grant's, and a
-/// credential no grant names only into the worlds it grants.
+/// credential no grant names only into the worlds it grants. A grant reads
+/// a world as claim admission judges it (Sol R5-004): by its canonical Scope
+/// and any world selector together, not by the selector's name alone.
 #[test]
 fn worlds_list_under_the_readers_own_authority() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
     let (first, second, subject) = (test_id(0x34), test_id(0x35), test_id(0x36));
     let (agent, holder) = (test_id(0x37), test_id(0x38));
+    let (scoped, crossed) = (test_id(0x3A), test_id(0x3B));
     put_entity(&vault, first, ENTITY_TYPE_WORLD)?;
     put_entity(&vault, second, ENTITY_TYPE_WORLD)?;
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
@@ -234,7 +266,11 @@ fn worlds_list_under_the_readers_own_authority() -> Result<()> {
     put_policy_manifest(
         &vault,
         test_id(0x91),
-        encode_policy_manifest(vec![core_read_world_grant(&agent.to_hex(), first)]),
+        encode_policy_manifest(vec![
+            core_read_world_grant(&agent.to_hex(), first),
+            core_read_grant_in(&scoped.to_hex(), &[second], None),
+            core_read_grant_in(&crossed.to_hex(), &[first], Some(second)),
+        ]),
     )?;
     let walk = |read: &ScopedRead<'_>| -> Result<(Vec<String>, [bool; 2])> {
         let fs = resolver(read, 1024);
@@ -260,6 +296,20 @@ fn worlds_list_under_the_readers_own_authority() -> Result<()> {
     let agent = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(agent.to_hex()).expect("actor key"));
     assert_eq!(walk(&agent)?, (vec![first.to_hex()], [true, false]));
+    let scoped = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(scoped.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&scoped)?,
+        (vec![second.to_hex()], [false, true]),
+        "a grant whose Scope reads one world and names no selector"
+    );
+    let crossed = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(crossed.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&crossed)?,
+        (Vec::new(), [false, false]),
+        "a selector outside the grant's Scope reads no world"
+    );
 
     let issuer = crate::test_support::test_host_issuer();
     let root = vault.ensure_host_root_slip(&issuer)?;
@@ -278,6 +328,61 @@ fn worlds_list_under_the_readers_own_authority() -> Result<()> {
         crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("a read key"),
     );
     assert_eq!(walk(&narrowed)?, (vec![second.to_hex()], [false, true]));
+    Ok(())
+}
+
+/// Sol R5-001 on #1413: past a run of worlds the reader may not see, the
+/// world listing handed out the last one it scanned as its cursor, naming a
+/// world it withheld. The position is sealed now: no page names a withheld
+/// world, and paging on still reaches the reader's own.
+#[test]
+fn a_world_listing_cursor_names_no_withheld_world() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let mut worlds: Vec<EntityId> = (0..=GRAPH_FS_MAX_PAGE_ENTRIES)
+        .map(|_| EntityId::now())
+        .collect();
+    worlds.sort();
+    for chunk in worlds.chunks(512) {
+        chunk
+            .iter()
+            .fold(vault.batch(), |batch, world| {
+                batch.put(world, ENTITY_TYPE_WORLD, time_range(1), 1, b"entity")
+            })
+            .commit()?;
+    }
+    let (withheld, shown) = worlds.split_at(GRAPH_FS_MAX_PAGE_ENTRIES);
+    let reader = test_id(0x39);
+    put_policy_manifest(
+        &vault,
+        test_id(0x92),
+        encode_policy_manifest(vec![core_read_world_grant(&reader.to_hex(), shown[0])]),
+    )?;
+    let read = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(reader.to_hex()).expect("actor key"));
+    let fs = resolver(&read, 1024);
+    let (mut listed, mut cursor, mut pages) = (Vec::new(), None::<String>, 0);
+    loop {
+        let page = fs.readdir("/worlds/", cursor.as_deref())?;
+        let rendered = String::from_utf8(page.render_bytes()).expect("a page is text");
+        for world in withheld {
+            assert!(
+                !rendered.contains(&world.to_hex()),
+                "page {pages} names withheld world {world}"
+            );
+        }
+        listed.extend(
+            page.entries()
+                .iter()
+                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+                .map(|entry| entry.name().to_owned()),
+        );
+        cursor = page.next_cursor().map(str::to_owned);
+        pages += 1;
+        if cursor.is_none() || pages > 4 {
+            break;
+        }
+    }
+    assert_eq!(listed, vec![shown[0].to_hex()]);
     Ok(())
 }
 

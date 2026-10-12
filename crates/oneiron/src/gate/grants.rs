@@ -256,6 +256,40 @@ fn scoped_read_scope_matches_claim(
     }
 }
 
+/// Whether `grant` reads claims in `world` (`None` is base reality), as
+/// [`scoped_read_claim_allowed`] judges a claim's world: its canonical Scope
+/// holds the world, and a world selector, if it carries one, names that
+/// world. A selector on another axis leaves the world readable; one this
+/// matcher does not know admits no claim, so no world. A grant that needs a
+/// receipt or a budget reads none.
+pub(crate) fn scoped_read_grant_reads_world(
+    grant: &PolicyScopedGrant,
+    world: Option<EntityId>,
+) -> bool {
+    if grant.receipt_required || grant.budget.is_some() {
+        return false;
+    }
+    let id = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+    if !grant.authority_scope.worlds.contains(&id) {
+        return false;
+    }
+    match grant.scope.as_ref() {
+        None | Some(Value::Nil) => true,
+        Some(Value::Map(entries)) => entries.iter().all(|(key, value)| match key.as_str() {
+            Some("world" | "world_ref" | "worldRef") => {
+                scoped_read_world_matches_claim(value, world)
+            }
+            Some(
+                "claim_scope" | "claimScope" | "scope" | "facet" | "facet_ref" | "facetRef"
+                | "entity_types" | "max_sensitivity_band" | "include_stale" | "min_confidence"
+                | "min_salience",
+            ) => true,
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
 fn scoped_read_world_matches_claim(value: &Value, claim_world: Option<EntityId>) -> bool {
     if matches!(value, Value::Nil) {
         return claim_world.is_none();

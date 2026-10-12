@@ -18,10 +18,11 @@ use super::model::{
     GraphFsPage, GraphFsResolver,
 };
 
-use super::coreutils::{claim_matches_world_in, grant_scope_world_name, read_grant_matches_actor};
+use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
 
 use super::paging::{
-    DayPosition, EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard,
+    DayPosition, EdgeCursor, PageBuilder, TemporalCursor, WorldPosition, format_day_shard,
+    parse_day_shard,
 };
 
 /// File lookup and the receipt of the scoped read, if a stored row was read.
@@ -318,42 +319,48 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     /// The vault's worlds this reader may walk into, base first, then each
     /// WORLD row by id ([`Self::world_visible`]). A manifest grant never
     /// lists a world of its own: it only says where a reader other than the
-    /// owner may read.
+    /// owner may read. A page can end inside a run of worlds this reader may
+    /// not see, so its cursor is sealed and names none of them.
     fn listdir_worlds(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
         let policy = self.policy()?;
-        let after = cursor.unwrap_or_default();
-        let after_world = if after.is_empty() || after == "base" {
-            None
-        } else {
-            Some(parse_entity_id(after)?)
-        };
+        if self.scoped_read.actor_key().vault_owner_ref().is_none()
+            && policy.diagnostics().loaded_manifest_forces_fail_closed()
+        {
+            return Ok(empty_page(path, self.options.mount));
+        }
+        let scope = self.cursor_scope(path);
+        let after: Option<WorldPosition> = scope.open(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
-        let mut next_cursor = None;
-        if after.is_empty()
+        if after.is_none()
             && self.world_visible(&policy, None)
             && !builder.try_push(GraphFsEntry::directory("base"))
         {
             return Ok(builder.finish(None));
         }
 
+        let after = after.and_then(|position| position.0);
         let rows = self.scoped_read.vault().entities_by_type_page(
             ENTITY_TYPE_WORLD,
-            after_world.as_ref(),
+            after.as_ref(),
             GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1),
         )?;
         let has_more_rows = rows.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
-        let mut last_scanned = None;
+        let mut next_cursor = None;
+        let (mut last_listed, mut last_scanned) = (after, after);
         for id in rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES) {
-            if self.world_visible(&policy, Some(id))
-                && !builder.try_push(GraphFsEntry::directory(id.to_hex()))
-            {
-                next_cursor = builder.last_entry_name();
-                break;
+            if self.world_visible(&policy, Some(id)) {
+                if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
+                    next_cursor = builder
+                        .last_entry_name()
+                        .map(|_| scope.seal(&WorldPosition(last_listed)));
+                    break;
+                }
+                last_listed = Some(id);
             }
-            last_scanned = Some(id.to_hex());
+            last_scanned = Some(id);
         }
         if next_cursor.is_none() && has_more_rows {
-            next_cursor = last_scanned;
+            next_cursor = Some(scope.seal(&WorldPosition(last_scanned)));
         }
         Ok(builder.finish(next_cursor))
     }
@@ -362,9 +369,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     /// judged as claim admission judges a claim's world: the worlds the read
     /// asked for and its credential's Scope must admit it; the owner then
     /// reads every world of their vault (ARCH-0057). Any other reader reads
-    /// where a read grant for it names the world, anywhere while the manifest
-    /// holds no read grant, and, with a credential no grant names, wherever
-    /// that credential reads.
+    /// where a read grant for it reads the world
+    /// ([`crate::gate::scoped_read_grant_reads_world`]), anywhere while the
+    /// manifest holds no read grant, and, with a credential no grant names,
+    /// wherever that credential reads.
     pub(super) fn world_visible(
         &self,
         policy: &PolicyManifestResolution,
@@ -383,17 +391,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         if !policy.has_scoped_read_grants() {
             return true;
         }
-        let name = world.map_or_else(|| "base".to_owned(), |world| world.to_hex());
         let mut matched = false;
         for grant in policy.scoped_grants() {
             if !read_grant_matches_actor(grant, key) {
                 continue;
             }
             matched = true;
-            if grant.receipt_required || grant.budget.is_some() {
-                continue;
-            }
-            if grant_scope_world_name(grant.scope.as_ref()).as_deref() == Some(name.as_str()) {
+            if crate::gate::scoped_read_grant_reads_world(grant, world) {
                 return true;
             }
         }

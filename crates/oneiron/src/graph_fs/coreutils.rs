@@ -4,8 +4,6 @@ use crate::ports::EntityStoreRead;
 use std::ops::Bound;
 use std::time::Instant;
 
-use rmpv::Value;
-
 use crate::claim::{ScopedReadReceipt, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -595,42 +593,6 @@ pub(super) fn read_grant_matches_actor(
         return false;
     }
     true
-}
-
-pub(super) fn grant_scope_world_name(scope: Option<&Value>) -> Option<String> {
-    let Some(scope) = scope else {
-        return Some("base".to_owned());
-    };
-    match scope {
-        Value::Nil => Some("base".to_owned()),
-        Value::Map(entries) if entries.is_empty() => Some("base".to_owned()),
-        Value::Map(entries) => {
-            for (key, value) in entries {
-                let key = key.as_str()?;
-                if !matches!(key, "world" | "world_ref" | "worldRef") {
-                    continue;
-                }
-                if matches!(value, Value::Nil) || value.as_str().is_some_and(|text| text == "base")
-                {
-                    return Some("base".to_owned());
-                }
-                let id = value
-                    .as_str()
-                    .and_then(|text| EntityId::from_hex(text).ok())
-                    .or_else(|| match value {
-                        Value::Binary(bytes) => bytes
-                            .as_slice()
-                            .try_into()
-                            .ok()
-                            .and_then(|bytes| EntityId::from_bytes(bytes).ok()),
-                        _ => None,
-                    })?;
-                return Some(id.to_hex());
-            }
-            None
-        }
-        _ => None,
-    }
 }
 
 pub(super) fn claim_matches_world_in(
