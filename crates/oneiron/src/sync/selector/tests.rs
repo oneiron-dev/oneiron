@@ -5270,11 +5270,12 @@ fn an_epoch_summary_stays_home_when_its_source_history_spans_windows() -> crate:
     Ok(())
 }
 
-/// Sol rounds 10 and 11 on #1384: a summary leaves only beside the records
+/// Sol rounds 10 to 12 on #1384: a summary leaves only beside the records
 /// it was written from, not beside what a peer put at their ids. In one base
 /// window a peer's CLAIM wins the carrier of a nested epoch whose source is a
 /// CLAIM in private world W, of a nested epoch born in W, and of a CLAIM in W
-/// itself. The vault refused each write, so the stored records stand, and no
+/// itself, and a peer's garbled copy wins the carrier of a summary of a CLAIM
+/// in W. The vault refused each write, so the stored records stand, and no
 /// summary written from them leaves through a Base export.
 #[test]
 fn an_epoch_summary_stays_home_when_a_peer_rewrote_a_source_carrier() -> crate::Result<()> {
@@ -5284,7 +5285,7 @@ fn an_epoch_summary_stays_home_when_a_peer_rewrote_a_source_carrier() -> crate::
     let (person, claim, moved) = (entity_id(0xd1), entity_id(0xd2), entity_id(0xd9));
     let (nested, outer) = (entity_id(0xd3), entity_id(0xd4));
     let (born_in_w, over) = (entity_id(0xd5), entity_id(0xd6));
-    let from_moved = entity_id(0xd8);
+    let (from_moved, garbled) = (entity_id(0xd8), entity_id(0xda));
     let key = WindowKey::new("2026-03");
     let at = key.start_timestamp().unwrap() + 60;
     let occurred = TimeRange { start: at, end: at };
@@ -5354,6 +5355,14 @@ fn an_epoch_summary_stays_home_when_a_peer_rewrote_a_source_carrier() -> crate::
             &epoch_summary_bytes(5, "the run learned the other private world fact")?,
         )
         .edge(&from_moved, EdgeKind::DerivedFrom, &moved, 1.0)
+        .put(
+            &garbled,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(6, "the run repeated the private world fact")?,
+        )
+        .edge(&garbled, EdgeKind::DerivedFrom, &claim, 1.0)
         .commit()?;
     let placement = crate::compaction::EpochPlacement {
         world: Some(world.entity_id()),
@@ -5365,6 +5374,11 @@ fn an_epoch_summary_stays_home_when_a_peer_rewrote_a_source_carrier() -> crate::
     for id in [nested, born_in_w, moved] {
         insert_blob(&doc, id, &claim_blob(None));
     }
+    // The summary's own bytes with one trailing byte: no longer an epoch body,
+    // still its words.
+    let mut copy = vault.get_raw_unsealed(&garbled)?.expect("a stored summary");
+    copy.push(0xc0);
+    insert_blob(&doc, garbled, &copy);
     doc.commit();
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
     let sent = import_ids(
@@ -5373,11 +5387,16 @@ fn an_epoch_summary_stays_home_when_a_peer_rewrote_a_source_carrier() -> crate::
             .unwrap(),
     );
     assert!(sent.contains(&person), "the selector exports");
-    let left = [(outer, "outer"), (over, "over"), (from_moved, "from_moved")]
-        .into_iter()
-        .filter(|(id, _)| sent.contains(id))
-        .map(|(_, name)| name)
-        .collect::<Vec<_>>();
+    let left = [
+        (outer, "outer"),
+        (over, "over"),
+        (from_moved, "from_moved"),
+        (garbled, "garbled"),
+    ]
+    .into_iter()
+    .filter(|(id, _)| sent.contains(id))
+    .map(|(_, name)| name)
+    .collect::<Vec<_>>();
     assert!(
         left.is_empty(),
         "summaries left beside a peer's carrier, not their sources: {left:?}"

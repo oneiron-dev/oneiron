@@ -20,9 +20,11 @@ use crate::error::Result;
 /// each source must be erased or withdrawn by nothing and ship here too (a
 /// nested epoch only if it leaves as well). A source another window carries,
 /// or none does, cannot be proven from here, so its summary stays home; the
-/// sources are never sent along. A source ships only as the record stored at
-/// its id: a peer's carrier the vault refused there is not what the summary
-/// was written from.
+/// sources are never sent along. A row is an epoch summary when its stored
+/// row or the bytes this export would ship say so, since a carrier the vault
+/// refused at a stored epoch's id may hold its words in any form. A source
+/// ships only as the record stored at its id: such a carrier is not what the
+/// summary was written from.
 pub(super) fn unbacked_epochs(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -46,7 +48,9 @@ pub(super) fn unbacked_epochs(
     let mut backs = BTreeMap::<EntityId, bool>::new();
     for id in shipped {
         let carried = crate::sync::loro_support::map_get_bytes(&entities, &id.to_hex());
-        if !carried.as_deref().is_some_and(is_epoch) {
+        if !carried.as_deref().is_some_and(is_epoch)
+            && !vault.get_raw_in(rtxn, id)?.as_deref().is_some_and(is_epoch)
+        {
             continue;
         }
         if withdrawn(id)? {
