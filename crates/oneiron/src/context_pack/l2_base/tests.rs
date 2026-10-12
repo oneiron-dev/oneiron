@@ -341,3 +341,96 @@ fn a_body_the_write_door_refuses_is_withheld_whole_from_every_context_output() -
     }
     Ok(())
 }
+
+#[test]
+fn a_write_accepted_body_spells_no_phrase_where_a_writer_drops_its_keys() -> Result<()> {
+    let (_dir, vault, _) = fixture();
+    let field = |key: String, value: &str| (rmpv::Value::from(key), rmpv::Value::from(value));
+    let words: Vec<_> = PHRASE.split(' ').zip(1..).collect();
+    // Sol R9: a word per field behind a non-list key, which Markdown and
+    // Plaintext rows and TOON's table rows leave out.
+    let valued = words
+        .iter()
+        .map(|&(word, at)| field(format!("PROSE{at:02}"), word))
+        .collect();
+    // A word per key, numbered (a header reads the number as nothing), each
+    // beside a non-list value.
+    let keyed = words
+        .iter()
+        .map(|&(word, at)| field(format!("{at:02}={word}"), "PROSE"))
+        .collect();
+    // A word per numbered field, kept apart only by an identity key, which
+    // the context handles drop before any writer runs.
+    let mut handled: Vec<_> = words
+        .iter()
+        .map(|&(word, at)| match at {
+            1..7 => field(format!("{at:02}"), word),
+            _ => field(format!("~{at:02}"), word),
+        })
+        .collect();
+    handled.insert(6, field("identity_key".into(), "xyzzy"));
+    let kept = rmpv::Value::Map(vec![
+        field("title".into(), "kept asset words"),
+        field("password".into(), "changeme"),
+    ]);
+    let bodies = [
+        ("valuesneedle", rmpv::Value::Map(valued)),
+        ("keysneedle", rmpv::Value::Map(keyed)),
+        ("handleneedle", rmpv::Value::Map(handled)),
+        ("keptneedle", kept),
+    ];
+    for (seed, (needle, value)) in (0x50..).zip(&bodies) {
+        let mut body = Vec::new();
+        rmpv::encode::write_value(&mut body, value).unwrap();
+        assert!(
+            crate::batch::secret_scan::scan_write_payload(&body).is_ok(),
+            "{value}"
+        );
+        let asset = crate::test_util::entity(seed);
+        vault
+            .batch()
+            .put(
+                &asset,
+                ENTITY_TYPE_ASSET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .text(&asset, &[("body", *needle)])
+            .commit()?;
+    }
+    let emitted = |needle: &str, format: PackFormat| -> Result<String> {
+        let bytes = vault
+            .context_pack()
+            .search_text(needle, 10)
+            .with_temporal_now(100)
+            .field_profile(crate::context_pack::FieldProfile::Full)
+            .token_budget(0)
+            .max_field_chars(0)
+            .max_item_tokens(0)
+            .format(format)
+            .run_serialized()?;
+        Ok(String::from_utf8(bytes).unwrap())
+    };
+    let row_formats = [PackFormat::Markdown, PackFormat::Plaintext, PackFormat::Toon];
+    let keyed_formats = [PackFormat::Json, PackFormat::Yaml];
+    for needle in ["valuesneedle", "keysneedle"] {
+        for format in row_formats {
+            let text = emitted(needle, format)?;
+            assert!(!text.contains("sausage"), "{needle} {format:?}: {text}");
+        }
+        // Where the keys stay between the words, the body serves whole.
+        for format in keyed_formats {
+            let text = emitted(needle, format)?;
+            assert!(text.contains("sausage"), "{needle} {format:?}: {text}");
+        }
+    }
+    for format in row_formats.into_iter().chain(keyed_formats) {
+        let text = emitted("handleneedle", format)?;
+        assert!(!text.contains("sausage"), "handleneedle {format:?}: {text}");
+        let text = emitted("keptneedle", format)?;
+        assert!(text.contains("kept asset words"), "{format:?}: {text}");
+        assert!(!text.contains("changeme"), "{format:?}: {text}");
+    }
+    Ok(())
+}

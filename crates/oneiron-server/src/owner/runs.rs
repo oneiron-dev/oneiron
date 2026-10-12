@@ -348,7 +348,7 @@ mod tests {
         assert!(!shown.contains("sk-not-for-display"), "{shown}");
     }
 
-    /// Sol R8: a proposal the write door refuses shows none of its value,
+    /// Sol R8: a proposal the write door refuses shows none of its parts,
     /// though only this review's projection (a key turned to text) brings its
     /// words together; one it accepts shows all but its credential field.
     #[test]
@@ -390,13 +390,14 @@ mod tests {
                 .park_run_proposal_for_test(run, agent, EntityId::now(), value)
                 .unwrap();
         }
-        let shown = |run| {
-            let reviewed = review(&vault, &owner, RunName::Id(run)).unwrap();
-            serde_json::to_string(&reviewed.proposals).unwrap()
-        };
+        let shown = |run| review(&vault, &owner, RunName::Id(run)).unwrap().proposals;
+        // Withheld whole, as a claim whose parts read as a secret together is:
+        // neither its predicate nor its value, whatever the JSON read finds.
         let refused = shown("refused-run");
-        assert!(!refused.contains("sausage"), "{refused}");
-        let kept = shown("kept-run");
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].predicate, "[redacted]");
+        assert_eq!(refused[0].value, serde_json::json!("[redacted]"));
+        let kept = serde_json::to_string(&shown("kept-run")).unwrap();
         assert!(kept.contains("kept words"), "{kept}");
         assert!(!kept.contains("changeme"), "{kept}");
     }

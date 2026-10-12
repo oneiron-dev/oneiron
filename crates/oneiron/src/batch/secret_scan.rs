@@ -195,6 +195,11 @@ pub(crate) fn nested_past_decoder(data: &[u8]) -> Option<&'static str> {
     too_deep.then_some(REASON_MESSAGEPACK_TOO_DEEP)
 }
 
+/// The release doors' text rules over text exactly as a writer emits it.
+pub(crate) fn release_reads_text(text: &str) -> bool {
+    detect(text, Door::Release).is_some()
+}
+
 /// The release doors' text rules over strings a reader keeps apart (one
 /// array's items), read one per line: a phrase or key split over the items.
 pub(crate) fn release_joined_strings<S: std::borrow::Borrow<str>>(items: &[S]) -> bool {
