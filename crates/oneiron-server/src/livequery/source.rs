@@ -197,8 +197,8 @@ impl LiveQuerySource for BoundSource {
                 followed.retain(|path| !served.contains(path));
                 serde_json::to_value(pack.items)
             }
-            Channel::Receipts => serde_json::to_value(
-                oneiron::sync::bridge::scoped_subscription_receipts(
+            Channel::Receipts => {
+                let rows = oneiron::sync::bridge::scoped_subscription_receipts(
                     server.vault(),
                     self.auth
                         .principal_ref()
@@ -207,10 +207,17 @@ impl LiveQuerySource for BoundSource {
                     self.auth.locality(),
                     limit,
                 )
-                .map_err(|_| AppError::internal_server_error("scoped receipts read failed"))?,
-            ),
-            Channel::PendingConsent => serde_json::to_value(
-                oneiron::sync::bridge::scoped_subscription_pending(
+                .map_err(|_| AppError::internal_server_error("scoped receipts read failed"))?;
+                // A row names its claim: the view follows the claim, and a
+                // delivery off this device re-admits it.
+                for claim in rows.iter().filter_map(|row| row.claim_ref.as_deref()) {
+                    dependencies.insert(format!("e:{claim}"));
+                    followed.insert(format!("e:{claim}"));
+                }
+                serde_json::to_value(rows)
+            }
+            Channel::PendingConsent => {
+                let rows = oneiron::sync::bridge::scoped_subscription_pending(
                     server.vault(),
                     self.auth
                         .principal_ref()
@@ -219,8 +226,13 @@ impl LiveQuerySource for BoundSource {
                     self.auth.locality(),
                     limit,
                 )
-                .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?,
-            ),
+                .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?;
+                for row in &rows {
+                    dependencies.insert(format!("e:{}", row.claim_ref));
+                    followed.insert(format!("e:{}", row.claim_ref));
+                }
+                serde_json::to_value(rows)
+            }
             Channel::OwnerFeed => {
                 dependencies.insert("owner-feed".to_owned());
                 let owner = owner_feed_principal(&self.auth, server.vault())?;
@@ -400,13 +412,14 @@ impl LiveQuerySource for BoundSource {
         view: &ScopedView,
         channel: Channel,
         pushes: &[subscriptions::Push],
-        generation: u64,
     ) -> Result<(), AppError> {
         let _server = self.server()?;
-        if channel == Channel::OwnerFeed {
+        if channel == Channel::OwnerFeed || self.off_device() {
             // Owner body history cannot be replayed safely after a later
-            // policy change. Keep only the live subscription ring, which is
-            // re-authorized before each delivery, not a retained payload log.
+            // policy change, nor any body off this device after a row it
+            // serves turns device-local. Keep only the live subscription
+            // ring, which is re-authorized before each delivery, not a
+            // retained payload log.
             return Ok(());
         }
         let mut state = self
@@ -416,7 +429,7 @@ impl LiveQuerySource for BoundSource {
         let CursorDocument {
             journal, history, ..
         } = &mut *state;
-        if !history.record(journal, view, channel, pushes, generation)? {
+        if !history.record(journal, view, channel, pushes)? {
             // Expire Loro and payload retention together, so a missing journal
             // is never presented as a retained cursor with a silent gap.
             state.doc = LoroDoc::new();
@@ -450,7 +463,6 @@ impl LiveQuerySource for BoundSource {
         view: &ScopedView,
         channel: Channel,
         cursor: &Cursor,
-        generation: u64,
     ) -> Result<Option<Vec<subscriptions::Push>>, AppError> {
         if channel == Channel::OwnerFeed {
             return Ok(None);
@@ -462,18 +474,25 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        super::history::History::replay(&state.journal, view, channel, cursor, generation)
+        super::history::History::replay(&state.journal, view, channel, cursor)
     }
 
-    fn device_only_generation(&self) -> Result<u64, AppError> {
-        // Read on every delivery: no credential check, which each derivation
-        // and resume makes anyway.
-        self.server
+    fn off_device(&self) -> bool {
+        self.auth.locality() == oneiron::claim::CallerLocality::OffDevice
+    }
+
+    fn withholds_any(&self, ids: &[oneiron::EntityId]) -> Result<bool, AppError> {
+        if !self.off_device() || ids.is_empty() {
+            return Ok(false);
+        }
+        let readable = self
+            .server
             .upgrade()
             .ok_or_else(AppError::unauthorized)?
             .vault()
-            .device_only_generation()
-            .map_err(|_| AppError::internal_server_error("device-only generation read failed"))
+            .off_device_readable(ids.to_vec())
+            .map_err(|_| AppError::internal_server_error("device-local admission read failed"))?;
+        Ok(readable.len() != ids.len())
     }
 
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError> {
@@ -530,11 +549,11 @@ mod remediation_tests {
             kind: "data",
             result: Some(json!([1])),
         };
-        source.record(&view, Channel::Receipts, &[push], 0).unwrap();
+        source.record(&view, Channel::Receipts, &[push]).unwrap();
         assert!(source.can_resume(&anchor).unwrap());
         tier.close(7).unwrap();
         let replay = source
-            .replay(&view, Channel::Receipts, &anchor, 0)
+            .replay(&view, Channel::Receipts, &anchor)
             .unwrap()
             .unwrap();
         assert_eq!(replay.len(), 1);
@@ -542,7 +561,7 @@ mod remediation_tests {
         assert_eq!(replay[0].result, Some(json!([1])));
         assert!(
             source
-                .replay(&view, Channel::PendingConsent, &anchor, 0)
+                .replay(&view, Channel::PendingConsent, &anchor)
                 .unwrap()
                 .is_none()
         );
@@ -585,7 +604,6 @@ mod remediation_tests {
                     kind: "snapshot",
                     result: Some(json!([])),
                 }],
-                0,
             )
             .unwrap();
         assert!(!source.can_resume(&cursor).unwrap());

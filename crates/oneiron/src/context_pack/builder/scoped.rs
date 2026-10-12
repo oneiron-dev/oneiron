@@ -8,9 +8,9 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
-    /// Assembles for a caller off this device: the claims the pack counts
-    /// as suppressed leave out every one a device-local world keeps
-    /// (DEC-0005), as its scoped filter leaves out the rows. It only narrows.
+    /// Assembles for a caller off this device: no row a device-local world
+    /// keeps enters its retrieval or its edge walk (DEC-0005), so no count,
+    /// reason or clamp sees one. It only narrows.
     pub(crate) fn caller_off_device(mut self, off_device: bool) -> Self {
         self.off_device |= off_device;
         self.pipeline = self.pipeline.caller_off_device(off_device);

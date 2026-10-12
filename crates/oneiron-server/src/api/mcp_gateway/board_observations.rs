@@ -69,7 +69,7 @@ pub(super) async fn state(
         .then_some(actor.actor_ref);
     let board = changed.clone();
     observations
-        .fold_own_changes(&server.vault, own, &mut changed, 16)
+        .fold_own_changes(&server.vault, own, actor.locality(), &mut changed, 16)
         .map_err(|error| mcp_engine_error("mcp session refresh failed", error))?;
     Ok((observations, changed, board))
 }

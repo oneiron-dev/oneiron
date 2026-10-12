@@ -548,16 +548,28 @@ impl Vault {
     /// This is the exact count primitive for deterministic paginated list
     /// metadata. It does not materialize entity IDs or read entity bodies.
     pub fn count_entities_by_type(&self, entity_type: u8) -> Result<u64> {
+        self.count_entities_by_type_at(entity_type, crate::claim::CallerLocality::OnDevice)
+    }
+
+    /// [`Self::count_entities_by_type`] for a caller at `locality`: one off
+    /// this device counts no row a device-local world keeps (DEC-0005).
+    pub fn count_entities_by_type_at(
+        &self,
+        entity_type: u8,
+        locality: crate::claim::CallerLocality,
+    ) -> Result<u64> {
         let rtxn = self.store.env.read_txn()?;
+        let flagged = crate::settings::device_local_worlds_at(&self.store, &rtxn, locality)?;
         let mut total = 0_u64;
         for entry in self
             .store
             .port_entity_ids_by_type(&rtxn, entity_type, None)?
         {
-            entry?;
-            total = total
-                .checked_add(1)
-                .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
+            if !crate::settings::device_local_keeps_among(&self.store, &rtxn, &flagged, &entry?)? {
+                total = total
+                    .checked_add(1)
+                    .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
+            }
         }
         Ok(total)
     }

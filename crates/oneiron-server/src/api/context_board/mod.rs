@@ -225,7 +225,7 @@ pub(crate) async fn context_board_hydrate(
     // same key the MEMORIES cursor store already uses.
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
 
-    let session = session_prefix(&server).await?;
+    let session = session_prefix(&server, auth.locality()).await?;
     let notifications = pending_notifications(&server, caller)?;
     let unprocessed = pending_unprocessed_items(&server, caller);
     let budget = standing.as_ref().map_or_else(
@@ -286,7 +286,7 @@ pub(crate) async fn context_board_hydrate(
             );
             changed.rows.extend(installs.rows);
             changed.overflow += installs.overflow;
-            reads.fold_own_changes(&server.vault, own, &mut changed, 16)?;
+            reads.fold_own_changes(&server.vault, own, auth.locality(), &mut changed, 16)?;
             Ok::<_, oneiron::Error>(changed)
         })
         .transpose()

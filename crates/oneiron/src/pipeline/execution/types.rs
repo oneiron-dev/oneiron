@@ -34,9 +34,6 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) capabilities: Vec<ScoredEntity>,
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(super) claim_gate: ClaimStatusGateCache,
-    /// The claims `claim_gate` suppressed that the caller may count, counted
-    /// in the retrieval transaction.
-    pub(super) claims_suppressed: usize,
     pub(super) read_suppressed: usize,
     pub(super) deferred_ppr_cache_writes: Vec<crate::ppr::DeferredPprCacheWrite>,
     pub(super) cosine_ghosts_dampened: usize,

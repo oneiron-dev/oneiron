@@ -219,12 +219,22 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
-    /// Reads for a caller off this device: the suppressions the run counts
-    /// leave out every row a device-local world keeps (DEC-0005), so a count
-    /// never hints at one. It only narrows.
+    /// Reads for a caller off this device: no candidate a device-local world
+    /// keeps enters the run (DEC-0005). It only narrows.
     pub(crate) fn caller_off_device(mut self, off_device: bool) -> Self {
         self.off_device |= off_device;
         self
+    }
+
+    /// The device-local worlds this run reads nothing of, read in `txn`:
+    /// every flagged one for a caller off this device, none for one on it.
+    pub(super) fn device_local_worlds(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<std::collections::BTreeSet<EntityId>>> {
+        self.off_device
+            .then(|| crate::settings::device_only_worlds_in(&self.vault.store, txn))
+            .transpose()
     }
 
     pub(crate) fn result_limit(&self) -> usize {

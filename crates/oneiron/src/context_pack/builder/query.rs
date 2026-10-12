@@ -51,7 +51,7 @@ pub struct ContextPackBuilder<'a> {
     pub(super) l2_summary_subjects: Vec<EntityId>,
     pub(super) l2_summary_reader: Option<&'a crate::claim::ScopedRead<'a>>,
     /// Whether the pack is for a caller off this device; see
-    /// [`Self::caller_off_device`].
+    /// [`Self::caller_off_device`]. Its edge walk admits no device-local row.
     pub(super) off_device: bool,
 }
 

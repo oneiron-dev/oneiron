@@ -86,6 +86,15 @@ pub(super) async fn mcp_endpoint_result(
             }
         }
     };
+    // A queued frame naming a row a device-local world keeps now stays here.
+    let carrier = carrier.filter(|frame| {
+        serde_json::to_vec(frame).is_ok_and(|bytes| {
+            matches!(
+                crate::device_local::names_kept_row(&server.vault, actor.locality(), &bytes),
+                Ok(false)
+            )
+        })
+    });
     let carrier = carrier.and_then(|frame| mcp_live_task_lines(server, actor, frame));
     // Never turn lifecycle movement into a push. A narrowed connector never
     // reaches the rider and an empty queue remains empty.
@@ -604,10 +613,21 @@ pub(super) async fn mcp_preflight_page(
             cursor,
         )
         .map_err(mcp_page_cursor_error)?;
-    if state.snapshot.is_none() {
+    let Some(snapshot) = state.snapshot.as_ref() else {
         // Registry-only callers may mint an old position-only handle, but the
         // gateway cannot safely dispatch it: without the retained producer set
         // there is no exact continuation to return.
+        return Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::SnapshotMismatch,
+        ));
+    };
+    // A retained page that names a row a device-local world keeps now never
+    // leaves this device again: the caller starts over from page one.
+    let retained = serde_json::to_vec(&(&snapshot.output, &snapshot.keyframe))
+        .map_err(|_| mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch))?;
+    if crate::device_local::names_kept_row(&server.vault, actor.locality(), &retained)
+        .map_err(|error| mcp_engine_error("mcp page snapshot release check failed", error))?
+    {
         return Err(mcp_page_cursor_error(
             crate::mcp::McpPageCursorError::SnapshotMismatch,
         ));

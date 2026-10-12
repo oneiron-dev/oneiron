@@ -512,15 +512,6 @@ impl Vault {
         Ok(true)
     }
 
-    /// The device-only flag generation: it moves whenever a world's flag is
-    /// set or cleared. A host holding rows it read for a later delivery reads
-    /// it before that read, and delivers them only while it has not moved.
-    #[cfg(feature = "sync")]
-    pub fn device_only_generation(&self) -> Result<u64> {
-        let rtxn = self.store.env.read_txn()?;
-        device_only_generation_in(&self.store, &rtxn)
-    }
-
     /// Whether `world` is flagged device-only on this device.
     pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
@@ -704,6 +695,19 @@ pub(crate) fn device_local_keeps_in(
     id: &EntityId,
 ) -> Result<bool> {
     device_local_keeps_among(store, txn, &device_only_worlds_in(store, txn)?, id)
+}
+
+/// The device-local worlds whose rows a caller at `locality` reads nothing
+/// of: every flagged one off this device, none on it.
+pub(crate) fn device_local_worlds_at(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    locality: crate::claim::CallerLocality,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    match locality {
+        crate::claim::CallerLocality::OffDevice => device_only_worlds_in(store, txn),
+        crate::claim::CallerLocality::OnDevice => Ok(std::collections::BTreeSet::new()),
+    }
 }
 
 /// [`device_local_keeps_in`] against `flagged`, the flag set read once in

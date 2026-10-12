@@ -186,10 +186,12 @@ impl PipelineBuilder<'_> {
                 temporal_now,
             )?;
             let corpus_filter = CorpusFilter::new(&self.corpus_scope)?;
+            let device_local = self.device_local_worlds(rtxn)?;
             let mut filter_config = corpus_filter.config(self, occurred_range, authority_filter);
             filter_config.world_active_set = world_authority
                 .as_ref()
                 .map(|resolved| &resolved.active_set);
+            filter_config.device_local = device_local.as_ref();
             // Ordinary text uses D19 widening; candidate-filtered text instead
             // applies D19 during bounded scoring and needs no corpus-sized probe.
             let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
@@ -420,12 +422,8 @@ impl PipelineBuilder<'_> {
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
-                    claims_suppressed: 0,
-                    read_suppressed: metadata_cache.countable_suppressed(
-                        &self.vault.store,
-                        rtxn,
-                        self.off_device,
-                    )?,
+                    read_suppressed: metadata_cache
+                        .countable_suppressed(&self.vault.store, rtxn)?,
                     deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
@@ -751,17 +749,8 @@ impl PipelineBuilder<'_> {
                 cited_messages,
                 capabilities,
                 pending_vectors,
-                claims_suppressed: claim_gate.countable_suppressed(
-                    &self.vault.store,
-                    rtxn,
-                    self.off_device,
-                )?,
                 claim_gate,
-                read_suppressed: metadata_cache.countable_suppressed(
-                    &self.vault.store,
-                    rtxn,
-                    self.off_device,
-                )?,
+                read_suppressed: metadata_cache.countable_suppressed(&self.vault.store, rtxn)?,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
                 total_in_scope,

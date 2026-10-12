@@ -346,7 +346,6 @@ impl<'a> ContextPackBuilder<'a> {
                 edge_cache: None,
                 claim_bodies: Some(&claim_bodies),
                 clamp,
-                off_device: self.off_device,
             };
             let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
@@ -422,6 +421,14 @@ impl<'a> ContextPackBuilder<'a> {
             let stale_neighbor_exclusion = (!stale_worlds.is_empty()
                 && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
             .then_some(&stale_worlds);
+            let device_local = if self.off_device {
+                Some(crate::settings::device_only_worlds_in(
+                    &self.vault.store,
+                    &rtxn,
+                )?)
+            } else {
+                None
+            };
             let edge_walk = if let Some(neighbor_pipeline) = neighbor_pipeline.as_ref() {
                 let (neighbor_filter, named_types) =
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
@@ -435,6 +442,7 @@ impl<'a> ContextPackBuilder<'a> {
                         exclude: &result_ids,
                         clamp,
                         stale_worlds: stale_neighbor_exclusion,
+                        device_local: device_local.as_ref(),
                         type_filter: &neighbor_filter,
                         named_types,
                     },
@@ -462,7 +470,6 @@ impl<'a> ContextPackBuilder<'a> {
                 edge_cache,
                 claim_bodies: Some(&claim_bodies),
                 clamp,
-                off_device: self.off_device,
             };
 
             if self.include_edges && self.edge_hop > 0 {

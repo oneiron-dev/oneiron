@@ -409,9 +409,10 @@ async fn a_caller_off_this_device_counts_no_device_local_claim() {
     }
 }
 
-/// Sol R1 F4: discovery counts the vault's rows, dates its last activity and
-/// names its predicate namespaces. A caller off this device learns none of
-/// that from a device-local world.
+/// Sol R1 F4 and R2 F4: discovery and a board's session prefix count the
+/// vault's rows and date its last activity, and discovery names its predicate
+/// namespaces. A caller off this device learns none of that from a
+/// device-local world.
 #[tokio::test]
 async fn discovery_off_this_device_counts_no_device_local_row() {
     let (_dir, server, caller, grower) = serve();
@@ -453,4 +454,75 @@ async fn discovery_off_this_device_counts_no_device_local_row() {
     assert!(namespaces(&away).contains("openspace"), "{away}");
     assert_eq!(here["last_activity"], json!(latest));
     assert!(away["last_activity"].as_u64().unwrap() < latest, "{away}");
+
+    let board = |from| {
+        let caller = &caller;
+        async move {
+            let (status, body) = caller
+                .call(from, "POST", "/v1/core/context-board", Some(json!({})))
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["session"].clone()
+        }
+    };
+    let (here, away) = (board(HERE).await, board(AWAY).await);
+    for kind in [
+        oneiron::registry::ENTITY_TYPE_CLAIM,
+        oneiron::registry::ENTITY_TYPE_WORLD,
+    ] {
+        assert_eq!(
+            count(&here, kind),
+            count(&away, kind) + 1,
+            "board type {kind}"
+        );
+    }
+    assert_eq!(here["last_activity"], json!(latest));
+    assert!(away["last_activity"].as_u64().unwrap() < latest, "{away}");
+}
+
+/// Sol R2 F2 and F7: a pack off this device for a query only a device-local
+/// claim answers reads as a pack for a query nothing answers: no candidate
+/// of a device-local world enters the retrieval, so no empty reason, hint or
+/// clamp count betrays one.
+#[tokio::test]
+async fn a_pack_off_this_device_reads_a_device_local_match_as_no_match() {
+    let (_dir, server, caller, grower) = serve();
+    let kept_world = put_world(&server.vault);
+    put_claim_as(
+        &server,
+        grower,
+        "test.marigold",
+        Some(kept_world),
+        "marigold ledger",
+        ClaimApprovalStatus::Auto,
+        101,
+    );
+    index(&server);
+    server
+        .vault
+        .set_world_device_only(kept_world, true)
+        .unwrap();
+
+    let empty = |query: &'static str| {
+        let caller = &caller;
+        async move {
+            let (status, body) = caller
+                .call(
+                    AWAY,
+                    "POST",
+                    "/v1/core/context-pack",
+                    Some(json!({"query": query, "limit": 10, "view": "full"})),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["results"], json!([]), "{body}");
+            (
+                body["empty"]["reason"].clone(),
+                body["empty"]["hint"].clone(),
+                body["stats"]["claims_suppressed"].clone(),
+                body["narrowing"]["suppressed_count"].clone(),
+            )
+        }
+    };
+    assert_eq!(empty("marigold").await, empty("zinnia").await);
 }

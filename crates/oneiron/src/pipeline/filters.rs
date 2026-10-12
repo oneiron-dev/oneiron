@@ -575,6 +575,11 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     if let Some(deadline) = filters.deadline {
         deadline.checkpoint()?;
     }
+    if let Some(flagged) = filters.device_local
+        && crate::settings::device_local_keeps_among(store, rtxn, flagged, id)?
+    {
+        return Ok(false);
+    }
     if let Some(filter) = filters.candidate_filter
         && !filter(store, rtxn, id)?
     {

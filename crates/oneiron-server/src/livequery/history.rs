@@ -22,8 +22,6 @@ struct Entry {
     cursor: Cursor,
     kind: String,
     result: Option<Value>,
-    /// The device-only generation the push was derived under.
-    generation: u64,
 }
 
 impl History {
@@ -48,7 +46,6 @@ impl History {
         view: &ScopedView,
         channel: Channel,
         pushes: &[Push],
-        generation: u64,
     ) -> Result<bool, AppError> {
         let mut rows = Vec::new();
         for push in pushes {
@@ -59,7 +56,6 @@ impl History {
                 cursor: push.cursor.clone(),
                 kind: push.kind.to_owned(),
                 result: push.result.clone(),
-                generation,
             })
             .map_err(|_| error())?;
             rows.push((format!("{}:{}", push.cursor.batch, push.kind), bytes));
@@ -110,15 +106,11 @@ impl History {
         Ok(None)
     }
 
-    /// The pushes retained after `cursor`, only when each was derived under
-    /// `generation`: one from another may hold a row a world flagged since
-    /// keeps on this device, so the resume takes a gap and a fresh snapshot.
     pub(super) fn replay(
         doc: &LoroDoc,
         view: &ScopedView,
         channel: Channel,
         cursor: &Cursor,
-        generation: u64,
     ) -> Result<Option<Vec<Push>>, AppError> {
         // The caller has validated the indexed projection's export since the
         // cursor. Delivery entries live in a separate, bounded journal: they
@@ -150,9 +142,6 @@ impl History {
             return Ok(None);
         };
         entries.retain(|entry| entry.subscription_id == id && entry.cursor.batch > cursor.batch);
-        if entries.iter().any(|entry| entry.generation != generation) {
-            return Ok(None);
-        }
         entries.sort_by_key(|entry| {
             (
                 entry.cursor.batch,

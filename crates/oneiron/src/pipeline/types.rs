@@ -213,6 +213,11 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// `AnyOf` fails the run closed before the first candidate is scanned and
     /// the candidate-scan twin stays a pure predicate.
     pub(super) corpus_scope: &'a CorpusScope,
+    /// The device-local worlds, read once per run, when the run reads for a
+    /// caller off this device: no candidate a device-local world keeps enters
+    /// the run (DEC-0005), so no count, reason or budget sees it. `None` for
+    /// a caller on this device.
+    pub(super) device_local: Option<&'a BTreeSet<EntityId>>,
     /// The run's deadline. While a channel stage is open every candidate the
     /// scope gate reads is one of its checkpoints.
     pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
@@ -245,42 +250,6 @@ pub(super) struct ClaimStatusGateCache {
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
     #[cfg(test)]
     pub(super) body_loads: usize,
-}
-
-impl ClaimStatusGateCache {
-    /// The claims the gate suppressed that the caller may count: for a caller
-    /// off this device, none a device-local world keeps (DEC-0005).
-    pub(super) fn countable_suppressed(
-        &self,
-        store: &Store,
-        txn: &RoTxn<'_>,
-        off_device: bool,
-    ) -> Result<usize> {
-        let flagged = device_local_flags(store, txn, off_device)?;
-        let mut count = 0;
-        for (id, decision) in &self.decisions {
-            if decision.is_none()
-                && !crate::settings::device_local_keeps_among(store, txn, &flagged, id)?
-            {
-                count += 1;
-            }
-        }
-        Ok(count)
-    }
-}
-
-/// The device-local worlds whose rows a caller's counts leave out: every
-/// flagged one for a caller off this device, none for one on it.
-fn device_local_flags(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    off_device: bool,
-) -> Result<BTreeSet<EntityId>> {
-    if off_device {
-        crate::settings::device_only_worlds_in(store, txn)
-    } else {
-        Ok(BTreeSet::new())
-    }
 }
 
 pub(crate) struct PipelineOutput {
@@ -332,20 +301,10 @@ pub struct RetrievalWithPendingVectors<T> {
 impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
-    /// scoped caller's final admission gate. Nor, for a caller off this
-    /// device, does a row a device-local world keeps (DEC-0005).
-    pub(super) fn countable_suppressed(
-        &self,
-        store: &Store,
-        txn: &RoTxn<'_>,
-        off_device: bool,
-    ) -> Result<usize> {
-        let flagged = device_local_flags(store, txn, off_device)?;
+    /// scoped caller's final admission gate.
+    pub(super) fn countable_suppressed(&self, store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
         let mut count = 0;
         for id in &self.read_suppressed {
-            if crate::settings::device_local_keeps_among(store, txn, &flagged, id)? {
-                continue;
-            }
             let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
                 continue;
             };
