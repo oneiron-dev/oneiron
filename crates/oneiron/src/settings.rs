@@ -448,6 +448,11 @@ impl Vault {
                 "base reality cannot be device-only".to_owned(),
             ));
         }
+        let _flags = self
+            .store
+            .device_only_flag_lock
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.with_write_txn_grouped(|wtxn| {
             if self.get_entity_type_in_txn(wtxn, &world)?
                 != Some(crate::registry::ENTITY_TYPE_WORLD)
@@ -675,9 +680,11 @@ pub(crate) fn device_only_withholds(
 }
 
 /// A CLAIM's world from its stored body. An erased claim keeps only its
-/// header, and a purged one nothing; its deletion kept the world window's
-/// address (`m:dw:`, `<month>@<world>`). A body or address that cannot be
-/// read is an error, never portability: the world is unknown.
+/// header (its row fenced as deleted), and a purged one nothing; its deletion
+/// kept the world window's address (`m:dw:`, `<month>@<world>`). A body that
+/// cannot be read, a bare header on a row not fenced as deleted, or an
+/// address that is not a world window's is an error, never portability: the
+/// world is unknown.
 fn claim_in_flagged_world(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -685,13 +692,18 @@ fn claim_in_flagged_world(
     id: &EntityId,
     raw: Option<&[u8]>,
 ) -> Result<bool> {
-    if let Some(body) = raw
-        .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
-        .filter(|body| !body.is_empty())
-    {
-        let body = crate::claim::decode_claim_body(body, true)
-            .map_err(|_| Error::CorruptedIndex("device-only claim world"))?;
-        return Ok(body.world.is_some_and(|world| flagged.contains(&world)));
+    let unknown = || Error::CorruptedIndex("device-only claim world");
+    if let Some(raw) = raw {
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .unwrap_or_default();
+        if !body.is_empty() {
+            let body = crate::claim::decode_claim_body(body, true).map_err(|_| unknown())?;
+            return Ok(body.world.is_some_and(|world| flagged.contains(&world)));
+        }
+        if !crate::deletion::row_deletion_marked(store, txn, id, Some(raw))? {
+            return Err(unknown());
+        }
     }
     let Some(label) = store
         .sync_state
@@ -701,6 +713,7 @@ fn claim_in_flagged_world(
     };
     let world = std::str::from_utf8(&label)
         .ok()
+        .filter(|label| crate::deletion::parse_window_label(label).is_some())
         .and_then(|label| label.split_once('@'))
         .and_then(|(_, world)| EntityId::from_hex(world).ok())
         .ok_or(Error::CorruptedIndex("deletion window address"))?;

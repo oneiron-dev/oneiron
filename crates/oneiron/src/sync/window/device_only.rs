@@ -80,8 +80,10 @@ const FLAG_PASSES: usize = 3;
 /// Opening and reading the window takes time, and a flag may be committed
 /// meanwhile. Bytes are portable only if the flag generation read after the
 /// inspection is the one the inspection ran against; otherwise they are
-/// inspected again under the new flag set. No read transaction is held
-/// across the inspection or the send.
+/// inspected again under the new flag set. That read and the acceptance hold
+/// the vault's device-only flag lock, which a flag commit takes too, so a flag
+/// committed before the verdict accepts is always seen. No read transaction
+/// is held across the inspection or the send.
 pub fn raw_update_verdict(
     manager: &Arc<WindowManager>,
     window_key: &str,
@@ -89,19 +91,30 @@ pub fn raw_update_verdict(
 ) -> UpdateVerdict {
     let verdict = (|| -> Result<UpdateVerdict> {
         let vault = manager.vault();
+        let flag_lock = || {
+            vault
+                .store
+                .device_only_flag_lock
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        let accepting = flag_lock();
         let (mut generation, mut flagged) = flagged_worlds(vault)?;
+        if flagged.is_empty() {
+            return Ok(UpdateVerdict::Portable);
+        }
+        drop(accepting);
         for _ in 0..FLAG_PASSES {
-            if flagged.is_empty() {
-                return Ok(UpdateVerdict::Portable);
-            }
             let verdict = inspect_raw_update(manager, &flagged, window_key, update)?;
             if verdict != UpdateVerdict::Portable {
                 return Ok(verdict);
             }
+            let accepting = flag_lock();
             let (now, now_flagged) = flagged_worlds(vault)?;
-            if now == generation {
+            if now == generation || now_flagged.is_empty() {
                 return Ok(UpdateVerdict::Portable);
             }
+            drop(accepting);
             (generation, flagged) = (now, now_flagged);
         }
         Ok(UpdateVerdict::Uninspectable)

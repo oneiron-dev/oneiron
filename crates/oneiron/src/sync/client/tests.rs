@@ -2480,39 +2480,43 @@ fn device_only_claim_text_stays_journaled_until_the_flag_clears() {
     assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
 }
 
-/// Astra #1402 finding 6: a live claim whose stored body cannot be read names
+/// Astra #1402 finding 6, and Sol's bare-header variant: a live claim whose
+/// stored body cannot be read, or is missing on a row no delete fenced, names
 /// no world anyone can check. While a flag stands its queued text stays
 /// journaled, unsent; it ships once no flag stands.
 #[test]
 fn claim_text_whose_world_cannot_be_read_stays_journaled_while_a_flag_stands() {
-    let JournaledClaimText {
-        vault,
-        world,
-        claim,
-        mut client,
-        frame,
-        ..
-    } = journaled_claim_text();
-    vault
-        .with_write_txn_grouped(|wtxn| {
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &claim)?
-                .expect("stored claim");
-            // A valid header over a body that is never MessagePack.
-            let mut broken = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-            broken.push(0xc1);
-            crate::ports::EntityStoreMaintenance::port_raw_record_seed(
-                &vault.store,
-                wtxn,
-                &claim,
-                &broken,
-            )
-        })
-        .unwrap();
-    vault.set_world_device_only(world, true).unwrap();
+    // Never MessagePack, and no body at all.
+    for tail in [&[0xc1][..], &[][..]] {
+        let JournaledClaimText {
+            vault,
+            world,
+            claim,
+            mut client,
+            frame,
+            ..
+        } = journaled_claim_text();
+        vault
+            .with_write_txn_grouped(|wtxn| {
+                let raw =
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &claim)?
+                        .expect("stored claim");
+                let mut broken = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+                broken.extend_from_slice(tail);
+                crate::ports::EntityStoreMaintenance::port_raw_record_seed(
+                    &vault.store,
+                    wtxn,
+                    &claim,
+                    &broken,
+                )
+            })
+            .unwrap();
+        vault.set_world_device_only(world, true).unwrap();
 
-    assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
-    vault.set_world_device_only(world, false).unwrap();
-    assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
+        assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
+        vault.set_world_device_only(world, false).unwrap();
+        assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
+    }
 }
 
 /// Astra #1402 finding 1: a flag committed while the raw guard inspects a

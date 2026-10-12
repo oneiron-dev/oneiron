@@ -576,3 +576,68 @@ async fn authenticated_interrupted_upload_consumes_prefix_without_publishing_obj
     );
     assert!(server.vault.lfs_object(oid).unwrap().is_some());
 }
+
+/// Sol on #1402 (r9): an object attached only to a NOTE of a world turned
+/// device-only is neither offered nor served by the Git-LFS download doors,
+/// though it was downloadable while the world was portable.
+#[tokio::test]
+async fn lfs_download_withholds_an_object_only_a_device_only_world_owns() {
+    let (_dir, server) = test_server(secret_config());
+    let token = writer_token();
+    let bytes = b"private attachment bytes".to_vec();
+    let oid = LfsOid::digest(&bytes);
+    let size = u64::try_from(bytes.len()).expect("length fits u64");
+    assert_eq!(upload(&server, &token, &bytes).await, StatusCode::OK);
+    let vault = server.vault();
+    let asset = vault.lfs_object(oid).unwrap().expect("object").asset_id;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "private attachment",
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        )
+        .unwrap();
+    let world = oneiron::EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"private world",
+        )
+        .unwrap();
+    vault
+        .put_edge(&note, oneiron::EdgeKind::InWorld, &world, 1.0)
+        .unwrap();
+    vault
+        .put_edge(&asset, oneiron::EdgeKind::Attached, &note, 1.0)
+        .unwrap();
+    let get = || {
+        request(
+            "GET",
+            &object_uri(&oid.to_hex()),
+            Some(&token),
+            Body::empty(),
+        )
+    };
+    let batch = || {
+        request(
+            "POST",
+            &format!("/git/{REPO}/info/lfs/objects/batch"),
+            Some(&token),
+            batch_body("download", &oid.to_hex(), size, &["basic"]),
+        )
+    };
+    let (status, _, body) = route(&server, get()).await;
+    assert_eq!((status, body), (StatusCode::OK, bytes));
+
+    vault.set_world_device_only(world, true).unwrap();
+    let (status, _, _) = route(&server, get()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, _, body) = route(&server, batch()).await;
+    let parsed = json_body(&body);
+    assert!(parsed["objects"][0]["actions"]["download"].is_null());
+    assert_eq!(parsed["objects"][0]["error"]["code"], LFS_BATCH_NOT_FOUND);
+}
