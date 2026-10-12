@@ -8,9 +8,9 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs,
-    RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
-    SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
+    ImportNotesArgs, ImportSourceArgs, RecoverClockArgs, RecoverWindowArgs, RestoreArgs, RunArgs,
+    RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
+    SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -60,6 +60,10 @@ pub enum Command {
     /// of its CRDT state, repairing its rows. The snapshot stays in memory
     /// and never touches disk; only the window's manifest is kept.
     RecoverWindow(Box<RecoverWindowArgs>),
+    /// Let agents back in after the host clock ran ahead and was set back:
+    /// on a stopped vault, move the clock holder proofs are judged on back
+    /// to the host's clock, and refuse every proof signed before now.
+    RecoverClock(Box<RecoverClockArgs>),
     /// Export the whole vault in one of five formats.
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
@@ -177,6 +181,29 @@ fn parse_route(value: &str) -> Result<oneiron::ModelLocality, String> {
 #[derive(Subcommand)]
 pub enum HostCommand {
     Init(HostInitArgs),
+    /// Move a stopped self-host vault's root to a new host secret, in-chain:
+    /// the vault id stays, and every credential the old secret minted stops
+    /// working. Run it after a host secret leaks, or to change it.
+    ReRoot(Box<HostReRootArgs>),
+}
+
+/// The current secret comes from `--secret-file`, the config or
+/// `ONEIRON_AUTH_SECRET`; the new one from `--new-secret-file` or
+/// `ONEIRON_NEW_AUTH_SECRET`. Neither is read from argv or printed.
+#[derive(Args, Clone, Debug)]
+pub struct HostReRootArgs {
+    /// Read the current host secret from this file, readable by its owner
+    /// only, instead of the config or `ONEIRON_AUTH_SECRET`.
+    #[arg(long, value_name = "FILE")]
+    pub secret_file: Option<PathBuf>,
+
+    /// Read the new host secret from this file, readable by its owner only,
+    /// instead of `ONEIRON_NEW_AUTH_SECRET`.
+    #[arg(long, value_name = "FILE")]
+    pub new_secret_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -651,6 +678,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Backup(args) => commands::backup(*args),
         Command::Restore(args) => commands::restore(*args),
         Command::RecoverWindow(args) => commands::recover_window(*args),
+        Command::RecoverClock(args) => commands::recover_clock(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
         Command::Secrets(command) => commands::secrets(command),
@@ -669,6 +697,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
+        Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
     }

@@ -988,3 +988,280 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
         "unbound host cannot disclose Tier A: {unbound}"
     );
 }
+
+/// Engine-lane ruling 2026-10-11 (ARCH-0067 §8): the vault's own agent acts
+/// for the owner and adds no clearance term; its own grant bounds what the
+/// room reads instead. A room holding the bound owner and that agent
+/// assembles its own default-Sensitive history, owner present or away, once
+/// the agent may read it too: a policy grant for the room's records and a
+/// relationship grant for its message's space. Before, the agent was an
+/// unknown party and the room public-only.
+#[tokio::test]
+async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
+    let (_dir, server) = interlocutor_test_server();
+    let owner = seeded_test_entity_id(0x2094_0301);
+    let agent = seeded_test_entity_id(0x2094_0302);
+    server
+        .vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"room member",
+        )
+        .expect("onboard person");
+    bind_room_owner(&server, owner);
+    // The host key holds the owner's binding, so the vault's own agent here
+    // is one of its live agent definitions.
+    let definition = oneiron::agent_def::AgentDefinition::new(
+        "oneiron.agent.room",
+        "Room member fixture",
+        "1.0.0",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        oneiron::agent_def::AgentScope::All,
+        oneiron::agent_def::AgentCeiling::Proposed,
+        None,
+        oneiron::ClaimApprovalStatus::Approved,
+        oneiron::ClaimLifecycleStatus::Active,
+        oneiron::ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("test"),
+        )]),
+        None,
+        true,
+        None,
+    );
+    server
+        .vault
+        .put_agent_definition(
+            &agent,
+            &definition,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .expect("agent definition");
+    let root = server.vault.root_project().expect("root project");
+    let project = seeded_test_entity_id(0x2094_0303);
+    let mut roster =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    create_owned_project(&server, owner, project, &roster);
+    roster.roster.push(agent.to_hex());
+    let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
+    let exact_room = oneiron::workspace_roster::ProjectRoom {
+        schema_version: 1,
+        kind: "channel".into(),
+        project_id: project.to_hex(),
+        member_ids: roster.roster.clone(),
+        claims_scope_ref: roster.claims_scope_ref.clone(),
+        origin: None,
+    };
+    server
+        .vault
+        .batch()
+        .put(
+            &project,
+            server.vault.project_type_byte().unwrap(),
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&roster).unwrap(),
+        )
+        .put(
+            &room,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&exact_room).unwrap(),
+        )
+        .commit()
+        .expect("onboard exact project and room in one batch");
+    let space = seeded_test_entity_id(0x2094_0304);
+    server
+        .vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .rooms_speak(&oneiron::memory::WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(oneiron::EntityId::now().to_hex()),
+            messages: vec![oneiron::memory::WitnessMessage {
+                id: Some(oneiron::EntityId::now().to_hex()),
+                author: oneiron::memory::WitnessAuthor::User,
+                message_type: "text".into(),
+                content: "lantern harbor room2094".into(),
+                metadata: Some(json!({ "rel": space.to_hex() })),
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 2,
+        })
+        .expect("speak");
+
+    // Nothing, the policy grant alone, then both: only the agent's whole
+    // read of the message lets the room read it.
+    for grants in 0..3 {
+        if grants == 1 {
+            super::context_board_history::restrict_principal_read_types(
+                &server,
+                agent,
+                &[
+                    oneiron::registry::ENTITY_TYPE_TURN,
+                    oneiron::registry::ENTITY_TYPE_MESSAGE,
+                ],
+            );
+        }
+        if grants == 2 {
+            server
+                .vault
+                .create_access_grant(
+                    &seeded_test_entity_id(0x2094_0305),
+                    &oneiron::access_grant::AccessGrant {
+                        principal_ref: agent,
+                        scope: oneiron::access_grant::AccessGrantScope::Messages {
+                            space_ref: space,
+                        },
+                        capability: oneiron::access_grant::AccessGrantCapability::MessagesRead,
+                        authority_scope: oneiron::federation::Scope::top(),
+                        status: oneiron::access_grant::AccessGrantStatus::Active,
+                        created_at: 1,
+                        revoked_at: None,
+                        expires_at: None,
+                    },
+                )
+                .expect("grant the message's space");
+        }
+        for (owner_present, mode) in [(None, "absence_clamp"), (Some(true), "owner_alone")] {
+            let mut request = json!({"conversation_id": room.to_hex(), "query": "room2094"});
+            if let Some(present) = owner_present {
+                request["interlocutors"] = json!({ "owner_present": present });
+            }
+            let (status, body) = room_owner_json(server.clone(), owner, &request).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["disclosure"]["mode"], mode, "{body}");
+            assert_eq!(
+                body.to_string().contains("lantern harbor room2094"),
+                grants == 2,
+                "the room reads its history only as its agent may ({grants}, {mode}): {body}"
+            );
+        }
+    }
+}
+
+/// A bare host secret proves no PERSON, so the vault's own agents stay
+/// unknown parties to it: a room of agents alone never reads as the owner
+/// alone, presence asserted or not, and reads only public rows. The agent
+/// reading on its own credential is the room's proven reader: it adds no
+/// clearance term, so the room reads what its own grant admits, and never
+/// Tier A.
+#[tokio::test]
+async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
+    let (_dir, server) = interlocutor_test_server();
+    let agent = seeded_test_entity_id(0x2094_0401);
+    server
+        .vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"room agent",
+        )
+        .expect("onboard agent");
+    bind_room_actor(&server, agent, "agent");
+    let creator = server.vault.ensure_embedded_owner_actor().unwrap();
+    let room = oneiron::EntityId::now();
+    server
+        .vault
+        .create_conversation(
+            room,
+            &oneiron::conversation::ConversationBody {
+                kind: oneiron::conversation::ConversationKind::Channel,
+                member_ids: vec![agent],
+                ..Default::default()
+            },
+            oneiron::WriteActor::new(creator, oneiron::EdgeActorClass::Human),
+            1,
+        )
+        .expect("agent-only room");
+    let private = seed_text_turn(&server, "agent room private2094");
+    server.vault.set_disclosure_tier_a(&private, 101).unwrap();
+    let sensitive = seed_text_turn(&server, "agent room sensitive2094");
+    let request = json!({"conversation_id": room.to_hex(), "query": "agent room"});
+    let ids = |body: &Value| -> Vec<String> {
+        body["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    for interlocutors in [None, Some(json!({"owner_present": true}))] {
+        let mut request = request.clone();
+        if let Some(interlocutors) = interlocutors {
+            request["interlocutors"] = interlocutors;
+        }
+        let (status, body) = owner_json(
+            server.clone(),
+            "POST",
+            "/v1/core/context-pack",
+            Some(&request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["disclosure"]["mode"], "owner_alone", "{body}");
+        assert!(
+            !ids(&body).contains(&private.to_hex()) && !ids(&body).contains(&sensitive.to_hex()),
+            "a bare host reads only public rows through an agent-only room: {body}"
+        );
+    }
+
+    let agent_reads = |server: std::sync::Arc<SyncServer>| {
+        route_json(
+            server,
+            core_request_with_authz(
+                "POST",
+                "/v1/core/context-pack",
+                test_bearer(&format!(
+                    "scope=core:read;principal_ref={};actor_class=agent",
+                    agent.to_hex()
+                )),
+                Some(&request),
+            ),
+        )
+    };
+    // The agent's slip reads every record kind until a manifest grant names
+    // it, so a grant that reads only MESSAGEs is the narrow start.
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_MESSAGE],
+    );
+    let (status, before) = agent_reads(server.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert!(
+        !ids(&before).contains(&sensitive.to_hex()),
+        "the agent's own read bounds the room: {before}"
+    );
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let (status, after) = agent_reads(server.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_ne!(after["disclosure"]["mode"], "owner_alone", "{after}");
+    assert!(
+        ids(&after).contains(&sensitive.to_hex()),
+        "the agent reads the room as its own grant admits: {after}"
+    );
+    assert!(
+        !ids(&after).contains(&private.to_hex()),
+        "an agent's room never holds Tier A: {after}"
+    );
+}

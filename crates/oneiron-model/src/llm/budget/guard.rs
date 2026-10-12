@@ -239,6 +239,12 @@ impl BudgetGuard {
         self.read()
     }
 
+    /// What one call reserves at admission on this meter.
+    #[must_use]
+    pub fn reserve_units(&self) -> u64 {
+        self.lock_state().reserve_units
+    }
+
     pub(super) fn lock_state(&self) -> MutexGuard<'_, BudgetState> {
         self.state.lock().expect("budget guard mutex poisoned")
     }

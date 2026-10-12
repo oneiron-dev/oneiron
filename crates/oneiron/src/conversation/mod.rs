@@ -16,8 +16,9 @@ pub(crate) use deletion::{
     room_message_owner_in, room_person_write_allowed,
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
+pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use session::{SessionMode, SessionPresence};
-pub(crate) use visibility::{AudienceCache, room_for_record_in};
+pub(crate) use visibility::{AudienceCache, conversation_summary_covers, room_for_record_in};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{RecordError, Result};
