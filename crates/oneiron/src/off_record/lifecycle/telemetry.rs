@@ -54,11 +54,11 @@ impl SessionRetrievalTelemetry<'_> {
         self.landing.route.revalidate()
     }
 
-    /// A run base keeps no row of, because it read the room's own rows,
-    /// checks what that row's landing would have: the route and, in a room
-    /// on record, the saver. A run whose saver left is refused, and the
-    /// saving stops, as when its row is written.
-    pub(crate) fn admit_withheld_run(&self) -> Result<()> {
+    /// A base write kept out, because its run read the room's own rows,
+    /// checks what its landing would have: the route and, in a room on
+    /// record, the saver. A run whose saver left is refused, and the saving
+    /// stops, as when the write lands.
+    pub(crate) fn admit_withheld_write(&self) -> Result<()> {
         let txn = self.vault.store.env.read_txn()?;
         self.landing.in_txn(&txn)
     }

@@ -406,7 +406,7 @@ impl PipelineBuilder<'_> {
         let telemetry_run_id = if !capture {
             if let Some(session) = self.session {
                 if capture_enabled {
-                    session.admit_withheld_run()?;
+                    session.admit_withheld_write()?;
                 } else {
                     session.revalidate_without_capture()?;
                 }

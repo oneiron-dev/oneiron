@@ -366,7 +366,7 @@ impl OffRecordSession<'_> {
             return Ok(search.scores);
         }
         if telemetry.writes_to_base() && holds_room_rows {
-            telemetry.admit_withheld_run()?;
+            telemetry.admit_withheld_write()?;
             return Ok(search.scores);
         }
         let record = Vault::vault_search_retrieval_run_record(

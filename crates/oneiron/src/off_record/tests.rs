@@ -1241,6 +1241,65 @@ fn a_room_retrieval_queues_no_embed_job_once_its_saver_left() -> Result<()> {
     Ok(())
 }
 
+/// The same retrieval reading the room, which holds a message of its own.
+/// Base keeps no embed job of a run that read the room's rows, and with
+/// capture off no run row lands either. The saver those jobs would have
+/// landed under must still hold: the run is refused, and the saving stops.
+#[cfg(feature = "sync")]
+#[test]
+fn a_room_read_that_keeps_its_embed_jobs_out_still_stops_once_its_saver_left() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    // A claim owes its vector from the write that put it.
+    let claim = EntityId::now();
+    let body = ClaimBody::new(
+        "test.status",
+        ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("subject id")),
+        rmpv::Value::from("v"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("claim body");
+    vault
+        .batch()
+        .put(
+            &claim,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::claim::encode_claim_body(&body)?,
+        )
+        .text(&claim, &[("body", "saverleftroomreadneedle")])
+        .commit()?;
+    let (room, by, session) = a_room_on_record_with_an_unsaved_message(&vault)?;
+    let route = session.write_route()?;
+    let door = session.retrieval_telemetry(&route)?;
+    vault.leave_member(room, by.entity_ref(), by, 50)?;
+
+    let view = session.read_view()?;
+    let error = vault
+        .query()
+        .search_text("saverleftroomreadneedle", 10)
+        .in_session(&door)
+        .reading(view.read())
+        .run_with_pending_vectors()
+        .expect_err("a room whose saver left lands nothing of the run");
+    assert!(
+        matches!(
+            error,
+            Error::OffRecord(OffRecordError::OffRecordSavingStopped { .. })
+        ),
+        "{error:?}"
+    );
+    drop(view);
+    drop(door);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    Ok(())
+}
+
 /// A room holding the vault's owner, with one message nobody saved in its
 /// stretch, which the owner has then put on record.
 fn a_room_on_record_with_an_unsaved_message(
