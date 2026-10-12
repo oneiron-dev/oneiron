@@ -79,6 +79,10 @@ const CUSTOMIZATION_EVENT: SideTable<u64, CustomizationSettingsChangeEvent, Name
 /// syncs; the row never goes on the wire. Key: hex32 (world id).
 const DEVICE_ONLY_WORLD: SideTable<HexId, [u8; 1], Raw> =
     SideTable::new(&side_table::DEVICE_ONLY_WORLD);
+/// Bumped in every transaction that sets or clears a device-only flag, so a
+/// reader that inspected against an older flag set can tell. Key: ().
+const DEVICE_ONLY_GENERATION: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::DEVICE_ONLY_GENERATION);
 
 const TOKEN_MAX_BYTES: usize = 64;
 const WORLD_LABEL_MAX_BYTES: usize = 128;
@@ -458,6 +462,11 @@ impl Vault {
             } else {
                 DEVICE_ONLY_WORLD.delete(&self.store, wtxn, &key)?;
             }
+            let generation = DEVICE_ONLY_GENERATION
+                .get(&self.store, wtxn, &())?
+                .unwrap_or(0)
+                .wrapping_add(1);
+            DEVICE_ONLY_GENERATION.put(&self.store, wtxn, &(), &generation)?;
             Ok(())
         })
     }
@@ -615,6 +624,13 @@ pub(crate) fn device_only_worlds_in(
         .collect())
 }
 
+/// The device-only flag generation: it moves whenever a flag is set or
+/// cleared. Read it in the transaction that read the flag set.
+#[cfg(feature = "sync")]
+pub(crate) fn device_only_generation_in(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
+    Ok(DEVICE_ONLY_GENERATION.get(store, txn, &())?.unwrap_or(0))
+}
+
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD
 /// row itself, a CLAIM whose `worldId` is flagged (an erased or purged one by
 /// the world address its deletion kept), or a NOTE with a stored `InWorld`
@@ -658,32 +674,10 @@ pub(crate) fn device_only_withholds(
     }
 }
 
-/// Whether stored `id` is a CLAIM of a flagged world, erased or purged ones
-/// included. Other rows are not, whatever world they name.
-#[cfg(feature = "sync")]
-pub(crate) fn device_only_claim(
-    store: &crate::store::Store,
-    txn: &RoTxn<'_>,
-    flagged: &std::collections::BTreeSet<EntityId>,
-    id: &EntityId,
-) -> Result<bool> {
-    if flagged.is_empty() {
-        return Ok(false);
-    }
-    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
-    if let Some(raw) = &raw {
-        let header = crate::batch::EntityMetadataHeader::parse(raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-            return Ok(false);
-        }
-    }
-    claim_in_flagged_world(store, txn, flagged, id, raw.as_deref())
-}
-
 /// A CLAIM's world from its stored body. An erased claim keeps only its
-/// shell, and a purged one nothing; its deletion kept the world window's
-/// address (`m:dw:`, `<month>@<world>`).
+/// header, and a purged one nothing; its deletion kept the world window's
+/// address (`m:dw:`, `<month>@<world>`). A body or address that cannot be
+/// read is an error, never portability: the world is unknown.
 fn claim_in_flagged_world(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -693,15 +687,22 @@ fn claim_in_flagged_world(
 ) -> Result<bool> {
     if let Some(body) = raw
         .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
-        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .filter(|body| !body.is_empty())
     {
+        let body = crate::claim::decode_claim_body(body, true)
+            .map_err(|_| Error::CorruptedIndex("device-only claim world"))?;
         return Ok(body.world.is_some_and(|world| flagged.contains(&world)));
     }
-    Ok(store
+    let Some(label) = store
         .sync_state
         .get(txn, &format!("m:dw:{}", id.to_hex()))?
-        .as_deref()
-        .and_then(|label| std::str::from_utf8(label).ok()?.split_once('@'))
+    else {
+        return Ok(false);
+    };
+    let world = std::str::from_utf8(&label)
+        .ok()
+        .and_then(|label| label.split_once('@'))
         .and_then(|(_, world)| EntityId::from_hex(world).ok())
-        .is_some_and(|world| flagged.contains(&world)))
+        .ok_or(Error::CorruptedIndex("deletion window address"))?;
+    Ok(flagged.contains(&world))
 }

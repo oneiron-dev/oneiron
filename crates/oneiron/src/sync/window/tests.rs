@@ -4283,6 +4283,69 @@ fn base_window_history_never_ships_a_removed_device_only_claim() -> Result<()> {
     Ok(())
 }
 
+/// A NOTE in `world`, with the WORLD row and the `InWorld` edge learned in the
+/// NOTE's base month. Returns the NOTE and that month.
+fn note_in_world(vault: &Vault, world: EntityId) -> Result<(EntityId, WindowKey)> {
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "private note text",
+            crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let at = crate::batch::EntityMetadataHeader::parse(&vault.get_raw_unsealed(&note)?.unwrap())
+        .unwrap()
+        .learned_at;
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        TimeRange { start: at, end: at },
+        at,
+        b"private world",
+    )?;
+    vault.put_edge(&note, EdgeKind::InWorld, &world, 1.0)?;
+    Ok((note, WindowKey::from_timestamp(at)))
+}
+
+/// Astra #1402 sequence A: a WORLD and a NOTE in it, packed into their base
+/// month while the world was portable. Once the world turns device-only, a
+/// receiver fetching that month gets neither the NOTE nor the WORLD row.
+#[test]
+fn base_month_withholds_a_resident_note_and_world_once_the_world_turns_device_only() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let world = EntityId::now();
+    let (note, month) = note_in_world(&vault, world)?;
+    let base = create_window_doc("base", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+    for id in [note, world] {
+        assert!(base.get_map("entities").get(&id.to_hex()).is_some());
+    }
+    vault.set_world_device_only(world, true)?;
+
+    let received = exported_to_empty_receiver(&vault, &month, &base)?;
+    for id in [note, world] {
+        assert!(received.get_map("entities").get(&id.to_hex()).is_none());
+        assert!(!names_entity_in_any_edge(&received, id));
+    }
+    Ok(())
+}
+
+/// Astra #1402 finding 2A: the NOTE mirror never packs a NOTE of a
+/// device-only world into its base month.
+#[test]
+fn packing_withholds_a_note_in_a_device_only_world() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let world = EntityId::now();
+    let (note, month) = note_in_world(&vault, world)?;
+    vault.set_world_device_only(world, true)?;
+    let base = create_window_doc("base", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+
+    assert!(base.get_map("entities").get(&note.to_hex()).is_none());
+    Ok(())
+}
+
 #[test]
 fn dreamer_actor_conflicting_peer_put_and_tombstone_quarantine_without_disabling_open() -> Result<()>
 {

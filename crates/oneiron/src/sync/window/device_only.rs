@@ -1,7 +1,7 @@
 //! Export-time withholding for worlds flagged device-only.
 //!
 //! Rows in a device-local world never leave the device that holds the flag
-//! (DEC-0005). Packing skips them, but a claim packed while its world was
+//! (DEC-0005). Packing skips them, but a row packed while its world was
 //! still portable stays resident in the stored window. Every claim of a world,
 //! and every edge naming one, lives in that world's own windows
 //! (`edge_worlds_match`), so an export door reads the flag when it runs and
@@ -11,12 +11,12 @@
 //! Cutting rows out of an export instead would need removal operations, and a
 //! receiver materializes a bare edge removal as the deletion of its own stored
 //! edge; that removal would also flow back here. For the same reason another
-//! window that carries such a claim or edge out of residence (a base edge
-//! admitted before its endpoint was known, or a raw local write) is withheld
-//! whole too. Loro history keeps a carrier a later write removed, so a delta
-//! or raw update whose operations insert one is withheld as well. An export
-//! to a receiver that holds nothing of the window falls back to its
-//! history-free snapshot; one that holds part of it gets nothing.
+//! window that carries a row the flag keeps (the WORLD row, a NOTE in the
+//! world, a claim or an edge naming any of them) is withheld whole too. Loro
+//! history keeps a carrier a later write removed, so a delta or raw update
+//! whose operations insert one is withheld as well. An export to a receiver
+//! that holds nothing of the window falls back to its history-free snapshot;
+//! one that holds part of it gets nothing.
 
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
@@ -45,14 +45,14 @@ pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> 
 }
 
 /// Whether a full-window send of `doc` ships nothing now: the window belongs
-/// to a flagged world, or it carries a CLAIM of a flagged world or an edge
+/// to a flagged world, or it carries a row a flagged world keeps or an edge
 /// naming one.
 pub(in crate::sync) fn window_withheld(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<bool> {
-    carries_device_only(vault, &flagged_worlds(vault)?, key, doc)
+    carries_device_only(vault, &flagged_worlds(vault)?.1, key, doc)
 }
 
 /// What a raw send of window bytes may do, against the flag as it stands now.
@@ -68,10 +68,20 @@ pub enum UpdateVerdict {
     Uninspectable,
 }
 
+/// Inspections a raw verdict makes before it gives up on a flag set that
+/// keeps moving under it.
+const FLAG_PASSES: usize = 3;
+
 /// The verdict on raw `update` bytes of window `window_key`, made at the
 /// door that sends them. The bytes are read themselves: whole when they
 /// stand alone (a snapshot, a selector's synthetic update), otherwise as the
 /// operation range the live window must hold in full.
+///
+/// Opening and reading the window takes time, and a flag may be committed
+/// meanwhile. Bytes are portable only if the flag generation read after the
+/// inspection is the one the inspection ran against; otherwise they are
+/// inspected again under the new flag set. No read transaction is held
+/// across the inspection or the send.
 pub fn raw_update_verdict(
     manager: &Arc<WindowManager>,
     window_key: &str,
@@ -79,26 +89,49 @@ pub fn raw_update_verdict(
 ) -> UpdateVerdict {
     let verdict = (|| -> Result<UpdateVerdict> {
         let vault = manager.vault();
-        let flagged = flagged_worlds(vault)?;
-        if flagged.is_empty() {
-            return Ok(UpdateVerdict::Portable);
+        let (mut generation, mut flagged) = flagged_worlds(vault)?;
+        for _ in 0..FLAG_PASSES {
+            if flagged.is_empty() {
+                return Ok(UpdateVerdict::Portable);
+            }
+            let verdict = inspect_raw_update(manager, &flagged, window_key, update)?;
+            if verdict != UpdateVerdict::Portable {
+                return Ok(verdict);
+            }
+            let (now, now_flagged) = flagged_worlds(vault)?;
+            if now == generation {
+                return Ok(UpdateVerdict::Portable);
+            }
+            (generation, flagged) = (now, now_flagged);
         }
-        let Some(key) = WindowKey::try_new(window_key) else {
-            return Ok(UpdateVerdict::Uninspectable);
-        };
-        if key.world().is_some_and(|world| flagged.contains(&world)) {
-            return Ok(UpdateVerdict::Withheld);
-        }
-        let window = manager.open_window(&key)?;
-        if carries_device_only(vault, &flagged, &key, &window.doc)? {
-            return Ok(UpdateVerdict::Withheld);
-        }
-        bytes_verdict(vault, &flagged, &key, &window.doc, update)
+        Ok(UpdateVerdict::Uninspectable)
     })();
     verdict.unwrap_or_else(|error| {
         tracing::warn!(window_key, %error, "raw window update not inspectable");
         UpdateVerdict::Uninspectable
     })
+}
+
+fn inspect_raw_update(
+    manager: &Arc<WindowManager>,
+    flagged: &BTreeSet<EntityId>,
+    window_key: &str,
+    update: &[u8],
+) -> Result<UpdateVerdict> {
+    let Some(key) = WindowKey::try_new(window_key) else {
+        return Ok(UpdateVerdict::Uninspectable);
+    };
+    if key.world().is_some_and(|world| flagged.contains(&world)) {
+        return Ok(UpdateVerdict::Withheld);
+    }
+    let vault = manager.vault();
+    #[cfg(any(test, feature = "test-hooks"))]
+    super::test_hooks::run_device_only_flag_race(vault)?;
+    let window = manager.open_window(&key)?;
+    if carries_device_only(vault, flagged, &key, &window.doc)? {
+        return Ok(UpdateVerdict::Withheld);
+    }
+    bytes_verdict(vault, flagged, &key, &window.doc, update)
 }
 
 fn bytes_verdict(
@@ -153,7 +186,7 @@ pub fn export_withheld(
         || (!remote.is_empty() && delta_carries_device_only(vault, doc, remote)?))
 }
 
-/// Whether the delta of `doc` past `from` inserts a CLAIM of a flagged world
+/// Whether the delta of `doc` past `from` inserts a row a flagged world keeps
 /// or an edge naming one, even one a later write removed. Such a delta must
 /// not ship; the window's history-free snapshot carries only what it holds now.
 pub(super) fn delta_carries_device_only(
@@ -161,7 +194,7 @@ pub(super) fn delta_carries_device_only(
     doc: &LoroDoc,
     from: &VersionVector,
 ) -> Result<bool> {
-    let flagged = flagged_worlds(vault)?;
+    let (_, flagged) = flagged_worlds(vault)?;
     if flagged.is_empty() {
         return Ok(false);
     }
@@ -174,9 +207,13 @@ pub(super) fn delta_carries_device_only(
     )
 }
 
-fn flagged_worlds(vault: &Vault) -> Result<BTreeSet<EntityId>> {
+/// The flag generation and the flagged worlds, read in one transaction.
+fn flagged_worlds(vault: &Vault) -> Result<(u64, BTreeSet<EntityId>)> {
     let rtxn = vault.store.env.read_txn()?;
-    crate::settings::device_only_worlds_in(&vault.store, &rtxn)
+    Ok((
+        crate::settings::device_only_generation_in(&vault.store, &rtxn)?,
+        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?,
+    ))
 }
 
 fn carries_device_only(
@@ -192,7 +229,7 @@ fn carries_device_only(
         return Ok(true);
     }
     // The body decides first; the stored row decides too, so a carrier whose
-    // body names another world cannot ship a stored private claim's id.
+    // body names another world cannot ship a stored private row's id.
     let mut carried = false;
     let mut ids = BTreeSet::new();
     map_for_each_value_bytes(&doc.get_map("entities"), |key, blob| {
@@ -204,7 +241,7 @@ fn carries_device_only(
             ids.extend([src, tgt]);
         }
     });
-    Ok(carried || stored_claim_among(vault, flagged, ids)?)
+    Ok(carried || stored_withheld_among(vault, flagged, ids)?)
 }
 
 /// Read from `history` (taken before any read transaction opens: taking it
@@ -234,19 +271,19 @@ fn history_inserts_device_only(
             ids.extend([src, tgt]);
         }
     }
-    stored_claim_among(vault, flagged, ids)
+    stored_withheld_among(vault, flagged, ids)
 }
 
-/// Whether any of `ids` is stored as a CLAIM of a flagged world, erased or
-/// purged ones included.
-fn stored_claim_among(
+/// Whether a flagged world keeps any of `ids` by its stored row: the WORLD
+/// itself, a CLAIM of it (erased or purged ones included) or a NOTE in it.
+fn stored_withheld_among(
     vault: &Vault,
     flagged: &BTreeSet<EntityId>,
     ids: BTreeSet<EntityId>,
 ) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
     for id in ids {
-        if crate::settings::device_only_claim(&vault.store, &rtxn, flagged, &id)? {
+        if crate::settings::device_only_withholds(&vault.store, &rtxn, flagged, &id)? {
             return Ok(true);
         }
     }
@@ -298,9 +335,13 @@ pub(in crate::sync) fn device_only_ids(
     Ok(withheld)
 }
 
+/// Whether a carried CLAIM body names a flagged world. A body that cannot be
+/// read names no world anyone can check, so it counts as one.
 fn claim_in(raw: &[u8], flagged: &BTreeSet<EntityId>) -> bool {
     EntityMetadataHeader::parse(raw)
         .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        && raw.len() > ENTITY_METADATA_HEADER_LEN
         && crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-            .is_ok_and(|body| body.world.is_some_and(|world| flagged.contains(&world)))
+            .ok()
+            .is_none_or(|body| body.world.is_some_and(|world| flagged.contains(&world)))
 }

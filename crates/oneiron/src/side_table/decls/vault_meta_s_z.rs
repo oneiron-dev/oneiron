@@ -130,6 +130,8 @@ side_tables! {
     /// Flags a WORLD as device-only: its rows, claims and NOTEs never leave this device. Key: hex32
     /// (world id).
     DEVICE_ONLY_WORLD: VaultMeta b"settings:sync:v1:device_only_world:" Raw;
+    /// Moves (u64) in every transaction that sets or clears a device-only flag. Key: ().
+    DEVICE_ONLY_GENERATION: VaultMeta b"settings:sync:v1:device_only_generation" Raw;
     /// Local, engine-written provenance and monotonic revocation latch for one admitted brief share
     /// (issuer, gate decision id, effect-target digest, revocation state), proving the row was
     /// created through the share door and not a generic grant write. Key: id16.

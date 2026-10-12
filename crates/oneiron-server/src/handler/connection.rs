@@ -428,7 +428,10 @@ async fn handle_connection(
                         _ => break,
                     }
                 }
-                if window_update_withheld(&server, &data) {
+                if window_update_withheld(&server, &data)
+                    || (data.first() == Some(&oneiron::sync::transport::TAG_LFS_CHUNK_SYNC)
+                        && super::lfs_chunks::chunk_reply_withheld(&server, &mut conn_state))
+                {
                     transport.app_jti = None;
                     continue;
                 }

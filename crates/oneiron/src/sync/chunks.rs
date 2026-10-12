@@ -143,6 +143,45 @@ pub fn serve_chunk_request(
     respond(vault, request)
 }
 
+/// Whether a device-only world keeps an object's bytes on this device: every
+/// row its ASSET is attached to (an `Attached` edge either way) is a row the
+/// flag keeps. An object a portable row also owns, or one attached to nothing,
+/// stays portable. Read for every manifest and WANT request, and again when a
+/// queued reply is released, so neither a known OID nor an earlier manifest
+/// is standing authority to export.
+pub fn lfs_object_withheld(vault: &Vault, oid: LfsOid) -> Result<bool> {
+    use crate::ports::{EdgeDirection, EdgeStoreRead};
+    let object = vault.lfs_object(oid)?.ok_or_else(invalid)?;
+    let txn = vault.store.env.read_txn()?;
+    let flagged = crate::settings::device_only_worlds_in(&vault.store, &txn)?;
+    if flagged.is_empty() {
+        return Ok(false);
+    }
+    let mut owners = std::collections::BTreeSet::new();
+    for edge in vault.store.port_edges(
+        &txn,
+        &object.asset_id,
+        EdgeDirection::Both,
+        Some(crate::edge::EdgeKind::Attached),
+        None,
+    )? {
+        owners.insert(edge?.target);
+    }
+    owners.remove(&object.asset_id);
+    for owner in &owners {
+        if !crate::settings::device_only_withholds(&vault.store, &txn, &flagged, owner)? {
+            return Ok(false);
+        }
+    }
+    Ok(!owners.is_empty())
+}
+
+/// The object a chunk request names, so a transport can check its reply
+/// again with [`lfs_object_withheld`] when it releases it.
+pub fn chunk_request_object(bytes: &[u8]) -> Result<LfsOid> {
+    Ok(LfsOid::from_bytes(decode::<ChunkSyncRequest>(bytes)?.oid))
+}
+
 /// Owner-socket sibling. Only the transport's owner-authenticated sync lane may
 /// call this; narrowed credentials must use `serve_chunk_request` instead.
 pub fn serve_owner_chunk_request(vault: &Vault, bytes: &[u8]) -> Result<Vec<u8>> {
@@ -161,6 +200,9 @@ pub fn serve_owner_chunk_request(vault: &Vault, bytes: &[u8]) -> Result<Vec<u8>>
 
 fn respond(vault: &Vault, request: ChunkSyncRequest) -> Result<Vec<u8>> {
     let oid = LfsOid::from_bytes(request.oid);
+    if lfs_object_withheld(vault, oid)? {
+        return Err(invalid());
+    }
     let manifest = vault.lfs_manifest(oid)?.ok_or_else(invalid)?;
     if request
         .have
