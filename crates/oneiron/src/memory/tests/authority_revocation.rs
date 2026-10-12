@@ -437,6 +437,15 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
         MemoryError::from(error).code,
         MEMORY_CODE_OWNER_BINDING_REQUIRED
     );
+    // The readability predicate the server's doors ask refuses the same way
+    // (Sol R1-003 on the `/v1` credential keys).
+    let error = lane
+        .is_entity_readable(&subject)
+        .expect_err("the owner key no longer holds");
+    assert_eq!(
+        MemoryError::from(error).code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
 }
 
 /// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.

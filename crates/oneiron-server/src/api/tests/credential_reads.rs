@@ -152,7 +152,7 @@ impl Room {
             self.agent.to_hex()
         );
         if let Some(records) = records {
-            let ids: Vec<_> = records.iter().map(|id| id.to_hex()).collect();
+            let ids: Vec<_> = records.iter().map(oneiron::EntityId::to_hex).collect();
             recipe.push_str(&format!(";records={}", ids.join(",")));
         }
         recipe
@@ -185,7 +185,11 @@ impl Room {
     async fn reads(&self, recipe: &str, uri: &str) -> (bool, bool) {
         let request = match uri {
             "/v1/core/query" => json!({ "query": "credkey" }),
-            _ => json!({ "conversation_id": self.room.to_hex(), "query": "credkey" }),
+            _ => json!({
+                "conversation_id": self.room.to_hex(),
+                "query": "credkey",
+                "limit": 20,
+            }),
         };
         let (status, body) = route_json(
             self.server.clone(),
@@ -194,9 +198,8 @@ impl Room {
         .await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
         let body = body.to_string();
-        let seen = |id: oneiron::EntityId, text: &str| {
-            body.contains(&id.to_hex()) || body.contains(text)
-        };
+        let seen =
+            |id: oneiron::EntityId, text: &str| body.contains(&id.to_hex()) || body.contains(text);
         (seen(self.spaced, SPACED), seen(self.unscoped, UNSCOPED))
     }
 }
@@ -306,4 +309,206 @@ async fn the_owners_full_credential_reads_as_the_owner_on_v1() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// Sol R1-004: the generated facade verbs ran on a `Memory` handle that
+/// dropped the credential, so a narrower owner credential read the room as the
+/// owner. Bound to its credential, it reads only what its lane admits: here a
+/// manifest grant that reads conversations and turns, not messages.
+#[tokio::test]
+async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
+    let room = room();
+    super::context_board_history::restrict_principal_read_types(
+        &room.server,
+        room.owner,
+        &[
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::registry::ENTITY_TYPE_TURN,
+        ],
+    );
+    let messages = |recipe: String| {
+        let server = room.server.clone();
+        let request = json!({ "room_ref": room.room.to_hex() });
+        async move {
+            let (status, body) = route_json(
+                server,
+                core_request_with_authz(
+                    "POST",
+                    "/v1/core/facade/rooms.messages",
+                    test_bearer(&recipe),
+                    Some(&request),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body.to_string()
+        }
+    };
+    let owner = room.owner.to_hex();
+    let full = messages(format!("principal_ref={owner};actor_class=human")).await;
+    assert!(full.contains(&room.spaced.to_hex()), "{full}");
+    let narrow = messages(format!(
+        "scope=core:read;principal_ref={owner};actor_class=human"
+    ))
+    .await;
+    for message in [room.spaced, room.unscoped] {
+        assert!(!narrow.contains(&message.to_hex()), "{narrow}");
+    }
+}
+
+/// Sol R1-005: a slip cut from the host root and handed to another key
+/// (`attenuate_to`) still names the host, but no grant can name its holder.
+/// It reads the unscoped words its records name, and no relationship's.
+#[tokio::test]
+async fn a_host_slip_handed_to_another_key_reads_no_relationship_words() {
+    let room = room();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();
+    let mut slip = room.server.vault.ensure_host_root_slip(&issuer).unwrap();
+    let holder = ed25519_dalek::SigningKey::from_bytes(&[0x51; 32]);
+    issuer
+        .attenuate_to(
+            &mut slip,
+            oneiron::authority::SlipCaveat {
+                records: Some([room.spaced.to_hex(), room.unscoped.to_hex()].into()),
+                ..Default::default()
+            },
+            holder.verifying_key().to_bytes(),
+        )
+        .unwrap();
+    let request = slip_credentials::bind_slip_request(
+        &room.server,
+        &slip,
+        &holder,
+        Request::builder()
+            .method("POST")
+            .uri("/v1/core/query")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({ "query": "credkey" }).to_string()))
+            .unwrap(),
+    );
+    let (status, body) = route_json(room.server.clone(), request).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let body = body.to_string();
+    assert!(
+        !body.contains(SPACED) && !body.contains(&room.spaced.to_hex()),
+        "{body}"
+    );
+    assert!(
+        body.contains(UNSCOPED) || body.contains(&room.unscoped.to_hex()),
+        "{body}"
+    );
+}
+
+/// Whether the agent's standing block, opened on its own credential, quotes
+/// the claim said in a relationship's space.
+async fn standing_quotes(
+    server: &Arc<SyncServer>,
+    agent: oneiron::EntityId,
+    world: oneiron::EntityId,
+) -> bool {
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-board",
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={};actor_class=agent",
+                agent.to_hex()
+            )),
+            Some(&json!({
+                "standing": { "world_ref": world.to_hex(), "token_budget": 65_536 }
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["standing"]["compiled"]
+        .as_str()
+        .is_some_and(|compiled| compiled.contains("lantern-quiet"))
+}
+
+/// Sol R1-001: the standing prefix read an agent's standing claims with a key
+/// built from its name alone, so under a manifest read grant a claim in a
+/// relationship's space came back with no relationship grant. On the agent's
+/// credential it needs a live `RelationshipClaimsRead` grant, and loses the
+/// claim when that grant is revoked.
+#[tokio::test]
+async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_grant() {
+    let (_dir, server) = interlocutor_test_server();
+    let agent = seeded_test_entity_id(0x2401_0011);
+    let world = seeded_test_entity_id(0x2401_0012);
+    let space = seeded_test_entity_id(0x2401_0013);
+    for (id, kind) in [
+        (agent, oneiron::registry::ENTITY_TYPE_PERSON),
+        (world, oneiron::registry::ENTITY_TYPE_WORLD),
+        (space, oneiron::registry::ENTITY_TYPE_RELATIONSHIP),
+    ] {
+        server
+            .vault
+            .put_entity(&id, kind, oneiron::TimeRange { start: 1, end: 1 }, 1, b"fixture")
+            .unwrap();
+    }
+    let owner_ref = server.vault.ensure_embedded_owner_actor().unwrap();
+    let owner = server
+        .vault
+        .authenticate_owner(
+            owner_ref,
+            &owner_ref.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault
+        .open_standing_block(&owner, agent, world, "identity", 64)
+        .unwrap();
+    let mut claim = oneiron::ClaimBody::new(
+        "companion.standing.tone",
+        oneiron::ClaimSubject::Entity(agent),
+        rmpv::Value::from("lantern-quiet"),
+        0.9,
+        oneiron::ClaimApprovalStatus::Approved,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    claim.world = Some(world);
+    claim.rel = Some(space);
+    server
+        .vault
+        .put_claim(
+            &seeded_test_entity_id(0x2401_0014),
+            &claim,
+            oneiron::TimeRange { start: 5, end: 5 },
+            5,
+        )
+        .unwrap();
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_CLAIM],
+    );
+    assert!(!standing_quotes(&server, agent, world).await);
+    let grant = seeded_test_entity_id(0x2401_0015);
+    server
+        .vault
+        .create_access_grant(
+            &grant,
+            &AccessGrant {
+                principal_ref: agent,
+                scope: AccessGrantScope::RelationshipClaims { space_ref: space },
+                capability: AccessGrantCapability::RelationshipClaimsRead,
+                authority_scope: oneiron::federation::Scope::top(),
+                status: AccessGrantStatus::Active,
+                created_at: 1,
+                revoked_at: None,
+                expires_at: None,
+            },
+        )
+        .expect("grant the claim's relationship");
+    assert!(standing_quotes(&server, agent, world).await);
+    server
+        .vault
+        .revoke_access_grant(&grant, crate::api::params::unix_seconds_now())
+        .expect("revoke the grant");
+    assert!(!standing_quotes(&server, agent, world).await);
 }

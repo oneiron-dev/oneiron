@@ -298,7 +298,7 @@ impl GraphFsResolver<'_, '_> {
         let mut total = 0;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             reverse: true,
             after: cursor.map(TemporalCursor::port_position),
@@ -375,7 +375,7 @@ impl GraphFsResolver<'_, '_> {
         let mut total = 0;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             start: if cursor.is_some() {
                 Bound::Unbounded
@@ -475,7 +475,7 @@ impl GraphFsResolver<'_, '_> {
     fn coreutils_entity_visible(&self, id: &EntityId) -> Result<bool> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         self.coreutils_entity_visible_in(&rtxn, &policy, id)
     }
 

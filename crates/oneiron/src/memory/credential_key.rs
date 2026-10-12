@@ -12,74 +12,93 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
 
-/// The holder the host's own credentials name: the host root and any slip
-/// cut from it. It is no entity, so no grant can name it.
+/// The holder the host root names, and every slip cut from it keeps. It is
+/// no entity, so no grant can name it.
 const HOST_HOLDER: &str = "host";
 
 impl Vault {
-    /// The read key `proof` reads under, judged in one snapshot. The holder's
-    /// class is the credential's own; one that names none is judged as a
-    /// person, so only the vault's bound owner passes as the owner.
-    ///
-    /// See [`Self::credential_read_key_in_txn`] for the rule. `None` is a
-    /// credential that grants no read, or whose holder is no entity.
+    /// The read key `proof` reads under, judged in one snapshot: the owner
+    /// check judges its holder, then [`Self::credential_read_key_in_txn`]
+    /// builds the key. The holder is judged as the credential's own class;
+    /// one that names none is judged as a person, so only the vault's bound
+    /// owner passes. `None` is a credential that grants no read, or whose
+    /// holder is no entity.
     pub fn credential_read_key(&self, proof: &VerifiedSlip) -> Result<Option<ScopedReadActorKey>> {
-        let txn = self.store.env.read_txn()?;
-        let class = match proof.claims().actor_class.as_deref() {
+        let claims = proof.claims();
+        if claims.holder_ref == HOST_HOLDER {
+            // The host root, unattenuated, is the trust root every credential
+            // is cut from: it reads what its Scope grants. A slip cut from it
+            // still names the host but may be held by anyone (`attenuate_to`),
+            // so it reads a relationship's rows only on a grant, which none
+            // can name.
+            return Ok(ScopedReadActorKey::from_verified_slip(proof).map(|key| {
+                if proof.is_full_vault_owner_grade() {
+                    key
+                } else {
+                    key.require_relationship_grants(None)
+                }
+            }));
+        }
+        let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
+            return Ok(None);
+        };
+        let class = match claims.actor_class.as_deref() {
             None | Some("human") => Some(EdgeActorClass::Human),
             Some("agent") => Some(EdgeActorClass::Agent),
             Some("system") => Some(EdgeActorClass::System),
             Some(_) => None,
         };
-        self.credential_read_key_in_txn(&txn, proof, class)
+        let txn = self.store.env.read_txn()?;
+        let owner = match class {
+            // A broken owner check (a conflicted authority root, a corrupt
+            // row) carries its refusal, as the owner key's own reads do.
+            Some(class) => {
+                actor_is_vault_owner_in_txn(self, &txn, holder, class).map_err(|refusal| {
+                    Error::Claim(ClaimError::ScopedReadOwnerNotLive(Box::new(refusal)))
+                })?
+            }
+            None => false,
+        };
+        self.credential_read_key_in_txn(&txn, proof, holder, owner)
     }
 
-    /// The one rule for a proof-backed read key. The vault owner's own live,
-    /// unattenuated credential reads as the owner: a manifest never narrows
-    /// the person on their own vault (ARCH-0057), and every read still checks
-    /// that the credential is unexpired and unrevoked in its own snapshot. A
-    /// narrower credential, the owner's too, reads only what it grants.
+    /// The one rule for a proof-backed read key, once the owner check
+    /// ([`actor_is_vault_owner_in_txn`]) says whether `holder` is the vault
+    /// owner. The owner's own live, unattenuated credential reads as the
+    /// owner: a manifest never narrows the person on their own vault
+    /// (ARCH-0057), and every read still checks that the credential is
+    /// unexpired and unrevoked in its own snapshot. A narrower credential,
+    /// the owner's too, reads only what it grants.
     ///
     /// Any other holder reads a relationship-scoped or private row only on a
     /// live grant for its relationship (ARCH-0006a rule 2), and an unscoped
     /// row as the credential's records allow. A grant is an extra condition:
-    /// it never widens the records. The host's own credentials read what
-    /// their Scope grants, as the owner's narrower credentials do.
-    ///
-    /// `holder_class` is the class the holder is judged as for the owner
-    /// check; `None` is one no owner can hold.
+    /// it never widens the records. `None` is a credential that grants no
+    /// read, or one `holder` does not hold.
     pub(crate) fn credential_read_key_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         proof: &VerifiedSlip,
-        holder_class: Option<EdgeActorClass>,
+        holder: EntityId,
+        owner: bool,
     ) -> Result<Option<ScopedReadActorKey>> {
+        let claims = proof.claims();
+        if claims.holder_ref != holder.to_hex() {
+            return Ok(None);
+        }
         let Some(key) = ScopedReadActorKey::from_verified_slip(proof) else {
             return Ok(None);
         };
-        let claims = proof.claims();
-        if claims.holder_ref == HOST_HOLDER {
-            return Ok(Some(key));
-        }
-        let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
-            return Ok(None);
-        };
-        let owner = match holder_class {
-            // A broken owner check (a conflicted authority root, a corrupt
-            // row) carries its refusal, as the owner key's own reads do.
-            Some(class) => actor_is_vault_owner_in_txn(self, txn, holder, class).map_err(
-                |refusal| Error::Claim(ClaimError::ScopedReadOwnerNotLive(Box::new(refusal))),
-            )?,
-            None => false,
-        };
         if !owner {
-            return Ok(Some(key.require_relationship_grants(holder)));
+            return Ok(Some(key.require_relationship_grants(Some(holder))));
         }
         if proof.is_full_vault_owner_grade()
             && claims.actor_class.as_deref() == Some(EdgeActorClass::Human.gate_actor_class())
             && self.capability_slip_is_live_in_txn(txn, proof)?
         {
-            return Ok(Some(ScopedReadActorKey::vault_owner(holder).while_live(proof)));
+            return Ok(Some(
+                ScopedReadActorKey::vault_owner(holder).while_live(proof),
+            ));
         }
         Ok(Some(key))
     }

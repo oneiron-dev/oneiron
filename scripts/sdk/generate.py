@@ -370,7 +370,7 @@ pub(crate) async fn execute_agent_verb_input(
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
     }
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class);
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
     match tool {
 '''
@@ -483,7 +483,7 @@ def outputs():
             continue
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
-        guard, result = '', f'facade_invoke(&server, &headers, actor, class, "{r["name"]}", value)?'
+        guard, result = '', f'facade_invoke(&server, &headers, &auth, actor, class, "{r["name"]}", value)?'
         readables = r.get('admission', {}).get('readable', [])
         # A room turn refuses an unserved verb before any credential lookup,
         # so the refusal says nothing about the target the lookup would read.
@@ -493,7 +493,7 @@ def outputs():
             guard += f'facade_room_turn_serves(&headers, "{r["name"]}", oneiron::memory::RoomTurnHandle::serves("{r["name"]}"))?;'
         for readable in readables:
             if readable == 'rows':
-                result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
+                result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&credential_memory(&server.vault, Some(&auth), actor, class), facade_input(value)?)?)?'
             else:
                 guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
         # A server door runs the verb with the host's execution inputs, off the

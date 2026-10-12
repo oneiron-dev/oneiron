@@ -342,14 +342,14 @@ impl ScopedReadActorKey {
     /// A vault-internal reader (the Dreamer), or a credential's holder other
     /// than the owner, under the delegated relationship gate: a row that
     /// names a relationship or a private scope passes only on this
-    /// principal's live grants. A row that names neither is the vault's own
-    /// and stays readable, where a delegated key refuses every such MESSAGE
-    /// or SUMMARY.
+    /// principal's live grants, and a holder with no principal has none. A
+    /// row that names neither is the vault's own and stays readable, where a
+    /// delegated key refuses every such MESSAGE or SUMMARY.
     #[must_use]
-    pub(crate) fn require_relationship_grants(self, principal_ref: EntityId) -> Self {
+    pub(crate) fn require_relationship_grants(self, principal_ref: Option<EntityId>) -> Self {
         Self {
             unscoped_rows_open: true,
-            ..self.require_access_grants(Some(principal_ref))
+            ..self.require_access_grants(principal_ref)
         }
     }
 

@@ -10,7 +10,7 @@ use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedRead
 use crate::code_sandbox::SandboxLinkedImport;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::gate::{PolicyManifestResolution, resolve_policy_manifest};
+use crate::gate::PolicyManifestResolution;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 
 use super::model::{
@@ -389,7 +389,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
@@ -444,7 +444,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
@@ -507,7 +507,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         for (scanned, entry) in self
             .scoped_read
             .vault()
@@ -568,7 +568,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut next_cursor = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             after: from.after.map(TemporalCursor::port_position),
             ..Default::default()
@@ -637,7 +637,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             start: Bound::Included(start),
             end: Bound::Excluded(end),
@@ -684,7 +684,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     pub(super) fn policy(&self) -> Result<PolicyManifestResolution> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        resolve_policy_manifest(&self.scoped_read.vault().store, &rtxn)
+        self.scoped_read.live_policy_manifest_in(&rtxn)
     }
 }
 

@@ -60,24 +60,21 @@ impl Memory<'_> {
             .read_txn()
             .map_err(|error| MemoryError::from(Error::from(error)))?;
         verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        let owner = self.is_vault_owner_in_txn(&txn)?;
         if let Some(proof) = &self.read_proof {
             // The one key every proof-backed door builds (credential_key.rs).
-            let key = (proof.claims().holder_ref == self.actor.to_hex())
-                .then(|| {
-                    self.vault
-                        .credential_read_key_in_txn(&txn, proof, Some(self.actor_class))
-                })
-                .transpose()?
-                .flatten();
-            return key.ok_or_else(|| {
-                MemoryError::new(
-                    MEMORY_CODE_FORBIDDEN,
-                    "the bound read credential does not grant this actor a read",
-                    &["Present a credential minted for this actor that carries the read verb."],
-                )
-            });
+            return self
+                .vault
+                .credential_read_key_in_txn(&txn, proof, self.actor, owner)?
+                .ok_or_else(|| {
+                    MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "the bound read credential does not grant this actor a read",
+                        &["Present a credential minted for this actor that carries the read verb."],
+                    )
+                });
         }
-        let key = if self.is_vault_owner_in_txn(&txn)? {
+        let key = if owner {
             ScopedReadActorKey::vault_owner(self.actor)
         } else {
             ScopedReadActorKey::with_actor_class(

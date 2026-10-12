@@ -33,6 +33,23 @@ pub(crate) fn credential_read_key(
         .ok_or_else(ApiError::unauthorized)
 }
 
+/// A facade handle that reads as `auth`'s credential does: a verified slip
+/// binds the handle's reads to the same credential key, so a narrower
+/// credential stays bounded by it. A caller with no slip keeps the handle's
+/// own lane.
+pub(crate) fn credential_memory<'a>(
+    vault: &'a oneiron::Vault,
+    auth: Option<&CoreAuth>,
+    actor: oneiron::EntityId,
+    class: oneiron::EdgeActorClass,
+) -> oneiron::memory::Memory<'a> {
+    let memory = vault.memory(actor, class);
+    match auth.and_then(CoreAuth::verified_slip) {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
+    }
+}
+
 pub(crate) fn scoped_read_for_core_auth<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
