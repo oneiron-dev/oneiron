@@ -1439,9 +1439,20 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
     let reader = seed_recallable_base_turn(&vault, "forwardedlanternneedle");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    // The run acts as an agent who stays: a run whose own participant left
+    // is refused `NotInRoom` before any effect (Codex burn engine-prs-01).
+    let agent = EntityId::now();
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room agent",
+    )?;
     let room = EntityId::now();
     vault.create_conversation(room, &ConversationBody::default(), by, 1)?;
     vault.join_member(room, owner, by, 2, HistoryChoice::Share)?;
+    vault.join_member(room, agent, by, 3, HistoryChoice::Share)?;
     let session = vault.off_record_session_vault().enter_in_room(
         "lamp-door",
         OffRecordBackendClass::Local,
@@ -1456,8 +1467,12 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
         actor: reader,
         calls: AtomicUsize::new(0),
     });
-    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lamp-door-run")?
-        .with_agent_verb_door(door.clone());
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        crate::WriteActor::new(agent, EdgeActorClass::Agent),
+        "lamp-door-run",
+    )?
+    .with_agent_verb_door(door.clone());
     vault.leave_member(room, owner, by, 50)?;
 
     let base_runs_before = vault.retrieval_runs(64)?.len();
