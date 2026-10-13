@@ -116,6 +116,7 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
             &RecallDoor {
                 arrived,
                 on_cut: None,
+                rerank: crate::memory::RecallRerank::Required,
             },
         )
         .expect("call-mode recall");
@@ -345,6 +346,7 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
         &RecallDoor {
             arrived: std::time::Instant::now(),
             on_cut: Some(&publish),
+            rerank: crate::memory::RecallRerank::Required,
         },
     )
     .expect("call-mode recall");
@@ -399,6 +401,7 @@ fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
             &RecallDoor {
                 arrived: std::time::Instant::now(),
                 on_cut: Some(&publish),
+                rerank: crate::memory::RecallRerank::Required,
             },
         )
         .expect("call-mode recall")

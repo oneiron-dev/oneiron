@@ -34,8 +34,9 @@
 //! with its connection key; the slip is parsed once, at connect, only to hash
 //! it into that proof, and every authority decision is the server's. It does not
 //! emulate a facade verb out of lower-level storage routes. It does not mint
-//! or simulate a retrieval lease, so `Effort::High` returns the engine's own
-//! `LEASE_REQUIRED`.
+//! or simulate a retrieval lease: embedded, `Effort::High` returns the
+//! engine's own `LEASE_REQUIRED`; remote, the server decides how it serves
+//! high, xhigh and max.
 
 #![forbid(unsafe_code)]
 

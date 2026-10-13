@@ -341,6 +341,17 @@ fn current_state_in_txn(
     Ok(Some(SourceState { commitment, text }))
 }
 
+/// Whether `message`'s words live in its entity document, which no row
+/// revision of it holds. Every build sees this, whether or not it reads the
+/// document.
+pub(crate) fn message_has_document_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    message: &EntityId,
+) -> Result<bool> {
+    DOCUMENT_HEADS.contains(&vault.store, txn, &HexId(*message))
+}
+
 /// The member `message` as a search may pick it: every state it retains in
 /// which it shows text, `current` first. A row-backed message's are its
 /// row at each retained revision; a document-backed one's are its

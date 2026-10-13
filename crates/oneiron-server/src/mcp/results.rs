@@ -123,6 +123,14 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "ask the vault owner to widen or re-issue the grant",
         ],
         "board_render_failed" => &["retry setup_oneiron with a smaller board_budget_tok"],
+        "budget_spent" => &[
+            "recall at medium, which makes no model call",
+            "ask the vault owner to raise the line the call spends on",
+        ],
+        "model_unavailable" => &[
+            "recall at medium, which needs no reranker",
+            "ask the vault owner to check the model route in [models]",
+        ],
         "verb_dispatch_failed" => {
             &["re-read the board with board.refresh and retry against the current epoch"]
         }

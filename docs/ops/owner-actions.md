@@ -29,6 +29,19 @@ the server for the rest: `GET /v1/owner/status` returns the same `location` obje
 setting that does not resolve never hides where the vault is: `doctor` reports the vault and
 lists the problem under `config_errors`.
 
+Both also print an `embedder` section, which keeps three things apart:
+
+| Field | Meaning |
+|---|---|
+| `embedder.configured` | What `[embedder]` asks for: provider, `model_id`, `dimensions`, and a local model's `device` as written (`auto` resolves at load) and `quant`. Absent when no provider is configured. |
+| `embedder.persisted` | What the vault pins: the `model_id` its vectors came from and their `dimensions`. |
+| `embedder.loaded` | The model a running server loaded on this machine, checked and admitted by the vault: `repo`, `revision`, `dimensions` (the width its module chain was checked to give), `device` (`cpu`, `metal` or `cuda`, never `auto`), `quant`, and `artifacts`: `pinned_digests` (each file's size and sha256 at the pinned revision), `unpinned` or `model_dir` (an operator's directory, read as found). Absent for an endpoint provider, whose model runs elsewhere. |
+| `embedder.dense`, `embedder.reason` | Whether dense recall runs: `ready`; `loading` (it runs on its sparse signals until the model is admitted); `refused`, with the reason the last load or admission failed (the server tries again); `not_configured`; or, from `doctor`, `not_observed`. |
+
+`doctor` loads no model, so it never reports one as loaded: its `dense` is `not_observed`. The
+running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
+facts once the vault admits the model (`embedder model loaded and admitted`).
+
 ## Back up
 
 ```sh

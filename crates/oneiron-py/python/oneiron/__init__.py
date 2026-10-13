@@ -202,9 +202,10 @@ class Oneiron:
     def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> dict[str, Any]:
         """Recalls a memory pack.
 
-        ``effort="high"`` is lease-gated and raises ``LEASE_REQUIRED`` until a
-        lease-bearing constructor exists; this package neither mints nor
-        simulates a lease. ``effort="call"`` is call mode for live calls:
+        ``effort="high"`` needs a lease this package never mints: an embedded
+        client raises ``LEASE_REQUIRED``; a remote one gets what the server
+        serves (reranked on its ``[models]`` reranker, or unreranked and
+        saying so). ``effort="call"`` is call mode for live calls:
         light effort under a hard deadline (``deadline_ms``, or the vault's
         call-mode deadline), answering with the best results ready, marked
         ``partial``. ``format`` takes the engine's exact tokens:

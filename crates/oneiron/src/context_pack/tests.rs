@@ -272,6 +272,7 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
         0.0,
         HydrateOptions {
             read_mode: crate::vault::ReadMode::Indexed,
+            words_pinned: false,
             policy: &crate::gate::resolve_policy_manifest(&vault.store, &rtxn).unwrap(),
             criticality: None,
             hydrate_fields: true,

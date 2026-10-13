@@ -121,8 +121,11 @@ def test_remote_sdk_parity():
     assert_quickstart({
         "witnessed": witnessed, "claimed": claimed, "recalled": recalled, "receipts": receipts,
     })
+    # A server with no reranker serves high recall unreranked, and says so.
+    deep = memory.recall("window seat", effort="high")
+    assert deep["retrieval_meta"]["rerank"] == {"status": "skipped", "reason": "no_reranker"}
     errors = {
-        "deep": refusal(lambda: memory.recall("window seat", effort="high"), "LEASE_REQUIRED"),
+        "kinds": refusal(lambda: memory.recall("window seat", scope={"kinds": []}), "BAD_REQUEST"),
         "rebind": refusal(
             lambda: memory.as_actor("human:00000000000000000000000000000001"), "FORBIDDEN"
         ),

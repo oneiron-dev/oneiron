@@ -149,9 +149,10 @@ export class Oneiron {
   /**
    * Recalls a memory pack.
    *
-   * `effort: "high"`, `"xhigh"`, or `"max"` is lease-gated and returns `LEASE_REQUIRED` until a
-   * lease-bearing constructor exists; this package neither mints nor
-   * simulates a lease. `effort: "call"` is call mode for live calls: light
+   * `effort: "high"`, `"xhigh"`, or `"max"` needs a lease this package never
+   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what
+   * the server serves (reranked on its `[models]` reranker, or unreranked and
+   * saying so). `effort: "call"` is call mode for live calls: light
    * effort under a hard deadline (`deadlineMs`, or the vault's call-mode
    * deadline), answering with the best results ready, marked `partial`.
    */

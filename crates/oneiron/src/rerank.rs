@@ -28,6 +28,16 @@ pub struct RerankCandidate<'a> {
     /// D19 gate (borrowed from the pipeline's gate cache). `None` for
     /// non-claim entities.
     pub claim: Option<&'a ClaimBody>,
+    /// The revision of the words retrieval read the candidate at, for a
+    /// reranker that [binds words](Reranker::binds_words): a TURN's text
+    /// revision, which commits to the state of every message its words come
+    /// from, or any other row's indexed revision. A host that reads the
+    /// candidate's text outside the transaction pins its read here; `None`
+    /// when there is nothing to pin.
+    pub revision: Option<crate::vault::RevisionRef>,
+    /// A MESSAGE that the run returns as its TURN: that TURN and the text
+    /// revision it is served at, bound with the message's own words.
+    pub turn: Option<(EntityId, crate::vault::RevisionRef)>,
 }
 
 /// Host-injected top-N reranker (1186-D1/D2: impl app-side, seam
@@ -52,6 +62,16 @@ pub trait Reranker: Send + Sync {
     /// engine exposes for it. A slow impl here pins LMDB free-page
     /// reclamation for the duration of the call.
     fn rerank(&self, query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>>;
+
+    /// Whether the scores are for the candidates' words as a host read them
+    /// outside the transaction: a scorer prepared on an earlier pass, or the
+    /// pass that captures the block for it. The run then hands each
+    /// candidate the revision of its words ([`RerankCandidate::revision`],
+    /// [`RerankCandidate::turn`]) and serves each one there. A reranker that
+    /// scores from what it is handed reads none of it.
+    fn binds_words(&self) -> bool {
+        false
+    }
 }
 
 /// Per-run rerank knobs (the 1186-D2 "N knob").

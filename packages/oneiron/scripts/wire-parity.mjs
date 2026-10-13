@@ -53,7 +53,7 @@ if (mode === "write") {
 const recalled = memory.recall("window seat")
 const receipts = memory.receipts()
 const errors = {
-  deep: refusal(() => memory.recall("window seat", { effort: "high" }), "LEASE_REQUIRED"),
+  kinds: refusal(() => memory.recall("window seat", { scope: { kinds: [] } }), "BAD_REQUEST"),
   rebind: refusal(() => memory.asActor("human:00000000000000000000000000000001"), "FORBIDDEN"),
 }
 const unbound = Oneiron.connect(url, required("ONEIRON_WIRE_NO_CLASS_KEY"))

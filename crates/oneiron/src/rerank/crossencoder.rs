@@ -247,6 +247,37 @@ pub struct PreparedCrossEncoder {
     fingerprint: [u8; 32],
     scores: Vec<f32>,
 }
+impl PreparedCrossEncoder {
+    /// Scores a host's own scorer (`model`) gave for exactly `candidates`
+    /// and `query`, outside the engine. Like a prepared batch, it applies
+    /// only to that snapshot.
+    pub fn from_scores(
+        model: &str,
+        query: &str,
+        candidates: &[RerankCandidate<'_>],
+        scores: Vec<f32>,
+    ) -> Result<Self> {
+        if model.trim().is_empty()
+            || scores.len() != candidates.len()
+            || scores.iter().any(|score| !score.is_finite())
+        {
+            return Err(invalid("host rerank scores do not fit the candidates"));
+        }
+        let fingerprint = fingerprint(query, candidates)?;
+        let mut identity = Sha256::new();
+        identity.update(model);
+        identity.update([0]);
+        identity.update(fingerprint);
+        for score in &scores {
+            identity.update(score.to_bits().to_le_bytes());
+        }
+        Ok(Self {
+            identity: format!("{model}:prepared:{:x}", identity.finalize()),
+            fingerprint,
+            scores,
+        })
+    }
+}
 impl Reranker for PreparedCrossEncoder {
     fn id(&self) -> &str {
         &self.identity
@@ -256,6 +287,9 @@ impl Reranker for PreparedCrossEncoder {
             return Err(invalid("prepared crossencoder candidate snapshot changed"));
         }
         Ok(self.scores.clone())
+    }
+    fn binds_words(&self) -> bool {
+        true
     }
 }
 impl DeepSearchBackend for CrossEncoder {
@@ -318,6 +352,23 @@ fn fingerprint(query: &str, candidates: &[RerankCandidate<'_>]) -> Result<[u8; 3
         hash.update(candidate.id.as_bytes());
         hash.update(candidate.score.to_bits().to_le_bytes());
         hash.update(candidate.rank.to_le_bytes());
+        // The revision the candidate was read at: a row whose words changed
+        // keeps its id, and can keep its score and rank.
+        match candidate.revision {
+            Some(revision) => {
+                hash.update([1]);
+                hash.update(revision.0);
+            }
+            None => hash.update([0]),
+        }
+        match candidate.turn {
+            Some((turn, revision)) => {
+                hash.update([1]);
+                hash.update(turn.as_bytes());
+                hash.update(revision.0);
+            }
+            None => hash.update([0]),
+        }
         let claim = match candidate.claim {
             Some(body) => crate::claim::encode_claim_body(body)?,
             None => Vec::new(),

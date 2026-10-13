@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, payload_text};
+use serde::Serialize;
 
 use crate::config::{EmbedderConfig, EmbedderProvider};
 
@@ -45,6 +46,47 @@ pub(crate) trait QueryEmbedder: Embedder {
     fn as_endpoint(&self) -> Option<&endpoint::HttpEmbedder> {
         None
     }
+
+    /// The model this provider loaded on this host, when it loads one: an
+    /// endpoint's model runs elsewhere and answers `None`.
+    fn loaded(&self) -> Option<&LoadedModel> {
+        None
+    }
+}
+
+/// The model a local provider loaded, as it loaded it: what makes this
+/// vault's vectors once the vault has admitted it, apart from what config
+/// asks for and what the vault pins.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct LoadedModel {
+    pub(crate) repo: String,
+    pub(crate) revision: String,
+    /// The output width the model's module chain was checked to give.
+    pub(crate) dimensions: usize,
+    /// Where it runs: `cpu`, `metal` or `cuda`, never `auto`.
+    pub(crate) device: &'static str,
+    /// How its weights are held: `q8_0`, or `none` for the checkpoint's own
+    /// bf16.
+    pub(crate) quant: &'static str,
+    /// How its files were checked: `pinned_digests` (each file's size and
+    /// sha256 at the pinned revision), `unpinned` (a revision this build
+    /// pins no digests for) or `model_dir` (an operator's directory, read as
+    /// found).
+    pub(crate) artifacts: &'static str,
+}
+
+/// Whether the slot serves dense recall, and on what.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DenseState {
+    /// The vault admitted the provider; `loaded` is its local model, if it
+    /// loaded one.
+    Ready { loaded: Option<LoadedModel> },
+    /// Not admitted yet, and nothing refused so far: the model is still
+    /// downloading or loading, or the worker has not reached it.
+    Loading,
+    /// The last load or admission failed, for this reason. The worker tries
+    /// again.
+    Refused { reason: String },
 }
 
 /// Identity and numerics every provider shares.
@@ -185,6 +227,8 @@ pub(crate) struct EmbedderSlot {
     /// answers are held to ([`Self::remote_rung`]); set again with the
     /// vault's floors on every admission.
     rung_hold: Arc<Mutex<remote::RungHold>>,
+    /// Why the last load or admission failed, cleared by the next success.
+    refusal: Mutex<Option<String>>,
 }
 
 impl EmbedderSlot {
@@ -203,6 +247,7 @@ impl EmbedderSlot {
             models: local::model_manager::ModelManager::default(),
             admitted: AtomicBool::new(false),
             rung_hold: Arc::default(),
+            refusal: Mutex::new(None),
         };
         if config.provider == EmbedderProvider::Endpoint {
             let embedder = endpoint::HttpEmbedder::from_config(config)?;
@@ -256,6 +301,39 @@ impl EmbedderSlot {
         &self,
         admit: impl FnOnce(Admission<'_>) -> oneiron::Result<()>,
     ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
+        let ready = self.make_ready(admit);
+        *self
+            .refusal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            ready.as_ref().err().map(ToString::to_string);
+        ready
+    }
+
+    /// Whether dense recall runs on this slot now, and on what.
+    pub(crate) fn dense_state(&self) -> DenseState {
+        let refusal = self
+            .refusal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let serving = self
+            .ready
+            .get()
+            .filter(|_| self.admitted.load(Ordering::Acquire));
+        match (serving, refusal) {
+            (Some(embedder), _) => DenseState::Ready {
+                loaded: embedder.loaded().cloned(),
+            },
+            (None, Some(reason)) => DenseState::Refused { reason },
+            (None, None) => DenseState::Loading,
+        }
+    }
+
+    fn make_ready(
+        &self,
+        admit: impl FnOnce(Admission<'_>) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         if let Some(ready) = self.ready.get() {
             if let Some(http) = ready.as_endpoint() {
                 // Read afresh each time: a refused remote restored to the
@@ -294,7 +372,19 @@ impl EmbedderSlot {
         )?;
         self.admitted.store(true, Ordering::Release);
         let embedder = local as Arc<dyn QueryEmbedder>;
-        let _ = self.ready.set(Arc::clone(&embedder));
+        if self.ready.set(Arc::clone(&embedder)).is_ok()
+            && let Some(loaded) = embedder.loaded()
+        {
+            tracing::info!(
+                repo = %loaded.repo,
+                revision = %loaded.revision,
+                dimensions = loaded.dimensions,
+                device = loaded.device,
+                quant = loaded.quant,
+                artifacts = loaded.artifacts,
+                "embedder model loaded and admitted; dense recall is ready"
+            );
+        }
         // `set` loses a race; the winner is the one every caller must see.
         Ok(self.ready.get().map_or(embedder, Arc::clone))
     }

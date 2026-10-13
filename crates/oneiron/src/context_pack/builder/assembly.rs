@@ -336,6 +336,7 @@ impl<'a> ContextPackBuilder<'a> {
 
             let result_options = HydrateOptions {
                 read_mode: self.read_mode,
+                words_pinned: false,
                 policy: &policy,
                 criticality: self.criticality,
                 hydrate_fields: self.hydrate,
@@ -348,6 +349,7 @@ impl<'a> ContextPackBuilder<'a> {
             let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
                 let mut options = result_options;
+                options.words_pinned = pipeline_output.words_bound.contains(&entry.id);
                 if options.read_mode == crate::vault::ReadMode::Indexed {
                     let Some(revision) = pipeline_output.revisions.get(&entry.id) else {
                         continue;
@@ -451,6 +453,7 @@ impl<'a> ContextPackBuilder<'a> {
             }
             let neighbor_options = HydrateOptions {
                 read_mode: self.read_mode,
+                words_pinned: false,
                 policy: &policy,
                 criticality: self.criticality,
                 hydrate_fields: self.hydrate,

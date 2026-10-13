@@ -100,8 +100,9 @@ created for the actor you want to act as instead.
 `recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max"`,
 default `"medium"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
 (default `10`) and `format` (`"json" | "yaml" | "toon" | "md" | "txt"`).
-`high`, `xhigh` and `max` are lease-gated and raises `LEASE_REQUIRED`; this package neither mints
-nor simulates a lease.
+`high`, `xhigh` and `max` need a lease this package never mints: an embedded client raises
+`LEASE_REQUIRED`; a remote one gets what the server serves (reranked on its `[models]`
+reranker, or unreranked and saying so).
 
 Timestamps are Unix **seconds** everywhere and are never converted. Omitting
 `occurred_at` stamps the current wall clock at the call boundary.

@@ -118,9 +118,11 @@ class Bridge:
         self.process.wait()
 
 
-def tool_call(tools: list, query: str, limit: int) -> tuple[str, dict]:
-    """`recall` at the light effort (no model, no embedding) when the server
-    lists it; otherwise the lexical `memory.query`."""
+def tool_call(tools: list, query: str, limit: int, effort: str = "light") -> tuple[str, dict]:
+    """`recall` at `effort` when the server lists it; otherwise the lexical
+    `memory.query`. Light runs no model and embeds nothing; medium embeds the
+    query on the server's embedder, so it finds a paraphrase; high and above
+    also rerank on the server's reranker, under the server's own budget."""
     by_name = {tool.get("name"): tool for tool in tools if isinstance(tool, dict)}
     name = "recall" if "recall" in by_name else "memory.query"
     tool = by_name.get(name)
@@ -129,7 +131,7 @@ def tool_call(tools: list, query: str, limit: int) -> tuple[str, dict]:
     schema = tool.get("inputSchema", {}).get("properties", {})
     version = schema.get("schema_version", {}).get("const", "mcp_tool_args.v1")
     if name == "recall":
-        arguments = {"spec": {"query": query, "effort": "light", "limit": limit}}
+        arguments = {"spec": {"query": query, "effort": effort, "limit": limit}}
     else:
         arguments = {
             "request": {"query": query, "limit": limit, "view": "summary", "countMode": "none"}
@@ -225,7 +227,7 @@ def session_start(args: argparse.Namespace) -> None:
         )
         bridge.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         listed = bridge.call(2, "tools/list", {})
-        name, arguments = tool_call(listed.get("tools", []), query, args.limit)
+        name, arguments = tool_call(listed.get("tools", []), query, args.limit, args.effort)
         result = bridge.call(3, "tools/call", {"name": name, "arguments": arguments})
     finally:
         bridge.close()
@@ -298,6 +300,13 @@ def main() -> None:
     )
     start.add_argument("--limit", type=int, default=8, help="most hits printed")
     start.add_argument("--query", help="recall this instead of the project's name")
+    start.add_argument(
+        "--effort",
+        choices=["light", "medium", "high", "xhigh", "max"],
+        default="light",
+        help="recall effort: light reads lexically; medium and up embed the query"
+        " (allow a --timeout the server's embedder can meet)",
+    )
     over = events.add_parser("hand-over", parents=[common])
     over.add_argument("--config", help="the serve config, for where the import queue is")
     args = parser.parse_args()

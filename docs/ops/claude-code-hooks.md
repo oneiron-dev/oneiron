@@ -30,10 +30,15 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron_hook.py hand-over
 ```
 
 - **Recall** goes through `oneiron mcp` with the hooks' own read-only
-  credential. It calls `recall` at the `light` effort: no model call and no
-  embedding, so it is fast and costs nothing. A server that does not list
-  `recall` gets the lexical `memory.query` instead. The query is the project's
-  name: the git repository's folder name, or the working directory's.
+  credential. By default it calls `recall` at the `light` effort: no model
+  call and no embedding, so it is fast and costs nothing. `--effort medium`
+  embeds the query on the server's embedder, so a session finds what it
+  worked on in other words; `high`, `xhigh` and `max` also rerank on the
+  reranker the server's `[models]` routes, under the server's own budget
+  (see [run-with-models.md](run-with-models.md#8-the-reranker)). A server that
+  does not list `recall` gets the lexical `memory.query` instead. The query is
+  the project's name: the git repository's folder name, or the working
+  directory's.
 - **Write-back** needs no credential. `--queue` leaves one file that names the
   session's log in the vault's import queue. A running `serve` imports it
   within seconds. It is the same import as `oneiron import claude-code` with the
@@ -194,6 +199,12 @@ What the hooks already imported stays in your vault, like any import.
   lands.
 - `--query "<words>"` on `session-start` recalls those words instead of the
   project's name.
+- `--effort <light|medium|high|xhigh|max>` on `session-start` picks recall's
+  effort; it stays `light` unless you set it. Above light the server embeds
+  the query first, and a model that is still loading leaves recall on its
+  lexical signals (the result says `sparse: true`). Give such a hook a
+  `--timeout` its server's embedder and reranker can meet; a hook that runs
+  out of time prints nothing and the session goes on.
 
 Hook events, their input fields, stdout handling and timeouts:
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks).

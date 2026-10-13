@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::retrieval_quality::RetrievalDiagnostics;
 use crate::store::{RetrievalScoreComponent, RetrievalTrace, Store};
 use heed::RoTxn;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Detailed pipeline output for the context-pack path.
 ///
@@ -26,6 +26,8 @@ pub(super) struct HydeAttemptOverrides<'a> {
 
 pub(super) struct RetrievalTxnOutput {
     pub(super) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
+    /// See [`super::super::types::PipelineOutput::words_bound`].
+    pub(super) words_bound: HashSet<EntityId>,
     pub(super) diagnostics: RetrievalDiagnostics,
     pub(super) scores: Vec<ScoredEntity>,
     /// Per TURN in `scores`, the MESSAGE rows it took the place of, best

@@ -238,10 +238,11 @@ impl OneironClient {
     }
     /// Recalls a memory pack.
     ///
-    /// The lease argument the engine takes is `None` and is NOT a client
-    /// input: no lease issuer exists, and a bearer slip is not one. An
-    /// `Effort::High` call therefore returns the engine's `LEASE_REQUIRED`
-    /// through both backends, spelled identically.
+    /// The lease the engine takes is not a client input, and a bearer slip
+    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the
+    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the
+    /// server admits them on a line of its own and reranks on its `[models]`
+    /// reranker, or runs them unreranked and says so when it has none.
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"

@@ -22,15 +22,23 @@ pub struct ServedOffer {
 /// broker, so it is held at T1: a declared run refuses it unless the owner
 /// allows that offer. A `key_secret` key stays in the vault's custody and
 /// only the credential broker sends it, so it is at T0. A provider with no
-/// key is the vault's own server.
+/// key is the vault's own server. A reranker's offer names the rerank
+/// protocol as its adapter, so a chat permit never starts a rerank call at
+/// the same origin, nor the reverse.
 pub(super) fn provider_offer(
     provider: &ProviderConfig,
     model: ModelId,
+    rerank: bool,
 ) -> anyhow::Result<OfferBinding> {
     let origin = reqwest::Url::parse(&provider.base_url)?
         .origin()
         .ascii_serialization();
-    let route = OfferRoute::new(adapter(provider.kind), origin)
+    let adapter = if rerank {
+        format!("{}-rerank", adapter(provider.kind))
+    } else {
+        adapter(provider.kind).to_owned()
+    };
+    let route = OfferRoute::new(adapter, origin)
         .map_err(|error| anyhow::anyhow!("model route: {error}"))?;
     let (custody, credential_binding) = match (&provider.key_secret, &provider.key_env) {
         (Some(secret), _) => (KeyCustody::T0, Some(format!("secret:{secret}"))),
