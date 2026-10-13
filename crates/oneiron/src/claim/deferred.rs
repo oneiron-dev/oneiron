@@ -150,9 +150,11 @@ impl Vault {
             ));
         }
         let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-        let critical = policy.criticality_for_predicate(&old_body.predicate)
-            == PolicyCriticality::Critical
-            || policy.criticality_for_predicate(&body.predicate) == PolicyCriticality::Critical;
+        // Only a class a manifest rule declares critical holds the closure
+        // for the owner; the critical default of a predicate no rule names
+        // does not stop the write (ARCH-0003 §Criticality, ARCH-0057).
+        let critical = policy.declares_predicate_critical(&old_body.predicate)
+            || policy.declares_predicate_critical(&body.predicate);
         let proposal = DeferredClaim {
             action: DeferredAction::Supersede {
                 old: *old.as_bytes(),
@@ -172,8 +174,9 @@ impl Vault {
     }
 
     /// Re-evaluate an ordinary parked replacement for Auto and close the
-    /// prior only after that grant, in the same write transaction. Critical
-    /// or attributed truth still needs the owner-confirmation door.
+    /// prior only after that grant, in the same write transaction. A class a
+    /// manifest rule declares critical, or attributed truth, still needs the
+    /// owner-confirmation door.
     pub fn grant_deferred_claim_auto(&self, id: &EntityId, now: u64) -> Result<()> {
         self.grant_deferred_claim_auto_with_checker(id, now, None)
     }
@@ -237,6 +240,60 @@ impl Vault {
             receipt.record_metrics(&self.store.diagnostics.gate);
         }
         Ok(())
+    }
+
+    /// Re-parks `pending`'s deferred action under the policy now in force:
+    /// the deferred door's fresh verdict (its `critical` flag) becomes a new
+    /// pending decision, and the row and its consent bind to the current
+    /// frontier. Nothing is applied; a verdict that would now let the action
+    /// through still waits for its grant or the owner. Returns whether the
+    /// verdict is the one the row was parked under, or `None` when the row
+    /// cannot be re-gated (its claim, or the prior it closes, does not read).
+    pub(crate) fn restage_deferred_claim_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        pending: &PendingGateConsentRecord,
+        now: u64,
+    ) -> Result<Option<bool>> {
+        let id = EntityId::from_bytes(pending.claim_id)?;
+        let Some(proposal) = load(self, txn, &id)? else {
+            return Ok(None);
+        };
+        let Some(body) = crate::gate::readable(self.get_claim_in_txn(txn, &id))? else {
+            return Ok(None);
+        };
+        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        let critical = match &proposal.action {
+            DeferredAction::Supersede { old, .. } => {
+                let old = EntityId::from_bytes(*old)?;
+                let Some(old_body) = crate::gate::readable(self.get_claim_in_txn(txn, &old))?
+                else {
+                    return Ok(None);
+                };
+                policy.declares_predicate_critical(&old_body.predicate)
+                    || policy.declares_predicate_critical(&body.predicate)
+            }
+            // The demotion door's own test (`apply_claim_demotion`).
+            _ => policy.criticality_for_predicate(&body.predicate) == PolicyCriticality::Critical,
+        };
+        let same = critical == proposal.critical && pending.reason_codes == [reason(critical)];
+        let parked_by = self.store.gate_decision_in_txn(txn, pending.decision_id)?;
+        let parker = Parker {
+            actor_class: parked_by
+                .as_ref()
+                .map_or_else(|| "system".to_owned(), |record| record.actor_class.clone()),
+            actor_ref: parked_by.and_then(|record| record.actor_ref),
+            run: pending.dreamer_run_id.clone(),
+            created_at: pending.created_at,
+        };
+        let restaged = DeferredClaim {
+            frontier: policy.read_frontier_hash()?,
+            critical,
+            ..proposal
+        };
+        DEFERRED.delete(&self.store, txn, &id)?;
+        park(self, txn, &id, &body, restaged, parker, now)?;
+        Ok(Some(same))
     }
 
     /// Called only by explicit local approval/authority settlement doors, never reads/replay.
@@ -365,17 +422,60 @@ pub(super) fn put_pending(
             claim_id: *id,
         }));
     }
+    let actor = envelope.map(WriteEnvelope::actor);
+    let parker = Parker {
+        actor_class: actor
+            .map_or("system", |actor| actor.actor_class().gate_actor_class())
+            .to_owned(),
+        actor_ref: actor.map(|actor| actor.entity_ref().to_hex()),
+        run: envelope.and_then(|envelope| match envelope.provenance().value() {
+            rmpv::Value::Map(rows) => rows
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("run"))
+                .and_then(|(_, value)| value.as_str())
+                .map(str::to_owned),
+            _ => None,
+        }),
+        created_at: now,
+    };
+    park(vault, txn, id, body, proposal, parker, now)
+}
+
+/// Who parked a deferred action, the run review it shows in, and when.
+struct Parker {
+    actor_class: String,
+    actor_ref: Option<String>,
+    run: Option<String>,
+    created_at: u64,
+}
+
+fn reason(critical: bool) -> &'static str {
+    if critical {
+        "gate.pending.critical_confirm_attached"
+    } else {
+        CONTRADICTION_PENDING
+    }
+}
+
+/// Parks `proposal` behind a fresh pending decision bound to the current
+/// policy frontier.
+fn park(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    proposal: DeferredClaim,
+    parker: Parker,
+    now: u64,
+) -> Result<()> {
+    let encoded = rmp_serde::to_vec_named(&proposal)
+        .map_err(|_| Error::InvariantViolation("deferred claim encode"))?;
     let (mut diff_handle, read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(&vault.store, txn, body)?;
     if proposal.critical {
         diff_handle = critical_diff(&diff_handle, &encoded);
     }
-    let reason = if proposal.critical {
-        "gate.pending.critical_confirm_attached"
-    } else {
-        CONTRADICTION_PENDING
-    };
-    let actor = envelope.map(WriteEnvelope::actor);
+    let reason = reason(proposal.critical);
     let record = GateDecisionRecord {
         version: 0,
         decision_id: GateDecisionId::now(),
@@ -384,10 +484,8 @@ pub(super) fn put_pending(
         reason_codes: vec![reason.to_owned()],
         receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
-        actor_class: actor
-            .map_or("system", |actor| actor.actor_class().gate_actor_class())
-            .to_owned(),
-        actor_ref: actor.map(|actor| actor.entity_ref().to_hex()),
+        actor_class: parker.actor_class,
+        actor_ref: parker.actor_ref,
         content_kind: "claim".to_owned(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
         claim_id: Some(*id.as_bytes()),
@@ -397,25 +495,17 @@ pub(super) fn put_pending(
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &record)?;
-    let run = envelope.and_then(|envelope| match envelope.provenance().value() {
-        rmpv::Value::Map(rows) => rows
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("run"))
-            .and_then(|(_, value)| value.as_str())
-            .map(str::to_owned),
-        _ => None,
-    });
     vault.store.put_pending_gate_consent_in_txn(
         txn,
         &PendingGateConsentRecord {
             version: crate::store::PENDING_GATE_CONSENT_VERSION,
             claim_id: *id.as_bytes(),
             decision_id: record.decision_id,
-            created_at: now,
+            created_at: parker.created_at,
             diff_handle,
             read_frontier_hash,
             reason_codes: vec![reason.to_owned()],
-            dreamer_run_id: run,
+            dreamer_run_id: parker.run,
         },
     )?;
     DEFERRED.put(&vault.store, txn, id, &proposal)?;

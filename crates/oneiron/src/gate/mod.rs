@@ -37,7 +37,11 @@ pub(crate) mod mail_policy;
 mod operational_policy;
 mod owner_policy_mutation;
 mod pack_install_policy;
+mod policy_upgrade;
 pub(crate) mod policy_values;
+#[cfg(test)]
+pub(crate) use policy_upgrade::ConsentRegate;
+pub(crate) use policy_upgrade::readable;
 mod project_conversion;
 pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;

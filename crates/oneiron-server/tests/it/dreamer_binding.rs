@@ -6,6 +6,11 @@
 //! listed entity's id and names a listed claim when a turn corrects it.
 //! Before the extraction input listed the known entities, the second pass saw
 //! only its own turn, minted a new subject, and nothing bound.
+//!
+//! Where it binds follows the seeded policy (Engine ruling 2026-10-13): a
+//! correction on a predicate no rule names lands with its grant, and one on a
+//! class canon declares critical is held for the owner, in a fresh vault and
+//! in one seeded before those classes shipped.
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +18,7 @@ use std::time::Duration;
 use oneiron::dreamer_consolidation::{
     enqueue_partition_attempts, read_watermark, scan_dirty_turns,
 };
+use oneiron::edge::EdgeActorClass;
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use oneiron::{DreamerConsolidationScope, EntityId, TimeRange, Vault};
 use serde_json::{Value, json};
@@ -65,14 +71,35 @@ fn text(message: &Value) -> &str {
     message["content"].as_str().unwrap_or_default()
 }
 
+/// What a scenario says about the person, and where its correction binds.
+struct Case {
+    predicate: &'static str,
+    /// The first turn, and the value on `predicate` it holds.
+    first: (&'static str, &'static str),
+    /// Who holds that value: the first pass, as its own unvetted claim, or
+    /// the owner, as an observed claim stated once the first pass has met
+    /// the person (a Dreamer claim in a critical class lands Proposed and is
+    /// never listed).
+    owner_states_first: bool,
+    second: (&'static str, &'static str),
+    seeded_before_critical_classes: bool,
+    granted: bool,
+}
+
 /// A model that does what the extraction prompt asks. It names a listed
-/// `profile.name` claim when one is shown, and otherwise meets the person.
-/// Asked for a verdict, it takes the newer value.
-fn follows_the_prompt() -> Reply {
-    Reply::Computed(Arc::new(|request: &Value| {
+/// claim on the case's predicate when one is shown, and otherwise meets the
+/// person. Asked for a verdict, it takes the newer value.
+fn follows_the_prompt(case: &Case) -> Reply {
+    let (predicate, second) = (case.predicate, case.second.1);
+    let (met, first) = if case.owner_states_first {
+        ("profile.name", "Oleksii")
+    } else {
+        (predicate, case.first.1)
+    };
+    Reply::Computed(Arc::new(move |request: &Value| {
         let messages = request["messages"].as_array().unwrap();
         if !text(&messages[0]).starts_with("Extract durable memory claims") {
-            return json!({"resolution": "supersede", "value": "Alex"}).to_string();
+            return json!({"resolution": "supersede", "value": second}).to_string();
         }
         let input = text(messages.last().unwrap());
         let turn = input
@@ -88,7 +115,7 @@ fn follows_the_prompt() -> Reply {
             let mut words = line.split_whitespace();
             match (words.next(), words.next(), words.next()) {
                 (Some("entity"), Some(id), _) => subject = Some(id.to_owned()),
-                (Some("claim"), Some(id), Some("profile.name")) => {
+                (Some("claim"), Some(id), Some(named)) if named == predicate => {
                     listed = subject.clone().map(|subject| (subject, id.to_owned()));
                 }
                 _ => {}
@@ -97,13 +124,13 @@ fn follows_the_prompt() -> Reply {
         let evidence = json!([{"source_id": turn, "byte_range": [0, 4]}]);
         match listed {
             Some((subject, claim)) => json!({"candidates": [{
-                "subject": subject, "predicate": "profile.name", "value": "Alex",
+                "subject": subject, "predicate": predicate, "value": second,
                 "corrects": claim, "confidence": 0.9, "evidence_refs": evidence,
             }]}),
             None => json!({
                 "persons": [{"id": PERSON, "name": "Oleksii", "evidence_turn_refs": [turn]}],
                 "candidates": [{
-                    "subject": PERSON, "predicate": "profile.name", "value": "Oleksii",
+                    "subject": PERSON, "predicate": met, "value": first,
                     "confidence": 0.9, "evidence_refs": evidence,
                 }],
             }),
@@ -133,41 +160,61 @@ async fn serve_until(config: &Path, fake: &FakeLlm, calls: usize) {
     stop(child);
 }
 
-fn names(vault: &Vault, person: EntityId) -> Vec<(EntityId, oneiron::ClaimBody)> {
+fn claims_on(
+    vault: &Vault,
+    person: EntityId,
+    predicate: &str,
+) -> Vec<(EntityId, oneiron::ClaimBody)> {
     vault
         .claims_for_subject(&person)
         .unwrap()
         .into_iter()
         .filter_map(|id| Some((id, vault.get_claim(&id).ok().flatten()?)))
-        .filter(|(_, body)| body.predicate == "profile.name")
+        .filter(|(_, body)| body.predicate == predicate)
         .collect()
 }
 
-/// Whether `replacement` binds to `prior`: granted (it supersedes it) or held
-/// in the owner's review with the supersession deferred.
-fn binds(vault: &Vault, replacement: EntityId, prior: EntityId) -> bool {
-    vault.pending_claim_supersession(&replacement).unwrap() == Some(prior)
-        || vault
-            .edges_out(&replacement)
-            .unwrap()
-            .iter()
-            .any(|edge| edge.kind == oneiron::edge::EdgeKind::Supersedes && edge.target == prior)
+/// Whether `replacement` binds to `prior` the way `granted` says: it closed
+/// it with its grant, or it is held in the owner's review with the closure
+/// deferred and the prior still Active.
+fn binds(vault: &Vault, replacement: EntityId, prior: EntityId, granted: bool) -> bool {
+    let closes = vault
+        .edges_out(&replacement)
+        .unwrap()
+        .iter()
+        .any(|edge| edge.kind == oneiron::edge::EdgeKind::Supersedes && edge.target == prior);
+    let body = vault.get_claim(&replacement).unwrap().unwrap();
+    let prior = vault.get_claim(&prior).unwrap().unwrap();
+    if granted {
+        closes
+            && body.approval == oneiron::ClaimApprovalStatus::Auto
+            && prior.lifecycle == oneiron::ClaimLifecycleStatus::Superseded
+    } else {
+        !closes
+            && vault
+                .pending_claim_supersession(&replacement)
+                .unwrap()
+                .is_some()
+            && body.approval == oneiron::ClaimApprovalStatus::Proposed
+            && prior.lifecycle == oneiron::ClaimLifecycleStatus::Active
+    }
 }
 
-#[tokio::test]
-async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
+async fn binds_once(case: Case) {
     let dir = tempfile::tempdir().unwrap();
     let vault_path = dir.path().join("vault");
     std::fs::create_dir_all(&vault_path).unwrap();
+    if case.seeded_before_critical_classes {
+        let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
+        vault
+            .install_seeded_policy_manifest_for_test(
+                Vault::policy_manifest_before_critical_classes_for_test().unwrap(),
+            )
+            .unwrap();
+    }
     let conversation = EntityId::now();
-    witness(
-        &vault_path,
-        conversation,
-        "call me Oleksii",
-        true,
-        "binding-1",
-    );
-    let fake = FakeLlm::start(Vec::new(), Some(follows_the_prompt())).await;
+    witness(&vault_path, conversation, case.first.0, true, "binding-1");
+    let fake = FakeLlm::start(Vec::new(), Some(follows_the_prompt(&case))).await;
     let config = write_config(
         dir.path(),
         &vault_path,
@@ -190,19 +237,26 @@ async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
     let person = EntityId::from_hex(PERSON).unwrap();
     let first = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
-        let [(first, _)] = names(&vault, person)[..] else {
-            panic!("the first pass wrote one name: {:?}", names(&vault, person));
+        if case.owner_states_first {
+            let owner = vault.ensure_embedded_owner_actor().unwrap();
+            let input = serde_json::from_value(json!({
+                "predicate": case.predicate, "subject_ref": PERSON, "value": case.first.1,
+                "confidence": 1.0, "source": "observed",
+            }))
+            .unwrap();
+            vault
+                .memory(owner, EdgeActorClass::Human)
+                .claim_upsert(&input)
+                .unwrap();
+        }
+        let written = claims_on(&vault, person, case.predicate);
+        let [(first, _)] = written[..] else {
+            panic!("the first pass wrote one claim: {written:?}");
         };
         first
     };
 
-    witness(
-        &vault_path,
-        conversation,
-        "Not Oleksii any more, call me Alex.",
-        false,
-        "binding-2",
-    );
+    witness(&vault_path, conversation, case.second.0, false, "binding-2");
     let before = fake.seen().len();
     serve_until(&config, &fake, before + 1).await;
     let seen = fake.seen();
@@ -220,14 +274,19 @@ async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
     );
 
     let held = |vault: &Vault| {
-        let names = names(vault, person);
-        assert_eq!(names.len(), 2, "one correction, no duplicate: {names:?}");
-        let bound: Vec<_> = names
+        let claims = claims_on(vault, person, case.predicate);
+        assert_eq!(claims.len(), 2, "one correction, no duplicate: {claims:?}");
+        let bound: Vec<_> = claims
             .iter()
-            .filter(|(id, _)| *id != first && binds(vault, *id, first))
+            .filter(|(id, _)| *id != first && binds(vault, *id, first, case.granted))
             .collect();
-        assert_eq!(bound.len(), 1, "the correction binds once: {names:?}");
-        assert_eq!(bound[0].1.value, rmpv::Value::from("Alex"));
+        assert_eq!(
+            bound.len(),
+            1,
+            "the correction binds once, granted = {}: {claims:?}",
+            case.granted
+        );
+        assert_eq!(bound[0].1.value, rmpv::Value::from(case.second.1));
     };
     held(&Vault::open_owned(&vault_path, vault_config()).unwrap());
 
@@ -238,4 +297,57 @@ async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
     stop(child);
     assert_eq!(fake.seen().len(), calls, "a finished pass makes no call");
     held(&Vault::open_owned(&vault_path, vault_config()).unwrap());
+}
+
+/// A predicate no rule names: the correction lands with its grant.
+#[tokio::test]
+async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
+    binds_once(Case {
+        predicate: "residence.city",
+        first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
+        owner_states_first: false,
+        second: (
+            "Oleksii again: I moved, I live in Porto now, not Lisbon.",
+            "Porto",
+        ),
+        seeded_before_critical_classes: false,
+        granted: true,
+    })
+    .await;
+}
+
+/// A class canon declares critical: the correction is held for the owner.
+#[tokio::test]
+async fn a_correction_on_a_critical_class_is_held_for_the_owner() {
+    binds_once(Case {
+        predicate: "health.allergy",
+        first: ("I'm Oleksii and I am allergic to peanuts.", "peanuts"),
+        owner_states_first: true,
+        second: (
+            "Oleksii again: not peanuts after all, I am allergic to shellfish.",
+            "shellfish",
+        ),
+        seeded_before_critical_classes: false,
+        granted: false,
+    })
+    .await;
+}
+
+/// A vault seeded before those classes shipped takes them on its first open
+/// by the new build, and holds the same correction. Before the upgrade it
+/// granted it: the class was unregistered there.
+#[tokio::test]
+async fn a_vault_seeded_before_the_critical_classes_holds_that_correction_too() {
+    binds_once(Case {
+        predicate: "health.allergy",
+        first: ("I'm Oleksii and I am allergic to peanuts.", "peanuts"),
+        owner_states_first: true,
+        second: (
+            "Oleksii again: not peanuts after all, I am allergic to shellfish.",
+            "shellfish",
+        ),
+        seeded_before_critical_classes: true,
+        granted: false,
+    })
+    .await;
 }

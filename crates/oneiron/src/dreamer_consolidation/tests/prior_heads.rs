@@ -114,6 +114,44 @@ pub(super) fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> 
     )
 }
 
+/// Rewrites the test policy's criticality: `default` for every predicate no
+/// rule names, and each `(prefix, criticality)` rule declaring a class.
+fn criticality(vault: &Vault, default: &str, rules: &[(&str, &str)]) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let raw = vault.get_raw(&id)?.expect("manifest");
+    let mut cursor = std::io::Cursor::new(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
+        panic!("manifest map");
+    };
+    let axes = |criticality: &str| {
+        Value::Map(vec![
+            ("criticality".into(), criticality.into()),
+            ("sensitivity".into(), "normal".into()),
+        ])
+    };
+    for (key, value) in &mut entries {
+        match key.as_str() {
+            Some("defaults") => *value = axes(default),
+            Some("rules") => {
+                *value = Value::Array(
+                    rules
+                        .iter()
+                        .map(|(prefix, criticality)| {
+                            Value::Map(vec![
+                                ("prefix".into(), (*prefix).into()),
+                                ("axes".into(), axes(criticality)),
+                            ])
+                        })
+                        .collect(),
+                );
+            }
+            _ => {}
+        }
+    }
+    let bytes = super::super::support::encode_value(&Value::Map(entries))?;
+    crate::test_util::put_policy_manifest_bytes(vault, id, &bytes)
+}
+
 fn fixture(vault: &Vault) -> Result<Fixture> {
     fixture_with_head_source(vault, ClaimSource::UserStated)
 }
@@ -961,13 +999,27 @@ fn each_dreamer_role_calls_its_own_backend() -> Result<()> {
     Ok(())
 }
 
-/// Gate 3 (map gap 9): a correction of attributed truth is protected. It is
-/// staged, never applied: the replacement stays Proposed, its prior stays
-/// Active with no Supersedes edge, and the owner's run review lists it.
+/// Gate 3 (map gap 9): a correction of attributed truth, or of a class a
+/// manifest rule declares critical, is protected. It is staged, never
+/// applied: the replacement stays Proposed, its prior stays Active with no
+/// Supersedes edge, and the owner's run review lists it.
 #[test]
 fn a_protected_correction_stays_proposed_in_the_owners_review() -> Result<()> {
+    for declared_critical in [false, true] {
+        a_protected_correction_stays_proposed(declared_critical)?;
+    }
+    Ok(())
+}
+
+fn a_protected_correction_stays_proposed(declared_critical: bool) -> Result<()> {
     let (_dir, vault) = open_vault();
-    let fx = fixture_with_head_source(&vault, ClaimSource::UserStated)?;
+    let fx = if declared_critical {
+        let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+        criticality(&vault, "normal", &[("profile.", "critical")])?;
+        fx
+    } else {
+        fixture_with_head_source(&vault, ClaimSource::UserStated)?
+    };
     let backend = ScriptedBackend::new(vec![
         Ok(extract(&fx, "Alex")),
         Ok(text_response(
@@ -1007,6 +1059,67 @@ fn a_protected_correction_stays_proposed_in_the_owners_review() -> Result<()> {
                         .any(|record| record.claim_id == *new.as_bytes())
             ),
         "the owner's run review lists the protected correction"
+    );
+    Ok(())
+}
+
+/// Engine ruling 2026-10-13 (the served dry run held its correction): a
+/// predicate no manifest rule names defaults critical for legibility only,
+/// and that default does not stop the write (ARCH-0003 §Criticality). Under
+/// the seeded posture, where every unnamed predicate defaults critical, the
+/// served shape (a correction naming the Dreamer's own claim) lands with its
+/// grant and closes it. Before, the deferred door counted the default as a
+/// critical class and held it.
+#[test]
+fn a_correction_on_an_unregistered_predicate_lands_with_its_grant() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = provisional_fixture(&vault)?;
+    criticality(&vault, "critical", &[])?;
+    let pin = PreparedWake::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    let backend = ScriptedBackend::new(vec![
+        Ok(text_response(
+            serde_json::json!({"candidates": [{
+                "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
+                "corrects": fx.head.to_hex(), "confidence": 0.9,
+                "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+            }]})
+            .to_string(),
+        )),
+        Ok(text_response(
+            "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
+        )),
+    ]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    execute_at_pin(
+        &vault,
+        &fx,
+        &backend,
+        &mut sink,
+        fx.scope.clone(),
+        Some(&pin),
+    )
+    .unwrap_or_else(|error| panic!("the pass refused: {error}; {:?}", sink.outcome));
+    let [new] = sink.outcome.landed.as_slice() else {
+        let held = sink.outcome.pended.first();
+        let grant = held.map(|id| vault.grant_deferred_claim_auto(id, fx.run.now_ms + 1));
+        panic!(
+            "one granted replacement: {:?}; a grant now: {grant:?}",
+            sink.outcome
+        );
+    };
+    assert!(sink.outcome.pended.is_empty(), "{:?}", sink.outcome);
+    assert_eq!(
+        vault.get_claim(new)?.expect("replacement").approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(vault.pending_claim_supersession(new)?, None);
+    assert_eq!(
+        vault.get_claim(&fx.head)?.expect("closed").lifecycle,
+        crate::ClaimLifecycleStatus::Superseded
     );
     Ok(())
 }

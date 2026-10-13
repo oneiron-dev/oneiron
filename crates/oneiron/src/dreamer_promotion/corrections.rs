@@ -2,9 +2,9 @@
 //!
 //! A replacement takes its Auto grant through the deferred door when the
 //! vault's policy allows it; the grant closes its named prior in the same
-//! transaction. One the policy protects (critical or attributed truth, a Gate
-//! that pends, the Generated-over-UserStated guard) is never applied here: it
-//! stays Proposed in the owner's run review. Once the prior is closed, each
+//! transaction. One the policy protects (a class a manifest rule declares
+//! critical, attributed truth, a Gate that pends, the Generated-over-UserStated
+//! guard) is never applied here: it stays Proposed in the owner's run review. Once the prior is closed, each
 //! open conflict that named it closes through the conflict-close door.
 use std::collections::BTreeSet;
 
