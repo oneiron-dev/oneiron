@@ -680,8 +680,8 @@ fn a_held_turn_rewritten_and_restored_holds_nothing() -> Result<()> {
 /// continuation keeps its TURN row and re-dirties it; a re-put can also move
 /// its key back), but only material between the two keys the repeat
 /// recorded released it, so its return to the old words was never read
-/// after the change. The repeated turn queued again, under any key,
-/// releases it too.
+/// after the change. A change to the repeated turn's words, or that turn
+/// queued again under any key, releases it.
 #[test]
 fn a_repeat_is_planned_again_when_the_turn_it_repeated_is_queued_again() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -709,11 +709,9 @@ fn a_repeat_is_planned_again_when_the_turn_it_repeated_is_queued_again() -> Resu
         crate::dreamer_consolidation::redirty::redirty_turn_in_txn(&vault, txn, &held)
     })?;
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
-    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 5)?);
-    assert_eq!(
-        micro_rounds(&vault)?,
-        vec![vec![held], vec![held], vec![back]]
-    );
+    let rounds = micro_rounds(&vault)?;
+    assert_eq!(rounds.len(), 2);
+    assert!(rounds[1].contains(&held) && rounds[1].contains(&back));
     Ok(())
 }
 
@@ -790,5 +788,36 @@ fn a_repeat_is_read_again_when_the_turn_it_repeated_changes_its_words() -> Resul
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 7)?);
     let rounds = micro_rounds(&vault)?;
     assert!(rounds[rounds.len() - 1].contains(&back));
+    Ok(())
+}
+
+/// Sol R7 (P1): a continuation cancelled with no new words took a final
+/// MESSAGE out of the held turn's transcript without any word-change notice,
+/// so the repeat that rode on those words stayed consumed. A MESSAGE that
+/// stops being final changes its turn's words for the sieve and the
+/// projector.
+#[cfg(feature = "sync")]
+#[test]
+fn a_repeat_is_read_again_when_a_cancelled_continuation_withdraws_what_it_repeated() -> Result<()> {
+    use super::witnessed_turns::{end_stream, message, stream_turn};
+    use crate::memory::WitnessAuthor;
+    let (_dir, vault) = open_vault();
+    let said = "I live in Kyoto.";
+    let (held, conversation, _, input) = stream_turn(&vault, 0x81, said, "finalize")?;
+    let at = vault.now_recorded_at();
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let writer = EntityId::from_bytes([0x81; 16])?;
+    let back = witness_into(
+        &vault,
+        writer,
+        conversation,
+        vec![message(0, WitnessAuthor::User, said, true)],
+    );
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+
+    end_stream(&vault, writer, &input, "", "cancel");
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![held], vec![back]]);
     Ok(())
 }

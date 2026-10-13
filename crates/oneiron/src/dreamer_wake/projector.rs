@@ -57,7 +57,7 @@ use crate::dreamer_consolidation::{
 use crate::dreamer_runner::EnqueueDreamerAttemptOutcome;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::side_table::{self, LegacyJson, Named, SideTable};
+use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
@@ -76,6 +76,9 @@ const GIVEN: SideTable<EntityId, Vec<[u8; 32]>, Named> =
 /// A turn consumed as a repeat of the held turn. Key: its temporal key.
 const RIDER: SideTable<TurnKey, Rider, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_RIDER);
+/// The riders of each TURN repeated. Key: (repeated TURN id, rider's key).
+const RIDER_OF: SideTable<(EntityId, TurnKey), (), Raw> =
+    SideTable::new(&side_table::DREAMER_PROJECTION_RIDER_OF);
 /// The temporal key each riding TURN rides under, one per TURN. Key: TURN id.
 const RIDES: SideTable<EntityId, TurnKey, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_RIDES);
@@ -323,6 +326,7 @@ pub(crate) fn hold_in_txn(
                 after: *after,
             };
             RIDER.put(store, txn, at, &rider)?;
+            RIDER_OF.put(store, txn, &(after.1, *at), &())?;
             RIDES.put(store, txn, &at.1, at)?;
             round.riders.push(*at);
         }
@@ -362,29 +366,17 @@ fn release_in_txn(
     requeue_riders_in_txn(store, txn, &released)
 }
 
-/// The riders that repeated one of `sources`, whatever key each has now:
-/// riders of the rounds a source gave words to, each round read once.
+/// The riders that repeated one of `sources`, whatever key each has now.
 fn riders_of_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     sources: &BTreeSet<EntityId>,
 ) -> Result<BTreeSet<EntityId>> {
-    let mut rounds = BTreeSet::new();
-    for source in sources {
-        rounds.extend(GIVEN.get(store, txn, source)?.unwrap_or_default());
-    }
     let mut riders = BTreeSet::new();
-    for id in &rounds {
-        let Some(round) = ROUND.get(store, txn, id)? else {
-            continue;
-        };
-        for at in &round.riders {
-            if RIDER
-                .get(store, txn, at)?
-                .is_some_and(|rider| sources.contains(&rider.after.1))
-            {
-                riders.insert(at.1);
-            }
+    for source in sources {
+        for row in RIDER_OF.iter_from(store, txn, source.as_bytes())? {
+            let ((_, (_, rider)), ()) = row?;
+            riders.insert(rider);
         }
     }
     Ok(riders)
@@ -414,6 +406,7 @@ fn unride_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> R
         return Ok(true);
     };
     RIDER.delete(store, txn, &at)?;
+    RIDER_OF.delete(store, txn, &(rider.after.1, at))?;
     if let Some(mut round) = ROUND.get(store, txn, &rider.round)? {
         round.riders.retain(|other| *other != at);
         keep_in_txn(store, txn, &rider.round, &round)?;
@@ -522,6 +515,9 @@ pub(crate) fn erase_turn_in_txn(
             continue;
         };
         for at in &round.riders {
+            if let Some(rider) = RIDER.get(store, txn, at)? {
+                RIDER_OF.delete(store, txn, &(rider.after.1, *at))?;
+            }
             RIDER.delete(store, txn, at)?;
             RIDES.delete(store, txn, &at.1)?;
             requeue_turn_in_txn(store, txn, &at.1)?;

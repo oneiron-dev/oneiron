@@ -109,6 +109,8 @@ side_tables! {
     /// A TURN consumed as a repeat of the held TURN: the round it rode and the TURN it repeated.
     /// Key: u64be + id16.
     DREAMER_PROJECTION_RIDER: VaultMeta b"dreamer:projection:rider:v1:" Named;
+    /// A rider by the TURN it repeated. Key: id16(repeated) + u64be + id16(rider).
+    DREAMER_PROJECTION_RIDER_OF: VaultMeta b"dreamer:projection:rider_of:v1:" Raw;
     /// The temporal key one riding TURN rides under. Key: id16(turn).
     DREAMER_PROJECTION_RIDES: VaultMeta b"dreamer:projection:rides:v1:" Named;
     /// One projector round: its turns and riders, and whether it applied. Key: hash32(round).
