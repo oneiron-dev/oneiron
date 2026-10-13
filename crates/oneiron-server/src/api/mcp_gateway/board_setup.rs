@@ -1,5 +1,6 @@
 //! Board state, setup grammar, and page preflight.
 
+use super::device_release::{mcp_carrier_releases, mcp_release_result, mcp_snapshot_releases};
 use super::stream_reads::{mcp_live_task_lines, mcp_own_task_lines};
 use super::{
     McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
@@ -107,7 +108,7 @@ pub(super) async fn mcp_endpoint_result(
         (None, Vec::new())
     };
     #[cfg(test)]
-    release_hook::run(server);
+    super::device_release::release_hook::run(server);
     // Judged again once the call has nothing left to wait on, for every
     // result: the rows it was derived from may all still leave this device.
     let carrier = carrier.filter(|frame| mcp_carrier_releases(server, actor, frame, &rider_rows));
@@ -125,32 +126,6 @@ pub(super) async fn mcp_endpoint_result(
         );
     }
     result
-}
-
-/// Whether a carrier frame may leave for `actor`: none of the rows it was
-/// derived from, the TASKs its delta rows are keyed by and `rider_rows`, nor
-/// any row it names, is one a device-local world keeps from the caller now.
-fn mcp_carrier_releases(
-    server: &SyncServer,
-    actor: &McpCallContext,
-    frame: &oneiron::context_board::BoardStreamFrame,
-    rider_rows: &[oneiron::EntityId],
-) -> bool {
-    let mut rows = rider_rows.to_vec();
-    if let oneiron::context_board::FrameKind::Delta(delta) = &frame.kind {
-        rows.extend(
-            delta
-                .iter()
-                .filter_map(|row| row.key.strip_prefix("tasks:"))
-                .filter_map(|task| oneiron::EntityId::from_hex(task).ok()),
-        );
-    }
-    serde_json::to_vec(frame).is_ok_and(|bytes| {
-        matches!(
-            crate::device_local::withholds_retained(&server.vault, actor.locality(), &rows, &bytes),
-            Ok(false)
-        )
-    })
 }
 
 /// The result data a client reads over the NEGOTIATED protocol.
@@ -627,16 +602,7 @@ pub(super) async fn mcp_preflight_page(
     };
     // A retained page derived from a row a device-local world keeps now
     // never leaves this device again: the caller starts over from page one.
-    let retained = serde_json::to_vec(&(&snapshot.output, &snapshot.keyframe))
-        .map_err(|_| mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch))?;
-    if crate::device_local::withholds_retained(
-        &server.vault,
-        actor.locality(),
-        &snapshot.rows,
-        &retained,
-    )
-    .map_err(|error| mcp_engine_error("mcp page snapshot release check failed", error))?
-    {
+    if !mcp_snapshot_releases(server, actor, snapshot)? {
         return Err(mcp_page_cursor_error(
             crate::mcp::McpPageCursorError::SnapshotMismatch,
         ));
@@ -692,38 +658,6 @@ pub(super) async fn mcp_resolve_page(
 
 pub(super) fn mcp_page_cursor_error(error: crate::mcp::McpPageCursorError) -> McpGatewayError {
     McpGatewayError::new(-32602, error.error_code(), error.to_string()).with_field("page.cursor")
-}
-
-/// Every result, fresh or a continuation of one its producer retained, is
-/// judged again once its call has nothing left to wait on (DEC-0005). One
-/// derived from a row a device-local world keeps now, or naming one, is
-/// refused: a continuation's caller starts over from page one, and a fresh
-/// call is told its result changed and to call again.
-pub(super) fn mcp_release_result(
-    server: &Arc<SyncServer>,
-    actor: &McpCallContext,
-    rows: &[oneiron::EntityId],
-    continued: bool,
-    result: Value,
-) -> Result<Value, McpGatewayError> {
-    let refused = || {
-        if continued {
-            mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
-        } else {
-            McpGatewayError::new(
-                -32603,
-                "mcp_result_changed",
-                "the result changed before it was released; call again",
-            )
-        }
-    };
-    let bytes = serde_json::to_vec(&result).map_err(|_| refused())?;
-    if crate::device_local::withholds_retained(&server.vault, actor.locality(), rows, &bytes)
-        .map_err(|error| mcp_engine_error("mcp page release check failed", error))?
-    {
-        return Err(refused());
-    }
-    Ok(result)
 }
 
 /// `setup_oneiron`: board keyframe + verb grammar + instructions, in ONE
@@ -850,7 +784,7 @@ pub(crate) async fn execute_mcp_setup(
         super::board_observations::delivered(server, actor, rider, true, *epoch).await;
     }
     #[cfg(test)]
-    release_hook::run(server);
+    super::device_release::release_hook::run(server);
     let continued = dispatch.continuation.is_some();
     let result = mcp_endpoint_result(
         server,
@@ -861,31 +795,4 @@ pub(crate) async fn execute_mcp_setup(
     )
     .await;
     mcp_release_result(server, actor, &snapshot.rows, continued, result)
-}
-
-/// A device-only flag committed while a call waits, after its checks ran
-/// and before its result is released: past a continuation's cursor check,
-/// or on a carrier's rider.
-#[cfg(test)]
-pub(crate) mod release_hook {
-    use std::cell::Cell;
-
-    thread_local! {
-        // Per thread: the call resumes on the test's own current-thread
-        // runtime.
-        static FLAG: Cell<Option<oneiron::EntityId>> = const { Cell::new(None) };
-    }
-
-    pub(crate) fn arm(world: oneiron::EntityId) {
-        FLAG.set(Some(world));
-    }
-
-    pub(super) fn run(server: &crate::server::SyncServer) {
-        if let Some(world) = FLAG.take() {
-            server
-                .vault
-                .set_world_device_only(world, true)
-                .expect("device-only flag");
-        }
-    }
 }

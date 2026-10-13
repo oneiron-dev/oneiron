@@ -38,6 +38,7 @@ mod linear_store;
 mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;
+mod presence_pages;
 mod presence_scan;
 mod query_facade;
 mod rate_limit;
