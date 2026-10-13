@@ -3110,6 +3110,7 @@ fn an_ask_off_this_device_takes_nothing_from_a_device_local_task() -> Result<()>
         .unwrap();
     let mut input = spec(&vault, owner, "device-local");
     input.task_ref = Some(task);
+    let question = input.what.reference.entity_ref();
     let can = |locality| {
         let producers = crate::memory::ProducerRows::default();
         let preflight = vault
@@ -3124,7 +3125,7 @@ fn an_ask_off_this_device_takes_nothing_from_a_device_local_task() -> Result<()>
     };
     let (portable, listed) = can(CallerLocality::OffDevice);
     let portable = portable?;
-    assert_eq!(listed, vec![task]);
+    assert_eq!(listed, vec![task, question]);
 
     vault.set_world_device_only(world, true)?;
     let (kept, listed) = can(CallerLocality::OffDevice);
@@ -3132,7 +3133,7 @@ fn an_ask_off_this_device_takes_nothing_from_a_device_local_task() -> Result<()>
     assert_eq!(listed, vec![task]);
     let (here, listed) = can(CallerLocality::OnDevice);
     assert_eq!(here?, portable);
-    assert_eq!(listed, vec![task]);
+    assert_eq!(listed, vec![task, question]);
     Ok(())
 }
 
@@ -3188,7 +3189,7 @@ fn an_agents_omitted_target_lists_the_assignment_it_comes_from() -> Result<()> {
     let (portable, listed) = can(CallerLocality::OffDevice);
     let portable = portable?;
     assert_eq!(portable.recipients[0].who, human);
-    assert_eq!(listed, vec![assignment]);
+    assert_eq!(listed, vec![assignment, question.entity_ref()]);
 
     vault.set_world_device_only(world, true)?;
     let (kept, listed) = can(CallerLocality::OffDevice);
@@ -3196,7 +3197,7 @@ fn an_agents_omitted_target_lists_the_assignment_it_comes_from() -> Result<()> {
     assert!(listed.is_empty(), "{listed:?}");
     let (here, listed) = can(CallerLocality::OnDevice);
     assert_eq!(here?, portable);
-    assert_eq!(listed, vec![assignment]);
+    assert_eq!(listed, vec![assignment, question.entity_ref()]);
     Ok(())
 }
 
@@ -3207,15 +3208,94 @@ fn an_asks_status_lists_every_member_task() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor()?;
+    let input = spec(&vault, owner, "members");
     let receipt = vault
         .memory(owner, EdgeActorClass::Human)
-        .tasks_ask(&spec(&vault, owner, "members"))?;
+        .tasks_ask(&input)?;
     let producers = crate::memory::ProducerRows::default();
     vault
         .memory(owner, EdgeActorClass::Human)
         .listing_producers(&producers)
         .tasks_ask_status(receipt.handle)?;
-    assert_eq!(producers.take(), receipt.task_refs);
+    let mut members = receipt.task_refs;
+    members.push(input.what.reference.entity_ref());
+    assert_eq!(producers.take(), members);
+    Ok(())
+}
+
+/// Sol R9 F1, F2: an ask is derived from its question and context rows, so
+/// a preflight lists them, and so does each of its handle's reads of the
+/// ask. Once a context CLAIM's world is device-local, a caller off this
+/// device reads that CLAIM as no row: it can neither preflight nor ask with
+/// it, and an ask holding it reads as no ask. On this device each still
+/// stands.
+#[test]
+fn an_ask_off_this_device_reads_no_device_local_context_claim() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    super::tests::support::permit_outcome_fixture_predicates(&vault, owner)?;
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    let context = EntityId::now();
+    let mut body = crate::ClaimBody::new(
+        "profile.orchid",
+        crate::ClaimSubject::Entity(owner),
+        rmpv::Value::from("orchid ledger"),
+        0.8,
+        crate::ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+    )?;
+    body.world = Some(world);
+    vault.put_claim(&context, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    let with_context = |key: &str| {
+        let mut input = spec(&vault, owner, key);
+        input.what.context_refs = vec![ConsultPayloadRef::Claim(context)];
+        input
+    };
+    let input = with_context("context");
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_ask(&input)?;
+    let read = |locality, status: bool| {
+        let producers = crate::memory::ProducerRows::default();
+        let memory = vault
+            .memory(owner, EdgeActorClass::Human)
+            .at(locality)
+            .listing_producers(&producers);
+        let read = if status {
+            memory.tasks_ask_status(receipt.handle).map(|_| ())
+        } else {
+            memory.tasks_can_ask(&input).map(|_| ())
+        };
+        (read.map_err(|error| format!("{error:?}")), producers.take())
+    };
+    for status in [false, true] {
+        let (portable, listed) = read(CallerLocality::OffDevice, status);
+        portable?;
+        assert!(listed.contains(&context), "{status}: {listed:?}");
+    }
+
+    vault.set_world_device_only(world, true)?;
+    for status in [false, true] {
+        let (kept, listed) = read(CallerLocality::OffDevice, status);
+        assert!(kept.is_err(), "{status}: {kept:?}");
+        assert!(listed.contains(&context), "{status}: {listed:?}");
+        let (here, _) = read(CallerLocality::OnDevice, status);
+        here?;
+    }
+    let asked = vault
+        .memory(owner, EdgeActorClass::Human)
+        .at(CallerLocality::OffDevice)
+        .tasks_ask(&with_context("context-again"));
+    assert!(asked.is_err(), "{asked:?}");
     Ok(())
 }
 

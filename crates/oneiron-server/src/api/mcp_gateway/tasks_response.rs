@@ -988,8 +988,8 @@ async fn execute_agent_verb_listing(
                 .as_ref()
                 .and_then(crate::auth::CoreAuth::verified_slip)
                 .cloned();
-            let output = server
-                .recall_off_runtime(
+            let (output, listed) = server
+                .recall_off_runtime_listing(
                     actor.actor_ref,
                     actor.actor_class,
                     proof,
@@ -997,8 +997,10 @@ async fn execute_agent_verb_listing(
                     None,
                     input,
                 )
-                .await
-                .map_err(mcp_facade_error)?;
+                .await;
+            // Derived from these rows too, though it names none of them.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

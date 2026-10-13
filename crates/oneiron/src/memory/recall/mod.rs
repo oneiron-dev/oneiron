@@ -867,7 +867,15 @@ impl Memory<'_> {
                     return Ok(fallback.clone());
                 }
                 let mut pack = scoped.value;
-                lane.attach_reactions_quoting(&mut pack, &status.cited_messages, None)?;
+                let mut counted = Vec::new();
+                lane.attach_reactions_quoting(
+                    &mut pack,
+                    &status.cited_messages,
+                    None,
+                    &mut counted,
+                )?;
+                // Each reaction claim a line counts is a producer of the pack.
+                self.produced_from(counted);
 
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {

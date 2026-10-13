@@ -44,6 +44,7 @@ impl Memory<'_> {
                 now,
                 context_class.clone(),
             )?;
+            self.ask_question_in(txn, &effective.what)?;
             if super::rate_limit::task_actor_ceiling(
                 self.vault(),
                 txn,

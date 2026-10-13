@@ -460,13 +460,14 @@ fn standing_comm_state_vetoes_an_otherwise_live_route() {
             "{veto}: the route is live before the veto"
         );
 
+        let unreachable = EntityId::now();
         if veto == "opt_out" {
             record_comm_inbound_stop(&vault, HUMAN_ADDRESS, "email", NOW).expect("record the STOP");
             run_comm_projector(&vault).expect("project the STOP into standing state");
         } else {
             vault
                 .put_claim(
-                    &EntityId::now(),
+                    &unreachable,
                     &CommClaimValue::ReachableVia {
                         party_ref: person,
                         channel_class: "email".to_owned(),
@@ -501,7 +502,10 @@ fn standing_comm_state_vetoes_an_otherwise_live_route() {
             )
             .is_err()
         );
-        assert_eq!(vetoes.len(), 1, "{veto}: {vetoes:?}");
+        assert!(!vetoes.is_empty(), "{veto}");
+        if veto == "not_reachable" {
+            assert!(vetoes.contains(&unreachable), "{veto}: {vetoes:?}");
+        }
     }
 }
 

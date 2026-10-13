@@ -280,25 +280,40 @@ pub(super) fn put<T: Serialize>(
 }
 
 impl crate::memory::Memory<'_> {
-    /// The ask group `id`, read as its handle's verbs read it: each member
-    /// TASK and the TASK its class came from are listed as producers of what
-    /// the call answers from the group (DEC-0005).
+    /// The ask group `id`, read as its handle's verbs read it (DEC-0005):
+    /// each member TASK, the TASK its class came from and its question and
+    /// context rows are listed as producers of what the call answers from the
+    /// group. Off this device a group with any such row a device-local world
+    /// keeps reads as no group.
     pub(super) fn ask_group_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: EntityId,
     ) -> Result<Option<AskGroup>> {
-        let group = read_group(self.vault(), txn, id)?;
-        if let Some(group) = &group {
-            self.produced_from(
-                group
-                    .members
-                    .iter()
-                    .filter_map(|member| EntityId::from_hex(&member.task).ok())
-                    .chain(group.requested.task_ref),
-            );
+        let Some(group) = read_group(self.vault(), txn, id)? else {
+            return Ok(None);
+        };
+        let what = &group.effective.what;
+        let rows = group
+            .members
+            .iter()
+            .filter_map(|member| EntityId::from_hex(&member.task).ok())
+            .chain(group.requested.task_ref)
+            .chain(
+                std::iter::once(what.reference)
+                    .chain(what.context_refs.iter().copied())
+                    .map(super::ConsultPayloadRef::entity_ref),
+            )
+            .collect::<Vec<_>>();
+        self.produced_from(rows.iter().copied());
+        let store = &self.vault().store;
+        let kept = crate::settings::device_local_worlds_at(store, txn, self.locality())?;
+        for row in &rows {
+            if crate::settings::device_local_keeps_among(store, txn, &kept, row)? {
+                return Ok(None);
+            }
         }
-        Ok(group)
+        Ok(Some(group))
     }
 }
 

@@ -318,7 +318,10 @@ def mcp_input_dispatch(row):
         # A server door runs the verb with the host's execution inputs, as on REST.
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
-                 f'let output = server.{row["server_door"]}(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input).await.map_err(mcp_facade_error)?;\n')
+                 f'let (output, listed) = server.{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input).await;\n'
+                 '// Derived from these rows too, though it names none of them.\n'
+                 'served.extend(listed);\n'
+                 'let output = output.map_err(mcp_facade_error)?;\n')
     else:
         body += decode
         if name == 'describe':

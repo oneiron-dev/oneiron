@@ -174,8 +174,11 @@ impl Read {
             Self::Recall(request) => {
                 let (actor, class) = super::bound_reader(auth)?;
                 let proof = auth.verified_slip().cloned();
-                let pack =
-                    server.recall_at_sync_door(actor, class, proof, auth.locality(), request)?;
+                let (pack, listed) =
+                    server.recall_at_sync_door(actor, class, proof, auth.locality(), request);
+                // Derived from them too, though it names none.
+                rows.list(listed);
+                let pack = pack?;
                 rows.pack(&pack);
                 result(pack)
             }
@@ -207,6 +210,13 @@ impl<'a> Carried<'a> {
         match oneiron::memory::resolve_entity_ref(self.vault, reference) {
             Ok(id) => rows.push(id),
             Err(_) => self.rows = None,
+        }
+    }
+
+    /// Rows the result was derived from without naming them.
+    fn list(&mut self, listed: Vec<EntityId>) {
+        if let Some(rows) = &mut self.rows {
+            rows.extend(listed);
         }
     }
 

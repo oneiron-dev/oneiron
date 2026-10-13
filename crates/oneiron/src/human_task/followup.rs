@@ -55,8 +55,8 @@ pub fn resolve_native_human_route(
 }
 
 /// [`resolve_native_human_route_in`] for the identity `owner_ref` sends from.
-/// Each `comm.*` CLAIM whose veto took a route that would otherwise stand
-/// is pushed onto `vetoes`: the route read is derived from it.
+/// Each `comm.*` CLAIM whose veto takes an active channel away is pushed
+/// onto `vetoes`: the route read is derived from it.
 pub(crate) fn resolve_native_human_route_for_actor_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -103,6 +103,10 @@ pub(super) fn resolve_native_human_route_with_sender_in(
         if identity.state() != ChannelIdentityState::Active {
             continue;
         }
+        if let Some(claims) = vetoed.get(identity.channel()) {
+            vetoes.extend(claims.iter().copied());
+            continue;
+        }
         if let Some(owner) = owner_ref {
             // The notice scheduler's outbound chokepoint selects this exact
             // identity for (channel, owner). A contact on some other sender's
@@ -129,10 +133,6 @@ pub(super) fn resolve_native_human_route_with_sender_in(
             continue;
         };
         if contact.status != CounterpartyContactStatus::Active || contact.opt_out.is_some() {
-            continue;
-        }
-        if let Some(claims) = vetoed.get(identity.channel()) {
-            vetoes.extend(claims.iter().copied());
             continue;
         }
         return Ok(NativeHumanRoute {
