@@ -338,28 +338,53 @@ fn fold_authority_log_inner(
         .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
             local.policy.stale_roster_window_secs
         });
-    let fold = fold_authority_log_once(
-        entries,
-        FoldContext {
-            sequence_floors,
-            entry_ancestors: None,
-            peer_consent_roots,
-            consent_arm,
-            hosted: local.hosted,
-            machine_standing: local
-                .machine_standing
-                .unwrap_or(&super::world_privacy::every_admitted_machine),
-            pre_handoff_entries: local.pre_handoff_entries,
-        },
-        local.handoff_candidates,
-    );
-    let mut fold = apply_stale_roster_window(
-        entries,
-        fold,
-        first_seen_at_secs,
-        now_secs,
-        stale_roster_window_secs,
-    );
+    let standing = local
+        .machine_standing
+        .unwrap_or(&super::world_privacy::every_admitted_machine);
+    let context = FoldContext {
+        sequence_floors,
+        entry_ancestors: None,
+        peer_consent_roots,
+        consent_arm,
+        hosted: local.hosted,
+        machine_standing: standing,
+        pre_handoff_entries: local.pre_handoff_entries,
+    };
+    // Staleness is this install's own projection, which the structural fold
+    // never sees. A machine stale here is one this install does not count, so
+    // fold again without it: its world edits then only narrow. Staleness rests
+    // on valid entries alone and counting changes no entry's validity, so the
+    // second fold finds the same stale machines.
+    let mut stale = BTreeSet::<crate::EntityId>::new();
+    let mut fold = loop {
+        let counted = |state: &FoldState, machine: &FoldedMachine| {
+            !stale.contains(&machine.profile.machine) && standing(state, machine)
+        };
+        let fold = apply_stale_roster_window(
+            entries,
+            fold_authority_log_once(
+                entries,
+                FoldContext {
+                    machine_standing: &counted,
+                    ..context
+                },
+                local.handoff_candidates,
+            ),
+            first_seen_at_secs,
+            now_secs,
+            stale_roster_window_secs,
+        );
+        let now_stale: BTreeSet<_> = fold
+            .machines
+            .iter()
+            .filter(|(_, machine)| machine.stale)
+            .map(|(id, _)| *id)
+            .collect();
+        if fold.worlds.is_empty() || now_stale.is_subset(&stale) {
+            break fold;
+        }
+        stale = now_stale;
+    };
     (fold.append_heads, fold.side_heads) =
         super::world_privacy::log_heads(entries, &fold.valid_entries);
     for entry in entries {
