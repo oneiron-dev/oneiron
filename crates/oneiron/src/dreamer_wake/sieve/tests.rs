@@ -2,7 +2,9 @@
 //! turn chunk with a date and a name gets both flags and queues them by
 //! score; a restart keeps the queue and the cursor and reads nothing twice;
 //! saved oneiroNER tags stand in for the rule names, and a save that lands
-//! after the sieve read the turn owes it a new read.
+//! after the sieve read the turn owes it a new read. Then the review's
+//! repros: what the Dreamer may not read, a long turn read across passes,
+//! and grants written while turns wait.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -31,6 +33,42 @@ fn witness_with(
     occurred_at: u64,
     metadata: Option<serde_json::Value>,
 ) -> EntityId {
+    let message = WitnessMessage {
+        id: None,
+        author: WitnessAuthor::User,
+        message_type: "text".into(),
+        content: text.into(),
+        metadata,
+        is_visible: true,
+        order: 0,
+    };
+    witness_messages(vault, turn_ref, occurred_at, vec![message])
+}
+
+/// A visible user MESSAGE with the id `id`.
+fn message(
+    id: &str,
+    text: &str,
+    order: u32,
+    metadata: Option<serde_json::Value>,
+) -> WitnessMessage {
+    WitnessMessage {
+        id: Some(id.to_owned()),
+        author: WitnessAuthor::User,
+        message_type: "text".into(),
+        content: text.into(),
+        metadata,
+        is_visible: true,
+        order,
+    }
+}
+
+fn witness_messages(
+    vault: &Vault,
+    turn_ref: &str,
+    occurred_at: u64,
+    messages: Vec<WitnessMessage>,
+) -> EntityId {
     let speaker = EntityId::from_bytes([0x21; 16]).expect("speaker id");
     if vault.get(&speaker).expect("speaker read").is_none() {
         vault
@@ -47,21 +85,47 @@ fn witness_with(
         conversation_ref: ROOM.into(),
         turn_ref: Some(turn_ref.to_owned()),
         occurred_at,
-        messages: vec![WitnessMessage {
-            id: None,
-            author: WitnessAuthor::User,
-            message_type: "text".into(),
-            content: text.into(),
-            metadata,
-            is_visible: true,
-            order: 0,
-        }],
+        messages,
     };
     vault
         .memory(speaker, EdgeActorClass::Human)
         .witness(&turn)
         .expect("witness");
     EntityId::from_hex(turn_ref).expect("turn id")
+}
+
+/// Lets the Dreamer read the MESSAGE rows of `space`, under grant id
+/// `[id; 16]`.
+fn grant_messages_read(vault: &Vault, id: u8, space: EntityId) {
+    use crate::access_grant::{
+        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    };
+    let dreamer = vault.dreamer_authority().expect("dreamer").entity_ref();
+    vault
+        .create_access_grant(
+            &EntityId::from_bytes([id; 16]).expect("grant id"),
+            &AccessGrant {
+                principal_ref: dreamer,
+                scope: AccessGrantScope::Messages { space_ref: space },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: 1,
+                revoked_at: None,
+                expires_at: Some(u64::MAX),
+                authority_scope: crate::federation::scope_codec::read_preset(),
+            },
+        )
+        .expect("grant");
+}
+
+/// Runs passes from `now` until one leaves no work; returns how many ran.
+fn drain(vault: &Vault, now: u64) -> u64 {
+    let mut passes = 0;
+    while vault.sieve_pass(now + passes).expect("pass").more {
+        passes += 1;
+        assert!(passes < 1_000, "the sieve never settles");
+    }
+    passes + 1
 }
 
 /// A fake oneiroNER tagger: each word it knows is a `PERSON`.
@@ -288,9 +352,6 @@ fn a_new_turn_dated_behind_the_cursor_is_read() {
 /// the waiting turn a read.
 #[test]
 fn words_the_dreamer_may_not_read_give_no_span_until_a_grant_lets_it() {
-    use crate::access_grant::{
-        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-    };
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), false);
     let space = EntityId::from_bytes([0x5a; 16]).expect("space id");
@@ -313,22 +374,7 @@ fn words_the_dreamer_may_not_read_give_no_span_until_a_grant_lets_it() {
     assert!(flags(&vault, &private, text).is_empty());
     assert!(flags(&vault, &related, text).is_empty());
 
-    let dreamer = vault.dreamer_authority().expect("dreamer").entity_ref();
-    vault
-        .create_access_grant(
-            &EntityId::from_bytes([0x5b; 16]).expect("grant id"),
-            &AccessGrant {
-                principal_ref: dreamer,
-                scope: AccessGrantScope::Messages { space_ref: space },
-                capability: AccessGrantCapability::MessagesRead,
-                status: AccessGrantStatus::Active,
-                created_at: 1,
-                revoked_at: None,
-                expires_at: Some(u64::MAX),
-                authority_scope: crate::federation::scope_codec::read_preset(),
-            },
-        )
-        .expect("grant");
+    grant_messages_read(&vault, 0x5b, space);
     let pass = vault.sieve_pass(NOW + 1).expect("pass");
     assert_eq!(pass.turns_read, 1);
     assert_eq!(flags(&vault, &related, text).len(), 2);
@@ -387,4 +433,185 @@ fn a_flood_is_read_pass_after_pass_within_the_bound() {
     let spans = spans_of(&vault);
     assert_eq!(spans.len(), 40_000);
     assert!(spans.windows(2).all(|pair| pair[0].1 <= pair[1].0));
+}
+
+/// Sol R10 (P2): a turn re-read with the same readable words returned
+/// before it noted a newly withheld MESSAGE, so a grant written later never
+/// read that MESSAGE. The wait for a grant is noted on every read.
+#[test]
+fn a_message_withheld_beside_unchanged_words_is_read_once_a_grant_lets_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    let space = EntityId::from_bytes([0x5c; 16]).expect("space id");
+    let turn_ref = "79797979797979797979797979797979";
+    let (first, second) = (
+        "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+        "7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b",
+    );
+    let turn = witness_messages(
+        &vault,
+        turn_ref,
+        NOW,
+        vec![message(first, "We met Alice.", 0, None)],
+    );
+    drain(&vault, NOW);
+    witness_messages(
+        &vault,
+        turn_ref,
+        NOW,
+        vec![message(
+            second,
+            "Bob arrives tomorrow.",
+            1,
+            Some(serde_json::json!({"rel": space.to_hex()})),
+        )],
+    );
+    drain(&vault, NOW + 10);
+    let second = EntityId::from_hex(second).expect("message id");
+    let of_second = |vault: &Vault| {
+        vault
+            .sieve_queue(usize::MAX)
+            .expect("queue")
+            .into_iter()
+            .filter(|span| span.turn == turn && span.source == second)
+            .count()
+    };
+    assert_eq!(of_second(&vault), 0, "the Dreamer may not read it yet");
+
+    grant_messages_read(&vault, 0x5d, space);
+    drain(&vault, NOW + 20);
+    assert_eq!(of_second(&vault), 2, "Bob and tomorrow, once granted");
+}
+
+/// Sol R10 (P2): a cut at a word end split a date the rules read across
+/// it, and reset the sentence a name runs in. A long text is read in
+/// segments that end where no span the rules see runs across, and carry the
+/// sentence and the code they end in, so a date, a name and a code block
+/// read as they do in a short text.
+#[test]
+fn a_long_text_is_cut_where_no_span_runs_across() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    let date = "x ".repeat(16_380) + "January 12, 2026.";
+    let name = "x ".repeat(16_381) + "Alice Smith arrives.";
+    let code = format!(
+        "```\n{}```\nCarol arrives.",
+        "Alice Smith met Bob.\n".repeat(400)
+    );
+    let turns = [
+        witness(&vault, "7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c", &date),
+        witness(&vault, "7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d", &name),
+        witness(&vault, "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e", &code),
+    ];
+    drain(&vault, NOW);
+    assert_eq!(
+        flags(&vault, &turns[0], &date),
+        vec![(SpanKind::Date, "January 12, 2026".to_owned(), "rule")]
+    );
+    assert_eq!(
+        flags(&vault, &turns[1], &name),
+        vec![(SpanKind::Name, "Alice Smith".to_owned(), "rule")]
+    );
+    let name = vault
+        .sieve_queue(usize::MAX)
+        .expect("queue")
+        .into_iter()
+        .find(|span| span.turn == turns[1])
+        .expect("the name");
+    assert_eq!(
+        name.origin,
+        SpanOrigin::Rule {
+            rules: RULES_VERSION,
+            class: RuleClass::Name,
+        }
+    );
+    assert_eq!(
+        flags(&vault, &turns[2], &code),
+        vec![(SpanKind::Name, "Carol".to_owned(), "rule")]
+    );
+}
+
+/// Sol R10 (P2): a word with no space in it ran past the bound whole. A
+/// segment ends at the bound's own segment size inside such a word, so every
+/// pass stays within the bound, and the word is read in pieces end to end.
+#[test]
+fn a_word_with_no_space_is_read_within_the_bound() {
+    const BOUND: u32 = 32 * 1024;
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    let text = "アリス".repeat(20_000);
+    let turn = witness(&vault, "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f", &text);
+    let mut seen = Vec::new();
+    let mut passes = 0;
+    loop {
+        let pass = vault.sieve_pass(NOW + passes).expect("pass");
+        let mut spans: Vec<(u32, u32)> = vault
+            .sieve_queue(usize::MAX)
+            .expect("queue")
+            .into_iter()
+            .filter(|span| span.turn == turn)
+            .map(|span| (span.start, span.end))
+            .collect();
+        spans.sort_unstable();
+        let read: Vec<_> = spans
+            .iter()
+            .filter(|span| seen.binary_search(*span).is_err())
+            .collect();
+        if let (Some(first), Some(last)) = (read.first(), read.last()) {
+            assert!(
+                last.1 - first.0 <= BOUND,
+                "pass {passes} read past the bound"
+            );
+        }
+        seen = spans;
+        passes += 1;
+        if !pass.more {
+            break;
+        }
+    }
+    assert!(passes > 2, "the word takes more than one pass");
+    assert_eq!(seen.first().map(|span| span.0), Some(0));
+    assert_eq!(seen.last().map(|span| span.1), Some(text.len() as u32));
+    assert!(seen.windows(2).all(|pair| pair[0].1 == pair[1].0));
+}
+
+/// Sol R10 (P2): every grant written put each withheld turn back in the
+/// owed list, ahead of a new turn with a higher id, so grants written
+/// before each pass kept a new turn from ever being read. A grant moves an
+/// epoch on, and the withheld turns are read again on what a pass leaves.
+#[test]
+fn grants_written_while_turns_wait_never_hold_a_new_turn_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    let private = Some(serde_json::json!({"scope": {"private": true}}));
+    for index in 0..64_u8 {
+        let turn_ref = format!("{:02x}", 0x30 + index).repeat(16);
+        witness_with(
+            &vault,
+            &turn_ref,
+            "We met Alice Smith.",
+            NOW,
+            private.clone(),
+        );
+    }
+    let mut now = NOW + drain(&vault, NOW);
+    let text = "Bob arrives tomorrow.";
+    let turn = witness(&vault, "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f", text);
+    let space = EntityId::from_bytes([0x9e; 16]).expect("space id");
+    for grant in 0..3_u8 {
+        grant_messages_read(&vault, 0xa0 + grant, space);
+        vault.sieve_pass(now).expect("pass");
+        now += 1;
+        assert_eq!(
+            flags(&vault, &turn, text),
+            vec![
+                (SpanKind::Name, "Bob".to_owned(), "rule"),
+                (SpanKind::Date, "tomorrow".to_owned(), "rule"),
+            ],
+            "grant {grant}"
+        );
+    }
+    drain(&vault, now);
+    let queue = vault.sieve_queue(usize::MAX).expect("queue");
+    assert!(queue.iter().all(|span| span.turn == turn));
 }

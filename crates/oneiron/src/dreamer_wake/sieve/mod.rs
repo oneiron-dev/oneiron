@@ -24,12 +24,19 @@
 //!
 //! The sieve reads what the Dreamer may read. A MESSAGE that is private, or
 //! a relationship row without the Dreamer's live grant, gives no span; its
-//! turn waits, and a grant written later owes it a new read. One pass reads
-//! at most the policy row's bytes of text: a longer turn stops at a line,
-//! sentence or word end and keeps its place, and the next pass reads on.
+//! turn waits. A grant written later moves the grant epoch on, and a sweep
+//! that keeps its place across passes reads the waiting turns again on what
+//! a pass has left after new words, so a grant never holds new words back.
+//!
+//! One pass reads at most the policy row's bytes of text. A longer turn is
+//! read a segment at a time (see [`rules`]) and keeps its place: the next
+//! pass reads on from the segment it stopped at, from the chunks the read
+//! holds, with nothing it has read read or hashed again, and each segment's
+//! spans go in the queue as it reads, so a pass writes only what it read.
 
 mod chunks;
 mod policy;
+mod read;
 mod rules;
 #[cfg(test)]
 mod tests;
@@ -39,7 +46,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use chunks::{Chunk, TurnChunks, turn_chunks_in_txn};
+use chunks::ChunkRef;
 pub use policy::SievePolicy;
 pub use rules::RuleClass;
 
@@ -62,11 +69,22 @@ const READ: SideTable<EntityId, SievedTurn, Named> =
 /// The interest queue. Key: inverted score (u32 BE), then the span id.
 const QUEUE: SideTable<QueueKey, SieveSpan, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_QUEUE);
-/// Turns owed a new read: changed words, newly saved tags. Key: TURN id.
+/// Each TURN's queued spans. Key: TURN id, then the span's queue key.
+const SPANS: SideTable<(EntityId, QueueKey), (), Raw> =
+    SideTable::new(&side_table::DREAMER_SIEVE_SPANS);
+/// Turns owed a new read: new, changed words, newly saved tags. Key: TURN id.
 const OWED: SideTable<EntityId, (), Raw> = SideTable::new(&side_table::DREAMER_SIEVE_OWED);
-/// Turns read with a MESSAGE the Dreamer may not read, owed again when a
-/// grant is written. Key: TURN id.
-const WITHHELD: SideTable<EntityId, (), Raw> = SideTable::new(&side_table::DREAMER_SIEVE_WITHHELD);
+/// Turns whose read the text bound stopped, with the chunks it reads on in.
+/// A change to the turn's words owes it a new read and drops this row.
+/// Key: TURN id.
+const CONTINUE: SideTable<EntityId, Vec<ChunkRef>, Named> =
+    SideTable::new(&side_table::DREAMER_SIEVE_CONTINUE);
+/// Turns read with a MESSAGE the Dreamer may not read, and the grant epoch
+/// they were read at. Key: TURN id.
+const WITHHELD: SideTable<EntityId, u64, Raw> = SideTable::new(&side_table::DREAMER_SIEVE_WITHHELD);
+/// The grant epoch, and the sweep that reads the withheld turns again.
+/// Key: ().
+const RETRY: SideTable<(), Retry, Named> = SideTable::new(&side_table::DREAMER_SIEVE_RETRY);
 
 type QueueKey = ([u8; 4], [u8; 32]);
 
@@ -76,22 +94,56 @@ struct SieveCursor {
     turn: EntityId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct SievedTurn {
     /// The version of the turn's words the read saw.
     reading: [u8; 32],
     names: NameSource,
-    spans: Vec<QueueKey>,
     /// Where a reading the text bound stopped reads on; `None` once whole.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     next: Option<Resume>,
 }
 
-/// A place in a turn's words: a chunk, and a byte of its text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A place in a turn's words: a chunk, the byte of its text a segment
+/// starts at, and what the text before it leaves that segment's reading.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Resume {
     chunk: usize,
     at: usize,
+    carry: rules::Carry,
+}
+
+impl Resume {
+    /// Where chunk `index` reads from: here in the chunk the read stopped
+    /// in, its start in a later one.
+    fn within(self, index: usize) -> (usize, rules::Carry) {
+        if index == self.chunk {
+            (self.at, self.carry)
+        } else {
+            (0, rules::Carry::default())
+        }
+    }
+}
+
+/// The grant epoch, and how far the withheld turns have been read again.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+struct Retry {
+    /// Moved on by every grant written.
+    epoch: u64,
+    /// Every withheld turn was read at this epoch or a later one.
+    done: u64,
+    /// The sweep under way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sweep: Option<Sweep>,
+}
+
+/// A sweep of the withheld turns: the epoch it reads them up to, and the
+/// last turn it stepped over.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct Sweep {
+    epoch: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    after: Option<EntityId>,
 }
 
 /// How one turn's read ended.
@@ -207,22 +259,25 @@ impl Vault {
 }
 
 /// Owes `turn` a new read in the caller's transaction: its words or its saved
-/// tags changed.
+/// tags changed. A read the text bound stopped no longer goes on from the
+/// chunks it holds; the new read goes on where it stopped only if the words
+/// read the same.
 pub(crate) fn owe_read_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
+    CONTINUE.delete(store, txn, turn)?;
     OWED.put(store, txn, turn, &())
 }
 
-/// A grant was written: every turn read with a MESSAGE the Dreamer could
-/// not read is owed a new read, which takes what the grant now lets it.
+/// A grant was written: it moves the grant epoch on, and the retry sweep
+/// reads every turn withheld before it again, to take what it now lets the
+/// Dreamer read.
 pub(crate) fn grant_written_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-    for turn in WITHHELD.scan_keys(store, txn, &[])? {
-        OWED.put(store, txn, &turn, &())?;
-    }
-    Ok(())
+    let mut retry = RETRY.get(store, txn, &())?.unwrap_or_default();
+    retry.epoch += 1;
+    RETRY.put(store, txn, &(), &retry)
 }
 
 /// Takes `turn` out of the sieve in an erasing transaction: its spans, its
@@ -237,9 +292,11 @@ pub(crate) fn erase_turn_in_txn(
     Ok(())
 }
 
-/// One bounded pass, in the caller's transaction: the turns owed a read
-/// first, then any turn that landed in the cursor's own second behind it, then
-/// new turns past the cursor.
+/// One bounded pass, in the caller's transaction: a read the text bound
+/// stopped reads on first, then the turns owed a read, then any turn that
+/// landed in the cursor's own second behind it, then new turns past the
+/// cursor, and last, on what the pass has left, the withheld turns a grant
+/// may now let it read.
 pub(crate) fn sieve_pass_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -249,48 +306,48 @@ pub(crate) fn sieve_pass_in_txn(
     // snapshot judges it.
     crate::ports::observe_clock_floor_in_txn(&vault.store, txn)?;
     let policy = policy::policy_in_txn(vault, txn)?;
+    let retry = RETRY.get(&vault.store, txn, &())?.unwrap_or_default();
     let reader = Reader {
         policy,
         policy_digest: policy.digest()?,
         rules: rules::Rules::new(),
         now,
+        epoch: retry.epoch,
         budget: Cell::new(policy.max_text_bytes_per_pass as usize),
+        segmented: Cell::new(false),
     };
     let mut pass = SievePass::default();
     let mut left = policy.max_turns_per_pass as usize;
-    let owed = OWED.scan_keys(&vault.store, txn, &[])?;
-    for turn in owed.iter().take(left) {
-        if reader.spent() {
-            pass.more = true;
-            return Ok(pass);
-        }
-        // An owed read admits the turn as the scans do: a turn the live
-        // sieve does not read (imported, or a role GATE-10 keeps out) keeps
-        // no spans here.
-        let read = if sieved_turn_in_txn(vault, txn, turn)? {
-            reader.read_in_txn(vault, txn, turn, &mut pass)?
-        } else {
-            pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;
-            Read::Gone
-        };
-        // A read the text bound cut stays owed; the next pass reads on.
-        if read == Read::Cut {
-            pass.more = true;
-            return Ok(pass);
-        }
-        OWED.delete(&vault.store, txn, turn)?;
-    }
-    if owed.len() >= left {
-        pass.more = true;
+    let continuing = first_keys(&vault.store, txn, &CONTINUE, left)?;
+    if !reader.listed_in_txn(vault, txn, &continuing, true, &mut left, &mut pass)? {
         return Ok(pass);
     }
-    left -= owed.len();
+    let owed = first_keys(&vault.store, txn, &OWED, left)?;
+    if !reader.listed_in_txn(vault, txn, &owed, false, &mut left, &mut pass)? {
+        return Ok(pass);
+    }
     let cursor = CURSOR.get(&vault.store, txn, &())?;
     if let Some(at) = cursor {
         left -= reader.sweep_late_in_txn(vault, txn, at, left, &mut pass)?;
     }
-    reader.scan_new_in_txn(vault, txn, cursor, left, &mut pass)?;
+    left -= reader.scan_new_in_txn(vault, txn, cursor, left, &mut pass)?;
+    reader.retry_in_txn(vault, txn, retry, left, &mut pass)?;
     Ok(pass)
+}
+
+/// The first `limit` turns of a table keyed by TURN id, and one more if
+/// there is one, so a pass that takes `limit` knows work is left.
+fn first_keys<V: 'static, C: side_table::SideCodec<V> + 'static>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    table: &SideTable<EntityId, V, C>,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    table
+        .iter_from(store, txn, &[])?
+        .take(limit.saturating_add(1))
+        .map(|row| row.map(|(turn, _)| turn))
+        .collect()
 }
 
 /// Whether the sieve reads this timeline row: a live TURN the Dreamer may
@@ -311,17 +368,24 @@ fn sieved_turn_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Re
     Ok(!facts.imported && crate::dreamer_runner::dreamer_extraction_role_admissible(role))
 }
 
-/// Removes a turn's reading and every span it queued.
+/// Takes `turn` out of the sieve's reads: its reading, its spans, the read
+/// it goes on with and its wait for a grant.
 fn retire_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<usize> {
     WITHHELD.delete(store, txn, turn)?;
-    let Some(held) = READ.get(store, txn, turn)? else {
-        return Ok(0);
-    };
-    for key in &held.spans {
+    retire_spans_in_txn(store, txn, turn)
+}
+
+/// Removes a turn's reading, every span it queued and the read it goes on
+/// with; returns how many spans went.
+fn retire_spans_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<usize> {
+    let spans = SPANS.scan_keys(store, txn, turn.as_bytes())?;
+    for (_, key) in &spans {
         QUEUE.delete(store, txn, key)?;
     }
+    SPANS.delete_from(store, txn, turn.as_bytes())?;
     READ.delete(store, txn, turn)?;
-    Ok(held.spans.len())
+    CONTINUE.delete(store, txn, turn)?;
+    Ok(spans.len())
 }
 
 /// One pass's fixed inputs, and the text it may still read.
@@ -330,13 +394,58 @@ struct Reader {
     policy_digest: [u8; 32],
     rules: rules::Rules,
     now: u64,
+    /// The grant epoch the pass reads at.
+    epoch: u64,
     /// Bytes of text left under the policy row's bound.
     budget: Cell<usize>,
+    /// Whether the pass has read a segment yet.
+    segmented: Cell<bool>,
 }
 
 impl Reader {
     fn spent(&self) -> bool {
         self.budget.get() == 0
+    }
+
+    /// Reads `turns` in order while the pass lasts: reads that go on
+    /// (`continues`), or turns owed a read. Returns whether the pass goes on
+    /// past them.
+    fn listed_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        turns: &[EntityId],
+        continues: bool,
+        left: &mut usize,
+        pass: &mut SievePass,
+    ) -> Result<bool> {
+        for turn in turns {
+            if *left == 0 || self.spent() {
+                pass.more = true;
+                return Ok(false);
+            }
+            *left -= 1;
+            // A listed turn is admitted as the scans admit it: a turn the
+            // live sieve does not read (imported, or a role GATE-10 keeps
+            // out) keeps no spans here.
+            let read = if !sieved_turn_in_txn(vault, txn, turn)? {
+                pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;
+                Read::Gone
+            } else if continues {
+                self.read_on_in_txn(vault, txn, turn, pass)?
+            } else {
+                self.read_in_txn(vault, txn, turn, pass)?
+            };
+            if !continues {
+                OWED.delete(&vault.store, txn, turn)?;
+            }
+            // A read the text bound cut goes on first in the next pass.
+            if read == Read::Cut {
+                pass.more = true;
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Reads the rows that landed in the cursor's own second after it moved
@@ -380,7 +489,6 @@ impl Reader {
                 Read::Gone => {}
                 Read::Whole => read += 1,
                 Read::Cut => {
-                    OWED.put(&vault.store, txn, id, &())?;
                     pass.more = true;
                     return Ok(read + 1);
                 }
@@ -390,8 +498,9 @@ impl Reader {
     }
 
     /// Reads new turns past the cursor, at most `left`, and moves the cursor
-    /// to the last row it stepped over. A turn already read is stepped over:
-    /// a new turn is owed its read from its birth, and a change is owed.
+    /// to the last row it stepped over; returns how many it read. A turn
+    /// already read is stepped over: a new turn is owed its read from its
+    /// birth, and a change is owed.
     fn scan_new_in_txn(
         &self,
         vault: &Vault,
@@ -399,7 +508,7 @@ impl Reader {
         cursor: Option<SieveCursor>,
         left: usize,
         pass: &mut SievePass,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let query = TimelineQuery {
             after: cursor.map(|at| EntityTime {
                 timestamp: at.learned_at,
@@ -428,301 +537,80 @@ impl Reader {
             }
             read += 1;
             if self.read_in_txn(vault, txn, &entry.id, pass)? == Read::Cut {
-                OWED.put(&vault.store, txn, &entry.id, &())?;
                 pass.more = true;
                 break;
             }
         }
         pass.more |= entries.len() == scan && last == entries.last().copied();
         let Some(last) = last else {
-            return Ok(());
+            return Ok(read);
         };
         let cursor = SieveCursor {
             learned_at: last.timestamp,
             turn: last.id,
         };
-        CURSOR.put(&vault.store, txn, &(), &cursor)
+        CURSOR.put(&vault.store, txn, &(), &cursor)?;
+        Ok(read)
     }
 
-    /// Reads `turn` once: a reading of the same words from the same name
-    /// source writes nothing; a new one replaces the turn's spans; a reading
-    /// the text bound stopped reads on from where it stopped. A turn that
-    /// reads gone loses its spans.
-    fn read_in_txn(
+    /// Reads again, on what the pass has left, the withheld turns read before
+    /// the latest grant: a sweep in turn order that keeps its place across
+    /// passes and steps over at most the policy row's scan of rows. A grant
+    /// written mid-sweep starts another sweep once this one ends, so a grant
+    /// neither restarts the sweep nor puts a turn ahead of new words.
+    fn retry_in_txn(
         &self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
-        turn: &EntityId,
+        mut retry: Retry,
+        left: usize,
         pass: &mut SievePass,
-    ) -> Result<Read> {
-        let store = &vault.store;
-        let Some(TurnChunks { chunks, withheld }) = turn_chunks_in_txn(vault, txn, turn)? else {
-            pass.spans_retired += retire_in_txn(store, txn, turn)?;
-            return Ok(Read::Gone);
-        };
-        let reading = chunks::reading_digest(&chunks);
-        let tags = crate::tagging::current_tags_in_txn(vault, txn, turn)?;
-        let names = tags.as_ref().map_or(
-            NameSource::Rules {
-                rules: RULES_VERSION,
-            },
-            |tags| NameSource::SavedTags {
-                envelope: envelope_digest(&tags.envelope),
-            },
-        );
-        let (mut keys, from) = match READ.get(store, txn, turn)? {
-            Some(held) if held.reading == reading && held.names == names => match held.next {
-                None => return Ok(Read::Whole),
-                Some(next) => (held.spans, next),
-            },
-            _ => {
-                pass.spans_retired += retire_in_txn(store, txn, turn)?;
-                pass.turns_read += 1;
-                (Vec::new(), Resume { chunk: 0, at: 0 })
-            }
-        };
-        // Words the Dreamer may not read wait for a grant.
-        if withheld {
-            WITHHELD.put(store, txn, turn, &())?;
-        } else {
-            WITHHELD.delete(store, txn, turn)?;
+    ) -> Result<()> {
+        if retry.done >= retry.epoch {
+            return Ok(());
         }
-        let tags = match (&tags, names) {
-            (Some(tags), NameSource::SavedTags { envelope }) => Some((tags, envelope)),
-            _ => None,
-        };
-        let before = keys.len();
-        let (queued, next) = self.queue_from(vault, txn, turn, &chunks, tags, from)?;
-        keys.extend(queued);
-        keys.sort_unstable();
-        keys.dedup();
-        pass.spans_queued += keys.len().saturating_sub(before);
-        let read = SievedTurn {
-            reading,
-            names,
-            spans: keys,
-            next,
-        };
-        READ.put(store, txn, turn, &read)?;
-        Ok(if next.is_some() {
-            Read::Cut
-        } else {
-            Read::Whole
-        })
-    }
-
-    /// Queues the spans of `chunks` from `from` on, one slice at a time
-    /// while the pass's text bound lasts. Returns their keys and where it
-    /// stopped, `None` once the last chunk is read.
-    fn queue_from(
-        &self,
-        vault: &Vault,
-        txn: &mut heed::RwTxn<'_>,
-        turn: &EntityId,
-        chunks: &[Chunk],
-        tags: Option<(&crate::tagging::TurnTags, [u8; 32])>,
-        from: Resume,
-    ) -> Result<(Vec<QueueKey>, Option<Resume>)> {
-        let mut keys = Vec::new();
-        for (index, chunk) in chunks.iter().enumerate().skip(from.chunk) {
-            let mut at = if index == from.chunk { from.at } else { 0 };
-            if at >= chunk.text.len() {
+        let mut sweep = retry.sweep.unwrap_or(Sweep {
+            epoch: retry.epoch,
+            after: None,
+        });
+        let scan = self.policy.max_scan_per_pass as usize;
+        let rows = WITHHELD
+            .iter_range(
+                &vault.store,
+                txn,
+                sweep
+                    .after
+                    .as_ref()
+                    .map_or(Bound::Unbounded, Bound::Excluded),
+                Bound::Unbounded,
+            )?
+            .take(scan)
+            .collect::<Result<Vec<_>>>()?;
+        let mut ended = rows.len() < scan;
+        let mut read = 0;
+        for (turn, epoch) in &rows {
+            if read >= left || self.spent() {
+                ended = false;
+                break;
+            }
+            sweep.after = Some(*turn);
+            if *epoch >= sweep.epoch {
                 continue;
             }
-            let code = rules::code_ranges(&chunk.text);
-            while at < chunk.text.len() {
-                let budget = self.budget.get();
-                if budget == 0 {
-                    return Ok((keys, Some(Resume { chunk: index, at })));
-                }
-                let end = slice_end(&chunk.text, at, budget);
-                for span in self.slice_spans(turn, chunk, &code, (at, end), tags) {
-                    let key = ((u32::MAX - span.score).to_be_bytes(), span.id);
-                    QUEUE.put(&vault.store, txn, &key, &span)?;
-                    keys.push(key);
-                }
-                self.budget.set(budget.saturating_sub(end - at));
-                at = end;
-            }
-        }
-        Ok((keys, None))
-    }
-
-    /// The spans of one slice `[from, to)` of a chunk: rule dates always,
-    /// rule names only when no saved tags stand in for them, and the saved
-    /// tag set's mentions that start in it, as refs into the tag set, which
-    /// keeps their labels and links.
-    fn slice_spans(
-        &self,
-        turn: &EntityId,
-        chunk: &Chunk,
-        code: &[(usize, usize)],
-        (from, to): (usize, usize),
-        tags: Option<(&crate::tagging::TurnTags, [u8; 32])>,
-    ) -> Vec<SieveSpan> {
-        let first = code.partition_point(|&(_, end)| end <= from);
-        let local: Vec<(usize, usize)> = code[first..]
-            .iter()
-            .take_while(|&&(start, _)| start < to)
-            .map(|&(start, end)| (start.max(from) - from, end.min(to) - from))
-            .collect();
-        let mut spans = Vec::new();
-        for span in self.rules.spans(&chunk.text[from..to], &local) {
-            let kind = if span.class.is_date() {
-                SpanKind::Date
-            } else if tags.is_none() {
-                SpanKind::Name
+            if sieved_turn_in_txn(vault, txn, turn)? {
+                read += 1;
+                self.read_in_txn(vault, txn, turn, pass)?;
             } else {
-                continue;
-            };
-            let origin = SpanOrigin::Rule {
-                rules: RULES_VERSION,
-                class: span.class,
-            };
-            let confidence = self.policy.rule_confidence(span.class);
-            let range = (from + span.start, from + span.end);
-            spans.push(self.span(turn, chunk, range, kind, origin, confidence));
-        }
-        let Some((tags, envelope)) = tags else {
-            return spans;
-        };
-        for (index, mention) in tags.mentions.iter().enumerate() {
-            if mention.message != chunk.source
-                || !(from..to).contains(&mention.start)
-                || chunk.text.get(mention.start..mention.end).is_none()
-            {
-                continue;
-            }
-            let origin = SpanOrigin::SavedTag {
-                envelope,
-                index: u32::try_from(index).unwrap_or(u32::MAX),
-            };
-            let confidence = percent(mention.confidence);
-            let range = (mention.start, mention.end);
-            spans.push(self.span(turn, chunk, range, SpanKind::Name, origin, confidence));
-        }
-        spans
-    }
-
-    fn span(
-        &self,
-        turn: &EntityId,
-        chunk: &Chunk,
-        (start, end): (usize, usize),
-        kind: SpanKind,
-        origin: SpanOrigin,
-        confidence: u8,
-    ) -> SieveSpan {
-        let start = u32::try_from(start).unwrap_or(u32::MAX);
-        let end = u32::try_from(end).unwrap_or(u32::MAX);
-        let mut id = blake3::Hasher::new();
-        id.update(b"oneiron:dreamer-sieve:span:v1");
-        id.update(turn.as_bytes());
-        id.update(chunk.source.as_bytes());
-        id.update(&start.to_be_bytes());
-        id.update(&end.to_be_bytes());
-        id.update(&chunk.digest);
-        match origin {
-            SpanOrigin::Rule { rules, class } => {
-                id.update(&[0, kind as u8, class as u8]);
-                id.update(&rules.to_be_bytes());
-            }
-            SpanOrigin::SavedTag { envelope, index } => {
-                id.update(&[1, kind as u8]);
-                id.update(&envelope);
-                id.update(&index.to_be_bytes());
+                pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;
             }
         }
-        let interest = match kind {
-            SpanKind::Date => self.policy.date_interest,
-            SpanKind::Name => self.policy.name_interest,
-        };
-        let band = if confidence < self.policy.uncertain_low {
-            SpanBand::Low
-        } else if confidence < self.policy.uncertain_high {
-            SpanBand::Uncertain
+        if ended {
+            retry.done = sweep.epoch;
+            retry.sweep = None;
         } else {
-            SpanBand::Sure
-        };
-        let mut owed = vec![SieveRung::Novelty];
-        if band == SpanBand::Uncertain {
-            owed.push(SieveRung::Typing);
+            retry.sweep = Some(sweep);
         }
-        SieveSpan {
-            id: *id.finalize().as_bytes(),
-            turn: *turn,
-            source: chunk.source,
-            start,
-            end,
-            kind,
-            origin,
-            source_digest: chunk.digest,
-            policy_digest: self.policy_digest,
-            confidence,
-            score: interest.saturating_mul(u32::from(confidence)),
-            band,
-            owed,
-            queued_at: self.now,
-        }
+        pass.more |= retry.done < retry.epoch;
+        RETRY.put(&vault.store, txn, &(), &retry)
     }
-}
-
-/// Where a slice of `text` read from `at` ends: within `budget` bytes, after
-/// the last line break in reach, else the last sentence end, else the last
-/// space. A word longer than the bound runs on to its end, so no word is cut.
-fn slice_end(text: &str, at: usize, budget: usize) -> usize {
-    let rest = &text[at..];
-    if rest.len() <= budget {
-        return text.len();
-    }
-    let mut reach = budget;
-    while !rest.is_char_boundary(reach) {
-        reach -= 1;
-    }
-    if reach == 0 {
-        reach = rest.chars().next().map_or(rest.len(), char::len_utf8);
-    }
-    let window = &rest[..reach];
-    let back = || window.char_indices().rev();
-    let after = |found: Option<(usize, char)>| found.map(|(index, ch)| index + ch.len_utf8());
-    let cut = after(back().find(|&(_, ch)| ch == '\n'))
-        .or_else(|| after(back().find(|&(index, ch)| ends_sentence(window, index, ch))))
-        .or_else(|| after(back().find(|&(_, ch)| ch.is_whitespace())));
-    match cut {
-        Some(cut) => at + cut,
-        None => rest[reach..]
-            .find(char::is_whitespace)
-            .map_or(text.len(), |space| at + reach + space),
-    }
-}
-
-/// Whether the character at `index` of `text` ends a sentence: a CJK full
-/// stop, or `.`, `!` or `?` before a space.
-fn ends_sentence(text: &str, index: usize, ch: char) -> bool {
-    matches!(ch, '。' | '！' | '？')
-        || (matches!(ch, '.' | '!' | '?') && text[index + 1..].starts_with(char::is_whitespace))
-}
-
-fn percent(confidence: f32) -> u8 {
-    if confidence.is_nan() {
-        return 0;
-    }
-    let scaled = (confidence.clamp(0.0, 1.0) * 100.0).round();
-    // In range by the clamp above.
-    scaled as u8
-}
-
-fn envelope_digest(envelope: &crate::tagging::DerivationEnvelope) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:dreamer-sieve:tag-envelope:v1");
-    for field in [
-        &envelope.content_hash,
-        &envelope.model_id,
-        &envelope.version,
-        &envelope.params_hash,
-    ] {
-        hash.update(&(field.len() as u64).to_be_bytes());
-        hash.update(field.as_bytes());
-    }
-    *hash.finalize().as_bytes()
 }

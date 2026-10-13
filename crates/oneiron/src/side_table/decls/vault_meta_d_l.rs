@@ -126,16 +126,23 @@ side_tables! {
     /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
     /// successors. Key: id16.
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
+    /// A TURN whose sieve read the pass's text bound stopped, with the chunks it reads on in.
+    /// Key: id16(turn).
+    DREAMER_SIEVE_CONTINUE: VaultMeta b"dreamer:sieve:continue:v1:" Named;
     /// Where the continuous sieve stands on the TURN timeline. Key: ().
     DREAMER_SIEVE_CURSOR: VaultMeta b"dreamer:sieve:cursor:v1" Named;
-    /// A TURN owed a new sieve read (changed words or saved tags). Key: id16(turn).
+    /// A TURN owed a new sieve read (new, changed words or saved tags). Key: id16(turn).
     DREAMER_SIEVE_OWED: VaultMeta b"dreamer:sieve:owed:v1:" Raw;
     /// The sieve's interest queue, one span per row. Key: u32be(inverted score) + hash32(span).
     DREAMER_SIEVE_QUEUE: VaultMeta b"dreamer:sieve:queue:v1:" Named;
-    /// What the sieve last read of one TURN and the queue keys of its spans. Key: id16(turn).
+    /// The sieve's grant epoch and its sweep over the withheld turns. Key: ().
+    DREAMER_SIEVE_RETRY: VaultMeta b"dreamer:sieve:retry:v1" Named;
+    /// One queued span of a TURN. Key: id16(turn) + u32be(inverted score) + hash32(span).
+    DREAMER_SIEVE_SPANS: VaultMeta b"dreamer:sieve:spans:v1:" Raw;
+    /// What the sieve last read of one TURN. Key: id16(turn).
     DREAMER_SIEVE_TURN: VaultMeta b"dreamer:sieve:turn:v1:" Named;
-    /// A TURN the sieve read with a MESSAGE the Dreamer may not read, owed again when a grant is
-    /// written. Key: id16(turn).
+    /// A TURN the sieve read with a MESSAGE the Dreamer may not read, and the grant epoch it was
+    /// read at (u64be). Key: id16(turn).
     DREAMER_SIEVE_WITHHELD: VaultMeta b"dreamer:sieve:withheld:v1:" Raw;
     /// Dreamer step index rows, plus the 'i:' sub-index. Key: bytes.
     DREAMER_STEP_INDEX: VaultMeta b"dreamer:step_index:v1:" Raw;

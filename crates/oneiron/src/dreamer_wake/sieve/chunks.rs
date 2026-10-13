@@ -1,6 +1,8 @@
 //! A TURN's words as the sieve reads them: one chunk per source row, each
 //! with the digest that versions it, read through the Dreamer's own gate.
 
+use serde::{Deserialize, Serialize};
+
 use crate::dreamer_consolidation::{decode_turn_body, dreamer_may_read_messages_in};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
@@ -17,7 +19,24 @@ pub(crate) struct Chunk {
     pub(crate) digest: [u8; 32],
 }
 
+/// A chunk as a read that stopped in it holds it: its source, its digest
+/// and its length, so the read goes on without hashing it again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ChunkRef {
+    pub(crate) source: EntityId,
+    pub(crate) digest: [u8; 32],
+    pub(crate) len: u64,
+}
+
 impl Chunk {
+    pub(crate) fn held(&self) -> ChunkRef {
+        ChunkRef {
+            source: self.source,
+            digest: self.digest,
+            len: self.text.len() as u64,
+        }
+    }
+
     fn new(source: EntityId, text: String) -> Self {
         let digest = *blake3::Hasher::new()
             .update(b"oneiron:dreamer-sieve:chunk:v1")
@@ -71,12 +90,7 @@ pub(crate) fn turn_chunks_in_txn(
         }));
     }
     let ids: Vec<EntityId> = members.iter().map(|(message, _)| *message).collect();
-    let readable = match dreamer_may_read_messages_in(vault, txn, &ids) {
-        Ok(readable) => readable,
-        // A read the gate refuses as a whole reads none of them.
-        Err(Error::InvalidClaimBody(_)) => vec![false; ids.len()],
-        Err(error) => return Err(error),
-    };
+    let readable = readable_in(vault, txn, &ids)?;
     let mut withheld = false;
     let mut chunks = Vec::with_capacity(members.len());
     for ((message, text), readable) in members.into_iter().zip(readable) {
@@ -92,8 +106,47 @@ pub(crate) fn turn_chunks_in_txn(
     Ok(Some(TurnChunks { chunks, withheld }))
 }
 
+/// The text of one chunk of `turn`, read as [`turn_chunks_in_txn`] reads it,
+/// for a read that goes on in it: `None` when the turn or the source no
+/// longer reads, or the Dreamer may no longer read it.
+pub(crate) fn chunk_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    source: &EntityId,
+) -> Result<Option<String>> {
+    let live = match live_entity_row_in_txn(&vault.store, txn, turn)? {
+        LiveEntityRow::Live { entity_type, .. } => entity_type == ENTITY_TYPE_TURN,
+        _ => false,
+    };
+    if !live || vault.archive_tombstone_in_txn(txn, turn)?.is_some() {
+        return Ok(None);
+    }
+    if source == turn {
+        let body = crate::ports::safe_read_text(vault, txn, turn)?;
+        return Ok(body.and_then(|body| decode_turn_body(&body).text));
+    }
+    if vault.archive_tombstone_in_txn(txn, source)?.is_some()
+        || readable_in(vault, txn, &[*source])? != [true]
+    {
+        return Ok(None);
+    }
+    let body = crate::ports::safe_read_text(vault, txn, source)?;
+    Ok(body.and_then(|body| crate::tagging::shown_message_text(&body)))
+}
+
+/// Which of `messages` the Dreamer may read.
+fn readable_in(vault: &Vault, txn: &heed::RoTxn<'_>, messages: &[EntityId]) -> Result<Vec<bool>> {
+    match dreamer_may_read_messages_in(vault, txn, messages) {
+        Ok(readable) => Ok(readable),
+        // A read the gate refuses as a whole reads none of them.
+        Err(Error::InvalidClaimBody(_)) => Ok(vec![false; messages.len()]),
+        Err(error) => Err(error),
+    }
+}
+
 /// The version of a whole reading: every chunk's source and digest, in order.
-pub(super) fn reading_digest(chunks: &[Chunk]) -> [u8; 32] {
+pub(super) fn reading_digest(chunks: &[ChunkRef]) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     hash.update(b"oneiron:dreamer-sieve:reading:v1");
     hash.update(&(chunks.len() as u64).to_be_bytes());

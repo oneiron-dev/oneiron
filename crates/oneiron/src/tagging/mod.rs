@@ -74,7 +74,7 @@ pub(crate) use provisional::{refuse_held_id_in_txn, release_held_id_in_txn};
 pub(crate) use save::save_shadow_output_in_txn;
 pub(crate) use tags::{
     current_tags_in_txn, erase_in_txn, erase_scope_exists_in_txn, saved_turn_mood_in_txn,
-    tear_in_txn,
+    tag_set_in_txn, tear_in_txn,
 };
 
 #[cfg(test)]

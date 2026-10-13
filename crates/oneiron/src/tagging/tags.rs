@@ -306,7 +306,9 @@ impl Vault {
     }
 }
 
-pub(super) fn tag_set_in_txn(
+/// The tag set saved for `turn` as it is stored: whether it still indexes
+/// the turn's words is the caller's to know.
+pub(crate) fn tag_set_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
