@@ -1113,6 +1113,67 @@ async fn a_cancel_receipt_off_this_device_is_released_by_the_task_it_cancelled()
     assert_mcp_structured_error(&changed, "mcp_result_changed");
 }
 
+/// Sol R8 F6: under an estimate a native query reads one row past its page
+/// and counts it, so that row is a producer of the result though the page
+/// leaves it out. Flagged after the read and before the result is released,
+/// its world keeps the result on this device: the caller reads that its
+/// result changed. While the world is portable the page and its count go out.
+#[tokio::test]
+async fn a_query_off_this_device_is_released_by_the_row_it_counts_past_its_page() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let actor = EntityId::now();
+    register_mcp_actor(&server, "counts", actor, oneiron::EdgeActorClass::Human).await;
+    let world = put_world(&server.vault);
+    let shown = put_orchid_claim(
+        &server,
+        actor,
+        "test.orchid_shown",
+        None,
+        "orchid orchid orchid",
+    );
+    put_orchid_claim(
+        &server,
+        actor,
+        "test.orchid_counted",
+        Some(world),
+        "orchid ledger counted past the page",
+    );
+    index(&server);
+    let query = || {
+        let server = Arc::clone(&server);
+        let arguments = mcp_merge_args(
+            mcp_endpoint_envelope(actor, "read_board"),
+            json!({"arguments": {"request": {
+                "query": "orchid",
+                "limit": 1,
+                "countMode": "estimate",
+            }}}),
+        );
+        async move {
+            let request = mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                "counts",
+                "counts",
+                "memory.query",
+                arguments,
+            );
+            route_json(server, request).await.1
+        }
+    };
+    let portable = query().await;
+    let response = &portable["result"]["structuredContent"]["output"]["response"];
+    assert_eq!(response["items"][0]["id"], shown.to_hex(), "{portable}");
+    assert_eq!(response["meta"]["total"], 2, "{portable}");
+
+    crate::api::mcp_gateway::release_hook::arm(world);
+    let changed = query().await;
+    assert!(changed.get("result").is_none(), "{changed}");
+    assert_mcp_structured_error(&changed, "mcp_result_changed");
+}
+
 /// Sol R3 F5: an agent's standing block is pinned to one world. Once that
 /// world is device-local, a board off this device takes no block of it: the
 /// agent reads as one with no standing block, and the world is never named.

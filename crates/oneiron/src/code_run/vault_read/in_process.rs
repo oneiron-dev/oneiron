@@ -40,6 +40,7 @@ use super::validate::{
 /// open a fresh reader so request-local audience state is never retained.
 pub struct InProcessVaultReadAdapter<'v> {
     scoped_read: ScopedRead<'v>,
+    producers: Option<&'v crate::memory::ProducerRows>,
 }
 
 impl<'v> InProcessVaultReadAdapter<'v> {
@@ -49,7 +50,17 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     pub fn new(vault: &'v Vault, actor_key: ScopedReadActorKey) -> Self {
         Self {
             scoped_read: vault.scoped_read(actor_key),
+            producers: None,
         }
+    }
+
+    /// Lists in `producers` every row a query reads, the ones its count
+    /// takes in but its page leaves out among them, for a host that judges
+    /// the answer again before it leaves this device (DEC-0005).
+    #[must_use]
+    pub fn listing_producers(mut self, producers: &'v crate::memory::ProducerRows) -> Self {
+        self.producers = Some(producers);
+        self
     }
 
     fn run_query(
@@ -83,6 +94,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             request.query_vector.as_deref(),
             fetch_limit,
         )?;
+        if let Some(producers) = self.producers {
+            producers.list(admitted.value.iter().map(|result| result.id));
+        }
         let mut narrowing = admitted.receipt;
         let projected = self
             .scoped_read
@@ -505,10 +519,12 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
     ) -> VaultReadResult<VaultReadResponse> {
         // Keep request-local reader state isolated. Policy is re-resolved in
         // each body snapshot, so a retained actor binding is not retained authority.
-        let reader = Self::new(
+        // The fresh reader lists into the host's producer set.
+        let mut reader = Self::new(
             self.scoped_read.vault(),
             self.scoped_read.actor_key().clone(),
         );
+        reader.producers = self.producers;
         match request.into_inner() {
             VaultReadRequest::Query(request) => {
                 reader.query_op(&request).map(VaultReadResponse::Query)

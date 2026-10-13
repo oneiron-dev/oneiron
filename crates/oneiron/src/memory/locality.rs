@@ -9,7 +9,9 @@ use crate::entity_id::EntityId;
 ///
 /// A read that picks rows itself, ones its caller never named, lists them
 /// here as it reads: a room thread's TASKs and their results, the TASK an ask
-/// takes its class from. A host lists the rows its caller names by ref.
+/// takes its class from, every row a native query reads, the ones it counts
+/// but does not return among them. A host lists the rows its caller names by
+/// ref.
 #[derive(Debug, Default)]
 pub struct ProducerRows(std::sync::Mutex<Vec<EntityId>>);
 
@@ -18,6 +20,11 @@ impl ProducerRows {
     #[must_use]
     pub fn take(&self) -> Vec<EntityId> {
         std::mem::take(&mut *self.rows())
+    }
+
+    /// Lists `rows` as producers of the answer being read.
+    pub(crate) fn list(&self, rows: impl IntoIterator<Item = EntityId>) {
+        self.rows().extend(rows);
     }
 
     fn rows(&self) -> std::sync::MutexGuard<'_, Vec<EntityId>> {
@@ -61,7 +68,7 @@ impl Memory<'_> {
     /// collects them ([`Memory::listing_producers`]).
     pub(crate) fn produced_from(&self, rows: impl IntoIterator<Item = EntityId>) {
         if let Some(producers) = self.producers {
-            producers.rows().extend(rows);
+            producers.list(rows);
         }
     }
 

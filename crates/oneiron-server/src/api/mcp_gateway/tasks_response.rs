@@ -154,8 +154,9 @@ pub(crate) async fn execute_mcp_generated_verb(
             )
         } else {
             let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
-                let (output, capabilities) =
+                let (output, capabilities, producers) =
                     super::memory_response::execute(server, &args, actor).await?;
+                served.extend(producers);
                 // One native response, with its own bounded query/batch
                 // semantics. Do not invent an MCP cursor over nested DTOs.
                 (
