@@ -1,9 +1,10 @@
 //! World privacy P1 acceptance in the authority fold: who may answer for a
 //! machine, and which other authority facts take a machine's standing away
 //! in every arrival order.
+use super::history_transfer::re_root_entry;
 use super::machine_identity::{Host, host, request_for};
 use super::support::{
-    authority_key_from_ed, device, ed_key, genesis_entry, rotate_entry, sign_ed, unsigned_entry,
+    authority_key_from_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
 };
 use super::*;
 use crate::registry::ENTITY_TYPE_MACHINE;
@@ -489,16 +490,16 @@ fn a_retired_root_signs_no_machine_standing() {
     }
 }
 
-/// A key rotated away by hand has no handoff fence: a mark it signs on a
-/// branch that never saw the rotation stands only for the stale-roster
-/// window, while the marks of the key it rotated to keep their standing.
+/// A mark the root signed before its handoff rests on a key the handoff
+/// revoked. Unless the new root signs that standing again, as `re_root_host`
+/// does, the machine stands only for the stale-roster window, while the new
+/// root's own marks keep their standing.
 #[test]
-fn a_rotated_keys_mark_never_outlives_the_stale_window() {
+fn an_uncarried_mark_never_outlives_the_stale_window() {
     let old = ed_key(96);
-    let rotated = ed_key(97);
+    let next = ed_key(97);
     let genesis = genesis_entry(96, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let id = genesis_vault_id(&genesis).unwrap();
-    let rotation = rotate_entry(id, &genesis, &old, authority_key_from_ed(&old), 97, 1);
     let mark = |parent: &AuthorityLogEntry, signer: &SigningKey, seq, machine, key: u8| {
         let request = request_for(id, machine, &ed_key(key));
         sign_ed(
@@ -523,12 +524,10 @@ fn a_rotated_keys_mark_never_outlives_the_stale_window() {
         )
     };
     let (stale, kept) = (EntityId::now(), EntityId::now());
-    let entries = [
-        mark(&genesis, &old, 2, stale, 98),
-        mark(&rotation, &rotated, 1, kept, 99),
-        rotation,
-        genesis,
-    ];
+    let stale_mark = mark(&genesis, &old, 1, stale, 98);
+    let handoff = re_root_entry(id, &stale_mark, &old, 2, &next);
+    let kept_mark = mark(&handoff, &next, 1, kept, 99);
+    let entries = [kept_mark, handoff, stale_mark, genesis];
     let first_seen: BTreeMap<_, _> = entries
         .iter()
         .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
