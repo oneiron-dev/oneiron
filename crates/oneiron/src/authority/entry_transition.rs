@@ -144,7 +144,9 @@ pub(super) fn fold_entry_state(
     // Signed by a machine's install key, never a roster key: the owner's
     // signed "yours" mark is what makes the machine speak for the owner.
     if let AuthorityOp::WorldPrivacy(edit) = &entry.op {
-        if let Err(issue) = apply_world_privacy(&mut state, entry, edit, hash) {
+        if let Err(issue) =
+            apply_world_privacy(&mut state, entry, edit, hash, context.machine_standing)
+        {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);

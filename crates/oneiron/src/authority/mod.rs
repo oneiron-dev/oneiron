@@ -158,7 +158,7 @@ use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 use tier_floor::*;
 pub use world_privacy::{
     Destination, EffectiveModelOrder, EffectiveRead, EffectiveWorldPrivacy, FoldedWorld,
+    WorldEditStanding,
 };
 use world_privacy::{WorldFrontier, apply_world_privacy, merge_world_frontiers};
-pub(crate) use world_privacy_door::WorldPrivacyChange;
 pub use world_privacy_door::{EditOrigin, WorldPrivacyView, world_readable_on_machine_in};

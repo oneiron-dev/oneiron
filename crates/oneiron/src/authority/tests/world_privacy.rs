@@ -8,7 +8,7 @@ use super::*;
 use crate::registry::ENTITY_TYPE_WORLD;
 use crate::{Vault, VaultConfig};
 
-fn world_row(host: &Host) -> EntityId {
+pub(super) fn world_row(host: &Host) -> EntityId {
     let world = EntityId::now();
     host.vault
         .put_entity(
@@ -23,7 +23,7 @@ fn world_row(host: &Host) -> EntityId {
 }
 
 /// Enrols this install as one of the owner's machines.
-fn enrol_here(host: &Host) -> EntityId {
+pub(super) fn enrol_here(host: &Host) -> EntityId {
     let request = host
         .vault
         .machine_enrolment_request(host.vault_id, encryption_key())
@@ -40,7 +40,7 @@ fn enrol_here(host: &Host) -> EntityId {
 }
 
 /// Another machine of the owner's answer `role`, whose install key the test holds.
-fn other_machine(host: &Host, seed: u8, role: MachineRole) -> (EntityId, SigningKey) {
+pub(super) fn other_machine(host: &Host, seed: u8, role: MachineRole) -> (EntityId, SigningKey) {
     let key = ed_key(seed);
     let machine = EntityId::now();
     host.vault
@@ -54,14 +54,14 @@ fn other_machine(host: &Host, seed: u8, role: MachineRole) -> (EntityId, Signing
     (machine, key)
 }
 
-fn settings(read: ReadLocation) -> WorldPrivacy {
+pub(super) fn settings(read: ReadLocation) -> WorldPrivacy {
     WorldPrivacy {
         read,
         ..WorldPrivacy::default()
     }
 }
 
-fn set(
+pub(super) fn set(
     host: &Host,
     origin: EditOrigin,
     world: EntityId,
@@ -72,9 +72,9 @@ fn set(
         .map(|_| ())
 }
 
-/// An edit `key` signs as `machine`, on the host's current heads and the
-/// world's live edits: what that machine's own door would sign.
-fn edit_by(
+/// An edit `key` signs as `machine`, on the host's main-log heads and the
+/// world's side heads: what that machine's own door would sign.
+pub(super) fn edit_by(
     host: &Host,
     machine: EntityId,
     key: &SigningKey,
@@ -85,8 +85,8 @@ fn edit_by(
     let signer = authority_key_from_ed(key);
     let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
     let mut parents = fold.append_heads.clone();
-    if let Some(folded) = fold.worlds.get(&world) {
-        parents.extend(folded.live.keys().copied());
+    if let Some(side) = fold.side_heads.get(&world) {
+        parents.extend(side.iter().copied());
     }
     sign_ed(
         unsigned_entry(
@@ -106,17 +106,17 @@ fn edit_by(
     )
 }
 
-fn land(host: &Host, entries: &[AuthorityLogEntry]) {
+pub(super) fn land(host: &Host, entries: &[AuthorityLogEntry]) {
     let at = TimeRange { start: 2, end: 2 };
     let rows: Vec<_> = entries.iter().map(|entry| (entry.clone(), at, 2)).collect();
     host.vault.put_authority_log_entries(&rows).unwrap();
 }
 
-fn read_of(host: &Host, world: EntityId) -> EffectiveRead {
+pub(super) fn read_of(host: &Host, world: EntityId) -> EffectiveRead {
     host.vault.world_privacy(world).unwrap().read
 }
 
-fn stored_entries(vault: &Vault) -> Vec<AuthorityLogEntry> {
+pub(super) fn stored_entries(vault: &Vault) -> Vec<AuthorityLogEntry> {
     let txn = vault.store.env.read_txn().unwrap();
     authority_log_rows_in_txn(&vault.store, &txn)
         .unwrap()
@@ -468,7 +468,70 @@ fn a_machine_removed_while_it_widened_never_widens() {
 }
 
 #[test]
-fn a_replica_without_a_worlds_edits_folds_the_same_main_log() {
+fn a_machine_that_loses_standing_never_widens_a_world() {
+    let host = host();
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let (b, b_key) = other_machine(&host, 77, yours);
+    let (c, c_key) = other_machine(&host, 78, yours);
+    let (laptop, laptop_key) = other_machine(&host, 79, yours);
+
+    // The laptop narrows a world, and the owner demotes it without having
+    // seen that edit: the narrowing stays.
+    let narrowed = world_row(&host);
+    let narrow = edit_by(
+        &host,
+        laptop,
+        &laptop_key,
+        narrowed,
+        settings(ReadLocation::MyMachines),
+    );
+    host.vault
+        .set_machine_role(
+            &host.issuer,
+            &host.owner,
+            laptop,
+            MachineRole::Owned(MachineOwnership::WorkSchool),
+        )
+        .unwrap();
+    land(&host, &[narrow]);
+    assert_eq!(read_of(&host, narrowed), EffectiveRead::MyMachines);
+
+    // Another machine of the owner's widens a second world.
+    let widened = world_row(&host);
+    land(
+        &host,
+        &[edit_by(
+            &host,
+            b,
+            &b_key,
+            widened,
+            settings(ReadLocation::MyMachines),
+        )],
+    );
+    land(
+        &host,
+        &[edit_by(
+            &host,
+            c,
+            &c_key,
+            widened,
+            settings(ReadLocation::Everywhere),
+        )],
+    );
+    assert_eq!(read_of(&host, widened), EffectiveRead::Everywhere);
+
+    // An install that does not count the laptop or that machine keeps the
+    // narrowing and never takes the widening.
+    let entries = stored_entries(&host.vault);
+    let fold = fold_authority_log_with_machine_standing(&entries, &|_, folded| {
+        ![laptop, c].contains(&folded.profile.machine)
+    });
+    assert_eq!(fold.world_privacy(narrowed).read, EffectiveRead::MyMachines);
+    assert_eq!(fold.world_privacy(widened).read, EffectiveRead::MyMachines);
+}
+
+#[test]
+fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     let host = host();
     let here = enrol_here(&host);
     let world = world_row(&host);
@@ -476,26 +539,71 @@ fn a_replica_without_a_worlds_edits_folds_the_same_main_log() {
         &host,
         EditOrigin::ThisMachine,
         world,
+        ReadLocation::MyMachines,
+    )
+    .unwrap();
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
         ReadLocation::OneMachine(here),
     )
     .unwrap();
-    // The main log moves on after the edit.
-    let (later, _) = other_machine(&host, 71, MachineRole::Owned(MachineOwnership::Yours));
+    // The main log moves on after the edits.
+    let (later, later_key) = other_machine(&host, 71, MachineRole::Owned(MachineOwnership::Yours));
 
     let entries = stored_entries(&host.vault);
     let (edits, main): (Vec<_>, Vec<_>) = entries
         .iter()
         .cloned()
         .partition(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)));
-    assert_eq!(edits.len(), 1);
+    assert_eq!(edits.len(), 2);
+    let edit_hashes: BTreeSet<_> = edits
+        .iter()
+        .map(|entry| authority_entry_hash(entry).unwrap())
+        .collect();
     let full = fold_authority_log(&entries);
     let without = fold_authority_log(&main);
     assert_eq!(full.append_heads, without.append_heads);
     assert_eq!(full.machines, without.machines);
+    assert_eq!(full.roster, without.roster);
+    assert_eq!(full.actor_bindings, without.actor_bindings);
+    assert_eq!(
+        full.valid_entries
+            .difference(&edit_hashes)
+            .copied()
+            .collect::<BTreeSet<_>>(),
+        without.valid_entries
+    );
     assert!(without.machine(later).is_some_and(FoldedMachine::is_mine));
-    let edit = authority_entry_hash(&edits[0]).unwrap();
-    assert!(!full.append_heads.contains(&edit));
+    assert!(without.side_heads.is_empty());
+    // The second edit took the first as its parent: one side head, never a
+    // main-log head.
+    let edit = *full.side_heads[&world].first().unwrap();
+    assert_eq!(full.side_heads[&world], BTreeSet::from([edit]));
+    assert!(full.append_heads.is_disjoint(&edit_hashes));
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
+
+    // Another world's entry may not hang off this world's side head.
+    let other_world = world_row(&host);
+    let mut crossing = edit_by(
+        &host,
+        later,
+        &later_key,
+        other_world,
+        settings(ReadLocation::MyMachines),
+    );
+    crossing.parent_hashes.push(edit);
+    let crossing = sign_ed(crossing, &later_key);
+    land(&host, &[crossing.clone()]);
+    let fold = host.vault.authority_fold().unwrap();
+    let crossing = authority_entry_hash(&crossing).unwrap();
+    assert!(!fold.valid_entries.contains(&crossing));
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::InvalidEntry(crossing))
+    );
+    assert_eq!(read_of(&host, other_world), EffectiveRead::Everywhere);
 
     // A main-log entry may not hang off a world edit.
     let stray = EntityId::now();

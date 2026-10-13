@@ -12,7 +12,18 @@
 //! An edit by a machine that is no longer the owner's counts at full strength
 //! only if the revision that took "yours" away had seen it. One it never saw
 //! raced the demotion (a stolen laptop widening a world offline) and counts
-//! only as its meet with the settings it replaced.
+//! only as its meet with the settings it replaced. So does an edit whose
+//! machine the roster rule admits but this install does not count: losing
+//! standing never widens a world.
+//!
+//! A world whose read names no machine still the owner's is orphaned: any
+//! machine of the owner's that stores it may re-pick it. A re-pick only makes
+//! the world editable again; bringing its rows back is a restore's job.
+//!
+//! Edits are per-world side entries. An entry for world W takes main-log heads
+//! and W's own side heads as parents and is never a parent of a main-log entry
+//! or of another world's entry, so a replica that may not hold W folds the
+//! main log without W's entries.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -104,6 +115,71 @@ impl AuthorityFold {
     }
 }
 
+/// How a machine of the owner's comes to edit a world, judged on the world's
+/// effective read at the edit's parents. The door and the fold ask this one
+/// rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldEditStanding {
+    /// The world is readable on the machine.
+    Holds,
+    /// The machine is one of a conflict's contenders.
+    Contends,
+    /// No machine the world's read names is still the owner's.
+    RepicksOrphan,
+}
+
+impl AuthorityFold {
+    /// How `machine` may edit `world` now, or `None` when it may not.
+    #[must_use]
+    pub fn world_edit_standing(
+        &self,
+        machine: EntityId,
+        world: EntityId,
+    ) -> Option<WorldEditStanding> {
+        edit_standing(&self.world_privacy(world).read, machine, |id| {
+            self.machine(id).is_some_and(FoldedMachine::is_mine)
+        })
+    }
+}
+
+fn edit_standing(
+    read: &EffectiveRead,
+    machine: EntityId,
+    is_mine: impl Fn(EntityId) -> bool,
+) -> Option<WorldEditStanding> {
+    if !is_mine(machine) {
+        return None;
+    }
+    if readable(read, Destination::Machine(machine), &is_mine) {
+        return Some(WorldEditStanding::Holds);
+    }
+    match read {
+        EffectiveRead::Conflicted { contenders } if contenders.contains(&machine) => {
+            Some(WorldEditStanding::Contends)
+        }
+        _ if !orphaned_from(read, &is_mine).is_empty() => Some(WorldEditStanding::RepicksOrphan),
+        _ => None,
+    }
+}
+
+/// The machines `read` names when none of them is still the owner's; empty
+/// when the world is not orphaned.
+pub(super) fn orphaned_from(
+    read: &EffectiveRead,
+    is_mine: impl Fn(EntityId) -> bool,
+) -> BTreeSet<EntityId> {
+    let named = match read {
+        EffectiveRead::OneMachine(machine) => BTreeSet::from([*machine]),
+        EffectiveRead::Conflicted { contenders } => contenders.clone(),
+        EffectiveRead::Everywhere | EffectiveRead::MyMachines => return BTreeSet::new(),
+    };
+    if named.iter().any(|machine| is_mine(*machine)) {
+        BTreeSet::new()
+    } else {
+        named
+    }
+}
+
 fn readable(
     read: &EffectiveRead,
     destination: Destination,
@@ -119,6 +195,14 @@ fn readable(
         EffectiveRead::OneMachine(only) => machine == Some(*only),
         EffectiveRead::Conflicted { .. } => false,
     }
+}
+
+/// Whether this install counts a machine the roster rule admits as the
+/// owner's. Every one today; an owner anchor narrows it per install.
+pub(super) type MachineStanding<'a> = &'a dyn Fn(&FoldState, &FoldedMachine) -> bool;
+
+pub(super) fn every_admitted_machine(_: &FoldState, _: &FoldedMachine) -> bool {
+    true
 }
 
 /// The settings lattice one edit, or a meet of edits, stands for. Each part
@@ -199,6 +283,8 @@ pub(super) struct FrontierEdit {
     machine: EntityId,
     /// The world's settings at the edit's parents, which it replaced.
     prior: PrivacyMeet,
+    /// This install did not count the machine at the edit's parents.
+    narrow_only: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -237,7 +323,7 @@ fn contribution(state: &FoldState, hash: &AuthorityEntryHash, edit: &FrontierEdi
                 && folded.profile.seen_world_edits.contains(hash)
                 && (!folded.removed || folded.profile.role == MachineRole::Removed))
     });
-    if seen_by_demotion {
+    if seen_by_demotion && !edit.narrow_only {
         own
     } else {
         own.meet(&edit.prior)
@@ -257,30 +343,22 @@ fn world_meet(state: &FoldState, world: EntityId) -> PrivacyMeet {
     contributions.fold(first, |meet, next| meet.meet(&next))
 }
 
-/// A machine edits a world only while it is the owner's and holds the world,
-/// or while it is one of a conflict's contenders, which is how the owner
-/// re-picks.
 fn may_edit(state: &FoldState, machine: EntityId, world: EntityId) -> bool {
-    if !is_mine(state, machine) {
-        return false;
-    }
     let read = world_meet(state, world).effective().read;
-    match &read {
-        EffectiveRead::Conflicted { contenders } => contenders.contains(&machine),
-        _ => readable(&read, Destination::Machine(machine), |id| {
-            is_mine(state, id)
-        }),
-    }
+    edit_standing(&read, machine, |id| is_mine(state, id)).is_some()
 }
 
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster check:
-/// its signer is a machine's install key, never a roster key.
+/// its signer is a machine's install key, never a roster key. Validity and
+/// standing follow the roster rule, so every install keeps the same edits;
+/// `standing` only weakens one this install does not count.
 pub(super) fn apply_world_privacy(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
     edit: &WorldPrivacyEdit,
     hash: AuthorityEntryHash,
+    standing: MachineStanding<'_>,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     if !entry.cosigns.is_empty() || edit.world == crate::claim::base_world_id() {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
@@ -310,6 +388,8 @@ pub(super) fn apply_world_privacy(
         return Ok(());
     }
     let prior = world_meet(state, edit.world);
+    let narrow_only =
+        !derived_machine(state, edit.machine).is_some_and(|folded| standing(state, &folded));
     let frontier = state.worlds.entry(edit.world).or_default();
     let seen = std::mem::take(&mut frontier.live);
     frontier.superseded.extend(seen.into_keys());
@@ -319,6 +399,7 @@ pub(super) fn apply_world_privacy(
             settings: edit.settings.clone(),
             machine: edit.machine,
             prior,
+            narrow_only,
         },
     );
     Ok(())
@@ -345,53 +426,74 @@ pub(super) fn folded_worlds(state: &FoldState) -> BTreeMap<EntityId, FoldedWorld
         .collect()
 }
 
-/// Entries that break the side branch: anything but a later edit of the same
-/// world naming a world edit as its parent. A replica that may not hold a
-/// world never receives its edits, so nothing else may depend on them.
+/// The world a per-world side entry belongs to; `None` for a main-log entry.
+pub(super) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
+    match op {
+        AuthorityOp::WorldPrivacy(edit) => Some(edit.world),
+        _ => None,
+    }
+}
+
+/// Entries that break the side branches: any entry naming a side entry of a
+/// world other than its own as a parent. A replica that may not hold a world
+/// never receives its entries, so nothing outside the world may depend on
+/// them.
 pub(super) fn side_branch_violations(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> BTreeSet<AuthorityEntryHash> {
-    let world_of = |entry: &AuthorityLogEntry| match &entry.op {
-        AuthorityOp::WorldPrivacy(edit) => Some(edit.world),
-        _ => None,
-    };
     by_hash
         .iter()
         .filter(|(_, entry)| {
             entry.parent_hashes.iter().any(|parent| {
                 by_hash
                     .get(parent)
-                    .and_then(world_of)
-                    .is_some_and(|parent_world| world_of(entry) != Some(parent_world))
+                    .and_then(|parent| side_world(&parent.op))
+                    .is_some_and(|parent_world| side_world(&entry.op) != Some(parent_world))
             })
         })
         .map(|(hash, _)| *hash)
         .collect()
 }
 
-/// The append heads a new main-log entry takes as parents: valid entries no
-/// valid main-log entry names. World edits never join them, and naming a
-/// main-log entry as a parent does not retire it as a head.
-pub(super) fn main_log_heads(
+/// The heads new entries take as parents: the main-log heads, which no valid
+/// main-log entry names, and each world's side heads, which no valid entry of
+/// that world names. A side entry naming a main-log entry does not retire it
+/// as a head.
+pub(super) fn log_heads(
     entries: &[AuthorityLogEntry],
     valid: &BTreeSet<AuthorityEntryHash>,
-) -> BTreeSet<AuthorityEntryHash> {
-    let mut heads = BTreeSet::new();
-    let mut named = BTreeSet::new();
+) -> (
+    BTreeSet<AuthorityEntryHash>,
+    BTreeMap<EntityId, BTreeSet<AuthorityEntryHash>>,
+) {
+    let mut main = BTreeSet::new();
+    let mut side = BTreeMap::<EntityId, BTreeSet<AuthorityEntryHash>>::new();
+    let mut named_by_main = BTreeSet::new();
+    let mut named_by_side = BTreeSet::new();
     for entry in entries {
-        if matches!(entry.op, AuthorityOp::WorldPrivacy(_)) {
-            continue;
-        }
         let Ok(hash) = authority_entry_hash(entry) else {
             continue;
         };
-        if valid.contains(&hash) {
-            heads.insert(hash);
-            named.extend(entry.parent_hashes.iter().copied());
+        if !valid.contains(&hash) {
+            continue;
+        }
+        let parents = entry.parent_hashes.iter().copied();
+        match side_world(&entry.op) {
+            None => {
+                main.insert(hash);
+                named_by_main.extend(parents);
+            }
+            Some(world) => {
+                side.entry(world).or_default().insert(hash);
+                named_by_side.extend(parents);
+            }
         }
     }
-    heads.retain(|hash| !named.contains(hash));
-    heads
+    main.retain(|hash| !named_by_main.contains(hash));
+    for heads in side.values_mut() {
+        heads.retain(|hash| !named_by_side.contains(hash));
+    }
+    (main, side)
 }
 
 /// The live world edits `machine` signed: what a new profile revision lists

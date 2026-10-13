@@ -34,21 +34,9 @@ pub(crate) struct WorldPrivacyChange {
     pub(crate) entry_hash: AuthorityEntryHash,
     pub(crate) previous: EffectiveWorldPrivacy,
     pub(crate) next: EffectiveWorldPrivacy,
-}
-
-impl AuthorityFold {
-    /// Whether `machine` may edit `world`: it is the owner's and holds the
-    /// world, or it is one of a conflict's contenders.
-    #[must_use]
-    pub fn may_edit_world(&self, machine: EntityId, world: EntityId) -> bool {
-        if !self.machine(machine).is_some_and(FoldedMachine::is_mine) {
-            return false;
-        }
-        match self.world_privacy(world).read {
-            EffectiveRead::Conflicted { contenders } => contenders.contains(&machine),
-            _ => self.world_readable_on(world, Destination::Machine(machine)),
-        }
-    }
+    /// For an orphan re-pick, the machines the world's read named, none of
+    /// them still the owner's; empty otherwise.
+    pub(crate) orphaned_from: BTreeSet<EntityId>,
 }
 
 fn refused(reason: &'static str) -> Error {
@@ -113,9 +101,9 @@ impl Vault {
                 "only a machine the owner marked as theirs edits a world",
             ));
         }
-        if !fold.may_edit_world(machine, world) {
-            return Err(refused("this machine does not hold the world"));
-        }
+        let standing = fold
+            .world_edit_standing(machine, world)
+            .ok_or_else(|| refused("this machine does not hold the world"))?;
         if let ReadLocation::OneMachine(target) = settings.read
             && !fold.machine(target).is_some_and(FoldedMachine::is_mine)
         {
@@ -129,8 +117,8 @@ impl Vault {
             Some(seq) => seq.checked_add(1).ok_or_else(invalid_authority)?,
         };
         let mut parents: BTreeSet<AuthorityEntryHash> = fold.append_heads.clone();
-        if let Some(folded) = fold.worlds.get(&world) {
-            parents.extend(folded.live.keys().copied());
+        if let Some(side) = fold.side_heads.get(&world) {
+            parents.extend(side.iter().copied());
         }
         let now = self.instant_in_txn(txn)?.secs();
         let mut entry = AuthorityLogEntry {
@@ -155,6 +143,13 @@ impl Vault {
         entry.signer.signature = key.sign(&authority_transcript(&entry)?).to_bytes().to_vec();
         let entry_hash = authority_entry_hash(&entry)?;
         let previous = fold.world_privacy(world);
+        let orphaned_from = if standing == WorldEditStanding::RepicksOrphan {
+            super::world_privacy::orphaned_from(&previous.read, |id| {
+                fold.machine(id).is_some_and(FoldedMachine::is_mine)
+            })
+        } else {
+            BTreeSet::new()
+        };
         let at = TimeRange {
             start: now,
             end: now,
@@ -173,6 +168,7 @@ impl Vault {
             entry_hash,
             previous,
             next: after.world_privacy(world),
+            orphaned_from,
         })
     }
 }

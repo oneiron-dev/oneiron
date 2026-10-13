@@ -35,6 +35,9 @@ pub(super) struct FoldContext<'a> {
     /// the provider's key. Never inferred from the consent arm: a peer fold's
     /// arm admits cloud roots without saying whose root a key is.
     pub(super) hosted: bool,
+    /// Which machines the roster rule admits as the owner's this install
+    /// counts: a world edit from one it does not count only narrows.
+    pub(super) machine_standing: super::world_privacy::MachineStanding<'a>,
     /// Only verified pre-handoff ancestry can use retired device-key ops.
     /// None is the legacy-only reference fold, never the posture-aware vault door.
     pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
@@ -52,6 +55,7 @@ struct FoldLocalInputs<'a> {
     retire_device_ops: bool,
     pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
     hosted: bool,
+    machine_standing: Option<super::world_privacy::MachineStanding<'a>>,
 }
 
 impl FoldLocalInputs<'_> {
@@ -60,6 +64,7 @@ impl FoldLocalInputs<'_> {
         retire_device_ops: true,
         pre_handoff_entries: None,
         hosted: false,
+        machine_standing: None,
     };
 }
 
@@ -78,6 +83,26 @@ pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         &peer_consent_roots,
         folded_device_can_authority_consent,
         FoldLocalInputs::VAULT_DOOR,
+    )
+}
+
+/// [`fold_authority_log`] as an install that counts only some of the
+/// machines the roster rule admits.
+#[cfg(test)]
+pub(super) fn fold_authority_log_with_machine_standing(
+    entries: &[AuthorityLogEntry],
+    standing: super::world_privacy::MachineStanding<'_>,
+) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        &BTreeMap::new(),
+        None,
+        &BTreeMap::new(),
+        folded_device_can_authority_consent,
+        FoldLocalInputs {
+            machine_standing: Some(standing),
+            ..FoldLocalInputs::VAULT_DOOR
+        },
     )
 }
 
@@ -306,6 +331,9 @@ fn fold_authority_log_inner(
             peer_consent_roots,
             consent_arm,
             hosted: local.hosted,
+            machine_standing: local
+                .machine_standing
+                .unwrap_or(&super::world_privacy::every_admitted_machine),
             pre_handoff_entries: local.pre_handoff_entries,
         },
     );
@@ -316,7 +344,8 @@ fn fold_authority_log_inner(
         now_secs,
         stale_roster_window_secs,
     );
-    fold.append_heads = super::world_privacy::main_log_heads(entries, &fold.valid_entries);
+    (fold.append_heads, fold.side_heads) =
+        super::world_privacy::log_heads(entries, &fold.valid_entries);
     for entry in entries {
         // Advance beyond even a signed rejected local entry. A new local write
         // never reuses a sequence, though independently received siblings may.
@@ -595,6 +624,7 @@ fn fold_authority_log_once(
         }
         return AuthorityFold {
             append_heads: BTreeSet::new(),
+            side_heads: BTreeMap::new(),
             append_sequences: BTreeMap::new(),
             actor_revocation_affected_writers: BTreeSet::new(),
             actor_write_frontiers: BTreeMap::new(),
@@ -652,6 +682,7 @@ fn fold_authority_log_once(
 
     AuthorityFold {
         append_heads: BTreeSet::new(),
+        side_heads: BTreeMap::new(),
         append_sequences: BTreeMap::new(),
         actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
             &states,

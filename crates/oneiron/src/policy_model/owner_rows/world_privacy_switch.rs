@@ -4,8 +4,9 @@
 //! The settings are a signed authority-log edit, never a WORLD body field, so
 //! no generic write, import, sync ingest or restore door can change them. Only
 //! a live vault owner changes them, only on a machine the owner marked "yours"
-//! that holds the world, and each change lands its receipt and a typed event
-//! in the same transaction as the edit. The receipt carries ids only.
+//! that holds the world (or stores an orphaned one), and each change lands its
+//! receipt and a typed event in the same transaction as the edit. The receipt
+//! carries ids only.
 use serde::{Deserialize, Serialize};
 
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
@@ -35,6 +36,10 @@ pub struct WorldPrivacyReceipt {
     pub next: EffectiveWorldPrivacy,
     /// The signed authority-log entry, the cross-machine record, as hex.
     pub entry_hash: String,
+    /// When the change re-picked an orphaned world: the machines its read
+    /// named, none of them still the owner's, as hex. Empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub orphaned_from: Vec<String>,
     pub at: u64,
 }
 
@@ -46,8 +51,11 @@ impl Vault {
     ///
     /// Only a live vault owner may, and only on this machine: it must be one
     /// the owner marked "yours" and must hold the world, and a peer's request
-    /// is refused unless that peer proved it is this machine. A one-machine
-    /// setting names only a machine the owner marked "yours". The signed edit,
+    /// is refused unless that peer proved it is this machine. When no machine
+    /// the world's read names is still the owner's, any machine of the
+    /// owner's that stores the WORLD row may re-pick it; the receipt names the
+    /// machines it was orphaned from. A one-machine setting names only a
+    /// machine the owner marked "yours". The signed edit,
     /// its receipt and a `policy.world_privacy.changed` event commit in one
     /// transaction; a call that keeps the current settings is receipted too.
     ///
@@ -99,6 +107,7 @@ impl Vault {
                     .iter()
                     .map(|byte| format!("{byte:02x}"))
                     .collect(),
+                orphaned_from: change.orphaned_from.iter().map(EntityId::to_hex).collect(),
                 at: self.instant_in_txn(txn)?.secs(),
             };
             RECEIPTS.put(&self.store, txn, &revision, &receipt)?;

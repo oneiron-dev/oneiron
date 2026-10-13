@@ -333,6 +333,7 @@ impl LocalFoldContext {
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
             hosted: false,
+            machine_standing: &crate::authority::world_privacy::every_admitted_machine,
             pre_handoff_entries: None,
         }
     }
