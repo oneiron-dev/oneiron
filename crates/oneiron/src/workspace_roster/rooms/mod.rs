@@ -51,8 +51,10 @@ pub(super) const THREAD_CHILDREN: SideTable<(EntityId, EntityId, EntityId), Enti
 fn invalid() -> Error {
     Error::InvalidConfig("invalid room operation".into())
 }
+/// The room as its project's proof vouches for it: the stored room must match
+/// the stored project, and its members are the ones that proof authenticates.
 pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<ProjectRoom> {
-    let room: ProjectRoom = super::project::record(
+    let mut room: ProjectRoom = super::project::record(
         &vault.store,
         txn,
         room,
@@ -66,6 +68,7 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     if project.roster != room.member_ids || project.claims_scope_ref != room.claims_scope_ref {
         return Err(invalid());
     }
+    room.member_ids = project.members();
     Ok(room)
 }
 pub(in crate::workspace_roster) fn require_member(

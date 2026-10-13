@@ -1634,15 +1634,17 @@ fn sign_as_host(vault: &Vault, id: EntityId, body: &mut oneiron::workspace_roste
     let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
     let anchor = vault.project(id).unwrap().unwrap().anchor();
     let signed_at = slip.claims.issued_at;
+    let version = oneiron::workspace_roster::ProjectProofVersion::V3;
     let challenge = body
-        .authority()
-        .write_challenge(id, signed_at, Some(&anchor))
+        .authority_at(version)
+        .write_challenge(id, version, signed_at, Some(&anchor))
         .unwrap();
     body.write_proof = Some(oneiron::workspace_roster::ProjectWriteProof {
         slip_wire: slip.to_token().unwrap(),
         holder_signature: issuer.binding_proof(&slip, &challenge).unwrap(),
         signed_at,
         anchor: Some(Box::new(anchor)),
+        version,
     });
 }
 

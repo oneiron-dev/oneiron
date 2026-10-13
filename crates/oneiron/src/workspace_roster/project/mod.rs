@@ -166,6 +166,26 @@ pub struct ProjectAuthority {
     pub depth_remaining: u8,
     pub leader: String,
     pub board: Vec<String>,
+    /// Who sits in the home room. Only a v3 proof signs it; a state an older
+    /// proof or an owner door set carries none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roster: Option<BTreeSet<String>>,
+}
+
+/// The challenge a project proof signs. A proof from before v3 carries no
+/// tag, and its challenge leaves the roster out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectProofVersion {
+    #[default]
+    V2,
+    V3,
+}
+
+impl ProjectProofVersion {
+    fn is_v2(&self) -> bool {
+        *self == Self::V2
+    }
 }
 
 /// The holder signs the authority fields, its signing time and the anchor
@@ -181,6 +201,8 @@ pub struct ProjectWriteProof {
     /// The authority this revision builds on: none for a spawn, else the
     /// prior authority fields with the proof that set them.
     pub anchor: Option<Box<ProjectAnchor>>,
+    #[serde(default, skip_serializing_if = "ProjectProofVersion::is_v2")]
+    pub version: ProjectProofVersion,
 }
 
 /// One earlier authority state, carried so any replica can verify a revision
@@ -193,23 +215,28 @@ pub struct ProjectAnchor {
 }
 
 impl ProjectAuthority {
-    /// Domain-separated challenge for these fields at `signed_at` over `anchor`.
+    /// Domain-separated challenge a `version` proof signs for these fields at
+    /// `signed_at` over `anchor`. Only a v3 challenge holds a roster.
     pub fn write_challenge(
         &self,
         id: EntityId,
+        version: ProjectProofVersion,
         signed_at: u64,
         anchor: Option<&ProjectAnchor>,
     ) -> Result<Vec<u8>> {
+        let domain: &[u8] = match (version, &self.roster) {
+            (ProjectProofVersion::V2, None) => b"oneiron/project-write/v2/",
+            (ProjectProofVersion::V3, Some(_)) => b"oneiron/project-write/v3/",
+            _ => return Err(invalid()),
+        };
         let bytes =
             serde_json::to_vec(&(id.to_hex(), self, signed_at, anchor)).map_err(|_| invalid())?;
-        Ok([
-            b"oneiron/project-write/v2/".as_slice(),
-            blake3::hash(&bytes).as_bytes(),
-        ]
-        .concat())
+        Ok([domain, blake3::hash(&bytes).as_bytes()].concat())
     }
     /// A change only a board holder may make: structure, leadership, the
-    /// board itself, or any widening. Narrowing stays with the leader.
+    /// board itself, a new member, or any widening. Narrowing, a removal
+    /// included, stays with the leader. Members compare as each state vouches
+    /// for them, so a v2 proof over a v3 state seats no one the roster left out.
     pub(crate) fn board_action(&self, next: &Self) -> bool {
         self.parents != next.parents
             || self.leader != next.leader
@@ -218,6 +245,18 @@ impl ProjectAuthority {
             || self.depth_limit < next.depth_limit
             || self.depth_remaining < next.depth_remaining
             || self.slice.attenuate(next.slice.clone()).is_err()
+            || !next.members().is_subset(&self.members())
+    }
+    /// The members this state vouches for: its signed roster, else, where no
+    /// v3 proof signed one, its leader and board.
+    fn members(&self) -> BTreeSet<&str> {
+        match &self.roster {
+            Some(roster) => roster.iter().map(String::as_str).collect(),
+            None => std::iter::once(&self.leader)
+                .chain(&self.board)
+                .map(String::as_str)
+                .collect(),
+        }
     }
     /// A child never sees more than a parent, and has one level less.
     pub(crate) fn fits_under(&self, parent: &Self) -> bool {
@@ -228,7 +267,16 @@ impl ProjectAuthority {
 }
 
 impl ProjectRecord {
+    /// The authority fields this row's own proof signs.
     pub fn authority(&self) -> ProjectAuthority {
+        self.authority_at(
+            self.write_proof
+                .as_ref()
+                .map_or(ProjectProofVersion::V2, |proof| proof.version),
+        )
+    }
+    /// The authority fields a `version` proof of this row signs.
+    pub fn authority_at(&self, version: ProjectProofVersion) -> ProjectAuthority {
         ProjectAuthority {
             parents: self.parents.clone(),
             claims_scope_ref: self.claims_scope_ref.clone(),
@@ -237,7 +285,28 @@ impl ProjectRecord {
             depth_remaining: self.depth_remaining,
             leader: self.leader.clone(),
             board: self.board.clone(),
+            roster: (version == ProjectProofVersion::V3)
+                .then(|| self.roster.iter().cloned().collect()),
         }
+    }
+    /// Who sits in the home room of a row the read fold accepts. A v3 proof
+    /// signs the roster. An older proof signed none, so only its leader and
+    /// board sit there. An owner-door row carries no proof and keeps its roster.
+    pub(crate) fn members(&self) -> Vec<String> {
+        if self
+            .write_proof
+            .as_ref()
+            .is_some_and(|proof| proof.version == ProjectProofVersion::V2)
+        {
+            let mut members = vec![self.leader.clone()];
+            for actor in &self.board {
+                if !members.contains(actor) {
+                    members.push(actor.clone());
+                }
+            }
+            return members;
+        }
+        self.roster.clone()
     }
     /// The anchor a new signed revision of this stored record builds on.
     pub fn anchor(&self) -> ProjectAnchor {
@@ -675,7 +744,8 @@ impl Vault {
         .depth;
         Ok(Some(body))
     }
-    /// The home room of a visible project; a hidden project's room reads as absent.
+    /// The home room of a visible project, with the members its proof
+    /// vouches for; a hidden project's room reads as absent.
     pub fn project_room(&self, id: EntityId) -> Result<Option<ProjectRoom>> {
         let txn = self.store.env.read_txn()?;
         let Some(room) = record::<ProjectRoom>(&self.store, &txn, id, ENTITY_TYPE_CONVERSATION)?
@@ -686,7 +756,10 @@ impl Vault {
             return Ok(None);
         };
         let project = EntityId::from_hex(&room.project_id)?;
-        Ok(reader.visible(project)?.map(|_| room))
+        Ok(reader.visible(project)?.map(|project| ProjectRoom {
+            member_ids: project.members(),
+            ..room
+        }))
     }
     /// Owner view of stored project rows the fold hides, each with its reason.
     /// They stay in storage and become visible when their authorization does.

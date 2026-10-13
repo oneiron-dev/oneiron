@@ -23,6 +23,38 @@ pub(crate) fn sign_with(
     anchor: Option<ProjectAnchor>,
     expires_at: Option<u64>,
 ) -> Result<ProjectWriteProof> {
+    let version = ProjectProofVersion::V3;
+    sign_as(vault, id, body, holder, anchor, expires_at, version)
+}
+
+/// Signs as a writer from before v3 did: the challenge leaves the roster out.
+fn sign_legacy(
+    vault: &Vault,
+    id: EntityId,
+    body: &mut ProjectRecord,
+    holder: Option<EntityId>,
+    anchor: Option<ProjectAnchor>,
+) -> Result<ProjectWriteProof> {
+    sign_as(
+        vault,
+        id,
+        body,
+        holder,
+        anchor,
+        None,
+        ProjectProofVersion::V2,
+    )
+}
+
+fn sign_as(
+    vault: &Vault,
+    id: EntityId,
+    body: &mut ProjectRecord,
+    holder: Option<EntityId>,
+    anchor: Option<ProjectAnchor>,
+    expires_at: Option<u64>,
+    version: ProjectProofVersion,
+) -> Result<ProjectWriteProof> {
     let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
     let root = vault.ensure_host_root_slip(&issuer)?;
     let mut claims = root.claims;
@@ -61,9 +93,9 @@ pub(crate) fn sign_with(
     }
     let signed_at = slip.claims.issued_at;
     let anchor = anchor.map(Box::new);
-    let challenge = body
-        .authority()
-        .write_challenge(id, signed_at, anchor.as_deref())?;
+    let challenge =
+        body.authority_at(version)
+            .write_challenge(id, version, signed_at, anchor.as_deref())?;
     let holder_signature = match holder {
         Some(actor) => holder_key(actor)
             .sign(&slip.binding_transcript(&challenge)?)
@@ -76,6 +108,7 @@ pub(crate) fn sign_with(
         holder_signature,
         signed_at,
         anchor,
+        version,
     };
     body.write_proof = Some(proof.clone());
     Ok(proof)
@@ -94,7 +127,10 @@ pub(crate) fn sign_project(
     let root = vault.root_project()?;
     let host = prior.as_ref().is_some_and(|prior| {
         (prior.write_proof.is_none() && id != root)
-            || (id == root && prior.authority().board_action(&body.authority()))
+            || (id == root
+                && prior
+                    .authority()
+                    .board_action(&body.authority_at(ProjectProofVersion::V3)))
     });
     let anchor = prior.as_ref().map(ProjectRecord::anchor);
     sign_with(vault, id, body, (!host).then_some(actor), anchor, None)
@@ -677,8 +713,9 @@ fn project_slice_entity_refs_cannot_publish_live_off_record_ids() -> Result<()> 
 }
 
 /// Every entity-bearing position a signed proof carries meets the off-record
-/// guard: slip scope, pact grant and pact bound worlds and facets, at the
-/// typed, batch and replay doors.
+/// guard: slip scope, pact grant and pact bound worlds and facets, the roster
+/// of the anchor it carries (Sol roster review 1) and the slip's holder (Sol
+/// roster review 2), at the typed, batch and replay doors.
 #[test]
 fn signed_proof_positions_cannot_hide_an_off_record_reference() -> Result<()> {
     use crate::federation::{FederationDirectionScope, ScopeAxis, ScopeId};
@@ -703,16 +740,20 @@ fn signed_proof_positions_cannot_hide_an_off_record_reference() -> Result<()> {
     let root = vault.ensure_host_root_slip(&issuer)?;
     let actor = EntityId::from_hex(&before.leader)?;
     let tainted = ScopeAxis::Some(BTreeSet::from([ScopeId(overlay_id)]));
-    for position in 0..3 {
+    for position in 0..5 {
         let mut claims = root.claims.clone();
         claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
-        claims.holder_ref = actor.to_hex();
+        claims.holder_ref = if position == 4 {
+            overlay_id.to_hex()
+        } else {
+            actor.to_hex()
+        };
         claims.binding_key = holder_key(actor).verifying_key().to_bytes();
         if position == 0 {
             claims.scope.worlds = tainted.clone();
         }
         let mut slip: CapabilitySlip = vault.mint_capability_slip(&issuer, claims)?;
-        if position > 0 {
+        if position == 1 || position == 2 {
             let bound = FederationDirectionScope {
                 worlds: if position == 1 {
                     tainted.clone()
@@ -734,12 +775,17 @@ fn signed_proof_positions_cannot_hide_an_off_record_reference() -> Result<()> {
                 &holder_key(actor),
             )?;
         }
+        let mut anchor = before.anchor();
+        if position == 3 {
+            anchor.authority.roster = Some(BTreeSet::from([overlay_id.to_hex()]));
+        }
         let mut changed = before.clone();
         changed.write_proof = Some(ProjectWriteProof {
             slip_wire: slip.to_token()?,
             holder_signature: vec![0; 64],
             signed_at: slip.claims.issued_at,
-            anchor: Some(Box::new(before.anchor())),
+            anchor: Some(Box::new(anchor)),
+            version: ProjectProofVersion::V3,
         });
         let bytes = encode(&changed)?;
         #[cfg_attr(not(feature = "sync"), allow(unused_mut))]
@@ -844,7 +890,8 @@ fn an_update_that_arrives_before_the_project_birth_becomes_visible_once_it_arriv
     copy_tree(origin.path(), copy.path())?;
     let vault = Vault::open(origin.path(), crate::VaultConfig::default())?;
     let replica = Vault::open(copy.path(), crate::VaultConfig::default())?;
-    // A distinct child leader updates the child the parent leader spawned.
+    // The parent leader spawns a child under a distinct leader, then, from
+    // its seat on the child's board, joins the child's roster.
     let child_id = EntityId::now();
     let child_leader = EntityId::now();
     spawn_signed(
@@ -859,7 +906,7 @@ fn an_update_that_arrives_before_the_project_birth_becomes_visible_once_it_arriv
     let mut update = vault.project(child_id)?.unwrap();
     update.depth_remaining = 3;
     update.roster.push(parent_leader.to_hex());
-    sign_project(&vault, child_id, &mut update, child_leader)?;
+    sign_project(&vault, child_id, &mut update, parent_leader)?;
     vault.put_project(child_id, &update, 2)?;
     let update = vault.project(child_id)?.unwrap();
 
@@ -1076,4 +1123,166 @@ fn every_project_read_path_goes_through_the_read_fold() {
     // Rooms, leader chat, goals, weave report, docs corpus, spawn and the
     // public accessors all resolve projects through the fold.
     assert!(fold_reads >= 12, "fold reads: {fold_reads}");
+}
+
+/// The members a project's home room seats, as a member check reads them.
+fn seated(vault: &Vault, project: EntityId) -> Result<BTreeSet<EntityId>> {
+    let room = home_room_id(project)?;
+    Ok(vault.room_audience_members(room)?.into_iter().collect())
+}
+
+/// Bug repro (engine-core-13): a writer off the board replays a signed row
+/// with itself added to the roster under the unchanged proof. The row stays
+/// stored but hidden, and its home room admits no one through it.
+#[cfg(feature = "sync")]
+#[test]
+fn a_roster_entry_added_under_an_unchanged_proof_admits_no_one() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let (root_id, root, parent_leader) = root_leader(&vault)?;
+    let child_id = EntityId::now();
+    let child_leader = EntityId::now();
+    spawn_signed(
+        &vault,
+        root_id,
+        child_id,
+        parent_leader,
+        child_leader,
+        root.slice,
+        1,
+    )?;
+    let room = home_room_id(child_id)?;
+    let writer = EntityId::now();
+    assert!(vault.bind_room_handle(room, "@writer", writer).is_err());
+
+    let mut forged = vault.project(child_id)?.unwrap();
+    forged.roster.push(writer.to_hex());
+    replay_project(&vault, child_id, &forged, 2)?;
+    assert!(
+        vault.bind_room_handle(room, "@writer", writer).is_err(),
+        "a roster entry no proof signs seated its writer"
+    );
+    assert!(vault.project(child_id)?.is_none());
+    assert!(matches!(
+        verdict_of(&vault, child_id)?,
+        Some(ProjectVerdict::Quarantined(_))
+    ));
+    Ok(())
+}
+
+/// Acceptance (engine-core-13 ruling): a proof from before v3 signed no
+/// roster, so its room seats only the leader and board, whatever the stored
+/// roster holds, until a board holder signs the roster under v3.
+#[cfg(feature = "sync")]
+#[test]
+fn a_proof_from_before_v3_seats_only_the_leader_and_board() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let (root_id, root, parent_leader) = root_leader(&vault)?;
+    let child_id = EntityId::now();
+    let child_leader = EntityId::now();
+    let mut body = child_body(
+        &vault,
+        root_id,
+        child_id,
+        parent_leader,
+        child_leader,
+        root.slice.clone(),
+    )?;
+    let proof = sign_legacy(&vault, child_id, &mut body, Some(parent_leader), None)?;
+    vault.spawn_subproject(root_id, child_id, child_leader, root.slice, proof, 1)?;
+    // A peer adds a writer to the stored roster; the older proof still verifies.
+    let writer = EntityId::now();
+    let mut legacy = vault.project(child_id)?.unwrap();
+    legacy.roster.push(writer.to_hex());
+    replay_project(&vault, child_id, &legacy, 2)?;
+    assert!(vault.project(child_id)?.is_some());
+    let room = home_room_id(child_id)?;
+    assert!(
+        vault.bind_room_handle(room, "@writer", writer).is_err(),
+        "a roster entry the older proof never signed seated its writer"
+    );
+    assert_eq!(
+        seated(&vault, child_id)?,
+        BTreeSet::from([child_leader, parent_leader])
+    );
+
+    // The board holder signs that roster under v3, and the room seats it.
+    let mut signed = vault.project(child_id)?.unwrap();
+    sign_project(&vault, child_id, &mut signed, parent_leader)?;
+    vault.put_project(child_id, &signed, 3)?;
+    vault.bind_room_handle(room, "@writer", writer)?;
+    assert_eq!(
+        seated(&vault, child_id)?,
+        BTreeSet::from([child_leader, writer])
+    );
+    Ok(())
+}
+
+/// Acceptance (engine-core-13 ruling): adding a member is a board act; the
+/// leader may remove one.
+#[test]
+fn only_the_board_adds_a_member_and_the_leader_may_remove_one() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let (root_id, root, parent_leader) = root_leader(&vault)?;
+    let child_id = EntityId::now();
+    let child_leader = EntityId::now();
+    spawn_signed(
+        &vault,
+        root_id,
+        child_id,
+        parent_leader,
+        child_leader,
+        root.slice,
+        1,
+    )?;
+    let room = home_room_id(child_id)?;
+    let newcomer = EntityId::now();
+    let add = |signer: EntityId, at: u64| -> Result<()> {
+        let mut body = vault.project(child_id)?.unwrap();
+        body.roster.push(newcomer.to_hex());
+        sign_project(&vault, child_id, &mut body, signer)?;
+        vault.put_project(child_id, &body, at)
+    };
+    assert_eq!(
+        add(child_leader, 2).unwrap_err().kind(),
+        ErrorKind::InvalidProjectBody,
+        "the leader alone seated a new member"
+    );
+    assert!(vault.bind_room_handle(room, "@newcomer", newcomer).is_err());
+    add(parent_leader, 3)?;
+    vault.bind_room_handle(room, "@newcomer", newcomer)?;
+
+    let mut body = vault.project(child_id)?.unwrap();
+    body.roster.retain(|actor| *actor != newcomer.to_hex());
+    sign_project(&vault, child_id, &mut body, child_leader)?;
+    vault.put_project(child_id, &body, 4)?;
+    assert!(vault.bind_room_handle(room, "@gone", newcomer).is_err());
+    assert_eq!(seated(&vault, child_id)?, BTreeSet::from([child_leader]));
+
+    // A proof from before v3 leaves the roster out, so its members are the
+    // leader and the board. Signing one over the same state is no way for the
+    // leader to seat the board (Sol roster review 1).
+    let mut body = vault.project(child_id)?.unwrap();
+    let anchor = body.anchor();
+    sign_legacy(
+        &vault,
+        child_id,
+        &mut body,
+        Some(child_leader),
+        Some(anchor),
+    )?;
+    assert_eq!(
+        vault.put_project(child_id, &body, 5).unwrap_err().kind(),
+        ErrorKind::InvalidProjectBody,
+        "a leader's older proof seated the board"
+    );
+    assert!(
+        vault
+            .bind_room_handle(room, "@board", parent_leader)
+            .is_err()
+    );
+    assert_eq!(seated(&vault, child_id)?, BTreeSet::from([child_leader]));
+    Ok(())
 }
