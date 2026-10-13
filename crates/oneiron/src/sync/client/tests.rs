@@ -2392,3 +2392,183 @@ fn note_session_bind_frame_carries_a_holder_proof_the_vault_accepts() {
             .is_ok()
     );
 }
+
+/// A claim of a portable world whose text this device edited, its client, and
+/// a server document UPDATE whose reply would carry the edit.
+struct JournaledClaimText {
+    vault: Arc<Vault>,
+    world: EntityId,
+    claim: EntityId,
+    client: SyncClient,
+    _events: mpsc::UnboundedReceiver<SyncEvent>,
+    frame: Vec<u8>,
+}
+
+fn journaled_claim_text() -> JournaledClaimText {
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let at = TimeRange { start: 1, end: 1 };
+    let world = EntityId::from_bytes([0x61; 16]).unwrap();
+    let person = EntityId::from_bytes([0x62; 16]).unwrap();
+    let claim = EntityId::from_bytes([0x63; 16]).unwrap();
+    vault
+        .put_entity(&world, crate::registry::ENTITY_TYPE_WORLD, at, 1, b"world")
+        .unwrap();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            1,
+            b"person",
+        )
+        .unwrap();
+    let mut body = ClaimBody::new(
+        "test.device_only",
+        ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, at, 1).unwrap();
+    let (client, events) = test_client(&manager);
+    manager
+        .documents()
+        .open(claim)
+        .unwrap()
+        .edit_text(0, 0, "private text")
+        .unwrap();
+    let home = LoroDoc::new();
+    home.get_text("body").insert(0, "home ").unwrap();
+    home.commit();
+    let frame = transport::encode_document(
+        claim,
+        transport::document_sub_tags::UPDATE,
+        &home.export(ExportMode::all_updates()).unwrap(),
+    )
+    .into_result()
+    .unwrap();
+    JournaledClaimText {
+        vault,
+        world,
+        claim,
+        client,
+        _events: events,
+        frame,
+    }
+}
+
+/// R11133 on the text plane: a claim's own text edited on this device stays
+/// journaled, unsent, once its world turns device-only; after the flag clears
+/// the next exchange carries it.
+#[test]
+fn device_only_claim_text_stays_journaled_until_the_flag_clears() {
+    let JournaledClaimText {
+        vault,
+        world,
+        mut client,
+        frame,
+        ..
+    } = journaled_claim_text();
+    vault.set_world_device_only(world, true).unwrap();
+
+    assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
+    vault.set_world_device_only(world, false).unwrap();
+    assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
+}
+
+/// Astra #1402 finding 6, and Sol's bare-header variant: a live claim whose
+/// stored body cannot be read, or is missing on a row no delete fenced, names
+/// no world anyone can check. While a flag stands its queued text stays
+/// journaled, unsent; it ships once no flag stands.
+#[test]
+fn claim_text_whose_world_cannot_be_read_stays_journaled_while_a_flag_stands() {
+    // Never MessagePack, and no body at all.
+    for tail in [&[0xc1][..], &[][..]] {
+        let JournaledClaimText {
+            vault,
+            world,
+            claim,
+            mut client,
+            frame,
+            ..
+        } = journaled_claim_text();
+        vault
+            .with_write_txn_grouped(|wtxn| {
+                let raw =
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &claim)?
+                        .expect("stored claim");
+                let mut broken = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+                broken.extend_from_slice(tail);
+                crate::ports::EntityStoreMaintenance::port_raw_record_seed(
+                    &vault.store,
+                    wtxn,
+                    &claim,
+                    &broken,
+                )
+            })
+            .unwrap();
+        vault.set_world_device_only(world, true).unwrap();
+
+        assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
+        vault.set_world_device_only(world, false).unwrap();
+        assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
+    }
+}
+
+/// Astra #1402 finding 1: a flag committed while the raw guard inspects a
+/// window, after the guard read the flag set, still withholds the bytes.
+#[test]
+fn a_flag_committed_while_the_raw_guard_inspects_withholds_the_update() {
+    use crate::sync::window::{UpdateVerdict, raw_update_verdict};
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let learned = 1_772_323_260;
+    let at = TimeRange {
+        start: learned,
+        end: learned,
+    };
+    let [world, other, person, claim] =
+        [0x64, 0x65, 0x66, 0x67].map(|byte| EntityId::from_bytes([byte; 16]).unwrap());
+    for (id, entity_type) in [
+        (world, crate::registry::ENTITY_TYPE_WORLD),
+        (other, crate::registry::ENTITY_TYPE_WORLD),
+        (person, crate::registry::ENTITY_TYPE_PERSON),
+    ] {
+        vault
+            .put_entity(&id, entity_type, at, learned, b"row")
+            .unwrap();
+    }
+    let mut body = ClaimBody::new(
+        "test.device_only",
+        ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, at, learned).unwrap();
+    vault.set_world_device_only(other, true).unwrap();
+    let key = WindowKey::for_world(learned, world);
+    let update = manager
+        .open_window(&key)
+        .unwrap()
+        .doc
+        .export(ExportMode::all_updates())
+        .unwrap();
+    assert_eq!(
+        raw_update_verdict(&manager, key.as_str(), &update),
+        UpdateVerdict::Portable
+    );
+
+    crate::sync::window::test_hooks::arm_device_only_flag_race(world);
+    assert_eq!(
+        raw_update_verdict(&manager, key.as_str(), &update),
+        UpdateVerdict::Withheld
+    );
+}

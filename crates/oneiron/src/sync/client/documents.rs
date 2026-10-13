@@ -76,7 +76,14 @@ impl SyncClient {
                     )
                     .into_result()?,
                 ];
-                out.extend(doc.pending_frames().map_err(storage)?);
+                // Text a device-only world keeps here stays journaled; each
+                // reply loop asks again right before its send.
+                out.extend(
+                    doc.pending_frames()
+                        .map_err(storage)?
+                        .into_iter()
+                        .filter(|frame| !self.frame_withheld(frame)),
+                );
                 Ok(out)
             }
             _ => Err(TransportError::InvalidPayload(

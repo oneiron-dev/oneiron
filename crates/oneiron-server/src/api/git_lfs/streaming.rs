@@ -140,8 +140,9 @@ impl Write for ChannelWriter {
 
 pub(super) fn download(vault: Arc<Vault>, oid: LfsOid) -> Body {
     let (sender, receiver) = mpsc::channel(2);
+    let reader = Arc::clone(&vault);
     tokio::task::spawn_blocking(move || {
-        let result = vault.write_lfs_object_to(oid, &mut ChannelWriter(sender.clone()));
+        let result = reader.write_lfs_object_to(oid, &mut ChannelWriter(sender.clone()));
         match result {
             Ok(true) => {}
             Ok(false) => {
@@ -155,7 +156,25 @@ pub(super) fn download(vault: Arc<Vault>, oid: LfsOid) -> Body {
             }
         }
     });
-    Body::from_stream(stream::unfold(receiver, |mut receiver| async move {
-        receiver.recv().await.map(|item| (item, receiver))
+    // Each buffered chunk is released only while no device-only world keeps
+    // the object; a flag set mid-download ends the body with an error.
+    Body::from_stream(stream::unfold(receiver, move |mut receiver| {
+        let vault = Arc::clone(&vault);
+        async move {
+            let item = receiver.recv().await?;
+            let item = match item {
+                Ok(_)
+                    if oneiron::sync::chunks::lfs_object_withheld(&vault, oid).unwrap_or(true) =>
+                {
+                    receiver.close();
+                    Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "lfs object kept on this device",
+                    ))
+                }
+                item => item,
+            };
+            Some((item, receiver))
+        }
     }))
 }

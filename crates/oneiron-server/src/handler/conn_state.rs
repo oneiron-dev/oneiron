@@ -20,6 +20,9 @@ pub(super) struct ConnState {
     pub(super) owner_documents: std::collections::HashMap<oneiron::EntityId, Vec<u8>>,
     pub(super) window_sync_mode: WindowSyncMode,
     pub(super) lfs_owner_mode: bool,
+    /// The object of each chunk reply queued on this socket, in queue order,
+    /// so the reply is checked against the device-only flag again on release.
+    pub(super) queued_chunk_objects: std::collections::VecDeque<oneiron::origin::lfs::LfsOid>,
     pub(super) protocol_version: u8,
     /// App-tier authority is established only by a successful in-band bind.
     pub(super) bound_auth: Option<CoreAuth>,
@@ -37,6 +40,7 @@ impl ConnState {
             owner_documents: std::collections::HashMap::new(),
             window_sync_mode: WindowSyncMode::Unbound,
             lfs_owner_mode: false,
+            queued_chunk_objects: std::collections::VecDeque::new(),
             protocol_version,
             bound_auth: None,
             residence_index: None,

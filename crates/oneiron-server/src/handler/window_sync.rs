@@ -177,11 +177,21 @@ pub(super) async fn handle_window_sync(
             // echo suppression to drop the response for the requester.
             let _ = direct_tx.send(response);
             // Reverse SyncStep1: send our VV so the client pushes its local
-            // diff back — this is what makes the exchange bidirectional.
+            // diff back — this is what makes the exchange bidirectional. A
+            // window withheld as device-only names only what both sides hold,
+            // so a client that sent all it has still sees convergence.
+            let remote = VersionVector::decode(payload)
+                .map_err(|_| ProtocolError::InvalidPayload("invalid version vector"))?;
+            let mut vv = doc.oplog_vv();
+            if oneiron::sync::window::export_withheld(server.vault.as_ref(), &key, &doc, &remote)
+                .map_err(map_delta_export_err)?
+            {
+                vv = vv.intersection(&remote);
+            }
             let vv_response = protocol::encode_window_sync(
                 window_key,
                 window_sub_tags::VV_RESPONSE,
-                &doc.oplog_vv().encode(),
+                &vv.encode(),
             )
             .into_result()
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
@@ -261,11 +271,17 @@ pub(super) async fn handle_window_sync(
                 )));
             }
 
-            let broadcast_msg =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
-                    .into_result()
-                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-            let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
+            // A world flagged device-only on this server stays here, even as
+            // another device's relayed update.
+            if !crate::server::withheld_from_peers(&server.reassert_manager, window_key, update) {
+                let broadcast_msg =
+                    protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
+                        .into_result()
+                        .map_err(|e| {
+                            ProtocolError::InvalidPayload(protocol::transport_err_msg(e))
+                        })?;
+                let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
+            }
             if let Some(seq) = residence_seq {
                 let mut ack = seq.to_be_bytes().to_vec();
                 ack.extend_from_slice(blake3::hash(update).as_bytes());

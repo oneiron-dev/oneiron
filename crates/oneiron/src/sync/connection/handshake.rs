@@ -11,8 +11,10 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
+use crate::sync::queue::QueuedUpdate;
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
+use crate::sync::window::UpdateVerdict;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
 use super::session::{FullResyncMarker, WsSink, WsSource, residence_update_frame};
@@ -45,7 +47,7 @@ impl SyncConnection {
                 let _ = event_tx.send(SyncEvent::Error(
                     "Queue overflow — performing re-bootstrap".to_string(),
                 ));
-                match self.queue.clear_all() {
+                match self.clear_queue_for_re_bootstrap(client) {
                     Ok(()) => client.reset_for_re_bootstrap(),
                     Err(e) => {
                         let _ = event_tx.send(SyncEvent::Error(format!("Clear queue failed: {e}")));
@@ -241,7 +243,12 @@ impl SyncConnection {
                     let responses = client
                         .handle_server_message(&data)
                         .map_err(|e| format!("Handle server message failed: {e}"))?;
-                    for resp in responses {
+                    // Judged per frame: a device-only flag may turn while an
+                    // earlier frame waits on the socket.
+                    for resp in responses
+                        .into_iter()
+                        .filter(|frame| !client.frame_withheld(frame))
+                    {
                         write
                             .send(Message::Binary(resp.into()))
                             .await
@@ -269,7 +276,12 @@ impl SyncConnection {
                                 let responses = client
                                     .handle_server_message(&data)
                                     .map_err(|e| format!("Handle server message failed: {e}"))?;
-                                for resp in responses {
+                                // Judged per frame: a device-only flag may turn while an
+                                // earlier frame waits on the socket.
+                                for resp in responses
+                                    .into_iter()
+                                    .filter(|frame| !client.frame_withheld(frame))
+                                {
                                     write
                                         .send(Message::Binary(resp.into()))
                                         .await
@@ -354,7 +366,8 @@ impl SyncConnection {
                 queued_updates = queued.len(),
                 "replaying queued sync updates"
             );
-            for update in &queued {
+            let mut sent = Vec::with_capacity(queued.len());
+            for update in queued {
                 // Mirror the queued ops into the LOCAL window doc first:
                 // convergence is confirmed by VV equality with the server,
                 // which only vouches for ops the local doc knows about
@@ -366,6 +379,16 @@ impl SyncConnection {
                         "Queued update import failed (window {}, seq {}): {e}",
                         update.window_key, update.seq
                     )));
+                }
+                // Bytes queued while a world was portable stay here once it
+                // is flagged device-only; the window's next export reads the
+                // flag again. Bytes that cannot be read in full keep their
+                // row and every later one queued: nothing past them is sent,
+                // so no clear reaches them.
+                match client.update_verdict(&update.window_key, &update.encoded) {
+                    UpdateVerdict::Portable => {}
+                    UpdateVerdict::Withheld => continue,
+                    UpdateVerdict::Uninspectable => break,
                 }
                 // Re-encode as WindowSync wire message
                 let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
@@ -384,12 +407,13 @@ impl SyncConnection {
                     .send(Message::Binary(msg.into()))
                     .await
                     .map_err(|e| format!("Queue replay failed: {e}"))?;
+                sent.push(update);
             }
 
             // ARCH-0023b Fig. 2 convergence dance. Any error here leaves the
             // queue intact (fail-closed) and surfaces as a connection failure.
             if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
-                self.wait_residence_acks(&mut write, &mut read, client)
+                self.wait_residence_acks(&mut write, &mut read, client, &sent)
                     .await?;
             } else {
                 self.run_convergence(
@@ -397,7 +421,7 @@ impl SyncConnection {
                     &mut read,
                     client,
                     event_tx,
-                    &queued,
+                    &sent,
                     &force_resync,
                 )
                 .await?;
@@ -432,25 +456,35 @@ impl SyncConnection {
     }
 
     /// A home acknowledgment is sent only after persistence. A missing ACK
-    /// leaves every unconfirmed queue row intact for the next reconnect.
+    /// leaves every unconfirmed queue row intact for the next reconnect. The
+    /// wait ends once every row of `sent` is acknowledged or cleared; a row
+    /// never sent is never acknowledged, and one queued before them keeps
+    /// them queued for a later clear.
     async fn wait_residence_acks(
         &self,
         write: &mut WsSink,
         read: &mut WsSource,
         client: &mut SyncClient,
+        sent: &[QueuedUpdate],
     ) -> Result<(), String> {
+        let sent: BTreeSet<u64> = sent.iter().map(|update| update.seq).collect();
         let budgets = self
             .manager
             .vault()
             .residence_operation_budgets()
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "residence policy unavailable".to_string())?;
+        // Rows a device-only world keeps here were never sent.
+        self.clear_residence_acks(client)?;
         tokio::time::timeout(Duration::from_millis(budgets.ack_timeout_ms), async {
-            while !self
+            while self
                 .queue
                 .drain_updates()
                 .map_err(|e| e.to_string())?
-                .is_empty()
+                .iter()
+                .any(|update| {
+                    sent.contains(&update.seq) && !client.residence_acks.contains_key(&update.seq)
+                })
             {
                 let message = read
                     .next()
@@ -461,6 +495,8 @@ impl SyncConnection {
                     for response in client
                         .handle_server_message(&data)
                         .map_err(|e| e.to_string())?
+                        .into_iter()
+                        .filter(|frame| !client.frame_withheld(frame))
                     {
                         write
                             .send(Message::Binary(response.into()))

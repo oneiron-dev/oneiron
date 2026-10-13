@@ -47,6 +47,18 @@ pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool
 }
 
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
+    reverse_rematerialize_with(vault, doc, window_key, true)
+}
+
+/// [`reverse_rematerialize`], packing rows a device-only world keeps here
+/// unless `withhold_device_only`. Only promotion authority packs them: it
+/// asks what a grant covers and exports nothing.
+pub(in crate::sync) fn reverse_rematerialize_with(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    withhold_device_only: bool,
+) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
@@ -88,9 +100,11 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             }
         }
     }
-    let device_only = {
+    let device_only = if withhold_device_only {
         let rtxn = vault.store.env.read_txn()?;
         crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
+    } else {
+        std::collections::BTreeSet::new()
     };
 
     let entities_map = doc.get_map("entities");

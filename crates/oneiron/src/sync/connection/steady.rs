@@ -8,6 +8,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
+use crate::sync::window::UpdateVerdict;
 
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
@@ -59,7 +60,12 @@ impl SyncConnection {
                         Some(Ok(Message::Binary(data))) => {
                             match client.handle_server_message(&data) {
                                 Ok(responses) => {
-                                    for resp in responses {
+                                    // Judged per frame: a device-only flag may turn while an
+                                    // earlier frame waits on the socket.
+                                    for resp in responses
+                                        .into_iter()
+                                        .filter(|frame| !client.frame_withheld(frame))
+                                    {
                                         let send_result =
                                             write.send(Message::Binary(resp.into())).await;
                                         if let Err(e) = send_result {
@@ -179,9 +185,10 @@ impl SyncConnection {
                                 },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
+                            let withheld = client.frame_withheld(&frame);
                             let subscribed = (|| -> crate::error::Result<bool> {
                                 let rtxn = client.vault.store.env.read_txn()?;
-                                DS_E.contains(&client.vault.store, &rtxn, &HexId(id))
+                                Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))? && !withheld)
                             })();
                             match subscribed {
                                 Ok(true) => {
@@ -189,7 +196,9 @@ impl SyncConnection {
                                         return LoopExit::Disconnected(error.to_string());
                                     }
                                 }
-                                Ok(false) => {} // Offline editing before admission stays journaled.
+                                // Offline editing before admission, or on text a
+                                // device-only world keeps here, stays journaled.
+                                Ok(false) => {}
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             }
                         }
@@ -229,6 +238,25 @@ impl SyncConnection {
                     let opened = client.config.residence_mode == crate::sync::SyncResidenceMode::Opened;
                     let mut queued_count = 0;
                     for (i, local_update) in pending.iter().enumerate() {
+                        match client.update_verdict(&local_update.window_key, &local_update.update_bytes) {
+                            UpdateVerdict::Portable => {}
+                            // A world flagged device-only since this commit keeps
+                            // it; the window's next export reads the flag again.
+                            UpdateVerdict::Withheld => {
+                                queued_count += usize::from(opened);
+                                continue;
+                            }
+                            // Bytes that cannot be read in full wait, unsent, in
+                            // the queue for the next replay to judge again.
+                            UpdateVerdict::Uninspectable => {
+                                if let Err(e) = self.queue.push(&local_update.window_key, &local_update.update_bytes) {
+                                    failed_at = Some((i, format!("Durable residence queue failed: {e}")));
+                                    break;
+                                }
+                                queued_count += usize::from(opened);
+                                continue;
+                            }
+                        }
                         let seq = if opened {
                             match self.queue.push(&local_update.window_key, &local_update.update_bytes) {
                                 Ok(seq) => {

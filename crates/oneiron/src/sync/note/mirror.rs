@@ -52,6 +52,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     )?;
     let mut state = State::default();
     let txn = vault.store.env.read_txn()?;
+    let flagged = crate::settings::device_only_worlds_in(&vault.store, &txn)?;
     let mut local = BTreeSet::new();
     let mut removed = BTreeSet::new();
     for (key, raw) in rows(doc, "entities")? {
@@ -75,6 +76,11 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
         if EntityMetadataHeader::parse(&raw)
             .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)
         {
+            continue;
+        }
+        // A NOTE a device-only world keeps is never packed into a window
+        // that does not already carry it.
+        if !state.cores.contains_key(&note) && held(vault, &txn, &flagged, &note)? {
             continue;
         }
         local.insert(note);
@@ -181,10 +187,14 @@ pub(crate) fn copy_selected(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> R
     }
     let mut state = codec::read(source)?;
     let txn = vault.store.env.read_txn()?;
+    let flagged = crate::settings::device_only_worlds_in(&vault.store, &txn)?;
     let mut keep = BTreeSet::new();
     for (key, _) in rows(out, "entities")? {
         let note = id(&key)?;
-        if state.cores.contains_key(&note) && !blocked(vault, &txn, source, &note)? {
+        if state.cores.contains_key(&note)
+            && !blocked(vault, &txn, source, &note)?
+            && !held(vault, &txn, &flagged, &note)?
+        {
             keep.insert(note);
         } else if state.cores.contains_key(&note) {
             map_delete(&out.get_map("entities"), &key)?;

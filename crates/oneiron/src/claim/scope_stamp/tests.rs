@@ -285,6 +285,37 @@ fn unstamped_records_are_excluded_from_read_export_delete_and_debug_is_explicit(
     assert!(vault.get(&remote)?.is_some());
     Ok(())
 }
+/// A scoped record export never carries a row a device-only world keeps on
+/// this device: the WORLD row, or a claim in it.
+#[test]
+fn scoped_export_withholds_rows_of_a_device_only_world() -> Result<()> {
+    let (_dir, vault) = vault()?;
+    let world = entity(37);
+    let private = entity(38);
+    let portable = entity(39);
+    vault.put_entity(&world, crate::registry::ENTITY_TYPE_WORLD, AT, 10, b"world")?;
+    vault.put_entity(&entity(31), ENTITY_TYPE_PERSON, AT, 10, b"subject")?;
+    let mut in_world = body();
+    in_world.world = Some(world);
+    vault.put_claim(&private, &in_world, AT, 10)?;
+    vault.put_claim(&portable, &body(), AT, 10)?;
+    let top = Scope::top();
+    let exported = |vault: &Vault| -> Result<Vec<EntityId>> {
+        Ok(vault
+            .export_records_in_scope(&top, &top, &top)?
+            .into_iter()
+            .map(|record| record.id)
+            .collect())
+    };
+    assert!(exported(&vault)?.contains(&private));
+    vault.set_world_device_only(world, true)?;
+
+    let ids = exported(&vault)?;
+    assert!(ids.contains(&portable));
+    assert!(!ids.contains(&private));
+    assert!(!ids.contains(&world));
+    Ok(())
+}
 #[test]
 fn stored_grant_scope_roundtrip_and_bottom_deny_at_existing_doors() -> Result<()> {
     let mut access = crate::access_grant::AccessGrant::companion_profile_read(

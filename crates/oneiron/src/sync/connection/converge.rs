@@ -105,6 +105,23 @@ impl SyncConnection {
         Ok(())
     }
 
+    /// The queue clear of every re-bootstrap (`clear_all`). A row a
+    /// device-only verdict could not judge was never sent: it and every row
+    /// behind it stay queued for a later replay to judge again.
+    pub(super) fn clear_queue_for_re_bootstrap(
+        &self,
+        client: &SyncClient,
+    ) -> crate::error::Result<()> {
+        let unjudged = self.queue.drain_updates()?.into_iter().find(|update| {
+            client.update_verdict(&update.window_key, &update.encoded)
+                == crate::sync::window::UpdateVerdict::Uninspectable
+        });
+        match unjudged {
+            Some(update) => self.queue.clear_through(update.seq.saturating_sub(1)),
+            None => self.queue.clear_all(),
+        }
+    }
+
     /// Local half of the re-bootstrap, shared by the convergence and
     /// queue-overflow paths: clear the queue FIRST (`q:`/`e:` rows only —
     /// the `h:`/`m:`/`x:` families and delete-bearing rows + `d:` markers
@@ -122,7 +139,7 @@ impl SyncConnection {
                 "opened-item queue cannot use full-window re-bootstrap",
             ));
         }
-        self.queue.clear_all()?;
+        self.clear_queue_for_re_bootstrap(client)?;
         client
             .generate_re_bootstrap_sync_for_windows(force_resync.iter().cloned())
             .map_err(|e| {
@@ -159,7 +176,12 @@ impl SyncConnection {
                 Some(Ok(Message::Binary(data))) => {
                     match client.handle_server_message(&data) {
                         Ok(responses) => {
-                            for resp in responses {
+                            // Judged per frame: a device-only flag may turn while an
+                            // earlier frame waits on the socket.
+                            for resp in responses
+                                .into_iter()
+                                .filter(|frame| !client.frame_withheld(frame))
+                            {
                                 write
                                     .send(Message::Binary(resp.into()))
                                     .await

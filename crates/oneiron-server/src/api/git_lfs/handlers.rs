@@ -101,9 +101,12 @@ fn batch_entry(
         .vault
         .has_lfs_object(oid, object.size)
         .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?;
+    // An object a device-only world keeps is offered as absent.
+    let offered =
+        stored && !oneiron::sync::chunks::lfs_object_withheld(&server.vault, oid).unwrap_or(true);
     let href = format!("{base}/git/{repo}/info/lfs/objects/{}", oid.to_hex());
     match operation {
-        LfsBatchOperation::Download if stored => {
+        LfsBatchOperation::Download if offered => {
             entry.actions.insert("download", LfsAction { href });
         }
         LfsBatchOperation::Download => {
@@ -173,6 +176,9 @@ pub(crate) async fn lfs_download(
     else {
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     };
+    if oneiron::sync::chunks::lfs_object_withheld(&server.vault, oid).unwrap_or(true) {
+        return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
+    }
     // Preflight in the blocking pool preserves the old fail-before-200 contract
     // without ever buffering the object. The stream verifies each chunk again;
     // a deletion/corruption racing preflight terminates the HTTP body with error.

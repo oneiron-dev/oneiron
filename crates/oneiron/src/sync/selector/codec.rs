@@ -297,7 +297,26 @@ pub fn filtered_window_doc(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    filter_window_doc(vault, source, key, selector, &position)
+    filter_window_doc(vault, source, key, selector, &position, true)
+}
+
+/// What the selector's grant alone covers, before this device's device-only
+/// flags withhold anything. Promotion authority reads it; the export doors
+/// withhold.
+pub(in crate::sync) fn granted_window_doc(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+) -> Result<LoroDoc> {
+    let position = authorize_selector_export(
+        vault,
+        grant_scope,
+        selector,
+        vault.store.clock.now_recorded_at(),
+    )?;
+    filter_window_doc(vault, source, key, selector, &position, false)
 }
 
 /// Builds and signs a guest-share envelope from selector-filtered window bytes.
@@ -334,7 +353,7 @@ pub fn guest_share_envelope_body(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    let filtered = filter_window_doc(vault, source, key, selector, &position)?;
+    let filtered = filter_window_doc(vault, source, key, selector, &position, true)?;
     let stripped = strip_guest_share_metadata(vault, &filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())

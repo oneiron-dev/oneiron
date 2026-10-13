@@ -1016,6 +1016,62 @@ fn strip_happens_before_sign() {
     assert_eq!(imported_tombstone_count(&envelope.body.update), 0);
 }
 
+/// R11133 on the federation door: a claim already resident in the window
+/// leaves the selector's synthetic doc, with every edge naming it, once its
+/// world turns device-only.
+#[test]
+fn selector_withholds_a_resident_claim_once_its_world_turns_device_only() {
+    let member = entity_id(0x3B);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-03");
+    let world = local_world_id(0x5B).entity_id();
+    vault
+        .put_entity(
+            &world,
+            ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    let doc = create_window_doc("source", &window_key);
+    let kept_claim = entity_id(0x7B);
+    let private_claim = entity_id(0x7C);
+    let facet = entity_id(0x5C);
+    insert_blob(&doc, kept_claim, &claim_blob(None));
+    insert_blob(&doc, private_claim, &claim_blob(Some(world)));
+    insert_entity(&doc, facet, ENTITY_TYPE_FACET, b"facet");
+    insert_edge(&doc, kept_claim, EdgeKind::FacetOf, facet);
+    insert_edge(&doc, private_claim, EdgeKind::FacetOf, facet);
+    insert_edge(&doc, kept_claim, EdgeKind::Supports, private_claim);
+    doc.commit();
+    seed_doc_stamps(&vault, &doc);
+    vault.set_world_device_only(world, true).unwrap();
+
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
+    let selected =
+        filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
+    let ids = import_ids(&selected.export(ExportMode::all_updates()).unwrap());
+    assert!(ids.contains(&kept_claim));
+    assert!(!ids.contains(&private_claim));
+    let mut edges = Vec::new();
+    map_for_each_value_bytes(&selected.get_map("edges"), |key, _| {
+        edges.push(key.to_owned());
+    });
+    assert!(edges.contains(&edge_key(kept_claim, EdgeKind::FacetOf, facet)));
+    assert!(
+        !edges
+            .iter()
+            .any(|key| key.contains(&private_claim.to_hex()))
+    );
+}
+
 #[test]
 fn selector_denies_entity_with_any_unselected_facet_of() {
     let member = entity_id(0x39);

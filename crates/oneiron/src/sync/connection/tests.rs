@@ -728,3 +728,37 @@ async fn out_of_order_window_delta_disconnects_instead_of_losing_the_update() {
     );
     server.await.unwrap();
 }
+
+/// R11133, opened mode: a queued residence write of a world turned
+/// device-only is never sent, so never acknowledged; it must not hold back
+/// the acknowledged rows behind it.
+#[test]
+fn residence_ack_clears_past_a_row_a_device_only_world_keeps() {
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let world = crate::EntityId::from_bytes([0x61; 16]).unwrap();
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    let private =
+        crate::sync::WindowKey::for_month_world(&crate::sync::WindowKey::new("2026-03"), world);
+    let conn = SyncConnection::new(manager.clone(), ConnectionConfig::default()).unwrap();
+    let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    conn.queue().push(private.as_str(), b"private").unwrap();
+    let sent = conn.queue().push("2026-03", b"portable").unwrap();
+    vault.set_world_device_only(world, true).unwrap();
+    let mut payload = sent.to_be_bytes().to_vec();
+    payload.extend_from_slice(blake3::hash(b"portable").as_bytes());
+    let ack = transport::encode_window_sync("2026-03", window_sub_tags::RESIDENCE_ACK, &payload)
+        .into_result()
+        .unwrap();
+    client.handle_server_message(&ack).unwrap();
+    conn.clear_residence_acks(&mut client).unwrap();
+    assert!(conn.queue().drain_updates().unwrap().is_empty());
+}

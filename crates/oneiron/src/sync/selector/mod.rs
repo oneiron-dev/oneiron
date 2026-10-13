@@ -31,6 +31,7 @@ pub use self::admission::put_selector_test_federation_grant;
 pub(in crate::sync) use self::admission::revalidate_admitted_federated_claims;
 pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
 pub use self::authorize::authorize_sync_selector;
+pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
