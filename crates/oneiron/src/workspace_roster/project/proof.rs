@@ -91,9 +91,10 @@ fn verify_live(
     if proof.signed_at > now {
         return Err(refused("project write proof is dated ahead"));
     }
-    let challenge =
-        next.authority()
-            .write_challenge(id, proof.signed_at, proof.anchor.as_deref())?;
+    let challenge = next
+        .authority()
+        .write_challenge(id, proof.version, proof.signed_at, proof.anchor.as_deref())
+        .map_err(|_| refused("invalid project write proof"))?;
     slip.verify_with_host_key(
         &mint.signer,
         &fold,
