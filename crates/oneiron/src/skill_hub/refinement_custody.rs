@@ -133,6 +133,12 @@ fn decode(bytes: &[u8]) -> Result<Option<(EntityId, EntityId, RefinementReceipt)
     Ok(Some((candidate, ruling, payload)))
 }
 
+/// The receipt JSON a carrier wraps behind its magic and ids, for the
+/// credential scans: read whether or not the carrier is canonical.
+pub(crate) fn refinement_carrier_payload(bytes: &[u8]) -> Option<&[u8]> {
+    bytes.strip_prefix(MAGIC)?.get(32..)
+}
+
 /// A malformed carrier can still be scrubbed by its fixed holder prefix.
 #[cfg(feature = "sync")]
 pub(crate) fn refinement_carrier_holder(bytes: &[u8]) -> Option<EntityId> {
