@@ -208,8 +208,16 @@ fn a_door_records_each_retired_signer_and_only_rows_that_verify() {
     let genesis = genesis_entry(240, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let enroll_first = enroll_entry(id, &genesis, &old, 241, 1, 2);
-    let enroll_second = cosign_ed(enroll_entry(id, &enroll_first, &old, 242, 2, 2), &old, &first);
-    let handoff = cosign_ed(re_root_entry(id, &enroll_second, &old, 3, &next), &old, &first);
+    let enroll_second = cosign_ed(
+        enroll_entry(id, &enroll_first, &old, 242, 2, 2),
+        &old,
+        &first,
+    );
+    let handoff = cosign_ed(
+        re_root_entry(id, &enroll_second, &old, 3, &next),
+        &old,
+        &first,
+    );
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     put(&vault, &[&genesis, &enroll_first, &enroll_second, &handoff]).unwrap();
