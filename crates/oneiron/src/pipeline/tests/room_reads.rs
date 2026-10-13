@@ -1848,9 +1848,12 @@ fn embed_in_room(
     stage_in_room(vault, session, vec![room_put(id), room_vector(id, vector)])
 }
 
+/// A row of base's graph or vectors: its database's tag, key and value.
+type GraphRow = (u8, Vec<u8>, Vec<u8>);
+
 /// Base's graph and vectors, row by row: count, entry point and the rest of
 /// its graph's scalars, its nodes' neighbour lists, and its vectors.
-fn base_graph(vault: &Vault) -> Result<Vec<(u8, Vec<u8>, Vec<u8>)>> {
+fn base_graph(vault: &Vault) -> Result<Vec<GraphRow>> {
     let txn = vault.store.env.read_txn()?;
     let mut rows = Vec::new();
     for (tag, db) in [
