@@ -224,11 +224,10 @@ mod macos {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     /// `chmod +a`, the owner's own tool for adding an ACL entry.
     fn add_acl_entry(path: &Path, entry: &str) {
-        let added = Command::new("/bin/chmod")
+        let added = oneiron_spawn::command("/bin/chmod")
             .arg("+a")
             .arg(entry)
             .arg(path)

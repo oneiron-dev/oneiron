@@ -10,6 +10,10 @@
 //! The bearer gate itself lives in the server crate (`api::git_http`), where
 //! `CoreAuth` lives, and is proved there (`api::git_http::tests_auth`). This
 //! binary proves the wire.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
