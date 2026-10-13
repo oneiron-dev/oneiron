@@ -5889,6 +5889,62 @@ fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
     Ok(())
 }
 
+/// Sol round 21: an epoch summary rewritten in place into a SUMMARY body that
+/// is no epoch stops every walk at it, while a summary written from it still
+/// holds W's words. The rewrite records the worlds the old body carried, so
+/// the nested summary stays home while W is flagged.
+#[test]
+fn a_summary_of_a_summary_rewritten_as_no_epoch_keeps_its_world() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (source, nested) = (entity_id(0x73), entity_id(0x74));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let (world, _) = summaries_of_a_world_fact(&vault, &[(source, &october)])?;
+    let at = november.start_timestamp().unwrap() + 60;
+    vault
+        .batch()
+        .put(
+            &nested,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange { start: at, end: at },
+            at,
+            &epoch_summary_bytes(2, "the world fact, again")?,
+        )
+        .edge(&nested, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, nested)
+    })?;
+    let november_doc = packed_window(&vault, &november)?;
+    vault.set_world_device_only(world, true)?;
+    assert!(!owner_window_ships(&vault, &november, &november_doc)?);
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    vault
+        .batch()
+        .put(
+            &source,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: rewritten,
+                end: rewritten,
+            },
+            rewritten,
+            b"a summary written by hand",
+        )
+        .commit()?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of a summary rewritten as no epoch"
+    );
+    let (selected, scoped) =
+        selected_and_scoped(&vault, grant_id, member, &november, &november_doc)?;
+    assert!(
+        !selected.contains(&nested) && !scoped.contains(&nested),
+        "the selector and the scoped export"
+    );
+    Ok(())
+}
+
 /// Astra #1384d F3: what an epoch summary was withdrawn for lives as long as
 /// its words. A standalone tombstone invalidates the summary and keeps the
 /// body, so the record stays and the summary stays home while W is flagged.

@@ -152,6 +152,24 @@ pub(crate) fn keep_deleted_worlds_in_txn(
     }
     Ok(())
 }
+/// A put that rewrites epoch summary `id` into a SUMMARY body that is no
+/// epoch ends every walk at it: its edges stop saying where the words sat that
+/// a summary written from it still holds (Sol round 21). Its record keeps
+/// every world the old body carried, read before the new body lands.
+pub(crate) fn keep_worlds_of_unmade_epoch_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        && crate::compaction::decode_epoch_summary_body(body).is_err()
+    {
+        keep_deleted_worlds_in_txn(store, txn, id)?;
+    }
+    Ok(())
+}
 /// Removing epoch summary `summary`'s `DerivedFrom` edge to `source` withdraws
 /// it as deleting `source` would: its body keeps the words, and the edge that
 /// said where they sat is gone. The removal is never refused, so a peer's
