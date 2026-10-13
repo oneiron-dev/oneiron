@@ -77,14 +77,19 @@ fn persisted_nonfinite_retrieval_state_is_corruption_at_read_doors() -> crate::R
 fn opt_in_turn_round_trips_replay_inputs_and_exact_pack_with_fork_lookup() -> crate::Result<()> {
     let (_dir, vault) = open_test_vault_with(telemetry_config());
     let id = crate::test_util::entity(0xB5);
+    // A TURN payload hydrates, so the serialized pack carries its text.
+    let payload = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "replay marker", "spkr": "user", "at": 1_u64,
+    }))
+    .unwrap();
     vault
         .batch()
         .put(
             &id,
-            1,
+            crate::registry::ENTITY_TYPE_TURN,
             crate::TimeRange { start: 1, end: 1 },
             1,
-            b"replay marker",
+            &payload,
         )
         .text(&id, &[("body", "replay marker")])
         .commit()?;
