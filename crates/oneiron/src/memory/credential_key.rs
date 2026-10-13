@@ -132,6 +132,24 @@ pub(crate) fn actor_is_vault_owner_in_txn(
     }
 }
 
+/// Whether a narrower owner credential's relationship exemption holds in
+/// `txn`: its holder still exists as a human and is the vault owner. The
+/// embedded owner needs no owner binding, but its PERSON must still be there,
+/// as the owner key's own reads require (Sol R5-007).
+pub(crate) fn owner_exemption_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: EntityId,
+) -> MemoryResult<bool> {
+    let human = EdgeActorClass::Human;
+    match verify_actor_binding_in_txn(vault, txn, owner, human) {
+        Ok(()) => actor_is_vault_owner_in_txn(vault, txn, owner, human),
+        // Gone, or no longer a PERSON: the exemption has no holder.
+        Err(error) if error.code == MEMORY_CODE_FORBIDDEN => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// The owner check: `actor` exists as `actor_class`, which is human, and its
 /// owner binding verifies.
 pub(crate) fn verify_vault_owner_in_txn(

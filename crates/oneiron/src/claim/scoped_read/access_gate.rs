@@ -52,8 +52,9 @@ impl ScopedRead<'_> {
     }
 
     /// Whether this read's relationship gate binds in `txn`. A narrower
-    /// credential of the owner's is exempt only while its holder is still the
-    /// vault's bound owner in this snapshot (Astra #1413-003).
+    /// credential of the owner's is exempt only while its holder still exists
+    /// and is the vault's owner in this snapshot (Astra #1413-003, Sol
+    /// R5-007).
     pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
         if !self.actor_key.enforce_access_grants {
             return Ok(false);
@@ -61,18 +62,13 @@ impl ScopedRead<'_> {
         let Some(owner) = self.actor_key.owner_exemption else {
             return Ok(true);
         };
-        crate::memory::actor_is_vault_owner_in_txn(
-            self.vault,
-            txn,
-            owner,
-            crate::edge::EdgeActorClass::Human,
-        )
-        .map(|owner| !owner)
-        .map_err(|refusal| {
-            crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
-                refusal,
-            )))
-        })
+        crate::memory::owner_exemption_holds_in_txn(self.vault, txn, owner)
+            .map(|owner| !owner)
+            .map_err(|refusal| {
+                crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
+                    Box::new(refusal),
+                ))
+            })
     }
 
     pub(super) fn relationship_claim_allowed_in(

@@ -551,6 +551,111 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
     }
 }
 
+/// Sol R5-007 on #1413: the narrower owner credential's exemption was judged
+/// in each read's own snapshot, but for the embedded owner that judgement
+/// never read the PERSON, so a lane kept past the embedded owner's hard
+/// delete, and a fresh lane from the same credential, still read a
+/// relationship's words. The exemption needs its holder's PERSON in the
+/// read's snapshot now.
+#[test]
+fn a_narrower_embedded_owner_credential_loses_its_exemption_with_its_person() {
+    use crate::claim::PointRead;
+    use crate::federation::ScopeAxis;
+    let (_dir, vault) = open_vault();
+    let embedded = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let author = put_person(&vault, 0x6C);
+    let (spaced, unscoped) = (EntityId::now(), EntityId::now());
+    let mut messages = Vec::new();
+    for (order, (id, content, rel)) in [
+        (spaced, "harbor lantern embedded", Some([0x6B; 16])),
+        (unscoped, "kettle stove embedded", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut message = witness_message(order as u32, WitnessAuthor::User, content);
+        message.id = Some(id.to_hex());
+        message.metadata = rel.map(
+            |space| serde_json::json!({ "rel": EntityId::from_bytes(space).unwrap().to_hex() }),
+        );
+        messages.push(message);
+    }
+    facade_for(&vault, author)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x6A; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages,
+            occurred_at: 1500,
+        })
+        .expect("witness another person's words");
+
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer).expect("host root");
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"narrower embedded owner credential").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = embedded.to_hex();
+    claims.actor_class = Some("human".into());
+    claims.scope.verbs = ScopeAxis::Some(std::collections::BTreeSet::from(["read".into()]));
+    let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+    let tag = b"narrower-embedded-owner";
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            tag,
+            &issuer.binding_proof(&slip, tag).expect("binding proof"),
+        )
+        .expect("verify");
+    assert!(!proof.is_full_vault_owner_grade());
+    let lane_of = || {
+        vault.scoped_read(
+            vault
+                .credential_read_key(&proof)
+                .expect("judge the credential")
+                .expect("a read key"),
+        )
+    };
+    let reads = |lane: &crate::claim::ScopedRead<'_>, id: EntityId| {
+        let point = lane
+            .read(&[PointRead::id(id)], None)
+            .expect("point read")
+            .value[0]
+            .as_ref()
+            .is_some_and(|row| row.body.is_some());
+        let readable = lane.is_entity_readable(&id).expect("readability");
+        assert_eq!(
+            point,
+            readable,
+            "{}: the point read and the predicate agree",
+            id.to_hex()
+        );
+        readable
+    };
+    let kept = lane_of();
+    assert!(
+        reads(&kept, spaced),
+        "the embedded owner's narrower credential"
+    );
+
+    vault
+        .delete_entity_with_reason(&embedded, crate::deletion::DeleteReason::UserHardDelete)
+        .expect("hard-delete the embedded owner");
+    let fresh = lane_of();
+    for (lane, which) in [(&kept, "kept"), (&fresh, "fresh")] {
+        assert!(
+            !reads(lane, spaced),
+            "the {which} lane, past the hard delete"
+        );
+        assert!(
+            reads(lane, unscoped),
+            "the {which} lane keeps unscoped words"
+        );
+    }
+}
+
 /// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
 ///
 /// `evaluate_deletion_gate` folds the owner binding in a read txn it then
