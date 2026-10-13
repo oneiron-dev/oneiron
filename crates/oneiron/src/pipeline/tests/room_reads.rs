@@ -1334,10 +1334,11 @@ fn base_claim_for_the_room(
     batch.commit()
 }
 
-/// A room embeds a base claim's body of its own, then changes the body
-/// again and indexes it with its words and no vector. The vector the room
-/// staged describes the earlier body, so it no longer finds the claim there
-/// (Sol R23).
+/// A room embeds a base claim's body of its own. Putting that same body
+/// again with new words and no vector keeps the room's vector of it. Then
+/// the room changes the body and indexes it with its words and no vector:
+/// the vector the room staged describes the earlier body, so it no longer
+/// finds the claim there (Sol R23).
 #[test]
 fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1374,6 +1375,21 @@ fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() 
         (
             TimeRange { start: 11, end: 11 },
             11,
+            owner_claim_body(owner, "ownembeddedvalue")?,
+        ),
+        "ownrestagedword",
+    )?;
+    assert!(
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "the room's vector of the body it put again still finds the claim"
+    );
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
+        (
+            TimeRange { start: 12, end: 12 },
+            12,
             owner_claim_body(owner, "ownchangedvalue")?,
         ),
         "ownchangedneedle",
