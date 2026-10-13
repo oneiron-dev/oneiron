@@ -117,13 +117,15 @@ async fn a_worker_panic_returns_no_payload_to_the_cli() {
 }
 
 /// Owner ruling 2026-10-14 (fix 6): the default receipt sink logs ids, counts
-/// and codes. A run's name, a teacher's purpose, a caller's selector and the
-/// model a provider says it served are text, so none reaches the log as given.
+/// and codes. A run's name, a teacher's purpose, a caller's selector, the
+/// lease id (it begins with the run's name), a refused connector's name and
+/// the model a provider says it served are text, so none reaches the log as
+/// given.
 #[test]
 fn the_receipt_log_carries_ids_and_codes_never_run_text() {
     use oneiron::llm::ModelLocality;
     use oneiron::llm::run_admission::{
-        LeaseUnit, Payer, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
+        LeaseUnit, Payer, PermitFacts, RunDenied, RunEvent, RunReceipt, RunReceiptSink,
     };
 
     use crate::models::LoggedReceipts;
@@ -139,7 +141,7 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             locality: ModelLocality::ThirdParty,
             payer: Payer::Host,
             catalog_revision: None,
-            lease: "lease-7a".to_owned(),
+            lease: format!("{SENTINEL} nightly digest:call:7"),
             reserved_units: 100,
             unit: LeaseUnit::tokens(),
             allocation: None,
@@ -153,7 +155,7 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
         run: format!("{SENTINEL} nightly digest"),
         revision: 1,
         event: RunEvent::Dispatched {
-            lease: "lease-7a".to_owned(),
+            lease: format!("{SENTINEL} nightly digest:call:7"),
             subject: "test/model@v1".to_owned(),
             route: "route-1".to_owned(),
             request_digest: "digest-0f".to_owned(),
@@ -162,17 +164,32 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             answered: true,
         },
     };
+    let denied = RunReceipt {
+        run: format!("{SENTINEL} nightly digest"),
+        revision: 1,
+        event: RunEvent::Denied {
+            selector: None,
+            subject: None,
+            lease: None,
+            reason: RunDenied::UndeclaredConnector {
+                connector: format!("{SENTINEL} connector"),
+            },
+        },
+    };
     // A callsite registration racing another test can miss one capture; the
-    // lease id proves this capture saw the rows.
+    // request digest proves this capture saw the rows.
     for _ in 0..3 {
         let sink = CapturedSink::default();
         sink.with_production_subscriber(|| {
             LoggedReceipts.record(admitted.clone());
             LoggedReceipts.record(dispatched.clone());
+            LoggedReceipts.record(denied.clone());
         });
         let written = sink.text();
-        if written.contains("lease-7a") {
+        if written.contains("digest-0f") {
             assert!(!written.contains(SENTINEL), "{written}");
+            assert!(written.contains("\"lease_seq\":7"), "{written}");
+            assert!(written.contains("undeclared_connector"), "{written}");
             assert!(written.contains("test/model@v1"), "{written}");
             assert!(written.contains("unrecognised"), "{written}");
             assert!(written.contains("digest-0f"), "{written}");

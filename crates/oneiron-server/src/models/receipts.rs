@@ -3,7 +3,7 @@
 use std::sync::{Arc, RwLock};
 
 use oneiron::llm::ModelId;
-use oneiron::llm::run_admission::{RunEvent, RunReceipt, RunReceiptSink};
+use oneiron::llm::run_admission::{RunDenied, RunEvent, RunReceipt, RunReceiptSink};
 use serde_json::{Value, json};
 
 /// The log target every receipt row is written under.
@@ -24,16 +24,17 @@ impl RunReceiptSink for LoggedReceipts {
 
 /// What a receipt's log line carries: ids, counts, codes and the request
 /// digest (owner ruling 2026-10-14, fix 6). The run's name, a teacher's
-/// purpose and a caller's selector are text someone wrote, and a provider may
-/// report any string as the model it served, so none of them is logged as
-/// given. The host's own sink still gets the whole receipt.
+/// purpose and a caller's selector are text someone wrote, a lease id begins
+/// with the run's name, a refusal can name a caller's connector, and a
+/// provider may report any string as the model it served, so none of them is
+/// logged as given. The host's own sink still gets the whole receipt.
 fn logged_row(receipt: &RunReceipt) -> Value {
     let revision = receipt.revision;
     match &receipt.event {
         RunEvent::Admitted(facts) => json!({
             "event": "admitted",
             "revision": revision,
-            "lease": facts.lease,
+            "lease_seq": lease_seq(&facts.lease),
             "subject": model(&facts.subject),
             "route": facts.route,
             "locality": facts.locality,
@@ -51,9 +52,9 @@ fn logged_row(receipt: &RunReceipt) -> Value {
         } => json!({
             "event": "denied",
             "revision": revision,
-            "lease": lease,
+            "lease_seq": lease.as_deref().and_then(lease_seq),
             "subject": subject.as_deref().map(model),
-            "reason": reason,
+            "reason": denial_kind(reason),
         }),
         RunEvent::Dispatched {
             lease,
@@ -66,7 +67,7 @@ fn logged_row(receipt: &RunReceipt) -> Value {
         } => json!({
             "event": "dispatched",
             "revision": revision,
-            "lease": lease,
+            "lease_seq": lease_seq(lease),
             "subject": model(subject),
             "route": route,
             "request_digest": request_digest,
@@ -84,7 +85,7 @@ fn logged_row(receipt: &RunReceipt) -> Value {
         } => json!({
             "event": "settled",
             "revision": revision,
-            "lease": lease,
+            "lease_seq": lease_seq(lease),
             "units": units,
             "unit": unit,
             "allocation_units": allocation_units,
@@ -97,6 +98,20 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "from": from,
         }),
     }
+}
+
+/// A lease as logged: its sequence number in the run, the last `:` field of
+/// the id. The id begins with the run's name, so no other part of it is.
+fn lease_seq(lease: &str) -> Option<u64> {
+    lease.rsplit(':').next()?.parse().ok()
+}
+
+/// A refusal as logged: its closed kind, never a field a variant carries.
+fn denial_kind(reason: &RunDenied) -> Value {
+    serde_json::to_value(reason)
+        .ok()
+        .and_then(|value| value.get("kind").cloned())
+        .unwrap_or_else(|| Value::from(UNRECOGNISED))
 }
 
 /// A model string as logged: itself when it is a model id, else a marker.
