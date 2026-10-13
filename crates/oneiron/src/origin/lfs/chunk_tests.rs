@@ -246,6 +246,275 @@ fn cross_transport_boundary_credentials_never_publish_assets() {
     assert!(scanner.feed(b"KEY-----").is_err());
 }
 
+/// Installs `parts` as one object whose peer-chosen chunks are exactly those
+/// parts, as the sync chunk protocol lets a peer choose them.
+fn install_parts(vault: &Vault, parts: &[&[u8]]) -> crate::error::Result<LfsPutOutcome> {
+    install_parts_within(vault, parts, None)
+}
+
+/// [`install_parts`] with the bound up to which the object is read whole
+/// lowered (`Some(0)`: every object is read by chunk and seam).
+fn install_parts_within(
+    vault: &Vault,
+    parts: &[&[u8]],
+    whole_scan_max: Option<u64>,
+) -> crate::error::Result<LfsPutOutcome> {
+    install_parts_with(vault, parts, whole_scan_max, |_| {})
+}
+
+/// [`install_parts_within`], calling `before_supply` with each part's index
+/// before that part is handed over.
+fn install_parts_with(
+    vault: &Vault,
+    parts: &[&[u8]],
+    whole_scan_max: Option<u64>,
+    mut before_supply: impl FnMut(usize),
+) -> crate::error::Result<LfsPutOutcome> {
+    let whole = parts.concat();
+    let manifest = chunks::LfsManifest {
+        size_bytes: whole.len() as u64,
+        chunks: parts
+            .iter()
+            .map(|part| chunks::LfsChunkRef {
+                hash: *blake3::hash(part).as_bytes(),
+                size: part.len() as u32,
+            })
+            .collect(),
+    };
+    let mut parts = parts.iter().enumerate();
+    let supply = move |_: &chunks::LfsChunkRef| {
+        let (index, part) = parts.next().unwrap();
+        before_supply(index);
+        Ok(part.to_vec())
+    };
+    let oid = LfsOid::digest(&whole);
+    match whole_scan_max {
+        None => vault.install_lfs_manifest(oid, &manifest, time(), time().start, supply),
+        Some(max) => vault.install_lfs_manifest_reading_whole(
+            max,
+            oid,
+            &manifest,
+            time(),
+            time().start,
+            supply,
+        ),
+    }
+}
+
+fn set_secret_scan(vault: &Vault, mode: crate::batch::secret_scan::SecretScanMode) {
+    let mut txn = vault.store.env.write_txn().unwrap();
+    crate::batch::secret_scan::put_secret_scan_mode_in_txn(&vault.store, &mut txn, mode).unwrap();
+    txn.commit().unwrap();
+}
+
+fn refused_as_sensitive(result: crate::error::Result<LfsPutOutcome>) {
+    let error = result.unwrap_err();
+    assert!(
+        matches!(&error, crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { reason_codes, .. })
+            if reason_codes.contains(&"gate.secret_scan.sensitive_env")),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_credential_assignment_split_across_peer_chunks_is_read_whole() {
+    let parts: [&[u8]; 2] = [
+        b"[service]\nhost = db.internal\npassword=",
+        b"t7Rk2pLq9WzX\nport = 5432\n",
+    ];
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let assets_before = vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap();
+    // Read whole within the bound, and by the seam above it.
+    for whole_scan_max in [None, Some(0)] {
+        refused_as_sensitive(install_parts_within(&vault, &parts, whole_scan_max));
+        assert!(
+            vault
+                .lfs_object(LfsOid::digest(&parts.concat()))
+                .unwrap()
+                .is_none()
+        );
+    }
+    // With the owner's switch off the batch door stores it, and so does the seam.
+    set_secret_scan(&vault, crate::batch::secret_scan::SecretScanMode::Off);
+    install_parts(&vault, &parts).unwrap();
+    assert!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len() > assets_before.len());
+}
+
+#[test]
+fn an_object_within_the_bound_is_read_whole_however_a_peer_cuts_it() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    // Padding that outruns any seam, and a JSON key escaped and cut mid-member.
+    let mut padded = b"password=".to_vec();
+    padded.extend([b' '; 1016]);
+    padded.extend_from_slice(b"t7Rk2pLq9WzX\n");
+    let cases: [[&[u8]; 2]; 2] = [
+        [&padded[..1025], &padded[1025..]],
+        [br#"{"pass\u0077ord":"#, br#""private fixture"}"#],
+    ];
+    for parts in &cases {
+        refused_as_sensitive(install_parts(&vault, parts));
+        assert!(
+            vault
+                .lfs_object(LfsOid::digest(&parts.concat()))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn a_stored_chunk_is_read_again_when_another_object_reuses_it() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let stored: &[u8] = b"password=t7Rk2pLq9WzX\n";
+    set_secret_scan(&vault, crate::batch::secret_scan::SecretScanMode::Off);
+    install_parts(&vault, &[stored]).unwrap();
+    set_secret_scan(&vault, crate::batch::secret_scan::SecretScanMode::On);
+    let parts: [&[u8]; 2] = [stored, b"host = db.internal\n"];
+    // Read by chunk, as above the bound, and read whole.
+    for whole_scan_max in [Some(0), None] {
+        refused_as_sensitive(install_parts_within(&vault, &parts, whole_scan_max));
+        assert!(
+            vault
+                .lfs_object(LfsOid::digest(&parts.concat()))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn the_switch_is_read_where_each_write_of_an_object_lands() {
+    use crate::batch::secret_scan::SecretScanMode::{Off, On};
+    // The parts, the whole-read bound, the refusal.
+    type Case = ([&'static [u8]; 2], Option<u64>, &'static str);
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let stored: &[u8] = b"password=t7Rk2pLq9WzX\n";
+    set_secret_scan(&vault, Off);
+    install_parts(&vault, &[stored]).unwrap();
+    // The owner switches the scan on while the first chunk is on its way: a
+    // stored chunk reused, an object read whole at publish, and one past the
+    // bound whose edges went unread.
+    let cases: [Case; 4] = [
+        (
+            [stored, b"host = db.internal\n"],
+            None,
+            "gate.secret_scan.sensitive_env",
+        ),
+        (
+            [stored, b"host = db.internal\n"],
+            Some(0),
+            "gate.secret_scan.sensitive_env",
+        ),
+        (
+            [b"host = db.internal\npassword=", b"t7Rk2pLq9WzX\n"],
+            None,
+            "gate.secret_scan.sensitive_env",
+        ),
+        (
+            [b"host = a\n", b"port = 1\n"],
+            Some(0),
+            "gate.secret_scan.switched_on_mid_object",
+        ),
+    ];
+    for (parts, whole_scan_max, reason) in cases {
+        set_secret_scan(&vault, Off);
+        let error = install_parts_with(&vault, &parts, whole_scan_max, |index| {
+            if index == 0 {
+                set_secret_scan(&vault, On);
+            }
+        })
+        .unwrap_err();
+        assert!(
+            matches!(&error, crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { reason_codes, .. })
+                if reason_codes.contains(&reason)),
+            "{reason}: {error:?}"
+        );
+        assert!(
+            vault
+                .lfs_object(LfsOid::digest(&parts.concat()))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn a_repeated_chunk_is_supplied_from_the_store_once_it_landed() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let part: &[u8] = b"host = db.internal\n";
+    let whole = part.repeat(3);
+    let chunk = chunks::LfsChunkRef {
+        hash: *blake3::hash(part).as_bytes(),
+        size: part.len() as u32,
+    };
+    let manifest = chunks::LfsManifest {
+        size_bytes: whole.len() as u64,
+        chunks: vec![chunk; 3],
+    };
+    // A sync pull asks its peer only for a chunk the store lacks, through the
+    // store's own read: a generic reader finds no chunk before publication.
+    let mut fetched = 0;
+    vault
+        .install_lfs_manifest(
+            LfsOid::digest(&whole),
+            &manifest,
+            time(),
+            time().start,
+            |chunk| {
+                if vault
+                    .get_raw_unsealed(&chunks::chunk_id(&chunk.hash)?)?
+                    .is_none()
+                {
+                    fetched += 1;
+                }
+                Ok(part.to_vec())
+            },
+        )
+        .unwrap();
+    assert_eq!(fetched, 1);
+}
+
+#[test]
+fn no_generic_reader_returns_a_chunk_before_its_object_is_published() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    // Each chunk passes alone; the object they make is refused when read whole.
+    let parts: [&[u8]; 3] = [br#"{"pass\u0077ord":"#, br#""private fixture"}"#, b"\n"];
+    let id = |part: &[u8]| chunks::chunk_id(blake3::hash(part).as_bytes()).unwrap();
+    let read = |vault: &Vault, wanted: &[&[u8]]| -> Vec<Vec<u8>> {
+        let mut bodies: Vec<Vec<u8>> = vault
+            .latest_entity_bodies_by_type(ENTITY_TYPE_ASSET, 64, 4096)
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, body)| body)
+            .collect();
+        for &part in wanted {
+            bodies.extend(vault.get(&id(part)).unwrap());
+            bodies.extend(
+                vault
+                    .get_raw(&id(part))
+                    .unwrap()
+                    .map(|raw| raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec()),
+            );
+        }
+        bodies.retain(|body| wanted.contains(&body.as_slice()));
+        bodies
+    };
+    let mut paused = Vec::new();
+    refused_as_sensitive(install_parts_with(&vault, &parts, None, |index| {
+        if index == 2 {
+            // The first two chunks have landed; the third is on its way.
+            assert!(vault.get_raw_unsealed(&id(parts[1])).unwrap().is_some());
+            paused = read(&vault, &parts[..2]);
+        }
+    }));
+    assert!(paused.is_empty(), "read before publication: {paused:?}");
+    assert!(read(&vault, &parts[..]).is_empty());
+    // A published object's chunks read as any ASSET does.
+    let published: [&[u8]; 2] = [b"host = db.internal\n", b"port = 5432\n"];
+    install_parts(&vault, &published).unwrap();
+    assert_eq!(read(&vault, &published[..]).len(), 3 * published.len());
+}
+
 struct RepeatingReader {
     block: Vec<u8>,
     position: u64,
