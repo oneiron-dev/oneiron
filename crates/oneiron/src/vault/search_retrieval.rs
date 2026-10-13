@@ -158,7 +158,7 @@ impl Vault {
                 started,
             }
         } else {
-            self.search_text_scored(&self.store, query, limit, profile)?
+            self.search_text_scored(&self.store, query, limit, profile, |_| Ok(()))?
         };
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Text,
@@ -187,12 +187,17 @@ impl Vault {
     /// the session path (ONE-1728 §7), so an in-room search scores over
     /// overlay ∪ base through the SAME body — the two cannot drift in
     /// scoring, and canonical output stays byte-identical.
+    ///
+    /// `admit` runs first in the read that scores, so a caller whose right to
+    /// read can lapse (a run whose participant left its room) reads nothing
+    /// once it has.
     pub(crate) fn search_text_scored(
         &self,
         target: &impl crate::store::ManifestDbs,
         query: &str,
         limit: usize,
         profile: &crate::config::Bm25RankProfile,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
@@ -200,6 +205,7 @@ impl Vault {
         let started = Instant::now();
         let scores = {
             let rtxn = self.store.env.read_txn()?;
+            admit(&rtxn)?;
             crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
                 &crate::ports::text_index(target, &self.analyzer),
                 &rtxn,
