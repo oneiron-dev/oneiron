@@ -655,7 +655,9 @@ pub(crate) fn device_only_generation_in(store: &Store, txn: &RoTxn<'_>) -> Resul
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD
 /// row itself, a CLAIM whose `worldId` is flagged (an erased or purged one by
 /// the world address its deletion kept), a NOTE with a stored `InWorld` edge
-/// to a flagged world, or an epoch SUMMARY born in one.
+/// to a flagged world, or an epoch SUMMARY born in one. An epoch SUMMARY
+/// carries the words of every record it was written from, so it stays too
+/// when a flagged world keeps any of them, through any nested epoch.
 pub(crate) fn device_only_withholds(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -665,6 +667,27 @@ pub(crate) fn device_only_withholds(
     if flagged.is_empty() {
         return Ok(false);
     }
+    let mut seen = std::collections::BTreeSet::from([*id]);
+    let mut pending = vec![*id];
+    while let Some(next) = pending.pop() {
+        let mut sources = Vec::new();
+        if row_device_only(store, txn, flagged, &next, &mut sources)? {
+            return Ok(true);
+        }
+        pending.extend(sources.into_iter().filter(|source| seen.insert(*source)));
+    }
+    Ok(false)
+}
+
+/// Whether a flagged world keeps the row `id` by where it sits. An epoch
+/// SUMMARY's `DerivedFrom` sources go to `sources`.
+fn row_device_only(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    flagged: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+    sources: &mut Vec<EntityId>,
+) -> Result<bool> {
     if flagged.contains(id) {
         return Ok(true);
     }
@@ -692,12 +715,24 @@ pub(crate) fn device_only_withholds(
             Ok(false)
         }
         crate::registry::ENTITY_TYPE_SUMMARY => {
+            let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+            if crate::compaction::decode_epoch_summary_body(body).is_ok() {
+                for edge in store.port_edges(
+                    txn,
+                    id,
+                    EdgeDirection::Out,
+                    Some(crate::edge::EdgeKind::DerivedFrom),
+                    None,
+                )? {
+                    sources.push(edge?.target);
+                }
+            }
             Ok(crate::federation::record_scope::record_world_in(
                 store,
                 txn,
                 *id,
                 header.entity_type,
-                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                body,
             )?
             .flatten()
             .is_some_and(|world| flagged.contains(&world)))

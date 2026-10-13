@@ -5074,6 +5074,120 @@ fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<(
     Ok(())
 }
 
+/// #1384 beside #1402 (R11133): a world turned device-only keeps the epoch
+/// summaries packed while it was portable, at every export door, until the
+/// flag clears. `placed` was born in W; `told` was born in base reality from
+/// W's CLAIM and carries its words. The window door withholds each one's base
+/// window, the selector drops `placed` and every edge naming it, and the
+/// scoped record export drops both.
+#[test]
+fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> crate::Result<()> {
+    use crate::compaction::EpochPlacement;
+    use crate::federation::Scope;
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x58).entity_id();
+    let (person, placed) = (entity_id(0x59), entity_id(0x5a));
+    let (fact, told) = (entity_id(0x60), entity_id(0x61));
+    let (march, april) = (WindowKey::new("2026-03"), WindowKey::new("2026-04"));
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    // The WORLD row sits in February's window, so only a summary can make
+    // March's or April's window one the flag keeps.
+    let (occurred, learned) = at(&WindowKey::new("2026-02"));
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, occurred, learned, b"world")?;
+    let (in_march, march_at) = at(&march);
+    let (in_april, april_at) = at(&april);
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, in_march, march_at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.world_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&fact, &body, in_april, april_at)?;
+    vault
+        .batch()
+        .put(
+            &placed,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_march,
+            march_at,
+            &epoch_summary_bytes(1, "the run met the person in its world")?,
+        )
+        .edge(&placed, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &told,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_april,
+            april_at,
+            &epoch_summary_bytes(2, "the run learned the world fact")?,
+        )
+        .edge(&told, EdgeKind::DerivedFrom, &fact, 1.0)
+        .commit()?;
+    let in_world = EpochPlacement {
+        world: Some(world),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| in_world.settle_in(&vault.store, txn, placed))?;
+    vault.with_write_txn_grouped(|txn| {
+        EpochPlacement::default().settle_in(&vault.store, txn, told)
+    })?;
+    let packed = |key: &WindowKey| -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        Ok(doc)
+    };
+    let (march_doc, april_doc) = (packed(&march)?, packed(&april)?);
+    let top = Scope::top();
+    let ships = |shipped: bool| -> crate::Result<()> {
+        let window = |key: &WindowKey, doc: &LoroDoc| -> crate::Result<bool> {
+            Ok(!crate::sync::window::export_withheld(
+                &vault,
+                key,
+                doc,
+                &loro::VersionVector::default(),
+            )?)
+        };
+        assert_eq!(window(&march, &march_doc)?, shipped, "the window door, March");
+        assert_eq!(window(&april, &april_doc)?, shipped, "the window door, April");
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let selected =
+            filtered_window_doc(&vault, &march_doc, &march, test_selector_scope(), &selector)?;
+        let ids = import_ids(&selected.export(ExportMode::all_updates()).unwrap());
+        let mut edges = Vec::new();
+        map_for_each_value_bytes(&selected.get_map("edges"), |key, _| {
+            edges.push(key.to_owned());
+        });
+        assert!(ids.contains(&person));
+        assert_eq!(ids.contains(&placed), shipped, "the selector, the summary");
+        assert_eq!(
+            edges.iter().any(|key| key.contains(&placed.to_hex())),
+            shipped,
+            "the selector, an edge naming the summary"
+        );
+        let exported = vault
+            .export_records_in_scope(&top, &top, &top)?
+            .into_iter()
+            .map(|record| record.id)
+            .collect::<Vec<_>>();
+        assert_eq!(exported.contains(&placed), shipped, "the scoped export, born in W");
+        assert_eq!(exported.contains(&told), shipped, "the scoped export, W's words");
+        Ok(())
+    };
+    ships(true)?;
+    vault.set_world_device_only(world, true)?;
+    ships(false)?;
+    vault.set_world_device_only(world, false)?;
+    ships(true)
+}
+
 fn epoch_summary_bytes(epoch: u64, text: &str) -> crate::Result<Vec<u8>> {
     use crate::compaction::{
         EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
