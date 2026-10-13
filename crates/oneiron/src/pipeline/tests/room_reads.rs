@@ -1334,9 +1334,9 @@ fn base_claim_for_the_room(
     batch.commit()
 }
 
-/// A room embeds a base claim's body of its own. Putting that same body
-/// again with new words and no vector keeps the room's vector of it. Then
-/// the room changes the body and indexes it with its words and no vector:
+/// A room embeds a base claim's body of its own. Putting another body and
+/// then that one back, with new words and no vector, keeps the room's vector
+/// of it. Then the room changes the body and indexes it with its words and no vector:
 /// the vector the room staged describes the earlier body, so it no longer
 /// finds the claim there (Sol R23), and the room, whose graph held only the
 /// claim, still embeds another row (Sol R24).
@@ -1369,21 +1369,20 @@ fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() 
         vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
         "the room's vector of its body finds the claim"
     );
-    replace_in_room(
+    // Another body first: a put of the same body alone is metadata only and
+    // leaves the room nothing to publish.
+    stage_in_room(
         &vault,
         &session,
-        claim,
-        (
-            TimeRange { start: 11, end: 11 },
-            11,
-            owner_claim_body(owner, "ownembeddedvalue")?,
-        ),
-        "ownrestagedword",
+        vec![claim_put(
+            claim,
+            (
+                TimeRange { start: 11, end: 11 },
+                11,
+                owner_claim_body(owner, "ownpassingvalue")?,
+            ),
+        )],
     )?;
-    assert!(
-        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
-        "the room's vector of the body it put again still finds the claim"
-    );
     replace_in_room(
         &vault,
         &session,
@@ -1391,6 +1390,21 @@ fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() 
         (
             TimeRange { start: 12, end: 12 },
             12,
+            owner_claim_body(owner, "ownembeddedvalue")?,
+        ),
+        "ownrestagedword",
+    )?;
+    assert!(
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
+        "the room's vector of the body it put back still finds the claim"
+    );
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
+        (
+            TimeRange { start: 13, end: 13 },
+            13,
             owner_claim_body(owner, "ownchangedvalue")?,
         ),
         "ownchangedneedle",
