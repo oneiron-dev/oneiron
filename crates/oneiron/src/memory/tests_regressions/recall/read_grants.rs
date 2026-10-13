@@ -370,7 +370,11 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
     let mut granted = witness_message(0, WitnessAuthor::User, "harbor view table for two");
     granted.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
     // No space: a message only its owner's grants admit.
-    let withheld = witness_message(1, WitnessAuthor::User, "harbor locker code is 4471");
+    let withheld = witness_message(
+        1,
+        WitnessAuthor::User,
+        "harbor locker code is quokka-violet",
+    );
     let receipt = facade_for(&vault, owner)
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0x77; 16]).unwrap().to_hex(),
@@ -410,7 +414,7 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
         owner_pack
             .items
             .iter()
-            .any(|item| item.kind == "TURN" && item.value_text.contains("4471")),
+            .any(|item| item.kind == "TURN" && item.value_text.contains("quokka-violet")),
         "the owner finds the turn by its meaning: {:?}",
         owner_pack.items
     );
@@ -435,7 +439,7 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
         owner_pack
             .items
             .iter()
-            .any(|item| item.kind == "TURN" && item.value_text.contains("4471")),
+            .any(|item| item.kind == "TURN" && item.value_text.contains("quokka-violet")),
         "the owner reads the whole turn: {:?}",
         owner_pack.items
     );
@@ -455,11 +459,14 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
             );
             for item in &pack.items {
                 assert_ne!(item.kind, "TURN", "{effort:?}: {item:?}");
-                assert!(!item.value_text.contains("4471"), "{effort:?}: {item:?}");
+                assert!(
+                    !item.value_text.contains("quokka-violet"),
+                    "{effort:?}: {item:?}"
+                );
                 assert!(
                     item.cited_messages
                         .iter()
-                        .all(|message| !message.value_text.contains("4471")),
+                        .all(|message| !message.value_text.contains("quokka-violet")),
                     "{effort:?}: {item:?}"
                 );
             }
@@ -469,7 +476,7 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
                 assert!(rendered.contains("harbor view"), "{format:?}: {rendered}");
             }
             assert!(
-                !rendered.contains("4471"),
+                !rendered.contains("quokka-violet"),
                 "{effort:?} {format:?}: {rendered}"
             );
         }

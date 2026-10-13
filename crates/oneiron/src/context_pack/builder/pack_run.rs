@@ -28,6 +28,9 @@ pub struct SerializedContextPack {
 #[derive(Clone, Copy)]
 pub(in crate::context_pack) struct HydrateOptions<'a> {
     pub(in crate::context_pack) read_mode: crate::vault::ReadMode,
+    /// A reranker scored this row's words at `read_mode`'s pin, so its fields
+    /// come from that pinned row and not a live NOTE projection.
+    pub(in crate::context_pack) words_pinned: bool,
     pub(in crate::context_pack) policy: &'a crate::gate::PolicyManifestResolution,
     pub(in crate::context_pack) criticality: Option<bool>,
     pub(in crate::context_pack) hydrate_fields: bool,
