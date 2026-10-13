@@ -280,14 +280,20 @@ pub(crate) fn release_reads_whole(value: &rmpv::Value) -> bool {
 /// projection of a MessagePack body, so it is also read through the
 /// MessagePack it projects from: a float as either width it may have had.
 pub(crate) fn release_reads_whole_json(value: &serde_json::Value) -> bool {
-    let mut text = String::new();
-    json_leaves(value, &mut text);
-    if detect(&text, Door::Release).is_some() {
+    if release_reads_json_text(value) {
         return true;
     }
     let mut narrows = false;
     write_door_refuses_encoding(&messagepack_form(value, false, &mut narrows))
         || (narrows && write_door_refuses_encoding(&messagepack_form(value, true, &mut narrows)))
+}
+
+/// [`release_reads_whole_json`] over the text alone, for JSON whose stored
+/// encoding was already read as stored.
+fn release_reads_json_text(value: &serde_json::Value) -> bool {
+    let mut text = String::new();
+    json_leaves(value, &mut text);
+    detect(&text, Door::Release).is_some()
 }
 
 /// The parts a release door emits from one body, read before it projects them
@@ -535,8 +541,24 @@ fn detect(haystack: &str, door: Door) -> Option<&'static str> {
 /// Returns whether any bytes were removed. `null` is the export representation;
 /// the serving representation is the fixed, non-authoritative redaction marker.
 pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) -> bool {
+    sanitize_json_whole(value, null, release_reads_whole_json)
+}
+
+/// [`sanitize_credentials`] over JSON whose stored encoding was read as stored
+/// (a MessagePack body read at its own widths before its projection, or a body
+/// stored as JSON): its whole read takes its text, not a MessagePack form it
+/// never had, where a wide float read narrowed is other bytes.
+pub(crate) fn sanitize_read_credentials(value: &mut serde_json::Value, null: bool) -> bool {
+    sanitize_json_whole(value, null, release_reads_json_text)
+}
+
+fn sanitize_json_whole(
+    value: &mut serde_json::Value,
+    null: bool,
+    reads_whole: fn(&serde_json::Value) -> bool,
+) -> bool {
     let changed = sanitize_json(value, null, Door::Release);
-    if release_reads_whole_json(value) {
+    if reads_whole(value) {
         *value = if null {
             serde_json::Value::Null
         } else {

@@ -729,3 +729,38 @@ fn memory_reads_read_the_projection_they_serve() {
         );
     }
 }
+
+#[test]
+fn a_write_accepted_body_of_wide_floats_serves_its_numbers() {
+    // Sol R11: each word's first four letters as the bits of a float a single
+    // width holds exactly, stored wide, the rest of the word in byte-sized
+    // integers after it. Only the narrow width the floats never had spells
+    // the phrase.
+    let mut items = Vec::new();
+    for word in PHRASE.split(' ') {
+        let (head, rest) = word.as_bytes().split_at(4);
+        let bits = u32::from_be_bytes(head.try_into().unwrap());
+        items.push(Value::F64(f64::from(f32::from_bits(bits))));
+        items.extend(rest.iter().copied().map(Value::from));
+    }
+    let value = Value::Array(items);
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &value).unwrap();
+    assert!(crate::batch::secret_scan::scan_write_payload(&body).is_ok());
+    let (_dir, vault, owner) = owner_vault();
+    let numbers = crate::companion::companion_value_to_json(&value);
+    for served in served_both_ways(&vault, owner, value, 0x6e) {
+        assert_eq!(served, numbers);
+    }
+    assert_eq!(crate::batch::export::redacted_memory_body(&body), numbers);
+    let asset = EntityId::now();
+    vault
+        .batch()
+        .put(&asset, ENTITY_TYPE_ASSET, test_time(7), 7, &body)
+        .commit()
+        .unwrap();
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&[asset]).unwrap()).unwrap();
+    assert_eq!(bundle["entities"][0]["body"], numbers);
+    assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], false);
+}
