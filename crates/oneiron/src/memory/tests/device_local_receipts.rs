@@ -199,3 +199,58 @@ fn a_caller_off_this_device_learns_no_later_state_of_a_device_local_claim() {
         );
     }
 }
+
+/// Sol R3 F4: a recall's census of other worlds reads its first 512 claims
+/// and says when it stopped there. Off this device a claim a device-local
+/// world keeps takes no place among them, so a vault whose claims are all
+/// device-local reads as uncapped.
+#[test]
+fn a_recall_off_this_device_counts_no_device_local_claim_toward_its_census_cap() {
+    let (_dir, vault) = open_vault();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    for _ in 0..512 {
+        let mut body = ClaimBody::new(
+            "test.device_local_census",
+            ClaimSubject::Entity(owner),
+            rmpv::Value::from("fact"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = Some(world);
+        vault
+            .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
+            .unwrap();
+    }
+    vault.set_world_device_only(world, true).unwrap();
+
+    let capped = |locality| {
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .at(locality)
+            .recall(
+                "lighthouse",
+                Effort::Light,
+                &RecallScope::default(),
+                10,
+                None,
+                None,
+            )
+            .unwrap()
+            .scope_honesty
+            .census_capped
+    };
+    assert!(capped(CallerLocality::OnDevice));
+    assert!(!capped(CallerLocality::OffDevice));
+}

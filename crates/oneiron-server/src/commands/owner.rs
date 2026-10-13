@@ -9,6 +9,7 @@
 use std::io::{self, Read, Write};
 use std::path::Path;
 
+use oneiron::claim::CallerLocality;
 use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
@@ -640,10 +641,16 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
         hold_host_root(&config, &vault)?;
     }
     match command {
-        RunsCommand::Pending(_) => emit(&runs::pending(&vault)?),
+        // The CLI runs on this device.
+        RunsCommand::Pending(_) => emit(&runs::pending(&vault, CallerLocality::OnDevice)?),
         RunsCommand::Show(args) => {
             let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
-            emit(&runs::review(&vault, &local_owner(&vault)?, run)?)
+            emit(&runs::review(
+                &vault,
+                &local_owner(&vault)?,
+                run,
+                CallerLocality::OnDevice,
+            )?)
         }
         RunsCommand::Approve(args) => {
             let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
@@ -653,6 +660,7 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
                 run,
                 &args.bundle,
                 GateConsentBundleAction::Approve,
+                CallerLocality::OnDevice,
             )?)
         }
         RunsCommand::Decline(args) => {
@@ -663,6 +671,7 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
                 run,
                 &args.bundle,
                 GateConsentBundleAction::Decline,
+                CallerLocality::OnDevice,
             )?)
         }
     }

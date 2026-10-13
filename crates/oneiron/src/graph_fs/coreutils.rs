@@ -493,13 +493,20 @@ impl GraphFsResolver<'_, '_> {
                 .scoped_read
                 .is_entity_readable_with_policy_in(rtxn, policy, id);
         }
-        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+        if policy.diagnostics().loaded_manifest_forces_fail_closed()
+            || (self.scoped_read.off_device()
+                && crate::settings::device_local_keeps_in(
+                    &self.scoped_read.vault().store,
+                    rtxn,
+                    id,
+                )?)
+        {
             return Ok(false);
         }
         if !policy.has_scoped_read_grants() {
             return Ok(true);
         }
-        let visible_worlds = self.world_names_from_matching_grants(policy);
+        let visible_worlds = self.world_names_from_matching_grants(policy)?;
         Ok(visible_worlds.iter().any(|world| world == &id.to_hex()))
     }
 

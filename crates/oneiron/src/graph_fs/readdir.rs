@@ -323,7 +323,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         }
 
         let names = if policy.has_scoped_read_grants() {
-            self.world_names_from_matching_grants(&policy)
+            self.world_names_from_matching_grants(&policy)?
         } else {
             return self.listdir_world_rows(path, cursor);
         };
@@ -350,22 +350,37 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1),
         )?;
         let has_more_rows = rows.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
-        for id in rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES) {
+        let rows: Vec<_> = rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES).collect();
+        let last_scanned = rows.last().map(EntityId::to_hex);
+        for id in self.worlds_this_reader_may_name(rows)? {
             if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
                 next_cursor = builder.last_entry_name();
                 break;
             }
         }
         if next_cursor.is_none() && has_more_rows {
-            next_cursor = builder.last_entry_name();
+            next_cursor = last_scanned;
         }
         Ok(builder.finish(next_cursor))
+    }
+
+    /// `worlds` less those a device-local flag keeps from this reader: off
+    /// this device, every flagged world (DEC-0005).
+    pub(super) fn worlds_this_reader_may_name(
+        &self,
+        worlds: Vec<EntityId>,
+    ) -> Result<Vec<EntityId>> {
+        if self.scoped_read.off_device() {
+            self.scoped_read.vault().off_device_readable(worlds)
+        } else {
+            Ok(worlds)
+        }
     }
 
     pub(super) fn world_names_from_matching_grants(
         &self,
         policy: &PolicyManifestResolution,
-    ) -> Vec<String> {
+    ) -> Result<Vec<String>> {
         let mut names = BTreeSet::new();
         for grant in policy.scoped_grants() {
             if !read_grant_matches_actor(grant, self.scoped_read.actor_key()) {
@@ -378,7 +393,17 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 names.insert(name);
             }
         }
-        names.into_iter().collect()
+        let worlds = names
+            .iter()
+            .filter_map(|name| EntityId::from_hex(name).ok())
+            .collect::<Vec<_>>();
+        let named = self.worlds_this_reader_may_name(worlds)?;
+        names.retain(|name| {
+            EntityId::from_hex(name)
+                .ok()
+                .is_none_or(|world| named.contains(&world))
+        });
+        Ok(names.into_iter().collect())
     }
 
     fn listdir_entities(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {

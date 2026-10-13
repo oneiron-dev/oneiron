@@ -773,3 +773,220 @@ async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() 
     let back = setup(json!({})).await;
     assert!(back["result"].to_string().contains(&task), "{back}");
 }
+
+/// Sol R3 F5: an agent's standing block is pinned to one world. Once that
+/// world is device-local, a board off this device takes no block of it: the
+/// agent reads as one with no standing block, and the world is never named.
+#[tokio::test]
+async fn a_board_off_this_device_opens_no_standing_block_of_a_device_local_world() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let world = put_world(&server.vault);
+    let owner_ref = server.vault.ensure_embedded_owner_actor().unwrap();
+    let owner = server
+        .vault
+        .authenticate_owner(
+            owner_ref,
+            &owner_ref.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let [pinned, bare] = [EntityId::now(), EntityId::now()];
+    for agent in [pinned, bare] {
+        server
+            .vault
+            .put_entity(
+                &agent,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"agent",
+            )
+            .unwrap();
+    }
+    server
+        .vault
+        .open_standing_block(&owner, pinned, world, "identity", 64)
+        .unwrap();
+    let board = |agent: EntityId| {
+        let server = Arc::clone(&server);
+        async move {
+            route_json(
+                server,
+                core_request_with_authz(
+                    "POST",
+                    "/v1/core/context-board",
+                    test_bearer(&format!(
+                        "scope=core:read;principal_ref={};actor_class=agent",
+                        agent.to_hex()
+                    )),
+                    Some(&json!({"standing": {"token_budget": 65_536}})),
+                ),
+            )
+            .await
+        }
+    };
+    let (status, open) = board(pinned).await;
+    assert_eq!(status, StatusCode::OK, "{open}");
+    assert_eq!(open["standing"]["world_ref"], world.to_hex(), "{open}");
+
+    server.vault.set_world_device_only(world, true).unwrap();
+    let (status, kept) = board(pinned).await;
+    assert!(!kept.to_string().contains(&world.to_hex()), "{kept}");
+    let (bare_status, bare_body) = board(bare).await;
+    assert_eq!(status, bare_status, "{kept} / {bare_body}");
+    assert_eq!(kept["error"]["code"], bare_body["error"]["code"]);
+}
+
+/// Sol R3 F6: the owner's Graph-FS tree lists every world under `/worlds`.
+/// Off this device it lists no device-local world.
+#[tokio::test]
+async fn graph_fs_off_this_device_lists_no_device_local_world() {
+    use super::owner_routes::{call, owner_recipe};
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let world = put_world(&server.vault);
+    let worlds = || {
+        let server = Arc::clone(&server);
+        let owner = owner.clone();
+        async move {
+            let (status, listed) = call(
+                &server,
+                "GET",
+                "/v1/owner/graph-fs?path=/worlds&op=ls",
+                owner,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{listed}");
+            listed.to_string()
+        }
+    };
+    assert!(worlds().await.contains(&world.to_hex()));
+
+    server.vault.set_world_device_only(world, true).unwrap();
+    let listed = worlds().await;
+    assert!(!listed.contains(&world.to_hex()), "{listed}");
+}
+
+/// Sol R3 F7: an owner's persona card is compiled from the claims about its
+/// person. Off this device none a device-local world keeps enters it: the
+/// preview and the export it consents to name neither the claim nor its text.
+#[tokio::test]
+async fn a_persona_card_off_this_device_holds_no_device_local_claim() {
+    use super::owner_routes::{call, owner_recipe, person};
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let subject = person(&server, b"Ada");
+    let world = put_world(&server.vault);
+    let mut claims = Vec::new();
+    for (predicate, text, world) in [
+        ("profile.name", "Ada Lovelace", None),
+        ("profile.hobby", "grows orchids at night", Some(world)),
+    ] {
+        let mut body = oneiron::ClaimBody::new(
+            predicate,
+            oneiron::ClaimSubject::Entity(subject),
+            rmpv::Value::from(text),
+            0.9,
+            ClaimApprovalStatus::Approved,
+            oneiron::ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.salience = Some(0.9);
+        body.source = Some(oneiron::ClaimSource::UserStated);
+        body.world = world;
+        let id = EntityId::now();
+        server
+            .vault
+            .put_claim(&id, &body, oneiron::TimeRange { start: 10, end: 10 }, 10)
+            .unwrap();
+        claims.push(id);
+    }
+    let kept = claims[1].to_hex();
+    let path = format!("/v1/owner/persona?subject={}", subject.to_hex());
+    let (status, preview) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert!(preview.to_string().contains("orchids"), "{preview}");
+
+    server.vault.set_world_device_only(world, true).unwrap();
+    let (status, preview) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert!(preview.to_string().contains("Lovelace"), "{preview}");
+    for withheld in ["orchids", kept.as_str()] {
+        assert!(!preview.to_string().contains(withheld), "{preview}");
+    }
+    let request = json!({ "subject": subject.to_hex(), "stamp": preview["stamp"], "strike": [] });
+    let (status, exported) = call(
+        &server,
+        "POST",
+        "/v1/owner/persona/export",
+        owner,
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{exported}");
+    for withheld in ["orchids", kept.as_str()] {
+        assert!(!exported.to_string().contains(withheld), "{exported}");
+    }
+}
+
+/// Sol R3 F8: an agent run's waiting proposals are reviewed and resolved as
+/// one bundle. Off this device a run holding a proposal a device-local world
+/// keeps is no run of the owner's: it is not listed, and review and approval
+/// answer as for a run that does not exist.
+#[tokio::test]
+async fn a_run_off_this_device_holding_a_device_local_proposal_reads_as_no_run() {
+    use super::owner_routes::{call, owner_recipe};
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let world = put_world(&server.vault);
+    let run = "device-local-run";
+    let kept = server
+        .vault
+        .park_run_proposal_in_world_for_test(
+            run,
+            EntityId::now(),
+            EntityId::now(),
+            world,
+            "orchid keeper",
+        )
+        .unwrap()
+        .to_hex();
+    let review_path = format!("/v1/owner/runs/review?run_id={run}");
+    let (status, review) = call(&server, "GET", &review_path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    let decide = json!({ "run_id": run, "bundle_id": review["bundle_id"] });
+
+    server.vault.set_world_device_only(world, true).unwrap();
+    let (status, pending) = call(&server, "GET", "/v1/owner/runs", owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{pending}");
+    assert_eq!(pending, json!([]));
+    let unknown = "/v1/owner/runs/review?run_id=no-such-run";
+    let (absent, absent_body) = call(&server, "GET", unknown, owner.clone(), None).await;
+    let (status, review) = call(&server, "GET", &review_path, owner.clone(), None).await;
+    assert_eq!(status, absent, "{review} / {absent_body}");
+    assert!(!review.to_string().contains(&kept), "{review}");
+    let (status, approved) = call(
+        &server,
+        "POST",
+        "/v1/owner/runs/approve",
+        owner,
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, absent, "{approved}");
+    assert!(!approved.to_string().contains(&kept), "{approved}");
+    assert_eq!(
+        server
+            .vault
+            .get_claim(&EntityId::from_hex(&kept).unwrap())
+            .unwrap()
+            .unwrap()
+            .approval,
+        ClaimApprovalStatus::Proposed
+    );
+}
