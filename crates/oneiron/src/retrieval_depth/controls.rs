@@ -219,4 +219,8 @@ pub struct RecallExecution<'a> {
     /// `on_cut` received, once the deadline comes; past the deadline the
     /// recall stops at its next check and returns it.
     pub door_fallback: Option<&'a crate::memory::MemoryPack>,
+    /// The host serves no reranker: high, xhigh and max run their expansion
+    /// without the rerank stage and need no lease, and their door says so in
+    /// the pack ([`crate::memory::RecallRerank::Unavailable`]).
+    pub rerank_unavailable: bool,
 }

@@ -1,0 +1,185 @@
+//! The recall door: when a recall's clock starts, what it answers when its
+//! door stops waiting, and how it serves high, xhigh and max.
+use super::sdk::RecallRequest;
+use crate::memory::{Memory, MemoryResult};
+
+/// When a recall's clock started and what its door does if it stops waiting.
+/// A door that can stop waiting at the deadline (an async server door) starts
+/// the clock when the request arrives, and answers with the last pack
+/// `on_cut` received: the empty one before the query embeds and retrieval
+/// runs, then the assembled one before the scope census. Given `on_cut`, the
+/// recall takes it that its door answers at the deadline: past it, the recall
+/// stops at its next check and returns that first, empty pack, so it burns no
+/// time on an answer no one reads.
+///
+/// `rerank` is how the door serves high, xhigh and max. It is the host's
+/// alone: no field of the request names a lease or a reranker.
+pub struct RecallDoor<'a> {
+    pub arrived: std::time::Instant,
+    pub on_cut: Option<&'a (dyn Fn(crate::memory::MemoryPack) + Sync)>,
+    pub rerank: crate::memory::RecallRerank<'a>,
+}
+
+impl RecallDoor<'_> {
+    /// A door that waits for the answer, starts the clock now and refuses a
+    /// paid effort, having no reranker to offer it.
+    #[must_use]
+    pub fn now() -> Self {
+        Self {
+            arrived: std::time::Instant::now(),
+            on_cut: None,
+            rerank: crate::memory::RecallRerank::Required,
+        }
+    }
+}
+
+/// `recall` with a host's query vector. Every SDK door lands here: the
+/// generated [`recall`](super::sdk::recall) embeds nothing, and a server
+/// whose embedder is serving embeds the query. `embed` runs only once the
+/// request is admitted: a request recall refuses (a paid effort, an unknown
+/// format or kind, a deadline out of range) costs no vector.
+pub fn recall_with_vector(
+    memory: &Memory<'_>,
+    input: RecallRequest,
+    embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    recall_at_door(memory, input, embed, &RecallDoor::now())
+}
+
+/// [`recall_with_vector`] whose deadline counts from `door.arrived`. A
+/// request with a deadline (call mode, or its own `deadline_ms`) runs under
+/// it as a hard cut: the stages yield at it, and the answer holds what was
+/// ready, marked partial.
+///
+/// High, xhigh and max run as `door.rerank` says: refused without a lease
+/// and reranker, unreranked and saying so when the host serves none, or
+/// reranked by the host's reranker, whose scores apply only to the block
+/// they scored (see [`crate::memory::RecallRerankHost`]).
+pub fn recall_at_door(
+    memory: &Memory<'_>,
+    input: RecallRequest,
+    embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+    door: &RecallDoor<'_>,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    use crate::memory::{RecallRerank, RecallRerankHost, RerankReport, RerankSkip};
+    let (effort, budget) = crate::memory::resolve_recall_dial(
+        input.effort,
+        input.deadline_ms,
+        memory.call_mode_deadline(),
+    )?;
+    let scope = input.scope.clone().unwrap_or_default();
+    let limit = input.limit.unwrap_or(10);
+    crate::memory::caps::check_query(&input.query)?;
+    crate::memory::caps::check_limit(limit)?;
+    let host = match door.rerank {
+        RecallRerank::Host(host) if effort.requires_rerank() => Some(host),
+        _ => None,
+    };
+    let unreranked = effort.requires_rerank() && matches!(door.rerank, RecallRerank::Unavailable);
+    // The host's scores arrive later, for the block they score.
+    let preflight = PreflightReranker;
+    crate::memory::check_recall_request(
+        effort,
+        &scope,
+        limit,
+        input.format.as_deref(),
+        host.map(RecallRerankHost::lease),
+        &crate::retrieval_depth::RecallExecution {
+            as_of: input.as_of,
+            reranker: host.map(|_| &preflight as &dyn crate::rerank::Reranker),
+            rerank_unavailable: unreranked,
+            ..Default::default()
+        },
+    )?;
+    let deadline =
+        budget.map(|budget| crate::retrieval_depth::RetrievalDeadline::hard(door.arrived, budget));
+    // A paid effort's packs say what its rerank stage did; one cut before
+    // that stage did not rerank.
+    let cut_report = if host.is_some() {
+        Some(RerankReport::Skipped {
+            reason: RerankSkip::Deadline,
+        })
+    } else {
+        unreranked.then_some(RerankReport::Skipped {
+            reason: RerankSkip::NoReranker,
+        })
+    };
+    // Before the query embeds: a door whose deadline comes due during the
+    // embedding still answers.
+    let fallback = door
+        .on_cut
+        .map(|on_cut| {
+            let mut pack = memory.recall_cut_pack(&scope)?;
+            pack.retrieval_meta.rerank.clone_from(&cut_report);
+            on_cut(pack.clone());
+            Ok::<_, crate::memory::MemoryError>(pack)
+        })
+        .transpose()?;
+    let embedding = embed(&input.query);
+    if let Some(host) = host {
+        return memory.recall_reranked_at_door(
+            &input,
+            effort,
+            &scope,
+            limit,
+            budget,
+            embedding.as_deref(),
+            door,
+            fallback.as_ref(),
+            host,
+        );
+    }
+    // A host with no reranker runs the paid expansion unreranked, and every
+    // pack it answers with says so.
+    let skipped = |pack: &mut crate::memory::MemoryPack| {
+        if unreranked {
+            pack.retrieval_meta.rerank.clone_from(&cut_report);
+        }
+    };
+    let on_cut = door.on_cut.map(|on_cut| {
+        move |mut pack: crate::memory::MemoryPack| {
+            skipped(&mut pack);
+            on_cut(pack);
+        }
+    });
+    let mut pack = memory.recall_with_execution(
+        &input.query,
+        effort,
+        &scope,
+        limit,
+        input.format.as_deref(),
+        None,
+        &crate::retrieval_depth::RecallExecution {
+            deadline: deadline.as_ref(),
+            embedding: embedding.as_deref(),
+            as_of: input.as_of,
+            on_cut: on_cut
+                .as_ref()
+                .map(|on_cut| on_cut as &(dyn Fn(crate::memory::MemoryPack) + Sync)),
+            door_fallback: fallback.as_ref(),
+            rerank_unavailable: unreranked,
+            ..Default::default()
+        },
+    )?;
+    skipped(&mut pack);
+    Ok(pack)
+}
+
+/// The reranker a paid request is checked against before it embeds.
+struct PreflightReranker;
+
+impl crate::rerank::Reranker for PreflightReranker {
+    fn id(&self) -> &str {
+        "recall-preflight"
+    }
+
+    fn rerank(
+        &self,
+        _query: &str,
+        _candidates: &[crate::rerank::RerankCandidate<'_>],
+    ) -> crate::error::Result<Vec<f32>> {
+        Err(crate::error::Error::InvalidConfig(
+            "the preflight reranker scores nothing".to_owned(),
+        ))
+    }
+}

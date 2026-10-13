@@ -178,7 +178,7 @@ pub(super) fn rows_holding_distinct_turns(
 }
 
 /// The TURN a witnessed MESSAGE is `PartOf`.
-fn turn_of(
+pub(super) fn turn_of(
     store: &Store,
     rtxn: &RoTxn<'_>,
     message: &EntityId,
