@@ -740,6 +740,9 @@ impl EngineNativeExecutor<'_> {
                         .ok_or(Error::CorruptedIndex("missing executor observation"))
                 })?;
         let epochs = self.compaction_epochs(record.run_id)?;
+        if !epochs.is_empty() {
+            self.admit_compaction_read()?;
+        }
         for (seq, view) in views.iter().enumerate() {
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
                 Some(Some(frame)) => {

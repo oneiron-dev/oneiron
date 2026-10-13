@@ -38,6 +38,46 @@ struct Compactor {
     tries: Mutex<Vec<Option<CompactionCheck>>>,
     /// The window tokens one call takes whole; `None` takes any window.
     limit: Option<u64>,
+    /// A door each pass shuts as it runs, as a credential revoked mid-pass.
+    shuts: Mutex<Option<Arc<ShutDoor>>>,
+}
+
+/// A host door that admits the run's own calls until it is shut, as a
+/// connector credential stops admitting them once revoked.
+#[derive(Default)]
+struct ShutDoor(std::sync::atomic::AtomicBool);
+
+impl ShutDoor {
+    fn shut(&self, shut: bool) {
+        self.0.store(shut, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl crate::code_run::AgentVerbDoor for ShutDoor {
+    fn call(
+        &self,
+        _: &crate::code_run::SelfAgentVerbCall,
+        _: &crate::memory::HostWriteOrigin,
+    ) -> std::result::Result<serde_json::Value, crate::code_run::AgentVerbRefusal> {
+        Err(crate::code_run::AgentVerbRefusal {
+            code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+        })
+    }
+
+    fn admit_run_call(
+        &self,
+        _: crate::code_run::RunCall,
+    ) -> std::result::Result<
+        Option<crate::claim::ScopedReadActorKey>,
+        crate::code_run::AgentVerbRefusal,
+    > {
+        if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::code_run::AgentVerbRefusal {
+                code: "door_shut".to_owned(),
+            });
+        }
+        Ok(None)
+    }
 }
 
 struct CompactorSeat(Arc<Compactor>);
@@ -61,6 +101,9 @@ impl CompactionBackend for CompactorSeat {
         retry: Option<CompactionCheck>,
     ) -> std::result::Result<CompactionProduct, CompactionRefusal> {
         self.0.tries.lock().expect("tries").push(retry);
+        if let Some(door) = self.0.shuts.lock().expect("shuts").as_ref() {
+            door.shut(true);
+        }
         let from = request.turn_start;
         let through = request.window.last().map_or(from, |message| message.turn);
         let lead = format!(
@@ -262,12 +305,30 @@ impl LongRun {
         hard_steps: u32,
         calls: Vec<Vec<SelfCall>>,
     ) -> (EngineExecutorOutcome, Vec<String>) {
-        let gated_write = GatedActorWrite::new(
+        let (outcome, requests) = self.try_call(seat, steps, soft_steps, hard_steps, calls, None);
+        (outcome.expect("the run continues"), requests)
+    }
+
+    /// [`Self::call_with`] behind `door`, as the run's host binds it, with the
+    /// call's own result.
+    fn try_call(
+        &self,
+        seat: &mut RunCompaction,
+        steps: std::ops::Range<usize>,
+        soft_steps: u32,
+        hard_steps: u32,
+        calls: Vec<Vec<SelfCall>>,
+        door: Option<Arc<ShutDoor>>,
+    ) -> (EngineExecutorResult<EngineExecutorOutcome>, Vec<String>) {
+        let mut gated_write = GatedActorWrite::new(
             &self.vault,
             WriteActor::new(entity(0xA0), EdgeActorClass::Agent),
             RUN_REF,
         )
         .expect("gated actor write");
+        if let Some(door) = door {
+            gated_write = gated_write.with_agent_verb_door(door);
+        }
         let backend = FixtureBackend::new(steps.clone().map(program));
         let last = steps.end.saturating_sub(1);
         let mut runtime = FixtureRuntime::new(steps.map(|seq| {
@@ -296,8 +357,7 @@ impl LongRun {
             .with_output_decay(no_decay())
             .with_compaction(seat)
             .run(&config),
-        )
-        .expect("the run continues");
+        );
         let requests = backend
             .requests
             .lock()
@@ -446,6 +506,82 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
             .is_some_and(|withdrawn| withdrawn.unknown),
         "a summary minted from an erased summary"
     );
+}
+
+/// #1405 on the compaction host (Sol round 19): the run's door rules on what
+/// compaction reads of the run, as on a read of its recorded output. While
+/// it is shut no pass seals the run's steps for a model, a pass that finished
+/// as the door shut does not land, and no request renders a summary; each
+/// stops the run with the door's refusal. Opened again, the run lands the
+/// kept pass and goes on.
+#[test]
+fn a_shut_door_stops_the_compaction_host_until_it_opens() {
+    let run = LongRun::start(10);
+    let compactor = Arc::new(Compactor::default());
+    let door = Arc::new(ShutDoor::default());
+    let compact_at = run.base_tokens + run.step_tokens * 7 / 2;
+    let mut seat = run.seat(compact_at, &compactor);
+    let refused = |outcome: &EngineExecutorResult<EngineExecutorOutcome>| {
+        matches!(
+            outcome,
+            Err(EngineExecutorError::HostRefused { code }) if code == "door_shut"
+        )
+    };
+    // Steps 2-3 stay under the threshold; step 4's request crosses it.
+    let (outcome, _) = run.try_call(&mut seat, 2..4, 2, 10, Vec::new(), Some(door.clone()));
+    assert!(outcome.is_ok());
+    door.shut(true);
+    let (outcome, requests) = run.try_call(&mut seat, 4..6, 4, 10, Vec::new(), Some(door.clone()));
+    assert!(
+        refused(&outcome),
+        "a crossing behind a shut door: {outcome:?}"
+    );
+    assert!(
+        compactor.tries.lock().expect("tries").is_empty(),
+        "no pass reads the run while the door is shut"
+    );
+    assert!(requests.is_empty());
+
+    // The pass shuts the door as it runs: step 4 goes on, and the next
+    // boundary refuses to land it.
+    door.shut(false);
+    *compactor.shuts.lock().expect("shuts") = Some(door.clone());
+    let (outcome, requests) = run.try_call(&mut seat, 4..6, 4, 10, Vec::new(), Some(door.clone()));
+    assert!(
+        refused(&outcome),
+        "a finished pass behind a shut door: {outcome:?}"
+    );
+    assert_eq!(compactor.tries.lock().expect("tries").len(), 1);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        run.summaries(),
+        0,
+        "the pass does not land while the door is shut"
+    );
+
+    // Open again: the kept pass lands, and the run goes on from it.
+    *compactor.shuts.lock().expect("shuts") = None;
+    door.shut(false);
+    let (outcome, requests) = run.try_call(&mut seat, 5..7, 2, 10, Vec::new(), Some(door.clone()));
+    assert!(outcome.is_ok(), "{outcome:?}");
+    assert_eq!(
+        compactor.tries.lock().expect("tries").len(),
+        1,
+        "the kept pass, not a new one"
+    );
+    assert_eq!(run.summaries(), 1);
+    assert!(requests[0].contains("<compacted epoch=\"1\" steps=\"0-2\">"));
+
+    // Shut once a summary exists: a request that would render it is never
+    // assembled, with or without a seat.
+    door.shut(true);
+    let mut off = RunCompaction::off(crate::compaction::CompactionOff::Disabled);
+    let (outcome, requests) = run.try_call(&mut off, 7..9, 2, 10, Vec::new(), Some(door));
+    assert!(
+        refused(&outcome),
+        "a shut door renders no summary: {outcome:?}"
+    );
+    assert!(requests.is_empty());
 }
 
 /// An epoch holds words the host itself fed the run, not only what its calls

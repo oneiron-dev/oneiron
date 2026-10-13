@@ -12,7 +12,9 @@ use crate::store::Store;
 mod device_only;
 pub mod model_versioning;
 
-pub(crate) use device_only::{CarriedWorlds, carried_worlds_in, device_only_withholds};
+pub(crate) use device_only::{
+    CarriedWorlds, carried_worlds_in, device_only_withholds, minted_worlds_in,
+};
 pub use model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, DEFAULT_MODEL_STACK_V1_ID, ModelStack, ModelStackDeprecation,
     ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId,

@@ -649,7 +649,7 @@ pub(super) fn mint_epoch_summary_with(
             if state.deleted || state.stale {
                 born_withdrawn
                     .get_or_insert_default()
-                    .absorb(&crate::settings::carried_worlds_in(
+                    .absorb(&crate::settings::minted_worlds_in(
                         &vault.store,
                         wtxn,
                         target,

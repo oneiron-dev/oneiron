@@ -5356,7 +5356,7 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     // now would copy its words (Sol round 18).
     let rtxn = vault.store.env.read_txn()?;
     assert!(
-        crate::settings::carried_worlds_in(&vault.store, &rtxn, &inner)?.unknown,
+        crate::settings::minted_worlds_in(&vault.store, &rtxn, &inner)?.unknown,
         "a deleted summary's shell is unknown to a mint"
     );
     drop(rtxn);
@@ -5766,6 +5766,45 @@ fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
         );
     }
     drop(rtxn);
+    // A regeneration from W's CLAIM ends the withdrawal only once the
+    // summary's edges name it again: export doors read those (Sol round 19).
+    let regenerate = |at: u64| -> crate::Result<bool> {
+        let fact_at = EntityMetadataHeader::parse(&vault.get_raw(&fact)?.unwrap())
+            .unwrap()
+            .learned_at;
+        vault
+            .batch()
+            .put(
+                &batched,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                TimeRange { start: at, end: at },
+                at,
+                &epoch_summary_bytes(1, "the world fact, again")?,
+            )
+            .commit()?;
+        vault.with_write_txn(|txn| {
+            crate::ports::DependencyIndex::port_dependency_complete_regeneration(
+                &*vault,
+                txn,
+                &batched,
+                at,
+                &[crate::ports::SourceSpan {
+                    document: fact,
+                    frontier: fact_at,
+                }],
+            )
+        })
+    };
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    assert!(
+        !regenerate(rewritten)?,
+        "a regeneration the graph does not name ends nothing"
+    );
+    vault
+        .batch()
+        .edge(&batched, EdgeKind::DerivedFrom, &fact, 1.0)
+        .commit()?;
+    assert!(regenerate(rewritten + 60)?);
     let ships = |shipped: bool| -> crate::Result<()> {
         assert_eq!(
             owner_window_ships(&vault, &october, &october_doc)?,
@@ -5835,6 +5874,57 @@ fn a_tombstone_that_keeps_a_summary_body_keeps_its_withdrawal_record() -> crate:
     assert!(
         !owner_window_ships(&vault, &october, &october_doc)?,
         "the window door, a tombstoned summary"
+    );
+    Ok(())
+}
+
+/// Sol round 19: a first deletion reads where a row's words sat whatever its
+/// body holds, since its marker is written before the purge. A WORLD with an
+/// empty body still carries its own world: purging it records that world on
+/// a summary written from it, and a window packed after the purge holds the
+/// summary while the world is flagged.
+#[test]
+fn a_first_purge_of_an_empty_world_records_it_on_its_summary() -> crate::Result<()> {
+    use crate::deletion::DeleteEntityOptions;
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x32));
+    let world = local_world_id(0x5b).entity_id();
+    let summary = entity_id(0x73);
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    let october = WindowKey::new("2026-10");
+    let (sources, sources_at) = at(&WindowKey::new("2026-09"));
+    let (during, learned) = at(&october);
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"")?;
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            during,
+            learned,
+            &epoch_summary_bytes(1, "the world")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &world, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, summary)
+    })?;
+    vault.set_world_device_only(world, true)?;
+    vault.delete_entity_with_options(&world, DeleteEntityOptions { purge: true })?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &summary)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a first purge of an empty WORLD"
+    );
+    drop(rtxn);
+    let doc = packed_window(&vault, &october)?;
+    assert!(
+        !owner_window_ships(&vault, &october, &doc)?,
+        "a window packed after the purge"
     );
     Ok(())
 }

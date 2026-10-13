@@ -14,6 +14,13 @@ impl EngineNativeExecutor<'_> {
     /// this run's next epoch; anything else holds for the turn and leaves
     /// the window whole.
     pub(super) fn land_finished_compaction(&mut self) -> EngineExecutorResult<()> {
+        if self
+            .compaction
+            .as_ref()
+            .is_some_and(|seat| seat.report().in_flight)
+        {
+            self.admit_compaction_read()?;
+        }
         let Some(seat) = self.compaction.take() else {
             return Ok(());
         };
@@ -69,11 +76,36 @@ impl EngineNativeExecutor<'_> {
             return Ok(None);
         };
         let used = super::compaction::request_tokens(request);
+        let mut refused = None;
         let reason = seat.feed(used, completed, |driver, watermark| {
+            if let Err(refusal) = self.admit_compaction_read() {
+                refused = Some(refusal);
+                return Ok(None);
+            }
             self.seal_compaction_window(driver, config, record, watermark)
         });
         self.compaction = Some(seat);
-        Ok(reason)
+        match refused {
+            Some(refusal) => Err(refusal),
+            None => Ok(reason),
+        }
+    }
+
+    /// The run's host door rules on what the compaction host reads of the run
+    /// as on a read of its recorded output (#1405): a pass sends the run's
+    /// scripts and outputs to a model, a swap mints a summary of them, and a
+    /// request renders that summary. A refusal stops the run before any of
+    /// them; a finished pass stays in the seat for an admitted re-entry.
+    pub(super) fn admit_compaction_read(&self) -> EngineExecutorResult<()> {
+        self.storage
+            .answered(|| {
+                self.gated_write
+                    .admit_run_call(crate::code_run::RunCall::RecordedOutput)
+            })?
+            .map_err(|refusal| super::types::EngineExecutorError::HostRefused {
+                code: refusal.code,
+            })?;
+        Ok(())
     }
 
     /// Steps from the first uncovered one through `watermark`, with their

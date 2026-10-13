@@ -100,10 +100,21 @@ pub(crate) fn device_only_withholds(
 /// The worlds whose words the stored row `id` carries: where it sits and, for
 /// an epoch SUMMARY, where each record it was written from sits and what its
 /// own withdrawal recorded. A deletion records them on every epoch summary it
-/// withdraws, before the row, its stamp and its edges go. A SUMMARY a
-/// deletion scrubbed to its header no longer says where it sat, yet a summary
-/// minted from it after that still copies its words: they are unknown.
+/// withdraws, before the row, its stamp and its edges go.
 pub(crate) fn carried_worlds_in(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<CarriedWorlds> {
+    sources_worlds(store, txn, BTreeSet::new(), vec![*id])
+}
+
+/// The worlds a summary minted from the deleted or withdrawn record `id`
+/// copies words of. A SUMMARY whose body a deletion took no longer says where
+/// it sat (its stamp went with its words), yet the run read them before: they
+/// are unknown. Its erase already captured them for every summary written from
+/// it before, so only a mint asks this.
+pub(crate) fn minted_worlds_in(
     store: &Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
@@ -111,14 +122,13 @@ pub(crate) fn carried_worlds_in(
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && raw.first() == Some(&crate::registry::ENTITY_TYPE_SUMMARY)
         && raw.len() <= ENTITY_METADATA_HEADER_LEN
-        && crate::deletion::row_deletion_marked(store, txn, id, Some(&raw))?
     {
         return Ok(CarriedWorlds {
             worlds: BTreeSet::new(),
             unknown: true,
         });
     }
-    sources_worlds(store, txn, BTreeSet::new(), vec![*id])
+    carried_worlds_in(store, txn, id)
 }
 
 /// The worlds of `pending` and of every record each was written from, each

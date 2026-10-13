@@ -56,6 +56,30 @@ pub(super) fn complete(
             return Ok(false);
         }
     }
+    // Every export door judges an epoch summary by the sources its
+    // `DerivedFrom` edges name, so its withdrawal ends only once they name
+    // every source it was regenerated from: a dependency row alone certifies
+    // nothing a door reads, and a lost edge stays a withdrawal.
+    if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
+    {
+        let named = super::EdgeStoreRead::port_edges(
+            store,
+            txn,
+            dependent,
+            super::EdgeDirection::Out,
+            Some(crate::edge::EdgeKind::DerivedFrom),
+            None,
+        )?
+        .map(|edge| edge.map(|edge| edge.target))
+        .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        if sources
+            .iter()
+            .any(|source| !named.contains(&source.document))
+        {
+            return Ok(false);
+        }
+    }
     // Replace only this dependent's reverse-indexed rows. Never scan all sources.
     for (key, source) in reverse_rows(store, txn, dependent)? {
         store.vault_meta().delete(txn, &key)?;
