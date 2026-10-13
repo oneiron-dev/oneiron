@@ -14,6 +14,7 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
 use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage, WindowLog};
+use super::stored_epoch::{StoredEpoch, stored_epoch_in};
 use crate::error::OffRecordError;
 
 /// Pinned body keys for an epoch summary, in encode order.
@@ -235,7 +236,8 @@ pub fn decode_epoch_summary_body(bytes: &[u8]) -> Result<EpochSummaryBody> {
 /// what it was written from, so a reader that is not the owner takes an
 /// epoch summary only while `admit` takes each record reached here (nested
 /// summaries included). The walk refuses as soon as one is refused or a source no
-/// longer resolves. `Ok(None)` when `body` is not an epoch summary.
+/// longer resolves, or a summary's pointer does ([`stored_epoch_in`]).
+/// `Ok(None)` when `body` is not an epoch summary.
 pub(crate) fn epoch_sources_admitted_in(
     dbs: &impl ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
@@ -243,8 +245,10 @@ pub(crate) fn epoch_sources_admitted_in(
     body: &[u8],
     mut admit: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
 ) -> Result<Option<bool>> {
-    if decode_epoch_summary_body(body).is_err() {
-        return Ok(None);
+    match stored_epoch_in(dbs, rtxn, summary, body)? {
+        StoredEpoch::No => return Ok(None),
+        StoredEpoch::Unresolved => return Ok(Some(false)),
+        StoredEpoch::Yes => {}
     }
     let mut seen = std::collections::BTreeSet::from([*summary]);
     let mut pending = vec![*summary];
@@ -266,10 +270,12 @@ pub(crate) fn epoch_sources_admitted_in(
             if !admit(&source, &row)? {
                 return Ok(Some(false));
             }
-            if row.entity_type == ENTITY_TYPE_SUMMARY
-                && decode_epoch_summary_body(&row.body).is_ok()
-            {
-                pending.push(source);
+            if row.entity_type == ENTITY_TYPE_SUMMARY {
+                match stored_epoch_in(dbs, rtxn, &source, &row.body)? {
+                    StoredEpoch::No => {}
+                    StoredEpoch::Yes => pending.push(source),
+                    StoredEpoch::Unresolved => return Ok(Some(false)),
+                }
             }
         }
     }

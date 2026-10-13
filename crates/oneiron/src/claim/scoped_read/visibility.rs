@@ -138,9 +138,18 @@ impl ScopedRead<'_> {
             if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor)? {
                 return Ok(false);
             }
-            // The walk itself expands a nested epoch summary.
+            // The walk itself expands a nested epoch summary, in any form.
             if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-                && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
+                && match self.session_view {
+                    Some(view) => crate::compaction::stored_epoch_in(view, rtxn, source, &row.body),
+                    None => crate::compaction::stored_epoch_in(
+                        &self.vault.store,
+                        rtxn,
+                        source,
+                        &row.body,
+                    ),
+                }?
+                .may_be()
             {
                 return Ok(true);
             }

@@ -212,13 +212,15 @@ fn carried_now(store: &Store, txn: &RoTxn<'_>, source: &EntityId) -> Result<Carr
     }
     Ok(carried_or_unknown(store, txn, source))
 }
+/// Whether `id` is an epoch summary in whatever form it is stored, a pointer
+/// no head stands for included (Astra 1384e).
 fn epoch_summary_in(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(
-        super::EntityStoreRead::port_entity_record(store, txn, id)?.is_some_and(|row| {
-            row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-                && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
-        }),
-    )
+    match super::EntityStoreRead::port_entity_record(store, txn, id)? {
+        Some(row) if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY => {
+            Ok(crate::compaction::stored_epoch_in(store, txn, id, &row.body)?.may_be())
+        }
+        _ => Ok(false),
+    }
 }
 pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     withdraw_in_txn(store, txn, id, &CarriedWorlds::default())

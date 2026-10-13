@@ -203,7 +203,11 @@ fn row_worlds(
         }
         crate::registry::ENTITY_TYPE_SUMMARY => {
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            if crate::compaction::decode_epoch_summary_body(body).is_ok() {
+            // An epoch whose pointer no head stands for may carry any world's
+            // words (Astra 1384e).
+            let epoch = crate::compaction::stored_epoch_in(store, txn, id, body)?;
+            carried.unknown |= epoch == crate::compaction::StoredEpoch::Unresolved;
+            if epoch.may_be() {
                 for edge in store.port_edges(
                     txn,
                     id,

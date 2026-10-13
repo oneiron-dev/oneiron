@@ -36,11 +36,17 @@ pub(super) fn unbacked_epochs(
         let state = crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, rtxn, id)?;
         Ok(state.deleted || state.stale)
     };
-    let is_epoch = |raw: &[u8]| {
-        raw.first() == Some(&crate::registry::ENTITY_TYPE_SUMMARY)
-            && raw.len() >= ENTITY_METADATA_HEADER_LEN
-            && crate::compaction::decode_epoch_summary_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-                .is_ok()
+    // In any form: a pointer is resolved by the head stored at its id, and
+    // one no head stands for is held as an epoch (Astra 1384e).
+    let is_epoch = |id: &EntityId, raw: Option<Vec<u8>>| -> Result<bool> {
+        let Some(raw) = raw.filter(|raw| {
+            raw.first() == Some(&crate::registry::ENTITY_TYPE_SUMMARY)
+                && raw.len() >= ENTITY_METADATA_HEADER_LEN
+        }) else {
+            return Ok(false);
+        };
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        Ok(crate::compaction::stored_epoch_in(&vault.store, rtxn, id, body)?.may_be())
     };
     // Each epoch's sources, or `None` when the epoch itself is withdrawn;
     // and whether each source ships here, withdrawn by nothing.
@@ -48,9 +54,7 @@ pub(super) fn unbacked_epochs(
     let mut backs = BTreeMap::<EntityId, bool>::new();
     for id in shipped {
         let carried = crate::sync::loro_support::map_get_bytes(&entities, &id.to_hex());
-        if !carried.as_deref().is_some_and(is_epoch)
-            && !vault.get_raw_in(rtxn, id)?.as_deref().is_some_and(is_epoch)
-        {
+        if !is_epoch(id, carried)? && !is_epoch(id, vault.get_raw_in(rtxn, id)?)? {
             continue;
         }
         if withdrawn(id)? {

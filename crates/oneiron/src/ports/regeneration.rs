@@ -64,7 +64,7 @@ pub(super) fn complete(
     // source would lose the row that withdraws it on that source's erase; an
     // obsolete edge goes through the batch door first, which withdraws.
     if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-        && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
+        && crate::compaction::stored_epoch_in(store, txn, dependent, &row.body)?.may_be()
     {
         let named = super::EdgeStoreRead::port_edges(
             store,

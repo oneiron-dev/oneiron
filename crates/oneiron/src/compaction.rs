@@ -63,6 +63,7 @@ mod driver;
 mod epoch;
 mod gate;
 pub mod output;
+mod stored_epoch;
 
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
@@ -82,6 +83,7 @@ pub use gate::{
     CompactionSuppression, GatedCompaction, compaction_reply_schema, compaction_request_input,
     gate_compaction,
 };
+pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 
 use crate::entity_id::EntityId;
 use crate::error::{CompactionPacketError, Result};

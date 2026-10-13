@@ -5931,12 +5931,12 @@ fn a_summary_of_a_summary_rewritten_as_no_epoch_keeps_its_world() -> crate::Resu
 }
 
 /// Sol round 23: an owner's move of an epoch summary's text to the document
-/// plane leaves a pointer body, which is no epoch either. The move records
-/// the worlds the old body carried, so a summary written from it stays home
-/// while W is flagged.
+/// plane leaves a pointer body. The summary is still an epoch to every reader
+/// (Astra 1384e), and the move records the worlds the old body carried, so a
+/// summary written from it stays home while W is flagged. Without that record
+/// (a move made before it existed) its sources still hold it.
 #[test]
 fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Result<()> {
-    use crate::entity_doc::{DocAuthorization, TextField};
     let dir = tempfile::tempdir()?;
     let vault = Vault::open_owned(dir.path(), crate::VaultConfig::device())?;
     let (source, nested) = (entity_id(0x75), entity_id(0x76));
@@ -5945,6 +5945,75 @@ fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Re
     let november_doc = packed_window(&vault, &november)?;
     vault.set_world_device_only(world, true)?;
     assert!(!owner_window_ships(&vault, &november, &november_doc)?);
+    move_text_to_document_plane(&vault, &source)?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of a summary moved to the text plane"
+    );
+    vault
+        .with_write_txn(|txn| crate::ports::retire_withdrawn_in_txn(&vault.store, txn, &source))?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, the sources of a summary on the text plane"
+    );
+    Ok(())
+}
+
+/// Astra 1384e: an epoch summary whose text moved to the document plane
+/// reaches a vault that never held it through canonical recovery, as a
+/// pointer with no birth stamp and no record of what it carried. A summary
+/// minted there from it ships while no world is flagged, and stays home while
+/// W is, also once no head stands for the pointer.
+#[test]
+fn a_summary_of_a_recovered_summary_on_the_text_plane_stays_home() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), crate::VaultConfig::device())?;
+    let source = entity_id(0x77);
+    let october = WindowKey::new("2026-10");
+    let (world, _) = summaries_of_a_world_fact(&vault, &[(source, &october)])?;
+    move_text_to_document_plane(&vault, &source)?;
+    let snapshot = crate::recovery::capture_canonical_window(
+        &vault,
+        "2026-10",
+        &packed_window(&vault, &october)?,
+    )?;
+
+    let restored_dir = tempfile::tempdir()?;
+    let restored = Vault::open_owned(restored_dir.path(), crate::VaultConfig::device())?;
+    let at = WindowKey::new("2026-09").start_timestamp().unwrap() + 60;
+    let during = TimeRange { start: at, end: at };
+    restored.put_entity(&world, ENTITY_TYPE_WORLD, during, at, b"world")?;
+    crate::recovery::recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        restored_dir.path().join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(restored.entity_text(&source)?, "the world fact");
+    let (nested, november) = (entity_id(0x78), WindowKey::new("2026-11"));
+    nested_summary(&restored, source, nested, &november)?;
+    assert!(
+        owner_window_ships(&restored, &november, &packed_window(&restored, &november)?)?,
+        "no world flagged: a summary of a recovered summary ships"
+    );
+    restored.set_world_device_only(world, true)?;
+    assert!(
+        !owner_window_ships(&restored, &november, &packed_window(&restored, &november)?)?,
+        "the window door, a summary of a recovered summary on the text plane"
+    );
+    restored
+        .with_write_txn(|txn| crate::entity_doc::erase_in_txn(&restored.store, txn, &source))?;
+    assert!(
+        !owner_window_ships(&restored, &november, &packed_window(&restored, &november)?)?,
+        "the window door, a summary of a pointer no head stands for"
+    );
+    Ok(())
+}
+
+/// The owner moves the text of `id` to the document plane.
+fn move_text_to_document_plane(vault: &Vault, id: &EntityId) -> crate::Result<()> {
+    use crate::entity_doc::{DocAuthorization, TextField};
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     let authority = vault.authenticate_owner(
         owner,
@@ -5953,16 +6022,11 @@ fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Re
         crate::store::GateDecisionId::now(),
     )?;
     vault.migrate_entity_text(
-        &source,
+        id,
         &TextField::MapField("text".into()),
         crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
         &DocAuthorization::Owner(&authority),
-    )?;
-    assert!(
-        !owner_window_ships(&vault, &november, &november_doc)?,
-        "the window door, a summary of a summary moved to the text plane"
-    );
-    Ok(())
+    )
 }
 
 /// An epoch summary `source` of W's CLAIM settled in base in `at`, and an
@@ -5976,7 +6040,18 @@ fn summary_of_a_summary(
     nested_at: &WindowKey,
 ) -> crate::Result<EntityId> {
     let (world, _) = summaries_of_a_world_fact(vault, &[(source, at)])?;
-    let learned = nested_at.start_timestamp().unwrap() + 60;
+    nested_summary(vault, source, nested, nested_at)?;
+    Ok(world)
+}
+
+/// An epoch summary `nested` written from `source`, settled in base in `at`.
+fn nested_summary(
+    vault: &Vault,
+    source: EntityId,
+    nested: EntityId,
+    at: &WindowKey,
+) -> crate::Result<()> {
+    let learned = at.start_timestamp().unwrap() + 60;
     vault
         .batch()
         .put(
@@ -5993,8 +6068,7 @@ fn summary_of_a_summary(
         .commit()?;
     vault.with_write_txn_grouped(|txn| {
         crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, nested)
-    })?;
-    Ok(world)
+    })
 }
 
 /// Astra #1384d F3: what an epoch summary was withdrawn for lives as long as

@@ -474,7 +474,8 @@ fn stored_scope(
 /// every read that checks a world asks. A CLAIM names its own; a TASK and its
 /// authority facts sit where `stamp_task_birth` settled them, and a SUMMARY
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
-/// epoch SUMMARY sits where its birth stamp says; every other record, and any
+/// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
+/// where its birth stamp says; every other record, and any
 /// other SUMMARY, is base reality (`Some(None)`). `None` where the row cannot
 /// prove its world (an erased CLAIM, a TASK or epoch SUMMARY whose stamp is
 /// gone or was never settled), which a read narrowed on worlds keeps out.
@@ -501,9 +502,11 @@ pub(crate) fn record_world_in(
             .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
     };
+    // An epoch summary is one whatever form its body takes, and a pointer no
+    // head stands for may be one (Astra 1384e).
     if summary
         && stamped.flatten().is_none()
-        && crate::compaction::decode_epoch_summary_body(data).is_err()
+        && !crate::compaction::stored_epoch_in(store, txn, &id, data)?.may_be()
     {
         return Ok(Some(None));
     }
