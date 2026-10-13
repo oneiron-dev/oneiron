@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use super::config::{GIT_WIRE_POLL_INTERVAL, GIT_WIRE_READ_CHUNK_BYTES};
@@ -112,7 +112,7 @@ pub(super) fn spawn_git_inner(
     // excludes the ceiling itself; the working directory is still inspected.
     let ceiling = std::env::join_paths([repo_root.parent().unwrap_or(repo_root)])
         .map_err(|_| super::failure::invalid("git repository ceiling is not representable"))?;
-    let mut command = Command::new(process_env.git_binary.as_os_str());
+    let mut command = oneiron_spawn::command(process_env.git_binary.as_os_str());
     command.arg("-C").arg(repo_root).args(args);
     command.env_clear();
     for (key, value) in child_env(process_env) {

@@ -28,7 +28,7 @@ pub fn host_init(args: HostInitArgs) -> anyhow::Result<()> {
         fs::set_permissions(&args.path, fs::Permissions::from_mode(0o700))?;
     }
     if let Some(hook) = args.encryption_hook {
-        let status = std::process::Command::new(hook).arg(&args.path).status()?;
+        let status = oneiron_spawn::command(hook).arg(&args.path).status()?;
         anyhow::ensure!(status.success(), "encryption hook failed");
     }
     for (name, bytes) in TEMPLATES {

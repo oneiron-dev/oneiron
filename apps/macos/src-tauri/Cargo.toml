@@ -32,6 +32,8 @@ asr-mlx = []
 # the ordinary vault doors and never touches the sync wire itself; replication
 # to the elected home node is the existing device-sync path.
 oneiron = { path = "../../../crates/oneiron" }
+# Every subprocess starts with only the descriptors it is named.
+oneiron-spawn = { path = "../../../crates/oneiron-spawn" }
 tauri = { version = "2", features = ["tray-icon"] }
 cpal = "0.18"
 hound = "3.5"

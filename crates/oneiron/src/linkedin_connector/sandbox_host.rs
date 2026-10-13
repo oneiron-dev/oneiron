@@ -4,7 +4,6 @@
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -144,7 +143,7 @@ impl<'v, S: LinkedInSeatHostServices> LinkedInContainerSandboxHost<'v, S> {
     }
 
     fn command(&self, args: &[&str]) -> Result<()> {
-        let status = Command::new(&self.docker_binary)
+        let status = oneiron_spawn::command(&self.docker_binary)
             .args(args)
             .env_clear()
             .env("PATH", "/usr/bin:/bin")

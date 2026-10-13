@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::{Mutex, mpsc};
 use std::time::Duration;
 
@@ -26,7 +26,7 @@ pub struct StdioLanguageServer {
 }
 impl StdioLanguageServer {
     pub fn start(program: &Path, args: &[String], root: &Path, timeout: Duration) -> Result<Self> {
-        let mut child = Command::new(program)
+        let mut child = oneiron_spawn::command(program)
             .args(args)
             .current_dir(root)
             .stdin(Stdio::piped())

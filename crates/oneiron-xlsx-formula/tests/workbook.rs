@@ -1,6 +1,10 @@
 //! Actual XLSX in/out tests of the retained engine. The core's edit round
 //! trip, which wraps host sessions in this engine by default, tests the
 //! session routing (`crates/oneiron/src/edit_roundtrip/native_recalc_tests.rs`).
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 use std::io::{Cursor, Read, Write};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};

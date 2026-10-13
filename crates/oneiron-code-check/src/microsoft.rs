@@ -52,7 +52,7 @@ impl MicrosoftTsc {
     /// not answer in time, or reports another version.
     pub fn new(tsc: impl Into<PathBuf>) -> Result<Self, CheckFailure> {
         let tsc = std::fs::canonicalize(tsc.into()).map_err(|_| CheckFailure::Unavailable)?;
-        let mut command = Command::new(&tsc);
+        let mut command = oneiron_spawn::command(&tsc);
         command.arg("--version");
         let version = run_bounded(command, Instant::now() + DEFAULT_WALL_TIME, VERSION_BYTES)
             .map_err(|_| CheckFailure::Unavailable)?;
@@ -97,7 +97,7 @@ impl CodeCheck for MicrosoftTsc {
             std::fs::write(directory.path().join(name), bytes)
                 .map_err(|_| CheckFailure::Unavailable)?;
         }
-        let mut command = Command::new(&self.tsc);
+        let mut command = oneiron_spawn::command(&self.tsc);
         command.args(TSC_ARGS).current_dir(directory.path());
         run_bounded(command, deadline, DEFAULT_OUTPUT_BYTES)?.report(self.backend(), None)
     }

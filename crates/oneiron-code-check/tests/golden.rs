@@ -6,6 +6,10 @@
 //! host verbs, the verb table's `self.memory` (kept equal to the engine's
 //! rendering by `code_mode_declarations_file_is_the_verb_table`), and the
 //! interpreter's functions.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use oneiron_code_check::{
     CheckFailure, CheckInput, CodeCheck, Declaration, MICROSOFT_TS_VERSION, MicrosoftTsc,

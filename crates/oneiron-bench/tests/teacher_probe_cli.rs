@@ -1,4 +1,8 @@
 //! Run the shipped binary, not only its Rust scoring function, against CI fixtures.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 use oneiron::llm::manifest::{ModelManifest, TeacherProbeApproval};
 use oneiron::{Vault, VaultConfig};
 use std::path::{Path, PathBuf};

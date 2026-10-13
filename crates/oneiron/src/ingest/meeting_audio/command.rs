@@ -7,7 +7,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::{Value, json};
 
@@ -189,7 +189,7 @@ impl CommandMeetingAudioHost {
             .and_then(|()| input.write_all(body))
             .and_then(|()| input.seek(SeekFrom::Start(0)).map(|_| ()))
             .map_err(|_| host_error(stage, "RequestIo"))?;
-        let mut command = Command::new(&self.config.python);
+        let mut command = oneiron_spawn::command(&self.config.python);
         command
             .arg(&self.config.bridge)
             .arg("--workspace")

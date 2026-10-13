@@ -246,7 +246,7 @@ fn recommended_local() -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("/usr/sbin/sysctl")
+        oneiron_spawn::command("/usr/sbin/sysctl")
             .args(["-n", "hw.memsize"])
             .output()
             .ok()

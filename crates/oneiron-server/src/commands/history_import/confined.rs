@@ -295,7 +295,7 @@ mod tests {
     fn an_entry_that_is_a_fifo_when_opened_is_refused_without_waiting() {
         let dir = tempfile::tempdir().expect("test fixture");
         let name = "rollout-2026-09-14T10-00-00-fifo.jsonl";
-        let made = std::process::Command::new("mkfifo")
+        let made = oneiron_spawn::command("mkfifo")
             .arg(dir.path().join(name))
             .status()
             .expect("mkfifo");

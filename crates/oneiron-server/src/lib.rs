@@ -12,6 +12,13 @@
 //! [`managed`] adds a second, opt-in way to run that same path: as a
 //! supervised child process behind `--managed-by-hypnos`. Without the switch
 //! nothing in this crate behaves differently.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+    )
+)]
 
 pub mod actions;
 pub mod ai_host;

@@ -2,6 +2,13 @@
 //! Modules sit under family banners below: Vault core, Read path, Knowledge model, Gates & authority,
 //! Identity, Tasks & scheduling, Outbound & sync, Agent runtime, Dreamer & skills, Code & custody, Surfaces.
 //! Only `sync` is feature-gated. The generated map with sizes and one-line docs is `docs/CODEMAP.md`.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+    )
+)]
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

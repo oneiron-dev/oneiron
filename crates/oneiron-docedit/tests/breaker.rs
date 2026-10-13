@@ -1,3 +1,7 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 use oneiron_docedit::retained_opc::{Editability, Error, Limits, Package, XmlLimits};
 const PART: &str = "word/document.xml";
 const PATH: &[&str] = &["root", "item"];

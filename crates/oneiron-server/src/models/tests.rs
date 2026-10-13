@@ -978,9 +978,10 @@ fn sse_events_decode_across_reads_and_every_line_end() {
 
 /// A vault-held key's rung refuses, before its permit starts, a call that
 /// could only fail before anything is sent: no broker socket at the
-/// configured path (nothing there, or a file that is not a socket), or a
-/// custody door that would not release the key to the broker. None reads
-/// the key, and none is charged.
+/// configured path (nothing there, or a file that is not a socket), a
+/// same-user child that exits before it serves or that let its channel go
+/// (Astra on #1416), or a custody door that would not release the key to the
+/// broker. None reads the key, and none is charged.
 #[cfg(unix)]
 #[tokio::test]
 async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
@@ -1004,6 +1005,27 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
     // A separate-user broker: any uid but this process's own.
     let uid = std::fs::metadata(dir.path()).unwrap().uid().wrapping_add(1);
     let socket = dir.path().join("broker.sock");
+    // A same-user child that exits before it serves.
+    let child = config(
+        "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{ model = \"paid:teacher\" }]\n[broker]\nprogram = \"/bin/false\"\n",
+    );
+    // A live same-user child whose channel is already closed: it lets its
+    // end go, says it serves, and stays up.
+    let dropped = dir.path().join("dropped-channel");
+    std::fs::write(
+        &dropped,
+        "#!/bin/sh\nexec 3>&-\necho listening\nexec /bin/cat >/dev/null\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &dropped,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let dropped = config(&format!(
+        "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{{ model = \"paid:teacher\" }}]\n[broker]\nprogram = \"{}\"\n",
+        dropped.display()
+    ));
     let config = config(&format!(
         "[providers.paid]\nkind = \"openai-compat\"\nbase_url = \"https://api.example.test/v1\"\nkey_secret = \"provider-key\"\n[roles.checker]\nrungs = [{{ model = \"paid:teacher\" }}]\n[broker]\nsocket = \"{}\"\nuid = {uid}\n",
         socket.display()
@@ -1013,6 +1035,8 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
         ("no path", true),
         ("a plain file", true),
         ("a door that refuses", false),
+        ("a child that never serves", true),
+        ("a child that let its channel go", true),
     ];
     for (case, holds) in cases {
         match case {
@@ -1027,7 +1051,12 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
             holds,
             reads: AtomicUsize::new(0),
         });
-        let runtime = ModelRuntime::build_with_keys(Some(&config), Some(door.clone()));
+        let config = match case {
+            "a child that never serves" => &child,
+            "a child that let its channel go" => &dropped,
+            _ => &config,
+        };
+        let runtime = ModelRuntime::build_with_keys(Some(config), Some(door.clone()));
         let model = runtime
             .seat(ModelRole::Checker)
             .expect("seat")

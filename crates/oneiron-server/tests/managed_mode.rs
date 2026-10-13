@@ -1,5 +1,9 @@
 // Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
 #![allow(clippy::unwrap_used)]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 //! Managed serve mode: the engine as a supervised child process (ONE-1595).
 //!
 //! What each area is pinned by, and why that row is the discriminator:

@@ -2,6 +2,8 @@
 
 use super::*;
 
+use std::process::Command;
+
 fn frame(ok: bool, request_id: &str, body: &[u8]) -> Vec<u8> {
     let mut data = serde_json::to_vec(&json!({
         "protocol": PROTOCOL, "request_id": request_id, "body_bytes": body.len(),

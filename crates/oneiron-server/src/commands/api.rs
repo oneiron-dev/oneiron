@@ -25,7 +25,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::process::{Child, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -538,7 +538,7 @@ fn spawn_curl(
         None => None,
     };
 
-    let mut command = Command::new(program);
+    let mut command = oneiron_spawn::command(program);
     // FIRST, before anything else: curl only honours the refusal there.
     command.arg(CURL_DISABLE_HOST_CONFIG);
     command.args(CURL_FLAGS);

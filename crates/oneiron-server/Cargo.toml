@@ -45,6 +45,8 @@ oneiron-code-check = { version = "0.1.0", path = "../oneiron-code-check" }
 oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
 # The credential broker's frames, checks and binary entry point.
 oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
+# Every subprocess starts with only the descriptors it is named.
+oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 # The Dreamer's starter motor: the server owns the wake supervisor and the
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).

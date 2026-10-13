@@ -1,5 +1,6 @@
 //! What the model runtime built, for the owner-facing status route.
 use oneiron::ModelId;
+use oneiron::llm::BrokerIsolation;
 use oneiron::llm::manifest::ModelRole;
 use serde::Serialize;
 
@@ -29,6 +30,15 @@ pub struct ProviderStatus {
     pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// For a `key_secret` provider, how the credential broker that sends its
+    /// calls is kept apart from this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broker_isolation: Option<BrokerIsolation>,
+    /// The unproven badge (ARCH-0069 `#broker-same-user-open`): the broker
+    /// runs as this server's own user, so only its own closing keeps its
+    /// memory from that user.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unproven: bool,
 }
 
 fn kind_name(kind: ProviderKind) -> &'static str {
@@ -54,11 +64,23 @@ impl ProviderStatus {
             locality: provider.locality,
             state,
             reason,
+            broker_isolation: None,
+            unproven: false,
         }
     }
 
-    pub(super) fn ready(name: &str, provider: &ProviderConfig) -> Self {
-        Self::with(name, provider, "ready", None)
+    /// A provider that can serve, through a broker kept apart as `broker`
+    /// says, if its key is in custody.
+    pub(super) fn ready(
+        name: &str,
+        provider: &ProviderConfig,
+        broker: Option<BrokerIsolation>,
+    ) -> Self {
+        Self {
+            broker_isolation: broker,
+            unproven: broker == Some(BrokerIsolation::SameUser),
+            ..Self::with(name, provider, "ready", None)
+        }
     }
 
     /// A tagger entry: accepted config whose consumer is the tagger slot's

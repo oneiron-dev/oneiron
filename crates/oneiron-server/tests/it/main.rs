@@ -1,5 +1,9 @@
 //! Consolidated integration-test binary: five former standalone
 //! `tests/*.rs` Cargo targets compiled and linked once.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 mod agent_credentials;
 mod ai_serve;
