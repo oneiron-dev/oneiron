@@ -4680,7 +4680,7 @@
      "path": "src/booking/lifecycle/claim.rs",
      "purpose": "Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 6,
       "struct": 1
      }
@@ -4707,7 +4707,7 @@
      "purpose": "The public verb door and the home-node consumer turn: enqueue, checkout lease, and one claimed attempt run…",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -4762,7 +4762,7 @@
      "path": "src/booking/lifecycle/passport.rs",
      "purpose": "The outbound calendar passport written at sequence 0 and superseded by reschedule and cancel",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -4794,7 +4794,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HoldLeaseSpec",
@@ -4807,7 +4807,7 @@
      "surface": {
       "crate-vis": 13,
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -5684,6 +5684,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/calendar/invite/tests/pending_passport.rs",
+     "purpose": "A pending `calendar.passport` never picks the EVENT an invite binds to",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -5765,7 +5773,7 @@
      "path": "src/calendar/passport.rs",
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 7
      }
@@ -38661,6 +38669,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/booking_lifecycle/caps.rs",
+     "purpose": "engine-core-03: the daily and weekly caps count confirmed bookings",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/booking_lifecycle/proposals.rs",
+     "purpose": "A pending proposal on a booking's EVENT is not the booking's record",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -39449,7 +39473,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40670,7 +40694,7 @@
    "over_bar": 35,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2469,
-   "test_files": 783
+   "test_files": 786
   },
   "oneiron-android": {
    "files": [
@@ -48919,7 +48943,7 @@
      "path": "src/api/booking/public_fixture.rs",
      "purpose": "Shared fixtures for tests that enter the real public router",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -50168,6 +50192,14 @@
      "notable": [],
      "path": "src/api/tests/depth_quality.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/mcp_booking_publication.rs",
+     "purpose": "engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert`",
      "surface": {}
     },
     {
@@ -53539,7 +53571,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 179,
+     "files": 180,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53745,7 +53777,7 @@
    "over_bar": 9,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 328,
-   "test_files": 140
+   "test_files": 141
   },
   "oneiron-uniffi": {
    "files": [
