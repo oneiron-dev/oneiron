@@ -14,6 +14,8 @@ use crate::{
 
 #[path = "tests_room_saver.rs"]
 mod room_saver;
+#[path = "tests_room_saving.rs"]
+mod room_saving;
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
