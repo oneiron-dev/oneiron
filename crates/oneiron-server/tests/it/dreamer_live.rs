@@ -290,10 +290,21 @@ fn redact(text: &str, key: &str) -> String {
 }
 
 /// Every string in `value`, keys included, with `key` cut out of its decoded
-/// text, where no escape can hide it.
+/// text, where no escape can hide it, nested JSON strings included.
 fn redact_value(value: &mut Value, key: &str) {
     match value {
-        Value::String(text) => *text = redact(text, key),
+        Value::String(text) => {
+            // A string that is itself JSON may carry the key escaped: it is
+            // decoded and redacted too, and kept as it was when clean.
+            if let Ok(mut nested) = serde_json::from_str::<Value>(text) {
+                let clean = nested.clone();
+                redact_value(&mut nested, key);
+                if nested != clean {
+                    *text = nested.to_string();
+                }
+            }
+            *text = redact(text, key);
+        }
         Value::Array(items) => items.iter_mut().for_each(|item| redact_value(item, key)),
         Value::Object(map) => {
             *map = std::mem::take(map)
@@ -341,12 +352,41 @@ fn scrub(out: &Path, key: &str) -> Vec<PathBuf> {
         .filter(|path| path.is_file())
     {
         let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
-        if forms.iter().any(|form| text.contains(form)) {
-            std::fs::write(&path, redact(&text, key)).unwrap();
+        let literal = forms.iter().any(|form| text.contains(form));
+        if literal || decoded_carries(&text, key) {
+            if literal {
+                std::fs::write(&path, redact(&text, key)).unwrap();
+            }
             found.push(path);
         }
     }
     found
+}
+
+/// Whether a decoded JSON string in `text` carries `key`: the whole text or
+/// a line's trailing JSON, nested JSON strings included, since JSON may
+/// escape any character of it.
+fn decoded_carries(text: &str, key: &str) -> bool {
+    fn carries(value: &Value, key: &str) -> bool {
+        match value {
+            Value::String(text) => {
+                text.contains(key)
+                    || serde_json::from_str::<Value>(text).is_ok_and(|nested| carries(&nested, key))
+            }
+            Value::Array(items) => items.iter().any(|item| carries(item, key)),
+            Value::Object(map) => map
+                .iter()
+                .any(|(name, item)| name.contains(key) || carries(item, key)),
+            _ => false,
+        }
+    }
+    std::iter::once(text)
+        .chain(
+            text.lines()
+                .filter_map(|line| line.find('{').map(|start| &line[start..])),
+        )
+        .filter_map(|json| serde_json::from_str::<Value>(json).ok())
+        .any(|value| carries(&value, key))
 }
 
 /// The model ids an answer names: a JSON body's, or every stream event's.
