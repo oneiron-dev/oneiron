@@ -18,7 +18,8 @@ pub(crate) mod hygiene_tests;
 mod tests;
 
 pub(crate) use self::journal::{
-    JournalEntry, JournalRole, JournalScope, PromotePlan, zeroize_batch_op_payload,
+    JournalEntry, JournalRole, JournalScope, PromotePlan, replayed_subject,
+    zeroize_batch_op_payload,
 };
 pub(crate) use self::keyspace::OverlayKeyspace;
 pub(crate) use self::overlay::{SessionOverlay, TxnSegmentGuard, txn_segment_installed};

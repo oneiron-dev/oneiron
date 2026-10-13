@@ -130,6 +130,14 @@ pub enum OffRecordError {
         session_ref: String,
         saver_ref: String,
     },
+    /// ARCH-0052 D4: a save copies what was said into a turn it saved since,
+    /// and an ordinary write had meanwhile put another message at the same
+    /// order into that turn. A turn holds one message per order, so the save
+    /// kept nothing: what was said stays in the room, unsaved.
+    #[error(
+        "the save kept nothing: turn {turn_ref} holds another message at order {order} now, so what was said into it since stays in the room"
+    )]
+    OffRecordCopyConflict { turn_ref: String, order: u32 },
 }
 
 impl OffRecordError {
@@ -154,6 +162,7 @@ impl OffRecordError {
             Self::OffRecordPromoteAuthorMissing { .. } => ErrorKind::OffRecordPromoteAuthorMissing,
             Self::OffRecordNotInRoom { .. } => ErrorKind::OffRecordNotInRoom,
             Self::OffRecordSavingStopped { .. } => ErrorKind::OffRecordSavingStopped,
+            Self::OffRecordCopyConflict { .. } => ErrorKind::OffRecordCopyConflict,
         }
     }
 }
