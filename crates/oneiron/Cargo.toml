@@ -59,7 +59,8 @@ serde_json = { workspace = true, features = ["raw_value"] }
 jsonschema = { version = "0.33", default-features = false }
 serde_path_to_error = "0.1"
 postcard = { workspace = true, optional = true }
-blake3 = { workspace = true }
+# `zeroize`: the recovery kit wipes the hasher that saw a kit secret.
+blake3 = { workspace = true, features = ["zeroize"] }
 # SECRET-02 (ONE-1920): lease materialization returns the value wrapped in
 # `zeroize::Zeroizing` so the caller's copy is scrubbed on drop. No other
 # deps are added by that ticket.

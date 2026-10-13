@@ -218,6 +218,37 @@ fn a_wrong_passphrase_fails_exactly_like_a_bad_piece() {
 }
 
 #[test]
+fn one_piece_copies_another_vault_or_another_kit_restore_nothing() {
+    // Kept from the kit before homes: the threshold and the vault and kit binding.
+    let (vault_id, seed) = (random(), random());
+    let homes = [PieceHome::ThisMachine, PAPER, PieceHome::TrustedPerson];
+    let request = issue(homes, vault_id, None);
+    let pieces = issue_recovery_root_kit(&request, &seed)
+        .unwrap()
+        .into_pieces();
+    let other = issue_recovery_root_kit(&request, &seed)
+        .unwrap()
+        .into_pieces();
+    let copy = carried(&pieces[0]);
+    let kind = KitSecretKind::RecoveryRoot;
+    let refused =
+        |given: &[&KitPiece], vault_id| restore_kit(vault_id, kind, given, None).unwrap_err();
+    assert_eq!(refused(&[&pieces[0]], vault_id), KitError::NeedTwoPieces);
+    assert_eq!(
+        refused(&[&pieces[0], &copy], vault_id),
+        KitError::NeedTwoPieces
+    );
+    assert_eq!(
+        refused(&[&pieces[0], &pieces[1]], random()),
+        KitError::NoMatch
+    );
+    assert_eq!(
+        refused(&[&pieces[0], &other[1]], vault_id),
+        KitError::MixedKits
+    );
+}
+
+#[test]
 fn two_pieces_on_one_machine_are_refused() {
     let (vault_id, seed) = (random(), random());
     let (_, passphrase) = test_passphrase();
@@ -469,7 +500,7 @@ fn published_field_vector_restores_a_key() {
                 cost: None,
                 kit_id,
                 y: Zeroizing::new([y; 32]),
-                tag,
+                tag: Zeroizing::new(tag),
             },
         )
     };

@@ -10,7 +10,7 @@
 //! code   = Crockford base32 of body ‖ check: 80 symbols in groups of 4
 //! export = magic ‖ home (18 B) ‖ body ‖ check
 //! ```
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use super::{CodeKeeping, KitError, KitMachine, KitSecretKind, PassphraseCost, PieceHome};
 use crate::EntityId;
@@ -41,13 +41,7 @@ pub(super) struct Point {
     pub(super) cost: Option<PassphraseCost>,
     pub(super) kit_id: KitId,
     pub(super) y: Zeroizing<[u8; 32]>,
-    pub(super) tag: [u8; TAG_LEN],
-}
-
-impl Drop for Point {
-    fn drop(&mut self) {
-        self.tag.zeroize();
-    }
+    pub(super) tag: Zeroizing<[u8; TAG_LEN]>,
 }
 
 /// One stored piece. Debug never prints its material; drop scrubs it.
@@ -209,7 +203,7 @@ impl KitPiece {
         bytes[1] = cost_byte(point.cost);
         bytes[2..6].copy_from_slice(&point.kit_id.0);
         bytes[6..38].copy_from_slice(&*point.y);
-        bytes[38..BODY_LEN].copy_from_slice(&point.tag);
+        bytes[38..BODY_LEN].copy_from_slice(&*point.tag);
         let check = check(&bytes[..BODY_LEN]);
         bytes[BODY_LEN..].copy_from_slice(&check);
         bytes
@@ -270,7 +264,7 @@ fn decode_code_bytes(bytes: &[u8]) -> Result<Point, KitError> {
     }
     let mut y = Zeroizing::new([0u8; 32]);
     y.copy_from_slice(&body[6..38]);
-    let mut tag = [0; TAG_LEN];
+    let mut tag = Zeroizing::new([0; TAG_LEN]);
     tag.copy_from_slice(&body[38..]);
     Ok(Point {
         x,

@@ -7,8 +7,8 @@
 //! fitted through it and the secret, so the passphrase alone (or with any public byte) is
 //! one point and opens nothing, and testing a guess needs a stored piece.
 use rand_core::{OsRng, RngCore};
-use unicode_normalization::UnicodeNormalization;
-use zeroize::Zeroizing;
+use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::EntityId;
 
@@ -168,9 +168,17 @@ impl KitPassphrase {
     /// Refuses an empty passphrase and one over 1024 bytes after normalisation. Strength is
     /// the client's call: the kit never opens on the passphrase alone, whatever its strength.
     pub fn new(text: &str) -> Result<Self, KitError> {
+        // Text already in NFC (all ASCII, most typed text) skips the normaliser, whose
+        // scratch for long combining runs this crate cannot wipe.
+        if matches!(is_nfc_quick(text.chars()), IsNormalized::Yes) {
+            return Self::from_normal(text);
+        }
         let mut normal = Zeroizing::new(String::with_capacity(text.len().saturating_mul(3)));
         normal.extend(text.nfc());
-        oneiron_crypto::Passphrase::new(normal.as_bytes())
+        Self::from_normal(&normal)
+    }
+    fn from_normal(text: &str) -> Result<Self, KitError> {
+        oneiron_crypto::Passphrase::new(text.as_bytes())
             .map(Self)
             .map_err(|_| KitError::PassphraseLength)
     }
@@ -406,7 +414,7 @@ fn issue_with_id(
             .try_fill_bytes(&mut slope[..])
             .map_err(|_| KitError::EntropyUnavailable)?,
     }
-    let tag = *tag(&issue.vault_id, kind, passphrase_x, cost, kit_id, secret);
+    let tag = tag(&issue.vault_id, kind, passphrase_x, cost, kit_id, secret);
     let mut pieces = Vec::with_capacity(3);
     for (x, home) in (1u8..).zip(&issue.homes) {
         if *home == PieceHome::Passphrase {
@@ -421,7 +429,7 @@ fn issue_with_id(
                 cost,
                 kit_id,
                 y: Zeroizing::new(std::array::from_fn(|i| secret[i] ^ multiply(slope[i], x))),
-                tag,
+                tag: Zeroizing::new(*tag),
             },
         ));
     }
@@ -482,8 +490,13 @@ pub fn restore_kit(
         }
     }
     if let Some(passphrase) = passphrase {
+        // Only pieces that all agree the kit has no passphrase piece say so.
         let Some(cost) = first.cost else {
-            return Err(KitError::PassphraseUnused);
+            return Err(if mismatch {
+                KitError::NoMatch
+            } else {
+                KitError::PassphraseUnused
+            });
         };
         rebuilt = passphrase_point(&vault_id, kind, first.kit_id, cost, passphrase)?;
         points.push((first.passphrase_x, &rebuilt));
@@ -515,7 +528,7 @@ pub fn restore_kit(
         first.kit_id,
         &secret,
     );
-    for (a, b) in expected.iter().zip(&first.tag) {
+    for (a, b) in expected.iter().zip(first.tag.iter()) {
         diff |= a ^ b;
     }
     if diff != 0 || *secret == [0; 32] {
@@ -607,8 +620,12 @@ fn tag(
     h.update(&[piece::header(kind, passphrase_x, 0), piece::cost_byte(cost)]);
     h.update(&kit_id.0);
     h.update(secret);
+    let mut digest = h.finalize();
     let mut tag = Zeroizing::new([0; piece::TAG_LEN]);
-    tag.copy_from_slice(&h.finalize().as_bytes()[..piece::TAG_LEN]);
+    tag.copy_from_slice(&digest.as_bytes()[..piece::TAG_LEN]);
+    // The hasher's block buffer still holds the secret's bytes.
+    h.zeroize();
+    digest.zeroize();
     tag
 }
 
