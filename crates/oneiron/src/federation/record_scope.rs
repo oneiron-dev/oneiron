@@ -67,6 +67,30 @@ fn bump_scope_revision(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Settle a TASK that carries no birth stamp in base reality, as the upgrade
+/// sweep does once: a TASK put before birth positions (#1401) was written by
+/// a vault-wide writer. A stamp never travels with its TASK, so one a peer
+/// replicates later stays unstamped, and a device-local world keeps it until
+/// its world is known (DEC-0005).
+pub(crate) fn backfill_task_base(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    data: &[u8],
+) -> Result<()> {
+    if SCOPE_RECORD.get(store, txn, &id)?.is_some() {
+        return Ok(());
+    }
+    stamp_put(
+        store,
+        txn,
+        id,
+        crate::registry::ENTITY_TYPE_TASK,
+        data,
+        false,
+    )
+}
+
 /// Retire an id's scope sidecar in the same transaction that erases its body.
 /// A later same-id write never inherits the deleted record's birth position.
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {

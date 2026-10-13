@@ -118,8 +118,8 @@ pub(crate) async fn board_turn_idempotency(
         request,
         next,
         |body| serde_json::from_slice::<TurnForm>(body).is_ok_and(|form| form.turn.is_some()),
-        |server, auth, cached| {
-            release_board_replay(server, auth, cached)
+        |server, auth, cached, rows| {
+            release_board_replay(server, auth, cached, rows)
                 .err()
                 .map(|error| EnvelopedApiError::from(error).into_response())
         },
@@ -131,12 +131,15 @@ pub(crate) async fn board_turn_idempotency(
 /// everything it disclosed: every pack result and neighbour and every
 /// MEMORIES row passes the caller's current read scope and disclosure clamp,
 /// as on the board's read-back (409 `board_document_unreadable` otherwise).
-/// Off this device it also names no row a device-local world keeps now,
-/// changed lines included. A refused replay records nothing again.
+/// Off this device it goes out only while every row it was derived from
+/// (`rows`, listed when it was cached) may leave this device, and names no
+/// row a device-local world keeps now. A refused replay records nothing
+/// again.
 fn release_board_replay(
     server: &SyncServer,
     auth: Option<&CoreAuth>,
     cached: &[u8],
+    rows: &[EntityId],
 ) -> Result<(), ApiError> {
     #[derive(Deserialize)]
     struct Disclosed {
@@ -160,12 +163,12 @@ fn release_board_replay(
     }
     let auth = auth.ok_or_else(ApiError::unauthorized)?;
     let unreadable = || ApiError::internal_server_error("board replay is unreadable");
-    if crate::device_local::names_kept_row(&server.vault, auth.locality(), cached).map_err(
-        |error| {
+    if crate::device_local::withholds_retained(&server.vault, auth.locality(), rows, cached)
+        .map_err(|error| {
             tracing::error!(error = %error, "board replay device-local check failed");
             ApiError::internal_server_error("board history failed")
-        },
-    )? {
+        })?
+    {
         return Err(ApiError::invalid_state(Some("board_document_unreadable")));
     }
     let disclosed: Disclosed = serde_json::from_slice(cached).map_err(|_| unreadable())?;

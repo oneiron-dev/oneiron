@@ -733,8 +733,10 @@ pub(crate) fn device_only_generation_in(store: &Store, txn: &RoTxn<'_>) -> Resul
 
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD
 /// row itself, a CLAIM whose `worldId` is flagged (an erased or purged one by
-/// the world address its deletion kept), or a NOTE with a stored `InWorld`
-/// edge to a flagged world.
+/// the world address its deletion kept), a NOTE with a stored `InWorld` edge
+/// to a flagged world, or any other record the shared resolver
+/// (`record_scope::record_world_in`) places in a flagged world: a TASK where
+/// its birth stamp settled it. A record it cannot place is kept.
 pub(crate) fn device_only_withholds(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -787,7 +789,15 @@ pub(crate) fn device_only_withholds_raw(
             }
             Ok(false)
         }
-        _ => Ok(false),
+        kind => {
+            let body = raw
+                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .unwrap_or_default();
+            Ok(
+                crate::federation::record_scope::record_world_in(store, txn, *id, kind, body)?
+                    .is_none_or(|world| world.is_some_and(|world| flagged.contains(&world))),
+            )
+        }
     }
 }
 

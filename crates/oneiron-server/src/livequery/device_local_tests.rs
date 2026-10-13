@@ -7,6 +7,7 @@
 //! device they all still go out.
 use super::production_tests::{ACTOR, AT, server, token};
 use super::source::BoundSource;
+use super::subscriptions::LiveQuerySource as _;
 use super::*;
 use crate::server::SyncServer;
 use oneiron::claim::CallerLocality;
@@ -85,17 +86,15 @@ fn kinds(pushes: &[subscriptions::Push]) -> Vec<&'static str> {
 }
 
 /// A resume replays the pushes its source journaled after the client's
-/// cursor. Off this device it replays none naming a claim whose world turned
-/// device-local since: the client gets a gap and a fresh snapshot.
+/// cursor. Off this device it replays none derived from a claim whose world
+/// turned device-local since, even one whose body names the claim only by a
+/// short ref: the client gets a gap and a fresh snapshot.
 #[tokio::test]
 async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
     let (_dir, server) = server();
     let world = put_world(&server);
     let claim = put_claim(&server, world);
-    let view = ScopedView {
-        query: Some("unmatched".into()),
-        ..Default::default()
-    };
+    let view = ScopedView::default();
     for locality in [CallerLocality::OnDevice, CallerLocality::OffDevice] {
         server.vault().set_world_device_only(world, false).unwrap();
         let (queries, source) = subscriptions(&server, locality);
@@ -104,8 +103,8 @@ async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
             .unwrap()[0]
             .cursor
             .clone();
-        // A push the journal kept, naming the claim while its world was
-        // portable.
+        // A push the journal kept, derived from the claim while its world
+        // was portable.
         let mut next = anchor.clone();
         next.batch = anchor.batch + 1;
         source
@@ -116,7 +115,8 @@ async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
                     subscription_id: 7,
                     cursor: next,
                     kind: "data",
-                    result: Some(json!([{ "claim_ref": claim }])),
+                    result: Some(json!([{ "claim": &claim[..8] }])),
+                    rows: vec![EntityId::from_hex(&claim).unwrap()],
                 }],
             )
             .unwrap();
@@ -124,7 +124,7 @@ async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
         let resumed = queries
             .open(7, view.clone(), Channel::Receipts, Some(&anchor), None)
             .unwrap();
-        assert!(names(&resumed, &claim), "{locality:?}: {resumed:?}");
+        assert!(names(&resumed, &claim[..8]), "{locality:?}: {resumed:?}");
         queries.close(7).unwrap();
 
         server.vault().set_world_device_only(world, true).unwrap();
@@ -132,9 +132,9 @@ async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
             .open(7, view.clone(), Channel::Receipts, Some(&anchor), None)
             .unwrap();
         if locality == CallerLocality::OnDevice {
-            assert!(names(&resumed, &claim), "{resumed:?}");
+            assert!(names(&resumed, &claim[..8]), "{resumed:?}");
         } else {
-            assert!(!names(&resumed, &claim), "{resumed:?}");
+            assert!(!names(&resumed, &claim[..8]), "{resumed:?}");
             assert_eq!(kinds(&resumed), ["gap", "snapshot", "eose"]);
         }
     }

@@ -361,6 +361,7 @@ fn mcp_board_verb_output_value(output: &oneiron::board_verb::BoardVerbOutput) ->
 pub(super) async fn execute_mcp_board_verb(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
+    served: &mut Vec<oneiron::EntityId>,
     call: impl FnOnce(
         &mut oneiron::board_verb::BoardVerbContext<'_, McpLiveBoard>,
     ) -> Result<
@@ -377,6 +378,7 @@ pub(super) async fn execute_mcp_board_verb(
     McpGatewayError,
 > {
     let board = mcp_current_board(server, actor).await?;
+    served.extend_from_slice(&board.rows);
     let omissions = board.omissions();
     let source = mcp_live_board(actor, &board)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));

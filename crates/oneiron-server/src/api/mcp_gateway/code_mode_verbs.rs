@@ -87,7 +87,15 @@ async fn execute_code_mode_verb(
         .map_err(mcp_tool_validation_error)?;
     mcp_admit_scoped_verb(server, tool, &arguments, actor)?;
     mcp_verb_gate(server, tool, &arguments, actor)?;
-    let (output, ..) =
-        execute_agent_verb_input(server, tool.name, input, actor, Some(origin)).await?;
+    // A run's call is answered once and never continued.
+    let (output, ..) = execute_agent_verb_input(
+        server,
+        tool.name,
+        input,
+        actor,
+        Some(origin),
+        &mut Vec::new(),
+    )
+    .await?;
     Ok(output)
 }

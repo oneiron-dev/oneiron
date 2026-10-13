@@ -480,16 +480,21 @@ impl LiveQuerySource for BoundSource {
         if locality == oneiron::claim::CallerLocality::OnDevice {
             return Ok(false);
         }
-        let bodies: Vec<_> = pushes
-            .iter()
-            .filter_map(|push| push.result.as_ref())
-            .collect();
+        let bodies: Vec<_> = pushes.iter().filter(|push| push.result.is_some()).collect();
         if bodies.is_empty() {
             return Ok(false);
         }
-        let bodies = serde_json::to_vec(&bodies)
+        let server = self.server()?;
+        // The rows each body was derived from decide; the bodies are scanned
+        // only as a backstop.
+        let rows: Vec<_> = bodies
+            .iter()
+            .flat_map(|push| push.rows.iter().copied())
+            .collect();
+        let results: Vec<_> = bodies.iter().map(|push| &push.result).collect();
+        let bytes = serde_json::to_vec(&results)
             .map_err(|_| AppError::internal_server_error("live-query release check failed"))?;
-        crate::device_local::names_kept_row(self.server()?.vault(), locality, &bodies)
+        crate::device_local::withholds_retained(server.vault(), locality, &rows, &bytes)
             .map_err(|_| AppError::internal_server_error("device-local admission read failed"))
     }
 
@@ -546,6 +551,7 @@ mod remediation_tests {
             cursor: next.clone(),
             kind: "data",
             result: Some(json!([1])),
+            rows: Vec::new(),
         };
         source.record(&view, Channel::Receipts, &[push]).unwrap();
         assert!(source.can_resume(&anchor).unwrap());
@@ -601,6 +607,7 @@ mod remediation_tests {
                     cursor: cursor.clone(),
                     kind: "snapshot",
                     result: Some(json!([])),
+                    rows: Vec::new(),
                 }],
             )
             .unwrap();

@@ -706,3 +706,70 @@ async fn a_setup_page_off_this_device_continues_no_board_naming_a_device_local_r
         assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
     }
 }
+
+/// A TASK sits in the world it was born in. Once that world is device-local,
+/// no setup board off this device lists it, and a continuation of a board
+/// that listed it is refused. Clearing the flag lists it again.
+#[tokio::test]
+async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let actor = EntityId::now();
+    let world = put_world(&server.vault);
+    register_mcp_actor(&server, "errand", actor, oneiron::EdgeActorClass::Human).await;
+    let task = server
+        .vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .with_birth_position(oneiron::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+            rmpv::Value::from("orchid errand"),
+            None,
+            None,
+            None,
+        ))
+        .unwrap()
+        .task_ref
+        .unwrap()
+        .to_hex();
+    let setup = |page: Value| {
+        let server = Arc::clone(&server);
+        async move {
+            let arguments = mcp_merge_args(mcp_endpoint_envelope(actor, "read_board"), page);
+            let (status, body) = route_json(
+                server,
+                mcp_endpoint_call_request(
+                    "/mcp",
+                    "errand",
+                    "setup_oneiron",
+                    "setup_oneiron",
+                    arguments,
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
+        }
+    };
+    let first = setup(json!({"page": {"limit": 1}})).await;
+    assert!(first["result"].to_string().contains(&task), "{first}");
+    let cursor = first["result"]["structuredContent"]["meta"]["page"]["cursor"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    server.vault.set_world_device_only(world, true).unwrap();
+    let refused = setup(json!({"page": {"limit": 1, "cursor": cursor}})).await;
+    assert!(refused.get("result").is_none(), "{refused}");
+    assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
+    let fresh = setup(json!({})).await;
+    assert!(!fresh.to_string().contains(&task), "{fresh}");
+
+    server.vault.set_world_device_only(world, false).unwrap();
+    let back = setup(json!({})).await;
+    assert!(back["result"].to_string().contains(&task), "{back}");
+}

@@ -102,6 +102,7 @@
       "name": "describe",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
+      "mcp_served": "input.task_ref.as_deref().and_then(|id| oneiron::EntityId::from_hex(id).ok())",
       "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp_fields": {
@@ -333,6 +334,7 @@
       "name": "receipts",
       "input": "ReceiptsRequest",
       "output": "Vec<crate::memory::MemoryReceipt>",
+      "mcp_served_output": "output.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
       "call": "memory.receipts(input.limit.unwrap_or(100))?",
       "scope": "Read",
       "admission": {
@@ -524,6 +526,7 @@
       "name": "peek",
       "input": "crate::task_verb::TaskAskHandle",
       "output": "Vec<crate::task_verb::TaskAskPersonEvidence>",
+      "mcp_served": "[input.group_ref]",
       "call": "memory.tasks_ask_peek(input)?",
       "scope": "Read",
       "section": false,
@@ -582,6 +585,7 @@
       "name": "tasks.outcomes",
       "input": "crate::task_verb::TaskAskHandle",
       "output": "Vec<crate::llm::decision::questions::CalibrationPair>",
+      "mcp_served": "[input.group_ref]",
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
       "mcp_fields": {

@@ -295,7 +295,7 @@ def mcp_input_dispatch(row):
     name, method = row['name'], row['name'].replace('.', '_')
     decode = f'let input: {rust_type(row["input"])} = serde_json::from_value(input).map_err(|_| invalid())?;\n'
     if row.get('context') == 'board':
-        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
+        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
     body = ''
     if name == 'describe':
         # describe(self) renders the authenticated run brief, the same door REST takes.
@@ -327,10 +327,15 @@ def mcp_input_dispatch(row):
                      '    // The section is narrowed to this credential before its\n'
                      "    // render cap, so its counts are the credential's rows alone.\n"
                      '    let rows = memory.describe_rows().map_err(mcp_facade_error)?;\n'
-                     '    let (value, source) = mcp_tasks_section(server, actor, rows)?;\n'
+                     '    let (value, source) = mcp_tasks_section(server, actor, rows, served)?;\n'
                      '    return Ok((value, source, McpCarrierPolicy::Drain, None));\n'
                      '}\n')
+        if 'mcp_served' in row:
+            # The rows the verb reads by name: a continuation of its result is released only while they may leave.
+            body += f'served.extend({row["mcp_served"]});\n'
         body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
+        if 'mcp_served_output' in row:
+            body += f'served.extend({row["mcp_served_output"]});\n'
     if row.get('lands_turn'):
         body += 'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
     if 'mcp_result' in row:
@@ -353,9 +358,10 @@ async fn execute_mcp_agent_verb(
         server: &Arc<SyncServer>,
         args: &McpVerbToolArgs,
         actor: &McpCallContext,
+        served: &mut Vec<oneiron::EntityId>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-        execute_agent_verb_input(server, args.tool.name, input, actor, None).await
+        execute_agent_verb_input(server, args.tool.name, input, actor, None, served).await
     }
 
 fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
@@ -371,12 +377,14 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
 /// a code-mode call's claims are written under its run's host `origin`.
+/// Every row the result was derived from is listed in `served`.
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
         input: Value,
         actor: &McpCallContext,
         origin: Option<oneiron::memory::HostWriteOrigin>,
+        served: &mut Vec<oneiron::EntityId>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {

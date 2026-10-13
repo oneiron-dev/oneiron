@@ -126,6 +126,20 @@ pub(crate) struct Push {
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
+    /// The rows its result was derived from: the entity dependencies of that
+    /// derivation. A release judges them again (DEC-0005); they never go on
+    /// the wire.
+    #[serde(skip)]
+    pub rows: Vec<oneiron::EntityId>,
+}
+
+/// The rows a derivation read: its entity dependencies.
+fn derived_rows(dependencies: &BTreeSet<String>) -> Vec<oneiron::EntityId> {
+    dependencies
+        .iter()
+        .filter_map(|path| path.strip_prefix("e:"))
+        .filter_map(|id| oneiron::EntityId::from_hex(id).ok())
+        .collect()
 }
 
 impl Push {
@@ -170,6 +184,7 @@ impl Subscription {
                 cursor,
                 kind: "gap",
                 result: None,
+                rows: Vec::new(),
             });
             self.bytes = push_bytes(self.ring.make_contiguous()).unwrap_or(4096);
             let _ = self
@@ -489,6 +504,7 @@ impl LiveQueries {
                     cursor: state.cursor(derived.cursor.clone())?,
                     kind: "data",
                     result: Some(derived.value.clone()),
+                    rows: derived_rows(&derived.dependencies),
                 };
                 self.source
                     .record(&view, channel, std::slice::from_ref(&catch_up))?;
@@ -536,6 +552,7 @@ impl LiveQueries {
                 cursor: next_cursor.clone(),
                 kind: "gap",
                 result: None,
+                rows: Vec::new(),
             });
         }
         pushes.push(Push {
@@ -543,12 +560,14 @@ impl LiveQueries {
             cursor: next_cursor.clone(),
             kind: "snapshot",
             result: Some(derived.value.clone()),
+            rows: derived_rows(&derived.dependencies),
         });
         pushes.push(Push {
             subscription_id: id,
             cursor: next_cursor,
             kind: "eose",
             result: None,
+            rows: Vec::new(),
         });
         let bytes = push_bytes(&pushes)?;
         if bytes > MAX_RING_BYTES {
@@ -663,6 +682,7 @@ impl LiveQueries {
                     subscription_id: id,
                     cursor: cursor.clone(),
                     kind: "data",
+                    rows: derived_rows(&derived.dependencies),
                     result: Some(derived.value),
                 };
                 let bytes = push_bytes(std::slice::from_ref(&push))?;
@@ -693,6 +713,7 @@ impl LiveQueries {
                         cursor,
                         kind: "gap",
                         result: None,
+                        rows: Vec::new(),
                     });
                     sub.bytes = push_bytes(sub.ring.make_contiguous())?;
                     sub.budget
@@ -810,6 +831,7 @@ impl LiveQueries {
             let current = fingerprint(&derived.value)?;
             let changed = sub.current != current;
             let cursor = state.cursor(derived.cursor)?;
+            let rows = derived_rows(&derived.dependencies);
             let sub = state.subs.get_mut(&id).ok_or_else(state_error)?;
             sub.dependencies = derived.dependencies;
             sub.current = current;
@@ -821,6 +843,7 @@ impl LiveQueries {
                 cursor: cursor.clone(),
                 kind: "data",
                 result: Some(derived.value),
+                rows,
             };
             self.source
                 .record(&sub.view, sub.channel, std::slice::from_ref(&push))?;
@@ -854,6 +877,7 @@ impl LiveQueries {
                     cursor,
                     kind: "gap",
                     result: None,
+                    rows: Vec::new(),
                 };
                 sub.bytes = push_bytes(std::slice::from_ref(&gap))?;
                 sub.budget
