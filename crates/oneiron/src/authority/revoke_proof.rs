@@ -94,11 +94,29 @@ pub(super) fn derive_revoke_facts(
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
     for (hash, entry) in entries {
+        let mut exempt = None;
         match &entry.op {
             AuthorityOp::RevokeActor { .. } => {}
-            AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed => {}
+            AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed => {
+                // A removal is terminal on every replica. A local floor only
+                // records which of the signer's rows arrived first, so a
+                // sibling seen earlier never refuses the removal itself; its
+                // ancestry keeps every floor.
+                exempt = context
+                    .sequence_floors
+                    .filter(|floors| floors.contains_key(hash))
+                    .map(|floors| {
+                        let mut floors = floors.clone();
+                        floors.remove(hash);
+                        floors
+                    });
+            }
             _ => continue,
         }
+        let context = FoldContext {
+            sequence_floors: exempt.as_ref().or(context.sequence_floors),
+            ..context
+        };
         let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, true) else {
             continue;
         };

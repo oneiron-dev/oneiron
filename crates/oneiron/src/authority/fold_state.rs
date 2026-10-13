@@ -255,8 +255,9 @@ pub(super) struct FoldState {
     /// Every machine row that ever claimed each install key, merged by union.
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
     /// Roster keys in the host's custody, merged by union: each key a host
-    /// enrolled as its own root, and each key a custodial key admitted
-    /// (enrolled, rotated to or re-rooted to), whatever labels it carries.
+    /// enrolled as its own root, each key marked for the cloud (role or
+    /// tier), and each key a custodial key admitted (enrolled, rotated to or
+    /// re-rooted to), whatever labels it carries.
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
     /// Every row an accepted bind or rebind named, merged by union: the
     /// actor merge keeps one winner, and a row bound on a losing branch is

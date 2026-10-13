@@ -756,9 +756,9 @@ fn fold_authority_log_once(
             state.federation_grant_bindings.clone()
         }),
         actor_bindings,
-        machines: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, super::machine_profile::folded_machines),
+        machines: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            super::machine_profile::folded_machines(state, retirements.unsettled())
+        }),
         issues,
     }
 }

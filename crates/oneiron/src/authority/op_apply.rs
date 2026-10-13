@@ -587,13 +587,17 @@ pub(super) fn merge_pact_states(
 }
 
 /// `admitted_by` is the roster key that signed the device in; `None` for a
-/// genesis root.
+/// genesis root. Custody is sticky: a key the host attests as its root, a key
+/// marked for the cloud, and every key a custodial key admits stay custodial,
+/// whatever the successor's own labels say.
 pub(super) fn upsert_device(
     state: &mut FoldState,
     device: &DeviceAuthority,
     admitted_by: Option<&AuthorityKey>,
 ) {
     if device.attestation.kind == super::slip_vault::HOST_ROOT_ATTESTATION
+        || device.roles & ROLE_CLOUD != 0
+        || device.tier == AuthorityTier::CloudCustodial
         || admitted_by.is_some_and(|key| state.host_custody_keys.contains(key))
     {
         state.host_custody_keys.insert(device.key.clone());
