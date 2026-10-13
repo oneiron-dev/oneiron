@@ -114,11 +114,12 @@ pub(super) fn apply_machine_profile(
     Ok(())
 }
 
-/// The host's own root on a hosted vault, where that root is the provider's
-/// key and not the owner's. Judged from the root's attestation and the
-/// vault's posture, so a root row labelled owner-held still counts.
+/// A key in the host's custody on a hosted vault, where the host's root is
+/// the provider's key and not the owner's: that root, or any key it admitted
+/// directly or through another custodial key. Judged from provenance and the
+/// vault's posture, so a key labelled owner-held still counts.
 fn custodial_host_root(state: &FoldState, signer: &AuthorityKey, context: FoldContext<'_>) -> bool {
-    context.hosted && state.host_root_keys.contains(signer)
+    context.hosted && state.host_custody_keys.contains(signer)
 }
 
 /// An install key that is also a roster key or an actor's key is no machine's.
