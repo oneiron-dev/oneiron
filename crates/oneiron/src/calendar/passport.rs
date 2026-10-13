@@ -123,7 +123,7 @@ pub enum PassportDecision {
 /// This is the ingest diff's resolver, so a pending passport vouches for its
 /// EVENT: the import gate files its own passports pending review. Only an
 /// admitted passport repairs the index, though, because the first outbound
-/// invite falls back to that shortcut ([`event_ref_for_indexed_uid`]).
+/// invite falls back to that shortcut (`event_ref_for_indexed_uid`).
 ///
 /// # Errors
 ///
