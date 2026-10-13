@@ -1,6 +1,5 @@
 //! Which worlds an executing principal may read: the owner grants and the
-//! default its `claim_of` edges reach, as the world-authority fold reads them
-//! at an instant.
+//! default about it, as the world-authority fold reads them at an instant.
 use super::{Decision, held_by_both};
 use crate::claim::ClaimSubject;
 use crate::pipeline::{
@@ -12,9 +11,9 @@ use crate::{EntityId, Result, Vault};
 use std::collections::BTreeSet;
 
 /// The worlds a principal may select and the ones a turn that selects none
-/// reads: the intersection of every in-force owner grant its `claim_of`
-/// edges reach, and the newest in-force default it wrote itself, which must
-/// lie inside that intersection (`resolve_world_authority`).
+/// reads: the intersection of every live, in-force owner grant about it, and
+/// the newest in-force default it wrote itself, which must lie inside that
+/// intersection (`resolve_world_authority`).
 pub(super) struct WorldSelections;
 
 /// What a principal's world authority admits at one instant.
@@ -31,11 +30,11 @@ impl Decision for WorldSelections {
     type Answer = WorldSelectionAuthority;
 
     /// Every principal both vaults hold that a world-access claim in either
-    /// vault names, at zero, now, and each bound of such a claim's validity,
-    /// attached or not: the fold changes only where a claim comes into or
-    /// goes out of force, so these instants stand for every other. A
-    /// principal no such claim names is granted nothing in either vault, and
-    /// one only one vault holds returns or leaves with the restore.
+    /// vault names, at zero, now, and each bound of such a claim's validity:
+    /// the fold changes only where a claim comes into or goes out of force,
+    /// so these instants stand for every other. A principal no such claim
+    /// names is granted nothing in either vault, and one only one vault holds
+    /// returns or leaves with the restore.
     fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
         let mut principals = BTreeSet::new();
         for kind in [

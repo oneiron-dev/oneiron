@@ -377,3 +377,47 @@ fn policy_revocation_between_preflight_and_proposal_write_refuses_all_receipts()
     assert!(vault.proposal_burst_check(&actor.entity_ref())?.is_none());
     Ok(())
 }
+
+/// engine-core-08: an owner proof is bound to the vault that issued it. One
+/// from another vault releases no patch here, even when this vault holds a
+/// PERSON with the same id.
+#[test]
+fn an_owner_proof_from_another_vault_releases_no_patch() {
+    let (_d, other, foreign_owner, _) = fixture();
+    let (_d2, v, _owner, actor) = fixture();
+    drop(other);
+    v.put_entity(
+        &foreign_owner.actor(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )
+    .unwrap();
+    let registration = v
+        .register_dev_healer(HealerDeployment::Daemon, actor)
+        .unwrap();
+    let proposal = patch(RepairOperation::DevPatch {
+        repo_ref: "repo".into(),
+        patch_ref: "patch".into(),
+    });
+    let id = proposal.proposal_id;
+    registration.submit("run", "session", proposal).unwrap();
+    for result in [
+        v.review_patch_pr(&foreign_owner, &id, Some("release-1"))
+            .map(|_| ()),
+        v.reverse_healer_run(&foreign_owner, &actor.entity_ref(), "run")
+            .map(|_| ()),
+    ] {
+        assert!(matches!(
+            result,
+            Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(_)
+            ))
+        ));
+    }
+    assert_eq!(
+        v.healer_proposal(&id).unwrap().unwrap().state,
+        ProposalState::Proposed
+    );
+}

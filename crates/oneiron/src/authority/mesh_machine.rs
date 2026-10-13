@@ -16,7 +16,7 @@ use crate::{
     side_table::{self, HexId, Named, SideTable},
     temporal::TimeRange,
 };
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -102,7 +102,7 @@ fn parse_address(body: &[u8]) -> Option<MeshMachineAddress> {
     if envelope.domain != DOMAIN
         || envelope.version != 1
         || envelope.address.direct_addrs.len() > 32
-        || VerifyingKey::from_bytes(&envelope.address.endpoint_key).is_err()
+        || super::strong_ed25519_key(&envelope.address.endpoint_key).is_err()
         || envelope
             .address
             .relay_url
@@ -197,9 +197,9 @@ impl Vault {
         {
             return Ok(None);
         }
-        let host = VerifyingKey::from_bytes(&claims.host_key).map_err(|_| invalid_authority())?;
+        let host = super::strong_ed25519_key(&claims.host_key)?;
         let sig = Signature::from_slice(&signed.signature).map_err(|_| invalid_authority())?;
-        host.verify(&transcript(&claims)?, &sig)
+        host.verify_strict(&transcript(&claims)?, &sig)
             .map_err(|_| invalid_authority())?;
         if !self.mesh_pairing_live(&fold, txn, &claims)? {
             return Ok(None);
@@ -304,9 +304,8 @@ impl Vault {
     ) -> Result<()> {
         let transcript = binding_transcript(machine, address.endpoint_key);
         for (key, proof) in [(device_key, proofs[0]), (address.endpoint_key, proofs[1])] {
-            VerifyingKey::from_bytes(&key)
-                .map_err(|_| invalid_authority())?
-                .verify(
+            super::strong_ed25519_key(&key)?
+                .verify_strict(
                     &transcript,
                     &Signature::from_slice(proof).map_err(|_| invalid_authority())?,
                 )

@@ -6,7 +6,7 @@ use super::decode_witness_turn_speaker;
 use crate::ports::EdgeStoreRead;
 use crate::ports::{EntityRecord, EntityStoreRead};
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use rmpv::Value;
 
@@ -147,11 +147,7 @@ pub(super) fn validate_existing_witness_message_orders(
     messages: &[WitnessMessage],
     existing_message_ids: &HashSet<EntityId>,
 ) -> MemoryResult<()> {
-    const ORDER_WORDS: usize = (MAX_WITNESS_MESSAGE_ORDER as usize + 64) / 64;
-    let mut occupied = [0_u64; ORDER_WORDS];
-
-    // Reserve every incoming slot first. This catches a collision with a
-    // persisted sibling while still allowing an exact retry's own id below.
+    let mut incoming = BTreeSet::new();
     for message in messages {
         if message.order > MAX_WITNESS_MESSAGE_ORDER {
             return Err(MemoryError::bad_request(format!(
@@ -159,10 +155,32 @@ pub(super) fn validate_existing_witness_message_orders(
                 message.order,
             )));
         }
-        let word = (message.order / 64) as usize;
-        occupied[word] |= 1_u64 << (message.order % 64);
+        incoming.insert(message.order);
     }
+    match taken_witness_message_order(dbs, txn, turn_id, &incoming, existing_message_ids)? {
+        Some(order) => Err(MemoryError::bad_request_with(
+            format!("witness message order {order} collides with an existing message in this turn"),
+            &["Give each message in a turn its own position."],
+        )),
+        None => Ok(()),
+    }
+}
 
+/// The first of `incoming` a persisted MESSAGE child of `turn_id` already
+/// holds, leaving out the `exempt` children (a caller's exact retries).
+///
+/// Only an incoming order is refused. Two stored children that share an order
+/// already do not stop a new message at a free one: they were stored by two
+/// writers who could not see each other (a room's overlay and base), and
+/// refusing every later message for them would leave the turn mute for good
+/// (Astra on #1411).
+pub(crate) fn taken_witness_message_order(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    turn_id: &EntityId,
+    incoming: &BTreeSet<u32>,
+    exempt: &HashSet<EntityId>,
+) -> crate::error::Result<Option<u32>> {
     for row in dbs.port_edges(
         txn,
         turn_id,
@@ -172,39 +190,28 @@ pub(super) fn validate_existing_witness_message_orders(
     )? {
         let edge = row?;
         if edge.kind != EdgeKind::PartOf {
-            return Err(Error::CorruptedIndex("witness turn message edge").into());
+            return Err(Error::CorruptedIndex("witness turn message edge"));
         }
         let message_id = edge.target;
         // The caller's exact retry already proved this row's canonical body and
         // topology. Do not compare its own slot with itself.
-        if existing_message_ids.contains(&message_id) {
+        if exempt.contains(&message_id) {
             continue;
         }
         let raw = dbs
             .port_entity_record(txn, &message_id)?
             .ok_or(Error::CorruptedIndex("witness message edge target"))?;
         if raw.entity_type != ENTITY_TYPE_MESSAGE {
-            return Err(Error::CorruptedIndex("witness turn message type").into());
+            return Err(Error::CorruptedIndex("witness turn message type"));
         }
-        let order = canonical_witness_message_order(&raw.body)?;
-        let word = (order / 64) as usize;
-        let mask = 1_u64 << (order % 64);
-        if occupied[word] & mask != 0 {
-            return Err(MemoryError::bad_request_with(
-                format!(
-                    "witness message order {order} collides with an existing message in this turn"
-                ),
-                &["Give each message in a turn its own position."],
-            ));
+        let order = witness_message_order(&raw.body)?;
+        if incoming.contains(&order) {
+            return Ok(Some(order));
         }
-        occupied[word] |= mask;
     }
-    Ok(())
+    Ok(None)
 }
 
-/// Reads the already-validated canonical MESSAGE order for append collision
-/// checks. Validation is repeated at this storage boundary so a malformed
-/// persisted sibling cannot be treated as an ordinary occupied slot.
 /// The first order after every MESSAGE a stored TURN holds (0 for a turn not
 /// stored yet), so a writer that appends later can give each new message a
 /// slot no sibling occupies, whatever positions earlier writes chose.
@@ -226,13 +233,16 @@ pub(crate) fn next_witness_message_order(
             continue;
         };
         if raw.entity_type == ENTITY_TYPE_MESSAGE {
-            next = next.max(canonical_witness_message_order(&raw.body)?.saturating_add(1));
+            next = next.max(witness_message_order(&raw.body)?.saturating_add(1));
         }
     }
     Ok(next)
 }
 
-fn canonical_witness_message_order(body: &[u8]) -> MemoryResult<u32> {
+/// Reads the already-validated canonical MESSAGE order for append collision
+/// checks. Validation is repeated at this storage boundary so a malformed
+/// persisted sibling cannot be treated as an ordinary occupied slot.
+pub(crate) fn witness_message_order(body: &[u8]) -> crate::error::Result<u32> {
     // MESSAGE text-plane rows retain immutable axes with a document pointer.
     // Reconstruct an empty canonical content slot solely to validate the order
     // envelope; this is not a writer or text resolver and grants no authority.
@@ -253,20 +263,16 @@ fn canonical_witness_message_order(body: &[u8]) -> MemoryResult<u32> {
     let Value::Map(entries) = value else {
         return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
             "MESSAGE order is not canonical",
-        ))
-        .into());
+        )));
     };
     entries
         .into_iter()
         .find_map(|(key, value)| (key.as_str() == Some("order")).then(|| value.as_u64()))
         .flatten()
         .and_then(|order| u32::try_from(order).ok())
-        .ok_or_else(|| {
-            Error::Record(RecordError::InvalidWitnessMessageBody(
-                "MESSAGE order is not canonical",
-            ))
-            .into()
-        })
+        .ok_or(Error::Record(RecordError::InvalidWitnessMessageBody(
+            "MESSAGE order is not canonical",
+        )))
 }
 
 /// The call's ORDER axis, checked as a set (ONE-1686).
@@ -313,7 +319,7 @@ pub(in crate::memory) fn distinct_message_orders(messages: &[WitnessMessage]) ->
 }
 
 /// Pointer-aware metadata validation for sibling-order scans (no document load).
-fn message_pointer_order_envelope(body: &[u8]) -> MemoryResult<Option<Vec<u8>>> {
+fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Vec<u8>>> {
     let mut input = body;
     let value =
         rmpv::decode::read_value(&mut input).map_err(|_| Error::CorruptedIndex("message body"))?;
@@ -332,7 +338,7 @@ fn message_pointer_order_envelope(body: &[u8]) -> MemoryResult<Option<Vec<u8>>> 
         ))
     };
     if !input.is_empty() {
-        return Err(fail().into());
+        return Err(fail());
     }
     let mut keys = HashSet::new();
     for (key, value) in &fields {
@@ -342,7 +348,7 @@ fn message_pointer_order_envelope(body: &[u8]) -> MemoryResult<Option<Vec<u8>>> 
             "author" | "type" | "metadata" | "is_visible" | "order" | "entity_doc_ref"
         ) || !keys.insert(key)
         {
-            return Err(fail().into());
+            return Err(fail());
         }
         if key == "entity_doc_ref" {
             EntityId::from_hex(value.as_str().ok_or_else(fail)?).map_err(|_| fail())?;
@@ -364,7 +370,7 @@ fn message_pointer_order_envelope(body: &[u8]) -> MemoryResult<Option<Vec<u8>>> 
         if let Some((key, value)) = fields.iter().find(|(key, _)| key.as_str() == Some(name)) {
             canonical.push((key.clone(), value.clone()));
         } else if name != "metadata" {
-            return Err(fail().into());
+            return Err(fail());
         }
     }
     let mut bytes = Vec::new();

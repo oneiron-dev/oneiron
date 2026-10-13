@@ -72,6 +72,9 @@ side_tables! {
     NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named;
     /// Durable head-move (merge/switch/reject) receipt. Key: id16(receipt id).
     NOTE_RECEIPT: VaultMeta b"note_receipt:v1:" Named;
+    /// Durable receipt that a later save copied one off-record message into a turn its stretch had
+    /// already promoted. Key: id16 (the message).
+    OFF_RECORD_COPY_RECEIPT: VaultMeta b"offrecord_copy:v0:" Named;
     /// Durable retry receipt recording the outcome of promoting one off-record turn into base
     /// storage. Key: id16.
     OFF_RECORD_PROMOTE_RECEIPT: VaultMeta b"offrecord_promote:v0:" Named;
