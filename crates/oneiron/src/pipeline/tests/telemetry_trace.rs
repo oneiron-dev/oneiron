@@ -744,7 +744,7 @@ fn retrieval_trace_fork_hash_replay_key_is_stable_for_same_inputs() -> Result<()
 #[test]
 fn a_stored_fork_hash_confirms_no_guessed_query() -> Result<()> {
     let (dir, vault) = open_test_vault();
-    put_text(&vault, entity_id(0xD7), "yes no")?;
+    put_text(&vault, entity_id(0xC7), "yes no")?;
     let (_, stored) =
         captured_retrieval_run_trace(&vault, vault.query().search_text("yes", 10).limit(10))?;
     let guesses = crate::vault::unkeyed_for_test(|| -> Result<_> {
