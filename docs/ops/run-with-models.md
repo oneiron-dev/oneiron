@@ -82,7 +82,11 @@ no `response_format`. The fallback is llama.cpp `llama-server` on
 (`--spec-type draft-simple --spec-draft-n-max 8`) and the schema, the
 default (`response_format = "schema"`). Either way the engine checks the
 answer against the call's schema, and an answer that breaks it is refused.
-Typed decisions stay on `vllm-sr/d3-flash`.
+A ladder sends a schema in `response_format` only when every rung declares
+`json_response`. A rung without it, such as the Anthropic-compatible one in
+the DETAILED example, makes the engine put the schema in a system message on
+every rung instead, so keep a schema-constrained llama.cpp fallback in a
+ladder of OpenAI-compatible rungs. Typed decisions stay on `vllm-sr/d3-flash`.
 
 Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
 saved workflows), `local_reasoner`, `checker`, `dreamer_current`,

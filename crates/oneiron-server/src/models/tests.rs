@@ -1082,7 +1082,10 @@ async fn a_provider_set_to_no_schema_sends_no_response_format() {
         call.envelope.response_format = ResponseFormat::Json {
             schema: schema.clone(),
         };
-        seat.ladder.generate(&run, call.clone(), None).await.unwrap();
+        seat.ladder
+            .generate(&run, call.clone(), None)
+            .await
+            .unwrap();
         let mut events = seat.ladder.stream(&run, call, None).unwrap();
         while events.next().await.is_some() {}
         let seen = fake.seen();

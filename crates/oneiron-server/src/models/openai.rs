@@ -85,7 +85,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
 /// A provider set to `response_format = "none"` is sent no
 /// `response_format`; the engine still checks the answer against the call's
 /// schema, as it does when the schema went out.
-fn send_format(wire: ResponseFormatWire, body: &mut JsonValue) {
+pub(super) fn send_format(wire: ResponseFormatWire, body: &mut JsonValue) {
     if wire == ResponseFormatWire::Omitted
         && let Some(body) = body.as_object_mut()
     {

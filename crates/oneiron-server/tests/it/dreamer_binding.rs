@@ -356,11 +356,15 @@ async fn a_vault_seeded_before_the_critical_classes_holds_that_correction_too() 
 /// `response_format = "none"` sends the extraction call no
 /// `response_format`, and an answer that breaks the extraction schema is
 /// refused as it is under the default, which still sends the schema: the
-/// pass writes the same claims, none from that answer.
+/// pass writes the same claims, none from that answer. The answer holds a
+/// writable Lisbon candidate beside a stray item the decoder would skip, so
+/// only the schema check refuses it: without the stray item, the same answer
+/// lands Lisbon under `none` (Sol r3).
 #[tokio::test]
 async fn an_off_schema_answer_is_refused_with_or_without_the_schema_on_the_wire() {
+    let none = "response_format = \"none\"\n";
     let mut written = Vec::new();
-    for (line, sends) in [("", true), ("response_format = \"none\"\n", false)] {
+    for (line, sends, stray) in [("", true, true), (none, false, true), (none, false, false)] {
         let dir = tempfile::tempdir().unwrap();
         let vault_path = dir.path().join("vault");
         std::fs::create_dir_all(&vault_path).unwrap();
@@ -371,9 +375,27 @@ async fn an_off_schema_answer_is_refused_with_or_without_the_schema_on_the_wire(
             true,
             "schema-1",
         );
+        let Reply::Computed(answer) = follows_the_prompt(&Case {
+            predicate: "residence.city",
+            first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
+            owner_states_first: false,
+            second: ("", ""),
+            seeded_before_critical_classes: false,
+            granted: false,
+        }) else {
+            unreachable!("the prompt-following model computes its answer")
+        };
         let fake = FakeLlm::start(
             Vec::new(),
-            Some(Reply::text(json!({"candidates": "Lisbon"}).to_string())),
+            Some(Reply::Computed(Arc::new(move |request: &Value| {
+                let mut reply: Value = serde_json::from_str(&answer(request)).unwrap();
+                if stray
+                    && let Some(items) = reply.get_mut("candidates").and_then(Value::as_array_mut)
+                {
+                    items.push(json!("stray"));
+                }
+                reply.to_string()
+            }))),
         )
         .await;
         let config = write_config(
@@ -408,7 +430,11 @@ async fn an_off_schema_answer_is_refused_with_or_without_the_schema_on_the_wire(
         }
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         let person = EntityId::from_hex(PERSON).unwrap();
-        assert!(claims_on(&vault, person, "residence.city").is_empty());
+        assert_eq!(
+            claims_on(&vault, person, "residence.city").len(),
+            usize::from(!stray),
+            "the off-schema answer wrote nothing; the same answer in schema lands"
+        );
         let predicates: std::collections::BTreeSet<String> = vault
             .entities_by_type(ENTITY_TYPE_CLAIM)
             .unwrap()
