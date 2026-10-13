@@ -491,6 +491,12 @@ fn fold_authority_log_once(
             Err(_) => issues.push(AuthorityFoldIssue::InvalidEntry([0; 32])),
         }
     }
+    // Before ancestry, floors and restrictive proofs: no fold path may
+    // accept an entry that hangs off another branch's side entry.
+    for hash in super::world_privacy::side_branch_violations(&by_hash) {
+        by_hash.remove(&hash);
+        issues.push(AuthorityFoldIssue::InvalidEntry(hash));
+    }
     let entry_ancestors = entry_ancestor_index(&by_hash);
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
@@ -506,10 +512,6 @@ fn fold_authority_log_once(
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     let mut rejected_retired = BTreeSet::new();
     let mut pending: BTreeSet<AuthorityEntryHash> = by_hash.keys().copied().collect();
-    for hash in super::world_privacy::side_branch_violations(&by_hash) {
-        pending.remove(&hash);
-        issues.push(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     let mut progressed = true;
     while progressed {
         progressed = false;

@@ -11,10 +11,11 @@
 //!
 //! An edit by a machine that is no longer the owner's counts at full strength
 //! only if the revision that took "yours" away had seen it. One it never saw
-//! raced the demotion (a stolen laptop widening a world offline) and counts
-//! only as its meet with the settings it replaced. So does an edit whose
-//! machine the roster rule admits but this install does not count: losing
-//! standing never widens a world.
+//! raced the demotion (a stolen laptop widening a world offline) and only
+//! narrows: it counts as its meet with every edit it replaced, each judged the
+//! same way in the current state, so a chain of raced widens never widens. So
+//! does an edit whose machine the roster rule admits but this install does
+//! not count: losing standing never widens a world.
 //!
 //! A world whose read names no machine still the owner's is orphaned: any
 //! machine of the owner's that stores it may re-pick it. A re-pick only makes
@@ -26,6 +27,7 @@
 //! main log without W's entries.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::entity_id::EntityId;
 
@@ -276,21 +278,24 @@ impl PrivacyMeet {
     }
 }
 
-/// One accepted edit no later edit of its world has seen.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One accepted edit of a world.
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct FrontierEdit {
     settings: WorldPrivacy,
     machine: EntityId,
-    /// The world's settings at the edit's parents, which it replaced.
-    prior: PrivacyMeet,
+    /// The live edits at the edit's parents, which it replaced.
+    replaced: BTreeSet<AuthorityEntryHash>,
     /// This install did not count the machine at the edit's parents.
     narrow_only: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct WorldFrontier {
-    live: BTreeMap<AuthorityEntryHash, FrontierEdit>,
-    superseded: BTreeSet<AuthorityEntryHash>,
+    /// The edits no later edit of the world has seen.
+    live: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
+    /// Every edit a later edit replaced, kept so an edit that only narrows
+    /// is judged against what it replaced.
+    superseded: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
 }
 
 pub(super) fn merge_world_frontiers(
@@ -299,12 +304,16 @@ pub(super) fn merge_world_frontiers(
 ) {
     for (world, frontier) in right {
         let into = merged.entry(*world).or_default();
-        into.superseded.extend(frontier.superseded.iter().copied());
+        for (hash, edit) in &frontier.superseded {
+            into.superseded
+                .entry(*hash)
+                .or_insert_with(|| Arc::clone(edit));
+        }
         for (hash, edit) in &frontier.live {
-            into.live.entry(*hash).or_insert_with(|| edit.clone());
+            into.live.entry(*hash).or_insert_with(|| Arc::clone(edit));
         }
         let superseded = &into.superseded;
-        into.live.retain(|hash, _| !superseded.contains(hash));
+        into.live.retain(|hash, _| !superseded.contains_key(hash));
     }
 }
 
@@ -312,22 +321,58 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
     derived_machine(state, machine).is_some_and(|folded| folded.is_mine())
 }
 
-/// What one live edit contributes. Full strength while its machine is the
-/// owner's, or when the revision that took that away had seen it; otherwise
-/// it raced the demotion and only narrows what it replaced.
-fn contribution(state: &FoldState, hash: &AuthorityEntryHash, edit: &FrontierEdit) -> PrivacyMeet {
-    let own = PrivacyMeet::of(&edit.settings);
-    let seen_by_demotion = derived_machine(state, edit.machine).is_some_and(|folded| {
-        folded.is_mine()
-            || (!folded.conflicted
-                && folded.profile.seen_world_edits.contains(hash)
-                && (!folded.removed || folded.profile.role == MachineRole::Removed))
-    });
-    if seen_by_demotion && !edit.narrow_only {
-        own
-    } else {
-        own.meet(&edit.prior)
+/// Full strength while the edit's machine is the owner's, or when the
+/// revision that took that away had seen the edit, and this install counted
+/// the machine when the edit was made.
+fn full_strength(state: &FoldState, hash: &AuthorityEntryHash, edit: &FrontierEdit) -> bool {
+    !edit.narrow_only
+        && derived_machine(state, edit.machine).is_some_and(|folded| {
+            folded.is_mine()
+                || (!folded.conflicted
+                    && folded.profile.seen_world_edits.contains(hash)
+                    && (!folded.removed || folded.profile.role == MachineRole::Removed))
+        })
+}
+
+/// What one live edit contributes in the current state: its own settings at
+/// full strength; otherwise the meet of its settings and of every edit it
+/// replaced, each judged the same way, down to full-strength edits or the
+/// default. Iterative, so a long chain of offline edits cannot exhaust the
+/// stack.
+fn contribution(
+    state: &FoldState,
+    frontier: &WorldFrontier,
+    hash: AuthorityEntryHash,
+    edit: &FrontierEdit,
+) -> PrivacyMeet {
+    let mut meet = PrivacyMeet::of(&edit.settings);
+    if full_strength(state, &hash, edit) {
+        return meet;
     }
+    let mut visited = BTreeSet::from([hash]);
+    let mut pending = vec![edit];
+    while let Some(next) = pending.pop() {
+        if next.replaced.is_empty() {
+            meet = meet.meet(&PrivacyMeet::of(&WorldPrivacy::default()));
+        }
+        for replaced in &next.replaced {
+            if !visited.insert(*replaced) {
+                continue;
+            }
+            let Some(prior) = frontier
+                .superseded
+                .get(replaced)
+                .or_else(|| frontier.live.get(replaced))
+            else {
+                continue;
+            };
+            meet = meet.meet(&PrivacyMeet::of(&prior.settings));
+            if !full_strength(state, replaced, prior) {
+                pending.push(prior);
+            }
+        }
+    }
+    meet
 }
 
 fn world_meet(state: &FoldState, world: EntityId) -> PrivacyMeet {
@@ -335,7 +380,7 @@ fn world_meet(state: &FoldState, world: EntityId) -> PrivacyMeet {
         frontier
             .live
             .iter()
-            .map(|(hash, edit)| contribution(state, hash, edit))
+            .map(|(hash, edit)| contribution(state, frontier, *hash, edit))
     });
     let first = contributions
         .next()
@@ -387,20 +432,20 @@ pub(super) fn apply_world_privacy(
         state.refused_world_edits.insert(hash);
         return Ok(());
     }
-    let prior = world_meet(state, edit.world);
     let narrow_only =
         !derived_machine(state, edit.machine).is_some_and(|folded| standing(state, &folded));
     let frontier = state.worlds.entry(edit.world).or_default();
     let seen = std::mem::take(&mut frontier.live);
-    frontier.superseded.extend(seen.into_keys());
+    let replaced = seen.keys().copied().collect();
+    frontier.superseded.extend(seen);
     frontier.live.insert(
         hash,
-        FrontierEdit {
+        Arc::new(FrontierEdit {
             settings: edit.settings.clone(),
             machine: edit.machine,
-            prior,
+            replaced,
             narrow_only,
-        },
+        }),
     );
     Ok(())
 }

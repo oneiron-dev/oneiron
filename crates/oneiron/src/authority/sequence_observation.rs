@@ -16,7 +16,7 @@ use crate::store::Store;
 use super::*;
 
 /// Durable high-water mark of a signer's highest observed authority-log sequence number.
-/// Key: string (peer id).
+/// Key: string (peer id, or peer id and world for a side entry).
 const SEQ_HWM: SideTable<String, u64, Raw> = SideTable::new(&side_table::AUTHLOG_SEQ_HWM);
 /// First-observation receipt of the signer sequence high-water mark that existed before one
 /// entry hash was first observed. Key: hex64.
@@ -67,8 +67,15 @@ pub(super) fn authority_observation_peer_id(signer: &AuthorityKey) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
-fn sequence_key(signer: &AuthorityKey) -> String {
-    authority_observation_peer_id(signer)
+/// A signer's sequences order within one scope: the main log, or one world's
+/// side branch. Entries of different worlds never name each other, so one
+/// world's later entry is no rollback floor for another's.
+fn sequence_key(entry: &AuthorityLogEntry) -> String {
+    let peer = authority_observation_peer_id(entry.signer_key());
+    match super::world_privacy::side_world(&entry.op) {
+        None => peer,
+        Some(world) => format!("{peer}:{}", world.to_hex()),
+    }
 }
 
 fn receipt_key(hash: &AuthorityEntryHash) -> String {
@@ -92,7 +99,7 @@ pub(crate) fn record_authority_sequence_observation_in_txn(
     if SEQ_OBSERVATION.get(store, txn, &receipt_key)?.is_some() {
         return Ok(false);
     }
-    let key = sequence_key(entry.signer_key());
+    let key = sequence_key(entry);
     let previous = SEQ_HWM.get(store, txn, &key)?;
     SEQ_OBSERVATION.put(store, txn, &receipt_key, &SequenceReceipt(previous))?;
     let next = previous.map_or(entry.seq, |value| value.max(entry.seq));
@@ -108,7 +115,7 @@ pub(super) fn authority_local_observations_in_txn(
     let mut sequence_floors = BTreeMap::new();
     for entry in entries {
         let hash = authority_entry_hash(entry)?;
-        let current = SEQ_HWM.get(store, txn, &sequence_key(entry.signer_key()))?;
+        let current = SEQ_HWM.get(store, txn, &sequence_key(entry))?;
         let receipt = SEQ_OBSERVATION.get(store, txn, &receipt_key(&hash))?;
         let floor = match receipt {
             Some(SequenceReceipt(observed)) => {

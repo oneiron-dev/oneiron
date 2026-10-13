@@ -46,3 +46,4 @@ mod recovery_ceremony;
 mod retired_ceiling;
 mod world_orphan;
 mod world_privacy;
+mod world_race;
