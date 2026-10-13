@@ -7,8 +7,8 @@ use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::{ExecutorStorage, derived_executor_id};
 use crate::code_run::types::{
-    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbRefusal, SelfAgentVerbCall,
-    SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
+    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbRefusal, RunCall,
+    SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
@@ -17,6 +17,10 @@ use crate::task_verb::sdk::AgentVerb;
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
 const AGENT_VERB_RECEIPT_DOMAIN: &[u8] = b"oneiron:executor-agent-verb-receipt:v1";
+
+/// The reason a receipt's refusal row carries, so that no row read back from
+/// the receipt's answer, a refusal or not, is ever taken for one.
+const KEPT_ANSWER_REFUSED: &str = "kept_answer_refused";
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
@@ -57,7 +61,9 @@ impl HostSelfDispatcher<'_> {
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
-        // halted) halts the bridge, so no later call reaches this door.
+        // halted) halts the bridge, and `dispatch_bound` refuses every call
+        // past one whose kept answer the door refused, so no later call
+        // reaches this door.
         let ordinal = site.earlier.iter().filter(is_write).count() as u64;
         let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
         if let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? {
@@ -66,10 +72,33 @@ impl HostSelfDispatcher<'_> {
                     "agent verb write is in flight or needs reconciliation",
                 ));
             };
+            // The kept answer is a result the run recorded: the door rules on
+            // reading it back, as on the run's other recorded outputs. Its
+            // refusal stands on the receipt until an admitted read of the
+            // answer reconciles it, so no later attempt of the step goes on
+            // past it either.
+            if let Err(refusal) = door.admit_run_call(RunCall::RecordedOutput) {
+                let rejected = super::gate_rejection(&refusal.code);
+                let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
+                    effect: SelfEffect::AgentVerb,
+                    outcome: refusal.code.clone(),
+                    reason_codes: vec![KEPT_ANSWER_REFUSED.to_owned()],
+                });
+                let ruling =
+                    CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(call), &ruling, 0, 0)?;
+                self.append_ruling(&receipt, ruling)?;
+                if let Some(rejected) = rejected {
+                    return Err(rejected);
+                }
+                return Ok(answered(Err(refusal)));
+            }
             if row_identity(row) != Some(call_identity(call.verb.as_str(), &call.input)) {
                 return Err(Error::InvariantViolation(
                     "a resumed step changed a write it already made",
                 ));
+            }
+            if standing_refusal(&receipt).is_some() {
+                self.append_ruling(&receipt, row.clone())?;
             }
             return decode_self_dispatch_outcome(&row.outcome);
         }
@@ -78,7 +107,7 @@ impl HostSelfDispatcher<'_> {
             .storage
             .put_code_run_replay_record_if_generation_with_heal(&receipt, None, None)?;
         let outcome = answered(door.call(&call, &origin));
-        // A receipt is a one-call record, so its row is that record's first.
+        // A receipt keeps its call's answer as its record's first row.
         receipt.bridge_calls.push(CodeRunBridgeCall::record(
             0,
             &SelfCall::AgentVerb(call),
@@ -91,13 +120,90 @@ impl HostSelfDispatcher<'_> {
         Ok(outcome)
     }
 
+    /// A step past a write that did not meet its receipt can no longer close,
+    /// so it commits nothing more: every later call gets the refusal that
+    /// write got in place of its kept answer, or an error where it got none.
+    /// A write that kept no receipt (refused before its door ran) made
+    /// nothing to meet.
+    ///
+    /// A kept answer's refusal also stands on its receipt, so it holds in
+    /// every later attempt of the step until an admitted read of the answer
+    /// reconciles it. Until then `call` gets it too, unless `call` is a write
+    /// the step already made: its receipt answers it, never writes again, and
+    /// the door rules on that answer once more. `None` is a read of the run's
+    /// recorded outputs.
+    pub(crate) fn refusal_past_an_unmet_write(
+        &self,
+        site: ExecutorCallSite<'_>,
+        call: Option<&SelfCall>,
+    ) -> Result<Option<SelfDeniedResult>> {
+        let receipt_at = |ordinal: u64| {
+            self.storage
+                .get_code_run_replay_record(&self.write_receipt_id(
+                    site.run_id,
+                    site.step_start,
+                    ordinal,
+                )?)
+        };
+        for (ordinal, made) in (0_u64..).zip(site.earlier.iter().filter(is_write)) {
+            let Some(receipt) = receipt_at(ordinal)? else {
+                continue;
+            };
+            if meets(&receipt, made) {
+                continue;
+            }
+            return match decode_self_dispatch_outcome(&made.outcome) {
+                Ok(SelfDispatchOutcome::Denied(refused)) => Ok(Some(refused)),
+                _ => Err(Error::InvariantViolation(
+                    "a step went on past a write that did not meet its receipt",
+                )),
+            };
+        }
+        let writes = matches!(call, Some(SelfCall::AgentVerb(call)) if call.verb.writes());
+        let made = site.earlier.iter().filter(is_write).count() as u64;
+        if writes && receipt_at(made)?.is_some() {
+            return Ok(None);
+        }
+        let mut ordinal = 0;
+        while let Some(receipt) = receipt_at(ordinal)? {
+            if let Some(refused) = standing_refusal(&receipt) {
+                return kept_refusal(refused).map(Some);
+            }
+            ordinal += 1;
+        }
+        Ok(None)
+    }
+
+    /// Appends one ruling on a write's kept answer to its receipt, in one
+    /// transaction a restart keeps: each refusal, or, once an admitted read
+    /// reconciles a standing refusal, the answer read back. Every ruling
+    /// appends, so one decided on an older receipt fails the receipt's
+    /// generation compare instead of overwriting a newer one.
+    fn append_ruling(
+        &self,
+        receipt: &CodeRunReplayRecord,
+        mut ruling: CodeRunBridgeCall,
+    ) -> Result<()> {
+        let mut ruled = receipt.clone();
+        ruling.seq = ruled.bridge_calls.len() as u64;
+        ruled.bridge_calls.push(ruling);
+        self.storage
+            .put_code_run_replay_record_if_generation_with_heal(
+                &ruled,
+                Some(receipt.generation()?),
+                None,
+            )?;
+        Ok(())
+    }
+
     /// Refuses to close a step that left out a write an earlier attempt of it
     /// made. A resumed step makes the step's writes again in order, each
     /// answered from its receipt: the step's writes, in order, must be the
     /// receipts' calls with the receipts' answers. A receipt the step did not
-    /// meet so (a write left out, or one the bridge recorded after halting
-    /// and never dispatched) means the step would checkpoint without that
-    /// write, and a later step could make it again under a fresh receipt.
+    /// meet so (a write left out, one the bridge recorded after halting and
+    /// never dispatched, or one whose kept answer stands refused) means the
+    /// step would checkpoint without that write, and a later step could make
+    /// it again under a fresh receipt.
     pub(crate) fn refuse_a_step_that_dropped_a_write(
         &self,
         run_id: EntityId,
@@ -110,14 +216,7 @@ impl HostSelfDispatcher<'_> {
             .storage
             .get_code_run_replay_record(&self.write_receipt_id(run_id, step_start, ordinal)?)?
         {
-            let met = receipt
-                .bridge_calls
-                .first()
-                .zip(made.next())
-                .is_some_and(|(kept, made)| {
-                    row_identity(kept) == row_identity(made) && answered_as_kept(kept, made)
-                });
-            if !met {
+            if !made.next().is_some_and(|made| meets(&receipt, made)) {
                 return Err(Error::InvariantViolation(
                     "a resumed step left out a write it already made",
                 ));
@@ -145,6 +244,44 @@ impl HostSelfDispatcher<'_> {
             ],
         )
     }
+}
+
+/// The refusal a write's kept answer stands under, if any. A receipt's first
+/// row is its call's answer; the rows after it are the rulings on reading that
+/// answer back, each a refusal or the admitted read that reconciled one, so
+/// the answer stands refused while the last of them is a refusal.
+fn standing_refusal(receipt: &CodeRunReplayRecord) -> Option<&CodeRunBridgeCall> {
+    let ruling = receipt.bridge_calls.get(1..)?.last()?;
+    let Ok(SelfDispatchOutcome::Denied(refused)) = decode_self_dispatch_outcome(&ruling.outcome)
+    else {
+        return None;
+    };
+    (refused.reason_codes == [KEPT_ANSWER_REFUSED]).then_some(ruling)
+}
+
+/// Whether a write row met its receipt: it is the receipt's call with the
+/// answer the receipt kept, and no refusal of that answer stands.
+fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
+    standing_refusal(receipt).is_none()
+        && receipt.bridge_calls.first().is_some_and(|kept| {
+            row_identity(kept) == row_identity(made) && answered_as_kept(kept, made)
+        })
+}
+
+/// The refusal a receipt keeps beside its answer, as the run takes it: one
+/// spelled as a gate's outcome word halts the bridge as that gate does.
+fn kept_refusal(row: &CodeRunBridgeCall) -> Result<SelfDeniedResult> {
+    let Ok(SelfDispatchOutcome::Denied(refused)) = decode_self_dispatch_outcome(&row.outcome)
+    else {
+        return Err(Error::CorruptedIndex("agent verb receipt refusal"));
+    };
+    if let Some(rejected) = super::gate_rejection(&refused.outcome) {
+        return Err(rejected);
+    }
+    Ok(SelfDeniedResult {
+        reason_codes: Vec::new(),
+        ..refused
+    })
 }
 
 /// A refusal reaches the guest as its stable code alone; the host or prompt

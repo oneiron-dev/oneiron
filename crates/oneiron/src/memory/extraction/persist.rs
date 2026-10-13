@@ -16,15 +16,16 @@ impl Memory<'_> {
         parity: &EncoderParity,
         now: u64,
     ) -> MemoryResult<TurnTags> {
-        if parity.model != trace.model {
-            return Err(
-                Error::InvalidConfig("encoder has no matching parity receipt".into()).into(),
-            );
-        }
         let output = trace
             .output
             .as_ref()
             .ok_or_else(|| Error::InvalidConfig("shadow did not produce a valid output".into()))?;
+        // The receipt is for one model and the stack it served.
+        if parity.model != trace.model || parity.stack != output.stack_sha16 {
+            return Err(
+                Error::InvalidConfig("encoder has no matching parity receipt".into()).into(),
+            );
+        }
         let turn = EntityId::from_hex(&trace.input.turn)?;
         self.with_verified_actor_write_txn(|txn| {
             crate::tagging::save_shadow_output_in_txn(

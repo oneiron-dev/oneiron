@@ -453,6 +453,7 @@ pub(crate) fn execute_reschedule(
                     visitor_tz: spec.visitor_tz.clone(),
                 },
                 &context.owner_refs,
+                event_ref,
             )?;
             if !offers_slot(&solved.slots, spec.new_slot) {
                 return Err(refused("the requested slot is no longer available"));

@@ -8,7 +8,8 @@ use super::claims::{
 use super::hygiene::{CalendarInviteHygieneContext, hydrate_calendar_invite_hygiene};
 use super::mime::{ics_blob_content_hash, read_calendar_invite_ics};
 use super::passport::{
-    encode_passport_value, event_ref_for_indexed_uid, live_passport_for, resolve_event_by_uid,
+    admitted_passport_for_in_txn, encode_passport_value, event_ref_for_indexed_uid,
+    resolve_admitted_event_by_uid,
 };
 use super::payload::{CalendarInviteMethod, CalendarInvitePayload};
 use crate::Vault;
@@ -103,7 +104,7 @@ impl CalendarInviteAdmission {
             &self.recipient,
         )
         .map_err(|error| refused(error.to_string()))?;
-        let prior = super::passport::live_passport_for_in_txn(
+        let prior = admitted_passport_for_in_txn(
             vault,
             wtxn,
             &self.event_ref,
@@ -186,12 +187,18 @@ pub fn admit_calendar_invite(
     let event_ref = resolve_invite_event(vault, &payload.uid)?
         .ok_or_else(|| refused("this invite UID names no EVENT in the vault"))?;
     let content_hash = ics_blob_content_hash(vault, &payload.ics_blob_ref)?;
-    let live = live_passport_for(
-        vault,
-        &event_ref,
-        CALENDAR_INVITE_PASSPORT_SYSTEM,
-        &payload.uid,
-    )?
+    // The same admitted head the commit re-reads: a pending proposal never
+    // sets the SEQUENCE an invite must advance.
+    let live = {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        admitted_passport_for_in_txn(
+            vault,
+            &rtxn,
+            &event_ref,
+            CALENDAR_INVITE_PASSPORT_SYSTEM,
+            &payload.uid,
+        )?
+    }
     .map(|(_, value)| value);
     let change = classify_invite_state(payload, live.as_ref(), content_hash)?;
 
@@ -260,13 +267,14 @@ fn classify_invite_state(
 
 /// Resolves the EVENT one invite UID names.
 ///
-/// Live passport claims are synced truth and are consulted first; on the first
-/// confirm no passport carries the UID yet, so the CAL-02 UID index — which the
-/// minting side (booking confirm / ingest) already writes through
+/// Admitted passport claims are synced truth and are consulted first, so a
+/// pending proposal carrying the UID never picks the EVENT. On the first
+/// confirm no admitted passport carries the UID yet, so the CAL-02 UID index —
+/// which the minting side (booking confirm / ingest) already writes through
 /// [`super::passport::index_passport_uid`] — is the fallback. Nothing new is
 /// indexed here.
 fn resolve_invite_event(vault: &Vault, uid: &str) -> Result<Option<EntityId>, CalendarError> {
-    if let Some(event_ref) = resolve_event_by_uid(vault, uid)? {
+    if let Some(event_ref) = resolve_admitted_event_by_uid(vault, uid)? {
         return Ok(Some(event_ref));
     }
     event_ref_for_indexed_uid(vault, uid)
