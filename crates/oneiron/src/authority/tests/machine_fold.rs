@@ -593,9 +593,10 @@ fn a_custodians_successor_never_vouches_for_a_machine() {
 }
 
 /// Custody passes along every admission whichever branch carried the mark:
-/// the root enrols one key twice, once marked for the cloud, and a successor
-/// that key's other enrolment led to still never answers "yours" on a hosted
-/// fold (Sol P1 round 5, F1).
+/// the root enrols one key twice, once marked for the cloud, and the keys
+/// that key's other enrolment led to never answer "yours" on a hosted fold,
+/// whether they mark the machine after the branches meet or before (Sol P1
+/// rounds 5 and 6).
 #[test]
 fn custody_marked_on_another_branch_reaches_the_successor() {
     let root = ed_key(114);
@@ -665,21 +666,47 @@ fn custody_marked_on_another_branch_reaches_the_successor() {
         &admitted,
         Some(&root),
     );
+    let hosted = |entries: &[&AuthorityLogEntry]| {
+        let entries: Vec<_> = entries.iter().map(|entry| (*entry).clone()).collect();
+        fold_authority_log_for_posture(
+            &entries,
+            &BTreeMap::new(),
+            10,
+            &BTreeMap::new(),
+            crate::HostingPrivacyPosture::Hosted,
+        )
+    };
     let machine = EntityId::now();
     let mark = owned_mark(id, &handoff, &successor, 1, machine, 118);
-    let fold = fold_authority_log_for_posture(
-        &[genesis, plain, marked, enrolled, handoff.clone(), mark],
-        &BTreeMap::new(),
-        10,
-        &BTreeMap::new(),
-        crate::HostingPrivacyPosture::Hosted,
-    );
+    let fold = hosted(&[&genesis, &plain, &marked, &enrolled, &handoff, &mark]);
     assert!(
         fold.valid_entries
             .contains(&authority_entry_hash(&handoff).unwrap())
     );
     assert!(!fold.roster[&authority_key_from_ed(&successor)].revoked);
     assert!(fold.machine(machine).is_none());
+
+    // The admitted key marks a machine before the branches meet, on a branch
+    // the cloud enrolment never reached; the handoff then joins them.
+    let early = EntityId::now();
+    let early_mark = owned_mark(id, &enrolled, &admitted, 1, early, 119);
+    let joining = entry(
+        2,
+        &[&marked, &early_mark],
+        AuthorityOp::ReRoot {
+            new_device: ordinary(&successor),
+        },
+        &admitted,
+        Some(&root),
+    );
+    let fold = hosted(&[&genesis, &plain, &marked, &enrolled, &early_mark, &joining]);
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&joining).unwrap())
+    );
+    let folded = fold.machine(early).unwrap();
+    assert_eq!(folded.signer_class, SignerClass::Custodial);
+    assert!(!folded.is_live() && !folded.is_mine());
 }
 
 /// `signer` marks `machine` "yours" on `parent`, with the install key `key`.

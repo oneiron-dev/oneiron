@@ -385,6 +385,7 @@ pub(super) fn single_owner_state(
         machine_keys: BTreeMap::new(),
         host_custody_keys: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
+        hosted: false,
         actor_rows: BTreeSet::new(),
     };
     (owner, owner_key, parent, state)

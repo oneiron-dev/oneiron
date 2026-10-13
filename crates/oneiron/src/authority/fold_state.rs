@@ -263,6 +263,8 @@ pub(super) struct FoldState {
     /// custody when it, or any key up this graph, is marked as the host's,
     /// whatever labels it carries and whichever branch carried the mark.
     pub(super) key_admitters: BTreeMap<AuthorityKey, BTreeSet<AuthorityKey>>,
+    /// The fold judges a hosted vault (`FoldContext::hosted`), fixed at genesis.
+    pub(super) hosted: bool,
     /// Every row an accepted bind or rebind named, merged by union: the
     /// actor merge keeps one winner, and a row bound on a losing branch is
     /// still no physical machine.
