@@ -189,7 +189,7 @@ mod tests {
             })
             .count();
         assert_eq!(leftovers, 0);
-        fs::set_permissions(&keys.path(&slot()), fs::Permissions::from_mode(0o644)).unwrap();
+        fs::set_permissions(keys.path(&slot()), fs::Permissions::from_mode(0o644)).unwrap();
         assert!(matches!(keys.get(&slot()), Err(KeystoreError::Corrupt(_))));
         keys.delete(&slot()).unwrap();
         keys.delete(&slot()).unwrap();

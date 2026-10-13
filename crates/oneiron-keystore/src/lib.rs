@@ -8,9 +8,9 @@
 //! again for a new seed.
 //!
 //! Adapters:
-//! - Apple: [`AppleKeychain`], the data-protection keychain, with the attributes
+//! - Apple: `AppleKeychain`, the data-protection keychain, with the attributes
 //!   `AfterFirstUnlockThisDeviceOnly` and not synchronizable.
-//! - Other Unix: [`LocalFileKeystore`], 0600 files in a 0700 directory outside the
+//! - Other Unix: `LocalFileKeystore`, 0600 files in a 0700 directory outside the
 //!   vault, tagged so that backup tools skip it.
 //! - Windows has no adapter yet: [`platform_keystore`] returns `Unavailable` there.
 
