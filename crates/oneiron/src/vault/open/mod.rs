@@ -527,6 +527,9 @@ impl Vault {
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             vault_id: super::VaultId::resolve_at_open(&store)?,
+            retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
+                &store,
+            )?,
             store,
             vector_evidence: std::sync::RwLock::new(config.vector_evidence),
             config,

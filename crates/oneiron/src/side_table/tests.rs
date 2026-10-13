@@ -493,6 +493,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROPOSAL_SUBMISSION",
         "RETRIEVAL_AGE",
         "RETRIEVAL_AGE_BY_RUN",
+        "RETRIEVAL_TRACE_KEY_LOCAL",
         "ROOMS_THREAD_CHILDREN",
         "RUN_TREE_ASK_WAIT",
         "SCOPE_RECORD",

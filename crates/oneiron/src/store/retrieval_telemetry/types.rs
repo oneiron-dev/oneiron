@@ -190,12 +190,15 @@ pub struct RetrievalTraceStageRecord {
     pub candidates: Vec<RetrievalScoreBreakdown>,
 }
 
-/// SHA-256 replay key for a content-addressed [`RetrievalTrace`].
+/// Keyed replay key for a content-addressed [`RetrievalTrace`].
 ///
-/// The hash is stored as the raw 32-byte digest, not hex. It is computed by
-/// the retrieval pipeline with the same domain-separated SHA-256 style as the
-/// gate policy frontier hash: length-prefixed UTF-8 strings/bytes, little-endian
-/// integers, one-byte booleans, and IEEE-754 `to_bits()` bytes for floats.
+/// The hash is stored as the raw 32-byte digest, not hex. The retrieval
+/// pipeline digests its inputs with the same domain-separated SHA-256 style as
+/// the gate policy frontier hash: length-prefixed UTF-8 strings/bytes,
+/// little-endian integers, one-byte booleans, and IEEE-754 `to_bits()` bytes
+/// for floats. It then keys that digest with BLAKE3 under the vault's own
+/// random key, so equal inputs give equal hashes on one vault only, and a
+/// reader of the telemetry cannot test a guessed query against it.
 pub type RetrievalTraceForkHash = [u8; 32];
 
 /// Opt-in per-stage retrieval trace.

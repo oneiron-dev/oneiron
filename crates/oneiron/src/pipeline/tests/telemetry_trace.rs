@@ -737,6 +737,48 @@ fn retrieval_trace_fork_hash_replay_key_is_stable_for_same_inputs() -> Result<()
     Ok(())
 }
 
+/// Astra on #1421 (P8 fix 6): over one row `yes no`, a reader of the
+/// telemetry holds every fork-hash input but the query, so the unkeyed digest
+/// of each guess tells which query ran. The stored hash is keyed: it matches
+/// no guess, lookup by it still works, and a reopened vault keys alike.
+#[test]
+fn a_stored_fork_hash_confirms_no_guessed_query() -> Result<()> {
+    let (dir, vault) = open_test_vault();
+    put_text(&vault, entity_id(0xD7), "yes no")?;
+    let (_, stored) =
+        captured_retrieval_run_trace(&vault, vault.query().search_text("yes", 10).limit(10))?;
+    let guesses = crate::vault::unkeyed_for_test(|| -> Result<_> {
+        let mut guesses = Vec::new();
+        for guess in ["yes", "no"] {
+            let builder = vault.query().search_text(guess, 10).limit(10);
+            guesses.push(captured_retrieval_run_trace(&vault, builder)?.1.fork_hash);
+        }
+        Ok(guesses)
+    })?;
+    for guess in &guesses {
+        assert_ne!(&stored.fork_hash, guess, "the stored hash confirms a guess");
+    }
+    assert_eq!(
+        stored.fork_hash,
+        vault.retrieval_trace_key().seal(guesses[0]),
+        "the stored hash is the query's own digest, keyed"
+    );
+    assert_eq!(
+        vault.retrieval_trace_by_fork_hash(stored.fork_hash)?,
+        Some(stored.clone())
+    );
+
+    drop(vault);
+    let mut config = embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let vault = Vault::open(dir.path(), config)?;
+    crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
+    let (_, reopened) =
+        captured_retrieval_run_trace(&vault, vault.query().search_text("yes", 10).limit(10))?;
+    assert_eq!(reopened.fork_hash, stored.fork_hash);
+    Ok(())
+}
+
 #[test]
 fn retrieval_trace_fork_hash_canonicalizes_phonetic_query_codes() -> Result<()> {
     let (_dir, vault) = open_test_vault();
