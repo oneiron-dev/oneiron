@@ -3135,3 +3135,152 @@ fn an_ask_off_this_device_takes_nothing_from_a_device_local_task() -> Result<()>
     assert_eq!(listed, vec![task]);
     Ok(())
 }
+
+/// Sol R8 F2: an agent's omitted ask target is the human who assigned it a
+/// live TASK, so the ask lists that TASK among the rows its answer was
+/// derived from. Off this device a device-local assignment names no
+/// principal; on this device it still does.
+#[test]
+fn an_agents_omitted_target_lists_the_assignment_it_comes_from() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let (_dir, vault) = super::tests::support::open_vault();
+    let human = vault.ensure_embedded_owner_actor()?;
+    let agent = super::tests::support::own_agent(&vault);
+    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    let assignment = vault
+        .memory(human, EdgeActorClass::Human)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_create(
+            &TaskCreateSpec::new(rmpv::Value::from("owned assignment"), None, None, None)
+                .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+        )?
+        .task_ref
+        .unwrap();
+    let spec = TaskAskSpec::shorthand(
+        None,
+        TaskAskQuestion::new(question),
+        Some(u64::MAX),
+        TaskAskDefault::Hold,
+    );
+    let can = |locality| {
+        let producers = crate::memory::ProducerRows::default();
+        let preflight = vault
+            .memory(agent, EdgeActorClass::Agent)
+            .at(locality)
+            .listing_producers(&producers)
+            .tasks_can_ask(&spec);
+        (
+            preflight.map_err(|error| format!("{error:?}")),
+            producers.take(),
+        )
+    };
+    let (portable, listed) = can(CallerLocality::OffDevice);
+    let portable = portable?;
+    assert_eq!(portable.recipients[0].who, human);
+    assert_eq!(listed, vec![assignment]);
+
+    vault.set_world_device_only(world, true)?;
+    let (kept, listed) = can(CallerLocality::OffDevice);
+    assert!(kept.is_err(), "{kept:?}");
+    assert!(listed.is_empty(), "{listed:?}");
+    let (here, listed) = can(CallerLocality::OnDevice);
+    assert_eq!(here?, portable);
+    assert_eq!(listed, vec![assignment]);
+    Ok(())
+}
+
+/// Sol R8 F5: an ask's status is settled from every member TASK, so a read
+/// of it through its handle lists them all.
+#[test]
+fn an_asks_status_lists_every_member_task() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_ask(&spec(&vault, owner, "members"))?;
+    let producers = crate::memory::ProducerRows::default();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .listing_producers(&producers)
+        .tasks_ask_status(receipt.handle)?;
+    assert_eq!(producers.take(), receipt.task_refs);
+    Ok(())
+}
+
+/// Sol R8 F1, F3: the TASK scans an ask and a room thread read take place
+/// at the caller's locality. Off this device a TASK a device-local world
+/// keeps takes no place in a page, a scan cap or the room census guard, so
+/// none of their refusals counts it; on this device each still does.
+#[test]
+fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    // The cap fits the TASKs the vault opened with and no more.
+    let cap = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_TASK)?
+        .len()
+        + 1;
+    let root = EntityId::now();
+    for _ in 0..2 {
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .with_birth_position(crate::federation::record_scope::BirthPosition {
+                world: Some(world),
+                facet: None,
+            })
+            .tasks_create(&TaskCreateSpec::new(
+                rmpv::Value::Map(vec![(
+                    rmpv::Value::from("thread_ref"),
+                    rmpv::Value::from(root.to_hex()),
+                )]),
+                None,
+                None,
+                None,
+            ))?;
+    }
+    vault.set_world_device_only(world, true)?;
+
+    let exhausted = |locality| -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        let scan = super::presence_pages::scan_admitted_tasks_with_limits_in(
+            &vault, &txn, locality, cap, cap,
+        )?;
+        Ok(scan.source_exhausted)
+    };
+    assert!(exhausted(CallerLocality::OffDevice)?);
+    assert!(!exhausted(CallerLocality::OnDevice)?);
+
+    let roots = std::collections::BTreeMap::from([(root, root)]);
+    let members = std::collections::BTreeSet::from([owner.to_hex()]);
+    let census = |locality| {
+        let memory = vault.memory(owner, EdgeActorClass::Human).at(locality);
+        super::room_thread::thread_tasks_capped(&memory, &roots, &members, 1, 1)
+            .map(|tasks| tasks.len())
+            .map_err(|error| format!("{error:?}"))
+    };
+    assert_eq!(census(CallerLocality::OffDevice)?, 0);
+    assert!(census(CallerLocality::OnDevice).is_err());
+    Ok(())
+}

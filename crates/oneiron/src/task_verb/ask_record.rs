@@ -279,6 +279,29 @@ pub(super) fn put<T: Serialize>(
     Ok(())
 }
 
+impl crate::memory::Memory<'_> {
+    /// The ask group `id`, read as its handle's verbs read it: each member
+    /// TASK and the TASK its class came from are listed as producers of what
+    /// the call answers from the group (DEC-0005).
+    pub(super) fn ask_group_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<AskGroup>> {
+        let group = read_group(self.vault(), txn, id)?;
+        if let Some(group) = &group {
+            self.produced_from(
+                group
+                    .members
+                    .iter()
+                    .filter_map(|member| EntityId::from_hex(&member.task).ok())
+                    .chain(group.requested.task_ref),
+            );
+        }
+        Ok(group)
+    }
+}
+
 pub(super) fn read_group(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

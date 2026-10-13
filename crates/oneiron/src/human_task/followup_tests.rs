@@ -487,6 +487,21 @@ fn standing_comm_state_vetoes_an_otherwise_live_route() {
             ),
             "{veto}: the veto takes the channel away"
         );
+        // Sol R8 F4: the route read is derived from the veto, so a reader
+        // that lists its producers lists the veto (DEC-0005).
+        let txn = vault.store.env.read_txn().expect("read txn");
+        let mut vetoes = Vec::new();
+        assert!(
+            super::followup::resolve_native_human_route_with_sender_in(
+                &vault,
+                &txn,
+                person,
+                None,
+                &mut vetoes,
+            )
+            .is_err()
+        );
+        assert_eq!(vetoes.len(), 1, "{veto}: {vetoes:?}");
     }
 }
 

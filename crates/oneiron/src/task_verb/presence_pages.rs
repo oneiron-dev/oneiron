@@ -144,3 +144,66 @@ pub(super) fn device_admitted_task_page(
         }
     }
 }
+
+/// The TASK index read in `txn` in the presence scan's bounded pages, for a
+/// reader at `locality`. Off this device a TASK a device-local world keeps
+/// is passed over before it takes a place in a page or counts toward the
+/// scan cap (DEC-0005).
+pub(super) fn scan_admitted_tasks_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    locality: crate::claim::CallerLocality,
+) -> Result<TaskEntityPageScan> {
+    scan_admitted_tasks_with_limits_in(
+        vault,
+        txn,
+        locality,
+        super::presence_scan::TASK_PRESENCE_PAGE_SIZE,
+        super::presence_scan::TASK_PRESENCE_SCAN_CAP,
+    )
+}
+
+/// Testable body of [`scan_admitted_tasks_in`]: tests inject small limits.
+pub(super) fn scan_admitted_tasks_with_limits_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    locality: crate::claim::CallerLocality,
+    page_size: usize,
+    scan_cap: usize,
+) -> Result<TaskEntityPageScan> {
+    let store = &vault.store;
+    let kept = crate::settings::device_local_worlds_at(store, txn, locality)?;
+    let mut index_after = None;
+    scan_task_entity_pages(page_size, scan_cap, |_, limit| {
+        let mut page = Vec::new();
+        loop {
+            let rows = crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                store,
+                txn,
+                ENTITY_TYPE_TASK,
+                index_after,
+            )?
+            .take(limit)
+            .collect::<Result<Vec<_>>>()?;
+            let exhausted = rows.len() < limit;
+            let Some(&last) = rows.last() else {
+                return Ok(page);
+            };
+            for id in rows {
+                if crate::settings::device_local_keeps_among(store, txn, &kept, &id)? {
+                    continue;
+                }
+                if page.len() == limit {
+                    // The rest of these rows are read again from here.
+                    return Ok(page);
+                }
+                index_after = Some(id);
+                page.push(id);
+            }
+            index_after = Some(last);
+            if exhausted || page.len() == limit {
+                return Ok(page);
+            }
+        }
+    })
+}

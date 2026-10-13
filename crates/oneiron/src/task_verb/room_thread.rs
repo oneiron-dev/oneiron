@@ -15,6 +15,17 @@ pub(crate) fn thread_tasks(
     members: &BTreeSet<String>,
     now: u64,
 ) -> MemoryResult<Vec<RoomThreadTask>> {
+    thread_tasks_capped(memory, roots, members, now, 100_000)
+}
+
+/// Testable body of [`thread_tasks`]: `cap` is the room census guard.
+pub(super) fn thread_tasks_capped(
+    memory: &Memory<'_>,
+    roots: &std::collections::BTreeMap<EntityId, EntityId>,
+    members: &BTreeSet<String>,
+    now: u64,
+    cap: usize,
+) -> MemoryResult<Vec<RoomThreadTask>> {
     if roots.is_empty() {
         return Ok(Vec::new());
     }
@@ -29,12 +40,18 @@ pub(crate) fn thread_tasks(
         .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
         .for_audience(&audience);
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    // Off this device a TASK a device-local world keeps is no match, nor
+    // counts toward the census guard (DEC-0005).
+    let kept = crate::settings::device_local_worlds_at(&vault.store, &txn, memory.locality())?;
     let mut candidates = Vec::new();
     for row in vault
         .store
         .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_TASK, None)?
     {
         let id = row?;
+        if crate::settings::device_local_keeps_among(&vault.store, &txn, &kept, &id)? {
+            continue;
+        }
         let Some(body) = task_verb_body_in(vault, &txn, id)? else {
             continue;
         };
@@ -67,7 +84,7 @@ pub(crate) fn thread_tasks(
         // No persisted thread→TASK index is added: this issue forbids new
         // stored state. The guard applies to relevant rows, not unrelated
         // TASKs belonging to other rooms in the vault.
-        if candidates.len() == 100_000 {
+        if candidates.len() == cap {
             return Err(Error::IndexOverflow("room thread TASK matches").into());
         }
         // Ask-group ladders live on the existing group row. A peer consult

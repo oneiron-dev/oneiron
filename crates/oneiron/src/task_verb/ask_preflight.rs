@@ -76,6 +76,7 @@ impl Memory<'_> {
                     reference.entity_ref(),
                 )?;
             }
+            let mut vetoes = Vec::new();
             let route = match super::ask_facade::ask_assignee(&effective.who, actor, kind) {
                 super::TaskAssignee::Human { actor_ref } => {
                     crate::human_task::resolve_native_human_route_for_actor_in(
@@ -83,11 +84,14 @@ impl Memory<'_> {
                         &txn,
                         actor_ref,
                         self.actor(),
+                        &mut vetoes,
                     )
                     .ok()
                 }
                 _ => None,
             };
+            // A standing veto that took the route decides what is read.
+            self.produced_from(vetoes);
             let face = match &route {
                 Some(route) => self
                     .vault()
