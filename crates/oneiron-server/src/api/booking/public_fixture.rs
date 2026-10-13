@@ -30,6 +30,8 @@ pub(super) struct Fixture {
     pub(super) server: Arc<SyncServer>,
     pub(super) page: EntityId,
     pub(super) token: String,
+    /// The event type every page this fixture configures and publishes.
+    config: EventTypeConfig,
 }
 
 pub(super) fn id(byte: u8) -> EntityId {
@@ -38,12 +40,21 @@ pub(super) fn id(byte: u8) -> EntityId {
 
 impl Fixture {
     pub(super) fn new() -> Self {
-        let fixture = Self::unpublished();
+        Self::with_config(fixture_config())
+    }
+
+    /// A published page whose one event type is `config`.
+    pub(super) fn with_config(config: EventTypeConfig) -> Self {
+        let fixture = Self::unpublished_with(config);
         fixture.publish_page(fixture.page, true, 1, now_secs().expect("clock") + 86_400);
         fixture
     }
 
     pub(super) fn unpublished() -> Self {
+        Self::unpublished_with(fixture_config())
+    }
+
+    fn unpublished_with(config: EventTypeConfig) -> Self {
         let dir = tempfile::tempdir().expect("temp vault");
         let vault =
             Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("vault"));
@@ -68,6 +79,7 @@ impl Fixture {
             server,
             page,
             token: booking_page_token(page),
+            config,
         };
         fixture.configure_page(page, id(0x72));
         fixture
@@ -104,11 +116,10 @@ impl Fixture {
                 b"fixture booking page",
             )
             .expect("page");
-        let config = fixture_config();
         let value = encode_event_type_claim_value(&BookingEventTypeClaimValue {
             schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
             page_ref: page,
-            config,
+            config: self.config.clone(),
         })
         .expect("config");
         self.server
@@ -137,7 +148,9 @@ impl Fixture {
         from: u64,
         until: u64,
     ) -> String {
-        let input = publication_input(page, published, from, until);
+        let mut input = publication_input(page, published, from, until);
+        input.value["event_config_hashes"]["intro"] =
+            json!(oneiron::booking::booking_config_hash(&self.config).expect("hash"));
         let receipt = self
             .server
             .vault
@@ -226,7 +239,7 @@ impl Fixture {
     }
 }
 
-fn fixture_config() -> EventTypeConfig {
+pub(super) fn fixture_config() -> EventTypeConfig {
     EventTypeConfig {
         key: EventTypeKey("intro".to_owned()),
         duration_min: 30,

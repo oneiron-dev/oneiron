@@ -69,7 +69,7 @@ pub use run_verbs::{
     MemoryTimeRange,
 };
 pub use types::{
-    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbDoor, AgentVerbRefusal,
+    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbDoor, AgentVerbRefusal, RunCall,
     SelfAgentVerbCall,
 };
 

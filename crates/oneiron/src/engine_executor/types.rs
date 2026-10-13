@@ -35,6 +35,10 @@ pub enum EngineExecutorError {
     Llm(#[from] LlmError),
     #[error("executor request canonicalization failed: {0}")]
     CanonicalRequest(#[from] serde_json::Error),
+    /// The run's host door refused a call the executor makes for the run,
+    /// with the door's stable code.
+    #[error("the run's host door refused its call: {code}")]
+    HostRefused { code: String },
 }
 
 /// Soft-yield and hard-stop limits for the durable REPL.
