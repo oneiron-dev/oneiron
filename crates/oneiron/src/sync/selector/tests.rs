@@ -5395,9 +5395,9 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
 /// drops is judged in the selection's own snapshot, before the epoch pass, so
 /// a summary written from it never leaves without it, even when a flag lands
 /// as the export closes its snapshot. A device-only flag is policy, not
-/// authority: a promotion holding a NOTE of the flagged world stands (this
-/// corrects #1402's authority-mode NOTE drop), while the export withholds the
-/// NOTE and the summary written from it.
+/// authority: the view a promotion is judged by keeps a NOTE of the flagged
+/// world (this corrects #1402's authority-mode NOTE drop, which revoked the
+/// promotion), while the export withholds the NOTE and the summary of it.
 #[test]
 fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()> {
     let member = entity_id(0x3F);
@@ -5438,15 +5438,13 @@ fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()>
     let doc = create_window_doc("source", &key);
     crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let promoted = || {
-        crate::sync::residence::promotion_covers_full_window(
-            &vault,
-            &doc,
-            &key,
-            test_selector_scope(),
-            &selector,
-            |_| Ok(true),
-        )
+    // The window also holds the grant's own rows, which no selector ships,
+    // so the check reads the granted view a promotion compares with it.
+    let granted = || -> crate::Result<Vec<EntityId>> {
+        let granted = granted_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &granted.export(ExportMode::all_updates()).unwrap(),
+        ))
     };
     let exported = || -> crate::Result<Vec<EntityId>> {
         let filtered = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
@@ -5454,7 +5452,8 @@ fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()>
             &filtered.export(ExportMode::all_updates()).unwrap(),
         ))
     };
-    assert!(promoted()?, "the promotion covers the window");
+    let portable = granted()?;
+    assert!(portable.contains(&note) && portable.contains(&summary));
     crate::sync::window::test_hooks::arm_device_only_flag_race(world);
     let raced = exported()?;
     assert!(
@@ -5466,9 +5465,10 @@ fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()>
         raced.contains(&note),
         "a summary never leaves without its source"
     );
+    let promoted = granted()?;
     assert!(
-        promoted()?,
-        "the promotion stands beside a NOTE of a device-only world"
+        promoted.contains(&note) && promoted.contains(&summary),
+        "the promotion's view keeps a NOTE of a device-only world"
     );
     let flagged = exported()?;
     assert!(!flagged.contains(&note) && !flagged.contains(&summary));
