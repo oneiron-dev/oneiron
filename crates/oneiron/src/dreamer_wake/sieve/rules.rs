@@ -4,7 +4,9 @@
 //! Rules flag; they do not judge. A span a rule is unsure of keeps its place
 //! with a lower confidence, and the policy row's band sends it to the typing
 //! rung. Text inside code (a fenced block or an inline code span) is not
-//! prose and is never read for names or dates.
+//! prose and is never read for names or dates. An inline code span runs from
+//! a backtick to the next on its line within [`INLINE_CODE_BYTES`]; a
+//! backtick with none in reach is plain text.
 //!
 //! A long text is read one segment at a time, so one pass's work stays
 //! within its bound. Where a segment ends depends on the text alone: a
@@ -61,14 +63,20 @@ pub(super) const SEGMENT_BYTES: usize = 4096;
 pub(super) const SEGMENT_REACH: usize = 512;
 /// The most text one segment's rules read.
 pub(super) const SEGMENT_WINDOW: usize = SEGMENT_BYTES + SEGMENT_REACH;
+/// The longest inline code span, backticks included: well inside
+/// [`SEGMENT_REACH`], so a window always sees whether a backtick before its
+/// cut opens one.
+const INLINE_CODE_BYTES: usize = 256;
 
 /// What the text before a segment leaves its reading: whether the segment
 /// starts inside a sentence (its first word opens none), inside a fenced
-/// code block, or inside an inline code span.
+/// code block (and inside the line that closes it), or inside an inline
+/// code span.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Carry {
     pub(super) in_sentence: bool,
     pub(super) in_fence: bool,
+    pub(super) closing_fence: bool,
     pub(super) in_code: bool,
 }
 
@@ -92,11 +100,14 @@ struct CodeRange {
     fenced: bool,
 }
 
-/// The rules' reading of one window: its spans, and every word, every
-/// extent a rule considered and every inline code span, which a cut must
-/// not split.
+/// The rules' reading of one window, in offsets into it: its spans, its
+/// code, and every word, extent a rule considered, inline code span and
+/// fence line, which a cut must not split.
 struct Seen {
     spans: Vec<RuleSpan>,
+    code: Vec<CodeRange>,
+    /// Fence lines, each with whether it closes a block.
+    fences: Vec<(usize, usize, bool)>,
     cover: Vec<(usize, usize)>,
 }
 
@@ -223,15 +234,21 @@ impl Rules {
     /// else a sentence end, else a space, else any character, where no
     /// word, no extent its rules considered, no inline code span and no
     /// fence line runs across; the segment keeps the spans that end by then.
-    /// Only a word or extent that fills the whole half is cut at
-    /// [`SEGMENT_BYTES`]: each side reads its piece as a text of its own,
-    /// with the sentence and code it is in.
+    /// Only a word or extent that fills the whole half is cut, at
+    /// [`SEGMENT_BYTES`]: the spans across the cut are dropped, and the next
+    /// segment reads on inside it, starting no word or span there.
     pub(super) fn segment(&self, text: &str, at: usize, carry: Carry) -> Segment {
-        let line_start = at == 0 || text.as_bytes().get(at - 1) == Some(&b'\n');
         let rest = &text[at..];
-        let shift = |spans: Vec<RuleSpan>| -> Vec<RuleSpan> {
+        let end = if rest.len() <= SEGMENT_WINDOW {
+            text.len()
+        } else {
+            at + floor_boundary(rest, SEGMENT_WINDOW)
+        };
+        let seen = self.read(text, (at, end), carry);
+        let shift = |spans: Vec<RuleSpan>, cut: usize| -> Vec<RuleSpan> {
             spans
                 .into_iter()
+                .filter(|span| span.end <= cut)
                 .map(|span| RuleSpan {
                     start: at + span.start,
                     end: at + span.end,
@@ -239,78 +256,62 @@ impl Rules {
                 })
                 .collect()
         };
-        if rest.len() <= SEGMENT_WINDOW {
-            let (code, _) = code_ranges(rest, carry, line_start);
+        if end == text.len() {
             return Segment {
-                end: text.len(),
-                spans: shift(self.read(rest, &code, carry.in_sentence).spans),
+                end,
+                spans: shift(seen.spans, end - at),
                 carry: Carry::default(),
-                read: rest.len(),
+                read: end - at,
             };
         }
-        let window = &rest[..floor_boundary(rest, SEGMENT_WINDOW)];
-        let (code, fences) = code_ranges(window, carry, line_start);
-        let seen = self.read(window, &code, carry.in_sentence);
-        let lines = fences.iter().map(|&(start, end, _)| (start, end));
-        let (cut, clean) = cut_in(
-            window,
-            &merged(seen.cover.into_iter().chain(lines).collect()),
-        );
-        let spans = if clean {
-            seen.spans
-                .into_iter()
-                .filter(|span| span.end <= cut)
-                .collect()
-        } else {
-            let clipped: Vec<CodeRange> = code
-                .iter()
-                .filter(|range| range.start < cut)
-                .map(|range| CodeRange {
-                    end: range.end.min(cut),
-                    ..*range
-                })
-                .collect();
-            self.read(&window[..cut], &clipped, carry.in_sentence).spans
-        };
+        let window = &text[at..end];
+        let cut = cut_in(window, &merged(seen.cover));
         let inside = |fenced: bool| {
-            code.iter()
+            seen.code
+                .iter()
                 .any(|range| range.fenced == fenced && range.start < cut && cut < range.end)
         };
-        // A line that closes a fence is code to its end, and the fence is
-        // shut after it.
-        let closing = fences
+        let closing_fence = seen
+            .fences
             .iter()
             .any(|&(start, end, closes)| closes && start < cut && cut < end);
         Segment {
             end: at + cut,
-            spans: shift(spans),
             carry: Carry {
                 in_sentence: in_sentence_at(&window[..cut], carry.in_sentence),
-                in_fence: inside(true) && !closing,
-                in_code: inside(false) || closing,
+                in_fence: inside(true),
+                closing_fence,
+                in_code: inside(false),
             },
+            spans: shift(seen.spans, cut),
             read: window.len(),
         }
     }
 
-    /// Every date and name span of `text`, in text order, none overlapping,
-    /// and none inside `code` (its code ranges, in order); its first word
-    /// opens a sentence unless `in_sentence`. Each list is filtered against
-    /// the next in one ordered sweep, so a flood of spans costs its length,
-    /// not its square.
-    fn read(&self, text: &str, code: &[CodeRange], in_sentence: bool) -> Seen {
+    /// The rules' reading of `text[from..to]` from the state `carry` leaves
+    /// it: every date and name span, in text order, none overlapping and none
+    /// inside code. The character before `from` is read as well, so the
+    /// window's start is no word or token edge the text does not have; a
+    /// span that starts in it is the text before's. Each list is filtered
+    /// against the next in one ordered sweep, so a flood of spans costs its
+    /// length, not its square.
+    fn read(&self, text: &str, (from, to): (usize, usize), carry: Carry) -> Seen {
+        let line_start = from == 0 || text.as_bytes().get(from - 1) == Some(&b'\n');
+        let (code, fences) = code_ranges(&text[from..to], carry, line_start);
+        let context = text[..from].chars().next_back().map_or(0, char::len_utf8);
+        let hay = &text[from - context..to];
         let mut dates: Vec<RuleSpan> = self
             .dates
             .iter()
             .flat_map(|(pattern, class)| {
-                pattern.find_iter(text).map(|found| RuleSpan {
+                pattern.find_iter(hay).map(|found| RuleSpan {
                     start: found.start(),
                     end: found.end(),
                     class: *class,
                 })
             })
             .chain(
-                temporal_phrase_spans(text)
+                temporal_phrase_spans(hay)
                     .into_iter()
                     .map(|phrase| RuleSpan {
                         start: phrase.start,
@@ -324,27 +325,49 @@ impl Rules {
             )
             .collect();
         dates.sort_by_key(|span| (span.start, std::cmp::Reverse(span.end)));
-        let words = words(text, in_sentence);
-        let mut names = name_spans(text, &words);
+        let words = words(hay, carry.in_sentence);
+        let mut names = name_spans(hay, &words);
         names.sort_by_key(|span| (span.start, span.end));
+        // Offsets from here on are into the window, past the context.
+        let into = |(start, end): (usize, usize)| {
+            (start.saturating_sub(context), end.saturating_sub(context))
+        };
         let cover = dates
             .iter()
             .chain(&names)
-            .map(|span| (span.start, span.end))
-            .chain(words.iter().map(|word| (word.start, word.end)))
+            .map(|span| into((span.start, span.end)))
+            .chain(words.iter().map(|word| into((word.start, word.end))))
             .chain(
                 code.iter()
                     .filter(|range| !range.fenced)
                     .map(|range| (range.start, range.end)),
             )
+            .chain(fences.iter().map(|&(start, end, _)| (start, end)))
+            .filter(|&(start, end)| start < end)
             .collect();
-        let blocks: Vec<(usize, usize)> =
-            code.iter().map(|range| (range.start, range.end)).collect();
+        let blocks: Vec<(usize, usize)> = code
+            .iter()
+            .map(|range| (context + range.start, context + range.end))
+            .collect();
         let mut spans = longest_first(&mut clear_of(dates, &blocks));
         let held: Vec<_> = spans.iter().map(|date| (date.start, date.end)).collect();
         spans.extend(clear_of(clear_of(names, &blocks), &held));
+        let mut spans: Vec<RuleSpan> = spans
+            .into_iter()
+            .filter(|span| span.start >= context)
+            .map(|span| RuleSpan {
+                start: span.start - context,
+                end: span.end - context,
+                ..span
+            })
+            .collect();
         spans.sort_by_key(|span| (span.start, span.end));
-        Seen { spans, cover }
+        Seen {
+            spans,
+            code,
+            fences,
+            cover,
+        }
     }
 }
 
@@ -376,11 +399,11 @@ fn merged(mut extents: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     joined
 }
 
-/// Where a segment of `window` ends, and whether that end is clean: the
-/// last point in the second half of [`SEGMENT_BYTES`] after a line break,
-/// else a sentence end, else a space, else any character, inside none of
-/// `cover` (sorted, disjoint). With none, it ends at [`SEGMENT_BYTES`].
-fn cut_in(window: &str, cover: &[(usize, usize)]) -> (usize, bool) {
+/// Where a segment of `window` ends: the last point in the second half of
+/// [`SEGMENT_BYTES`] after a line break, else a sentence end, else a space,
+/// else any character, inside none of `cover` (sorted, disjoint). With none,
+/// it ends at [`SEGMENT_BYTES`].
+fn cut_in(window: &str, cover: &[(usize, usize)]) -> usize {
     let limit = floor_boundary(window, SEGMENT_BYTES);
     let clear = |cut: usize| {
         let next = cover.partition_point(|&(_, end)| end <= cut);
@@ -402,10 +425,10 @@ fn cut_in(window: &str, cover: &[(usize, usize)]) -> (usize, bool) {
     for ends in ends {
         if let Some((_, _, cut)) = points().find(|&(index, ch, cut)| ends(index, ch) && clear(cut))
         {
-            return (cut, true);
+            return cut;
         }
     }
-    (limit, false)
+    limit
 }
 
 /// Whether the character at `index` of `text` ends a sentence: a CJK full
@@ -481,7 +504,8 @@ fn code_ranges(
     let mut offset = 0;
     for (index, line) in text.split_inclusive('\n').enumerate() {
         let first = index == 0;
-        let fenced = (line_start || !first) && line.trim_start().starts_with("```");
+        let fenced = (first && carry.closing_fence)
+            || ((line_start || !first) && line.trim_start().starts_with("```"));
         if fenced {
             fences.push((offset, offset + line.len(), fence.is_some()));
         }
@@ -497,21 +521,28 @@ fn code_ranges(
             }
             (Some(_), false) => {}
             (None, false) => {
-                let carried = first && carry.in_code;
+                let mut carried = first && carry.in_code;
                 let mut open: Option<usize> = carried.then_some(0);
                 for (at, ch) in line.char_indices() {
-                    if ch == '`' {
-                        match open {
-                            None => open = Some(offset + at),
-                            Some(start) => {
-                                ranges.push(CodeRange {
-                                    start,
-                                    end: offset + at + 1,
-                                    fenced: false,
-                                });
-                                open = None;
-                            }
+                    if ch != '`' {
+                        continue;
+                    }
+                    let here = offset + at;
+                    match open {
+                        // A span carried in closes at the first backtick: the
+                        // window before saw it close within reach.
+                        Some(start) if carried || here + 1 - start <= INLINE_CODE_BYTES => {
+                            ranges.push(CodeRange {
+                                start,
+                                end: here + 1,
+                                fenced: false,
+                            });
+                            open = None;
+                            carried = false;
                         }
+                        // None open, or the open one has no close in reach
+                        // and is plain text: this one opens.
+                        _ => open = Some(here),
                     }
                 }
                 if carried && open == Some(0) {

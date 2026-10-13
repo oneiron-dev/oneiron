@@ -483,35 +483,71 @@ fn a_message_withheld_beside_unchanged_words_is_read_once_a_grant_lets_it() {
     assert_eq!(of_second(&vault), 2, "Bob and tomorrow, once granted");
 }
 
-/// Sol R10 (P2): a cut at a word end split a date the rules read across
-/// it, and reset the sentence a name runs in. A long text is read in
-/// segments that end where no span the rules see runs across, and carry the
-/// sentence and the code they end in, so a date, a name and a code block
-/// read as they do in a short text.
+/// Sol R10 and R11 (P2): a cut at a word end split a date the rules read
+/// across it and reset the sentence a name runs in; a window that saw no
+/// close read inline code as prose; a cut inside a word gave the next
+/// segment a word edge, and so a date, the text does not have; a cut in the
+/// line that closes a fence left the fence open. A long text is read in
+/// segments that end where no word or span the rules see runs across, read
+/// from the character before, and carry the sentence and code they end in,
+/// so each text below reads as a short one would.
 #[test]
 fn a_long_text_is_cut_where_no_span_runs_across() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), false);
-    let date = "x ".repeat(16_380) + "January 12, 2026.";
-    let name = "x ".repeat(16_381) + "Alice Smith arrives.";
-    let code = format!(
-        "```\n{}```\nCarol arrives.",
-        "Alice Smith met Bob.\n".repeat(400)
-    );
-    let turns = [
-        witness(&vault, "7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c", &date),
-        witness(&vault, "7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d", &name),
-        witness(&vault, "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e", &code),
+    let (date, name) = (SpanKind::Date, SpanKind::Name);
+    let cases = [
+        (
+            "x ".repeat(16_380) + "January 12, 2026.",
+            vec![(date, "January 12, 2026")],
+        ),
+        (
+            "x ".repeat(16_381) + "Alice Smith arrives.",
+            vec![(name, "Alice Smith")],
+        ),
+        (
+            format!(
+                "```\n{}```\nCarol arrives.",
+                "Alice Smith met Bob.\n".repeat(400)
+            ),
+            vec![(name, "Carol")],
+        ),
+        (
+            "```\nx\n```".to_owned() + &" ".repeat(5_000) + "\nAlice arrives.",
+            vec![(name, "Alice")],
+        ),
+        ("x".repeat(4_096) + "2026-10-12 " + &"x".repeat(600), vec![]),
+        // An inline code span closes within 256 bytes or is plain text, in a
+        // short text and in a long one alike.
+        (
+            "`".to_owned() + &"x ".repeat(200) + "Alice 2026-10-12`",
+            vec![(name, "Alice"), (date, "2026-10-12")],
+        ),
+        (
+            "`".to_owned() + &"x ".repeat(2_500) + "Alice 2026-10-12`",
+            vec![(name, "Alice"), (date, "2026-10-12")],
+        ),
+        (
+            "x ".repeat(2_040) + "`Alice 2026-10-12` Bob arrives. " + &"x ".repeat(2_000),
+            vec![(name, "Bob")],
+        ),
     ];
+    let turns: Vec<EntityId> = cases
+        .iter()
+        .enumerate()
+        .map(|(index, (text, _))| {
+            let turn_ref = format!("{:02x}", 0x80 + index).repeat(16);
+            witness(&vault, &turn_ref, text)
+        })
+        .collect();
     drain(&vault, NOW);
-    assert_eq!(
-        flags(&vault, &turns[0], &date),
-        vec![(SpanKind::Date, "January 12, 2026".to_owned(), "rule")]
-    );
-    assert_eq!(
-        flags(&vault, &turns[1], &name),
-        vec![(SpanKind::Name, "Alice Smith".to_owned(), "rule")]
-    );
+    for ((text, expected), turn) in cases.iter().zip(&turns) {
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|(kind, words)| (*kind, (*words).to_owned(), "rule"))
+            .collect();
+        assert_eq!(flags(&vault, turn, text), expected, "{}", &text[..40]);
+    }
     let name = vault
         .sieve_queue(usize::MAX)
         .expect("queue")
@@ -525,54 +561,92 @@ fn a_long_text_is_cut_where_no_span_runs_across() {
             class: RuleClass::Name,
         }
     );
-    assert_eq!(
-        flags(&vault, &turns[2], &code),
-        vec![(SpanKind::Name, "Carol".to_owned(), "rule")]
-    );
 }
 
 /// Sol R10 (P2): a word with no space in it ran past the bound whole. A
-/// segment ends at the bound's own segment size inside such a word, so every
-/// pass stays within the bound, and the word is read in pieces end to end.
+/// segment cuts such a word at the segment size and drops what runs across
+/// the cut, so every pass stays within the bound, and the read goes on to
+/// what follows the word.
 #[test]
 fn a_word_with_no_space_is_read_within_the_bound() {
-    const BOUND: u32 = 32 * 1024;
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), false);
-    let text = "アリス".repeat(20_000);
+    let text = "アリス".repeat(20_000) + " Alice arrives.";
     let turn = witness(&vault, "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f", &text);
-    let mut seen = Vec::new();
-    let mut passes = 0;
-    loop {
-        let pass = vault.sieve_pass(NOW + passes).expect("pass");
-        let mut spans: Vec<(u32, u32)> = vault
+    let mut passes = 1;
+    while vault.sieve_pass(NOW + passes).expect("pass").more {
+        passes += 1;
+    }
+    assert!(passes > 2, "the word takes more than one pass");
+    assert_eq!(
+        flags(&vault, &turn, &text),
+        vec![(SpanKind::Name, "Alice".to_owned(), "rule")]
+    );
+}
+
+/// Sol R11 (P2): a grant that let the sieve read a long turn ended the
+/// pass that cut its read with no work left, so a caller draining the sieve
+/// stopped with the turn half read.
+#[test]
+fn a_grant_that_opens_a_long_turn_keeps_the_pass_going() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    let space = EntityId::from_bytes([0x5f; 16]).expect("space id");
+    let text = "アリス 2026-10-12 ".repeat(20_000);
+    let turn = witness_with(
+        &vault,
+        "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+        &text,
+        NOW,
+        Some(serde_json::json!({"rel": space.to_hex()})),
+    );
+    let now = NOW + drain(&vault, NOW);
+    let spans = |vault: &Vault| {
+        vault
             .sieve_queue(usize::MAX)
             .expect("queue")
             .into_iter()
             .filter(|span| span.turn == turn)
-            .map(|span| (span.start, span.end))
-            .collect();
-        spans.sort_unstable();
-        let read: Vec<_> = spans
-            .iter()
-            .filter(|span| seen.binary_search(*span).is_err())
-            .collect();
-        if let (Some(first), Some(last)) = (read.first(), read.last()) {
-            assert!(
-                last.1 - first.0 <= BOUND,
-                "pass {passes} read past the bound"
-            );
-        }
-        seen = spans;
-        passes += 1;
-        if !pass.more {
-            break;
-        }
-    }
-    assert!(passes > 2, "the word takes more than one pass");
-    assert_eq!(seen.first().map(|span| span.0), Some(0));
-    assert_eq!(seen.last().map(|span| span.1), Some(text.len() as u32));
-    assert!(seen.windows(2).all(|pair| pair[0].1 == pair[1].0));
+            .count()
+    };
+    assert_eq!(spans(&vault), 0);
+
+    grant_messages_read(&vault, 0x60, space);
+    assert!(
+        vault.sieve_pass(now).expect("pass").more,
+        "the read the grant opened goes on"
+    );
+    drain(&vault, now + 1);
+    assert_eq!(spans(&vault), 40_000);
+}
+
+/// Sol R11 (P2): a read that went on in a MESSAGE kept reading it after the
+/// MESSAGE left its TURN, so the turn queued words it no longer holds. A read
+/// goes on only in a MESSAGE that is still part of the turn.
+#[test]
+fn a_message_taken_out_of_its_turn_is_not_read_on() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    let id = "8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e";
+    let text = "x ".repeat(16_400) + "Alice arrives.";
+    let turn = witness_messages(
+        &vault,
+        "8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f",
+        NOW,
+        vec![message(id, &text, 0, None)],
+    );
+    assert!(
+        vault.sieve_pass(NOW).expect("pass").more,
+        "the bound cut it"
+    );
+    let message = EntityId::from_hex(id).expect("message id");
+    vault
+        .batch()
+        .delete_edge(&message, crate::edge::EdgeKind::PartOf, &turn)
+        .commit()
+        .expect("edge");
+    drain(&vault, NOW + 1);
+    assert!(flags(&vault, &turn, &text).is_empty());
 }
 
 /// Sol R10 (P2): every grant written put each withheld turn back in the

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dreamer_consolidation::{decode_turn_body, dreamer_may_read_messages_in};
 use crate::error::{Error, Result};
+use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
@@ -108,7 +109,8 @@ pub(crate) fn turn_chunks_in_txn(
 
 /// The text of one chunk of `turn`, read as [`turn_chunks_in_txn`] reads it,
 /// for a read that goes on in it: `None` when the turn or the source no
-/// longer reads, or the Dreamer may no longer read it.
+/// longer reads, the source is no longer part of the turn, or the Dreamer
+/// may no longer read it.
 pub(crate) fn chunk_text_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -126,7 +128,11 @@ pub(crate) fn chunk_text_in_txn(
         let body = crate::ports::safe_read_text(vault, txn, turn)?;
         return Ok(body.and_then(|body| decode_turn_body(&body).text));
     }
-    if vault.archive_tombstone_in_txn(txn, source)?.is_some()
+    let part_of = vault
+        .store
+        .port_edge_get(txn, source, crate::edge::EdgeKind::PartOf, turn)?;
+    if part_of.is_none()
+        || vault.archive_tombstone_in_txn(txn, source)?.is_some()
         || readable_in(vault, txn, &[*source])? != [true]
     {
         return Ok(None);

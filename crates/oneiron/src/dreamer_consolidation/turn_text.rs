@@ -257,18 +257,15 @@ pub(crate) fn projected_turn_text_in(
 
 /// Which of `messages` the Dreamer may read in the caller's transaction,
 /// through the gate a branch reads MESSAGE rows by: a private row, or a
-/// relationship row without the Dreamer's live grant, is withheld.
+/// relationship row without the Dreamer's live grant, is withheld. It asks
+/// the gate only, and takes no body out.
 pub(crate) fn dreamer_may_read_messages_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     messages: &[EntityId],
 ) -> Result<Vec<bool>> {
     let read = dreamer_read(vault)?;
-    Ok(message_reader(&read)?
-        .get_entities_parts_in_txn(txn, messages)?
-        .iter()
-        .map(Option::is_some)
-        .collect())
+    message_reader(&read)?.entities_readable_in_txn(txn, messages)
 }
 
 /// [`collect_in`] over any reader of the MESSAGE rows: `read_rows` returns

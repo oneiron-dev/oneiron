@@ -39,6 +39,20 @@ impl ScopedRead<'_> {
         )))
     }
 
+    /// Whether this reader may read each of `ids` now, as
+    /// [`Self::get_entities_parts_in_txn`] admits it, without taking its
+    /// body out: no live projection and no short-reference hash.
+    pub(crate) fn entities_readable_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> Result<Vec<bool>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        ids.iter()
+            .map(|id| self.is_entity_readable_with_filter_in(txn, &policy, id, &filter))
+            .collect()
+    }
+
     /// Actor-gated entity bodies at a caller-owned ledger snapshot. A wake
     /// can pass the SAME read transaction to every child accounting step.
     pub(crate) fn get_entities_parts_in_txn(

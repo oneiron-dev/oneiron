@@ -599,7 +599,10 @@ impl Reader {
             }
             if sieved_turn_in_txn(vault, txn, turn)? {
                 read += 1;
-                self.read_in_txn(vault, txn, turn, pass)?;
+                // A cut read goes on first in the next pass.
+                if self.read_in_txn(vault, txn, turn, pass)? == Read::Cut {
+                    pass.more = true;
+                }
             } else {
                 pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;
             }
