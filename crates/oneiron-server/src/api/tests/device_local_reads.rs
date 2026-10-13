@@ -1051,6 +1051,42 @@ async fn a_refusal_off_this_device_states_no_scope_a_device_local_world_narrows(
     assert!(!kept.to_string().contains(&world.to_hex()), "{kept}");
 }
 
+/// Wonder R8 F5: `initialize` states the scope its credential resolved to.
+/// Once that scope's world is device-local, an `initialize` off this device
+/// is refused and names no world. While the world is portable it states its
+/// scope.
+#[tokio::test]
+async fn an_initialize_off_this_device_states_no_scope_a_device_local_world_narrows() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let world = put_world(&server.vault);
+    let actor = EntityId::now();
+    let scope = crate::mcp::McpConnectorScope::scoped(Some(world), None);
+    register_scoped_mcp_actor(&server, "narrowed", actor, scope).await;
+    let initialize = || {
+        let request = mcp_endpoint_request(
+            "/mcp",
+            "narrowed",
+            json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}}),
+        );
+        route_json(Arc::clone(&server), request)
+    };
+    let (_, portable) = initialize().await;
+    assert_eq!(
+        portable["result"]["actor"]["scope"]["world_ref"],
+        json!(world.to_hex()),
+        "{portable}"
+    );
+
+    server.vault.set_world_device_only(world, true).unwrap();
+    let (_, kept) = initialize().await;
+    assert!(kept.get("result").is_none(), "{kept}");
+    assert_mcp_structured_error(&kept, "mcp_result_changed");
+    assert!(!kept.to_string().contains(&world.to_hex()), "{kept}");
+}
+
 /// Sol R7 F2: a cancel receipt does not name the TASK it cancelled, yet it is
 /// derived from that TASK. Flagged after the cancel and before the receipt is
 /// released, the TASK's world keeps the receipt on this device: the caller

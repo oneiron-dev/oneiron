@@ -245,7 +245,9 @@ pub(crate) async fn handle_mcp_request(
         "initialize" => {
             let actor =
                 resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
-            Ok(json!({
+            // It states the credential's scope, so it is released as every
+            // result is (DEC-0005).
+            let result = json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "serverInfo": {
                     "name": crate::mcp::MCP_SERVER_NAME,
@@ -259,7 +261,8 @@ pub(crate) async fn handle_mcp_request(
                     && super::admission::mcp_execute_code_admitted(server, &actor),
                 "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call to call one. A call runs as this credential's actor; it need not name one, and an actor block that names anyone else is refused.",
                 "actor": mcp_actor_result(&actor),
-            }))
+            });
+            super::device_release::mcp_release_result(server, &actor, &[], false, result)
         }
         "notifications/initialized" => Ok(json!({})),
         // Deliberately actor-free: a listing that echoed the caller back would
