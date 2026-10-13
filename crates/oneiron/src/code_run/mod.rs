@@ -66,8 +66,8 @@ pub use run_verbs::{
     MemoryTimeRange,
 };
 pub use types::{
-    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbDoor, AgentVerbRefusal, RunCall,
-    SelfAgentVerbCall,
+    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
+    AgentVerbRefusal, RunCall, SelfAgentVerbCall,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

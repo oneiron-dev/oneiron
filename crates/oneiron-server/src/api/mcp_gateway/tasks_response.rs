@@ -177,8 +177,16 @@ pub(crate) async fn execute_mcp_generated_verb(
                 } else {
                     None
                 };
-                let (output, source, carrier, epoch) =
-                    execute_mcp_agent_verb(server, &args, actor, &mut served).await?;
+                let produced = execute_mcp_agent_verb(server, &args, actor, &mut served).await;
+                // A refusal is released by the rows its verb served first.
+                let (output, source, carrier, epoch) = produced.map_err(|error| {
+                    super::device_release::mcp_release_error(
+                        server,
+                        actor,
+                        Some(served.as_slice()),
+                        error,
+                    )
+                })?;
                 (output, source, carrier, epoch.or(task_epoch))
             };
             let snapshot = McpPageSnapshot {
@@ -926,6 +934,17 @@ pub(crate) async fn execute_agent_verb_input(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 oneiron::task_verb::sdk::claim_upsert(&memory, input).map_err(mcp_facade_error)?;
+            served.extend(
+                [
+                    Some(output.claim_short_id.as_str()),
+                    output.superseded_short_id.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .filter_map(|reference| {
+                    oneiron::memory::resolve_entity_ref(&server.vault, reference).ok()
+                }),
+            );
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

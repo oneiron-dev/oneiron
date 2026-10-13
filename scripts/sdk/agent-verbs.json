@@ -218,6 +218,7 @@
         "validate": "crate::memory::caps::check_claim_input(&input)?;"
       },
       "section": false,
+      "mcp_served_output": "[Some(output.claim_short_id.as_str()), output.superseded_short_id.as_deref()].into_iter().flatten().filter_map(|reference| oneiron::memory::resolve_entity_ref(&server.vault, reference).ok())",
       "binding": {
         "args": [
           {

@@ -929,6 +929,80 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
     assert_eq!(here.tasks_ask_outcomes(&handle).unwrap().len(), 2);
 }
 
+/// Astra F3: a direct `claim_upsert` receipt names the claim it wrote by
+/// short ref alone, and that claim is the receipt's producer. Flagged after
+/// the write and before the result is released, the claim's world keeps the
+/// receipt on this device: the caller reads that its result changed. While
+/// the world is portable the receipt goes out. Astra F1 on the direct tool
+/// path: a verb's refusal naming that claim's ref then leaves off this device
+/// as its code alone.
+#[tokio::test]
+async fn a_claim_receipt_off_this_device_names_no_claim_its_world_made_device_local() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let actor = EntityId::now();
+    register_mcp_actor(&server, "receipts", actor, oneiron::EdgeActorClass::Human).await;
+    let world = put_world(&server.vault);
+    let subject = EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .unwrap();
+    let upsert = |predicate: &str, id: Option<&str>| {
+        let server = Arc::clone(&server);
+        let arguments = mcp_merge_args(
+            mcp_endpoint_envelope(actor, "write_memory"),
+            json!({"arguments": {"spec": {
+                "id": id,
+                "predicate": predicate,
+                "subject_ref": subject.to_hex(),
+                "value": "orchid",
+                "confidence": 1.0,
+                "source": "user_stated",
+                "world_ref": world.to_hex(),
+            }}}),
+        );
+        async move {
+            let request = mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                "receipts",
+                "claim_upsert",
+                "claim_upsert",
+                arguments,
+            );
+            route_json(server, request).await.1
+        }
+    };
+    let portable = upsert("test.orchid_portable", None).await;
+    let reference = portable["result"]["structuredContent"]["output"]["claim_short_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{portable}"))
+        .to_owned();
+    assert!(
+        oneiron::entity_id::parse_short_ref_syntax(&reference).is_ok(),
+        "{portable}"
+    );
+
+    crate::api::mcp_gateway::release_hook::arm(world);
+    let changed = upsert("test.orchid_kept", None).await;
+    assert!(changed.get("result").is_none(), "{changed}");
+    assert_mcp_structured_error(&changed, "mcp_result_changed");
+    assert!(!changed.to_string().contains("claim_short_id"), "{changed}");
+
+    let refused = upsert("test.orchid_echo", Some(&reference)).await;
+    assert!(refused.get("result").is_none(), "{refused}");
+    assert_mcp_structured_error(&refused, "facade_error");
+    assert!(!refused.to_string().contains(&reference), "{refused}");
+}
+
 /// Sol R3 F5: an agent's standing block is pinned to one world. Once that
 /// world is device-local, a board off this device takes no block of it: the
 /// agent reads as one with no standing block, and the world is never named.

@@ -95,6 +95,23 @@ pub(crate) fn short_refs_named(
     Some(rows)
 }
 
+/// The rows `text` names by a short ref among its words, whatever stands
+/// around one; `None` when one names no row. Whole ids are left to the
+/// payload scan.
+pub(crate) fn short_refs_in_text(vault: &oneiron::Vault, text: &str) -> Option<Vec<EntityId>> {
+    let mut rows = Vec::new();
+    for word in text.split(|c: char| !c.is_ascii_alphanumeric() && c != ':') {
+        let parts = word.split(':').collect::<Vec<_>>();
+        for pair in parts.windows(2) {
+            let reference = format!("{}:{}", pair[0], pair[1]);
+            if oneiron::entity_id::parse_short_ref_syntax(&reference).is_ok() {
+                rows.push(oneiron::memory::resolve_entity_ref(vault, &reference).ok()?);
+            }
+        }
+    }
+    Some(rows)
+}
+
 /// The rows a changed line names: its lifecycle rows, install receipts and
 /// own proposal outcomes, by the id each one is keyed by.
 pub(crate) fn changed_line_rows(

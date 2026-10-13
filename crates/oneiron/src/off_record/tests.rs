@@ -1413,7 +1413,7 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
             &self,
             call: &SelfAgentVerbCall,
             origin: &crate::memory::HostWriteOrigin,
-        ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+        ) -> std::result::Result<crate::code_run::AgentVerbAnswer, AgentVerbRefusal> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let refused = |_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
@@ -1430,7 +1430,10 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
                     None,
                 )
                 .map_err(refused)?;
-            Ok(serde_json::json!({"recalled": true}))
+            Ok(crate::code_run::AgentVerbAnswer {
+                output: serde_json::json!({"recalled": true}),
+                rows: Some(Vec::new()),
+            })
         }
 
         fn admit_run_call(
@@ -1529,7 +1532,7 @@ fn a_session_bound_run_refuses_a_search_its_door_narrows() -> Result<()> {
             &self,
             _: &SelfAgentVerbCall,
             _: &crate::memory::HostWriteOrigin,
-        ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+        ) -> std::result::Result<crate::code_run::AgentVerbAnswer, AgentVerbRefusal> {
             Err(AgentVerbRefusal {
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
             })

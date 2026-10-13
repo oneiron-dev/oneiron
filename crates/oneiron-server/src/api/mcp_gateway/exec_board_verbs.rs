@@ -44,12 +44,27 @@ pub(crate) async fn execute_mcp_execute_code(
         .await;
     // Revocation takes effect at once: a credential that died while its run
     // ran gets its own refusal, never the run's results or failure. The run's
-    // durable record stays for a re-entry its credential admits.
+    // durable record stays for a re-entry its credential admits. A failure is
+    // released as a result is, by the rows the run served before it failed.
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => {
             super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
-            return Err(mcp_code_execution_error(&error));
+            let rows = match server.vault.get_code_run_replay_record(&run_id) {
+                Ok(Some(record)) => record.agent_verb_rows(),
+                Ok(None) => Some(Vec::new()),
+                Err(_) => None,
+            }
+            .map(|mut rows| {
+                rows.extend(verbs.served());
+                rows
+            });
+            return Err(super::device_release::mcp_release_error(
+                server,
+                actor,
+                rows.as_deref(),
+                mcp_code_execution_error(&error),
+            ));
         }
     };
 
@@ -61,7 +76,7 @@ pub(crate) async fn execute_mcp_execute_code(
             json!({
                 "seq": call.seq,
                 "effect": call.effect.as_str(),
-                "outcome": mcp_bridge_outcome_value(&call.outcome),
+                "outcome": mcp_step_outcome_value(call),
             })
         })
         .collect::<Vec<_>>();
@@ -105,7 +120,16 @@ pub(crate) async fn execute_mcp_execute_code(
     if let Some(receipt) = &outcome.seat_receipt {
         structured["model_choice"] = json!(receipt);
     }
-    let named = super::device_release::mcp_run_named_rows(&server.vault, &structured);
+    // Judged by the rows its verb answers listed, as its record keeps them
+    // beside each answer, fresh or replayed, and as this call's verb calls
+    // listed them, recorded or not.
+    let named = super::device_release::mcp_run_named_rows(&server.vault, &structured)
+        .zip(outcome.replay_record.agent_verb_rows())
+        .map(|(mut named, recorded)| {
+            named.extend(recorded);
+            named.extend(verbs.served());
+            named
+        });
     let result = mcp_endpoint_result(
         server,
         actor,
@@ -119,11 +143,7 @@ pub(crate) async fn execute_mcp_execute_code(
     super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
     #[cfg(test)]
     super::device_release::release_hook::run(server);
-    let rows = named.map(|mut rows| {
-        rows.extend(verbs.served());
-        rows
-    });
-    super::device_release::mcp_release_run_result(server, actor, rows.as_deref(), result)
+    super::device_release::mcp_release_run_result(server, actor, named.as_deref(), result)
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
@@ -211,6 +231,19 @@ fn mcp_executor_status_value(status: &oneiron::engine_executor::EngineExecutorSt
             json!({ "status": "hard_step_limit_reached" })
         }
     }
+}
+
+/// One step's outcome as its caller reads it: the recorded outcome, less the
+/// rows a verb's answer keeps for its release (DEC-0005), which are the host
+/// door's, not the verb's output.
+fn mcp_step_outcome_value(call: &oneiron::code_run::CodeRunBridgeCall) -> Value {
+    let mut outcome = mcp_bridge_outcome_value(&call.outcome);
+    if call.effect == oneiron::code_run::SelfEffect::AgentVerb
+        && let Some(entries) = outcome.as_object_mut()
+    {
+        entries.remove("rows");
+    }
+    outcome
 }
 
 /// One recorded bridge-call outcome as JSON, entry for entry.

@@ -54,10 +54,13 @@ pub(super) fn mcp_carrier_releases(
 }
 
 /// Every result, fresh or a continuation of one its producer retained, is
-/// judged again once its call has nothing left to wait on (DEC-0005). One
-/// derived from a row a device-local world keeps now, or naming one, is
-/// refused: a continuation's caller starts over from page one, and a fresh
-/// call is told its result changed and to call again.
+/// judged again once its call has nothing left to wait on (DEC-0005), by
+/// `rows`, those its producer listed, and every row it names: a whole id, or
+/// a short ref standing as a whole string, whichever door produced it. One
+/// derived from a row a device-local world keeps now, or naming one, or
+/// naming a short ref that resolves to no row, is refused: a continuation's
+/// caller starts over from page one, and a fresh call is told its result
+/// changed and to call again.
 pub(super) fn mcp_release_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -72,8 +75,15 @@ pub(super) fn mcp_release_result(
             mcp_result_changed()
         }
     };
+    if actor.locality() == oneiron::claim::CallerLocality::OnDevice {
+        return Ok(result);
+    }
+    let Some(mut named) = crate::device_local::short_refs_named(&server.vault, &result) else {
+        return Err(refused());
+    };
+    named.extend_from_slice(rows);
     let bytes = serde_json::to_vec(&result).map_err(|_| refused())?;
-    if crate::device_local::withholds_retained(&server.vault, actor.locality(), rows, &bytes)
+    if crate::device_local::withholds_retained(&server.vault, actor.locality(), &named, &bytes)
         .map_err(|error| mcp_engine_error("mcp page release check failed", error))?
     {
         return Err(refused());
@@ -81,24 +91,64 @@ pub(super) fn mcp_release_result(
     Ok(result)
 }
 
-/// The rows a code run's step log names by short ref, in each step's
-/// outcome and in the JSON a verb call's output was recorded as, fresh or
-/// replayed; `None` when one names no row.
+/// A refusal is released as a result is (DEC-0005): by `rows`, those its
+/// call served before it failed, and every row its words name, a whole id or
+/// a short ref among them. Off this device one naming a row a device-local
+/// world keeps now, or a short ref that resolves to no row, or whose call's
+/// rows are unknown (`None`), leaves as its code alone.
+pub(super) fn mcp_release_error(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    rows: Option<&[oneiron::EntityId]>,
+    error: McpGatewayError,
+) -> McpGatewayError {
+    if actor.locality() == oneiron::claim::CallerLocality::OnDevice {
+        return error;
+    }
+    let words = serde_json::to_string(&(
+        &error.message,
+        &error.field,
+        &error.successor_short_id,
+        &error.vault_read,
+    ))
+    .ok();
+    let released = rows.zip(words).is_some_and(|(rows, words)| {
+        crate::device_local::short_refs_in_text(&server.vault, &words).is_some_and(|mut named| {
+            named.extend_from_slice(rows);
+            let withheld = crate::device_local::withholds_retained(
+                &server.vault,
+                actor.locality(),
+                &named,
+                words.as_bytes(),
+            );
+            matches!(withheld, Ok(false))
+        })
+    });
+    if released {
+        return error;
+    }
+    McpGatewayError::new(
+        error.code,
+        error.kind,
+        "the call failed; its detail stays on this device",
+    )
+}
+
+/// The rows a code run's verb answers name by short ref inside the JSON
+/// each was recorded as, fresh or replayed; `None` when one names no row.
+/// The rest of its result is read at [`mcp_release_result`].
 pub(super) fn mcp_run_named_rows(
     vault: &oneiron::Vault,
     structured: &Value,
 ) -> Option<Vec<oneiron::EntityId>> {
     let mut rows = Vec::new();
-    for outcome in structured["steps"]
+    let outputs = structured["steps"]
         .as_array()
         .into_iter()
         .flatten()
-        .map(|step| &step["outcome"])
-    {
-        rows.extend(crate::device_local::short_refs_named(vault, outcome)?);
-        if let Some(output) = outcome["output"].as_str()
-            && let Ok(output) = serde_json::from_str::<Value>(output)
-        {
+        .filter_map(|step| step["outcome"]["output"].as_str());
+    for output in outputs {
+        if let Ok(output) = serde_json::from_str::<Value>(output) {
             rows.extend(crate::device_local::short_refs_named(vault, &output)?);
         }
     }
@@ -106,8 +156,9 @@ pub(super) fn mcp_run_named_rows(
 }
 
 /// [`mcp_release_result`] for a code run's result: judged by `rows`, those
-/// its verb calls listed and its step log names. Off this device a run whose
-/// steps name a short ref that resolves to no row (`None`) is refused.
+/// its verb answers listed and its step log names. Off this device a run
+/// with an answer recorded with no row set, or whose steps name a short ref
+/// that resolves to no row (`None`), is refused.
 pub(super) fn mcp_release_run_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,

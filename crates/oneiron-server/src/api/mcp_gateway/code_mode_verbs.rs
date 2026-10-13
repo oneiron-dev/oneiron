@@ -15,7 +15,9 @@ use super::{McpCallContext, McpGatewayError};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
 use oneiron::claim::ScopedReadActorKey;
-use oneiron::code_run::{AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect};
+use oneiron::code_run::{
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
+};
 use oneiron::memory::HostWriteOrigin;
 use oneiron::task_verb::sdk::RunVerb;
 use serde_json::Value;
@@ -26,7 +28,8 @@ pub(crate) struct McpCodeModeVerbs {
     server: Arc<SyncServer>,
     actor: McpCallContext,
     runtime: tokio::runtime::Handle,
-    /// The rows this run's verb calls listed as served (DEC-0005).
+    /// The rows this run's verb calls listed as served during this call
+    /// (DEC-0005); each answer carries its own into the run's record too.
     served: std::sync::Mutex<Vec<oneiron::EntityId>>,
 }
 
@@ -55,7 +58,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         &self,
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
-    ) -> Result<Value, AgentVerbRefusal> {
+    ) -> Result<AgentVerbAnswer, AgentVerbRefusal> {
         // The run's worker thread drives its own reactor; the verb runs on the
         // server runtime, as a tool call would, and the worker waits for it.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -78,8 +81,11 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.served
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend(listed);
-        Ok(output)
+            .extend(listed.iter().copied());
+        Ok(AgentVerbAnswer {
+            output,
+            rows: Some(listed),
+        })
     }
 
     /// A call the run serves itself meets this connector's door at each call

@@ -322,31 +322,6 @@ fn carries_only(snapshot: &[u8], named: &std::collections::BTreeSet<String>) -> 
     only
 }
 
-/// A local write landed on a window between a promotion's walk and its
-/// export.
-#[cfg(test)]
-pub(crate) mod promotion_hook {
-    use loro::LoroDoc;
-    use std::cell::RefCell;
-
-    type Write = Box<dyn FnOnce(&LoroDoc)>;
-
-    thread_local! {
-        static WRITE: RefCell<Option<Write>> = const { RefCell::new(None) };
-    }
-
-    /// Lands `write` on the window after the next walk on this thread.
-    pub(crate) fn arm(write: impl FnOnce(&LoroDoc) + 'static) {
-        WRITE.with(|hook| *hook.borrow_mut() = Some(Box::new(write)));
-    }
-
-    pub(super) fn run(doc: &LoroDoc) {
-        if let Some(write) = WRITE.with(|hook| hook.borrow_mut().take()) {
-            write(doc);
-        }
-    }
-}
-
 /// Re-check the grant and actor floor before a promoted window receives new
 /// bytes. The caller must NEVER broadcast raw full-window updates on a stale
 /// grant: a newly withheld row may have landed since promotion. A device-only
@@ -421,4 +396,29 @@ fn title_from_body(body: &[u8], max_chars: usize) -> Option<String> {
     }
     let value = titles[0].1.as_str()?.trim();
     (!value.is_empty() && max_chars > 0).then(|| value.chars().take(max_chars).collect())
+}
+
+/// A local write landed on a window between a promotion's walk and its
+/// export.
+#[cfg(test)]
+pub(crate) mod promotion_hook {
+    use loro::LoroDoc;
+    use std::cell::RefCell;
+
+    type Write = Box<dyn FnOnce(&LoroDoc)>;
+
+    thread_local! {
+        static WRITE: RefCell<Option<Write>> = const { RefCell::new(None) };
+    }
+
+    /// Lands `write` on the window after the next walk on this thread.
+    pub(crate) fn arm(write: impl FnOnce(&LoroDoc) + 'static) {
+        WRITE.with(|hook| *hook.borrow_mut() = Some(Box::new(write)));
+    }
+
+    pub(super) fn run(doc: &LoroDoc) {
+        if let Some(write) = WRITE.with(|hook| hook.borrow_mut().take()) {
+            write(doc);
+        }
+    }
 }
