@@ -9,6 +9,7 @@ use super::support::*;
 use super::*;
 use crate::authority::handoff_equivocation::RECORD_LIMIT;
 use crate::{TimeRange, Vault, VaultConfig};
+use std::sync::{Arc, Mutex, Weak, mpsc};
 
 fn hash(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
     authority_entry_hash(entry).unwrap()
@@ -292,4 +293,94 @@ fn past_its_bound_the_record_logs_at_powers_of_two_and_counts_drops() {
     assert_eq!(logged, RECORD_LIMIT + 7);
     assert_eq!(vault.authority_handoff_equivocations().len(), RECORD_LIMIT);
     assert_eq!(vault.authority_handoff_equivocations_dropped(), 100);
+}
+
+/// A host's log consumer that reads the record when the record logs. It
+/// reads on another thread under a timeout, so a read the door blocks shows
+/// as `None` instead of hanging the test.
+#[derive(Clone)]
+struct RecordReader {
+    vault: Weak<Vault>,
+    /// Records held and dropped, as read at each warning.
+    seen: Arc<Mutex<Vec<Option<(usize, u64)>>>>,
+}
+
+impl RecordReader {
+    fn with_default<T>(&self, f: impl FnOnce() -> T) -> T {
+        // A second registered dispatch keeps a concurrent test with no
+        // subscriber from caching these warnings off (embed/warn_capture.rs).
+        let _other = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        tracing::dispatcher::with_default(&tracing::Dispatch::new(self.clone()), f)
+    }
+}
+
+impl tracing::Subscriber for RecordReader {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata
+            .target()
+            .ends_with("authority::handoff_equivocation")
+    }
+
+    fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    fn event(&self, _event: &tracing::Event<'_>) {
+        let vault = self.vault.upgrade().unwrap();
+        let (send, read) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = send.send((
+                vault.authority_handoff_equivocations().len(),
+                vault.authority_handoff_equivocations_dropped(),
+            ));
+        });
+        let seen = read.recv_timeout(Duration::from_secs(10)).ok();
+        self.seen.lock().unwrap().push(seen);
+    }
+
+    fn enter(&self, _span: &tracing::span::Id) {}
+
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+/// Sol review 8: a host that reads the record from its log consumer when the
+/// record warns neither stalls the door nor misses the evidence it was warned
+/// of: the record is kept before the warning, and the read does not wait on
+/// the door. Both warnings: a door's refusal, and the first record dropped
+/// past the bound.
+#[test]
+fn a_log_consumer_reads_the_evidence_it_was_warned_of() {
+    let fork = fork(252);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).unwrap());
+    store(&vault, &fork.genesis);
+    vault.apply_signed_re_root(&fork.handoff).unwrap();
+    let reader = RecordReader {
+        vault: Arc::downgrade(&vault),
+        seen: Arc::default(),
+    };
+    reader.with_default(|| assert!(put(&vault, &[&fork.forged]).is_err()));
+
+    let log = &vault.store.authority_handoff_equivocations;
+    let template = vault.authority_handoff_equivocations()[0].clone();
+    let distinct = |n: usize| {
+        let mut refused = [0xA5; 32];
+        refused[..8].copy_from_slice(&n.to_be_bytes());
+        AuthorityHandoffEquivocation {
+            refused,
+            ..template.clone()
+        }
+    };
+    for n in 1..RECORD_LIMIT {
+        assert!(log.record(distinct(n)));
+    }
+    reader.with_default(|| assert!(log.record(distinct(RECORD_LIMIT))));
+    assert_eq!(
+        *reader.seen.lock().unwrap(),
+        vec![Some((1, 0)), Some((RECORD_LIMIT, 1))]
+    );
 }

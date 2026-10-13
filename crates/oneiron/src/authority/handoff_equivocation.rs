@@ -57,15 +57,29 @@ pub(crate) struct HandoffEquivocations(Mutex<Records>);
 impl HandoffEquivocations {
     /// Keeps `evidence` once and logs it once, so a peer that replays one
     /// refused row cannot flood the log. Past the bound, only the first
-    /// dropped record and each power of two log, with the count. Returns
-    /// whether it logged.
+    /// dropped record and each power of two log, with the count. It logs
+    /// after the record is kept and the lock released, so a log consumer
+    /// that reads the records sees this one and does not wait on the door.
+    /// Returns whether it logged.
     pub(super) fn record(&self, evidence: AuthorityHandoffEquivocation) -> bool {
-        let mut records = self.records();
-        if records.held.contains(&evidence) {
-            return false;
-        }
-        if records.held.len() < RECORD_LIMIT {
-            tracing::warn!(
+        let dropped = {
+            let mut records = self.records();
+            if records.held.contains(&evidence) {
+                return false;
+            }
+            if records.held.len() < RECORD_LIMIT {
+                records.held.insert(evidence.clone());
+                None
+            } else {
+                records.dropped += 1;
+                if !records.dropped.is_power_of_two() {
+                    return false;
+                }
+                Some(records.dropped)
+            }
+        };
+        match dropped {
+            None => tracing::warn!(
                 kind = AuthorityHandoffEquivocation::KIND,
                 signer = ?evidence.signer,
                 refused = %crate::entity_id::bytes_to_hex_lower(&evidence.refused),
@@ -75,18 +89,12 @@ impl HandoffEquivocations {
                     .map(|hash| crate::entity_id::bytes_to_hex_lower(hash))
                     .collect::<Vec<_>>(),
                 "door refused a row signed by a key a held handoff retired"
-            );
-            records.held.insert(evidence);
-        } else {
-            records.dropped += 1;
-            if !records.dropped.is_power_of_two() {
-                return false;
-            }
-            tracing::warn!(
+            ),
+            Some(dropped) => tracing::warn!(
                 kind = AuthorityHandoffEquivocation::KIND,
-                dropped = records.dropped,
+                dropped,
                 "handoff equivocation records past the bound were dropped"
-            );
+            ),
         }
         true
     }
