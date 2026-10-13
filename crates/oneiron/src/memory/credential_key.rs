@@ -18,7 +18,7 @@ const HOST_HOLDER: &str = "host";
 
 impl Vault {
     /// The read key `proof` reads under, judged in one snapshot: the owner
-    /// check judges its holder, then [`Self::credential_read_key_in_txn`]
+    /// check judges its holder, then `Self::credential_read_key_in_txn`
     /// builds the key. The holder is judged as the credential's own class;
     /// one that names none is judged as a person, so only the vault's bound
     /// owner passes. `None` is a credential that grants no read, or whose

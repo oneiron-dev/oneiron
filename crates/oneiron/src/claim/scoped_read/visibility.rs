@@ -2,7 +2,7 @@ use super::*;
 
 impl ScopedRead<'_> {
     /// Whether this lane reads `id` now, an owner lane's standing rechecked
-    /// in the snapshot it reads (see [`Self::live_policy_manifest_in`]).
+    /// in the snapshot it reads (see `Self::live_policy_manifest_in`).
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
         let policy = self.live_policy_manifest_in(&rtxn)?;
