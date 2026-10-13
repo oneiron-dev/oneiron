@@ -4,8 +4,8 @@
 //! by an owner roster key. It merges across branches as actor bindings do: a
 //! higher revision supersedes, divergent profiles at one revision poison the
 //! machine, and a removal on any branch is terminal. Liveness is derived, never
-//! stored, so the facts that poison a machine (a shared key, an actor binding
-//! to its row) apply in every arrival order.
+//! stored, so the facts that poison a machine (a shared key, a second key for
+//! one machine, an actor binding to its row) apply in every arrival order.
 //!
 //! Revisions form one chain per admitter and supersede only their own chain.
 //! The roster is the only admitter here; an owner anchor adds its own chain.
@@ -42,7 +42,8 @@ pub enum SignerClass {
 pub struct FoldedMachine {
     pub profile: MachineProfile,
     /// Divergent profiles at one revision, a machine key claimed by two
-    /// machines, or a row that is also an actor: never live.
+    /// machines, a machine whose revisions named two keys, or a row that is
+    /// also an actor: never live.
     pub conflicted: bool,
     /// A `Removed` revision folded on some branch. Terminal.
     pub removed: bool,
@@ -275,14 +276,22 @@ pub(super) fn merge_machine_maps(
 
 /// One machine with the derived poison applied: branches that never saw each
 /// other may have given its key to two machines, or made its key or row an
-/// actor's. Every reader of a machine's standing goes through this.
+/// actor's. A machine joins once with one key, so a revision that names
+/// another key leaves it live under neither: a connection that proved the
+/// first key never speaks for the second. Every reader of a machine's
+/// standing goes through this.
 pub(super) fn derived_machine(state: &FoldState, id: EntityId) -> Option<FoldedMachine> {
     let mut folded = roster_chain(state, id)?.head.clone();
     let shared_key = state
         .machine_keys
         .get(&folded.profile.machine_key)
         .is_some_and(|machines| machines.len() > 1);
+    let rekeyed = state
+        .machine_keys
+        .iter()
+        .any(|(key, machines)| *key != folded.profile.machine_key && machines.contains(&id));
     folded.conflicted |= shared_key
+        || rekeyed
         || key_is_authority(state, &folded.profile.machine_key)
         || machine_is_actor(state, id);
     Some(folded)
