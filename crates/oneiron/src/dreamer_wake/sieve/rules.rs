@@ -10,12 +10,14 @@
 //!
 //! A long text is read one segment at a time, so one pass's work stays
 //! within its bound. Every span a rule flags is short: a run of space inside
-//! a date holds at most 8 characters, the phrase reader reads at most
-//! [`PHRASE_BYTES`] a step, and a run of capitalized words or of katakana
-//! longer than [`NAME_BYTES`] is no name. So a segment's window sees whole
-//! every span that starts in the segment, and each rule reads on in the next
-//! segment from where it stood: a text reads the same, span for span, in one
-//! segment or many, and in one pass or many.
+//! a date holds at most 8 characters, a temporal phrase longer than
+//! [`PHRASE_BYTES`] is no date (the phrase reader reads at most that a step,
+//! and reads past a longer phrase whole, as the query reader reads it), and
+//! a run of capitalized words or of katakana longer than [`NAME_BYTES`] is
+//! no name. So a segment's window sees whole every span that starts in the
+//! segment, and each rule reads on in the next segment from where it stood:
+//! a text reads the same, span for span, in one segment or many, and in one
+//! pass or many.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -23,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use super::words::{
     CodeRange, Opening, capitalized_runs, code_ranges, in_sentence_at, katakana_runs, words,
 };
-use crate::temporal::temporal_phrase_steps;
+use crate::temporal::{OpenPhrase, temporal_phrase_steps};
 
 /// Which rule flagged a span. Each class has its own confidence on the sieve
 /// policy row.
@@ -75,8 +77,9 @@ pub(super) const SEGMENT_WINDOW: usize = SEGMENT_BYTES + SEGMENT_REACH;
 /// [`SEGMENT_REACH`], so a window always sees whether a backtick before its
 /// cut opens one.
 pub(super) const INLINE_CODE_BYTES: usize = 256;
-/// The most text one step of the phrase reader reads, for the same reason:
-/// no temporal phrase is longer.
+/// The longest temporal phrase, and the most text one step of the phrase
+/// reader reads, for the same reason. A phrase the query reader reads
+/// longer is no date, and the reader goes on past all of it.
 const PHRASE_BYTES: usize = 256;
 /// The longest name: a longer run of capitalized words or of katakana is
 /// running text, not a name.
@@ -89,8 +92,9 @@ const DATE_PATTERNS: usize = 9;
 /// sentence (its first word opens none), inside a fenced code block (and
 /// inside the line that closes it), inside an inline code span, on a line
 /// that holds only space so far, and inside a word, a run of capitalized
-/// words or a katakana run a cut split; and where each date pattern, the
-/// phrase reader and the dates kept read on from, in bytes into it.
+/// words or a katakana run a cut split; where each date pattern, the
+/// phrase reader and the dates kept read on from, in bytes into it; and the
+/// phrase the phrase reader is inside.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Carry {
     pub(super) in_sentence: bool,
@@ -105,6 +109,8 @@ pub(super) struct Carry {
     pub(super) dates: [u16; DATE_PATTERNS],
     /// Where the phrase reader's last step before it ends.
     pub(super) phrase: u16,
+    /// The phrase that step leaves open: one longer than a step.
+    pub(super) open: OpenPhrase,
     /// Where the last date kept before it ends: no span starts before.
     pub(super) held: u16,
 }
@@ -137,16 +143,18 @@ struct Seen {
     /// Each match with its pattern's index.
     matches: Vec<(usize, usize, usize)>,
     steps: Vec<(usize, usize)>,
+    /// Each step's start and the phrase it leaves open.
+    opens: Vec<(usize, OpenPhrase)>,
     kept: Vec<(usize, usize)>,
     cover: Vec<(usize, usize)>,
 }
 
 /// What the date rules scan in a window: each pattern's matches, with the
 /// pattern's index, and the phrase reader's steps, each with its class if
-/// it is a phrase.
+/// it is a phrase and the phrase it leaves open.
 struct Scan {
     matches: Vec<(usize, RuleSpan)>,
-    steps: Vec<(usize, usize, Option<RuleClass>)>,
+    steps: Vec<(usize, usize, Option<RuleClass>, OpenPhrase)>,
 }
 
 const MONTHS: &str = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
@@ -299,6 +307,12 @@ impl Rules {
                 in_kana: splits(&seen.kana),
                 dates,
                 phrase: past(seen.steps.iter().copied(), cut),
+                open: seen
+                    .opens
+                    .iter()
+                    .take_while(|&&(start, _)| start < cut)
+                    .last()
+                    .map_or(carry.open, |&(_, open)| open),
                 held: past(seen.kept.iter().copied(), cut),
             },
             spans: shift(seen.spans, cut),
@@ -320,7 +334,7 @@ impl Rules {
         let mut dates: Vec<RuleSpan> = matches
             .iter()
             .map(|&(_, span)| span)
-            .chain(steps.iter().filter_map(|&(start, end, class)| {
+            .chain(steps.iter().filter_map(|&(start, end, class, _)| {
                 class.map(|class| RuleSpan { start, end, class })
             }))
             .collect();
@@ -352,8 +366,12 @@ impl Rules {
             .iter()
             .map(|&(pattern, span)| (pattern, span.start, span.end))
             .collect();
+        let opens = steps
+            .iter()
+            .map(|&(start, .., open)| (start, open))
+            .collect();
         let steps: Vec<(usize, usize)> =
-            steps.iter().map(|&(start, end, _)| (start, end)).collect();
+            steps.iter().map(|&(start, end, ..)| (start, end)).collect();
         let cover = matches
             .iter()
             .map(|&(_, start, end)| (start, end))
@@ -391,6 +409,7 @@ impl Rules {
             kana,
             matches,
             steps,
+            opens,
             kept,
             cover,
         }
@@ -400,8 +419,10 @@ impl Rules {
     /// index, and the phrase reader's steps, each with its class if it is a
     /// phrase, in offsets into the window. Each reads on from where `carry`
     /// says it stood. A pattern reads its word edges in the text itself. The
-    /// phrase reader reads the character before `from` too, so the rest of a
-    /// word is no token, and starts at the first token past where it stood.
+    /// phrase reader reads the two characters before `from` too, so the rest
+    /// of a word or a number is no token (whether the one before is part of
+    /// one turns on the one before it), and starts at the first token past
+    /// where it stood, inside the phrase it left open.
     fn scan(&self, text: &str, (from, to): (usize, usize), carry: Carry) -> Scan {
         let hay = &text[..to];
         let mut matches = Vec::new();
@@ -422,11 +443,17 @@ impl Rules {
                 at = found.end();
             }
         }
-        let context = text[..from].chars().next_back().map_or(0, char::len_utf8);
+        let context = text[..from]
+            .char_indices()
+            .rev()
+            .nth(1)
+            .map_or(from, |(at, _)| from - at);
         let steps = temporal_phrase_steps(
             &text[from - context..to],
             context + usize::from(carry.phrase),
             PHRASE_BYTES,
+            carry.open,
+            to == text.len(),
         )
         .into_iter()
         .map(|step| {
@@ -437,7 +464,7 @@ impl Rules {
                     RuleClass::VagueDate
                 }
             });
-            (step.start - context, step.end - context, class)
+            (step.start - context, step.end - context, class, step.open)
         })
         .collect();
         Scan { matches, steps }

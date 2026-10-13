@@ -138,9 +138,11 @@ impl Reader {
     /// those after it, and neither reads nor hashes again a chunk before.
     /// The rows hold the same words while the row is held, since a change
     /// to them owes the turn a new read and drops it. A chunk the turn no
-    /// longer holds or the Dreamer may no longer read, before the resume
-    /// point or after it, or a row that no longer reads at the held length,
-    /// sends the turn to a whole read.
+    /// longer holds or the Dreamer may no longer read, or a row that no
+    /// longer reads at the held length, sends the turn to a whole read: a
+    /// chunk it reads on in when it reads it, and a chunk before the resume
+    /// point when the read is about to settle, checked once for the read
+    /// and paid for by the bound.
     pub(super) fn read_on_in_txn(
         &self,
         vault: &Vault,
@@ -157,12 +159,7 @@ impl Reader {
         let Some(from) = read.next else {
             return self.read_in_txn(vault, txn, turn, pass);
         };
-        let passed: Vec<EntityId> = held
-            .iter()
-            .take(from.chunk)
-            .map(|chunk| chunk.source)
-            .collect();
-        if from.chunk >= held.len() || !chunks::still_held_in_txn(vault, txn, turn, &passed)? {
+        if from.chunk >= held.len() {
             return self.read_in_txn(vault, txn, turn, pass);
         }
         let tags = match read.names {
@@ -205,6 +202,19 @@ impl Reader {
             }
         }
         if next.is_none() {
+            // The read settles: the chunks it passed in passes before must
+            // still be the turn's, and words the Dreamer may read.
+            let passed = &held[..from.chunk];
+            self.charge(
+                passed
+                    .iter()
+                    .map(|chunk| usize::try_from(chunk.len).unwrap_or(usize::MAX))
+                    .fold(0, usize::saturating_add),
+            );
+            let sources: Vec<EntityId> = passed.iter().map(|chunk| chunk.source).collect();
+            if !chunks::still_held_in_txn(vault, txn, turn, &sources)? {
+                return self.read_in_txn(vault, txn, turn, pass);
+            }
             CONTINUE.delete(store, txn, turn)?;
         }
         settle_in_txn(store, txn, turn, SievedTurn { next, ..read })

@@ -686,8 +686,10 @@ fn a_message_taken_out_of_its_turn_is_not_read_on() {
 
 /// Sol R12 and Wonder R12 (P2): a read that went on past a MESSAGE kept the
 /// spans it read there after the Dreamer lost its grant to read it, and
-/// settled the turn whole. A read goes on only while the turn holds every
-/// chunk it passed and the Dreamer may still read each.
+/// settled the turn whole. A read settles only when the turn still holds
+/// every chunk it passed and the Dreamer may still read each; else the turn
+/// is read again whole. Sol R13 (P2): the check runs once, as the read
+/// settles, not on every pass the read goes on.
 #[test]
 fn a_grant_revoked_behind_a_read_takes_back_what_the_read_passed() {
     let dir = tempfile::tempdir().expect("dir");
@@ -820,6 +822,79 @@ fn a_long_text_reads_a_segment_at_a_time_as_in_one_window() {
     assert_eq!(read(&phrase), ["few days ago"]);
 }
 
+/// Sol R13 (P2): the character before a segment read `.5` as a number the
+/// text does not hold there, and the bounded phrase steps read the end of a
+/// long count as a count of its own (`one days ago` out of 1,025 `one`s).
+/// The sieve flags the phrases the query reader reads in the whole text, no
+/// longer than a step ([`crate::temporal::temporal_phrase_spans`], the
+/// rule's 256 bytes), and reads past a longer one whole: in one window or
+/// many. The texts after the repros are drawn from the grammar's words,
+/// gaps around a step's bound and a window's reach, long counts and long
+/// words, from a fixed seed.
+#[test]
+fn the_sieve_reads_the_phrases_the_query_reader_reads() {
+    let rules = super::rules::Rules::new();
+    let mut texts = vec![
+        "x".repeat(4_095) + ".5 days ago " + &"x ".repeat(300),
+        "one ".repeat(1_025) + "days ago " + &"x ".repeat(300),
+        ("last".to_owned() + &" ".repeat(300) + "3 days ago, ").repeat(40),
+    ];
+    let words: Vec<&str> = "last past this next a an couple few half several of one twenty \
+        hundred thousand and 3 1,000 .5 day days weeks minute second ago night morning \
+        yesterday today recent x the"
+        .split_whitespace()
+        .collect();
+    let mut seed: u64 = 0x5eed;
+    let mut below = |bound: usize| {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        usize::try_from(seed >> 33).expect("31 bits") % bound
+    };
+    for _ in 0..48 {
+        let mut text = String::new();
+        while text.len() < 12_000 {
+            match below(16) {
+                0 => text.push_str(&"one ".repeat(below(1_200))),
+                1 => text.push_str(&" ".repeat(below(700))),
+                2 => text.push_str(&"x".repeat(below(3_000))),
+                _ => {}
+            }
+            text.push_str(words[below(words.len())]);
+            text.push_str([" ", " ", ", ", ". ", "-"][below(5)]);
+        }
+        texts.push(text);
+    }
+    let dates = |spans: Vec<super::rules::RuleSpan>| -> Vec<(usize, usize, bool)> {
+        spans
+            .iter()
+            .map(|span| {
+                let resolved = span.class == super::rules::RuleClass::RelativeDate;
+                (span.start, span.end, resolved)
+            })
+            .collect()
+    };
+    for text in &texts {
+        let phrases: Vec<(usize, usize, bool)> = crate::temporal::temporal_phrase_spans(text)
+            .into_iter()
+            .filter(|phrase| phrase.end - phrase.start <= 256)
+            .map(|phrase| (phrase.start, phrase.end, phrase.resolved))
+            .collect();
+        let head: String = text.chars().take(24).collect();
+        assert_eq!(dates(rules.read_whole(text)), phrases, "whole: {head}");
+        assert_eq!(
+            dates(rules.read_segmented(text)),
+            phrases,
+            "segmented: {head}"
+        );
+    }
+    assert_eq!(
+        dates(rules.read_segmented(&texts[0])),
+        [(4_096, 4_106, true)]
+    );
+    assert!(rules.read_segmented(&texts[1]).is_empty());
+}
+
 /// Sol R10 (P2): every grant written put each withheld turn back in the
 /// owed list, ahead of a new turn with a higher id, so grants written
 /// before each pass kept a new turn from ever being read. A grant moves an
@@ -842,10 +917,10 @@ fn grants_written_while_turns_wait_never_hold_a_new_turn_back() {
     let mut now = NOW + drain(&vault, NOW);
     let text = "Bob arrives tomorrow.";
     let turn = witness(&vault, "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f", text);
+    let space = EntityId::from_bytes([0x9e; 16]).expect("space id");
     for grant in 0..3_u8 {
-        // Each its own grant: one space, principal and capability hold one.
-        let space = EntityId::from_bytes([0x90 + grant; 16]).expect("space id");
-        grant_messages_read(&vault, 0xa0 + grant, space);
+        // Not 0xa1 on: the system agent definitions hold those ids.
+        grant_messages_read(&vault, 0xc0 + grant, space);
         vault.sieve_pass(now).expect("pass");
         now += 1;
         assert_eq!(
