@@ -331,13 +331,22 @@ fn prepare_entities(
                     stats.critical_over_budget = true;
                 }
             }
-            apply_item_budget_with_depth_limit(
+            let kept = apply_item_budget_with_depth_limit(
                 &mut prepared,
                 config.max_item_tokens,
                 stats,
                 value_depth_limit,
-            )
-            .then_some(prepared)
+            );
+            // Read whole once its fields are final: fields that read as a
+            // secret together leave none of them, keys included.
+            if kept
+                && crate::batch::secret_scan::release_reads_whole_json(&Value::Object(
+                    prepared.fields.iter().cloned().collect(),
+                ))
+            {
+                prepared.fields.clear();
+            }
+            kept.then_some(prepared)
         })
         .collect()
 }

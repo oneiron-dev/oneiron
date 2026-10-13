@@ -108,8 +108,13 @@ impl MemoriesSection {
             if !foreign_row(&row)
                 && let Some(claim) = claim
             {
-                let mut value = crate::companion::companion_value_to_json(&claim.value);
-                crate::batch::export::redact_credentials(&mut value);
+                // The MessagePack is read with the claim's other parts, and
+                // before and after the projection drops a float's width.
+                let value = if crate::batch::export::claim_reads_as_secret(&claim) {
+                    serde_json::Value::String("[redacted]".to_owned())
+                } else {
+                    crate::batch::export::served_messagepack_json(claim.value)
+                };
                 row.snippet = Some(value.to_string());
             }
             self.rows.retain(|old| old.id != row.id);
