@@ -1157,30 +1157,40 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
             .delete_room_record_unchecked_for_test(&id, reason)
             .unwrap();
     }
-    // An id Ada's own stretch in her room holds, off record.
-    let named_in = |room: EntityId, session_ref: &str, id: EntityId, text: &str| {
-        let mut body = turn(room, session_ref, 100, text);
-        body["turn"]["messages"][0]["id"] = json!(id.to_hex());
-        body
-    };
-    let ada_slip = slip("ada", ada, "human");
-    let (status, started) = start(&server, ada_slip.clone(), elsewhere, "den").await;
+    // An id Ada's own stretch in her room holds, off record. A participant
+    // names no id at the member door, so the native door, which may, stages it.
+    let (status, started) = start(&server, slip("ada", ada, "human"), elsewhere, "den").await;
     assert_eq!(status, StatusCode::OK, "{started}");
     let pending = EntityId::now();
-    let (status, receipt) = call(
-        &server,
-        "POST",
-        "/v1/core/off-record/witness",
-        ada_slip,
-        Some(&named_in(
-            elsewhere,
-            "den",
-            pending,
-            "ada's word off record",
-        )),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{receipt}");
+    {
+        let session = server
+            .vault()
+            .off_record_session_vault()
+            .bind_in_room("den", elsewhere, ada)
+            .unwrap();
+        server
+            .vault()
+            .memory(ada, EdgeActorClass::Human)
+            .witness_into_session(
+                &session,
+                &WitnessTurn {
+                    conversation_ref: String::new(),
+                    turn_ref: None,
+                    messages: vec![WitnessMessage {
+                        id: Some(pending.to_hex()),
+                        author: WitnessAuthor::User,
+                        message_type: "utterance".to_owned(),
+                        content: "ada's word off record".to_owned(),
+                        metadata: None,
+                        is_visible: true,
+                        order: 0,
+                    }],
+                    occurred_at: 90,
+                },
+                None,
+            )
+            .unwrap();
+    }
     let proof = server
         .vault()
         .authenticate_owner(
@@ -1219,7 +1229,11 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
     let viewer = slip("gil", gil, "human");
     let (status, started) = start(&server, viewer.clone(), room, "porch").await;
     assert_eq!(status, StatusCode::OK, "{started}");
-    let named = |id: EntityId, text: &str| named_in(room, "porch", id, text);
+    let named = |id: EntityId, text: &str| {
+        let mut body = turn(room, "porch", 100, text);
+        body["turn"]["messages"][0]["id"] = json!(id.to_hex());
+        body
+    };
     let mut answers = Vec::new();
     for (id, text) in [
         (kept, "a guess at ada's word"),
