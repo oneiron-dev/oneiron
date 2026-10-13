@@ -5077,9 +5077,10 @@ fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<(
 /// #1384 beside #1402 (R11133): a world turned device-only keeps the epoch
 /// summaries packed while it was portable, at every export door, until the
 /// flag clears. `placed` was born in W; `told` was born in base reality from
-/// W's CLAIM and carries its words. The window door withholds each one's base
-/// window, the selector drops `placed` and every edge naming it, and the
-/// scoped record export drops both.
+/// W's CLAIM and carries its words; `lost` was written from a row this device
+/// no longer holds, so the world it sat in is unknown. The window door
+/// withholds each one's base window, the selector drops `placed` and every
+/// edge naming it, and the scoped record export drops both.
 #[test]
 fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> crate::Result<()> {
     use crate::compaction::EpochPlacement;
@@ -5089,7 +5090,12 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
     let world = local_world_id(0x58).entity_id();
     let (person, placed) = (entity_id(0x59), entity_id(0x5a));
     let (fact, told) = (entity_id(0x60), entity_id(0x61));
-    let (march, april) = (WindowKey::new("2026-03"), WindowKey::new("2026-04"));
+    let (gone, lost) = (entity_id(0x62), entity_id(0x63));
+    let (march, april, may) = (
+        WindowKey::new("2026-03"),
+        WindowKey::new("2026-04"),
+        WindowKey::new("2026-05"),
+    );
     let at = |key: &WindowKey| {
         let at = key.start_timestamp().unwrap() + 60;
         (TimeRange { start: at, end: at }, at)
@@ -5100,7 +5106,9 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
     vault.put_entity(&world, ENTITY_TYPE_WORLD, occurred, learned, b"world")?;
     let (in_march, march_at) = at(&march);
     let (in_april, april_at) = at(&april);
+    let (in_may, may_at) = at(&may);
     vault.put_entity(&person, ENTITY_TYPE_PERSON, in_march, march_at, b"person")?;
+    vault.put_entity(&gone, ENTITY_TYPE_PERSON, in_may, may_at, b"gone")?;
     let mut body = ClaimBody::new(
         "selector.world_fact",
         ClaimSubject::Entity(person),
@@ -5130,6 +5138,14 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
             &epoch_summary_bytes(2, "the run learned the world fact")?,
         )
         .edge(&told, EdgeKind::DerivedFrom, &fact, 1.0)
+        .put(
+            &lost,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_may,
+            may_at,
+            &epoch_summary_bytes(3, "the run met someone")?,
+        )
+        .edge(&lost, EdgeKind::DerivedFrom, &gone, 1.0)
         .commit()?;
     let in_world = EpochPlacement {
         world: Some(world),
@@ -5144,7 +5160,11 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
         crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
         Ok(doc)
     };
-    let (march_doc, april_doc) = (packed(&march)?, packed(&april)?);
+    let (march_doc, april_doc, may_doc) = (packed(&march)?, packed(&april)?, packed(&may)?);
+    vault.with_write_txn(|txn| {
+        vault.store.entities.delete(txn, gone.as_bytes())?;
+        Ok(())
+    })?;
     let top = Scope::top();
     let ships = |shipped: bool| -> crate::Result<()> {
         let window = |key: &WindowKey, doc: &LoroDoc| -> crate::Result<bool> {
@@ -5157,6 +5177,7 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
         };
         assert_eq!(window(&march, &march_doc)?, shipped, "the window door, March");
         assert_eq!(window(&april, &april_doc)?, shipped, "the window door, April");
+        assert_eq!(window(&may, &may_doc)?, shipped, "the window door, May");
         let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
         let selected =
             filtered_window_doc(&vault, &march_doc, &march, test_selector_scope(), &selector)?;

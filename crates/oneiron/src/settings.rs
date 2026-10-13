@@ -657,7 +657,8 @@ pub(crate) fn device_only_generation_in(store: &Store, txn: &RoTxn<'_>) -> Resul
 /// the world address its deletion kept), a NOTE with a stored `InWorld` edge
 /// to a flagged world, or an epoch SUMMARY born in one. An epoch SUMMARY
 /// carries the words of every record it was written from, so it stays too
-/// when a flagged world keeps any of them, through any nested epoch.
+/// when a flagged world keeps any of them, through any nested epoch. Nothing
+/// is read while no world is flagged.
 pub(crate) fn device_only_withholds(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -667,38 +668,55 @@ pub(crate) fn device_only_withholds(
     if flagged.is_empty() {
         return Ok(false);
     }
-    let mut seen = std::collections::BTreeSet::from([*id]);
-    let mut pending = vec![*id];
-    while let Some(next) = pending.pop() {
-        let mut sources = Vec::new();
-        if row_device_only(store, txn, flagged, &next, &mut sources)? {
-            return Ok(true);
-        }
-        pending.extend(sources.into_iter().filter(|source| seen.insert(*source)));
-    }
-    Ok(false)
-}
-
-/// Whether a flagged world keeps the row `id` by where it sits. An epoch
-/// SUMMARY's `DerivedFrom` sources go to `sources`.
-fn row_device_only(
-    store: &crate::store::Store,
-    txn: &RoTxn<'_>,
-    flagged: &std::collections::BTreeSet<EntityId>,
-    id: &EntityId,
-    sources: &mut Vec<EntityId>,
-) -> Result<bool> {
     if flagged.contains(id) {
         return Ok(true);
     }
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return claim_in_flagged_world(store, txn, flagged, id, None);
     };
-    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+    let mut sources = Vec::new();
+    if row_device_only(store, txn, flagged, id, &raw, &mut sources)? {
+        return Ok(true);
+    }
+    // Each source is read once, nested epochs included. A source this device
+    // cannot read (gone, or a row that does not parse) sat in a world no one
+    // can name, so it keeps the summary home.
+    let mut seen = std::collections::BTreeSet::from([*id]);
+    while let Some(source) = sources.pop() {
+        if !seen.insert(source) {
+            continue;
+        }
+        if flagged.contains(&source) {
+            return Ok(true);
+        }
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &source)?
+        else {
+            return Ok(true);
+        };
+        match row_device_only(store, txn, flagged, &source, &raw, &mut sources) {
+            Ok(false) => {}
+            Ok(true) | Err(Error::CorruptedIndex(_)) => return Ok(true),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
+}
+
+/// Whether a flagged world keeps the stored row `id` (`raw`) by where it
+/// sits. An epoch SUMMARY's `DerivedFrom` sources go to `sources`.
+fn row_device_only(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    flagged: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+    raw: &[u8],
+    sources: &mut Vec<EntityId>,
+) -> Result<bool> {
+    let header = crate::batch::EntityMetadataHeader::parse(raw)
         .ok_or(Error::CorruptedIndex("entity header"))?;
     match header.entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {
-            claim_in_flagged_world(store, txn, flagged, id, Some(raw.as_slice()))
+            claim_in_flagged_world(store, txn, flagged, id, Some(raw))
         }
         crate::registry::ENTITY_TYPE_NOTE => {
             for edge in store.port_edges(
