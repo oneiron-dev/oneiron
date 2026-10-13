@@ -3,6 +3,7 @@ use super::*;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::edge::EdgeKind;
 use crate::genui::{ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface};
 use crate::outbound::OutboundDispatchOutcome;
 use crate::receipt::{ReceiptKind, ReceiptRecord};
@@ -54,8 +55,8 @@ fn healer_diagnosis() -> FeedbackHealerDiagnosis {
     diagnosis.subject_refs.insert("memory:alpha".to_owned());
     diagnosis.subject_refs.insert("memory:beta".to_owned());
     diagnosis.dag = vec![
-        FeedbackDagHop::new("memory:alpha", "supersedes", "memory:beta"),
-        FeedbackDagHop::new("memory:beta", "contradicts", "claim:gamma"),
+        FeedbackDagHop::new("memory:alpha", EdgeKind::Supersedes, "memory:beta"),
+        FeedbackDagHop::new("memory:beta", EdgeKind::Opposes, "claim:gamma"),
     ];
     diagnosis
 }
@@ -449,6 +450,33 @@ fn feedback_bundle_wire_contract_rejects_malformed_bytes() {
         }
         other => panic!("trailing bytes must be rejected by position check, got {other:?}"),
     }
+}
+
+/// Owner ruling 2026-10-14 (fix 6): the engine attaches no world text to a
+/// bundle. A healer's DAG relation is an edge kind, so a row the healer read
+/// cannot ride out in it, on encode or on decode.
+#[test]
+fn a_healer_relation_is_an_edge_kind_never_row_text() {
+    const SENTINEL: &str = "sentinel-row-text-5d21:my-sister's-diagnosis";
+    let mut diagnosis = healer_diagnosis();
+    diagnosis.dag[0].relation = SENTINEL.to_owned();
+    let bundle = minimal_bundle().with_healer_diagnosis(diagnosis);
+    assert!(
+        matches!(
+            encode_feedback_bundle(&bundle),
+            Err(FeedbackError::InvalidBundle(_))
+        ),
+        "a relation that is not an edge kind is refused on encode"
+    );
+    let bytes = rmp_serde::to_vec_named(&bundle).expect("raw encode");
+    match decode_feedback_bundle(&bytes) {
+        Err(FeedbackError::InvalidBundle(message)) => assert!(!message.contains(SENTINEL)),
+        other => panic!("a relation that is not an edge kind is refused on decode, got {other:?}"),
+    }
+
+    let kept = minimal_bundle().with_healer_diagnosis(healer_diagnosis());
+    let bytes = encode_feedback_bundle(&kept).expect("edge-kind relations encode");
+    assert_eq!(decode_feedback_bundle(&bytes).expect("and decode"), kept);
 }
 
 // ---------------------------------------------------------------- 2. digest

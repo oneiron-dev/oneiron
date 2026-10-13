@@ -6,6 +6,7 @@ use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 
 use crate::config::VaultConfig;
+use crate::edge::EdgeKind;
 
 use super::error::{FeedbackError, bounded, checked_embedding_model, checked_note, checked_token};
 
@@ -212,7 +213,9 @@ impl FeedbackConfigSnapshot {
 pub struct FeedbackDagHop {
     /// Reference the hop reasons from.
     pub from_ref: String,
-    /// Named relation between the two references.
+    /// The edge kind the hop walks, by its canon snake_case name
+    /// ([`EdgeKind::name`]). Any other word is refused: a relation is a closed
+    /// vocabulary, so a healer cannot write row text into it.
     pub relation: String,
     /// Reference the hop reasons to.
     pub to_ref: String,
@@ -221,21 +224,21 @@ pub struct FeedbackDagHop {
 impl FeedbackDagHop {
     /// Builds one hop.
     #[must_use]
-    pub fn new(
-        from_ref: impl Into<String>,
-        relation: impl Into<String>,
-        to_ref: impl Into<String>,
-    ) -> Self {
+    pub fn new(from_ref: impl Into<String>, relation: EdgeKind, to_ref: impl Into<String>) -> Self {
         Self {
             from_ref: from_ref.into(),
-            relation: relation.into(),
+            relation: relation.name().to_owned(),
             to_ref: to_ref.into(),
         }
     }
 
     fn validate(&self) -> Result<(), FeedbackError> {
         checked_token("dag hop from_ref", &self.from_ref, FEEDBACK_REF_MAX_BYTES)?;
-        checked_token("dag hop relation", &self.relation, FEEDBACK_REF_MAX_BYTES)?;
+        if EdgeKind::from_name(&self.relation).is_none() {
+            return Err(FeedbackError::InvalidBundle(
+                "dag hop relation must be an edge kind name".to_owned(),
+            ));
+        }
         checked_token("dag hop to_ref", &self.to_ref, FEEDBACK_REF_MAX_BYTES)
     }
 }
@@ -243,7 +246,8 @@ impl FeedbackDagHop {
 /// What the self-healer concluded: references and an ordered reasoning DAG.
 ///
 /// This is a summary, never a dump: references are opaque tokens and the DAG
-/// is an ordered list of hops. It carries no prose. A healer's own sentence
+/// is an ordered list of hops whose relations are edge kinds. It carries no
+/// prose. A healer's own sentence
 /// could quote the rows it reasoned over, and feedback never carries world
 /// text the owner did not write (owner ruling 2026-10-14).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
