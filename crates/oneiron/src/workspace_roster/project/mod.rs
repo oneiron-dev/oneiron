@@ -235,7 +235,8 @@ impl ProjectAuthority {
     }
     /// A change only a board holder may make: structure, leadership, the
     /// board itself, a new member, or any widening. Narrowing, a removal
-    /// included, stays with the leader.
+    /// included, stays with the leader. Members compare as each state vouches
+    /// for them, so a v2 proof over a v3 state seats no one the roster left out.
     pub(crate) fn board_action(&self, next: &Self) -> bool {
         self.parents != next.parents
             || self.leader != next.leader
@@ -244,10 +245,7 @@ impl ProjectAuthority {
             || self.depth_limit < next.depth_limit
             || self.depth_remaining < next.depth_remaining
             || self.slice.attenuate(next.slice.clone()).is_err()
-            || next.roster.as_ref().is_some_and(|roster| {
-                let members = self.members();
-                roster.iter().any(|actor| !members.contains(actor.as_str()))
-            })
+            || !next.members().is_subset(&self.members())
     }
     /// The members this state vouches for: its signed roster, else, where no
     /// v3 proof signed one, its leader and board.

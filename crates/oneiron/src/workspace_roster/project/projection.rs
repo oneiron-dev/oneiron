@@ -150,7 +150,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
             }
         }
         // An earlier authority state is a carrier too: its parents, leader,
-        // board and slice may not name a live off-record id either.
+        // board, roster and slice may not name a live off-record id either.
         let Some(anchor) = signed.anchor.as_deref() else {
             break;
         };
@@ -165,6 +165,7 @@ fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Resu
         .parents
         .iter()
         .chain(&authority.board)
+        .chain(authority.roster.iter().flatten())
         .chain([&authority.leader, &authority.claims_scope_ref])
     {
         let id = EntityId::from_hex(value).map_err(|_| invalid())?;

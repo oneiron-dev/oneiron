@@ -592,7 +592,7 @@ enum Compared {
     /// What a project may do and spend, and who is in it.
     Project {
         authority: Box<ProjectAuthority>,
-        members: Vec<String>,
+        members: BTreeSet<String>,
         role: ProjectRole,
         budget: Option<String>,
         budget_share: Option<ProjectBudgetShare>,
@@ -720,7 +720,7 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                     roster: None,
                     ..project.authority()
                 }),
-                members: project.members(),
+                members: project.members().into_iter().collect(),
                 role: project.role,
                 budget: project.budget,
                 budget_share: project.budget_share,
