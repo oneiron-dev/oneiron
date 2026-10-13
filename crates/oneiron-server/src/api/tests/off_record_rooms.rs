@@ -1018,3 +1018,255 @@ async fn a_fresh_flip_restarts_saving_after_its_credential_lapsed() {
     let kept = say(&server, mina, room.id, "garage", 100, "kept on record").await;
     assert!(server.vault().get(&kept).unwrap().is_some());
 }
+
+/// Codex burn engine-prs-29, the Engine lane's reading of ARCH-0052 D5 (the
+/// owner may veto it): in a shared vault, a person on the room's roster whose
+/// grant there is Viewer could start a stretch but not speak in it, because
+/// the overlay landing asked for the shared vault's content grant. Speech off
+/// record writes nothing durable, so the room's roster admits it. On record a
+/// turn lands in the shared vault, and the Viewer is still refused there.
+#[tokio::test]
+async fn a_rostered_viewer_speaks_off_record_and_not_on_record() {
+    use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+
+    let (dir, server) = auth_test_server();
+    let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
+    let gil = person(&server, "Gil");
+    crate::test_credentials::bind_actor(server.vault(), "secret", gil, "human");
+    let room = conversation(&server, owner_id, &[owner_id, gil]);
+    let proof = server
+        .vault()
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault()
+        .initialize_shared_vault(
+            &proof,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner_id,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: gil,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            10,
+        )
+        .unwrap();
+    let viewer = slip("gil", gil, "human");
+
+    let (status, started) = start(&server, viewer.clone(), room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let said = say(&server, viewer.clone(), room, "porch", 100, SECRET_WORDS).await;
+    let (status, file) = act(&server, "export", viewer.clone(), room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{file}");
+    assert_eq!(words(&file), [SECRET_WORDS]);
+    assert!(server.vault().get(&said).unwrap().is_none());
+    assert!(
+        !stored(&dir, SECRET_WORDS),
+        "a Viewer's speech off record wrote the vault"
+    );
+
+    let (status, flipped) = call(
+        &server,
+        "POST",
+        "/v1/owner/off-record/mode",
+        owner_recipe(&server),
+        Some(&json!({ "session_ref": owner_key(room, "porch"), "mode": "on_record" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{flipped}");
+    let (status, refused) = call(
+        &server,
+        "POST",
+        "/v1/core/off-record/witness",
+        viewer,
+        Some(&turn(room, "porch", 101, "a viewer word on record")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    // Refused by the shared vault's grant, with the saver still in the room.
+    assert!(
+        refused.to_string().contains("shared-vault role"),
+        "{refused}"
+    );
+    assert!(!stored(&dir, "a viewer word on record"));
+}
+
+/// Astra and Sol on #1411: a Viewer speaks off record by the room's roster
+/// alone, and the witness still read the message ids they named in the vault.
+/// A MESSAGE of a room they are not in answered one way for a wrong text,
+/// another for its own text, another for a row of another kind; a provisional
+/// entity's id failed inside the vault; a deleted id, or one another room's
+/// stretch holds, let the word land. So a guessed id told its kind and whether
+/// a guessed text was right. A participant now names no message id: every id,
+/// held or new, gets one refusal, and the Viewer's words still land.
+#[tokio::test]
+async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
+    use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+    use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+
+    let (_dir, server) = auth_test_server();
+    let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
+    let gil = person(&server, "Gil");
+    crate::test_credentials::bind_actor(server.vault(), "secret", gil, "human");
+    // Ada holds no binding of her own: the host key binds one person, Gil,
+    // and Ada acts before the vault is shared.
+    let ada = person(&server, "Ada");
+    let room = conversation(&server, owner_id, &[owner_id, gil]);
+    // Ada's room, which Gil is not in, and three of her words there.
+    let elsewhere = conversation(&server, owner_id, &[owner_id, ada]);
+    let (kept, soft, hard) = (EntityId::now(), EntityId::now(), EntityId::now());
+    server
+        .vault()
+        .memory(ada, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: elsewhere.to_hex(),
+            turn_ref: None,
+            messages: [kept, soft, hard]
+                .iter()
+                .zip(0..)
+                .map(|(id, order)| WitnessMessage {
+                    id: Some(id.to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: format!("ada's word {order}"),
+                    metadata: None,
+                    is_visible: true,
+                    order,
+                })
+                .collect(),
+            occurred_at: 50,
+        })
+        .unwrap();
+    for (id, reason) in [
+        (soft, oneiron::DeleteReason::UserDelete),
+        (hard, oneiron::DeleteReason::UserHardDelete),
+    ] {
+        server
+            .vault()
+            .delete_room_record_unchecked_for_test(&id, reason)
+            .unwrap();
+    }
+    // An id Ada's own stretch in her room holds, off record. A participant
+    // names no id at the member door, so the native door, which may, stages it.
+    let (status, started) = start(&server, slip("ada", ada, "human"), elsewhere, "den").await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let pending = EntityId::now();
+    {
+        let session = server
+            .vault()
+            .off_record_session_vault()
+            .bind_in_room("den", elsewhere, ada)
+            .unwrap();
+        server
+            .vault()
+            .memory(ada, EdgeActorClass::Human)
+            .witness_into_session(
+                &session,
+                &WitnessTurn {
+                    conversation_ref: String::new(),
+                    turn_ref: None,
+                    messages: vec![WitnessMessage {
+                        id: Some(pending.to_hex()),
+                        author: WitnessAuthor::User,
+                        message_type: "utterance".to_owned(),
+                        content: "ada's word off record".to_owned(),
+                        metadata: None,
+                        is_visible: true,
+                        order: 0,
+                    }],
+                    occurred_at: 90,
+                },
+                None,
+            )
+            .unwrap();
+    }
+    let proof = server
+        .vault()
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault()
+        .initialize_shared_vault(
+            &proof,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner_id,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: gil,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            10,
+        )
+        .unwrap();
+    // An id a save holds for a provisional entity, with no entity row.
+    let provisional = EntityId::now();
+    server
+        .vault()
+        .hold_provisional_id_for_test(&provisional, "Mirela", &elsewhere)
+        .unwrap();
+
+    let viewer = slip("gil", gil, "human");
+    let (status, started) = start(&server, viewer.clone(), room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let named = |id: EntityId, text: &str| {
+        let mut body = turn(room, "porch", 100, text);
+        body["turn"]["messages"][0]["id"] = json!(id.to_hex());
+        body
+    };
+    let mut answers = Vec::new();
+    for (id, text) in [
+        (kept, "a guess at ada's word"),
+        (kept, "ada's word 0"),
+        (elsewhere, "ada's word 0"),
+        (soft, "ada's word 1"),
+        (hard, "ada's word 2"),
+        (provisional, "Mirela called"),
+        (pending, "ada's word off record"),
+        (EntityId::now(), "a word with an id of its own"),
+    ] {
+        let (status, mut answer) = call(
+            &server,
+            "POST",
+            "/v1/core/off-record/witness",
+            viewer.clone(),
+            Some(&named(id, text)),
+        )
+        .await;
+        // Each response's own request id says nothing of the record.
+        if let Some(error) = answer["error"].as_object_mut() {
+            error.remove("requestId");
+        }
+        answers.push((status, answer));
+    }
+    assert_eq!(answers[0].0, StatusCode::BAD_REQUEST, "{answers:?}");
+    assert!(
+        answers.windows(2).all(|pair| pair[0] == pair[1]),
+        "the refusals tell the ids apart: {answers:?}"
+    );
+
+    say(&server, viewer.clone(), room, "porch", 101, SECRET_WORDS).await;
+    let (status, file) = act(&server, "export", viewer, room, "porch").await;
+    assert_eq!(status, StatusCode::OK, "{file}");
+    assert_eq!(words(&file), [SECRET_WORDS]);
+}

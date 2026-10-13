@@ -1278,6 +1278,57 @@ fn owner_can_apply_another_context_without_reminting_shared_read_authority() {
     assert_eq!(verified.mode.action_grant_ref, second.mode.action_grant_ref);
 }
 
+/// engine-prs-07: a fenced identity whose Active body is still stored
+/// authorizes no scoped read and resolves no autonomy mode.
+#[test]
+fn a_fenced_identity_authorizes_no_scoped_read() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::ScopedRead);
+    let state = vault
+        .apply_channel_identity_autonomy(&request, &owner)
+        .unwrap();
+    let reference = state.mode.read_grant_ref.unwrap();
+    let item = MailboxReadCandidate {
+        identity_ref: request.read_envelope.identity_ref,
+        label: Some("inbox".to_owned()),
+        thread_ref: Some("thread:1".to_owned()),
+        occurred_at: 15,
+    };
+    assert!(
+        vault
+            .authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &item)
+            .unwrap()
+    );
+    // An unobserved delete fences the row and leaves its body in place.
+    let mut wtxn = vault.store.env.write_txn().unwrap();
+    crate::deletion::ROW_DELETION_FENCE
+        .put(
+            &vault.store,
+            &mut wtxn,
+            &crate::side_table::HexId(request.read_envelope.identity_ref),
+            &Vec::new(),
+        )
+        .unwrap();
+    wtxn.commit().unwrap();
+    assert!(
+        crate::ports::EntityStoreRead::port_entity_raw(
+            &vault.store,
+            &vault.store.env.read_txn().unwrap(),
+            &request.read_envelope.identity_ref,
+        )
+        .unwrap()
+        .is_some()
+    );
+    assert!(!matches!(
+        vault.authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &item),
+        Ok(true)
+    ));
+    assert!(
+        vault
+            .verify_channel_identity_autonomy(&request, &owner)
+            .is_err()
+    );
+}
+
 #[test]
 fn scoped_read_checks_identity_principal_labels_threads_and_item_time() {
     let (_dir, vault, owner, mut request) = fixture(ChannelIdentityAutonomyRung::ScopedRead);

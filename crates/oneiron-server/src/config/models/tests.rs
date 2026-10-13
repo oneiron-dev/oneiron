@@ -143,10 +143,43 @@ fn a_vault_held_key_goes_out_only_through_the_broker_over_https() {
         config.providers["paid"].key_secret.as_deref(),
         Some("provider-key")
     );
-    assert_eq!(config.broker.unwrap().uid, 991);
+    assert_eq!(
+        config.broker,
+        BrokerConfig::SeparateUser {
+            socket: "/run/oneiron-broker/broker.sock".into(),
+            uid: 991,
+        }
+    );
+    // With no separate user named, this server starts a same-user child
+    // (`#broker-same-user-open`).
+    for (broker, program) in [
+        ("", None),
+        (
+            "[broker]\nprogram = \"/opt/oneiron/oneiron-broker\"\n",
+            Some("/opt/oneiron/oneiron-broker"),
+        ),
+    ] {
+        assert_eq!(
+            held(https, broker).unwrap().broker,
+            BrokerConfig::SameUser {
+                program: program.map(Into::into),
+                extra_roots: Vec::new(),
+            }
+        );
+    }
     for (provider, broker) in [
-        // No broker to send it.
-        (https, ""),
+        // A separate user needs both its socket and its uid.
+        (
+            https,
+            "[broker]\nsocket = \"/run/oneiron-broker/broker.sock\"\n",
+        ),
+        (https, "[broker]\nuid = 991\n"),
+        // A child's flags are not a separate-user broker's.
+        (
+            https,
+            "[broker]\nsocket = \"/run/oneiron-broker/broker.sock\"\nuid = 991\nprogram = \"/opt/oneiron-broker\"\n",
+        ),
+        (https, "[broker]\nprogram = \"oneiron-broker\"\n"),
         // Two ways to name one key.
         (&*format!("{https}\nkey_env = \"PAID_KEY\""), broker),
         // The broker sends over https only, even on this machine.

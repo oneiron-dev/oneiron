@@ -1432,6 +1432,15 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
                 .map_err(refused)?;
             Ok(serde_json::json!({"recalled": true}))
         }
+
+        fn admit_run_call(
+            &self,
+            _: crate::code_run::RunCall,
+        ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>
+        {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
     }
 
     let (_tmp, vault) = temp_vault();
@@ -1493,6 +1502,69 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
     drop(dispatcher);
     session.close()?;
     assert_eq!(vault.retrieval_runs(64)?.len(), base_runs_before);
+    Ok(())
+}
+
+/// Review repro (burn code-mode-door, on merging #1392): a run bound to an
+/// off-record session whose host door narrows its search to a reader's lane
+/// failed that search as a host fault, since a room's hits include overlay
+/// rows no lane can name: the guest got no typed answer and the bridge kept
+/// no row for the call. The search is now refused as the run's verb forwards
+/// are.
+#[test]
+fn a_session_bound_run_refuses_a_search_its_door_narrows() -> Result<()> {
+    use std::sync::Arc;
+
+    use crate::code_run::{
+        AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbDoor, AgentVerbRefusal,
+        HostSelfDispatcher, RunCall, SelfAgentVerbCall, SelfCall, SelfDeniedResult,
+        SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfMemorySearchCall,
+    };
+
+    /// A host door that admits a run's search on one reader's lane.
+    struct NarrowingDoor;
+
+    impl AgentVerbDoor for NarrowingDoor {
+        fn call(
+            &self,
+            _: &SelfAgentVerbCall,
+            _: &crate::memory::HostWriteOrigin,
+        ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+            Err(AgentVerbRefusal {
+                code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            })
+        }
+
+        fn admit_run_call(
+            &self,
+            _: RunCall,
+        ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>
+        {
+            Ok(crate::claim::ScopedReadActorKey::new("reader-lane"))
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let session = vault
+        .off_record_session_vault()
+        .enter("lane-door", OffRecordBackendClass::Local)?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "lane-door-run")?
+        .with_agent_verb_door(Arc::new(NarrowingDoor));
+    let answer = dispatcher.dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+        "lantern", 4,
+    )))?;
+    assert_eq!(
+        answer,
+        SelfDispatchOutcome::Denied(SelfDeniedResult {
+            effect: SelfEffect::MemorySearch,
+            outcome: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
+        })
+    );
+    drop(dispatcher);
+    session.close()?;
     Ok(())
 }
 

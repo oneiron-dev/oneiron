@@ -399,7 +399,8 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
         return Err(crate::secret_custody::reject_secret_custody_byte());
     }
-    if vault.archive_tombstone_in_txn(txn, id)?.is_some()
+    if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&vault.store, txn, id, header.entity_type)?
+        || vault.archive_tombstone_in_txn(txn, id)?.is_some()
         || (raw.len() == ENTITY_METADATA_HEADER_LEN
             && vault
                 .store

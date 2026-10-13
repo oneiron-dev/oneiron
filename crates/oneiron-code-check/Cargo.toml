@@ -9,6 +9,8 @@ description = "An optional type check of code-mode programs before they run"
 publish = false
 
 [dependencies]
+# tsc starts with stdio only.
+oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"

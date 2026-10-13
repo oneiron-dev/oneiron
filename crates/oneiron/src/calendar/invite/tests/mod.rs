@@ -1,4 +1,5 @@
 mod faceted_sender;
+mod pending_passport;
 
 use super::*;
 use crate::calendar::ics::{ImipEmitRequest, emit_imip_ics, persist_imip_blob};

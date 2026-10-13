@@ -489,3 +489,71 @@ fn older_connector_poll_preserves_committed_event_passport_and_outbox() {
     }
     assert_eq!(calendar_write_outbox_rows(&vault).unwrap(), outbox_before);
 }
+
+/// A push that takes its UID from a pending passport never moves the UID
+/// index, because the first outbound invite falls back to that index.
+#[test]
+fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
+    let (_dir, vault) = open_calendar_vault();
+    let owner = crate::WriteActor::new(
+        vault.ensure_embedded_owner_actor().unwrap(),
+        crate::EdgeActorClass::Human,
+    );
+    let native = |name: &str| {
+        vault
+            .create_native_calendar_event(
+                &crate::calendar::origin::CalendarEventInput {
+                    name: name.into(),
+                    ..Default::default()
+                },
+                crate::TimeRange {
+                    start: NOW,
+                    end: NOW + 60,
+                },
+                owner,
+            )
+            .unwrap()
+    };
+    let uid = "pending@example.test";
+    let minted = native("minted with the uid");
+    index_passport_uid(&vault, uid, &minted).unwrap();
+    let target = native("proposal target");
+    let proposal = crate::ClaimBody::new(
+        PREDICATE_CALENDAR_PASSPORT,
+        crate::ClaimSubject::Entity(target),
+        encode_passport_value(&CalendarPassportValue {
+            system: "work".into(),
+            uid: uid.into(),
+            last_sequence: 0,
+            content_hash: [7; 32],
+            direction: CalendarPassportDirection::TwoWay,
+            last_seen_at: NOW,
+            presence: CalendarPassportPresence::Live,
+        }),
+        1.0,
+        crate::ClaimApprovalStatus::Proposed,
+        crate::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    vault
+        .put_claim(
+            &vault.new_entity_id().unwrap(),
+            &proposal,
+            crate::TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+        )
+        .unwrap();
+
+    let transport = ChangeDuringUpsert {
+        on_first: RefCell::new(None),
+        requests: RefCell::default(),
+    };
+    write_calendar_event(&vault, &seat(), &transport, target, NOW).unwrap();
+    assert_eq!(
+        crate::calendar::passport::event_ref_for_indexed_uid(&vault, uid).unwrap(),
+        Some(minted)
+    );
+}

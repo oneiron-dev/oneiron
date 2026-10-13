@@ -1,4 +1,8 @@
 //! Public cache boundary: real vaults and BLOB_ARTIFACT versions only.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use std::collections::BTreeMap;
 
