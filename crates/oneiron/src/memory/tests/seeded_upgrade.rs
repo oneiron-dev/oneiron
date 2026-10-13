@@ -30,61 +30,121 @@ fn reopen(dir: &tempfile::TempDir) -> crate::Vault {
     crate::Vault::open(dir.path(), VaultConfig::default()).expect("reopen vault")
 }
 
-/// The old manifest with `residence.` declared critical, as a stand-in for
-/// a policy under which a residence correction was held.
-fn before_with_residence_critical() -> Vec<u8> {
+/// The manifest builds before canon's critical classes shipped, with
+/// `edit` applied to its rules.
+fn old_manifest(edit: impl FnOnce(&mut Vec<Value>)) -> Vec<u8> {
     let old = crate::Vault::policy_manifest_before_critical_classes_for_test().expect("old");
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut old.as_slice()).expect("decode")
     else {
         panic!("manifest map");
     };
-    for (key, value) in &mut entries {
-        if key.as_str() == Some("rules")
-            && let Value::Array(rules) = value
-        {
-            rules.push(Value::Map(vec![
-                (Value::from("prefix"), Value::from("residence.")),
-                (
-                    Value::from("axes"),
-                    Value::Map(vec![
-                        (Value::from("criticality"), Value::from("critical")),
-                        (Value::from("sensitivity"), Value::from("normal")),
-                    ]),
-                ),
-            ]));
-        }
-    }
+    let rules = entries
+        .iter_mut()
+        .find_map(|(key, value)| match value {
+            Value::Array(rules) if key.as_str() == Some("rules") => Some(rules),
+            _ => None,
+        })
+        .expect("manifest rules");
+    edit(rules);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).expect("encode");
     bytes
 }
 
-/// Lisbon, then Porto correcting it: the replacement waits on its deferred
-/// closure. Returns (Lisbon, Porto).
-fn residence_correction(vault: &crate::Vault) -> (EntityId, EntityId) {
+/// The old manifest with `residence.` declared critical, as a stand-in for
+/// a policy under which a residence correction was held.
+fn before_with_residence_critical() -> Vec<u8> {
+    old_manifest(|rules| {
+        rules.push(Value::Map(vec![
+            (Value::from("prefix"), Value::from("residence.")),
+            (
+                Value::from("axes"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("critical")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+        ]));
+    })
+}
+
+/// The old manifest without its `profile.` rule, so `profile.*` falls to
+/// the critical default there and is normal once the shipped one is in.
+fn before_without_profile_rule() -> Vec<u8> {
+    old_manifest(|rules| {
+        rules.retain(|rule| {
+            !matches!(rule, Value::Map(fields) if fields.iter().any(|(key, value)| {
+                key.as_str() == Some("prefix") && value.as_str() == Some("profile.")
+            }))
+        });
+    })
+}
+
+/// A first value on `predicate`, then a later one correcting it: the
+/// replacement waits on its deferred closure. Returns (prior, replacement).
+fn correction(
+    vault: &crate::Vault,
+    predicate: &str,
+    first: &str,
+    second: &str,
+) -> (EntityId, EntityId) {
     let facade = facade_for(vault, put_person(vault, 0x81));
     let subject = put_person(vault, 0x82);
     let first = facade
         .claim_upsert(&claim_input(
-            "residence.city",
+            predicate,
             &subject,
             "observed",
-            serde_json::json!("Lisbon"),
+            serde_json::json!(first),
         ))
-        .expect("Lisbon");
-    let mut input = claim_input(
-        "residence.city",
-        &subject,
-        "observed",
-        serde_json::json!("Porto"),
-    );
+        .expect("first value");
+    let mut input = claim_input(predicate, &subject, "observed", serde_json::json!(second));
     input.learned_at = Some(200);
     input.occurred_at = Some(200);
-    let second = facade.claim_upsert(&input).expect("Porto");
+    let second = facade.claim_upsert(&input).expect("correction");
     let old = facade.resolve_ref(&first.claim_short_id).unwrap();
     let new = facade.resolve_ref(&second.claim_short_id).unwrap();
     assert_eq!(vault.pending_claim_supersession(&new).unwrap(), Some(old));
     (old, new)
+}
+
+fn residence_correction(vault: &crate::Vault) -> (EntityId, EntityId) {
+    correction(vault, "residence.city", "Lisbon", "Porto")
+}
+
+/// Proposes `value` on `predicate` through the facade as an inference.
+fn inferred(vault: &crate::Vault, seed: u8, predicate: &str, value: &str) -> EntityId {
+    let facade = facade_for(vault, put_person(vault, seed));
+    let receipt = facade
+        .claim_upsert(&claim_input(
+            predicate,
+            &put_person(vault, seed + 1),
+            "inferred",
+            serde_json::json!(value),
+        ))
+        .expect("inferred claim");
+    facade.resolve_ref(&receipt.claim_short_id).unwrap()
+}
+
+fn row(vault: &crate::Vault, id: &EntityId) -> crate::store::PendingGateConsentRecord {
+    let txn = vault.store.env.read_txn().unwrap();
+    vault
+        .store
+        .pending_gate_consent_in_txn(&txn, id)
+        .unwrap()
+        .unwrap_or_else(|| panic!("{} waits", id.to_hex()))
+}
+
+fn decision(
+    vault: &crate::Vault,
+    row: &crate::store::PendingGateConsentRecord,
+) -> crate::store::GateDecisionRecord {
+    let txn = vault.store.env.read_txn().unwrap();
+    vault
+        .store
+        .gate_decision_in_txn(&txn, row.decision_id)
+        .unwrap()
+        .expect("the row's decision")
 }
 
 /// Every waiting consent: (claim, predicate, reasons, frontier).
@@ -203,21 +263,25 @@ fn waiting_consents_re_bind_and_stay_approvable() {
     let old = crate::Vault::policy_manifest_before_critical_classes_for_test().unwrap();
     vault.install_seeded_policy_manifest_for_test(old).unwrap();
     let (lisbon, porto) = residence_correction(&vault);
-    // No rule names `pet.name`, so its critical default pends a proposal
-    // for the owner under either manifest.
-    let facade = facade_for(&vault, put_person(&vault, 0x83));
-    let pet = facade
-        .claim_upsert(&claim_input(
-            "pet.name",
-            &put_person(&vault, 0x84),
-            "inferred",
-            serde_json::json!("Biscuit"),
-        ))
-        .expect("inferred pet name");
-    let pet = facade.resolve_ref(&pet.claim_short_id).unwrap();
+    // No rule names `pet.*`, so its critical default pends a proposal for
+    // the owner under either manifest; the raw door's proposal has no
+    // authored envelope and is judged as the local write it was (Sol r2).
+    let pet = inferred(&vault, 0x83, "pet.name", "Biscuit");
+    let raw = EntityId::from_bytes([0x86; 16]).unwrap();
+    let mut body = crate::claim::ClaimBody::new(
+        "pet.species",
+        crate::claim::ClaimSubject::Entity(put_person(&vault, 0x85)),
+        Value::from("cat"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.source = Some(crate::claim::ClaimSource::Inferred);
+    vault.put_claim(&raw, &body, test_time(1), 1).unwrap();
     let before = frontier(&vault);
     let rows = waiting(&vault);
-    for id in [porto, pet] {
+    for id in [porto, pet, raw] {
         assert!(rows.iter().any(|row| row.0 == id), "{} waits", id.to_hex());
     }
     assert!(rows.iter().all(|row| row.3 == before));
@@ -324,5 +388,89 @@ fn a_held_correction_whose_verdict_changed_is_re_staged_and_its_grant_lands() {
     assert_eq!(
         vault.get_claim(&lisbon).unwrap().unwrap().lifecycle,
         ClaimLifecycleStatus::Superseded
+    );
+}
+
+/// Sol r2: an ordinary proposal whose verdict the shipped policy changes
+/// takes a fresh decision, not a copy of the one it waited under. It waited
+/// on `profile.*`'s critical default; the shipped `profile.` rule is normal,
+/// so the fresh verdict carries no criticality floor. Nothing is applied,
+/// and the owner's approve lands it.
+#[test]
+fn an_ordinary_proposal_whose_verdict_changed_takes_a_fresh_decision() {
+    let (_dir, vault) = open_vault();
+    vault
+        .install_seeded_policy_manifest_for_test(before_without_profile_rule())
+        .unwrap();
+    let hobby = inferred(&vault, 0x83, "profile.hobby", "chess");
+    let parked = row(&vault, &hobby);
+    assert_eq!(parked.reason_codes, ["gate.pending.criticality_floor"]);
+    let rows = waiting(&vault);
+
+    let regate = vault.upgrade_seeded_policy_manifest().unwrap();
+    assert_eq!(
+        regate,
+        Some(crate::gate::ConsentRegate {
+            rebound: rows.len() - 1,
+            restaged: 1,
+            stale: 0
+        }),
+        "the rows that waited: {rows:?}"
+    );
+    let restaged = row(&vault, &hobby);
+    assert_ne!(restaged.decision_id, parked.decision_id);
+    assert_eq!(restaged.read_frontier_hash, frontier(&vault));
+    let fresh = decision(&vault, &restaged);
+    assert!(
+        !fresh
+            .reason_codes
+            .iter()
+            .any(|reason| reason == "gate.pending.criticality_floor"),
+        "the fresh verdict reads the shipped `profile.` rule: {fresh:?}"
+    );
+    assert_eq!(
+        vault.get_claim(&hobby).unwrap().unwrap().approval,
+        ClaimApprovalStatus::Proposed,
+        "the upgrade applies nothing"
+    );
+    approve(&vault, &hobby).expect("the owner's approve lands it");
+    assert_eq!(
+        vault.get_claim(&hobby).unwrap().unwrap().approval,
+        ClaimApprovalStatus::Approved
+    );
+}
+
+/// Sol r2: a correction staged long ago, on a class the shipped policy now
+/// declares critical, is re-staged with a critical confirm the owner can
+/// still give. The new pending decision gets its whole window; keeping the
+/// first staging's time would issue it already expired.
+#[test]
+fn a_correction_that_becomes_critical_gets_a_live_confirm() {
+    let (_dir, vault) = open_vault();
+    let old = crate::Vault::policy_manifest_before_critical_classes_for_test().unwrap();
+    vault.install_seeded_policy_manifest_for_test(old).unwrap();
+    let (_peanuts, shellfish) = correction(&vault, "health.allergy", "peanuts", "shellfish");
+    assert_eq!(
+        row(&vault, &shellfish).reason_codes,
+        ["gate.pending.contradiction_closure"]
+    );
+    let confirmable = |vault: &crate::Vault| {
+        vault
+            .pending_critical_write_confirms(16)
+            .unwrap()
+            .iter()
+            .any(|binding| binding.claim_id == shellfish)
+    };
+    assert!(!confirmable(&vault));
+
+    let regate = vault.upgrade_seeded_policy_manifest().unwrap();
+    assert_eq!(regate.map(|regate| regate.restaged), Some(1), "{regate:?}");
+    assert_eq!(
+        row(&vault, &shellfish).reason_codes,
+        ["gate.pending.critical_confirm_attached"]
+    );
+    assert!(
+        confirmable(&vault),
+        "the owner can confirm the correction now"
     );
 }

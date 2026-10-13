@@ -6,9 +6,10 @@
 //! the policy frontier, and every pending consent bound to the old frontier
 //! would refuse its grant or approval as stale. The re-gate takes each one's
 //! verdict again under the new policy and parks it there: re-bound when the
-//! verdict is the one it waited under, re-staged when it changed. Nothing is
-//! applied; the grant or the owner's approval still decides, with a fresh
-//! verdict. A row whose claim does not read stays stale.
+//! verdict is the one it waited under, re-staged as a new pending decision
+//! when it changed. Nothing is applied; the grant or the owner's approval
+//! still decides, with a fresh verdict. A row whose claim does not read, or
+//! whose fresh verdict denies the claim, stays stale on the old frontier.
 use super::confirm::{
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
 };
@@ -27,7 +28,8 @@ pub(crate) struct ConsentRegate {
     pub(crate) rebound: usize,
     /// Re-parked under a fresh verdict that differs.
     pub(crate) restaged: usize,
-    /// Left on the old frontier: the claim did not read.
+    /// Left on the old frontier: the claim did not read, or the fresh
+    /// verdict denies it.
     pub(crate) stale: usize,
 }
 
@@ -64,7 +66,7 @@ pub(crate) fn regate_pending_consents_in_txn(
         let verdict = if vault.has_deferred_claim_in_txn(txn, &id)? {
             vault.restage_deferred_claim_in_txn(txn, &pending, now)?
         } else {
-            restage_claim(vault, txn, &id, &pending)?
+            restage_claim(vault, txn, &id, &pending, now)?
         };
         match verdict {
             Some(true) => regate.rebound += 1,
@@ -77,19 +79,23 @@ pub(crate) fn regate_pending_consents_in_txn(
 
 /// The claim door's verdict on a waiting claim, taken again and recorded as
 /// a fresh decision, and its consent bound to it. A verdict that would now
-/// land the claim keeps it waiting under the reasons it had.
+/// land the claim keeps it waiting under the reasons it had; one that denies
+/// it leaves the row stale, so no ceremony is ever bound to a denial.
 fn restage_claim(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     pending: &PendingGateConsentRecord,
+    now: u64,
 ) -> Result<Option<bool>> {
     let Some(body) = readable(vault.get_claim_in_txn(txn, id))? else {
         return Ok(None);
     };
-    let Some(envelope) = readable(ClaimMaterialization::authored_envelope(
-        vault, txn, id, &body,
-    ))?
+    // A claim written through the raw door, or last changed by an unbound
+    // status write, has no authored envelope: the door judges it as that
+    // local write, as it did when the write was made.
+    let Some(envelope) =
+        readable(ClaimMaterialization::authored_envelope(vault, txn, id, &body).map(Some))?
     else {
         return Ok(None);
     };
@@ -101,7 +107,7 @@ fn restage_claim(
         id,
         super::ClaimGateWrite {
             body: &body,
-            envelope: Some(&envelope),
+            envelope: envelope.as_ref(),
             auto_checker: None,
             defer_metrics_until_commit: true,
             transition: None,
@@ -124,20 +130,22 @@ fn restage_claim(
     let Some(fresh) = recorded.map(super::RecordedClaimGateDecision::into_record) else {
         return Ok(None);
     };
+    if fresh.outcome == "deny" {
+        return Ok(None);
+    }
     let attached = fresh
         .receipt_reasons
         .iter()
         .any(|reason| reason == GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED);
-    let waits = attached || fresh.outcome == "pending";
     let reasons = if attached {
         vec![GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED.to_owned()]
-    } else if waits {
+    } else if fresh.outcome == "pending" {
         fresh.reason_codes.clone()
     } else {
         pending.reason_codes.clone()
     };
     let parked_under = vault.store.gate_decision_in_txn(txn, pending.decision_id)?;
-    let same = waits
+    let same = (attached || fresh.outcome == "pending")
         && parked_under.is_some_and(|parked| parked.outcome == fresh.outcome)
         && reasons == pending.reason_codes;
     vault.store.put_pending_gate_consent_in_txn(
@@ -146,7 +154,9 @@ fn restage_claim(
             version: crate::store::PENDING_GATE_CONSENT_VERSION,
             claim_id: pending.claim_id,
             decision_id: fresh.decision_id,
-            created_at: pending.created_at,
+            // A re-staged row is a new pending decision, so a ceremony it
+            // newly needs gets its whole window.
+            created_at: if same { pending.created_at } else { now },
             diff_handle: fresh.diff_handle,
             read_frontier_hash: fresh.read_frontier_hash,
             reason_codes: reasons,

@@ -284,7 +284,9 @@ impl Vault {
                 .map_or_else(|| "system".to_owned(), |record| record.actor_class.clone()),
             actor_ref: parked_by.and_then(|record| record.actor_ref),
             run: pending.dreamer_run_id.clone(),
-            created_at: pending.created_at,
+            // A re-staged row is a new pending decision, so a critical
+            // confirm it newly needs gets its whole window.
+            created_at: if same { pending.created_at } else { now },
         };
         let restaged = DeferredClaim {
             frontier: policy.read_frontier_hash()?,
