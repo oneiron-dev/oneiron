@@ -81,9 +81,33 @@ pub(super) fn mcp_release_result(
     Ok(result)
 }
 
-/// [`mcp_release_result`] for a code run's result: judged by `rows`, the rows
-/// its verb calls served. Off this device a run one of whose calls could not
-/// name every row its output carries (`None`) is refused.
+/// The rows a code run's step log names by short ref, in each step's
+/// outcome and in the JSON a verb call's output was recorded as, fresh or
+/// replayed; `None` when one names no row.
+pub(super) fn mcp_run_named_rows(
+    vault: &oneiron::Vault,
+    structured: &Value,
+) -> Option<Vec<oneiron::EntityId>> {
+    let mut rows = Vec::new();
+    for outcome in structured["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|step| &step["outcome"])
+    {
+        rows.extend(crate::device_local::short_refs_named(vault, outcome)?);
+        if let Some(output) = outcome["output"].as_str()
+            && let Ok(output) = serde_json::from_str::<Value>(output)
+        {
+            rows.extend(crate::device_local::short_refs_named(vault, &output)?);
+        }
+    }
+    Some(rows)
+}
+
+/// [`mcp_release_result`] for a code run's result: judged by `rows`, those
+/// its verb calls listed and its step log names. Off this device a run whose
+/// steps name a short ref that resolves to no row (`None`) is refused.
 pub(super) fn mcp_release_run_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,

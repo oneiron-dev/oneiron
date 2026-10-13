@@ -105,6 +105,7 @@ pub(crate) async fn execute_mcp_execute_code(
     if let Some(receipt) = &outcome.seat_receipt {
         structured["model_choice"] = json!(receipt);
     }
+    let named = super::device_release::mcp_run_named_rows(&server.vault, &structured);
     let result = mcp_endpoint_result(
         server,
         actor,
@@ -118,7 +119,11 @@ pub(crate) async fn execute_mcp_execute_code(
     super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
     #[cfg(test)]
     super::device_release::release_hook::run(server);
-    super::device_release::mcp_release_run_result(server, actor, verbs.served().as_deref(), result)
+    let rows = named.map(|mut rows| {
+        rows.extend(verbs.served());
+        rows
+    });
+    super::device_release::mcp_release_run_result(server, actor, rows.as_deref(), result)
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {

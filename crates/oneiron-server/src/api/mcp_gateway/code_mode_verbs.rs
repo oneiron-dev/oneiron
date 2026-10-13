@@ -26,10 +26,8 @@ pub(crate) struct McpCodeModeVerbs {
     server: Arc<SyncServer>,
     actor: McpCallContext,
     runtime: tokio::runtime::Handle,
-    /// The rows this run's verb calls served (DEC-0005): those each call
-    /// listed, and those its output names by short ref. `None` once an output
-    /// named a short ref that resolves to no row.
-    served: std::sync::Mutex<Option<Vec<oneiron::EntityId>>>,
+    /// The rows this run's verb calls listed as served (DEC-0005).
+    served: std::sync::Mutex<Vec<oneiron::EntityId>>,
 }
 
 impl McpCodeModeVerbs {
@@ -39,13 +37,12 @@ impl McpCodeModeVerbs {
             server: Arc::clone(server),
             actor: actor.clone(),
             runtime: tokio::runtime::Handle::current(),
-            served: std::sync::Mutex::new(Some(Vec::new())),
+            served: std::sync::Mutex::new(Vec::new()),
         }
     }
 
-    /// The rows this run's verb calls served, or `None` when one of them
-    /// could not name every row its output carries.
-    pub(crate) fn served(&self) -> Option<Vec<oneiron::EntityId>> {
+    /// The rows this run's verb calls listed as served.
+    pub(crate) fn served(&self) -> Vec<oneiron::EntityId> {
         self.served
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -78,23 +75,18 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .map_err(|error| AgentVerbRefusal {
                 code: error.kind.to_owned(),
             })?;
-        let named = crate::device_local::short_refs_named(&self.server.vault, &output);
-        let mut served = self
-            .served
+        self.served
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *served = served.take().zip(named).map(|(mut rows, named)| {
-            rows.extend(listed);
-            rows.extend(named);
-            rows
-        });
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(listed);
         Ok(output)
     }
 
     /// A call the run serves itself meets this connector's door at each call
     /// too: a run row needs its own binding, and every call needs the
     /// credential `execute_code` was admitted on, still live. A search reads
-    /// under that credential's grants, as `recall` does.
+    /// under that credential's grants, as `recall` does, from where its
+    /// caller sits (DEC-0005).
     fn admit_run_call(
         &self,
         call: RunCall,
@@ -116,7 +108,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .as_ref()
             .and_then(crate::auth::CoreAuth::verified_slip)
             .and_then(ScopedReadActorKey::from_verified_slip)
-            .map(Some)
+            .map(|reader| Some(reader.at(self.actor.locality())))
             .ok_or_else(|| AgentVerbRefusal {
                 code: "mcp_auth_required".to_owned(),
             })
