@@ -116,6 +116,146 @@ pub(in crate::booking) fn confirmed_start_for_reminder(
     Ok(Some(facts.slot.start))
 }
 
+/// Current starts of one page's live confirmed bookings of one event type that
+/// start inside `starts` (inclusive), read from one committed snapshot.
+///
+/// The daily and weekly caps charge these. A booking counts while its EVENT is
+/// live, a booking status head says Confirmed, and no status head says
+/// Cancelled — neither the booking's own nor the calendar's, since an inbound
+/// cancellation need not change the booking's. It counts at its current
+/// start, so a moved booking charges the day it sits on now. `excluding` is a
+/// booking being moved, which never charges against its own move.
+///
+/// No index keys bookings by page, so this walks the EVENT type index, the
+/// walk the calendar busy read already makes, and reads claims only for the
+/// EVENTs that start inside `starts`.
+pub(in crate::booking) fn confirmed_booking_starts(
+    vault: &Vault,
+    page_ref: EntityId,
+    event_type: &EventTypeKey,
+    starts: TimeRange,
+    excluding: Option<EntityId>,
+) -> Result<Vec<u64>, BookingError> {
+    let rtxn = read_txn(vault)?;
+    let mut found = Vec::new();
+    for id in vault
+        .store
+        .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_EVENT, None)
+        .map_err(|error| engine_failure("booking EVENT scan", error))?
+    {
+        let id = id.map_err(|error| engine_failure("booking EVENT scan", error))?;
+        if excluding == Some(id) {
+            continue;
+        }
+        let Some(record) = vault
+            .store
+            .port_entity_record(&rtxn, &id)
+            .map_err(|error| engine_failure("booking EVENT header read", error))?
+        else {
+            continue;
+        };
+        let start = record.occurred.start.min(record.occurred.end);
+        // Both bounds zero is an undated row, not 1970.
+        if record.entity_type != ENTITY_TYPE_EVENT
+            || (record.occurred.start == 0 && record.occurred.end == 0)
+            || start < starts.start
+            || start > starts.end
+        {
+            continue;
+        }
+        let visibility =
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &rtxn, &id)
+                .map_err(|error| engine_failure("booking EVENT liveness", error))?;
+        if visibility.deleted || visibility.stale {
+            continue;
+        }
+        if is_confirmed_booking_in(vault, &rtxn, &id, page_ref, event_type)? {
+            found.push(start);
+        }
+    }
+    Ok(found)
+}
+
+/// The event type one booking's live head names, read without the rest of
+/// its facts.
+pub(super) fn booking_event_type_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<EventTypeKey>, BookingError> {
+    for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
+        let Some(body) = vault
+            .get_claim_in_txn(rtxn, &claim_id)
+            .map_err(|error| engine_failure("booking claim read", error))?
+            .filter(crate::claim::claim_surfaceable)
+        else {
+            continue;
+        };
+        if body.predicate == BOOKING_EVENT_TYPE_REF_PREDICATE
+            && body.subject == ClaimSubject::Entity(*event_ref)
+        {
+            return Ok(Some(
+                decode_claim_value::<BookingEventTypeRefValue>(&body.value, "event type ref")?
+                    .event_type,
+            ));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether `event_ref`'s surfaceable heads make it a confirmed booking of
+/// this page and event type. Order-independent: competing status heads
+/// never count as Confirmed.
+fn is_confirmed_booking_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+    page_ref: EntityId,
+    event_type: &EventTypeKey,
+) -> Result<bool, BookingError> {
+    let (mut on_page, mut of_type, mut confirmed, mut cancelled) = (false, false, false, false);
+    for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
+        let Some(body) = vault
+            .get_claim_in_txn(rtxn, &claim_id)
+            .map_err(|error| engine_failure("booking claim read", error))?
+            .filter(crate::claim::claim_surfaceable)
+        else {
+            continue;
+        };
+        if body.subject != ClaimSubject::Entity(*event_ref) {
+            continue;
+        }
+        match body.predicate.as_str() {
+            BOOKING_SOURCE_PAGE_PREDICATE => {
+                on_page |=
+                    decode_claim_value::<BookingSourcePageValue>(&body.value, "source page")?
+                        .page_ref
+                        == page_ref;
+            }
+            BOOKING_EVENT_TYPE_REF_PREDICATE => {
+                of_type |=
+                    decode_claim_value::<BookingEventTypeRefValue>(&body.value, "event type ref")?
+                        .event_type
+                        == *event_type;
+            }
+            BOOKING_STATUS_PREDICATE => {
+                match decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status {
+                    BookingStatus::Confirmed => confirmed = true,
+                    BookingStatus::Cancelled => cancelled = true,
+                }
+            }
+            PREDICATE_CALENDAR_STATUS => {
+                cancelled |= decode_status_value(&body.value)
+                    .map_err(|error| engine_failure("calendar status decode", error))?
+                    .status
+                    == CalendarStatus::Cancelled;
+            }
+            _ => {}
+        }
+    }
+    Ok(on_page && of_type && confirmed && !cancelled)
+}
+
 /// Creates the EVENT and its four exact booking claims.
 pub(super) fn write_booking_event(
     vault: &Vault,
@@ -266,7 +406,7 @@ pub(super) fn supersede_exact_claim(
     value: rmpv::Value,
     now_utc: u64,
 ) -> Result<(), BookingError> {
-    let prior = live_claims_with_predicate(vault, &*wtxn, subject, predicate)?;
+    let prior = live_claims_with_predicate(vault, &*wtxn, subject, predicate, now_utc)?;
     let new_id = put_claim(vault, wtxn, subject, predicate, value, now_utc)?;
     for old_id in prior {
         vault
@@ -276,26 +416,45 @@ pub(super) fn supersede_exact_claim(
     Ok(())
 }
 
-/// Every live claim on `subject` carrying exactly `predicate`.
+/// Every live claim about `subject` carrying exactly `predicate`, except a
+/// pending one dated after `now_utc`: the store cannot close that yet, and a
+/// proposal must never block the transition. It is left to its review.
 fn live_claims_with_predicate(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     subject: &EntityId,
     predicate: &str,
+    now_utc: u64,
 ) -> Result<Vec<EntityId>, BookingError> {
     let mut out = Vec::new();
     for claim_id in claims_for_subject(vault, rtxn, subject)? {
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
         };
-        if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active {
-            out.push(claim_id);
+        if body.predicate != predicate
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.subject != ClaimSubject::Entity(*subject)
+        {
+            continue;
         }
+        if !crate::claim::claim_surfaceable(&body)
+            && vault
+                .store
+                .port_entity_record(rtxn, &claim_id)
+                .map_err(|error| engine_failure("booking claim header read", error))?
+                .is_some_and(|row| row.occurred.start > now_utc)
+        {
+            continue;
+        }
+        out.push(claim_id);
     }
     Ok(out)
 }
 
 /// Reads the booking facts one EVENT's live claims and structural row carry.
+///
+/// Only surfaceable heads count, as in the cap tally: a pending proposal
+/// beside the engine's record must not move, cancel or retype a booking.
 pub(super) fn read_booking_facts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -308,7 +467,9 @@ pub(super) fn read_booking_facts(
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
         };
-        if body.lifecycle != ClaimLifecycleStatus::Active {
+        if !crate::claim::claim_surfaceable(&body)
+            || body.subject != ClaimSubject::Entity(*event_ref)
+        {
             continue;
         }
         match body.predicate.as_str() {
