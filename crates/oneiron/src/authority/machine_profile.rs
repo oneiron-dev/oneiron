@@ -58,7 +58,8 @@ impl AuthorityFold {
 /// not an actor and whose key is not authority. Only an owner-held key answers
 /// "yours", "work/school" or "rented": a cloud or custodial root, which the
 /// hosted posture lets consent, can register its own node or demote and remove
-/// a machine, but never vouch for a machine as the owner's.
+/// a machine, but never vouch for a machine as the owner's. Neither can the
+/// host's own root on a hosted vault, whatever its role labels say.
 pub(super) fn apply_machine_profile(
     state: &mut FoldState,
     signer: &AuthorityKey,
@@ -67,7 +68,10 @@ pub(super) fn apply_machine_profile(
     context: FoldContext<'_>,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let owner_held = |device: &FoldedDevice| match profile.role {
-        MachineRole::Owned(_) => folded_device_can_authority_consent(device),
+        MachineRole::Owned(_) => {
+            folded_device_can_authority_consent(device)
+                && !custodial_host_root(state, signer, context)
+        }
         MachineRole::HostedNode | MachineRole::ExecutionNode | MachineRole::Removed => {
             context.device_can_consent(device)
         }
@@ -108,6 +112,20 @@ pub(super) fn apply_machine_profile(
         .or_default()
         .insert(profile.machine);
     Ok(())
+}
+
+/// The host's own root, on a fold whose consent arm admits custodial roots:
+/// the hosted posture, where that root is the provider's key and not the
+/// owner's. Judged from the root's attestation and the fold's mode, so a root
+/// row labelled owner-held still counts.
+fn custodial_host_root(state: &FoldState, signer: &AuthorityKey, context: FoldContext<'_>) -> bool {
+    state.host_root_keys.contains(signer)
+        && context.device_can_consent(&FoldedDevice {
+            key: signer.clone(),
+            tier: AuthorityTier::CloudCustodial,
+            roles: ROLE_OWNER | ROLE_CLOUD,
+            revoked: false,
+        })
 }
 
 /// An install key that is also a roster key or an actor's key is no machine's.

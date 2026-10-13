@@ -584,6 +584,9 @@ pub(super) fn merge_pact_states(
 }
 
 pub(super) fn upsert_device(state: &mut FoldState, device: &DeviceAuthority) {
+    if device.attestation.kind == HOST_ROOT_ATTESTATION {
+        state.host_root_keys.insert(device.key.clone());
+    }
     let folded = FoldedDevice {
         key: device.key.clone(),
         tier: device.tier,

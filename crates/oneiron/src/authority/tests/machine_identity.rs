@@ -377,6 +377,47 @@ fn a_cloud_root_never_vouches_for_a_machine() {
     assert!(fold.machine(machines[1]).is_none());
 }
 
+/// On a hosted vault the host's root is the provider's key: it registers its
+/// own node, but it never answers "yours" for the owner, whatever its labels.
+#[test]
+fn a_hosted_host_root_never_vouches_for_a_machine() {
+    let host = host();
+    let node = request_for(host.vault_id, EntityId::now(), &ed_key(86));
+    let yours = request_for(host.vault_id, EntityId::now(), &ed_key(87));
+    for (request, role) in [
+        (&node, MachineRole::HostedNode),
+        (&yours, MachineRole::Owned(MachineOwnership::Yours)),
+    ] {
+        host.vault
+            .enroll_machine(&host.issuer, &host.owner, request, role)
+            .unwrap();
+    }
+    let entries: Vec<_> = {
+        let txn = host.vault.store.env.read_txn().unwrap();
+        authority_log_rows_in_txn(&host.vault.store, &txn)
+            .unwrap()
+            .into_iter()
+            .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
+            .collect()
+    };
+    let fold = |posture| {
+        fold_authority_log_for_posture(&entries, &BTreeMap::new(), 10, &BTreeMap::new(), posture)
+    };
+    // Self-hosted, the host root is the owner's own process.
+    let own = fold(crate::HostingPrivacyPosture::SelfHostLocal);
+    assert!(
+        own.machine(yours.machine)
+            .is_some_and(FoldedMachine::is_mine)
+    );
+    let hosted = fold(crate::HostingPrivacyPosture::Hosted);
+    assert!(
+        hosted
+            .machine(node.machine)
+            .is_some_and(|folded| folded.is_live() && !folded.is_mine())
+    );
+    assert!(hosted.machine(yours.machine).is_none());
+}
+
 /// The pairing ceremony for `machine`: the owner answers "yours" on the link,
 /// `pairing_key` redeems it with `request`, and the host binds the paired
 /// machine's mesh address, which replaces the MACHINE body.

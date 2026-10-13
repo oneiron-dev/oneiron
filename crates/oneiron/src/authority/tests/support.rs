@@ -382,6 +382,7 @@ pub(super) fn single_owner_state(
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
+        host_root_keys: BTreeSet::new(),
         worlds: BTreeMap::new(),
         refused_world_edits: BTreeSet::new(),
     };
