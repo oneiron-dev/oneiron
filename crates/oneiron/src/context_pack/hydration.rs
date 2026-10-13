@@ -92,9 +92,10 @@ pub(crate) fn context_entity_matches_read_snapshot(
 /// via `options.claim_bodies` and are NOT re-decoded). Fail-closed: a type-0
 /// record whose body is missing or fails the pinned CLAIM ABI decode is
 /// excluded — it never surfaces with empty fields — and counted in
-/// `claims_suppressed`, exactly like a status-gated claim. Bodies of every
-/// other type byte stay opaque and are projected through the generic
-/// best-effort field decode, unchanged.
+/// `claims_suppressed`, exactly like a status-gated claim, and so is one whose
+/// body the write door refuses. Bodies of every other type byte stay opaque
+/// and are projected through the generic best-effort field decode, unchanged;
+/// one the write door refuses hydrates no field.
 pub(super) fn hydrate_entity(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
@@ -192,6 +193,17 @@ pub(super) fn hydrate_entity(
         }
     }
 
+    // A claim the write door refuses, stored while the owner's scan was off,
+    // is withheld as an undecodable one is: no read can follow this door's
+    // projection and its writers exactly (a float's width, a dropped key), so
+    // none of such a body is served.
+    if gated_claim_body.is_some()
+        && crate::batch::export::write_door_refuses_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+    {
+        *claims_suppressed += 1;
+        return Ok(None);
+    }
+
     let critical = gated_claim_body.is_some_and(|body| {
         options.policy.criticality_for_predicate(&body.predicate)
             == crate::gate::PolicyCriticality::Critical
@@ -217,15 +229,27 @@ pub(super) fn hydrate_entity(
                     header.entity_type,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                 )?;
-                let mut fields =
-                    decode_entity_fields(&body, header.entity_type).unwrap_or_default();
-                if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-                    fields.insert(
-                        "markdown".to_owned(),
-                        serde_json::Value::String(vault.note_text_in_txn(rtxn, id)?),
-                    );
+                let markdown = if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+                    Some(vault.note_text_in_txn(rtxn, id)?)
+                } else {
+                    None
+                };
+                // A body the write door refuses (a note's text is its body
+                // too) hydrates no field, as one no decoder reads hydrates none.
+                let refused = crate::batch::export::write_door_refuses_body(&body)
+                    || markdown.as_ref().is_some_and(|text| {
+                        crate::batch::export::write_door_refuses_body(text.as_bytes())
+                    });
+                if refused {
+                    HashMap::new()
+                } else {
+                    let mut fields =
+                        decode_entity_fields(&body, header.entity_type).unwrap_or_default();
+                    if let Some(markdown) = markdown {
+                        fields.insert("markdown".to_owned(), serde_json::Value::String(markdown));
+                    }
+                    fields
                 }
-                fields
             }
         })
     } else {
@@ -326,18 +350,32 @@ fn pins_indexed_frontier(
 /// omits `false`). Reusing the gate's decode means the body is MessagePack-
 /// decoded once per result for gate + projection (AC 9).
 fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> {
+    // Parts that read as a secret together, before this projection drops a
+    // float's width, project as null.
+    let secret = crate::batch::export::claim_reads_as_secret(body);
+    let project = |value: &rmpv::Value| {
+        if secret {
+            serde_json::Value::Null
+        } else {
+            rmpv_to_json(value)
+        }
+    };
     let mut out = HashMap::new();
     out.insert(
         "pred".to_owned(),
-        serde_json::Value::String(body.predicate.clone()),
+        if secret {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String(body.predicate.clone())
+        },
     );
-    out.insert("val".to_owned(), rmpv_to_json(&body.value));
+    out.insert("val".to_owned(), project(&body.value));
     out.insert("conf".to_owned(), serde_json::json!(body.confidence));
     if let Some(salience) = body.salience {
         out.insert("sal".to_owned(), serde_json::json!(salience));
     }
     if let Some(evidence) = &body.evidence {
-        out.insert("evid".to_owned(), rmpv_to_json(evidence));
+        out.insert("evid".to_owned(), project(evidence));
     }
     if let Some(valid_from) = body.valid_from {
         out.insert("from".to_owned(), serde_json::json!(valid_from));
@@ -378,7 +416,7 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     // binary as null, and so does this one.
     out.insert("subj".to_owned(), serde_json::Value::Null);
     if let Some(scope) = &body.scope {
-        out.insert("scope".to_owned(), rmpv_to_json(scope));
+        out.insert("scope".to_owned(), project(scope));
     }
     out.insert(
         "appr".to_owned(),
@@ -412,6 +450,11 @@ fn decode_entity_fields(
 
     let mut cursor = Cursor::new(payload);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
+    // A body that reads as a secret whole, before this projection drops a
+    // float's width, hydrates no field.
+    if crate::batch::secret_scan::release_parts_read_whole(&[&value]) {
+        return Some(HashMap::new());
+    }
     let rmpv::Value::Map(entries) = value else {
         return None;
     };

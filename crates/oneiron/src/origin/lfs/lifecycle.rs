@@ -48,6 +48,33 @@ pub(crate) fn delete_lfs_lifecycle_in_txn(
     Ok(())
 }
 
+/// Whether a stored row is an LFS chunk that no published object holds yet.
+/// A chunk lands as an ASSET before its object is read whole and published,
+/// so every generic reader takes such a chunk as absent; the LFS store reads
+/// it through its own door. An owner is its upload's journal row until it
+/// publishes and a GC row once refused, cancelled or deleted; an owner in
+/// neither is a live object's.
+pub(crate) fn unpublished_lfs_chunk_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<bool> {
+    if entity_type != crate::registry::ENTITY_TYPE_ASSET {
+        return Ok(false);
+    }
+    let Some(hash) = chunks::CHUNK_MARKS.get(store, txn, id)? else {
+        return Ok(false);
+    };
+    for row in chunks::CHUNK_REFS.iter_from(store, txn, hash.as_slice())? {
+        let ((_, owner), ()) = row?;
+        if !JOURNAL.contains(store, txn, &owner)? && !GC.contains(store, txn, &owner)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Internal chunk bytes never enter Loro windows or generic sync exports.
 #[cfg(feature = "sync")]
 pub(crate) fn is_lfs_chunk_asset_in_txn(
