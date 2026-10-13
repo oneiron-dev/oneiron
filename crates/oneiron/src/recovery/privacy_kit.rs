@@ -168,8 +168,8 @@ impl KitPassphrase {
     /// Refuses an empty passphrase and one over 1024 bytes after normalisation. Strength is
     /// the client's call: the kit never opens on the passphrase alone, whatever its strength.
     pub fn new(text: &str) -> Result<Self, KitError> {
-        // Text already in NFC (all ASCII, most typed text) skips the normaliser, whose
-        // scratch for long combining runs this crate cannot wipe.
+        // Text the NFC quick check passes (all ASCII, most typed text) skips the normaliser,
+        // whose scratch for long combining runs this crate cannot wipe.
         if matches!(is_nfc_quick(text.chars()), IsNormalized::Yes) {
             return Self::from_normal(text);
         }
@@ -623,7 +623,8 @@ fn tag(
     let mut digest = h.finalize();
     let mut tag = Zeroizing::new([0; piece::TAG_LEN]);
     tag.copy_from_slice(&digest.as_bytes()[..piece::TAG_LEN]);
-    // The hasher's block buffer still holds the secret's bytes.
+    // The hasher's block buffer still holds the secret's bytes. Scratch inside the
+    // provider's own frames (its finalize block) is not reached: best effort.
     h.zeroize();
     digest.zeroize();
     tag
