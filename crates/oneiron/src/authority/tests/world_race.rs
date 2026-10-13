@@ -245,6 +245,7 @@ fn one_worlds_later_edit_never_rolls_back_anothers() {
             assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
             assert!(
                 fold.worlds_withheld_from(Destination::Unknown)
+                    .unwrap()
                     .contains(&world)
             );
         }

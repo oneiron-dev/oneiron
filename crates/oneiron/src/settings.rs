@@ -585,15 +585,8 @@ pub(crate) fn device_only_worlds_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
-    Ok(crate::authority::WorldPrivacyView::load_in(vault, txn)?
-        .withheld_for(crate::authority::Destination::Unknown))
-}
-
-/// The settings generation: it moves with every authority-log write, a remote
-/// settings edit included. Read it in the transaction that read the worlds.
-#[cfg(feature = "sync")]
-pub(crate) fn device_only_generation_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<u64> {
-    Ok(crate::authority::WorldPrivacyView::load_in(vault, txn)?.generation())
+    crate::authority::WorldPrivacyView::load_in(vault, txn)?
+        .withheld_for(crate::authority::Destination::Unknown)
 }
 
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD

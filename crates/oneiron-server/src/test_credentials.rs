@@ -250,6 +250,11 @@ pub(crate) fn bind_actor(
         if !fold.valid_entries.contains(&hash) {
             continue;
         }
+        // A world's side entry is never a main-log head, and retires none.
+        if matches!(entry.op, AuthorityOp::WorldPrivacy(_)) {
+            heads.remove(&hash);
+            continue;
+        }
         for parent in &entry.parent_hashes {
             heads.remove(parent);
         }

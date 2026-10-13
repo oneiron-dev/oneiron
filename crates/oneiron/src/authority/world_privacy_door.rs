@@ -181,10 +181,14 @@ pub struct WorldPrivacyView {
 }
 
 impl WorldPrivacyView {
+    /// Refused under a conflicted vault root: its fold knows no world's
+    /// settings, so no door may judge a world portable from it.
     pub fn load_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Self> {
-        Ok(Self {
-            view: vault.authority_view_readonly_in_txn(txn)?,
-        })
+        let view = vault.authority_view_readonly_in_txn(txn)?;
+        if view.vault_root_is_conflicted() {
+            return Err(invalid_authority());
+        }
+        Ok(Self { view })
     }
 
     #[must_use]
@@ -193,15 +197,8 @@ impl WorldPrivacyView {
     }
 
     /// Every edited world not readable on `destination`: the withheld set.
-    #[must_use]
-    pub fn withheld_for(&self, destination: Destination) -> BTreeSet<EntityId> {
+    pub fn withheld_for(&self, destination: Destination) -> Result<BTreeSet<EntityId>> {
         self.view.worlds_withheld_from(destination)
-    }
-
-    /// Moves with every authority-log write, a remote one included.
-    #[must_use]
-    pub fn generation(&self) -> u64 {
-        self.view.generation()
     }
 }
 

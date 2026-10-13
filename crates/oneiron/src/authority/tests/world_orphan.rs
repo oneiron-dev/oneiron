@@ -1,7 +1,7 @@
 //! World privacy orphan re-pick: a world whose read names no machine still
 //! the owner's is re-picked from another of the owner's machines, and never
 //! while a machine it names is still the owner's.
-use super::machine_identity::host;
+use super::machine_identity::{encryption_key, host};
 use super::world_privacy::{
     edit_by, enrol_here, land, other_machine, read_of, set, settings, stored_entries, world_row,
 };
@@ -155,4 +155,89 @@ fn a_conflict_with_one_live_contender_is_not_orphaned() {
     assert!(fold.refused_world_edits.contains(&early));
     assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
     assert!(fold.world_readable_on(world, Destination::Machine(here)));
+}
+
+/// A world one machine kept to itself, when a handoff from elsewhere never
+/// marked that machine again: the handoff hangs off the main log alone and
+/// keeps the world's restriction, and once the old machine goes stale here,
+/// a machine the new root marked re-picks the world through the owner's door
+/// (Sol P2 round 2, F1 and F3).
+#[test]
+fn a_stale_holders_world_is_re_picked_after_a_handoff() {
+    let host = host();
+    let world = world_row(&host);
+    let (old, old_key) = other_machine(&host, 77, MachineRole::Owned(MachineOwnership::Yours));
+    let kept = edit_by(
+        &host,
+        old,
+        &old_key,
+        world,
+        settings(ReadLocation::OneMachine(old)),
+    );
+    land(&host, &[kept.clone()]);
+
+    let next = HostSlipIssuer::from_secret(b"stale holder successor root").unwrap();
+    let handoff = host
+        .vault
+        .re_root_authority(next.root_device(), host.issuer.public_key(), |bytes| {
+            Ok(host.issuer.sign_slip(bytes))
+        })
+        .unwrap();
+    assert!(
+        !handoff
+            .parent_hashes
+            .contains(&authority_entry_hash(&kept).unwrap())
+    );
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(old));
+
+    let person = host.owner.actor();
+    host.vault.bind_host_owner_for_test(&next, person).unwrap();
+    let owner = host
+        .vault
+        .authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let request = host
+        .vault
+        .machine_enrolment_request(host.vault_id, encryption_key())
+        .unwrap();
+    host.vault
+        .enroll_machine(
+            &next,
+            &owner,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let here = request.machine;
+    let repick = || {
+        host.vault.set_world_privacy_as(
+            &owner,
+            EditOrigin::ThisMachine,
+            world,
+            settings(ReadLocation::OneMachine(here)),
+        )
+    };
+    // Inside the window the old machine still stands, and keeps its world.
+    assert!(repick().is_err());
+
+    super::observation_safety::advance_observation_floor(
+        &host.vault,
+        crate::unix_seconds_now() + DEFAULT_STALE_ROSTER_WINDOW_SECS + 60,
+    );
+    let fold = host.vault.authority_fold().unwrap();
+    assert!(fold.machine(old).is_some_and(|folded| folded.stale));
+    assert!(fold.machine(here).is_some_and(FoldedMachine::is_mine));
+    assert_eq!(
+        fold.world_edit_standing(here, world),
+        Some(WorldEditStanding::RepicksOrphan)
+    );
+    let receipt = repick().unwrap();
+    assert_eq!(receipt.orphaned_from, vec![old.to_hex()]);
+    assert_eq!(receipt.next.read, EffectiveRead::OneMachine(here));
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 }

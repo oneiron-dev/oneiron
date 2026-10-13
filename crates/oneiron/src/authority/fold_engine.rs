@@ -777,6 +777,11 @@ fn fold_authority_log_once(
             &states,
             merged.as_ref(),
             &actor_bindings,
+            |hash| {
+                by_hash
+                    .get(hash)
+                    .is_some_and(|entry| super::world_privacy::side_world(&entry.op).is_none())
+            },
         ),
         revoked_actor_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             state.actor_revocation_hashes.keys().cloned().collect()

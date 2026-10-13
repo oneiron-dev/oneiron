@@ -2582,3 +2582,101 @@ fn a_flag_committed_while_the_raw_guard_inspects_withholds_the_update() {
         UpdateVerdict::Withheld
     );
 }
+
+/// Sol P2 round 2, F2: a machine's standing that expires while the raw guard
+/// inspects a window narrows a world with no authority-log write. The bytes
+/// are still withheld.
+#[test]
+fn a_standing_that_expires_while_the_raw_guard_inspects_withholds_the_update() {
+    use crate::authority::{
+        AuthorityAttestation, AuthorityTier, DEFAULT_STALE_ROSTER_WINDOW_SECS, DeviceAuthority,
+        HostSlipIssuer, ROLE_ADMIN, ROLE_OWNER,
+    };
+    use crate::sync::window::{UpdateVerdict, raw_update_verdict};
+    use ed25519_dalek::Signer;
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let learned = 1_772_323_260;
+    let at = TimeRange {
+        start: learned,
+        end: learned,
+    };
+    let [world, other, person, claim] =
+        [0x68, 0x69, 0x6a, 0x6b].map(|byte| EntityId::from_bytes([byte; 16]).unwrap());
+    for (id, entity_type) in [
+        (world, crate::registry::ENTITY_TYPE_WORLD),
+        (other, crate::registry::ENTITY_TYPE_WORLD),
+        (person, crate::registry::ENTITY_TYPE_PERSON),
+    ] {
+        vault
+            .put_entity(&id, entity_type, at, learned, b"row")
+            .unwrap();
+    }
+    let mut body = ClaimBody::new(
+        "test.device_only",
+        ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, at, learned).unwrap();
+    // This machine keeps `other` to itself, and lets `world` go after
+    // keeping it.
+    vault
+        .keep_world_on_this_machine_for_test(other, true)
+        .unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, false)
+        .unwrap();
+    // The vault moves to a root that never marks this machine again.
+    let root = crate::test_support::test_host_issuer();
+    let next = HostSlipIssuer::from_secret(b"expiring standing successor root").unwrap();
+    let signer = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        b"oneiron unit test host root",
+    ));
+    vault
+        .re_root_authority(
+            DeviceAuthority {
+                key: next.public_key(),
+                transport_key_binding: next.binding_key(),
+                attestation: AuthorityAttestation {
+                    kind: "HostRoot".into(),
+                    evidence: Vec::new(),
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            root.public_key(),
+            |bytes| Ok(signer.sign(bytes).to_bytes().to_vec()),
+        )
+        .unwrap();
+    let key = WindowKey::for_world(learned, world);
+    let update = manager
+        .open_window(&key)
+        .unwrap()
+        .doc
+        .export(ExportMode::all_updates())
+        .unwrap();
+    assert_eq!(
+        raw_update_verdict(&manager, key.as_str(), &update),
+        UpdateVerdict::Portable
+    );
+
+    // The window passes mid-inspection: this machine goes stale, and its
+    // widening of `world` now only narrows.
+    let past = crate::unix_seconds_now() + DEFAULT_STALE_ROSTER_WINDOW_SECS + 60;
+    crate::sync::window::test_hooks::arm_device_only_race(move |vault| {
+        vault.advance_authority_clock_for_test(past)
+    });
+    assert_eq!(
+        raw_update_verdict(&manager, key.as_str(), &update),
+        UpdateVerdict::Withheld
+    );
+}

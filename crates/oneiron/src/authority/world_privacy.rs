@@ -20,6 +20,16 @@
 //! A world whose read names no machine still the owner's is orphaned: any
 //! machine of the owner's that stores it may re-pick it. A re-pick only makes
 //! the world editable again; bringing its rows back is a restore's job.
+//! Whether a world is orphaned is judged on the machines this install counts,
+//! as the owner's door judges it, so a holder stale here leaves its world to
+//! be re-picked.
+//!
+//! An edit is valid when some chain of its machine's revisions admits the
+//! machine as the owner's under the key that signed it: each admitter vouches
+//! on its own.
+//!
+//! Under a conflicted vault root no world's settings can be known, so every
+//! world reads as readable nowhere and the withheld set cannot be named.
 //!
 //! Edits are per-world side entries. An entry for world W takes main-log heads
 //! and W's own side heads as parents and is never a parent of a main-log entry
@@ -30,8 +40,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::entity_id::EntityId;
+use crate::error::Result;
 
-use super::machine_profile::derived_machine;
+use super::machine_profile::{derived_chains, derived_machine};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
@@ -72,6 +83,20 @@ impl Default for EffectiveWorldPrivacy {
     }
 }
 
+impl EffectiveWorldPrivacy {
+    /// Any world under a conflicted vault root: readable nowhere, editable by
+    /// no one, with no sealed copies and no model order.
+    fn unknowable() -> Self {
+        Self {
+            read: EffectiveRead::Conflicted {
+                contenders: BTreeSet::new(),
+            },
+            sealed: SealedCopies::Off,
+            models: EffectiveModelOrder::Conflicted,
+        }
+    }
+}
+
 /// A machine a world's rows may go to, or one nobody proved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Destination {
@@ -89,8 +114,12 @@ pub struct FoldedWorld {
 
 impl AuthorityFold {
     /// A world's effective settings; the default for a world nobody edited.
+    /// A conflicted vault root fails closed: no world is readable anywhere.
     #[must_use]
     pub fn world_privacy(&self, world: EntityId) -> EffectiveWorldPrivacy {
+        if self.vault_root_is_conflicted() {
+            return EffectiveWorldPrivacy::unknowable();
+        }
         self.worlds
             .get(&world)
             .map_or_else(EffectiveWorldPrivacy::default, |folded| {
@@ -106,14 +135,19 @@ impl AuthorityFold {
         readable(&self.world_privacy(world).read, destination, is_mine)
     }
 
-    /// Every edited world that may not be readable on `destination`.
-    #[must_use]
-    pub fn worlds_withheld_from(&self, destination: Destination) -> BTreeSet<EntityId> {
-        self.worlds
+    /// Every edited world that may not be readable on `destination`. Refused
+    /// under a conflicted vault root, whose fold names no world: an empty set
+    /// there would let every private world go.
+    pub fn worlds_withheld_from(&self, destination: Destination) -> Result<BTreeSet<EntityId>> {
+        if self.vault_root_is_conflicted() {
+            return Err(invalid_authority());
+        }
+        Ok(self
+            .worlds
             .keys()
             .copied()
             .filter(|world| !self.world_readable_on(*world, destination))
-            .collect()
+            .collect())
     }
 }
 
@@ -138,16 +172,20 @@ impl AuthorityFold {
         machine: EntityId,
         world: EntityId,
     ) -> Option<WorldEditStanding> {
-        edit_standing(&self.world_privacy(world).read, machine, |id| {
-            self.machine(id).is_some_and(FoldedMachine::is_mine)
-        })
+        let is_mine = |id| self.machine(id).is_some_and(FoldedMachine::is_mine);
+        edit_standing(&self.world_privacy(world).read, machine, is_mine, is_mine)
     }
 }
 
+/// `is_mine` judges the editor, `counted` the machines the world's read
+/// names. The fold keeps an edit from a machine this install no longer counts
+/// (it only narrows), so the editor is judged by the roster rule there, while
+/// orphaning follows what this install counts, as the door sees it.
 fn edit_standing(
     read: &EffectiveRead,
     machine: EntityId,
     is_mine: impl Fn(EntityId) -> bool,
+    counted: impl Fn(EntityId) -> bool,
 ) -> Option<WorldEditStanding> {
     if !is_mine(machine) {
         return None;
@@ -159,7 +197,7 @@ fn edit_standing(
         EffectiveRead::Conflicted { contenders } if contenders.contains(&machine) => {
             Some(WorldEditStanding::Contends)
         }
-        _ if !orphaned_from(read, &is_mine).is_empty() => Some(WorldEditStanding::RepicksOrphan),
+        _ if !orphaned_from(read, counted).is_empty() => Some(WorldEditStanding::RepicksOrphan),
         _ => None,
     }
 }
@@ -388,9 +426,18 @@ fn world_meet(state: &FoldState, world: EntityId) -> PrivacyMeet {
     contributions.fold(first, |meet, next| meet.meet(&next))
 }
 
-fn may_edit(state: &FoldState, machine: EntityId, world: EntityId) -> bool {
+fn may_edit(
+    state: &FoldState,
+    machine: EntityId,
+    world: EntityId,
+    standing: MachineStanding<'_>,
+) -> bool {
     let read = world_meet(state, world).effective().read;
-    edit_standing(&read, machine, |id| is_mine(state, id)).is_some()
+    let counted = |id| {
+        derived_machine(state, id)
+            .is_some_and(|folded| folded.is_mine() && standing(state, &folded))
+    };
+    edit_standing(&read, machine, |id| is_mine(state, id), counted).is_some()
 }
 
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
@@ -409,7 +456,7 @@ pub(super) fn apply_world_privacy(
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
     let signer = entry.signer_key();
-    if !derived_machine(state, edit.machine).is_some_and(|folded| {
+    if !derived_chains(state, edit.machine).any(|folded| {
         folded.is_mine() && *signer == AuthorityKey::Ed25519(folded.profile.machine_key)
     }) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
@@ -428,7 +475,7 @@ pub(super) fn apply_world_privacy(
     }
     // Well signed but from a machine that cannot edit this world: valid and
     // without effect, so it never stalls what descends from it.
-    if !may_edit(state, edit.machine, edit.world) {
+    if !may_edit(state, edit.machine, edit.world, standing) {
         state.refused_world_edits.insert(hash);
         return Ok(());
     }

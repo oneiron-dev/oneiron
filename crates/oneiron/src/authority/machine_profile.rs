@@ -281,7 +281,23 @@ pub(super) fn merge_machine_maps(
 /// first key never speaks for the second. Every reader of a machine's
 /// standing goes through this.
 pub(super) fn derived_machine(state: &FoldState, id: EntityId) -> Option<FoldedMachine> {
-    let mut folded = roster_chain(state, id)?.head.clone();
+    roster_chain(state, id).map(|chain| derived_head(state, id, chain))
+}
+
+/// Each admitter's head for one machine, with the derived poison applied.
+pub(super) fn derived_chains(
+    state: &FoldState,
+    id: EntityId,
+) -> impl Iterator<Item = FoldedMachine> + '_ {
+    state.machines.get(&id).into_iter().flat_map(move |chains| {
+        chains
+            .values()
+            .map(move |chain| derived_head(state, id, chain))
+    })
+}
+
+fn derived_head(state: &FoldState, id: EntityId, chain: &MachineChain) -> FoldedMachine {
+    let mut folded = chain.head.clone();
     let shared_key = state
         .machine_keys
         .get(&folded.profile.machine_key)
@@ -294,7 +310,7 @@ pub(super) fn derived_machine(state: &FoldState, id: EntityId) -> Option<FoldedM
         || rekeyed
         || key_is_authority(state, &folded.profile.machine_key)
         || machine_is_actor(state, id);
-    Some(folded)
+    folded
 }
 
 /// The fold's public view: each machine with the derived poison applied.

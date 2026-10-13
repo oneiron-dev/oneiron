@@ -3,7 +3,7 @@
 //! Concurrent edits fold stricter in every order, and no forged entry, generic
 //! write, replayed edit, restore or machine that lost "yours" widens a world.
 use super::machine_identity::{Host, encryption_key, host, request_for};
-use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
+use super::support::{authority_key_from_ed, ed_key, genesis_entry, sign_ed, unsigned_entry};
 use super::*;
 use crate::registry::ENTITY_TYPE_WORLD;
 use crate::{Vault, VaultConfig};
@@ -433,6 +433,8 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     assert_eq!(full.machines, without.machines);
     assert_eq!(full.roster, without.roster);
     assert_eq!(full.actor_bindings, without.actor_bindings);
+    // A write stamped with a frontier must not depend on a world's entries.
+    assert_eq!(full.actor_write_frontiers, without.actor_write_frontiers);
     assert_eq!(
         full.valid_entries
             .difference(&edit_hashes)
@@ -605,4 +607,40 @@ fn a_replayed_edit_or_a_restore_never_loosens_a_world() {
         direct.world_privacy(world).unwrap().read,
         EffectiveRead::OneMachine(here)
     );
+}
+
+/// A second signed genesis leaves the vault's root conflicted, and its fold
+/// names no world. A world kept to one machine must not read as portable for
+/// that (Sol P2 round 2, F4).
+#[test]
+fn a_conflicted_root_never_lets_a_private_world_go() {
+    let host = host();
+    let here = enrol_here(&host);
+    let world = world_row(&host);
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::OneMachine(here),
+    )
+    .unwrap();
+    let withheld = |vault: &Vault| {
+        let txn = vault.store.env.read_txn().unwrap();
+        crate::settings::device_only_worlds_in(vault, &txn)
+    };
+    assert!(withheld(&host.vault).unwrap().contains(&world));
+
+    let rival = genesis_entry(78, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    host.vault
+        .put_authority_log_entry(&rival, TimeRange { start: 3, end: 3 }, 3)
+        .unwrap();
+    let fold = host.vault.authority_fold().unwrap();
+    assert!(fold.vault_root_is_conflicted());
+    for destination in [Destination::Unknown, Destination::Machine(here)] {
+        assert!(!fold.world_readable_on(world, destination));
+    }
+    assert!(fold.worlds_withheld_from(Destination::Unknown).is_err());
+    assert!(withheld(&host.vault).is_err());
+    let txn = host.vault.store.env.read_txn().unwrap();
+    assert!(world_readable_on_machine_in(&host.vault, &txn, world, Destination::Unknown).is_err());
 }
