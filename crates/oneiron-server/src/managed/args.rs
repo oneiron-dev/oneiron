@@ -572,6 +572,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
     (
+        "oneironer-stack-sha16",
+        |args| args.oneironer.oneironer_stack_sha16.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
         "oneironer-label-count",
         |args| args.oneironer.oneironer_label_count.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
