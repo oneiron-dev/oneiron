@@ -31211,7 +31211,7 @@
      "purpose": "Persisted customization settings and client-visible change events",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 15,
       "mod": 1,
@@ -34289,7 +34289,7 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 6,
       "re-export": 1,
       "struct": 1
      }
@@ -34308,7 +34308,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/sync/chunks/tests.rs",
@@ -34324,7 +34324,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 16,
       "struct": 1
      }
@@ -34479,7 +34479,7 @@
      "path": "src/sync/connection/converge.rs",
      "purpose": "Convergence: run_convergence, re_bootstrap, server-frame pump",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34568,8 +34568,8 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 13,
-      "fn": 13,
+      "crate-vis": 14,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -34748,7 +34748,7 @@
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -35164,7 +35164,7 @@
      "purpose": "Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 12,
       "struct": 2
@@ -35197,7 +35197,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -35319,6 +35319,20 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "UpdateVerdict"
+     ],
+     "path": "src/sync/window/device_only.rs",
+     "purpose": "Export-time withholding for worlds flagged device-only",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
@@ -35387,10 +35401,10 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 6,
       "mod": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -35401,7 +35415,7 @@
      "path": "src/sync/window/reverse.rs",
      "purpose": "Reverse rematerialization plus skip/policy predicates and carrier removal",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -35410,10 +35424,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/test_hooks.rs",
-     "purpose": "Test-only hook for the REDACTION_AUDIT rematerialization race pin",
+     "purpose": "Test-only hooks",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -40499,7 +40513,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 116,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40648,7 +40662,7 @@
    },
    "over_bar": 35,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2468,
+   "source_files": 2469,
    "test_files": 783
   },
   "oneiron-android": {
@@ -49552,7 +49566,7 @@
      "path": "src/api/git_lfs/chunks.rs",
      "purpose": "Grant-scoped binary have/want endpoint over the standing bearer identity",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -51510,7 +51524,7 @@
      "path": "src/handler/lfs_chunks.rs",
      "purpose": "Versioned owner-authenticated chunk requests, disjoint from selector window mode",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -52943,7 +52957,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 2
      }
     },
@@ -53005,7 +53019,7 @@
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
