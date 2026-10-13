@@ -2798,7 +2798,7 @@ fn missing_head_rights_revoked_actor_and_write_time_source_drift_refuse() -> Res
 
 /// What happens to the head once the handoff is sealed: an earlier grant in
 /// the same handoff closes it, then it is left, re-opened, or edited while it
-/// stays closed (narrowed to another principal).
+/// stays closed and readable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AfterClose {
     Kept,
@@ -2831,15 +2831,7 @@ impl ConsolidationSink for ClosedHeadSink<'_> {
                 vault.put_claim(&self.head, &body, occurred(2), 2)?;
             }
             AfterClose::Edited => {
-                let mut scope = match body.scope.take() {
-                    Some(Value::Map(rows)) => rows,
-                    _ => Vec::new(),
-                };
-                scope.push((
-                    "principal".into(),
-                    Value::Binary(EntityId::now().as_bytes().to_vec()),
-                ));
-                body.scope = Some(Value::Map(scope));
+                body.value = Value::from("owner edited while closed");
                 vault.put_claim(&self.head, &body, occurred(2), 2)?;
             }
         }
@@ -2921,11 +2913,12 @@ impl ConsolidationSink for StandingSink<'_> {
 }
 
 /// Sol r9 (#1417): a conflict close checked its replacement's standing once,
-/// outside the transactions it then wrote, so a retraction in between went
-/// unseen. The fence now holds every row a close relies on to the revision
-/// whose standing it checked: the handoff's later write lands while that row
-/// holds, and refuses once it changed. (A row the Dreamer reads outside the
-/// branch stands in for the replacement, so no source pin sees the change.)
+/// outside the transactions it then wrote, so a retraction between two
+/// closes went unseen. While closes rely on a row, the fence holds it to the
+/// revision whose standing they checked: a write under that fence lands while
+/// the row holds, and refuses once it changed. (A row the Dreamer reads
+/// outside the branch stands in for the replacement, so no source pin sees
+/// the change.)
 #[test]
 fn a_row_a_close_relies_on_is_fenced_for_the_handoffs_later_writes() -> Result<()> {
     for changed in [false, true] {

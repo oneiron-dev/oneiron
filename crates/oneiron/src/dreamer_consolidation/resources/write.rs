@@ -47,9 +47,9 @@ pub(crate) struct ConsolidationFence {
     /// the revision that grant wrote: the handoff's later writes hold them to
     /// it instead of their pins.
     closed: std::sync::Mutex<BTreeMap<EntityId, RowRevision>>,
-    /// Replacements a conflict close in this handoff relies on, at the
-    /// revision whose standing it checked: the handoff's later writes refuse
-    /// once one changes or no longer reads.
+    /// Replacements the conflict closes under way rely on, at the revision
+    /// whose standing they checked: each close refuses once one changes or no
+    /// longer reads.
     standing: std::sync::Mutex<BTreeMap<EntityId, RowRevision>>,
 }
 
@@ -107,11 +107,18 @@ impl ConsolidationFence {
     }
 
     /// Records a replacement a conflict close relies on, at the revision
-    /// whose standing the close checked. A poisoned lock fails the later
-    /// writes' fence.
+    /// whose standing the close checked, until [`Self::released`]. A
+    /// poisoned lock fails the later writes' fence.
     pub(crate) fn relies_on(&self, replacement: EntityId, revision: RowRevision) {
         if let Ok(mut standing) = self.standing.lock() {
             standing.insert(replacement, revision);
+        }
+    }
+
+    /// The closes that relied on `replacement` are done.
+    pub(crate) fn released(&self, replacement: EntityId) {
+        if let Ok(mut standing) = self.standing.lock() {
+            standing.remove(&replacement);
         }
     }
 }

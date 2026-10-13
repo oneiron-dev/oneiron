@@ -450,14 +450,15 @@ fn served_models(answer: &[u8]) -> Vec<String> {
 
 /// The assistant text an answer carries, as the server reads it: a JSON
 /// body's first choice's message content, or a stream's first-choice content
-/// deltas joined in order. A stream event whose first choice has another
-/// index is one the server refuses, so none of it is kept.
+/// deltas joined in order. A first choice whose index is present and not 0
+/// is kept by no one: the server refuses a nonzero one, and nothing of a
+/// malformed one is kept.
 fn answer_content(answer: &[u8]) -> String {
     let first = |event: &Value| -> Option<Value> {
         let choice = event["choices"].get(0)?;
-        choice["index"]
-            .as_u64()
-            .is_none_or(|index| index == 0)
+        choice
+            .get("index")
+            .is_none_or(|index| index.as_u64() == Some(0))
             .then(|| choice.clone())
     };
     let text = String::from_utf8_lossy(answer);

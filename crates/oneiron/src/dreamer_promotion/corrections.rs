@@ -110,7 +110,9 @@ pub(super) fn close_conflicts_naming(
     evidence: &[EntityId],
 ) -> Result<()> {
     // Its standing and revision come from one read; each close's fence then
-    // refuses once the replacement changes or no longer reads.
+    // refuses once the replacement changes or no longer reads. (A replacement
+    // that does not stand would be refused by that fence too; this skips the
+    // attempts.)
     let (body, revision) = {
         let txn = vault.store.env.read_txn()?;
         (
@@ -124,7 +126,6 @@ pub(super) fn close_conflicts_naming(
     if !crate::claim::claim_surfaceable(&body) {
         return Ok(());
     }
-    fence.relies_on(replacement, revision);
     let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
         return Ok(());
     };
@@ -152,6 +153,7 @@ pub(super) fn close_conflicts_naming(
         Value::from("superseded_by"),
         Value::Binary(replacement.as_bytes().to_vec()),
     )]);
+    fence.relies_on(replacement, revision);
     for marker in open.into_iter().filter(|marker| !resolved.contains(marker)) {
         // A marker this close cannot land stays open, and in the owner's
         // view; the correction itself has landed.
@@ -173,6 +175,8 @@ pub(super) fn close_conflicts_naming(
             tracing::warn!(%reason, marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
         }
     }
+    // The handoff's later writes do not stand on it.
+    fence.released(replacement);
     Ok(())
 }
 
