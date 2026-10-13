@@ -89,7 +89,16 @@ pub(crate) fn device_only_withholds(
         return Ok(true);
     }
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
-        return Ok(claim_world(store, txn, id, None)?.is_some_and(|world| flagged.contains(&world)));
+        // A purged row's words stay in window history until the historical
+        // sweep runs; a purged epoch summary's record says where they sat.
+        let mut gone = CarriedWorlds {
+            worlds: claim_world(store, txn, id, None)?.into_iter().collect(),
+            unknown: false,
+        };
+        if let Some(withdrawn) = crate::ports::withdrawn_worlds_in(store, txn, id)? {
+            gone.absorb(&withdrawn);
+        }
+        return Ok(gone.kept_by(flagged));
     };
     let mut sources = Vec::new();
     let mut carried = row_worlds(store, txn, id, &raw, &mut sources)?;

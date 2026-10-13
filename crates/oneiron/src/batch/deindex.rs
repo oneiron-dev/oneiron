@@ -78,6 +78,7 @@ pub(crate) fn deindex_entity(
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
     crate::config::failure_signals::purge_tier2_for_source_in_txn(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
+    crate::ports::keep_deleted_worlds_in_txn(store, wtxn, id)?;
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
     crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;
     crate::receipt::remove_receipt_archive_custody(store, wtxn, id)?;
@@ -90,9 +91,6 @@ pub(crate) fn deindex_entity(
 
     let (existed, entity_had_vector, entity_had_graph_mutation, mut entity_neighbors) =
         deindex_entity_without_lexical_query_hint_cascade(store, wtxn, id)?;
-    // What the row was withdrawn for goes with its body, after the edge sweep
-    // has read it for every summary losing an edge to the row.
-    crate::ports::retire_withdrawn_in_txn(store, wtxn, id)?;
     had_vector |= entity_had_vector;
     had_graph_mutation |= entity_had_graph_mutation;
     neighbors.append(&mut entity_neighbors);

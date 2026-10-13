@@ -124,16 +124,32 @@ pub(crate) fn record_withdrawn_in_txn(
         .put(txn, &withdrawn_key(id), &recorded.encode())?;
     Ok(true)
 }
-/// Retires what epoch summary `id` was withdrawn for with its body: a purge,
-/// or an erase that scrubs it. An invalidation that leaves the body (a
-/// standalone tombstone) keeps it, and so does a regeneration: the old words
-/// outlive the rewrite in window history and packed snapshots.
+/// Retires what epoch summary `id` was withdrawn for once its words have left
+/// this device: the historical sweep has rewritten every window that held
+/// them, after its purge scrubbed the queued updates. Until then everything
+/// keeps it: a standalone tombstone, a regeneration, an erase and the purge
+/// itself ([`keep_deleted_worlds_in_txn`]).
 pub(crate) fn retire_withdrawn_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
     store.vault_meta.delete(txn, &withdrawn_key(id))?;
+    Ok(())
+}
+/// A deletion takes epoch summary `id`'s body from its row, but its words stay
+/// in window history, and after a soft erase in updates already queued, which
+/// every door judges by this id (Sol round 21). So its record keeps every
+/// world the body carried, read while its body, stamp and edges still stand.
+pub(crate) fn keep_deleted_worlds_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if epoch_summary_in(store, txn, id)? {
+        let worlds = carried_or_unknown(store, txn, id);
+        record_withdrawn_in_txn(store, txn, id, &worlds)?;
+    }
     Ok(())
 }
 /// Removing epoch summary `summary`'s `DerivedFrom` edge to `source` withdraws

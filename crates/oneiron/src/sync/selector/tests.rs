@@ -5245,7 +5245,8 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
 /// edges go, so the summary keeps them home while a world is device-only.
 /// `told` was written from W's CLAIM and `plain` from a base CLAIM, both
 /// purged with their edges; `outer` from `inner`, a summary born in W that a
-/// user delete leaves as a shell with no stamp.
+/// user delete leaves as a shell with no stamp. `erased`, written from W's
+/// CLAIM, is itself erased first: its words stay in May's packed window.
 #[test]
 fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Result<()> {
     use crate::compaction::EpochPlacement;
@@ -5255,8 +5256,9 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     let person = entity_id(0x59);
     let (fact, told) = (entity_id(0x60), entity_id(0x61));
     let (base_fact, plain) = (entity_id(0x64), entity_id(0x65));
-    let (inner, outer) = (entity_id(0x66), entity_id(0x67));
-    let (june, july, august) = (
+    let (inner, outer, erased) = (entity_id(0x66), entity_id(0x67), entity_id(0x68));
+    let (may, june, july, august) = (
+        WindowKey::new("2026-05"),
         WindowKey::new("2026-06"),
         WindowKey::new("2026-07"),
         WindowKey::new("2026-08"),
@@ -5286,9 +5288,17 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     vault.put_claim(&base_fact, &claim(None), sources, sources_at)?;
     let summary = crate::registry::ENTITY_TYPE_SUMMARY;
     let ((in_june, june_at), (in_july, july_at)) = (at(&june), at(&july));
-    let (in_august, august_at) = at(&august);
+    let ((in_may, may_at), (in_august, august_at)) = (at(&may), at(&august));
     vault
         .batch()
+        .put(
+            &erased,
+            summary,
+            in_may,
+            may_at,
+            &epoch_summary_bytes(5, "the world fact")?,
+        )
+        .edge(&erased, EdgeKind::DerivedFrom, &fact, 1.0)
         .put(
             &told,
             summary,
@@ -5328,7 +5338,7 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     };
     vault.with_write_txn_grouped(|txn| {
         in_world.settle_in(&vault.store, txn, inner)?;
-        for base in [told, plain, outer] {
+        for base in [told, plain, outer, erased] {
             EpochPlacement::default().settle_in(&vault.store, txn, base)?;
         }
         Ok(())
@@ -5338,7 +5348,11 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
         crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
         Ok(doc)
     };
-    let (june_doc, july_doc, august_doc) = (packed(&june)?, packed(&july)?, packed(&august)?);
+    let (may_doc, june_doc) = (packed(&may)?, packed(&june)?);
+    let (july_doc, august_doc) = (packed(&july)?, packed(&august)?);
+    // A soft erase leaves the words in May's packed window and in history,
+    // so the shell keeps W (Sol round 21).
+    vault.delete_entity(&erased)?;
     let purge = DeleteEntityOptions { purge: true };
     vault.delete_entity_with_options(&fact, purge)?;
     vault.delete_entity_with_options(&base_fact, purge)?;
@@ -5370,6 +5384,11 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
                 &loro::VersionVector::default(),
             )?)
         };
+        assert_eq!(
+            window(&may, &may_doc)?,
+            portable,
+            "May, an erased summary of W's CLAIM"
+        );
         assert_eq!(
             window(&june, &june_doc)?,
             portable,
@@ -5860,13 +5879,21 @@ fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
         !scoped.contains(&batched) && !scoped.contains(&bridged),
         "the scoped export"
     );
+    // A soft erase leaves the regenerated summary's old words in November's
+    // packed window; its shell keeps W (Sol round 21).
+    vault.delete_entity(&bridged)?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "a soft erase keeps a regenerated summary's old words home"
+    );
     Ok(())
 }
 
 /// Astra #1384d F3: what an epoch summary was withdrawn for lives as long as
-/// its body. A standalone tombstone invalidates the summary and keeps the
-/// body, so the record stays and the summary stays home while W is flagged;
-/// a purge takes the record with the body.
+/// its words. A standalone tombstone invalidates the summary and keeps the
+/// body, so the record stays and the summary stays home while W is flagged.
+/// A purge leaves the words in window history, so the record stays until the
+/// historical sweep has rewritten it (Sol round 21).
 #[test]
 fn a_tombstone_that_keeps_a_summary_body_keeps_its_withdrawal_record() -> crate::Result<()> {
     use crate::deletion::DeleteEntityOptions;
@@ -5875,7 +5902,10 @@ fn a_tombstone_that_keeps_a_summary_body_keeps_its_withdrawal_record() -> crate:
     let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
     let (world, fact) =
         summaries_of_a_world_fact(&vault, &[(kept, &october), (purged, &november)])?;
-    let october_doc = packed_window(&vault, &october)?;
+    let (october_doc, november_doc) = (
+        packed_window(&vault, &october)?,
+        packed_window(&vault, &november)?,
+    );
     let purge = DeleteEntityOptions { purge: true };
     vault.delete_entity_with_options(&fact, purge)?;
     let tombstone = crate::deletion::TombstoneValueV2 {
@@ -5897,16 +5927,29 @@ fn a_tombstone_that_keeps_a_summary_body_keeps_its_withdrawal_record() -> crate:
     );
     assert!(vault.get_raw_in(&rtxn, &purged)?.is_none());
     assert_eq!(
-        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &purged)?,
-        None,
-        "a purge takes the record with the body"
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &purged)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a purge keeps the record while its words sit in window history"
     );
     drop(rtxn);
     assert!(owner_window_ships(&vault, &october, &october_doc)?);
+    assert!(owner_window_ships(&vault, &november, &november_doc)?);
     vault.set_world_device_only(world, true)?;
     assert!(
         !owner_window_ships(&vault, &october, &october_doc)?,
         "the window door, a tombstoned summary"
+    );
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a purged summary's words in history"
+    );
+    crate::sweep::run_hard_erase_sweep(&vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &purged)?,
+        None,
+        "the historical sweep retires the record with the words"
     );
     Ok(())
 }
