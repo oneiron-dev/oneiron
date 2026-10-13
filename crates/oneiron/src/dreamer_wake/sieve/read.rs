@@ -66,7 +66,10 @@ impl Reader {
         );
         let from = match READ.get(store, txn, turn)? {
             Some(read) if read.reading == reading && read.names == names => match read.next {
-                None => return Ok(Read::Whole),
+                None => {
+                    CONTINUE.delete(store, txn, turn)?;
+                    return Ok(Read::Whole);
+                }
                 Some(next) => next,
             },
             _ => {
