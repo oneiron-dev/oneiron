@@ -607,6 +607,14 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
             {
                 Ok(SelfDispatchOutcome::Denied(result))
             }
+            // So did a host door's refusal of a call the run serves itself. A
+            // gate's denial carries the gate's own outcome word and replays as
+            // the trap it was; a door's code is never one.
+            SelfDispatchOutcome::Denied(result)
+                if crate::error::GateDenialOutcome::parse(&result.outcome).is_none() =>
+            {
+                Ok(SelfDispatchOutcome::Denied(result))
+            }
             SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
             SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
             outcome => Ok(outcome),

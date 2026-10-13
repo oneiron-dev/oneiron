@@ -316,6 +316,14 @@ impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
         })
     }
+
+    fn admit_run_call(
+        &self,
+        _: oneiron::code_run::RunCall,
+    ) -> Result<Option<oneiron::claim::ScopedReadActorKey>, oneiron::code_run::AgentVerbRefusal>
+    {
+        Ok(None)
+    }
 }
 
 /// Runs `execute_code` twice under ONE run handle through the SHIPPED injected

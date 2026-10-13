@@ -470,6 +470,29 @@ pub trait AgentVerbDoor: Send + Sync {
         call: &SelfAgentVerbCall,
         origin: &crate::memory::HostWriteOrigin,
     ) -> std::result::Result<serde_json::Value, AgentVerbRefusal>;
+
+    /// Admits one call the run serves itself, before it runs. The host's
+    /// ceiling and credential bind these as they bind [`Self::call`], so a run
+    /// keeps no authority its door has lost or never had. A search admitted
+    /// with a key reads only what that key's lane admits. A refusal spelled as
+    /// a gate's outcome word (`pending`, `deny`) is taken as that gate's: the
+    /// run's bridge halts after it, as after any gate's refusal.
+    fn admit_run_call(
+        &self,
+        call: RunCall,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+}
+
+/// One call a run serves itself, as its host door is asked about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunCall {
+    /// A `self.*` call over the bridge: a run row such as
+    /// `self.memory.search` or `put_claim`, or an import. The run's trailing
+    /// implicit speech is a `self.speak` too.
+    Bridge(SelfEffect),
+    /// A read of the run's own recorded output: by its context reference, or
+    /// a resumed write's kept answer, read back from its receipt.
+    RecordedOutput,
 }
 
 /// Result of dispatching a `self.*` call.

@@ -8,12 +8,13 @@ mod wake_policy;
 
 use std::cell::Cell;
 
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
-    SelfCall, SelfContextCall, SelfContextResult, SelfDispatchOutcome, SelfDispatcher,
-    SelfDurableWaitReason, SelfEffect,
+    AgentVerbRefusal, RunCall, SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult,
+    SelfDispatchOutcome, SelfDispatcher, SelfDurableWaitReason, SelfEffect,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -178,6 +179,11 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// Binds the host's door onto the SDK verb table, so `self.memory.<verb>`
     /// runs each verb with that host's ceiling and gate.
+    ///
+    /// A host that binds a door runs one attempt of a run at a time, as the
+    /// MCP code host's single-flight does: the door's rulings on a step's kept
+    /// answers and that step's checkpoint are separate records, so two
+    /// attempts of one step at once could close it past a refusal.
     #[must_use]
     pub fn with_agent_verb_door(
         mut self,
@@ -185,6 +191,31 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Self {
         self.agent_verbs = Some(door);
         self
+    }
+
+    /// Asks the bound door to admit one call the run serves itself. A run
+    /// whose host binds no door admits it as its own.
+    ///
+    /// # Errors
+    ///
+    /// A refusal spelled as a gate's outcome word is that gate's
+    /// [`crate::error::GateError::GateWriteRejected`]: replay tells a door's
+    /// refusal, which the guest handles, from a gate's, which halts the run's
+    /// bridge, by that word alone.
+    pub(crate) fn admit_run_call(
+        &self,
+        call: RunCall,
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        let Some(door) = &self.agent_verbs else {
+            return Ok(Ok(None));
+        };
+        let admitted = door.admit_run_call(call);
+        if let Err(refusal) = &admitted
+            && let Some(rejected) = gate_rejection(&refusal.code)
+        {
+            return Err(rejected);
+        }
+        Ok(admitted)
     }
 
     /// Binds a host-authenticated owner proof to one agent action dispatch.
@@ -284,11 +315,40 @@ impl<'a> HostSelfDispatcher<'a> {
         // The descriptor bridge answers before the policy probe: that probe is
         // itself a vault read, and `self.context` must perform none.
         if matches!(call, SelfCall::Context(_)) {
-            return self.dispatch_effect(call, site);
+            return self.dispatch_effect(call, site, None);
         }
+        // The halt rule and the door rule inside the bracket: a run whose
+        // participant left the room hears `NotInRoom`, never their verdict.
         self.storage.answered(|| {
             self.enforce_off_record_effect_policy(call.effect())?;
-            self.dispatch_effect(call, site)
+            // A step that can no longer close commits nothing more.
+            if let Some(site) = site
+                && let Some(refused) = self.refusal_past_an_unmet_write(site, Some(&call))?
+            {
+                return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                    effect: call.effect(),
+                    ..refused
+                }));
+            }
+            // A bound door rules on every call the run serves itself, not only
+            // on the verb calls it runs, so its ceiling and credential hold at
+            // each. A verb call meets it in `dispatch_agent_verb`: at the
+            // door's own call, or before a kept receipt answers it.
+            let read_as = if matches!(call, SelfCall::AgentVerb(_)) {
+                None
+            } else {
+                match self.admit_run_call(RunCall::Bridge(call.effect()))? {
+                    Ok(read_as) => read_as,
+                    Err(refusal) => {
+                        return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                            effect: call.effect(),
+                            outcome: refusal.code,
+                            reason_codes: Vec::new(),
+                        }));
+                    }
+                }
+            };
+            self.dispatch_effect(call, site, read_as)
         })
     }
 
@@ -296,6 +356,7 @@ impl<'a> HostSelfDispatcher<'a> {
         &self,
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let run_id = site.map(|site| site.run_id);
         match call {
@@ -316,7 +377,7 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
             SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
-            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
+            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
@@ -345,6 +406,17 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
         }
     }
+}
+
+/// The gate rejection a door's refusal is when it is spelled as a gate's
+/// outcome word, as `admit_run_call` says.
+fn gate_rejection(code: &str) -> Option<crate::Error> {
+    crate::error::GateDenialOutcome::parse(code).map(|outcome| {
+        crate::Error::Gate(crate::error::GateError::GateWriteRejected {
+            outcome: outcome.as_str(),
+            reason_codes: Vec::new(),
+        })
+    })
 }
 
 impl HostSelfDispatcher<'_> {
