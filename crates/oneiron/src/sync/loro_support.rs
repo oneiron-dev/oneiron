@@ -184,6 +184,28 @@ pub(crate) fn export_updates_from(doc: &LoroDoc, vv: &VersionVector) -> Result<V
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))
 }
 
+/// Whether `operations`, read from a doc over `meta`'s range, hold every
+/// operation the import blob counts. Loro clips a JSON range below a
+/// shallow root without saying so.
+pub(crate) fn json_covers_blob(
+    operations: &loro::json::JsonSchema,
+    meta: &loro::ImportBlobMetadata,
+) -> bool {
+    let expected = meta
+        .partial_end_vv
+        .iter()
+        .try_fold(0_usize, |sum, (peer, end)| {
+            let start = meta.partial_start_vv.get(peer).copied().unwrap_or(0);
+            sum.checked_add(usize::try_from(end.checked_sub(start)?).ok()?)
+        });
+    let inspected = operations
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .try_fold(0_usize, |sum, op| sum.checked_add(op.content.op_len()));
+    expected.is_some() && expected == inspected
+}
+
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::Snapshot)
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))
