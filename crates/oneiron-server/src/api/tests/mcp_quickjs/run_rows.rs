@@ -290,9 +290,24 @@ async fn quickjs_a_runs_search_reads_under_the_credential_builders_key() {
     )
     .await;
 
+    // The agent's run names it as an agent: `run_request` asserts a human.
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(agent, "write_memory"),
+        json!({
+            "actor": mcp_actor_json(agent, "agent"),
+            "run_ref": "quickjs-key-agent",
+            "task": "search the vault",
+        }),
+    );
     let (_, body) = route_json(
         mode.server.clone(),
-        run_request(agent, "quickjs-key-agent", "quickjs-key-agent"),
+        mcp_endpoint_call_request(
+            "/mcp",
+            "quickjs-key-agent",
+            "quickjs-key-agent",
+            "execute_code",
+            args,
+        ),
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
