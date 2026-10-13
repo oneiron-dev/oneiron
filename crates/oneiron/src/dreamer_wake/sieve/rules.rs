@@ -141,6 +141,14 @@ struct Seen {
     cover: Vec<(usize, usize)>,
 }
 
+/// What the date rules scan in a window: each pattern's matches, with the
+/// pattern's index, and the phrase reader's steps, each with its class if
+/// it is a phrase.
+struct Scan {
+    matches: Vec<(usize, RuleSpan)>,
+    steps: Vec<(usize, usize, Option<RuleClass>)>,
+}
+
 const MONTHS: &str = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
 
 /// The compiled date patterns, built once per sieve pass.
@@ -308,7 +316,7 @@ impl Rules {
     fn read(&self, text: &str, (from, to): (usize, usize), carry: Carry, line_start: bool) -> Seen {
         let window = &text[from..to];
         let (code, fences) = code_ranges(window, carry, line_start);
-        let (matches, steps) = self.scan(text, (from, to), carry);
+        let Scan { matches, steps } = self.scan(text, (from, to), carry);
         let mut dates: Vec<RuleSpan> = matches
             .iter()
             .map(|&(_, span)| span)
@@ -394,15 +402,7 @@ impl Rules {
     /// says it stood. A pattern reads its word edges in the text itself. The
     /// phrase reader reads the character before `from` too, so the rest of a
     /// word is no token, and starts at the first token past where it stood.
-    fn scan(
-        &self,
-        text: &str,
-        (from, to): (usize, usize),
-        carry: Carry,
-    ) -> (
-        Vec<(usize, RuleSpan)>,
-        Vec<(usize, usize, Option<RuleClass>)>,
-    ) {
+    fn scan(&self, text: &str, (from, to): (usize, usize), carry: Carry) -> Scan {
         let hay = &text[..to];
         let mut matches = Vec::new();
         for (index, (pattern, class)) in self.dates.iter().enumerate() {
@@ -440,7 +440,7 @@ impl Rules {
             (step.start - context, step.end - context, class)
         })
         .collect();
-        (matches, steps)
+        Scan { matches, steps }
     }
 }
 

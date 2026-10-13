@@ -842,8 +842,9 @@ fn grants_written_while_turns_wait_never_hold_a_new_turn_back() {
     let mut now = NOW + drain(&vault, NOW);
     let text = "Bob arrives tomorrow.";
     let turn = witness(&vault, "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f", text);
-    let space = EntityId::from_bytes([0x9e; 16]).expect("space id");
     for grant in 0..3_u8 {
+        // Each its own grant: one space, principal and capability hold one.
+        let space = EntityId::from_bytes([0x90 + grant; 16]).expect("space id");
         grant_messages_read(&vault, 0xa0 + grant, space);
         vault.sieve_pass(now).expect("pass");
         now += 1;
