@@ -7,6 +7,7 @@
 use super::history_transfer::{re_root_entry, replica_with, store};
 use super::support::*;
 use super::*;
+use crate::authority::handoff_equivocation::RECORD_LIMIT;
 use crate::{TimeRange, Vault, VaultConfig};
 
 fn hash(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
@@ -236,4 +237,59 @@ fn a_door_records_each_retired_signer_and_only_rows_that_verify() {
             refused: hash(&fenced_peer_row),
         }]
     );
+}
+
+/// Astra review 2: a peer that replays one refused row floods no log. The
+/// same forged handoff twice through a door is refused both times and
+/// recorded once, and its evidence logs no second warning. Control: new
+/// evidence, a distinct refused handoff, still records and logs.
+#[test]
+fn a_replayed_refused_row_is_recorded_and_logged_once() {
+    let fork = fork(244);
+    let id = genesis_vault_id(&fork.genesis).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    store(&vault, &fork.genesis);
+    vault.apply_signed_re_root(&fork.handoff).unwrap();
+    assert!(put(&vault, &[&fork.forged]).is_err());
+    assert!(put(&vault, &[&fork.forged]).is_err());
+    let records = vault.authority_handoff_equivocations();
+    assert_eq!(records.len(), 1);
+    let log = &vault.store.authority_handoff_equivocations;
+    assert!(!log.record(records[0].clone()));
+
+    let second = re_root_entry(id, &fork.genesis, &fork.old, 3, &ed_key(247));
+    assert!(put(&vault, &[&second]).is_err());
+    assert_eq!(vault.authority_handoff_equivocations().len(), 2);
+    assert!(log.record(AuthorityHandoffEquivocation {
+        refused: [9; 32],
+        ..records[0].clone()
+    }));
+}
+
+/// Astra review 2: past its bound the record logs only at the first dropped
+/// record and at each power of two, and reports how many it dropped.
+#[test]
+fn past_its_bound_the_record_logs_at_powers_of_two_and_counts_drops() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let extra = 100;
+    let logged = (0..RECORD_LIMIT + extra)
+        .filter(|n| {
+            let mut refused = [0; 32];
+            refused[..8].copy_from_slice(&n.to_be_bytes());
+            vault
+                .store
+                .authority_handoff_equivocations
+                .record(AuthorityHandoffEquivocation {
+                    signer: authority_key_from_ed(&ed_key(250)),
+                    handoffs: BTreeSet::new(),
+                    refused,
+                })
+        })
+        .count();
+    // Drops 1, 2, 4, ..., 64 log: floor(log2 100) + 1 = 7 warnings.
+    assert_eq!(logged, RECORD_LIMIT + 7);
+    assert_eq!(vault.authority_handoff_equivocations().len(), RECORD_LIMIT);
+    assert_eq!(vault.authority_handoff_equivocations_dropped(), 100);
 }

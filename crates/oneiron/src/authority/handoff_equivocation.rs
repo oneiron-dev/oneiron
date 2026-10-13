@@ -40,30 +40,59 @@ impl AuthorityHandoffEquivocation {
 }
 
 /// The most records one vault handle keeps. The first ones carry the alarm;
-/// later refusals are still logged.
-const RECORD_LIMIT: usize = 256;
+/// later ones are counted as dropped.
+pub(super) const RECORD_LIMIT: usize = 256;
+
+#[derive(Default)]
+struct Records {
+    held: BTreeSet<AuthorityHandoffEquivocation>,
+    /// New records refused past [`RECORD_LIMIT`].
+    dropped: u64,
+}
 
 /// This vault handle's records, first come.
 #[derive(Default)]
-pub(crate) struct HandoffEquivocations(Mutex<BTreeSet<AuthorityHandoffEquivocation>>);
+pub(crate) struct HandoffEquivocations(Mutex<Records>);
 
 impl HandoffEquivocations {
-    fn record(&self, evidence: AuthorityHandoffEquivocation) {
-        tracing::warn!(
-            kind = AuthorityHandoffEquivocation::KIND,
-            signer = ?evidence.signer,
-            refused = %crate::entity_id::bytes_to_hex_lower(&evidence.refused),
-            handoffs = ?evidence
-                .handoffs
-                .iter()
-                .map(|hash| crate::entity_id::bytes_to_hex_lower(hash))
-                .collect::<Vec<_>>(),
-            "door refused a row signed by a key a held handoff retired"
-        );
-        let mut records = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if records.len() < RECORD_LIMIT {
-            records.insert(evidence);
+    /// Keeps `evidence` once and logs it once, so a peer that replays one
+    /// refused row cannot flood the log. Past the bound, only the first
+    /// dropped record and each power of two log, with the count. Returns
+    /// whether it logged.
+    pub(super) fn record(&self, evidence: AuthorityHandoffEquivocation) -> bool {
+        let mut records = self.records();
+        if records.held.contains(&evidence) {
+            return false;
         }
+        if records.held.len() < RECORD_LIMIT {
+            tracing::warn!(
+                kind = AuthorityHandoffEquivocation::KIND,
+                signer = ?evidence.signer,
+                refused = %crate::entity_id::bytes_to_hex_lower(&evidence.refused),
+                handoffs = ?evidence
+                    .handoffs
+                    .iter()
+                    .map(|hash| crate::entity_id::bytes_to_hex_lower(hash))
+                    .collect::<Vec<_>>(),
+                "door refused a row signed by a key a held handoff retired"
+            );
+            records.held.insert(evidence);
+        } else {
+            records.dropped += 1;
+            if !records.dropped.is_power_of_two() {
+                return false;
+            }
+            tracing::warn!(
+                kind = AuthorityHandoffEquivocation::KIND,
+                dropped = records.dropped,
+                "handoff equivocation records past the bound were dropped"
+            );
+        }
+        true
+    }
+
+    fn records(&self) -> std::sync::MutexGuard<'_, Records> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -112,11 +141,16 @@ impl Vault {
     pub fn authority_handoff_equivocations(&self) -> Vec<AuthorityHandoffEquivocation> {
         self.store
             .authority_handoff_equivocations
-            .0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .records()
+            .held
             .iter()
             .cloned()
             .collect()
+    }
+
+    /// How many such records this handle dropped past its bound.
+    #[must_use]
+    pub fn authority_handoff_equivocations_dropped(&self) -> u64 {
+        self.store.authority_handoff_equivocations.records().dropped
     }
 }
