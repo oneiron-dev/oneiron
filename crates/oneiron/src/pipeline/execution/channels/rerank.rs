@@ -120,21 +120,8 @@ impl PipelineBuilder<'_> {
                         claim_gate,
                     )?);
                 }
-                // A row that does not hold its words is not reranked: it
-                // follows the reranked rows, in its first-stage order.
-                if bound.iter().any(|words| words.unscored) {
-                    let (kept, unscored): (Vec<_>, Vec<_>) = scores[..block_len]
-                        .iter()
-                        .copied()
-                        .zip(bound.iter().copied())
-                        .partition(|(_, words)| !words.unscored);
-                    for (slot, (scored, _)) in scores.iter_mut().zip(kept.iter().chain(&unscored)) {
-                        *slot = *scored;
-                    }
-                    block_len = kept.len();
-                    tail_len = unscored.len();
-                    bound = kept.into_iter().map(|(_, words)| words).collect();
-                }
+                (bound, tail_len) = set_aside_unscored(&mut scores[..block_len], bound);
+                block_len -= tail_len;
                 if block_len == 0 {
                     return Ok(RerankApplied::default());
                 }
@@ -225,19 +212,8 @@ impl PipelineBuilder<'_> {
                         score: rerank_scores[old_pos],
                     });
             }
-            // The unreranked rows step down from the weakest reranked one,
-            // keeping their order, so a later sort keeps them below it.
-            let mut cap = scores[..block_len]
-                .iter()
-                .map(|scored| scored.score)
-                .fold(f32::INFINITY, f32::min);
-            for scored in &mut scores[block_len..block_len + tail_len] {
-                if cap > 0.0 {
-                    cap = cap.next_down();
-                }
-                cap = cap.min(scored.score);
-                scored.score = cap;
-            }
+            let (reranked, rest) = scores.split_at_mut(block_len);
+            cap_set_aside(reranked, &mut rest[..tail_len]);
 
             // Rerank components append AFTER the blend components in each
             // entity's vector (pinned merge order; no dedup, no re-sort).
@@ -350,3 +326,48 @@ impl PipelineBuilder<'_> {
         .map(|text| text.revision))
     }
 }
+
+/// Sets aside the block's rows that do not hold their words (see
+/// [`BoundWords::unscored`]): they are not reranked, and their words bind
+/// nothing. They move after the rows that are reranked, each group in its
+/// first-stage order. Returns the kept rows' words and how many were set
+/// aside.
+fn set_aside_unscored(
+    block: &mut [ScoredEntity],
+    bound: Vec<BoundWords>,
+) -> (Vec<BoundWords>, usize) {
+    if !bound.iter().any(|words| words.unscored) {
+        return (bound, 0);
+    }
+    let (kept, unscored): (Vec<_>, Vec<_>) = block
+        .iter()
+        .copied()
+        .zip(bound)
+        .partition(|(_, words)| !words.unscored);
+    for (slot, (scored, _)) in block.iter_mut().zip(kept.iter().chain(&unscored)) {
+        *slot = *scored;
+    }
+    (
+        kept.into_iter().map(|(_, words)| words).collect(),
+        unscored.len(),
+    )
+}
+
+/// The rows set aside step down from the weakest reranked score, keeping
+/// their order, so a later sort keeps them below every reranked row.
+fn cap_set_aside(reranked: &[ScoredEntity], set_aside: &mut [ScoredEntity]) {
+    let mut cap = reranked
+        .iter()
+        .map(|scored| scored.score)
+        .fold(f32::INFINITY, f32::min);
+    for scored in set_aside {
+        if cap > 0.0 {
+            cap = cap.next_down();
+        }
+        cap = cap.min(scored.score);
+        scored.score = cap;
+    }
+}
+
+#[cfg(test)]
+mod tests;
