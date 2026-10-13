@@ -36,8 +36,20 @@ impl BranchResources<'_> {
                 if row.0 != ENTITY_TYPE_CLAIM {
                     continue;
                 }
+                // A head the wake read may be closed or withheld since, as
+                // by an earlier branch of the same pass. The branch holds
+                // only what it may read now; the rest is counted on its
+                // receipt (the row-authority axis), and the turn proceeds.
                 if !self.read.is_entity_readable(&id)? {
-                    return Err(invalid_consolidation("prior head read revoked"));
+                    self.read_receipt
+                        .lock()
+                        .map_err(|_| crate::Error::InvariantViolation("branch read receipt lock"))?
+                        .add_suppressed(1);
+                    tracing::info!(
+                        target: "oneiron::dreamer",
+                        "a prior head the wake listed is no longer readable; the branch runs without it"
+                    );
+                    continue;
                 }
                 row
             } else {
@@ -49,6 +61,7 @@ impl BranchResources<'_> {
                     .read(&[crate::claim::PointRead::id(id)], None)?
                     .single();
                 self.fold_read_receipt(&head.receipt)?;
+                // A withheld head is counted on the read's own receipt.
                 let Some(crate::claim::ReadRow {
                     entity_type: kind,
                     learned_at,
@@ -56,7 +69,7 @@ impl BranchResources<'_> {
                     ..
                 }) = head.value
                 else {
-                    return Err(invalid_consolidation("prior head is not actor-readable"));
+                    continue;
                 };
                 (kind, learned_at, bytes)
             };

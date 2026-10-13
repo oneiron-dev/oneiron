@@ -1504,7 +1504,11 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
             fx.scope.clone(),
             Some(&pin),
         )?;
-        assert!(sink.outcome.landed.is_empty(), "{value:?}: {:?}", sink.outcome);
+        assert!(
+            sink.outcome.landed.is_empty(),
+            "{value:?}: {:?}",
+            sink.outcome
+        );
         assert_eq!(names(&vault, fx.subject)?, vec![fx.head], "{value:?}");
         assert_eq!(
             vault.get_claim(&fx.head)?.expect("head").lifecycle,
@@ -1535,6 +1539,207 @@ fn a_correction_of_a_head_the_listing_did_not_show_asks_the_verdict() -> Result<
     assert_eq!(
         vault.get_claim(&fx.head)?.expect("head").lifecycle,
         crate::ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+/// Keeps each scoped write's read receipt, then lands the write.
+struct ReceiptSink<'a> {
+    inner: PromotionWriterSink<'a>,
+    receipts: Vec<crate::claim::ScopedReadReceipt>,
+}
+impl ConsolidationSink for ReceiptSink<'_> {
+    fn accept(&mut self, candidates: Vec<PromotionCandidate>) -> Result<()> {
+        self.inner.accept(candidates)
+    }
+    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        self.receipts.push(write.read_receipt().clone());
+        self.inner.accept_scoped(write)
+    }
+}
+
+/// Real run 2 (2026-10-14): one wake listed the same head for two passages,
+/// the first one's correction closed it, and the second's admission then
+/// failed the whole pass ("prior head read revoked"). The Dreamer reads only
+/// what it may read, without dropping or wedging work: the head it can no
+/// longer read leaves the second branch's listing and is counted on its read
+/// receipt, and the branch runs on the rest.
+#[test]
+fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let actor = vault.dreamer_authority()?;
+    policy(&vault, actor.entity_ref(), true)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Oleksii".into())]))?;
+    let person = EntityId::now();
+    let owner = EntityId::now();
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    // The Dreamer's own unvetted head, as an earlier conversation left it.
+    let head = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate(
+            &head,
+            ClaimCandidate::new(
+                "residence.city",
+                ClaimSubject::Entity(person),
+                "Lisbon".into(),
+                0.9,
+            ),
+            &WriteEnvelope::new(
+                WriteActor::new(owner, EdgeActorClass::Human),
+                ClaimSource::Generated,
+                WriteProvenance::new("an earlier pass".into())?,
+                ClaimApprovalStatus::Auto,
+            ),
+            occurred(2),
+            2,
+        )
+        .commit()?;
+    for (seed, text) in [
+        (0x5C, "my name is Oleksii and I live in Porto now"),
+        (0x5D, "my name is Oleksii and I play the viola now"),
+    ] {
+        let conversation = seed_session(&vault, seed, 1);
+        seed_turn(&vault, &conversation, "user", text, 10);
+    }
+    let scope = DreamerConsolidationScope::Micro;
+    let watermark = read_watermark(&vault, scope)?;
+    let dirty = scan_dirty_turns(&vault, scope, &watermark, 10)?;
+    enqueue_partition_attempts(&vault, scope, &dirty, &watermark, "run-1", 20)?;
+    // One wake pins both passages, as the driver does before its admissions.
+    let pin = PreparedWake::capture(&vault, scope)?;
+    let node = crate::identity::load_or_mint_client_id(&vault)?;
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut seen = Vec::new();
+    // The first branch corrects the head; the second states something else.
+    for corrects in [true, false] {
+        let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            admitted,
+        )) = store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+            scope,
+            local_node_id: node,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+            admission: AdmitDreamerAttempt {
+                lease_owner: "sibling-test".to_owned(),
+                now: 21,
+                budget_id: "wake".to_owned(),
+                budget_total_units: 10_000,
+                reserve_units: 100,
+                started_milestone: None,
+            },
+        })?
+        else {
+            panic!("two queued passages");
+        };
+        let Some(super::super::AttemptPreparation::Ready(plan)) =
+            pin.preparation(admitted.status.attempt.id)
+        else {
+            panic!("the wake prepared the passage");
+        };
+        assert!(plan.neighbourhood().shows(head), "the wake listed the head");
+        let turn = plan.turn_ids()[0];
+        let item = if corrects {
+            serde_json::json!({
+                "subject": person.to_hex(), "predicate": "residence.city", "value": "Porto",
+                "corrects": head.to_hex(), "confidence": 0.9,
+                "evidence_refs": [{"source_id": turn.to_hex(), "byte_range": [0, 1]}],
+            })
+        } else {
+            serde_json::json!({
+                "subject": person.to_hex(), "predicate": "music.instrument", "value": "viola",
+                "confidence": 0.9,
+                "evidence_refs": [{"source_id": turn.to_hex(), "byte_range": [0, 1]}],
+            })
+        };
+        let backend = JudgeBackend {
+            inner: ScriptedBackend::new(vec![Ok(text_response(
+                serde_json::json!({ "candidates": [item] }).to_string(),
+            ))]),
+            requests: Mutex::new(Vec::new()),
+        };
+        let run = DreamerRunContext {
+            run_id: admitted.status.attempt.run_id.clone().expect("queued run"),
+            attempt_id: admitted.status.attempt.id,
+            agent_actor: actor,
+            now_ms: 21_000,
+        };
+        let mut sink = ReceiptSink {
+            inner: PromotionWriterSink::new(&vault, run),
+            receipts: Vec::new(),
+        };
+        let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor,
+            model: crate::ModelId::new("test/model@r1").expect("model"),
+            sink: &mut sink,
+            inference: test_inference_host(),
+            scope: None,
+        };
+        let done = block_on_ready(executor.execute(
+            &admitted,
+            &mut WakeAttemptContext {
+                vault: &vault,
+                deadline: &deadline,
+                budget_id: "wake",
+                now_ms: 21_000,
+                prepared_wake: Some(&pin),
+                prepared_attempt: None,
+            },
+        ))
+        .unwrap_or_else(|error| panic!("corrects {corrects}: the branch refused: {error}"));
+        assert!(
+            matches!(done, DreamerAttemptExecution::Completed { .. }),
+            "corrects {corrects}: {done:?}"
+        );
+        assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            sink.inner.outcome.landed.len(),
+            1,
+            "corrects {corrects}: {:?}",
+            sink.inner.outcome
+        );
+        let prompt: String = backend.requests.lock().unwrap()[0]
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        let [receipt] = sink.receipts.as_slice() else {
+            panic!("one scoped write: {:?}", sink.receipts);
+        };
+        seen.push((prompt.contains(&head.to_hex()), receipt.clone()));
+    }
+    assert_eq!(
+        vault.get_claim(&head)?.expect("closed").lifecycle,
+        crate::ClaimLifecycleStatus::Superseded
+    );
+    let [(first_listed, first), (second_listed, second)] = seen.as_slice() else {
+        unreachable!()
+    };
+    assert!(*first_listed, "the first branch saw the head");
+    assert!(!*second_listed, "the closed head left the second listing");
+    assert_eq!(second.suppressed_count, first.suppressed_count + 1);
+    assert!(
+        second
+            .narrowed_axes
+            .iter()
+            .any(|axis| axis == "row_authority")
     );
     Ok(())
 }

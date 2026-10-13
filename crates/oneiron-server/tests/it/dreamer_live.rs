@@ -32,7 +32,8 @@
 //!
 //! Every model call goes through a relay that forwards it unchanged and keeps
 //! the model id each answer names. The server's Admitted, Dispatched and
-//! Settled receipts are kept from its log.
+//! Settled receipts are kept from its log. `report.json` is written whether
+//! the run passes or fails.
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -53,7 +54,7 @@ use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, WriteActor};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
-use crate::ai_serve::{free_port, oneiron, stop, vault_config, write_config};
+use crate::ai_serve::{free_port, oneiron, vault_config, write_config};
 
 /// The provider key's variable in the server's environment.
 const KEY_ENV: &str = "ONEIRON_LIVE_PROVIDER_KEY";
@@ -61,6 +62,8 @@ const KEY_ENV: &str = "ONEIRON_LIVE_PROVIDER_KEY";
 const QUIET: Duration = Duration::from_secs(20);
 /// The longest one phase waits for the server's model calls.
 const PHASE: Duration = Duration::from_secs(600);
+/// The provider's request timeout, as the server is configured.
+const PROVIDER_TIMEOUT_SECS: u64 = 300;
 
 struct Live {
     origin: String,
@@ -352,7 +355,7 @@ extraction_egress = true
 kind = "openai-compat"
 base_url = "{relay}"
 key_env = "{KEY_ENV}"
-timeout_secs = 300
+timeout_secs = {PROVIDER_TIMEOUT_SECS}
 response_format = "{response_format}"
 
 [models.dreamer]
@@ -559,12 +562,99 @@ fn receipts(logs: &[PathBuf]) -> Vec<Value> {
         .collect()
 }
 
+/// What the run has found so far. The report is written from it whether the
+/// run passes or fails.
+#[derive(Default)]
+struct Notes(Mutex<serde_json::Map<String, Value>>);
+
+impl Notes {
+    fn put(&self, key: &str, value: Value) {
+        self.0.lock().unwrap().insert(key.to_owned(), value);
+    }
+
+    fn push(&self, key: &str, value: Value) {
+        let mut notes = self.0.lock().unwrap();
+        let list = notes.entry(key).or_insert_with(|| json!([]));
+        list.as_array_mut().unwrap().push(value);
+    }
+}
+
+/// Stops the server gracefully. A pass in flight runs its attempt to the end,
+/// model calls included, so the grace covers one provider call; past it the
+/// server is killed by its exact PID. Each stop is noted.
+fn halt(mut child: Child, phase: &str, notes: &Notes) {
+    let started = Instant::now();
+    let sent = std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(sent.success());
+    let grace = Duration::from_secs(PROVIDER_TIMEOUT_SECS + 30);
+    let mut stopped = false;
+    while started.elapsed() < grace {
+        if child.try_wait().unwrap().is_some() {
+            stopped = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !stopped {
+        kill(child);
+    }
+    notes.push(
+        "stops",
+        json!({"phase": phase, "secs": started.elapsed().as_secs_f64(), "killed": !stopped}),
+    );
+}
+
+fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+        .unwrap_or_else(|| "a panic with no message".to_owned())
+}
+
 #[tokio::test]
 #[ignore = "calls a real model provider; run with --ignored and the ONEIRON_LIVE_* environment"]
 async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_model() {
+    use futures_util::FutureExt as _;
     let live = Live::from_env();
-    let probe = probe(&live).await;
     let (relay, relay_url) = Relay::start(&live).await;
+    let logs: Vec<_> = (1..=5)
+        .map(|n| live.out.join(format!("serve-{n}.log")))
+        .collect();
+    let notes = Notes::default();
+    let run = std::panic::AssertUnwindSafe(run(&live, &relay, &relay_url, &logs, &notes))
+        .catch_unwind()
+        .await;
+    if let Err(panic) = &run {
+        notes.put("failure", json!(panic_text(panic.as_ref())));
+    }
+    notes.put("calls", json!(relay.calls()));
+    notes.put(
+        "in_flight_at_end",
+        json!(relay.in_flight.load(Ordering::SeqCst)),
+    );
+    notes.put("receipts", json!(receipts(&logs)));
+    let report = Value::Object(notes.0.into_inner().unwrap());
+    std::fs::write(
+        live.out.join("report.json"),
+        redact(&serde_json::to_string_pretty(&report).unwrap(), &live.key),
+    )
+    .unwrap();
+    let leaked = scrub(&live.out, &live.key);
+    assert!(leaked.is_empty(), "the provider key reached {leaked:?}");
+    if let Err(panic) = run {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn run(live: &Live, relay: &Relay, relay_url: &str, logs: &[PathBuf], notes: &Notes) {
+    notes.put("model_asked", json!(live.model));
+    notes.put("model_expected", json!(live.served));
+    let probe = probe(live).await;
+    notes.put("probe_model", probe["model"].clone());
     let dir = tempfile::tempdir().unwrap();
     let vault_path = dir.path().join("vault");
     std::fs::create_dir_all(&vault_path).unwrap();
@@ -572,7 +662,7 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
         dir.path(),
         &vault_path,
         free_port(),
-        &models_section(&relay_url, &live),
+        &models_section(relay_url, live),
     );
     // Before the queue: the conversation and its summary declaration land
     // while no server runs; the server queues the turn's pass at start.
@@ -603,6 +693,8 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
             .unwrap();
         (person, turn)
     };
+    notes.put("person", json!(person.to_hex()));
+    notes.put("turns", json!([first_turn.to_hex()]));
 
     // The Dreamer's grant, on the vault the witness opened.
     let granted = oneiron(
@@ -620,10 +712,7 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     // 1. Between queue and apply: the first call is held and never sent.
     relay.enter("held");
     relay.hold.store(true, Ordering::SeqCst);
-    let logs: Vec<_> = (1..=5)
-        .map(|n| live.out.join(format!("serve-{n}.log")))
-        .collect();
-    let child = serve(&config, &live, &logs[0]);
+    let child = serve(&config, live, &logs[0]);
     tokio::time::timeout(PHASE, relay.holding.notified())
         .await
         .expect("the server's first pass reached its model call");
@@ -631,16 +720,16 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
 
     // 2. After apply: the passes run on the real model and land.
     relay.enter("consolidate");
-    let child = serve(&config, &live, &logs[1]);
+    let child = serve(&config, live, &logs[1]);
     relay.settle(1).await;
     kill(child);
     let consolidated = relay.calls().len();
 
     // 3. Nothing finished runs again.
     relay.enter("restart");
-    let child = serve(&config, &live, &logs[2]);
-    tokio::time::sleep(QUIET).await;
-    stop(child);
+    let child = serve(&config, live, &logs[2]);
+    relay.settle(0).await;
+    halt(child, "restart", notes);
     let after_restart = relay.calls().len();
     let first = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
@@ -651,6 +740,9 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
             lisbon_stated(&vault, person),
         )
     };
+    notes.put("claims_after_consolidation", json!(first.0));
+    notes.put("summaries_after_consolidation", json!(first.1));
+    notes.put("lisbon_stated", json!(first.2.as_ref().err()));
 
     // 4. A user correction in a later conversation, heard by a later pass.
     // The first conversation's summary moved it onto the record DAG, which
@@ -686,51 +778,37 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
             ),
         )
     };
+    notes.put(
+        "turns",
+        json!([
+            first_turn.to_hex(),
+            second_turn.to_hex(),
+            third_turn.to_hex()
+        ]),
+    );
     relay.enter("correct");
-    let child = serve(&config, &live, &logs[3]);
+    let child = serve(&config, live, &logs[3]);
     relay.settle(after_restart + 1).await;
-    stop(child);
+    halt(child, "correct", notes);
     let corrected = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         (claims(&vault), corrected_once(&vault, person))
     };
+    notes.put("claims_after_correction", json!(corrected.0));
+    notes.put("corrected_once", json!(corrected.1.as_ref().err()));
 
     // 5. The correction holds once.
     relay.enter("hold-once");
     let before_last = relay.calls().len();
-    let child = serve(&config, &live, &logs[4]);
-    tokio::time::sleep(QUIET).await;
-    stop(child);
+    let child = serve(&config, live, &logs[4]);
+    relay.settle(0).await;
+    halt(child, "hold-once", notes);
     let last = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         (claims(&vault), corrected_once(&vault, person))
     };
-
-    let calls = relay.calls();
-    let receipts = receipts(&logs);
-    let report = json!({
-        "model_asked": live.model,
-        "model_expected": live.served,
-        "probe_model": probe["model"],
-        "person": person.to_hex(),
-        "turns": [first_turn.to_hex(), second_turn.to_hex(), third_turn.to_hex()],
-        "calls": calls,
-        "claims_after_consolidation": first.0,
-        "summaries_after_consolidation": first.1,
-        "lisbon_stated": first.2.as_ref().err(),
-        "claims_after_correction": corrected.0,
-        "corrected_once": corrected.1.as_ref().err(),
-        "claims_after_last_restart": last.0,
-        "held_after_last_restart": last.1.as_ref().err(),
-        "receipts": receipts,
-    });
-    std::fs::write(
-        live.out.join("report.json"),
-        redact(&serde_json::to_string_pretty(&report).unwrap(), &live.key),
-    )
-    .unwrap();
-    let leaked = scrub(&live.out, &live.key);
-    assert!(leaked.is_empty(), "the provider key reached {leaked:?}");
+    notes.put("claims_after_last_restart", json!(last.0));
+    notes.put("held_after_last_restart", json!(last.1.as_ref().err()));
 
     assert!(
         !relay.wrong_model.load(Ordering::SeqCst),
@@ -747,6 +825,7 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
         "a finished correction called again"
     );
     assert_eq!(last.0, corrected.0, "the correction did not hold once");
+    let receipts = receipts(logs);
     for row in receipts
         .iter()
         .filter(|row| row["event"] == "dispatched" && row["answered"] == true)
@@ -772,5 +851,14 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
                 })
         }),
         "the verdict role's answered call settled: {verdict:?}"
+    );
+    // Every server stopped on SIGTERM within its grace.
+    assert!(
+        !notes.0.lock().unwrap()["stops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|stop| stop["killed"] == true),
+        "a server did not stop on SIGTERM within its grace and was killed"
     );
 }

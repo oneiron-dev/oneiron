@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 
 use super::conflict::{ConflictSet, PriorHead};
 use super::provenance::PromotionCandidate;
-use crate::{ClaimSubject, EntityId};
 use crate::claim::claim_source_widens_beyond;
+use crate::{ClaimSubject, EntityId};
 
 pub(super) fn fast_path(
     policy: &crate::gate::PolicyManifestResolution,
