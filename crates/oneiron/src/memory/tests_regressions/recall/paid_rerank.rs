@@ -7,6 +7,8 @@
 struct ScriptedReranker<'a> {
     lease: crate::llm::BudgetLease,
     calls: std::sync::atomic::AtomicUsize,
+    /// Each candidate the host was asked to score.
+    seen: std::sync::Mutex<Vec<EntityId>>,
     score: &'a (dyn Fn(usize, &str) -> f32 + Sync),
     during: &'a (dyn Fn(usize) + Sync),
 }
@@ -27,6 +29,10 @@ impl crate::memory::RecallRerankHost for ScriptedReranker<'_> {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             + 1;
         (self.during)(call);
+        self.seen
+            .lock()
+            .unwrap()
+            .extend(documents.iter().map(|document| document.id));
         Ok(crate::memory::RerankScores {
             scores: documents
                 .iter()
@@ -115,6 +121,7 @@ fn a_turn_edited_while_it_is_scored_takes_none_of_the_stale_scores() {
         .expect("a lease")
         .lease,
         calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::default(),
         score: &score,
         during: &during,
     };
@@ -181,6 +188,7 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
         .expect("a lease")
         .lease,
         calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::default(),
         score: &|_: usize, text: &str| text.len() as f32,
         during: &|_: usize| {},
     };
@@ -243,10 +251,12 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
 
 /// Done-means (the Engine lane's ruling on Sol round 6, R6-1): a streamed
 /// MESSAGE holds its words in its entity document, which no row revision
-/// pins, so no score can be bound to them. It is found but not reranked: it
-/// comes back after the reranked rows, as its TURN, with no score the
-/// reranker gave. Before, the reranker scored its row's empty words and its
-/// TURN took that score (R6-1); then it was dropped from the recall.
+/// pins, so no score can be bound to them. It is found but not reranked: the
+/// reranker never sees it, and it lends its TURN no score. The TURN, a
+/// candidate in its own right, keeps its own score, for the words its text
+/// revision pins (the document's frontier among them). Before, the reranker
+/// scored the message row's empty words and its TURN took that score
+/// (R6-1); then the message was scored and dropped.
 #[cfg(feature = "sync")]
 #[test]
 fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
@@ -257,6 +267,7 @@ fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
     witness_turn(&facade, 0xE4, &["the lantern repair kit is on the shelf"], 1_900);
     // The best lexical match of the three.
     let streamed = "lantern lantern: the lantern wick is trimmed";
+    let message = EntityId::now();
     let stream = facade
         .begin_message_stream(
             &WitnessTurn {
@@ -264,7 +275,7 @@ fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
                 turn_ref: Some(EntityId::now().to_hex()),
                 occurred_at: 1_900,
                 messages: vec![WitnessMessage {
-                    id: Some(EntityId::now().to_hex()),
+                    id: Some(message.to_hex()),
                     ..witness_message(0, WitnessAuthor::User, "")
                 }],
             },
@@ -273,13 +284,14 @@ fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
         .expect("open a stream");
     facade.append_to_stream(stream, streamed).expect("stream words");
     facade.finalize_stream(stream).expect("finalize the stream");
-    // Empty words score highest, then the shop's.
+    // Empty words score highest, then the shop's, then the repair kit's.
     let scored = std::sync::Mutex::new(Vec::new());
     let score = |_: usize, text: &str| {
         scored.lock().unwrap().push(text.to_owned());
         match text {
             "" => 20.0,
             text if text.contains("shop") => 10.0,
+            text if text.contains("repair kit") => 7.0,
             _ => 5.0,
         }
     };
@@ -293,6 +305,7 @@ fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
         .expect("a lease")
         .lease,
         calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::default(),
         score: &score,
         during: &|_: usize| {},
     };
@@ -330,8 +343,8 @@ fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
         "{turns:?} {kinds:?} {scored:?}"
     );
     assert!(
-        scored.iter().all(|text| !text.contains("wick is")),
-        "{turns:?} {kinds:?} {scored:?}"
+        !host.seen.lock().unwrap().contains(&message),
+        "the reranker scored the streamed message: {scored:?}"
     );
     assert!(matches!(
         pack.retrieval_meta.rerank,
@@ -413,6 +426,7 @@ fn a_message_moved_to_its_document_by_a_sync_process_is_not_reranked() {
         .expect("a lease")
         .lease,
         calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::default(),
         score: &score,
         during: &|_: usize| {},
     };
