@@ -68,6 +68,11 @@ fn a_claim_run_off_this_device_hints_at_no_device_local_claim() -> Result<()> {
         1,
         b"person",
     )?;
+    // Every claim before these is portable: the run they fill exactly.
+    let fetch = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        .len()
+        + 2;
     put_claims_in(&vault, world, subject, 1)?;
     vault.set_world_device_only(world, true)?;
 
@@ -79,7 +84,7 @@ fn a_claim_run_off_this_device_hints_at_no_device_local_claim() -> Result<()> {
         );
         let page = reader
             .graph_fs(GraphFsOptions::default())
-            .listdir_claims_by_id_with_fetch("/claims/by-id", None, 2)?;
+            .listdir_claims_by_id_with_fetch("/claims/by-id", None, fetch)?;
         Ok(page.next_cursor().is_some())
     };
     assert!(next_cursor(CallerLocality::OnDevice)?);

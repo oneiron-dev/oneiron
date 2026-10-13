@@ -1180,38 +1180,6 @@ async fn a_board_off_this_device_opens_no_standing_block_of_a_device_local_world
     assert_eq!(kept["error"]["code"], bare_body["error"]["code"]);
 }
 
-/// Sol R3 F6: the owner's Graph-FS tree lists every world under `/worlds`.
-/// Off this device it lists no device-local world.
-#[tokio::test]
-async fn graph_fs_off_this_device_lists_no_device_local_world() {
-    use super::owner_routes::{call, owner_recipe};
-    let (_dir, server) = auth_test_server();
-    let owner = owner_recipe(&server);
-    let world = put_world(&server.vault);
-    let worlds = || {
-        let server = Arc::clone(&server);
-        let owner = owner.clone();
-        async move {
-            let (status, listed) = call(
-                &server,
-                "GET",
-                "/v1/owner/graph-fs?path=/worlds&op=ls",
-                owner,
-                None,
-            )
-            .await;
-            assert_eq!(status, StatusCode::OK, "{listed}");
-            listed.to_string()
-        }
-    };
-    let listed = worlds().await;
-    assert!(listed.contains(&world.to_hex()), "{listed}");
-
-    server.vault.set_world_device_only(world, true).unwrap();
-    let listed = worlds().await;
-    assert!(!listed.contains(&world.to_hex()), "{listed}");
-}
-
 /// Sol R3 F7: an owner's persona card is compiled from the claims about its
 /// person. Off this device none a device-local world keeps enters it: the
 /// preview and the export it consents to name neither the claim nor its text.

@@ -215,6 +215,38 @@ fn worlds_readdir_omits_excluded_worlds_entirely() -> Result<()> {
     Ok(())
 }
 
+/// Sol R3 F6: `/worlds` names each world a reader's grant names. Off this
+/// device one a device-local flag keeps is not named on the page; on this
+/// device it still is.
+#[test]
+fn worlds_readdir_off_this_device_names_no_device_local_world() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
+    let world = test_id(0x34);
+    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x91),
+        encode_policy_manifest(vec![core_read_world_grant("reader", world)]),
+    )?;
+    vault.set_world_device_only(world, true)?;
+
+    let names = |locality| -> Result<String> {
+        let reader = vault.scoped_read(
+            crate::claim::ScopedReadActorKey::new("reader")
+                .expect("actor key")
+                .at(locality),
+        );
+        let page = resolver(&reader, 1024).readdir("/worlds/", None)?;
+        Ok(String::from_utf8_lossy(&page.render_bytes()).into_owned())
+    };
+    let here = names(CallerLocality::OnDevice)?;
+    assert!(here.contains(&world.to_hex()), "{here}");
+    let away = names(CallerLocality::OffDevice)?;
+    assert!(!away.contains(&world.to_hex()), "{away}");
+    Ok(())
+}
+
 #[test]
 fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(telemetry_config());

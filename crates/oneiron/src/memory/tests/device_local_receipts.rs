@@ -155,7 +155,7 @@ fn a_caller_off_this_device_learns_no_later_state_of_a_device_local_claim() {
     // read reports each served row whose state moved, and each own proposal.
     let id = EntityId::now();
     let mut body = ClaimBody::new(
-        "test.device_local_lifecycle",
+        "profile.orchid",
         ClaimSubject::Entity(owner),
         rmpv::Value::from("fact"),
         1.0,
@@ -220,7 +220,7 @@ fn a_recall_off_this_device_counts_no_device_local_claim_toward_its_census_cap()
         .unwrap();
     for _ in 0..512 {
         let mut body = ClaimBody::new(
-            "test.device_local_census",
+            "profile.orchid",
             ClaimSubject::Entity(owner),
             rmpv::Value::from("fact"),
             1.0,

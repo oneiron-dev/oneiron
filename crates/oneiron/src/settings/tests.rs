@@ -55,19 +55,28 @@ fn a_type_scan_off_this_device_never_overflows_on_device_local_rows() -> Result<
         vault.put_claim(&id, &body, at, 1)?;
         Ok(id)
     };
-    let portable = claim(None)?;
+    // The cap fits the claims the vault opened with and one more.
+    let mut portable = vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
+    portable.push(claim(None)?);
     for _ in 0..2 {
         claim(Some(world))?;
     }
     vault.set_world_device_only(world, true)?;
 
     let claims = |locality| {
-        vault.entities_by_type_at_with_cap(crate::registry::ENTITY_TYPE_CLAIM, locality, 2)
+        vault.entities_by_type_at_with_cap(
+            crate::registry::ENTITY_TYPE_CLAIM,
+            locality,
+            portable.len(),
+        )
     };
     assert!(matches!(
         claims(CallerLocality::OnDevice),
         Err(Error::IndexOverflow(_))
     ));
-    assert_eq!(claims(CallerLocality::OffDevice)?, [portable]);
+    let mut off = claims(CallerLocality::OffDevice)?;
+    off.sort();
+    portable.sort();
+    assert_eq!(off, portable);
     Ok(())
 }
