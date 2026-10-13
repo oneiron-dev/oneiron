@@ -18,7 +18,7 @@ use crate::sync::schema::read_window_list;
 use crate::sync::transport;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window::LoadedWindow;
+use crate::sync::window::{LoadedWindow, UpdateVerdict};
 use crate::sync::window_rows::{
     LAST_SYNC, ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE,
 };
@@ -198,6 +198,29 @@ impl SyncClient {
         self.manager
             .open_window(&WindowKey::new(key))
             .map_err(|e| TransportError::Storage(format!("open window {key}: {e}")))
+    }
+
+    /// The verdict on raw local `update` bytes for window `key`, read right
+    /// before they go out or a queue row holding them clears unsent.
+    pub(crate) fn update_verdict(&self, key: &str, update: &[u8]) -> UpdateVerdict {
+        crate::sync::window::raw_update_verdict(&self.manager, key, update)
+    }
+
+    /// Whether an outgoing frame carries what a device-only world now keeps
+    /// here, judged as it is released: a window UPDATE by the raw verdict
+    /// (a frame that cannot be read stays), a document frame, a NOTE command
+    /// included, by its text ([`crate::sync::documents::document_frame_withheld`]).
+    pub(crate) fn frame_withheld(&self, frame: &[u8]) -> bool {
+        if frame.first() == Some(&transport::TAG_WINDOW_SYNC) {
+            return frame
+                .get(1..)
+                .and_then(|payload| transport::decode_window_sync(payload).ok())
+                .is_none_or(|(key, sub_tag, update)| {
+                    sub_tag == transport::window_sub_tags::UPDATE
+                        && self.update_verdict(key, update) != UpdateVerdict::Portable
+                });
+        }
+        crate::sync::documents::document_frame_withheld(&self.vault, frame)
     }
 
     /// Returns the live window for `key` if loaded — registry lookup only,
