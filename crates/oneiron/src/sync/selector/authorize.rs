@@ -193,11 +193,7 @@ pub(super) fn effective_scope_for_grant(
         .map(Ceiling::new)
 }
 
-pub(super) fn strip_guest_share_metadata(
-    vault: &Vault,
-    source: &LoroDoc,
-    key: &WindowKey,
-) -> Result<LoroDoc> {
+pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> Result<LoroDoc> {
     let out = create_window_doc("guest-share", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -247,7 +243,8 @@ pub(super) fn strip_guest_share_metadata(
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
-    crate::sync::note::copy_selected(vault, source, &out)?;
+    // Its NOTEs already passed the selection that made `source`.
+    crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
     out.commit();
     Ok(out)
 }
@@ -656,12 +653,18 @@ pub(super) fn filter_window_doc(
             incomplete.insert(id);
         }
     }
+    // A NOTE this export drops is judged in its snapshot too (Sol round 17
+    // on #1384), so nothing is withheld after the epoch pass.
+    let flagged = crate::settings::device_only_worlds_in(&vault.store, &rtxn)?;
+    let notes_dropped = crate::sync::note::dropped_in(vault, &rtxn, &flagged, source, &kept)?;
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
     // after every other withholding and before anything is written.
     let mut shipped = kept
         .iter()
-        .filter(|id| !tombstoned.contains(id) && !incomplete.contains(id))
+        .filter(|id| {
+            !tombstoned.contains(id) && !incomplete.contains(id) && !notes_dropped.contains(id)
+        })
         .copied()
         .collect::<BTreeSet<_>>();
     let withheld = unbacked_epochs(vault, &rtxn, source, &shipped)?;
@@ -729,7 +732,7 @@ pub(super) fn filter_window_doc(
         }
     });
 
-    crate::sync::note::copy_selected(vault, source, &out)?;
+    crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
     out.commit();
     Ok(out)
 }

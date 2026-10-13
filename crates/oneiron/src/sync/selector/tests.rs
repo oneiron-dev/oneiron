@@ -5391,6 +5391,70 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     Ok(())
 }
 
+/// Sol round 17 on #1384: a NOTE the export drops is judged in the
+/// selection's own snapshot, before the epoch pass, so a summary written from
+/// it never leaves without it. Promotion authority keeps a NOTE of a
+/// device-only world out of its view, and the summary of it with it; before,
+/// the NOTE went only after the pass had let the summary through, and an
+/// export racing a flag change did the same.
+#[test]
+fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()> {
+    let member = entity_id(0x3F);
+    let (_dir, vault, grant_id) = member_grant_vault(member);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "the private research",
+            crate::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let world = local_world_id(0x58).entity_id();
+    let at = TimeRange { start: 1, end: 1 };
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, at, 1, b"world")?;
+    vault
+        .put_edge(&note, EdgeKind::InWorld, &world, 1.0)
+        .unwrap();
+    let learned = EntityMetadataHeader::parse(&vault.get_raw(&note)?.unwrap())
+        .unwrap()
+        .learned_at;
+    let key = WindowKey::from_timestamp(learned);
+    let summary = entity_id(0x6B);
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: learned,
+                end: learned,
+            },
+            learned,
+            &epoch_summary_bytes(1, "the run read the private research")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &note, 1.0)
+        .commit()?;
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let granted = || -> crate::Result<Vec<EntityId>> {
+        let granted = granted_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &granted.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let portable = granted()?;
+    assert!(portable.contains(&note) && portable.contains(&summary));
+    vault.set_world_device_only(world, true)?;
+    let flagged = granted()?;
+    assert!(!flagged.contains(&note));
+    assert!(
+        !flagged.contains(&summary),
+        "a summary never leaves without its source"
+    );
+    Ok(())
+}
+
 fn epoch_summary_bytes(epoch: u64, text: &str) -> crate::Result<Vec<u8>> {
     use crate::compaction::{
         EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
