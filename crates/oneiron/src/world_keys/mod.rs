@@ -90,20 +90,16 @@ pub enum WrapRecipient {
 }
 
 impl WrapRecipient {
-    /// The envelope `recipient`: 0x01 ‖ machine id, or 0x02 ‖ root id.
+    /// The envelope `recipient`: 0x01 ‖ machine id (17 B), or 0x02 ‖ root id (33 B).
     #[must_use]
-    pub fn envelope_recipient(&self) -> [u8; 17] {
-        let mut out = [0u8; 17];
-        match self {
-            Self::Machine(machine) => {
-                out[0] = 0x01;
-                out[1..].copy_from_slice(machine.as_bytes());
-            }
-            Self::RecoveryRoot(root) => {
-                out[0] = 0x02;
-                out[1..].copy_from_slice(&root.0);
-            }
-        }
+    pub fn envelope_recipient(&self) -> Vec<u8> {
+        let (tag, id): (u8, &[u8]) = match self {
+            Self::Machine(machine) => (0x01, &machine.as_bytes()[..]),
+            Self::RecoveryRoot(root) => (0x02, &root.0[..]),
+        };
+        let mut out = Vec::with_capacity(1 + id.len());
+        out.push(tag);
+        out.extend_from_slice(id);
         out
     }
 }

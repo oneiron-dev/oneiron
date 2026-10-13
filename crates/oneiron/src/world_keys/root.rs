@@ -17,20 +17,23 @@ use crate::error::Result;
 
 const RECOVERY_KEY_LABEL: &[u8] = b"oneiron/world-recovery-root/v1";
 const ANCHOR_CONTEXT: &str = "oneiron/owner-anchor/v1";
-const ROOT_ID_CONTEXT: &str = "oneiron/world-recovery-root-id/v1";
+const ROOT_ID_CONTEXT: &str = "oneiron/world-recovery-root-id/v2";
 
-/// A root's public id: derived from its recovery public key, so anyone can check
-/// that an id and a key belong together.
+/// A root's public id, and the fingerprint the owner carries between machines when
+/// pairing. It commits to the vault and to both seed-derived keys, so a root that
+/// copies the recovery key under another anchor has another id (R1-F1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RecoveryRootId(pub [u8; 16]);
+pub struct RecoveryRootId(pub [u8; 32]);
 
 impl RecoveryRootId {
+    /// `BLAKE3-derive_key("oneiron/world-recovery-root-id/v2", vault_id ‖ recovery_key ‖ anchor_key)`.
     #[must_use]
-    pub fn of(public: &HybridPublicKey) -> Self {
-        let digest = blake3::derive_key(ROOT_ID_CONTEXT, &public.to_bytes());
-        let mut id = [0u8; 16];
-        id.copy_from_slice(&digest[..16]);
-        Self(id)
+    pub fn of(vault_id: &[u8; 32], recovery_key: &HybridPublicKey, anchor_key: &[u8; 32]) -> Self {
+        let mut hasher = blake3::Hasher::new_derive_key(ROOT_ID_CONTEXT);
+        hasher.update(vault_id);
+        hasher.update(&recovery_key.to_bytes());
+        hasher.update(anchor_key);
+        Self(*hasher.finalize().as_bytes())
     }
 }
 
@@ -83,13 +86,14 @@ impl RecoveryRootSeed {
         key
     }
 
-    /// The public facts the vault records about this root.
-    pub fn public(&self) -> Result<RecoveryRoot> {
+    /// The public facts `vault_id` records about this root.
+    pub fn public(&self, vault_id: &[u8; 32]) -> Result<RecoveryRoot> {
         let recovery_key = self.recovery_secret()?.public_key().clone();
+        let anchor_key = self.anchor().verifying_key().to_bytes();
         Ok(RecoveryRoot {
-            id: RecoveryRootId::of(&recovery_key),
+            id: RecoveryRootId::of(vault_id, &recovery_key, &anchor_key),
             recovery_key,
-            anchor_key: self.anchor().verifying_key().to_bytes(),
+            anchor_key,
         })
     }
 }

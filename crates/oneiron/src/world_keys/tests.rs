@@ -32,7 +32,7 @@ fn a_world_key_opens_only_for_its_machine_and_for_the_kit() {
     let a = machine_secret(&keys_a, VAULT).unwrap();
     let b = machine_secret(&keys_b, VAULT).unwrap();
     let seed = RecoveryRootSeed::generate().unwrap();
-    let root = seed.public().unwrap();
+    let root = seed.public(&VAULT).unwrap();
     let key = WorldKey::mint(entity(0x77), FIRST_GENERATION).unwrap();
     let bound = binding(&key);
     let to_a = WrapRecipient::Machine(entity(0xa1));
@@ -58,7 +58,7 @@ fn a_world_key_opens_only_for_its_machine_and_for_the_kit() {
     )
     .unwrap();
     assert_eq!(opened.expose(), key.expose());
-    assert_eq!(restored.public().unwrap(), root);
+    assert_eq!(restored.public(&VAULT).unwrap(), root);
 
     // The machine secret is this install's: a second use returns the same key.
     assert_eq!(
@@ -77,7 +77,10 @@ fn the_vault_key_alone_opens_no_world_key() {
     os_fill(&mut vault_key).unwrap();
     let keys = MemoryKeystore::new();
     let machine = machine_secret(&keys, VAULT).unwrap();
-    let root = RecoveryRootSeed::generate().unwrap().public().unwrap();
+    let root = RecoveryRootSeed::generate()
+        .unwrap()
+        .public(&VAULT)
+        .unwrap();
     let key = WorldKey::mint(entity(0x77), FIRST_GENERATION).unwrap();
     let bound = binding(&key);
     let to_machine = WrapRecipient::Machine(entity(0xa1));
@@ -231,6 +234,32 @@ fn a_wrap_with_substituted_key_bytes_is_refused() {
     assert!(open_world_key(&substituted, to, &machine, &forged).is_ok());
     assert!(open_world_key(&bound, to, &machine, &forged).is_err());
     assert!(seal_world_key(&bound, to, machine.public_key(), &other).is_err());
+}
+
+/// Sol R1-F1 (repro): the pairing fingerprint must bind the anchor. A host that copies
+/// the owner's public recovery key under its own anchor, or replays the owner's root in
+/// another vault, gets another id, so the owner's fingerprint never names its copy.
+/// The v1 id hashed the recovery key alone, and both roots carried one fingerprint.
+#[test]
+fn the_root_fingerprint_binds_the_anchor_and_the_vault() {
+    let owner = RecoveryRootSeed::generate()
+        .unwrap()
+        .public(&VAULT)
+        .unwrap();
+    let host = RecoveryRootSeed::generate()
+        .unwrap()
+        .public(&VAULT)
+        .unwrap();
+    let copied = RecoveryRootId::of(&VAULT, &owner.recovery_key, &host.anchor_key);
+    assert_ne!(copied, owner.id);
+    let mut other_vault = VAULT;
+    other_vault[0] ^= 1;
+    let elsewhere = RecoveryRootId::of(&other_vault, &owner.recovery_key, &owner.anchor_key);
+    assert_ne!(elsewhere, owner.id);
+    assert_eq!(
+        RecoveryRootId::of(&VAULT, &owner.recovery_key, &owner.anchor_key),
+        owner.id
+    );
 }
 
 /// Debug output never prints key or seed material.
