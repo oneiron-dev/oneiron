@@ -1,0 +1,61 @@
+//! This install's machine secret: a 32-byte seed in the this-device-only keystore,
+//! expanded to the hybrid keypair that world keys are wrapped to.
+
+use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
+use oneiron_keystore::{DeviceKeystore, KeystoreError, KeystoreSlot, SlotKind};
+use zeroize::Zeroizing;
+
+use super::{os_fill, refused};
+use crate::error::{Error, Result, SecretError};
+
+const MACHINE_KEY_LABEL: &[u8] = b"oneiron/machine-encryption/v1";
+
+/// This install's secret for `vault_id`. It is created in the keystore on first use.
+/// The keystore is create-only, so a concurrent first use keeps the slot's first seed.
+pub fn machine_secret(
+    keystore: &dyn DeviceKeystore,
+    vault_id: [u8; 32],
+) -> Result<HybridSecretKey> {
+    let slot = KeystoreSlot {
+        vault_id,
+        kind: SlotKind::MachineEncryption,
+    };
+    let seed = match keystore.get(&slot).map_err(keystore_error)? {
+        Some(seed) => seed,
+        None => {
+            let mut fresh = Zeroizing::new([0u8; 32]);
+            os_fill(&mut fresh[..])?;
+            match keystore.create(&slot, &fresh) {
+                Ok(()) | Err(KeystoreError::AlreadyExists) => {}
+                Err(e) => return Err(keystore_error(e)),
+            }
+            keystore
+                .get(&slot)
+                .map_err(keystore_error)?
+                .ok_or_else(|| refused("the keystore lost a slot it just created"))?
+        }
+    };
+    HybridSecretKey::from_seed(&seed, MACHINE_KEY_LABEL)
+        .map_err(|_| refused("the machine seed does not expand"))
+}
+
+/// This install's public encryption key for `vault_id`: what its machine profile
+/// carries (P1's `MachineEncryptionKey`, suite 0x0101).
+pub fn machine_encryption_key(
+    keystore: &dyn DeviceKeystore,
+    vault_id: [u8; 32],
+) -> Result<HybridPublicKey> {
+    Ok(machine_secret(keystore, vault_id)?.public_key().clone())
+}
+
+fn keystore_error(e: KeystoreError) -> Error {
+    match e {
+        KeystoreError::Unavailable(reason) => {
+            Error::Secret(SecretError::KeystoreUnavailable(reason))
+        }
+        KeystoreError::Corrupt(reason) => refused(reason),
+        KeystoreError::AlreadyExists => refused("the keystore slot already exists"),
+        KeystoreError::Denied => refused("the keystore denied access"),
+        KeystoreError::Platform(..) => refused("the keystore failed"),
+    }
+}

@@ -187,8 +187,10 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
                 "missing authority vault id",
             )))?,
     };
-    let local_fold =
-        crate::authority::fold_authority_log(&stored_authority_log_entries(store, wtxn)?);
+    let local_fold = crate::authority::fold_own_authority_log(
+        &stored_authority_log_entries(store, wtxn)?,
+        store.privacy_posture,
+    );
     let local_vault_id =
         local_fold
             .vault_id

@@ -23,6 +23,11 @@ doctest = true
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+# World keys (P6b): the OF-570 envelope, and the this-device-only key slot.
+oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
+oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
+# The OS RNG on the rand_core line oneiron-crypto takes (0.10).
+getrandom = { version = "=0.4.3", features = ["sys_rng"] }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }

@@ -44,8 +44,15 @@ impl HostSlipIssuer {
     pub fn binding_key(&self) -> [u8; 32] {
         self.signing.verifying_key().to_bytes()
     }
-    /// The roster row this host's key holds as the vault's root.
-    pub(super) fn root_device(&self) -> DeviceAuthority {
+    /// The roster row this host's key holds as the vault's root. A Hosted root is
+    /// stamped `ROLE_CLOUD`: the host holds it, so it never counts as an owner-held key
+    /// (E2). That is a fact in the log, so every replica's fold sees it.
+    pub(super) fn root_device(&self, posture: crate::HostingPrivacyPosture) -> DeviceAuthority {
+        let cloud = if posture == crate::HostingPrivacyPosture::Hosted {
+            ROLE_CLOUD
+        } else {
+            0
+        };
         DeviceAuthority {
             key: self.public_key(),
             transport_key_binding: self.binding_key(),
@@ -54,7 +61,7 @@ impl HostSlipIssuer {
                 evidence: Vec::new(),
             },
             tier: AuthorityTier::Software,
-            roles: ROLE_OWNER | ROLE_ADMIN,
+            roles: ROLE_OWNER | ROLE_ADMIN | cloud,
         }
     }
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
@@ -210,7 +217,7 @@ impl Vault {
                 0,
                 Vec::new(),
                 AuthorityOp::Genesis {
-                    device: issuer.root_device(),
+                    device: issuer.root_device(self.privacy_posture()),
                     genesis_nonce: random_slip_id(),
                     recovery: GenesisRecoveryStep::acknowledge(&recovery, true)?,
                     tier_floor: AuthorityTier::Software,
@@ -220,7 +227,7 @@ impl Vault {
             )?;
             pending.push(genesis);
             // Only bootstrap on no records, never on a confused/invalid fold.
-            fold = fold_authority_log(&pending);
+            fold = super::fold_engine::fold_own_authority_log(&pending, self.privacy_posture());
         }
         require_host(&fold, issuer)?;
         if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, txn, &cache_key)? {

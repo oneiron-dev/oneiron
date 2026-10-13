@@ -2,9 +2,11 @@
 
 use core::fmt;
 
+use hkdf::Hkdf;
 use ml_kem::array::Array;
 use ml_kem::{DecapsulationKey1024, EncapsulationKey1024, KeyExport};
 use rand_core::TryCryptoRng;
+use sha2::Sha256;
 use zeroize::Zeroizing;
 
 use crate::codec::check_len;
@@ -269,6 +271,22 @@ impl HybridSecretKey {
         }
     }
 
+    /// Rebuilds a key kept as one 32-byte seed (a keystore slot, a recovery kit).
+    /// HKDF-SHA256 with no salt expands the seed under `label`: info `label || "/mlkem-1024"`
+    /// gives the 64-byte ML-KEM seed and `label || "/x25519"` the X25519 secret. Distinct
+    /// labels give unrelated keys from one seed. An all-zero seed is refused.
+    pub fn from_seed(seed: &[u8; 32], label: &[u8]) -> Result<Self> {
+        if seed == &[0u8; 32] {
+            return Err(Error::Primitive("zero seed"));
+        }
+        let mut mlkem_seed = Zeroizing::new([0u8; 64]);
+        let mut x25519 = Zeroizing::new([0u8; 32]);
+        let expanded = expand_seed(seed, label, &mut mlkem_seed, &mut x25519);
+        zeroize::zeroize_stack::<{ crate::envelope::AEAD_KEY_STACK_WIPE }>();
+        expanded?;
+        Ok(Self::from_seeds(&mlkem_seed, &x25519))
+    }
+
     /// The matching public key.
     pub fn public_key(&self) -> &HybridPublicKey {
         &self.public
@@ -281,4 +299,18 @@ impl HybridSecretKey {
     pub(crate) fn x25519(&self) -> &x25519_dalek::StaticSecret {
         &self.x25519
     }
+}
+
+/// Out of line, so the stack wipe in [`HybridSecretKey::from_seed`] covers its frames.
+#[inline(never)]
+fn expand_seed(
+    seed: &[u8; 32],
+    label: &[u8],
+    mlkem_seed: &mut [u8; 64],
+    x25519: &mut [u8; 32],
+) -> Result<()> {
+    let hkdf = Hkdf::<Sha256>::new(None, seed);
+    hkdf.expand_multi_info(&[label, b"/mlkem-1024"], mlkem_seed)
+        .and_then(|()| hkdf.expand_multi_info(&[label, b"/x25519"], x25519))
+        .map_err(|_| Error::Primitive("hkdf"))
 }

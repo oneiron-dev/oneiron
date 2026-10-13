@@ -244,6 +244,8 @@ pub enum ErrorKind {
     InvalidSecretLeaseBody,
     InvalidSecretRotationBody,
     TaintedArtifactStale,
+    WorldKeyRefused,
+    KeystoreUnavailable,
     MicroVmBackendUnavailable,
     MicroVmBackendError,
     MicroVmOverlayError,

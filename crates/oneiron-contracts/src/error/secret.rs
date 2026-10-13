@@ -132,6 +132,15 @@ pub enum SecretError {
         "artifact `{artifact}` is secret-tainted by a rotated or revoked record; publish refused (set secret.taint.allow_stale_publish to override)"
     )]
     TaintedArtifactStale { artifact: String },
+    /// A world key, one of its wraps, or the recovery root was refused: a wrong
+    /// world, generation, owner, policy, recipient or suite, or a key this machine
+    /// may not hold. The reason is a fixed name, never key or envelope bytes.
+    #[error("world key refused: {0}")]
+    WorldKeyRefused(&'static str),
+    /// This install has no this-device-only keystore, so it can hold no machine
+    /// secret and open no world key.
+    #[error("no this-device-only keystore: {0}")]
+    KeystoreUnavailable(&'static str),
 }
 
 impl SecretError {
@@ -158,6 +167,8 @@ impl SecretError {
             Self::InvalidSecretRotationBody(_) => ErrorKind::InvalidSecretRotationBody,
             Self::TaintedArtifactStale { .. } => ErrorKind::TaintedArtifactStale,
             Self::InvalidSecretLeaseBody(_) => ErrorKind::InvalidSecretLeaseBody,
+            Self::WorldKeyRefused(_) => ErrorKind::WorldKeyRefused,
+            Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
         }
     }
 }

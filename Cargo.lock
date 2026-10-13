@@ -7834,6 +7834,7 @@ dependencies = [
  "flate2",
  "futures-core",
  "futures-util",
+ "getrandom 0.4.3",
  "gix",
  "half",
  "heed",
@@ -7851,8 +7852,10 @@ dependencies = [
  "oneiron-authority",
  "oneiron-code-check",
  "oneiron-contracts",
+ "oneiron-crypto",
  "oneiron-docedit",
  "oneiron-guest",
+ "oneiron-keystore",
  "oneiron-model",
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
@@ -8118,6 +8121,16 @@ dependencies = [
  "base64 0.22.1",
  "oneiron",
  "serde_json",
+]
+
+[[package]]
+name = "oneiron-keystore"
+version = "0.1.0"
+dependencies = [
+ "security-framework",
+ "tempfile",
+ "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]

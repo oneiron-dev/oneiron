@@ -160,6 +160,28 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
     )
 }
 
+/// [`fold_authority_log`] under this vault's hosting posture: the fold a door of the
+/// vault's own log uses when it has no seen-times. A Hosted root is cloud-stamped, and
+/// the self-host arm would refuse that genesis.
+pub(crate) fn fold_own_authority_log(
+    entries: &[AuthorityLogEntry],
+    posture: crate::HostingPrivacyPosture,
+) -> AuthorityFold {
+    let consent = if posture == crate::HostingPrivacyPosture::Hosted {
+        folded_host_device_can_consent
+    } else {
+        folded_device_can_authority_consent
+    };
+    fold_authority_log_inner(
+        entries,
+        &BTreeMap::new(),
+        None,
+        &BTreeMap::new(),
+        consent,
+        FoldLocalInputs::VAULT_DOOR,
+    )
+}
+
 /// Folds under the vault's explicit hosting posture. Relay and self-host retain
 /// owner-device consent; only managed hosts may treat a cloud key as root.
 pub fn fold_authority_log_for_posture(

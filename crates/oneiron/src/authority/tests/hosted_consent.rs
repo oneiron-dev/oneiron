@@ -336,3 +336,53 @@ fn pairing_mints_a_logged_slip_not_a_client_authority_key_in_every_posture() {
         assert!(!fold.roster.contains_key(&AuthorityKey::Ed25519(public)));
     }
 }
+
+/// Done means (E2, the Engine's posture-fold ruling of 2026-10-14): a Hosted root is
+/// the host's own key, so its roster row is stamped cloud and never counts as an
+/// owner-held key. The vault still admits its own replicated rows, because the
+/// validator folds under the vault's posture rather than the self-host arm.
+#[test]
+fn a_hosted_root_is_cloud_stamped_and_its_own_rows_still_validate() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = crate::VaultConfig::default();
+    config.privacy = crate::config::VaultPrivacyConfig {
+        posture: crate::HostingPrivacyPosture::Hosted,
+        data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
+            key_ref: "hosted-root-stamp".into(),
+        },
+    };
+    let vault = crate::Vault::open(dir.path(), config).unwrap();
+    let host = HostSlipIssuer::from_secret(b"hosted-root-for-the-p6b-stamp").unwrap();
+    vault.ensure_host_root_slip(&host).unwrap();
+    let fold = vault.authority_fold().unwrap();
+    let root = &fold.roster[&host.public_key()];
+    assert_ne!(root.roles & ROLE_CLOUD, 0);
+    assert!(!folded_device_can_authority_consent(root));
+
+    let replicated = host
+        .sign_entry(
+            fold.vault_id,
+            99,
+            fold.append_heads.iter().copied().collect(),
+            AuthorityOp::SlipRevoke { slip_id: [7; 32] },
+            1,
+        )
+        .unwrap();
+    let body = encode_authority_log_entry_body(&replicated).unwrap();
+    let id = authority_log_entity_id(&replicated).unwrap();
+    let mut wtxn = vault.store.env.write_txn().unwrap();
+    crate::batch::validate_replicated_authority_log_for_local_vault(
+        &vault.store,
+        &mut wtxn,
+        &id,
+        &body,
+    )
+    .unwrap();
+
+    // A self-host vault keeps an unstamped root.
+    let dir = tempfile::tempdir().unwrap();
+    let local = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    local.ensure_host_root_slip(&host).unwrap();
+    let fold = local.authority_fold().unwrap();
+    assert_eq!(fold.roster[&host.public_key()].roles & ROLE_CLOUD, 0);
+}
