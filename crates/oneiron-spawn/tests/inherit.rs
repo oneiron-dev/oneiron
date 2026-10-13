@@ -2,16 +2,18 @@
 //! open across exec gets none of it. That is the moment std leaves on macOS,
 //! where it makes a pair with plain socketpair and marks each end
 //! close-on-exec in a second call; a subprocess another thread starts in that
-//! moment would keep the receiving end of a call's socket.
+//! moment would keep the receiving end of a call's socket. The far end is
+//! also copied above the soft descriptor limit, opened before the limit
+//! dropped, where a bound read from the limit would miss it.
 #![cfg(unix)]
 
 use std::io::Write as _;
-use std::os::fd::{FromRawFd as _, OwnedFd};
+use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::process::Stdio;
 
-/// What the runner reads its task from. Unset, the runner is a no-op, as it
-/// is in a normal test run.
+/// The descriptor numbers the runner checks. Unset, the runner is a no-op, as
+/// it is in a normal test run.
 const RUNNER: &str = "ONEIRON_SPAWN_RUNNER";
 const SENTINEL: &str = "sentinel-frame-0000";
 
@@ -24,18 +26,26 @@ fn a_subprocess_started_while_a_new_socket_pair_is_open_across_exec_gets_none_of
     assert_eq!(made, 0, "socketpair: {}", std::io::Error::last_os_error());
     // SAFETY: socketpair has just opened both, and nothing else owns them.
     let (ours, theirs) = unsafe { (OwnedFd::from_raw_fd(pair[0]), OwnedFd::from_raw_fd(pair[1])) };
+    let high = copy_above_the_limit(&theirs);
+    let numbers = format!(
+        "{} {} {}",
+        ours.as_raw_fd(),
+        theirs.as_raw_fd(),
+        high.as_raw_fd()
+    );
     // An unrelated subprocess starts in that moment.
     let runner = oneiron_spawn::command(std::env::current_exe().expect("test binary"))
         .args(["--exact", "runner", "--nocapture"])
-        .env(RUNNER, "1")
+        .env(RUNNER, &numbers)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("runner");
-    // The pair then carries a call: this process lets its copy of the far end
-    // go and writes the frame on its own.
+    // The pair then carries a call: this process lets its copies of the far
+    // end go and writes the frame on its own.
     drop(theirs);
+    drop(high);
     let mut ours = UnixStream::from(ours);
     // Refused once nothing holds the far end.
     let _ = ours.write_all(SENTINEL.as_bytes());
@@ -43,8 +53,8 @@ fn a_subprocess_started_while_a_new_socket_pair_is_open_across_exec_gets_none_of
     let report = String::from_utf8_lossy(&ran.stdout);
     assert!(ran.status.success(), "the runner failed: {report}");
     assert!(
-        report.lines().any(|line| line == "SOCKETS 0"),
-        "the subprocess holds a socket: {report}"
+        report.lines().any(|line| line == "HELD 0"),
+        "the subprocess holds a socket at {numbers}: {report}"
     );
     assert!(
         !report.contains(SENTINEL),
@@ -52,16 +62,51 @@ fn a_subprocess_started_while_a_new_socket_pair_is_open_across_exec_gets_none_of
     );
 }
 
-/// The subprocess: says how many sockets it holds beside the standard three,
-/// and what it reads from each within 3 s.
+/// A copy of `fd` above 1024, after which the soft limit drops below it.
+fn copy_above_the_limit(fd: &OwnedFd) -> OwnedFd {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit writes the struct on the stack.
+    assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) }, 0);
+    let original = limit.rlim_cur;
+    let raised = libc::rlimit {
+        rlim_cur: limit.rlim_max.min(70_001),
+        rlim_max: limit.rlim_max,
+    };
+    // SAFETY: setrlimit reads the struct; a soft limit up to the hard one
+    // needs no privilege, and a refusal leaves the old one.
+    unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) };
+    // SAFETY: as above.
+    assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) }, 0);
+    let high = RawFd::try_from(limit.rlim_cur - 1).expect("a descriptor number");
+    assert!(high > 1024, "no room above 1024 under this host's descriptor limit");
+    // SAFETY: dup2 copies an open descriptor to a number below the soft limit
+    // that nothing here uses; the copy has no close-on-exec flag.
+    assert_eq!(unsafe { libc::dup2(fd.as_raw_fd(), high) }, high);
+    let lowered = libc::rlimit {
+        rlim_cur: original.min(1024),
+        rlim_max: limit.rlim_max,
+    };
+    // SAFETY: setrlimit reads the struct; lowering the soft limit leaves
+    // descriptors already open above it.
+    assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lowered) }, 0);
+    // SAFETY: dup2 has just opened it, and nothing else owns it.
+    unsafe { OwnedFd::from_raw_fd(high) }
+}
+
+/// The subprocess: says how many of the numbers it was given are sockets it
+/// holds, and what it reads from each within 3 s.
 #[test]
 fn runner() {
-    if std::env::var_os(RUNNER).is_none() {
+    let Some(numbers) = std::env::var_os(RUNNER) else {
         return;
-    }
-    let mut sockets = 0;
+    };
+    let mut held = 0;
     let mut read = Vec::new();
-    for fd in 3..1024 {
+    for fd in numbers.to_string_lossy().split_whitespace() {
+        let fd: RawFd = fd.parse().expect("a descriptor number");
         let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
         // SAFETY: fstat writes a stat struct on the stack; a descriptor number
         // that is not open fails with EBADF.
@@ -73,7 +118,7 @@ fn runner() {
         if stat.st_mode & libc::S_IFMT != libc::S_IFSOCK {
             continue;
         }
-        sockets += 1;
+        held += 1;
         let mut ready = libc::pollfd {
             fd,
             events: libc::POLLIN,
@@ -89,6 +134,6 @@ fn runner() {
             }
         }
     }
-    println!("\nSOCKETS {sockets}");
+    println!("\nHELD {held}");
     println!("READ {}", String::from_utf8_lossy(&read));
 }

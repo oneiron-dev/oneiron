@@ -13,7 +13,6 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use oneiron::{
@@ -152,7 +151,7 @@ impl SegmentTranscriber for ExternalTranscriber {
 }
 
 fn run_tool(program: &Path, audio: &Path) -> Result<String> {
-    let output = Command::new(program).arg(audio).output()?;
+    let output = oneiron_spawn::command(program).arg(audio).output()?;
     if !output.status.success() {
         return Err(AsrError::Tool {
             status: output.status.code(),

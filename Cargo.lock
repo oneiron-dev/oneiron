@@ -8219,6 +8219,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation",
  "oneiron",
+ "oneiron-spawn",
  "rmpv",
  "serde",
  "serde_json",

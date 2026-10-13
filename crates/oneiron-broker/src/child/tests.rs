@@ -2,7 +2,7 @@
 //! #1416): the daemon replaces it, or refuses, before a call's permit starts.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::ChildBroker;
 
@@ -28,19 +28,40 @@ fn a_child_that_let_its_channel_go_is_replaced_or_refused() {
     let child = ChildBroker::new(before, &[], Duration::from_secs(20));
     assert!(child.ensure().is_err(), "a child with no channel was ready");
 
-    // Gone a second after it served: the next check starts a new child.
+    // Gone after it served, when the test says: the next check starts a new
+    // child. Only the first child closes; the one that replaces it keeps its
+    // channel.
+    let first = dir.path().join("first");
+    let go = dir.path().join("go");
+    let closed = dir.path().join("closed");
     let starts = dir.path().join("starts");
     let after = fake(
         dir.path(),
         "after",
         &format!(
-            "echo start >> '{}'\necho listening\n/bin/sleep 1\nexec 3>&-\nexec /bin/cat >/dev/null\n",
-            starts.display()
+            "echo start >> '{starts}'\n\
+             echo listening\n\
+             if /bin/mkdir '{first}' 2>/dev/null; then\n\
+             i=0\n\
+             while [ ! -e '{go}' ] && [ $i -lt 400 ]; do /bin/sleep 0.05; i=$((i+1)); done\n\
+             exec 3>&-\n\
+             : > '{closed}'\n\
+             fi\n\
+             exec /bin/cat >/dev/null\n",
+            starts = starts.display(),
+            first = first.display(),
+            go = go.display(),
+            closed = closed.display(),
         ),
     );
     let child = ChildBroker::new(after, &[], Duration::from_secs(20));
     child.ensure().expect("the first child");
-    std::thread::sleep(Duration::from_secs(2));
+    std::fs::write(&go, b"").expect("go");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !closed.exists() {
+        assert!(Instant::now() < deadline, "the first child never let its channel go");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     child.ensure().expect("a new child");
     let count = std::fs::read_to_string(&starts).expect("starts").lines().count();
     assert_eq!(count, 2, "the child that let its channel go was kept");
