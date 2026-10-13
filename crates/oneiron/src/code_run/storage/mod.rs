@@ -13,3 +13,5 @@ pub(super) use self::speech_identity::canonical_speech_conversation_id;
 pub(in crate::code_run) use self::speech_identity::derived_executor_id;
 #[cfg(test)]
 pub(crate) use self::speech_identity::executor_speech_message_id;
+#[cfg(test)]
+pub(super) use self::speech_identity::executor_speech_turn_id;

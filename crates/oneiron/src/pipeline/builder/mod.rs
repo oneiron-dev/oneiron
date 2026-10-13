@@ -302,6 +302,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode: TemporalAnchorMode::Auto,
             adaptive: self.temporal_adaptive_default,
             limit,
+            widened: None,
             query_occurred_range: None,
             effort_anchor: false,
         });
@@ -326,6 +327,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode,
             adaptive: self.temporal_adaptive_default,
             limit,
+            widened: None,
             query_occurred_range: None,
             effort_anchor: false,
         });
@@ -350,6 +352,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode,
             adaptive: self.temporal_adaptive_default,
             limit,
+            widened: None,
             query_occurred_range: None,
             effort_anchor: false,
         });
@@ -376,6 +379,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode: TemporalAnchorMode::Both,
             adaptive: self.temporal_adaptive_default,
             limit,
+            widened: None,
             query_occurred_range: None,
             effort_anchor: false,
         });

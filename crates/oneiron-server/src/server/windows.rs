@@ -140,6 +140,19 @@ pub(super) fn attach_local_read_tee(
     tee
 }
 
+/// Whether raw `update` bytes of a window stay on this server: its world is
+/// flagged device-only, the window now carries such a world's claim, the
+/// bytes' own operations insert one, or the bytes cannot be read in full.
+/// Read against the flag as it stands now.
+pub(crate) fn withheld_from_peers(
+    manager: &Arc<WindowManager>,
+    window_key: &str,
+    update: &[u8],
+) -> bool {
+    oneiron::sync::window::raw_update_verdict(manager, window_key, update)
+        != oneiron::sync::window::UpdateVerdict::Portable
+}
+
 /// Bridges the engine's Observer-A local-update path into `broadcast_tx`.
 ///
 /// Until now only *relayed* writes produced a change notice: a client's update
@@ -187,9 +200,17 @@ pub(super) fn spawn_local_change_producer(
     reassert_manager.outbound().attach(updates_tx);
 
     let broadcast_tx = broadcast_tx.clone();
+    // Weak: the manager's outbound sink holds this channel's sender, so a
+    // strong handle here would keep the manager, and its vault, alive forever.
+    let manager = Arc::downgrade(reassert_manager);
     runtime.spawn(async move {
         while let Some(update) = updates_rx.recv().await {
             let window_key = update.window_key;
+            if manager.upgrade().is_none_or(|manager| {
+                withheld_from_peers(&manager, &window_key, &update.update_bytes)
+            }) {
+                continue;
+            }
             match crate::protocol::encode_window_sync(
                 &window_key,
                 crate::protocol::window_sub_tags::UPDATE,
