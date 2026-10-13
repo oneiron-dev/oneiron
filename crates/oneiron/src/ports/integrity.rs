@@ -1,7 +1,7 @@
 //! Source-prefix dependency index and deletion invalidation in the caller's transaction.
 use super::SourceSpan;
 use crate::EntityId;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::settings::CarriedWorlds;
 use crate::store::ManifestDbs;
@@ -148,16 +148,33 @@ pub(crate) fn withdraw_from_lost_source_in_txn(
     if !epoch_summary_in(store, txn, summary)? {
         return Ok(());
     }
-    let worlds = carried_or_unknown(store, txn, source);
+    let worlds = carried_now(store, txn, source)?;
+    if stale_in_txn(store, txn, summary)? && !record_withdrawn_in_txn(store, txn, summary, &worlds)?
+    {
+        return Ok(());
+    }
     withdraw_in_txn(store, txn, summary, &worlds)
 }
 /// Where the words of `source` sit, read while its row, stamp and edges still
-/// stand. A source no one can place is unknown, and the write goes on.
-fn carried_or_unknown(store: &Store, txn: &RoTxn<'_>, source: &EntityId) -> CarriedWorlds {
-    crate::settings::carried_worlds_in(store, txn, source).unwrap_or(CarriedWorlds {
-        worlds: std::collections::BTreeSet::new(),
-        unknown: true,
-    })
+/// stand. A source no one can place is unknown, and the write goes on. A
+/// source whose words a deletion already took adds nothing: that deletion
+/// withdrew every summary written from it, for where they sat, so a repeat
+/// (a peer's late tombstone, a purge of an erased shell) changes no record.
+fn carried_now(store: &Store, txn: &RoTxn<'_>, source: &EntityId) -> Result<CarriedWorlds> {
+    let raw = super::EntityStoreRead::port_entity_raw(store, txn, source)?;
+    if raw
+        .as_deref()
+        .is_none_or(|raw| raw.len() <= ENTITY_METADATA_HEADER_LEN)
+        && crate::deletion::row_deletion_marked(store, txn, source, raw.as_deref())?
+    {
+        return Ok(CarriedWorlds::default());
+    }
+    Ok(
+        crate::settings::carried_worlds_in(store, txn, source).unwrap_or(CarriedWorlds {
+            worlds: std::collections::BTreeSet::new(),
+            unknown: true,
+        }),
+    )
 }
 fn epoch_summary_in(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(
@@ -263,7 +280,7 @@ pub(crate) fn invalidate_source_in_txn(
     let worlds = if dependents.is_empty() {
         CarriedWorlds::default()
     } else {
-        carried_or_unknown(store, txn, document)
+        carried_now(store, txn, document)?
     };
     for dependent in dependents {
         if super::EntityStoreRead::port_entity_record(store, txn, &dependent)?

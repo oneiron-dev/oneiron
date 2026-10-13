@@ -100,12 +100,24 @@ pub(crate) fn device_only_withholds(
 /// The worlds whose words the stored row `id` carries: where it sits and, for
 /// an epoch SUMMARY, where each record it was written from sits and what its
 /// own withdrawal recorded. A deletion records them on every epoch summary it
-/// withdraws, before the row, its stamp and its edges go.
+/// withdraws, before the row, its stamp and its edges go. A SUMMARY a
+/// deletion scrubbed to its header no longer says where it sat, yet a summary
+/// minted from it after that still copies its words: they are unknown.
 pub(crate) fn carried_worlds_in(
     store: &Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<CarriedWorlds> {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        && raw.first() == Some(&crate::registry::ENTITY_TYPE_SUMMARY)
+        && raw.len() <= ENTITY_METADATA_HEADER_LEN
+        && crate::deletion::row_deletion_marked(store, txn, id, Some(&raw))?
+    {
+        return Ok(CarriedWorlds {
+            worlds: BTreeSet::new(),
+            unknown: true,
+        });
+    }
     sources_worlds(store, txn, BTreeSet::new(), vec![*id])
 }
 

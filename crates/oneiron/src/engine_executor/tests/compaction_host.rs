@@ -436,6 +436,16 @@ fn a_long_run_compacts_by_itself_and_continues_from_the_summary() {
             .collect::<Vec<_>>(),
         vec![false, false]
     );
+    // The erased summary is a source of the next: its shell no longer says
+    // where it sat, so the summary born from it is withdrawn for an unknown
+    // world, which keeps it home while any world is device-only (Sol round 18).
+    let rtxn = run.vault.store.env.read_txn().expect("txn");
+    assert!(
+        crate::ports::withdrawn_worlds_in(&run.vault.store, &rtxn, &epochs[1].0.summary_id())
+            .expect("record")
+            .is_some_and(|withdrawn| withdrawn.unknown),
+        "a summary minted from an erased summary"
+    );
 }
 
 /// An epoch holds words the host itself fed the run, not only what its calls

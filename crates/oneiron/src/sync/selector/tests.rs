@@ -5343,6 +5343,23 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     vault.delete_entity_with_options(&fact, purge)?;
     vault.delete_entity_with_options(&base_fact, purge)?;
     vault.delete_entity(&inner)?;
+    // A peer that had not seen the purge sends its soft delete late: the
+    // words are gone already, so the summary's record does not change (Sol
+    // round 18).
+    let late = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 5,
+        request_id: [7; 16],
+    };
+    vault.apply_replayed_tombstone(&base_fact, &late.encode())?;
+    // `inner`'s shell no longer says where it sat; a summary minted from it
+    // now would copy its words (Sol round 18).
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        crate::settings::carried_worlds_in(&vault.store, &rtxn, &inner)?.unknown,
+        "a deleted summary's shell is unknown to a mint"
+    );
+    drop(rtxn);
 
     let ships = |portable: bool| -> crate::Result<()> {
         let window = |key: &WindowKey, doc: &LoroDoc| -> crate::Result<bool> {
@@ -5633,10 +5650,10 @@ fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate:
 }
 
 /// Astra #1384d F2: removing an epoch summary's `DerivedFrom` edge withdraws
-/// it as deleting the source would, at the batch door and at the sync
-/// bridge's edge-map removal alike. W's CLAIM stays live in W while the
-/// summary's body keeps its words: the summary is stale, its record holds W,
-/// and with W flagged no door ships it.
+/// it as deleting the source would, at the batch door, at the sync bridge's
+/// edge-map removal and in a purge's edge sweep alike. W's CLAIM stays live
+/// in W while the summary's body keeps its words: the summary is stale, its
+/// record holds W, and with W flagged no door ships it.
 #[test]
 fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
     let member = entity_id(0x32);
@@ -5650,6 +5667,64 @@ fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
         packed_window(&vault, &october)?,
         packed_window(&vault, &november)?,
     );
+    // A purge's lexical-hint cascade deletes a hint CLAIM with no
+    // invalidation of its own; the sweep of its edges withdraws a summary
+    // written from it.
+    let (person, hinted, claim) = (entity_id(0x59), entity_id(0x71), entity_id(0x72));
+    let before = vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            crate::write_envelope::ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(person),
+                Value::from("sencha"),
+                0.9,
+            ),
+            &crate::write_envelope::WriteEnvelope::new(
+                crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human),
+                crate::claim::ClaimSource::UserStated,
+                crate::write_envelope::WriteProvenance::new(Value::from("fixture"))?,
+                ClaimApprovalStatus::Approved,
+            ),
+            TimeRange { start: 10, end: 10 },
+            11,
+            &["hintedwords"],
+        )
+        .commit()?;
+    let hint = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        .into_iter()
+        .find(|id| *id != claim && !before.contains(id))
+        .expect("the hint CLAIM");
+    let (during, learned) = {
+        let at = WindowKey::new("2026-12").start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    vault
+        .batch()
+        .put(
+            &hinted,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            during,
+            learned,
+            &epoch_summary_bytes(9, "sencha")?,
+        )
+        .edge(&hinted, EdgeKind::DerivedFrom, &hint, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, hinted)
+    })?;
+    vault
+        .delete_entity_with_options(&claim, crate::deletion::DeleteEntityOptions { purge: true })?;
+    assert!(vault.get_raw(&hint)?.is_none(), "the cascade took the hint");
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        crate::ports::stale_in_txn(&vault.store, &rtxn, &hinted)?,
+        "the purge's edge sweep: the summary is withdrawn"
+    );
+    drop(rtxn);
     vault
         .batch()
         .delete_edge(&batched, EdgeKind::DerivedFrom, &fact)
