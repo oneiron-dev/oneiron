@@ -58,6 +58,15 @@ fn short_refs_in(vault: &oneiron::Vault, body: &[u8]) -> Option<Vec<EntityId>> {
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
         return Some(Vec::new());
     };
+    short_refs_named(vault, &value)
+}
+
+/// The rows `value` names by short ref, keys included; `None` when one names
+/// no row.
+pub(crate) fn short_refs_named(
+    vault: &oneiron::Vault,
+    value: &serde_json::Value,
+) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
     let mut name = |text: &str| {
         let reference = text
@@ -69,7 +78,7 @@ fn short_refs_in(vault: &oneiron::Vault, body: &[u8]) -> Option<Vec<EntityId>> {
         rows.push(oneiron::memory::resolve_entity_ref(vault, reference).ok()?);
         Some(())
     };
-    let mut pending = vec![&value];
+    let mut pending = vec![value];
     while let Some(value) = pending.pop() {
         match value {
             serde_json::Value::String(text) => name(text)?,

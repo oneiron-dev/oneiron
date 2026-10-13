@@ -26,6 +26,10 @@ pub(crate) struct McpCodeModeVerbs {
     server: Arc<SyncServer>,
     actor: McpCallContext,
     runtime: tokio::runtime::Handle,
+    /// The rows this run's verb calls served (DEC-0005): those each call
+    /// listed, and those its output names by short ref. `None` once an output
+    /// named a short ref that resolves to no row.
+    served: std::sync::Mutex<Option<Vec<oneiron::EntityId>>>,
 }
 
 impl McpCodeModeVerbs {
@@ -35,7 +39,17 @@ impl McpCodeModeVerbs {
             server: Arc::clone(server),
             actor: actor.clone(),
             runtime: tokio::runtime::Handle::current(),
+            served: std::sync::Mutex::new(Some(Vec::new())),
         }
+    }
+
+    /// The rows this run's verb calls served, or `None` when one of them
+    /// could not name every row its output carries.
+    pub(crate) fn served(&self) -> Option<Vec<oneiron::EntityId>> {
+        self.served
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -56,14 +70,25 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.runtime.spawn(async move {
             let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input, origin).await);
         });
-        receiver
+        let (output, listed) = receiver
             .recv()
             .map_err(|_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
             })?
             .map_err(|error| AgentVerbRefusal {
                 code: error.kind.to_owned(),
-            })
+            })?;
+        let named = crate::device_local::short_refs_named(&self.server.vault, &output);
+        let mut served = self
+            .served
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *served = served.take().zip(named).map(|(mut rows, named)| {
+            rows.extend(listed);
+            rows.extend(named);
+            rows
+        });
+        Ok(output)
     }
 
     /// A call the run serves itself meets this connector's door at each call
@@ -104,7 +129,7 @@ async fn execute_code_mode_verb(
     verb: &str,
     input: Value,
     origin: HostWriteOrigin,
-) -> Result<Value, McpGatewayError> {
+) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
     let Some(McpEndpointTool::Verb(tool)) =
         registered_surface(McpSurfaceMode::ToolFirst).resolve(verb)
     else {
@@ -121,14 +146,9 @@ async fn execute_code_mode_verb(
     mcp_admit_scoped_verb(server, tool, &arguments, actor)?;
     mcp_verb_gate(server, tool, &arguments, actor)?;
     // A run's call is answered once and never continued.
-    let (output, ..) = execute_agent_verb_input(
-        server,
-        tool.name,
-        input,
-        actor,
-        Some(origin),
-        &mut Vec::new(),
-    )
-    .await?;
-    Ok(output)
+    let mut served = Vec::new();
+    let (output, ..) =
+        execute_agent_verb_input(server, tool.name, input, actor, Some(origin), &mut served)
+            .await?;
+    Ok((output, served))
 }

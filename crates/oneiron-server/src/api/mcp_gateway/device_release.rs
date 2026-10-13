@@ -69,11 +69,7 @@ pub(super) fn mcp_release_result(
         if continued {
             mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
         } else {
-            McpGatewayError::new(
-                -32603,
-                "mcp_result_changed",
-                "the result changed before it was released; call again",
-            )
+            mcp_result_changed()
         }
     };
     let bytes = serde_json::to_vec(&result).map_err(|_| refused())?;
@@ -83,6 +79,31 @@ pub(super) fn mcp_release_result(
         return Err(refused());
     }
     Ok(result)
+}
+
+/// [`mcp_release_result`] for a code run's result: judged by `rows`, the rows
+/// its verb calls served. Off this device a run one of whose calls could not
+/// name every row its output carries (`None`) is refused.
+pub(super) fn mcp_release_run_result(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    rows: Option<&[oneiron::EntityId]>,
+    result: Value,
+) -> Result<Value, McpGatewayError> {
+    match rows {
+        Some(rows) => mcp_release_result(server, actor, rows, false, result),
+        None if actor.locality() == oneiron::claim::CallerLocality::OnDevice => Ok(result),
+        None => Err(mcp_result_changed()),
+    }
+}
+
+/// A fresh result refused at release: the caller calls again.
+fn mcp_result_changed() -> McpGatewayError {
+    McpGatewayError::new(
+        -32603,
+        "mcp_result_changed",
+        "the result changed before it was released; call again",
+    )
 }
 
 /// A device-only flag committed while a call waits, after its checks ran

@@ -31,6 +31,7 @@ pub(crate) async fn execute_mcp_execute_code(
         .code_execution_host()
         .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
     let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
+    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(server, actor));
     let outcome = host
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
@@ -38,7 +39,7 @@ pub(crate) async fn execute_mcp_execute_code(
             run_ref: &args.run_ref,
             task: &args.task,
             run_id,
-            verbs: Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(server, actor)),
+            verbs: Arc::clone(&verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
         })
         .await;
     // Revocation takes effect at once: a credential that died while its run
@@ -115,7 +116,9 @@ pub(crate) async fn execute_mcp_execute_code(
     // Checked after the result's last wait, so no wait parks the run's
     // results past their credential's death.
     super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
-    Ok(result)
+    #[cfg(test)]
+    super::device_release::release_hook::run(server);
+    super::device_release::mcp_release_run_result(server, actor, verbs.served().as_deref(), result)
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
