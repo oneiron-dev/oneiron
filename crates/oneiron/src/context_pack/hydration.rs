@@ -216,10 +216,15 @@ pub(super) fn hydrate_entity(
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
             // A NOTE's live prose is in its document, which its row pin does
-            // not hold: words a reranker scored are the pinned row's.
+            // not hold: words a reranker scored are the pinned row's. A row
+            // the write door refuses hydrates no field, as below.
             None if options.words_pinned => {
-                decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..], header.entity_type)
-                    .unwrap_or_default()
+                let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+                if crate::batch::export::write_door_refuses_body(body) {
+                    HashMap::new()
+                } else {
+                    decode_entity_fields(body, header.entity_type).unwrap_or_default()
+                }
             }
             None => {
                 let body = crate::note::live_body_in_txn(

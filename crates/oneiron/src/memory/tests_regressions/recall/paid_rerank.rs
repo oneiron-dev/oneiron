@@ -249,6 +249,99 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
     assert!(rendered.contains(scored), "{rendered}");
 }
 
+/// A row the write door refuses, stored while the owner's secret scan was
+/// off, is withheld whole from context packs (#1403). A reranked pack
+/// hydrates its rows from the pinned bytes whose words were scored; that
+/// read skipped the write door's judgment, so the refused row rendered its
+/// fields.
+#[test]
+fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("the owner");
+    vault
+        .set_secret_scan_mode(&proof, crate::batch::secret_scan::SecretScanMode::Off, 10)
+        .expect("the scan off");
+    // The public BIP39 test vector, a word per field and whole under a
+    // credential name.
+    let phrase = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    let mut refused: Vec<(rmpv::Value, rmpv::Value)> = phrase
+        .split(' ')
+        .enumerate()
+        .map(|(at, word)| (format!("PROSE{:02}", at + 1).into(), word.into()))
+        .collect();
+    refused.push(("password".into(), phrase.into()));
+    let kept = vec![("title".into(), "a brass lantern hook".into())];
+    let (withheld, shown) = (crate::test_util::entity(0x51), crate::test_util::entity(0x52));
+    for (asset, fields) in [(withheld, refused), (shown, kept)] {
+        let mut body = Vec::new();
+        rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields)).unwrap();
+        vault
+            .batch()
+            .put(
+                &asset,
+                crate::registry::ENTITY_TYPE_ASSET,
+                crate::temporal::TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .text(&asset, &[("body", "lantern")])
+            .commit()
+            .expect("store the asset");
+    }
+    let facade = facade_for(&vault, owner);
+    let host = ScriptedReranker {
+        lease: crate::BudgetGuard::new(
+            "paid-rerank-test",
+            100_000,
+            crate::BudgetExhaustionPolicy::Suspend,
+        )
+        .admit()
+        .expect("a lease")
+        .lease,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::default(),
+        score: &|_: usize, _: &str| 1.0,
+        during: &|_: usize| {},
+    };
+    let pack = crate::task_verb::sdk::recall_at_door(
+        &facade,
+        crate::task_verb::sdk::RecallRequest {
+            query: "lantern".to_owned(),
+            effort: Some(crate::memory::RecallEffort::High),
+            scope: None,
+            limit: Some(10),
+            format: Some("json".to_owned()),
+            as_of: None,
+            deadline_ms: None,
+        },
+        |_| None,
+        &crate::task_verb::sdk::RecallDoor {
+            arrived: std::time::Instant::now(),
+            on_cut: None,
+            rerank: crate::memory::RecallRerank::Host(&host),
+        },
+    )
+    .expect("recall");
+    let seen = host.seen.lock().unwrap();
+    assert!(seen.contains(&withheld) && seen.contains(&shown), "{seen:?}");
+    assert!(matches!(
+        pack.retrieval_meta.rerank,
+        Some(crate::memory::RerankReport::Applied { .. })
+    ));
+    let rendered = pack.rendered.as_deref().expect("a json pack");
+    assert!(rendered.contains("a brass lantern hook"), "{rendered}");
+    assert!(!rendered.contains("sausage"), "{rendered}");
+    assert!(!rendered.contains("PROSE"), "{rendered}");
+}
+
 /// Done-means (the Engine lane's ruling on Sol round 6, R6-1): a streamed
 /// MESSAGE holds its words in its entity document, which no row revision
 /// pins, so no score can be bound to them. It is found but not reranked: the
