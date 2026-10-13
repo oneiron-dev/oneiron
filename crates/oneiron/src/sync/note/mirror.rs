@@ -204,6 +204,20 @@ pub(crate) fn dropped_in(
     Ok(dropped)
 }
 
+/// [`copy_selected`] for a door with no snapshot of its own: the NOTEs in
+/// `out` are judged in a read transaction of their own.
+pub(crate) fn copy_judged(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Result<()> {
+    let ids = rows(out, "entities")?
+        .iter()
+        .map(|(key, _)| id(key))
+        .collect::<Result<BTreeSet<_>>>()?;
+    let txn = vault.store.env.read_txn()?;
+    let flagged = crate::settings::device_only_worlds_in(&vault.store, &txn)?;
+    let dropped = dropped_in(vault, &txn, &flagged, source, &ids)?;
+    drop(txn);
+    copy_selected(source, out, &dropped)
+}
+
 /// Copy only complete workflows whose NOTE owners already passed selection:
 /// every NOTE in `out` but those the export judged `dropped`, so nothing is
 /// withheld after the export's own snapshot. A partial bundle is an error,

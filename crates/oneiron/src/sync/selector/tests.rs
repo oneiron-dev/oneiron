@@ -5391,12 +5391,13 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     Ok(())
 }
 
-/// Sol round 17 on #1384: a NOTE the export drops is judged in the
-/// selection's own snapshot, before the epoch pass, so a summary written from
-/// it never leaves without it. Promotion authority keeps a NOTE of a
-/// device-only world out of its view, and the summary of it with it; before,
-/// the NOTE went only after the pass had let the summary through, and an
-/// export racing a flag change did the same.
+/// Sol round 17 on #1384, and the Engine ruling after it. A NOTE an export
+/// drops is judged in the selection's own snapshot, before the epoch pass, so
+/// a summary written from it never leaves without it, even when a flag lands
+/// as the export closes its snapshot. A device-only flag is policy, not
+/// authority: a promotion holding a NOTE of the flagged world stands (this
+/// corrects #1402's authority-mode NOTE drop), while the export withholds the
+/// NOTE and the summary written from it.
 #[test]
 fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()> {
     let member = entity_id(0x3F);
@@ -5437,21 +5438,40 @@ fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()>
     let doc = create_window_doc("source", &key);
     crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let granted = || -> crate::Result<Vec<EntityId>> {
-        let granted = granted_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
+    let promoted = || {
+        crate::sync::residence::promotion_covers_full_window(
+            &vault,
+            &doc,
+            &key,
+            test_selector_scope(),
+            &selector,
+            |_| Ok(true),
+        )
+    };
+    let exported = || -> crate::Result<Vec<EntityId>> {
+        let filtered = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
         Ok(import_ids(
-            &granted.export(ExportMode::all_updates()).unwrap(),
+            &filtered.export(ExportMode::all_updates()).unwrap(),
         ))
     };
-    let portable = granted()?;
-    assert!(portable.contains(&note) && portable.contains(&summary));
-    vault.set_world_device_only(world, true)?;
-    let flagged = granted()?;
-    assert!(!flagged.contains(&note));
+    assert!(promoted()?, "the promotion covers the window");
+    crate::sync::window::test_hooks::arm_device_only_flag_race(world);
+    let raced = exported()?;
     assert!(
-        !flagged.contains(&summary),
+        vault.world_is_device_only(world)?,
+        "the flag landed mid-export"
+    );
+    assert_eq!(
+        raced.contains(&summary),
+        raced.contains(&note),
         "a summary never leaves without its source"
     );
+    assert!(
+        promoted()?,
+        "the promotion stands beside a NOTE of a device-only world"
+    );
+    let flagged = exported()?;
+    assert!(!flagged.contains(&note) && !flagged.contains(&summary));
     Ok(())
 }
 

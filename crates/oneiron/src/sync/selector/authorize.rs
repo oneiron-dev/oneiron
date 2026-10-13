@@ -654,8 +654,15 @@ pub(super) fn filter_window_doc(
         }
     }
     // A NOTE this export drops is judged in its snapshot too (Sol round 17
-    // on #1384), so nothing is withheld after the epoch pass.
-    let flagged = crate::settings::device_only_worlds_in(&vault.store, &rtxn)?;
+    // on #1384), so nothing is withheld after the epoch pass. A device-only
+    // flag is policy, not authority: promotion authority keeps a NOTE the
+    // flag holds here, as it keeps every other row (this corrects #1402's
+    // authority-mode NOTE drop).
+    let flagged = if withhold_device_only {
+        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
+    } else {
+        BTreeSet::new()
+    };
     let notes_dropped = crate::sync::note::dropped_in(vault, &rtxn, &flagged, source, &kept)?;
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
@@ -669,6 +676,8 @@ pub(super) fn filter_window_doc(
         .collect::<BTreeSet<_>>();
     let withheld = unbacked_epochs(vault, &rtxn, source, &shipped)?;
     drop(rtxn);
+    #[cfg(any(test, feature = "test-hooks"))]
+    crate::sync::window::test_hooks::run_device_only_flag_race(vault)?;
     kept.retain(|id| !withheld.contains(id));
     shipped.retain(|id| !withheld.contains(id));
 
