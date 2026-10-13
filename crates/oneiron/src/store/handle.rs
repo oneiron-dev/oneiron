@@ -239,6 +239,9 @@ pub struct StoreCore {
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
+    /// Rows the authority doors refused because a key a handoff this vault
+    /// holds retired signed them (OF-166 evidence). Never persisted.
+    pub(crate) authority_handoff_equivocations: crate::authority::HandoffEquivocations,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,

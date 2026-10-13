@@ -12,9 +12,9 @@ use super::{
     delete_short_id_rows_for_id, evict_authority_log_store_key_squatter, parse_entity_metadata,
     plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
     stage_entity_body_row, stage_entity_index_rows, stage_optional_side_row,
-    validate_local_agent_definition_create, validate_local_skill_create,
-    validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
-    validate_task_checkin_immutable,
+    validate_immutable_task_record, validate_local_agent_definition_create,
+    validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
+    validate_skill_body_overwrite,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
@@ -253,7 +253,7 @@ pub(in crate::batch) fn apply_put(
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         if replicated {
-            validate_replicated_authority_log_for_local_vault(store, wtxn, &id, data)?;
+            validate_replicated_authority_log_for_local_vault(store, wtxn, &id, data, posture)?;
         } else {
             crate::authority::validate_authority_log_entry_body_bytes(data)?;
         }
@@ -523,7 +523,7 @@ pub(in crate::batch) fn apply_put(
             )));
         }
         if old_type == ENTITY_TYPE_TASK {
-            validate_task_checkin_immutable(
+            validate_immutable_task_record(
                 &old_record,
                 old_occurred,
                 old_learned,

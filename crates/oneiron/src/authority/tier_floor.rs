@@ -30,14 +30,17 @@ pub(super) fn record_tier_floor(
     state.tier_floor = effective_tier_floor(&state.tier_floor_events).unwrap_or(tier);
 }
 
-pub(super) fn reject_below_concurrent_tier_floors(
-    states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
+/// The rows `present` keeps whose signer falls below a floor a concurrent
+/// row among them set, with why.
+pub(super) fn below_concurrent_tier_floors(
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
-    issues: &mut Vec<AuthorityFoldIssue>,
-) {
+    present: &dyn Fn(&AuthorityEntryHash) -> bool,
+) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue> {
     let floors: Vec<_> = states
         .iter()
+        .filter(|(hash, _)| present(hash))
         .filter_map(|(hash, state)| {
             let requested = match entries[hash].op {
                 AuthorityOp::Genesis { tier_floor, .. }
@@ -47,8 +50,9 @@ pub(super) fn reject_below_concurrent_tier_floors(
             (state.tier_floor == requested).then_some((*hash, state.vault_id, requested))
         })
         .collect();
-    let rejected: BTreeSet<_> = states
+    states
         .iter()
+        .filter(|(hash, _)| present(hash))
         .filter_map(|(hash, state)| {
             let signer = state.roster.get(entries[hash].signer_key())?;
             floors
@@ -61,21 +65,7 @@ pub(super) fn reject_below_concurrent_tier_floors(
                 && !state.tier_floor_events.values().any(|(_, seen)| seen.contains(floor_hash))
                 && !tier_meets_floor(signer.tier, *floor)
                 })
-                .then_some(*hash)
+                .then_some((*hash, AuthorityFoldIssue::SignerBelowTierFloor(*hash)))
         })
-        .collect();
-    states.retain(|hash, _| {
-        if rejected.contains(hash) {
-            issues.push(AuthorityFoldIssue::SignerBelowTierFloor(*hash));
-            false
-        } else if ancestors
-            .get(hash)
-            .is_some_and(|past| !past.is_disjoint(&rejected))
-        {
-            issues.push(AuthorityFoldIssue::InvalidAncestry(*hash));
-            false
-        } else {
-            true
-        }
-    });
+        .collect()
 }
