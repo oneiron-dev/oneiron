@@ -38271,6 +38271,7 @@
      "notable": [
       "ProjectAnchor",
       "ProjectAuthority",
+      "ProjectProofVersion",
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
@@ -38282,9 +38283,9 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 34,
-      "enum": 1,
-      "fn": 15,
+      "crate-vis": 35,
+      "enum": 2,
+      "fn": 16,
       "re-export": 6,
       "struct": 7
      }
@@ -42381,6 +42382,27 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ChildBroker"
+     ],
+     "path": "src/child.rs",
+     "purpose": "The same-user broker (ARCH-0069 `#broker-same-user-open`)",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/child/tests.rs",
+     "purpose": "A live child that let its channel go is not taken as ready (Astra on #1416): the daemon replaces it, or…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -42401,7 +42423,7 @@
      "path": "src/client.rs",
      "purpose": "The daemon's side of the socket",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -42452,7 +42474,7 @@
       "enum": 1,
       "fn": 1,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -42462,7 +42484,7 @@
      "path": "src/peer.rs",
      "purpose": "Who this process is, and closing its memory to processes of its own uid",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -42487,6 +42509,8 @@
      "path": "src/serve.rs",
      "purpose": "The broker's side of the socket: one call per connection, from the daemon's uid only",
      "surface": {
+      "const": 1,
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -42563,6 +42587,13 @@
      "largest_src_bucket": "s",
      "layout": "file+dir",
      "purpose": "One call's header and its reply's header, and the checks both sides run"
+    },
+    "child": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "The same-user broker (ARCH-0069 `#broker-same-user-open`)"
     },
     "cli": {
      "files": 1,
@@ -42644,8 +42675,8 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 13,
-   "test_files": 4
+   "source_files": 14,
+   "test_files": 5
   },
   "oneiron-code-check": {
    "files": [
@@ -51035,9 +51066,10 @@
      "purpose": "`[models]`: which model serves each role, at three levels of detail",
      "surface": {
       "crate-vis": 2,
+      "enum": 1,
       "fn": 2,
       "re-export": 2,
-      "struct": 7
+      "struct": 6
      }
     },
     {
@@ -52353,7 +52385,7 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -53526,7 +53558,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/managed_mode.rs",
-     "purpose": "Managed serve mode: the engine as a supervised child process (ONE-1595)",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -53779,6 +53811,49 @@
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 328,
    "test_files": 141
+  },
+  "oneiron-spawn": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Starting a subprocess with only the descriptors it is meant to have",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "The walk that stands in where close_range is missing or refused finds a descriptor above the soft limit…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inherit.rs",
+     "purpose": "A subprocess started through the helper while a new socket pair is still open across exec gets none of it",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "The walk that stands in where close_range is missing or refused finds a descriptor above the soft limit…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Starting a subprocess with only the descriptors it is meant to have",
+   "source_files": 1,
+   "test_files": 2
   },
   "oneiron-uniffi": {
    "files": [

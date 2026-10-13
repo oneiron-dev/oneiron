@@ -131,6 +131,10 @@ mod probe {
                     })
                 }
                 "probe.fork" => {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "a hostile organ's own fork, outside the server"
+                    )]
                     // SAFETY: the child only calls pause(2), which is
                     // async-signal-safe, until a signal ends it.
                     let pid = unsafe { libc::fork() };
