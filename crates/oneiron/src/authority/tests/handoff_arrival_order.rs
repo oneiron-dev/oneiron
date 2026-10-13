@@ -301,14 +301,17 @@ fn past_its_bound_the_record_logs_at_powers_of_two_and_counts_drops() {
 #[derive(Clone)]
 struct RecordReader {
     vault: Weak<Vault>,
-    /// Records held and dropped, as read at each warning.
-    seen: Arc<Mutex<Vec<Option<(usize, u64)>>>>,
+    /// What the read at each warning saw.
+    seen: Arc<Mutex<Vec<Option<Counts>>>>,
 }
+
+/// Records held and dropped.
+type Counts = (usize, u64);
 
 impl RecordReader {
     /// What this reader read at the first warning `warn` raises, with `warn`
     /// run afresh, given its try number, until a warning reaches it.
-    fn first_read(&self, mut warn: impl FnMut(u64)) -> Option<(usize, u64)> {
+    fn first_read(&self, mut warn: impl FnMut(u64)) -> Option<Counts> {
         for attempt in 0..3 {
             // Two registered dispatches make a callsite registration consult
             // both (embed/warn_capture.rs), and registering them rebuilds the
