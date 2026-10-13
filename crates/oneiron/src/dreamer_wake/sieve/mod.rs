@@ -40,6 +40,7 @@ mod read;
 mod rules;
 #[cfg(test)]
 mod tests;
+mod words;
 
 use std::cell::Cell;
 use std::ops::Bound;

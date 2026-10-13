@@ -616,23 +616,65 @@ pub struct TemporalPhraseSpan {
 /// with its byte range in `text`, in reading order.
 #[must_use]
 pub fn temporal_phrase_spans(text: &str) -> Vec<TemporalPhraseSpan> {
+    temporal_phrase_steps(text, 0, usize::MAX)
+        .into_iter()
+        .filter_map(|step| {
+            step.phrase.map(|resolved| TemporalPhraseSpan {
+                start: step.start,
+                end: step.end,
+                resolved,
+            })
+        })
+        .collect()
+}
+
+/// One step the phrase reader takes through running text: a temporal
+/// phrase, a count it reads past, or one token it skips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TemporalPhraseStep {
+    /// Byte offset of the step's first character.
+    pub start: usize,
+    /// Byte offset just past its last character.
+    pub end: usize,
+    /// For a phrase, whether the parser resolves it; `None` for a count or
+    /// a token.
+    pub phrase: Option<bool>,
+}
+
+/// The steps [`temporal_phrase_spans`] takes through `text`, from its first
+/// token that starts at or after `from`, each reading only the tokens that
+/// end within `max_bytes` of its own start (one token at least). A step
+/// never runs longer than `max_bytes` unless it is one longer token, and
+/// a reading that starts where a step ends reads on as one from the start
+/// would.
+#[must_use]
+pub fn temporal_phrase_steps(text: &str, from: usize, max_bytes: usize) -> Vec<TemporalPhraseStep> {
     let (tokens, ranges) = temporal_tokens(text);
-    let mut spans = Vec::new();
-    let mut index = 0;
+    let mut steps = Vec::new();
+    let mut index = ranges.partition_point(|&(start, _)| start < from);
+    let mut reach = index;
     while index < tokens.len() {
-        let Some((end, expression)) = hint_at(&tokens, index) else {
-            index =
-                quantity_at(&tokens, index).map_or(index + 1, |(_, after)| after.max(index + 1));
-            continue;
+        let start = ranges[index].0;
+        reach = reach.max(index);
+        while reach < tokens.len() && ranges[reach].1 - start <= max_bytes {
+            reach += 1;
+        }
+        let within = &tokens[..reach.max(index + 1)];
+        let (end, phrase) = match hint_at(within, index) {
+            Some((end, expression)) => (end, Some(expression.is_some())),
+            None => (
+                quantity_at(within, index).map_or(index + 1, |(_, after)| after.max(index + 1)),
+                None,
+            ),
         };
-        spans.push(TemporalPhraseSpan {
-            start: ranges[index].0,
+        steps.push(TemporalPhraseStep {
+            start,
             end: ranges[end - 1].1,
-            resolved: expression.is_some(),
+            phrase,
         });
         index = end;
     }
-    spans
+    steps
 }
 
 fn weekday_index(token: &str) -> Option<u8> {

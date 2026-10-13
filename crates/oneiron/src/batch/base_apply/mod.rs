@@ -405,8 +405,13 @@ pub(super) fn apply_ops_with_origin(
                     crate::dreamer_wake::mark_on_publication_in_txn(store, wtxn, &id)?;
                 } else if born_turn {
                     crate::dreamer_wake::owe_sieve_read_in_txn(store, wtxn, &id)?;
-                } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
-                    // A grant may let the Dreamer read words the sieve left.
+                } else if matches!(
+                    entity_type,
+                    crate::registry::ENTITY_TYPE_ACCESS_GRANT
+                        | crate::registry::ENTITY_TYPE_POLICY_MANIFEST
+                ) {
+                    // A grant, or a policy manifest's read grant, may let the
+                    // Dreamer read words the sieve left.
                     crate::dreamer_wake::sieve_grant_written_in_txn(store, wtxn)?;
                 }
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {

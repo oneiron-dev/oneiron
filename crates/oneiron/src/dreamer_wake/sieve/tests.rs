@@ -684,6 +684,142 @@ fn a_message_taken_out_of_its_turn_is_not_read_on() {
     assert!(flags(&vault, &turn, &text).is_empty());
 }
 
+/// Sol R12 and Wonder R12 (P2): a read that went on past a MESSAGE kept the
+/// spans it read there after the Dreamer lost its grant to read it, and
+/// settled the turn whole. A read goes on only while the turn holds every
+/// chunk it passed and the Dreamer may still read each.
+#[test]
+fn a_grant_revoked_behind_a_read_takes_back_what_the_read_passed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    let space = EntityId::from_bytes([0x5d; 16]).expect("space id");
+    grant_messages_read(&vault, 0x61, space);
+    let (first, second) = (
+        "6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a",
+        "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b",
+    );
+    let long = "x ".repeat(16_400) + "Bob arrives.";
+    let turn = witness_messages(
+        &vault,
+        "6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c",
+        NOW,
+        vec![
+            message(
+                first,
+                "Alice arrives.",
+                0,
+                Some(serde_json::json!({"rel": space.to_hex()})),
+            ),
+            message(second, &long, 1, None),
+        ],
+    );
+    assert!(
+        vault.sieve_pass(NOW).expect("pass").more,
+        "the bound cut it"
+    );
+    vault
+        .revoke_access_grant(&EntityId::from_bytes([0x61; 16]).expect("grant id"), NOW)
+        .expect("revoke");
+    drain(&vault, NOW + 1);
+    let second = EntityId::from_hex(second).expect("message id");
+    let sources: Vec<EntityId> = vault
+        .sieve_queue(usize::MAX)
+        .expect("queue")
+        .into_iter()
+        .filter(|span| span.turn == turn)
+        .map(|span| span.source)
+        .collect();
+    assert_eq!(
+        sources,
+        vec![second],
+        "only Bob, from the message it may read"
+    );
+}
+
+/// Sol R11 and R12 (P2): the owner's grant that gives the Dreamer back its
+/// read writes a policy manifest, not an access grant, so the turns the
+/// sieve withheld waited for a grant that never came. A policy manifest a
+/// write puts moves the sieve's retries on as a grant does.
+#[test]
+fn the_owners_weave_grant_reads_the_turns_the_dreamer_could_not() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    crate::test_util::seeded_without_dreamer_rows(&vault).expect("seed");
+    let text = "We met Alice on 2026-10-12.";
+    let turn = witness(&vault, "6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d", text);
+    let now = NOW + drain(&vault, NOW);
+    assert!(
+        flags(&vault, &turn, text).is_empty(),
+        "the Dreamer may not read it"
+    );
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    assert!(vault.grant_dreamer_weave(&owner, now).expect("weave grant"));
+    drain(&vault, now);
+    assert_eq!(
+        flags(&vault, &turn, text),
+        vec![
+            (SpanKind::Name, "Alice".to_owned(), "rule"),
+            (SpanKind::Date, "2026-10-12".to_owned(), "rule"),
+        ]
+    );
+}
+
+/// Sol R12 and its rulings (P2): a fence whose line opened past a window's
+/// end, a phrase the character before a segment read as a word of its own,
+/// a chain of overlapping dates, and a long run of number words read
+/// differently a segment at a time than in one window. A segment keeps
+/// every span that starts in it, and each rule reads on in the next from
+/// where it stood, so each text below reads span for span as one window
+/// reads it.
+#[test]
+fn a_long_text_reads_a_segment_at_a_time_as_in_one_window() {
+    let rules = super::rules::Rules::new();
+    let fence = " ".repeat(5_000) + "```\nAlice 2026-10-12\n```\nBob arrives.";
+    let phrase = "x".repeat(4_095) + "a few days ago " + &"x ".repeat(300);
+    let texts = [
+        fence.clone(),
+        phrase.clone(),
+        "May 5 June 6 July 7 ".repeat(300),
+        "1/2/3/4 ".repeat(1_000),
+        "2026年10月12日".repeat(400),
+        "one ".repeat(1_025) + "days ago " + &"x ".repeat(300),
+        "last week, next Tuesday and 3 days ago ".repeat(300),
+        "A".repeat(4_090) + "-2026-10-12 " + &"x ".repeat(300),
+        "ア".repeat(1_366) + "、アリス。" + &"x ".repeat(1_000),
+        "Aa ".repeat(1_400) + "x Bob arrives. " + &"x ".repeat(300),
+        "x".repeat(4_095) + "-Alice arrives. " + &"x ".repeat(400),
+        "a_".repeat(2_048) + "2026-10-12 ok. " + &"x ".repeat(400),
+        "`Alice` and Bob ".repeat(1_000),
+        "Alice Smith met Bob on May 5. ".repeat(500),
+    ];
+    for text in &texts {
+        let whole = rules.read_whole(text);
+        assert_eq!(
+            rules.read_segmented(text),
+            whole,
+            "{}",
+            text.chars().take(16).collect::<String>()
+        );
+    }
+    let read = |text: &str| -> Vec<String> {
+        rules
+            .read_segmented(text)
+            .iter()
+            .map(|span| text[span.start..span.end].to_owned())
+            .collect()
+    };
+    assert_eq!(read(&fence), ["Bob"]);
+    assert_eq!(read(&phrase), ["few days ago"]);
+}
+
 /// Sol R10 (P2): every grant written put each withheld turn back in the
 /// owed list, ahead of a new turn with a higher id, so grants written
 /// before each pass kept a new turn from ever being read. A grant moves an

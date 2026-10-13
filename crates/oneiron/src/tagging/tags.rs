@@ -336,26 +336,49 @@ pub(super) fn readable_in_txn(
     Ok(Some(tags))
 }
 
-/// The tags saved for `turn` while they index its words as they read now:
-/// the envelope names the input a tagger would read from the turn today,
-/// with or without its live window. The sieve takes its name spans through
-/// this door; the tag set stays the one copy.
+/// The tags saved for `turn` while they index its words as they read now,
+/// and the bytes of text hashed to tell: the envelope names the input a
+/// tagger would read from the turn today, with or without its live window.
+/// The sieve takes its name spans through this door; the tag set stays the
+/// one copy.
 pub(crate) fn current_tags_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
-) -> Result<Option<TurnTags>> {
+) -> Result<(Option<TurnTags>, usize)> {
     let Some(tags) = readable_in_txn(&vault.store, txn, turn)? else {
-        return Ok(None);
+        return Ok((None, 0));
     };
     let TurnInput::Ready {
-        hash, text_hash, ..
+        input,
+        hash,
+        text_hash,
     } = turn_input_in_txn(vault, txn, turn)?
     else {
-        return Ok(None);
+        return Ok((None, 0));
+    };
+    let text: usize = input
+        .messages
+        .iter()
+        .map(|message| message.text.len())
+        .sum();
+    let window: usize = input
+        .context
+        .iter()
+        .flat_map(|turn| &turn.messages)
+        .map(|message| message.text.len())
+        .sum();
+    // The text is hashed alone, and once more with a live window.
+    let hashed = if input.context.is_empty() {
+        text
+    } else {
+        2 * text + window
     };
     let read = &tags.envelope.content_hash;
-    Ok((*read == hash || *read == text_hash).then_some(tags))
+    Ok((
+        (*read == hash || *read == text_hash).then_some(tags),
+        hashed,
+    ))
 }
 
 /// Whether the provisional entity `entity` reads: its origin turn's tag set

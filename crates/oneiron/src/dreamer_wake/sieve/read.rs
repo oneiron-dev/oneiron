@@ -55,7 +55,15 @@ impl Reader {
         }
         let held: Vec<ChunkRef> = chunks.iter().map(Chunk::held).collect();
         let reading = chunks::reading_digest(&held);
-        let tags = crate::tagging::current_tags_in_txn(vault, txn, turn)?;
+        // With no words to read there are no names to take: the tag set is
+        // not read. Telling whether it still names the words hashes the
+        // tagger's input, which the bound pays for too.
+        let (tags, hashed) = if chunks.is_empty() {
+            (None, 0)
+        } else {
+            crate::tagging::current_tags_in_txn(vault, txn, turn)?
+        };
+        self.charge(hashed);
         let names = tags.as_ref().map_or(
             NameSource::Rules {
                 rules: RULES_VERSION,
@@ -64,14 +72,22 @@ impl Reader {
                 envelope: envelope_digest(&tags.envelope),
             },
         );
-        let from = match READ.get(store, txn, turn)? {
-            Some(read) if read.reading == reading && read.names == names => match read.next {
-                None => {
-                    CONTINUE.delete(store, txn, turn)?;
-                    return Ok(Read::Whole);
-                }
-                Some(next) => next,
-            },
+        let same = READ
+            .get(store, txn, turn)?
+            .filter(|read| read.reading == reading && read.names == names);
+        let from = match same.map(|read| read.next) {
+            Some(None) => {
+                CONTINUE.delete(store, txn, turn)?;
+                return Ok(Read::Whole);
+            }
+            // A stored resume goes on only where the text has it.
+            Some(Some(next))
+                if chunks
+                    .get(next.chunk)
+                    .is_some_and(|chunk| chunk.text.is_char_boundary(next.at)) =>
+            {
+                next
+            }
             _ => {
                 pass.spans_retired += retire_spans_in_txn(store, txn, turn)?;
                 pass.turns_read += 1;
@@ -121,9 +137,10 @@ impl Reader {
     /// chunks the read holds: it reads the row of the chunk it is in and of
     /// those after it, and neither reads nor hashes again a chunk before.
     /// The rows hold the same words while the row is held, since a change
-    /// to them owes the turn a new read and drops it; a row that no longer
-    /// reads at the held length, or the Dreamer may no longer read, sends
-    /// the turn to a whole read.
+    /// to them owes the turn a new read and drops it. A chunk the turn no
+    /// longer holds or the Dreamer may no longer read, before the resume
+    /// point or after it, or a row that no longer reads at the held length,
+    /// sends the turn to a whole read.
     pub(super) fn read_on_in_txn(
         &self,
         vault: &Vault,
@@ -140,6 +157,14 @@ impl Reader {
         let Some(from) = read.next else {
             return self.read_in_txn(vault, txn, turn, pass);
         };
+        let passed: Vec<EntityId> = held
+            .iter()
+            .take(from.chunk)
+            .map(|chunk| chunk.source)
+            .collect();
+        if from.chunk >= held.len() || !chunks::still_held_in_txn(vault, txn, turn, &passed)? {
+            return self.read_in_txn(vault, txn, turn, pass);
+        }
         let tags = match read.names {
             NameSource::Rules { rules } if rules == RULES_VERSION => None,
             NameSource::SavedTags { envelope } => {

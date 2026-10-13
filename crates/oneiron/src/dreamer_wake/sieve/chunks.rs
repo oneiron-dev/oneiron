@@ -141,6 +141,37 @@ pub(crate) fn chunk_text_in_txn(
     Ok(body.and_then(|body| crate::tagging::shown_message_text(&body)))
 }
 
+/// Whether `turn` still holds each of `sources`, chunks a read of it has
+/// passed, where the Dreamer may still read it, as [`chunk_text_in_txn`]
+/// checks a chunk, without reading its text.
+pub(crate) fn still_held_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    sources: &[EntityId],
+) -> Result<bool> {
+    let messages: Vec<EntityId> = sources
+        .iter()
+        .filter(|source| *source != turn)
+        .copied()
+        .collect();
+    if messages.is_empty() {
+        return Ok(true);
+    }
+    for message in &messages {
+        let part_of =
+            vault
+                .store
+                .port_edge_get(txn, message, crate::edge::EdgeKind::PartOf, turn)?;
+        if part_of.is_none() || vault.archive_tombstone_in_txn(txn, message)?.is_some() {
+            return Ok(false);
+        }
+    }
+    Ok(readable_in(vault, txn, &messages)?
+        .into_iter()
+        .all(|readable| readable))
+}
+
 /// Which of `messages` the Dreamer may read.
 fn readable_in(vault: &Vault, txn: &heed::RoTxn<'_>, messages: &[EntityId]) -> Result<Vec<bool>> {
     match dreamer_may_read_messages_in(vault, txn, messages) {
