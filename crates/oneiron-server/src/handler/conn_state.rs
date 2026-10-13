@@ -29,8 +29,8 @@ pub(super) struct ConnState {
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
     /// The machine this socket's upgrade proved, independent of its actor.
-    /// `Unknown` is an unknown destination: never this machine or the owner's.
-    pub(super) peer_machine: oneiron::authority::PeerMachine,
+    /// Read it through [`Self::peer_machine`], which asks the fold again.
+    proven_machine: oneiron::authority::PeerMachine,
 }
 
 impl ConnState {
@@ -47,13 +47,32 @@ impl ConnState {
             protocol_version,
             bound_auth: None,
             residence_index: None,
-            peer_machine: oneiron::authority::PeerMachine::Unknown,
+            proven_machine: oneiron::authority::PeerMachine::Unknown,
         }
     }
 
     pub(super) fn with_peer_machine(mut self, machine: oneiron::authority::PeerMachine) -> Self {
-        self.peer_machine = machine;
+        self.proven_machine = machine;
         self
+    }
+
+    /// The machine this socket proved at upgrade, while the vault's fold
+    /// still holds it live. The socket outlives that instant: a machine
+    /// removed, poisoned or gone stale since is an unknown destination, as
+    /// is one the fold cannot be read for. `Unknown` is never this machine or
+    /// the owner's.
+    pub(super) fn peer_machine(&self, vault: &oneiron::Vault) -> oneiron::authority::PeerMachine {
+        match self.proven_machine {
+            oneiron::authority::PeerMachine::Proven(machine)
+                if vault.authority_fold().is_ok_and(|fold| {
+                    fold.machine(machine)
+                        .is_some_and(oneiron::authority::FoldedMachine::is_live)
+                }) =>
+            {
+                oneiron::authority::PeerMachine::Proven(machine)
+            }
+            _ => oneiron::authority::PeerMachine::Unknown,
+        }
     }
 
     pub(super) fn touch_window(

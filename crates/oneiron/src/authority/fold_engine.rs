@@ -56,6 +56,9 @@ struct FoldLocalInputs<'a> {
     pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
     hosted: bool,
     machine_standing: Option<super::world_privacy::MachineStanding<'a>>,
+    /// The handoffs valid on their own rows; only these settle. None settles
+    /// every handoff the fold holds.
+    handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldLocalInputs<'_> {
@@ -65,6 +68,7 @@ impl FoldLocalInputs<'_> {
         pre_handoff_entries: None,
         hosted: false,
         machine_standing: None,
+        handoff_candidates: None,
     };
 }
 
@@ -292,7 +296,14 @@ fn fold_authority_log_inner(
             local,
         );
         loop {
-            let allowed = verified_handoff_ancestors(entries, &candidates);
+            let handoffs: BTreeSet<_> = candidates.keys().copied().collect();
+            let allowed = verified_handoff_ancestors(entries, &handoffs);
+            // Each candidate's line settles as it probed, under no local
+            // sequence floor; every other row keeps its floor.
+            let lines: BTreeSet<_> = candidates.values().flatten().copied().collect();
+            let observations = local
+                .observations
+                .map(|observations| observations.without_floors_on(&lines));
             let result = fold_authority_log_inner(
                 entries,
                 first_seen_at_secs,
@@ -300,19 +311,23 @@ fn fold_authority_log_inner(
                 peer_consent_roots,
                 consent_arm,
                 FoldLocalInputs {
+                    observations: observations.as_ref(),
                     retire_device_ops: false,
                     pre_handoff_entries: Some(&allowed),
-                    ..local
+                    hosted: local.hosted,
+                    machine_standing: local.machine_standing,
+                    handoff_candidates: Some(&handoffs),
                 },
             );
-            let retained: BTreeSet<_> = candidates
-                .intersection(&result.valid_entries)
-                .copied()
-                .collect();
-            if retained == candidates {
+            // A handoff in conflict keeps its standing here: its fence stays
+            // closed, so the handoff it conflicts with never settles alone.
+            candidates.retain(|candidate, _| {
+                result.valid_entries.contains(candidate)
+                    || result.closed_handoffs.contains(candidate)
+            });
+            if candidates.len() == handoffs.len() {
                 return result;
             }
-            candidates = retained;
         }
     }
     let sequence_floors = local
@@ -336,6 +351,7 @@ fn fold_authority_log_inner(
                 .unwrap_or(&super::world_privacy::every_admitted_machine),
             pre_handoff_entries: local.pre_handoff_entries,
         },
+        local.handoff_candidates,
     );
     let mut fold = apply_stale_roster_window(
         entries,
@@ -357,9 +373,15 @@ fn fold_authority_log_inner(
     fold
 }
 
-/// Probe each signed re-root against its own causal history. A tier-floor or
-/// other retired sibling outside that history has zero authority to eliminate
-/// a candidate. The final strict fold rechecks these candidates as a set.
+/// Probe each signed re-root against its own causal history, and map each
+/// that stands there to that history, its line. A tier-floor or other retired
+/// sibling outside the line has zero authority to eliminate a candidate, and
+/// neither has a local sequence floor. A floor records only which rows of a
+/// signer this vault saw first, so a sibling that arrived first would decide
+/// the settlement, and the same rows would settle differently in another
+/// arrival order. The handoff vouches for its line as it vouches for its
+/// parents, so the probe applies no floor inside it. The final strict fold
+/// rechecks these candidates as a set, under the same rule.
 fn verified_handoff_candidates(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
@@ -367,12 +389,12 @@ fn verified_handoff_candidates(
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
-) -> BTreeSet<AuthorityEntryHash> {
+) -> BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>> {
     let by_hash: BTreeMap<_, _> = entries
         .iter()
         .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
         .collect();
-    let mut candidates = BTreeSet::new();
+    let mut candidates = BTreeMap::new();
     for (candidate, entry) in &by_hash {
         if !matches!(entry.op, AuthorityOp::ReRoot { .. })
             || entry.validate_shape().is_err()
@@ -400,6 +422,9 @@ fn verified_handoff_candidates(
             .iter()
             .map(|hash| (*by_hash[hash]).clone())
             .collect();
+        let observations = local
+            .observations
+            .map(|observations| observations.without_floors_on(&closure));
         let probe = fold_authority_log_inner(
             &scoped,
             first_seen_at_secs,
@@ -407,13 +432,14 @@ fn verified_handoff_candidates(
             peer_consent_roots,
             consent_arm,
             FoldLocalInputs {
+                observations: observations.as_ref(),
                 retire_device_ops: false,
                 pre_handoff_entries: None,
                 ..local
             },
         );
         if !probe.vault_root_is_conflicted() && probe.valid_entries.contains(candidate) {
-            candidates.insert(*candidate);
+            candidates.insert(*candidate, closure);
         }
     }
     candidates
@@ -479,6 +505,7 @@ fn has_re_root_ancestor(
 fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
+    handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
 ) -> AuthorityFold {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
@@ -507,7 +534,7 @@ fn fold_authority_log_once(
     };
 
     // Restrictive facts are proved independently of the surviving roster.
-    let revoke_facts =
+    let mut revoke_facts =
         super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     let mut rejected_retired = BTreeSet::new();
@@ -609,10 +636,31 @@ fn fold_authority_log_once(
         issues.push(AuthorityFoldIssue::InvalidAncestry(hash));
     }
 
-    reject_below_concurrent_tier_floors(&mut states, &by_hash, &entry_ancestors, &mut issues);
-    // Confirmations are consumable across branches, not only in ancestry.
-    // Only entries already proven against their live roster can contend.
-    reject_replayed_federation_confirms(&mut states, &by_hash, &entry_ancestors, &mut issues);
+    // A handoff's predecessor stays retired on every branch, not only its own.
+    // Fences close before concurrent floors and confirmations contend, so a
+    // retired key's floor or confirmation never prunes the new root's rows.
+    let retirements = super::retired_signers::settle_handoffs(
+        &mut states,
+        &by_hash,
+        &entry_ancestors,
+        handoffs,
+        &mut issues,
+        |states, present| {
+            let mut losers =
+                below_concurrent_tier_floors(states, &by_hash, &entry_ancestors, present);
+            let fallen = |hash: &AuthorityEntryHash| {
+                losers.contains_key(hash)
+                    || entry_ancestors
+                        .get(hash)
+                        .is_some_and(|past| losers.keys().any(|loser| past.contains(loser)))
+            };
+            let confirms =
+                federation_confirm_losers(states, &by_hash, &|hash| present(hash) && !fallen(hash));
+            losers.extend(confirms);
+            losers
+        },
+    );
+    let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
     for state in states.values() {
         vault_ids.insert(state.vault_id);
@@ -635,6 +683,8 @@ fn fold_authority_log_once(
             vault_id: None,
             valid_entries: BTreeSet::new(),
             roster: BTreeMap::new(),
+            retired_keys: BTreeSet::new(),
+            closed_handoffs: BTreeSet::new(),
             tier_floor: None,
             genesis_fragile: false,
             federation_pacts: BTreeMap::new(),
@@ -651,6 +701,9 @@ fn fold_authority_log_once(
         };
     }
 
+    revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
+    revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
+    revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = BTreeSet::new();
     for (hash, state) in &states {
@@ -677,6 +730,11 @@ fn fold_authority_log_once(
     }
     if let Some(state) = &mut merged {
         revoke_facts.apply_to(state);
+        for key in &retired_keys {
+            if let Some(device) = state.roster.get_mut(key) {
+                device.revoked = true;
+            }
+        }
     }
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         folded_actor_bindings(state, context.consent_arm)
@@ -706,6 +764,8 @@ fn fold_authority_log_once(
         roster: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.clone()),
+        retired_keys,
+        closed_handoffs: retirements.handoffs(),
         tier_floor: merged.as_ref().map(|state| state.tier_floor),
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
@@ -744,40 +804,30 @@ fn fold_authority_log_once(
     }
 }
 
-fn reject_replayed_federation_confirms(
-    states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
+/// The confirmations that lose a collision among the rows `present` keeps,
+/// with why. Confirmations are consumable across branches, not only in
+/// ancestry, and only entries already proven against their live roster
+/// contend.
+fn federation_confirm_losers(
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
-    issues: &mut Vec<AuthorityFoldIssue>,
-) {
+    present: &dyn Fn(&AuthorityEntryHash) -> bool,
+) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue> {
     let mut ids = BTreeSet::new();
     let mut nonces = BTreeSet::new();
-    let mut rejected = BTreeSet::new();
+    let mut rejected = BTreeMap::new();
     // Hash order is a stable choice among otherwise valid concurrent asks.
-    for hash in states.keys() {
+    for hash in states.keys().filter(|hash| present(hash)) {
         if let AuthorityOp::FederationConfirm(action) = &entries[hash].op {
             let vault = states[hash].vault_id;
             if ids.contains(&(vault, action.confirm_id)) || nonces.contains(&(vault, action.nonce))
             {
-                rejected.insert(*hash);
+                rejected.insert(*hash, AuthorityFoldIssue::InvalidEntry(*hash));
             } else {
                 ids.insert((vault, action.confirm_id));
                 nonces.insert((vault, action.nonce));
             }
         }
     }
-    states.retain(|hash, _| {
-        if rejected.contains(hash) {
-            issues.push(AuthorityFoldIssue::InvalidEntry(*hash));
-            false
-        } else if ancestors
-            .get(hash)
-            .is_some_and(|parents| !parents.is_disjoint(&rejected))
-        {
-            issues.push(AuthorityFoldIssue::InvalidAncestry(*hash));
-            false
-        } else {
-            true
-        }
-    });
+    rejected
 }

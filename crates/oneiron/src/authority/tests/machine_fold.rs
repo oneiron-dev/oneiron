@@ -2,7 +2,9 @@
 //! machine, and which other authority facts take a machine's standing away
 //! in every arrival order.
 use super::machine_identity::{Host, host, request_for};
-use super::support::{authority_key_from_ed, device, ed_key, sign_ed, unsigned_entry};
+use super::support::{
+    authority_key_from_ed, device, ed_key, genesis_entry, rotate_entry, sign_ed, unsigned_entry,
+};
 use super::*;
 use crate::registry::ENTITY_TYPE_MACHINE;
 
@@ -362,4 +364,186 @@ fn a_refused_profile_never_blocks_an_actor_revoke() {
         fold.actor_bindings[&authority_key_from_ed(&writer_key)].status,
         ActorBindingStatus::Revoked
     );
+}
+
+fn entries_of(host: &Host) -> Vec<AuthorityLogEntry> {
+    let txn = host.vault.store.env.read_txn().unwrap();
+    authority_log_rows_in_txn(&host.vault.store, &txn)
+        .unwrap()
+        .into_iter()
+        .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
+        .collect()
+}
+
+/// A removal signed after a mark that one fold refuses still removes there:
+/// a refused grant never shields a withdrawal.
+#[test]
+fn a_removal_crosses_a_refused_mark() {
+    let host = host();
+    let node = request_for(host.vault_id, EntityId::now(), &ed_key(92));
+    let yours = request_for(host.vault_id, EntityId::now(), &ed_key(93));
+    host.vault
+        .enroll_machine(&host.issuer, &host.owner, &node, MachineRole::ExecutionNode)
+        .unwrap();
+    // A hosted fold refuses this mark: there the host's root never answers
+    // "yours". The removal below names it as a parent.
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &yours,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    host.vault
+        .set_machine_role(
+            &host.issuer,
+            &host.owner,
+            node.machine,
+            MachineRole::Removed,
+        )
+        .unwrap();
+    let entries = entries_of(&host);
+    for posture in [
+        crate::HostingPrivacyPosture::SelfHostLocal,
+        crate::HostingPrivacyPosture::Hosted,
+    ] {
+        let fold = fold_authority_log_for_posture(
+            &entries,
+            &BTreeMap::new(),
+            10,
+            &BTreeMap::new(),
+            posture,
+        );
+        assert!(
+            fold.machine(node.machine)
+                .is_some_and(|folded| folded.removed && !folded.is_live())
+        );
+    }
+}
+
+/// A root a handoff retired signs no machine standing outside the handoff's
+/// line (#1410's fence): neither a mark nor a removal on history from before
+/// its retirement stands, while the machines the move carried keep their
+/// standing under the new root past the stale-roster window.
+#[test]
+fn a_retired_root_signs_no_machine_standing() {
+    let host = host();
+    let kept = request_for(host.vault_id, EntityId::now(), &ed_key(94));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &kept,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let before = host.vault.authority_fold().unwrap();
+    let next = HostSlipIssuer::from_secret(b"successor self-host root").unwrap();
+    let moved = host.vault.re_root_host(&host.issuer, &next).unwrap();
+    assert_eq!(moved.machines_carried, 1);
+
+    let forged = EntityId::now();
+    let removal = AuthorityOp::MachineProfile(MachineProfile {
+        role: MachineRole::Removed,
+        revision: 2,
+        ..before.machine(kept.machine).unwrap().profile.clone()
+    });
+    let seq = before.append_sequences[&host.issuer.public_key()];
+    let replayed = [
+        host_entry(
+            &host,
+            seq + 1,
+            &before.append_heads,
+            profile_op(&host, forged, &ed_key(95)),
+            None,
+        ),
+        host_entry(&host, seq + 2, &before.append_heads, removal, None),
+    ];
+    // The door refuses them, and a fold that holds them anyway does too.
+    for entry in &replayed {
+        assert!(
+            host.vault
+                .put_authority_log_entries(&[(entry.clone(), TimeRange { start: 3, end: 3 }, 3)])
+                .is_err()
+        );
+    }
+    let mut entries = entries_of(&host);
+    entries.extend(replayed.iter().cloned());
+    let first_seen: BTreeMap<_, _> = entries
+        .iter()
+        .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
+        .collect();
+    for now in [100, 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1] {
+        let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
+        assert!(replayed.iter().all(|entry| {
+            !fold
+                .valid_entries
+                .contains(&authority_entry_hash(entry).unwrap())
+        }));
+        assert!(fold.machine(forged).is_none());
+        assert!(
+            fold.machine(kept.machine)
+                .is_some_and(FoldedMachine::is_mine)
+        );
+    }
+}
+
+/// A key rotated away by hand has no handoff fence: a mark it signs on a
+/// branch that never saw the rotation stands only for the stale-roster
+/// window, while the marks of the key it rotated to keep their standing.
+#[test]
+fn a_rotated_keys_mark_never_outlives_the_stale_window() {
+    let old = ed_key(96);
+    let rotated = ed_key(97);
+    let genesis = genesis_entry(96, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let rotation = rotate_entry(id, &genesis, &old, authority_key_from_ed(&old), 97, 1);
+    let mark = |parent: &AuthorityLogEntry, signer: &SigningKey, seq, machine, key: u8| {
+        let request = request_for(id, machine, &ed_key(key));
+        sign_ed(
+            unsigned_entry(
+                Some(id),
+                seq,
+                vec![authority_entry_hash(parent).unwrap()],
+                AuthorityOp::MachineProfile(MachineProfile {
+                    machine,
+                    owner: EntityId::now(),
+                    machine_key: request.machine_key,
+                    encryption_key: request.encryption_key,
+                    role: MachineRole::Owned(MachineOwnership::Yours),
+                    revision: 1,
+                    machine_proof: request.machine_proof,
+                    seen_world_edits: BTreeSet::new(),
+                }),
+                authority_key_from_ed(signer),
+                2,
+            ),
+            signer,
+        )
+    };
+    let (stale, kept) = (EntityId::now(), EntityId::now());
+    let entries = [
+        mark(&genesis, &old, 2, stale, 98),
+        mark(&rotation, &rotated, 1, kept, 99),
+        rotation,
+        genesis,
+    ];
+    let first_seen: BTreeMap<_, _> = entries
+        .iter()
+        .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
+        .collect();
+    let within = fold_authority_log_with_seen_times(&entries, &first_seen, 100);
+    assert!(within.machine(stale).is_some_and(FoldedMachine::is_mine));
+    let after = fold_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
+    );
+    assert!(
+        after
+            .machine(stale)
+            .is_some_and(|folded| folded.stale && !folded.is_mine())
+    );
+    assert!(after.machine(kept).is_some_and(FoldedMachine::is_mine));
 }
