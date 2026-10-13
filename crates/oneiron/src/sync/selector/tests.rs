@@ -5367,7 +5367,28 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     vault.set_world_device_only(world, true)?;
     ships(false)?;
     vault.set_world_device_only(world, false)?;
-    ships(true)
+    ships(true)?;
+
+    // A restore over this vault brings the summary back with them.
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("image");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        101,
+    )?;
+    let rtxn = restored.store.env.read_txn()?;
+    assert!(restored.get_raw_in(&rtxn, &told)?.is_some());
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&restored.store, &rtxn, &told)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a restored summary keeps what it was withdrawn for"
+    );
+    Ok(())
 }
 
 fn epoch_summary_bytes(epoch: u64, text: &str) -> crate::Result<Vec<u8>> {

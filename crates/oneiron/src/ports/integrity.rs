@@ -100,7 +100,7 @@ pub(crate) fn withdrawn_worlds_in(
     store
         .vault_meta()
         .get(txn, &withdrawn_key(id))?
-        .map(CarriedWorlds::decode)
+        .map(|raw| CarriedWorlds::decode(&raw))
         .transpose()
 }
 /// Adds `worlds` to what epoch summary `id` was withdrawn for; whether that
