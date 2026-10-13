@@ -106,6 +106,7 @@ pub(super) fn fold_entry_state(
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
             host_root_keys: BTreeSet::new(),
+            actor_rows: BTreeSet::new(),
         };
         if !tier_meets_floor(device.tier, *tier_floor) {
             return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));

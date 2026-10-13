@@ -405,6 +405,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
         host_root_keys: BTreeSet::new(),
+        actor_rows: BTreeSet::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(

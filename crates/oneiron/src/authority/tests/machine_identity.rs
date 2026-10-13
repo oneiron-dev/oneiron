@@ -2,22 +2,22 @@
 //! own answer at enrolment ("yours, work/school, or rented"; only yours counts),
 //! signed into the authority log. No MACHINE body, actor class, host-root
 //! derivation or forged entry sets it, and a mesh address bind keeps it.
-use super::support::{authority_key_from_ed, device, ed_key, sign_ed, unsigned_entry};
+use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_MACHINE;
 use crate::store::GateDecisionId;
 use crate::{Vault, VaultConfig};
 
-struct Host {
-    _dir: tempfile::TempDir,
-    vault: Vault,
-    issuer: HostSlipIssuer,
-    owner: AuthenticatedOwner,
-    vault_id: [u8; 32],
+pub(super) struct Host {
+    pub(super) _dir: tempfile::TempDir,
+    pub(super) vault: Vault,
+    pub(super) issuer: HostSlipIssuer,
+    pub(super) owner: AuthenticatedOwner,
+    pub(super) vault_id: [u8; 32],
 }
 
-fn host() -> Host {
+pub(super) fn host() -> Host {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let issuer = crate::test_support::test_host_issuer();
@@ -37,7 +37,7 @@ fn host() -> Host {
     }
 }
 
-fn encryption_key() -> MachineEncryptionKey {
+pub(super) fn encryption_key() -> MachineEncryptionKey {
     MachineEncryptionKey {
         suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
         key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
@@ -55,7 +55,11 @@ fn joining(vault_id: [u8; 32]) -> (tempfile::TempDir, Vault, MachineEnrolmentReq
 }
 
 /// An enrolment request for an arbitrary row, signed by `key`.
-fn request_for(vault_id: [u8; 32], machine: EntityId, key: &SigningKey) -> MachineEnrolmentRequest {
+pub(super) fn request_for(
+    vault_id: [u8; 32],
+    machine: EntityId,
+    key: &SigningKey,
+) -> MachineEnrolmentRequest {
     let machine_key = key.verifying_key().to_bytes();
     MachineEnrolmentRequest {
         vault_id,
@@ -153,6 +157,30 @@ fn only_the_owners_yours_makes_a_machine_mine() {
         )
         .unwrap();
     assert!(is_mine(&host.vault, request.machine));
+
+    // A machine joins once: a later enrolment naming it, with another key,
+    // never takes its place.
+    let taken = request_for(host.vault_id, request.machine, &ed_key(42));
+    assert!(
+        host.vault
+            .enroll_machine(
+                &host.issuer,
+                &host.owner,
+                &taken,
+                MachineRole::Owned(MachineOwnership::Yours)
+            )
+            .is_err()
+    );
+    assert_eq!(
+        host.vault
+            .authority_fold()
+            .unwrap()
+            .machine(request.machine)
+            .unwrap()
+            .profile
+            .machine_key,
+        request.machine_key
+    );
 }
 
 #[test]
@@ -296,120 +324,67 @@ fn a_forged_mark_never_makes_a_machine_mine() {
     assert!(is_mine(&host.vault, machine));
 }
 
-/// A hosted vault's cloud root registers its own node, but only a key the
-/// owner holds answers "yours": a custodian never vouches for the owner.
+/// A checkpoint restored directly may land on any install, so it never takes
+/// this machine's identity with it; a restore that keeps this vault's
+/// authority, on this install, keeps it.
 #[test]
-fn a_cloud_root_never_vouches_for_a_machine() {
-    let signing = ed_key(81);
-    let key = authority_key_from_ed(&signing);
-    let genesis = sign_ed(
-        unsigned_entry(
-            None,
-            0,
-            vec![],
-            AuthorityOp::Genesis {
-                device: device(
-                    key.clone(),
-                    ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
-                    AuthorityTier::CloudCustodial,
-                ),
-                genesis_nonce: [82; 32],
-                tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
-                recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            },
-            key.clone(),
-            1,
-        ),
-        &signing,
+fn a_restored_image_never_carries_the_machine_to_another_install() {
+    let Host {
+        _dir,
+        vault,
+        issuer,
+        owner,
+        vault_id,
+    } = host();
+    let request = vault
+        .machine_enrolment_request(vault_id, encryption_key())
+        .unwrap();
+    vault
+        .enroll_machine(
+            &issuer,
+            &owner,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let local = |vault: &Vault| vault.local_machine().unwrap();
+    assert!(
+        local(&vault)
+            .is_some_and(|machine| machine.profile.is_some_and(|profile| profile.is_mine()))
     );
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    let mut entries = vec![genesis];
-    let mut machines = Vec::new();
-    for (seq, role) in [
-        MachineRole::HostedNode,
-        MachineRole::Owned(MachineOwnership::Yours),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let machine = EntityId::now();
-        let request = request_for(vault_id, machine, &ed_key(83 + seq as u8));
-        let parent = authority_entry_hash(entries.last().unwrap()).unwrap();
-        entries.push(sign_ed(
-            unsigned_entry(
-                Some(vault_id),
-                seq as u64 + 1,
-                vec![parent],
-                AuthorityOp::MachineProfile(MachineProfile {
-                    machine,
-                    owner: EntityId::now(),
-                    machine_key: request.machine_key,
-                    encryption_key: request.encryption_key,
-                    role,
-                    revision: 1,
-                    machine_proof: request.machine_proof,
-                }),
-                key.clone(),
-                seq as u64 + 2,
-            ),
-            &signing,
-        ));
-        machines.push(machine);
-    }
-    let fold = fold_authority_log_for_posture(
-        &entries,
-        &BTreeMap::new(),
-        10,
-        &BTreeMap::new(),
-        crate::HostingPrivacyPosture::Hosted,
-    );
-    let node = fold
-        .machine(machines[0])
-        .expect("the custodian registers its node");
-    assert!(node.is_live() && !node.is_mine());
-    assert!(fold.machine(machines[1]).is_none());
-}
+    let backups = tempfile::tempdir().unwrap();
+    let image = backups.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).unwrap();
 
-/// On a hosted vault the host's root is the provider's key: it registers its
-/// own node, but it never answers "yours" for the owner, whatever its labels.
-#[test]
-fn a_hosted_host_root_never_vouches_for_a_machine() {
-    let host = host();
-    let node = request_for(host.vault_id, EntityId::now(), &ed_key(86));
-    let yours = request_for(host.vault_id, EntityId::now(), &ed_key(87));
-    for (request, role) in [
-        (&node, MachineRole::HostedNode),
-        (&yours, MachineRole::Owned(MachineOwnership::Yours)),
-    ] {
-        host.vault
-            .enroll_machine(&host.issuer, &host.owner, request, role)
-            .unwrap();
-    }
-    let entries: Vec<_> = {
-        let txn = host.vault.store.env.read_txn().unwrap();
-        authority_log_rows_in_txn(&host.vault.store, &txn)
-            .unwrap()
-            .into_iter()
-            .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
-            .collect()
-    };
-    let fold = |posture| {
-        fold_authority_log_for_posture(&entries, &BTreeMap::new(), 10, &BTreeMap::new(), posture)
-    };
-    // Self-hosted, the host root is the owner's own process.
-    let own = fold(crate::HostingPrivacyPosture::SelfHostLocal);
-    assert!(
-        own.machine(yours.machine)
-            .is_some_and(FoldedMachine::is_mine)
+    let (here, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("here"),
+        VaultConfig::default(),
+        &vault,
+        200,
+    )
+    .unwrap();
+    assert_eq!(
+        local(&here).map(|machine| machine.id),
+        Some(request.machine)
     );
-    let hosted = fold(crate::HostingPrivacyPosture::Hosted);
-    assert!(
-        hosted
-            .machine(node.machine)
-            .is_some_and(|folded| folded.is_live() && !folded.is_mine())
-    );
-    assert!(hosted.machine(yours.machine).is_none());
+    drop((here, vault));
+
+    let (elsewhere, _) = Vault::restore_checkpoint(
+        &image,
+        &backups.path().join("elsewhere"),
+        VaultConfig::default(),
+        crate::recovery::checkpoint::RestoreReason::Restore,
+        300,
+    )
+    .unwrap();
+    assert_eq!(local(&elsewhere), None);
+    // It joins as a new machine, never with this one's key.
+    let joined = elsewhere
+        .machine_enrolment_request(vault_id, encryption_key())
+        .unwrap();
+    assert_ne!(joined.machine, request.machine);
+    assert_ne!(joined.machine_key, request.machine_key);
 }
 
 /// The pairing ceremony for `machine`: the owner answers "yours" on the link,

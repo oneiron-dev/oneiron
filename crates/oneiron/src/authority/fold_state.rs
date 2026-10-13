@@ -245,6 +245,10 @@ pub(super) struct FoldState {
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
     /// Roster keys a host enrolled as its own root, merged by union.
     pub(super) host_root_keys: BTreeSet<AuthorityKey>,
+    /// Every row an accepted bind or rebind named, merged by union: the
+    /// actor merge keeps one winner, and a row bound on a losing branch is
+    /// still no physical machine.
+    pub(super) actor_rows: BTreeSet<EntityId>,
 }
 
 /// Fold-internal binding content for one authority key.
@@ -458,6 +462,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .host_root_keys
         .extend(right.host_root_keys.iter().cloned());
+    merged.actor_rows.extend(right.actor_rows.iter().copied());
     merged
 }
 

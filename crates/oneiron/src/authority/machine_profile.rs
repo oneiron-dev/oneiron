@@ -114,18 +114,11 @@ pub(super) fn apply_machine_profile(
     Ok(())
 }
 
-/// The host's own root, on a fold whose consent arm admits custodial roots:
-/// the hosted posture, where that root is the provider's key and not the
-/// owner's. Judged from the root's attestation and the fold's mode, so a root
-/// row labelled owner-held still counts.
+/// The host's own root on a hosted vault, where that root is the provider's
+/// key and not the owner's. Judged from the root's attestation and the
+/// vault's posture, so a root row labelled owner-held still counts.
 fn custodial_host_root(state: &FoldState, signer: &AuthorityKey, context: FoldContext<'_>) -> bool {
-    state.host_root_keys.contains(signer)
-        && context.device_can_consent(&FoldedDevice {
-            key: signer.clone(),
-            tier: AuthorityTier::CloudCustodial,
-            roles: ROLE_OWNER | ROLE_CLOUD,
-            revoked: false,
-        })
+    context.hosted && state.host_root_keys.contains(signer)
 }
 
 /// An install key that is also a roster key or an actor's key is no machine's.
@@ -134,11 +127,9 @@ fn key_is_authority(state: &FoldState, machine_key: &[u8; 32]) -> bool {
     state.roster.contains_key(&key) || state.actor_bindings.contains_key(&key)
 }
 
+/// A row any accepted binding ever named, on any branch, is an actor's.
 fn machine_is_actor(state: &FoldState, machine: EntityId) -> bool {
-    state
-        .actor_bindings
-        .values()
-        .any(|binding| binding.actor_ref == machine)
+    state.actor_rows.contains(&machine)
 }
 
 /// Higher revision wins; divergent content at one revision is poison carried

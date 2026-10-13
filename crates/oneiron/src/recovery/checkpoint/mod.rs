@@ -41,6 +41,18 @@ struct CheckpointImage {
     created_at: u64,
     databases: BTreeMap<String, CanonicalRows>,
 }
+
+impl CheckpointImage {
+    /// A direct restore may land on any install, so the image's machine
+    /// identity stays with the install that minted it: the restored vault
+    /// joins as a new machine. A restore that keeps a live vault's authority
+    /// carries that vault's own identity instead (`restore_class`).
+    fn drop_machine_identity(&mut self) {
+        if let Some(rows) = self.databases.get_mut("sync_state") {
+            rows.retain(|(key, _)| !crate::identity::is_machine_identity_row(key));
+        }
+    }
+}
 /// Whose exterior key custody a restored vault holds (ARCH-0038
 /// #erasure-completeness, "Key custody in a side restore").
 #[derive(Clone, Copy)]
@@ -341,7 +353,8 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
-        let (image, checkpoint_id) = read_image(path)?;
+        let (mut image, checkpoint_id) = read_image(path)?;
+        image.drop_machine_identity();
         let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
@@ -369,7 +382,8 @@ impl Vault {
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
         let live = source.capture()?;
-        let (image, checkpoint_id) = read_image(path)?;
+        let (mut image, checkpoint_id) = read_image(path)?;
+        image.drop_machine_identity();
         let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
