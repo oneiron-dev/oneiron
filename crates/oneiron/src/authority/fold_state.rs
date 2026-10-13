@@ -243,6 +243,8 @@ pub(super) struct FoldState {
     pub(super) machines: BTreeMap<EntityId, FoldedMachine>,
     /// Every machine row that ever claimed each install key, merged by union.
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
+    /// Roster keys a host enrolled as its own root, merged by union.
+    pub(super) host_root_keys: BTreeSet<AuthorityKey>,
 }
 
 /// Fold-internal binding content for one authority key.
@@ -453,6 +455,9 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    merged
+        .host_root_keys
+        .extend(right.host_root_keys.iter().cloned());
     merged
 }
 
