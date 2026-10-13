@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
 use crate::dreamer_consolidation::conflict_close_candidate;
-use crate::dreamer_consolidation::resources::ConsolidationFence;
+use crate::dreamer_consolidation::resources::{ConsolidationFence, RowRevision};
 use crate::edge::EdgeKind;
 
 /// Grants `replacement` when the policy allows it, returning the prior the
@@ -30,11 +30,23 @@ pub(super) fn grant_allowed_replacement(
             return None;
         }
     };
-    match vault.grant_deferred_claim_auto_after(&replacement, run.now_ms, checker, |txn| {
-        fence.validate_in_txn(vault, txn)
-    }) {
+    // The prior as the grant left it, read in the grant's own transaction:
+    // the handoff's later writes hold it to that revision.
+    let mut closed_at = None;
+    match vault.grant_deferred_claim_auto_after(
+        &replacement,
+        run.now_ms,
+        checker,
+        |txn| fence.validate_in_txn(vault, txn),
+        |txn| {
+            closed_at = RowRevision::read_in(vault, txn, &prior)?;
+            Ok(())
+        },
+    ) {
         Ok(()) => {
-            fence.closed_by_this_write(prior);
+            if let Some(revision) = closed_at {
+                fence.closed_by_this_write(prior, revision);
+            }
             Some(prior)
         }
         // The policy protects it; the owner's run review holds it.
@@ -97,12 +109,22 @@ pub(super) fn close_conflicts_naming(
     prior: EntityId,
     evidence: &[EntityId],
 ) -> Result<()> {
-    let Some(body) = vault.get_claim(&replacement)? else {
+    // Its standing and revision come from one read; each close's fence then
+    // refuses once the replacement changes or no longer reads.
+    let (body, revision) = {
+        let txn = vault.store.env.read_txn()?;
+        (
+            vault.get_claim_in_txn(&txn, &replacement)?,
+            RowRevision::read_in(vault, &txn, &replacement)?,
+        )
+    };
+    let (Some(body), Some(revision)) = (body, revision) else {
         return Ok(());
     };
     if !crate::claim::claim_surfaceable(&body) {
         return Ok(());
     }
+    fence.relies_on(replacement, revision);
     let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
         return Ok(());
     };

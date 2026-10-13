@@ -189,18 +189,20 @@ impl Vault {
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
     ) -> Result<()> {
-        self.grant_deferred_claim_auto_after(id, now, checker, |_| Ok(()))
+        self.grant_deferred_claim_auto_after(id, now, checker, |_| Ok(()), |_| Ok(()))
     }
 
     /// The same grant, once `precheck` passes inside its transaction: the
     /// Dreamer's live source pins, so a replacement whose cited words moved
-    /// after it was staged closes nothing.
+    /// after it was staged closes nothing. `then` runs last in the same
+    /// transaction, so it reads exactly what the grant wrote.
     pub(crate) fn grant_deferred_claim_auto_after(
         &self,
         id: &EntityId,
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
         precheck: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        then: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         let decision = self.with_write_txn_grouped(|txn| {
             precheck(txn)?;
@@ -234,6 +236,7 @@ impl Vault {
             )?;
             let closure_decision =
                 self.complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker)?;
+            then(txn)?;
             Ok((decision, closure_decision))
         })?;
         for receipt in [decision.0, decision.1].into_iter().flatten() {

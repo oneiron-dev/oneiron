@@ -35,8 +35,8 @@ use crate::registry::{
 };
 use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
-pub(crate) use write::ConsolidationFence;
 pub use write::ScopedConsolidationWrite;
+pub(crate) use write::{ConsolidationFence, RowRevision};
 
 #[derive(Clone)]
 struct SourcePin {

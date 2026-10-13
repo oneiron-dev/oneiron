@@ -1,6 +1,6 @@
 //! Real executor -> sealed sink -> durable evidence/provenance fixture.
 use super::*;
-use crate::dreamer_consolidation::resources::{BranchResources, document_version};
+use crate::dreamer_consolidation::resources::{BranchResources, RowRevision, document_version};
 use crate::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
 use crate::llm::Scope;
 use std::future::Future;
@@ -916,7 +916,7 @@ fn a_replay_closes_no_conflict_for_a_replacement_that_no_longer_stands() -> Resu
         );
         open_conflict_on_head(&vault, &fx)?;
         if replay == Replay::Retracted {
-            vault.retract_claim(&new, 20)?;
+            vault.retract_claim(&new, fx.run.now_ms + 1)?;
         }
         let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Alex"))]);
         let inner = PromotionWriterSink::new(&vault, fx.run.clone());
@@ -2797,13 +2797,13 @@ fn missing_head_rights_revoked_actor_and_write_time_source_drift_refuse() -> Res
 }
 
 /// What happens to the head once the handoff is sealed: an earlier grant in
-/// the same handoff closes it, then it is left, re-opened, or narrowed to
-/// another principal so the Dreamer no longer reads it.
+/// the same handoff closes it, then it is left, re-opened, or edited while it
+/// stays closed (narrowed to another principal).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AfterClose {
     Kept,
     Reopened,
-    Unread,
+    Edited,
 }
 
 struct ClosedHeadSink<'a> {
@@ -2820,7 +2820,9 @@ impl ConsolidationSink for ClosedHeadSink<'_> {
         let mut body = vault.get_claim(&self.head)?.expect("head");
         body.lifecycle = crate::ClaimLifecycleStatus::Superseded;
         vault.put_claim(&self.head, &body, occurred(2), 2)?;
-        write.fence.closed_by_this_write(self.head);
+        write
+            .fence
+            .closed_by_this_write(self.head, revision(vault, self.head)?);
         match self.after {
             AfterClose::Kept => {}
             AfterClose::Reopened => {
@@ -2828,7 +2830,7 @@ impl ConsolidationSink for ClosedHeadSink<'_> {
                 body.value = Value::from("owner corrected value");
                 vault.put_claim(&self.head, &body, occurred(2), 2)?;
             }
-            AfterClose::Unread => {
+            AfterClose::Edited => {
                 let mut scope = match body.scope.take() {
                     Some(Value::Map(rows)) => rows,
                     _ => Vec::new(),
@@ -2845,14 +2847,20 @@ impl ConsolidationSink for ClosedHeadSink<'_> {
     }
 }
 
-/// Wonder r1 (#1417): a prior that an earlier grant in the same handoff
-/// closed dropped out of the fence, so the handoff's later writes held it to
-/// nothing. Only the grant's own rewrite is excused: a later write lands
-/// beside a prior left closed, and refuses once that prior is re-opened or
-/// no longer reads for the Dreamer.
+/// `id`'s stored revision.
+fn revision(vault: &Vault, id: EntityId) -> Result<RowRevision> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(RowRevision::read_in(vault, &txn, &id)?.expect("a stored row"))
+}
+
+/// Wonder r1 and Sol r9 (#1417): a prior that an earlier grant in the same
+/// handoff closed dropped out of the fence, so the handoff's later writes
+/// held it to nothing. It is held to the revision the grant wrote now: a
+/// later write lands beside a prior left closed, and refuses once that prior
+/// is re-opened, or edited while it stays closed.
 #[test]
 fn a_prior_the_handoff_closed_still_fences_its_later_writes() -> Result<()> {
-    for after in [AfterClose::Kept, AfterClose::Reopened, AfterClose::Unread] {
+    for after in [AfterClose::Kept, AfterClose::Reopened, AfterClose::Edited] {
         let (_dir, vault) = open_vault();
         let fx = fixture(&vault)?;
         let backend = ScriptedBackend::new(vec![
@@ -2882,6 +2890,78 @@ fn a_prior_the_handoff_closed_still_fences_its_later_writes() -> Result<()> {
         } else {
             assert!(result.is_err(), "{after:?}: {:?}", sink.inner.outcome);
             assert!(sink.inner.outcome.landed.is_empty(), "{after:?}");
+        }
+    }
+    Ok(())
+}
+
+struct StandingSink<'a> {
+    inner: PromotionWriterSink<'a>,
+    row: EntityId,
+    changed: bool,
+}
+impl ConsolidationSink for StandingSink<'_> {
+    fn accept(&mut self, _candidates: Vec<PromotionCandidate>) -> Result<()> {
+        panic!("scoped executor must not call unbounded persistence")
+    }
+    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        let vault = self.inner.vault;
+        write.fence.relies_on(self.row, revision(vault, self.row)?);
+        if self.changed {
+            vault.put_entity(
+                &self.row,
+                crate::registry::ENTITY_TYPE_PERSON,
+                occurred(1),
+                1,
+                b"another person, edited",
+            )?;
+        }
+        self.inner.accept_scoped(write)
+    }
+}
+
+/// Sol r9 (#1417): a conflict close checked its replacement's standing once,
+/// outside the transactions it then wrote, so a retraction in between went
+/// unseen. The fence now holds every row a close relies on to the revision
+/// whose standing it checked: the handoff's later write lands while that row
+/// holds, and refuses once it changed. (A row the Dreamer reads outside the
+/// branch stands in for the replacement, so no source pin sees the change.)
+#[test]
+fn a_row_a_close_relies_on_is_fenced_for_the_handoffs_later_writes() -> Result<()> {
+    for changed in [false, true] {
+        let (_dir, vault) = open_vault();
+        let fx = fixture(&vault)?;
+        let row = EntityId::now();
+        vault.put_entity(
+            &row,
+            crate::registry::ENTITY_TYPE_PERSON,
+            occurred(1),
+            1,
+            b"another person",
+        )?;
+        let backend = ScriptedBackend::new(vec![
+            Ok(extract(&fx, "Alex")),
+            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+        ]);
+        let mut sink = StandingSink {
+            inner: PromotionWriterSink::new(&vault, fx.run.clone()),
+            row,
+            changed,
+        };
+        let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
+        if changed {
+            assert!(result.is_err(), "{:?}", sink.inner.outcome);
+            assert!(sink.inner.outcome.landed.is_empty());
+        } else {
+            result.unwrap_or_else(|error| {
+                panic!("the write refused: {error}; {:?}", sink.inner.outcome)
+            });
+            assert_eq!(
+                sink.inner.outcome.landed.len(),
+                1,
+                "{:?}",
+                sink.inner.outcome
+            );
         }
     }
     Ok(())

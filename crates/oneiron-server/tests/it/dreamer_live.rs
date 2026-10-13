@@ -448,26 +448,31 @@ fn served_models(answer: &[u8]) -> Vec<String> {
     models
 }
 
-/// The assistant text an answer carries, as the server reads it: the first
-/// choice's message content, or a stream's first-choice content deltas
-/// joined in order.
+/// The assistant text an answer carries, as the server reads it: a JSON
+/// body's first choice's message content, or a stream's first-choice content
+/// deltas joined in order. A stream event whose first choice has another
+/// index is one the server refuses, so none of it is kept.
 fn answer_content(answer: &[u8]) -> String {
-    let content = |event: &Value| -> String {
-        let choice = &event["choices"][0];
-        choice["message"]["content"]
-            .as_str()
-            .or_else(|| choice["delta"]["content"].as_str())
-            .unwrap_or_default()
-            .to_owned()
+    let first = |event: &Value| -> Option<Value> {
+        let choice = event["choices"].get(0)?;
+        choice["index"]
+            .as_u64()
+            .is_none_or(|index| index == 0)
+            .then(|| choice.clone())
     };
     let text = String::from_utf8_lossy(answer);
     match serde_json::from_str::<Value>(&text) {
-        Ok(body) => content(&body),
+        Ok(body) => first(&body)
+            .and_then(|choice| choice["message"]["content"].as_str().map(str::to_owned))
+            .unwrap_or_default(),
         Err(_) => text
             .lines()
             .filter_map(|line| line.strip_prefix("data:"))
             .filter_map(|data| serde_json::from_str::<Value>(data.trim()).ok())
-            .map(|event| content(&event))
+            .filter_map(|event| {
+                first(&event)
+                    .and_then(|choice| choice["delta"]["content"].as_str().map(str::to_owned))
+            })
             .collect(),
     }
 }
