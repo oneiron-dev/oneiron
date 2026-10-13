@@ -1,5 +1,7 @@
 //! RET-010 rerank hook: the post-sort score-ladder reassignment over the top-N block.
 
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::export::write_door_refuses_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::builder::PipelineBuilder;
@@ -11,6 +13,7 @@ use crate::pipeline::types::{
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankCandidate;
 use crate::store::{RetrievalScoreComponent, RetrievalSignal};
+use crate::vault::entity_revision::TurnText;
 use crate::vault::{ReadMode, RevisionRef};
 use std::collections::{HashMap, HashSet};
 
@@ -52,9 +55,11 @@ struct BoundWords {
     turn: Option<(EntityId, RevisionRef)>,
     /// The TURN the candidate is served as, when it holds no words to pin.
     unpinned: Option<EntityId>,
-    /// A MESSAGE whose row does not hold the words it is served with: its
+    /// A MESSAGE whose row does not hold the words it is served with (its
     /// text moved into its entity document, or the row has no revision to
-    /// read. The run does not rerank it.
+    /// read), or a row with words the write door refuses (stored while the
+    /// owner's secret scan was off), which no model is sent. The run does
+    /// not rerank it.
     unscored: bool,
 }
 
@@ -241,8 +246,9 @@ impl PipelineBuilder<'_> {
     /// The revision of the words `id` holds in this transaction (see
     /// [`RerankCandidate::revision`]) and, for a MESSAGE the run folds into a
     /// TURN it admits, that TURN's (see [`RerankCandidate::turn`]). A TURN
-    /// whose messages show no words has no text revision to pin them by, and
-    /// a MESSAGE whose row does not hold its words is not reranked.
+    /// whose messages show no words has no text revision to pin them by. A
+    /// MESSAGE whose row does not hold its words is not reranked, nor is a
+    /// row with words the write door refuses.
     fn bound_words(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -255,7 +261,19 @@ impl PipelineBuilder<'_> {
             .get(&self.vault.store, rtxn, id)?
             .map(|meta| meta.entity_type);
         if kind == Some(ENTITY_TYPE_TURN) {
-            let revision = self.turn_words(rtxn, id)?;
+            let text = self.turn_text(rtxn, id)?;
+            // Words the write door refuses are sent to no model.
+            if text.as_ref().is_some_and(|text| {
+                text.messages
+                    .iter()
+                    .any(|(_, words)| write_door_refuses_body(words.as_bytes()))
+            }) {
+                return Ok(BoundWords {
+                    unscored: true,
+                    ..BoundWords::default()
+                });
+            }
+            let revision = text.map(|text| text.revision);
             return Ok(BoundWords {
                 revision,
                 turn: None,
@@ -270,12 +288,21 @@ impl PipelineBuilder<'_> {
         };
         // A streamed or edited MESSAGE holds its words in its entity
         // document, which its row revision does not pin; a build without
-        // `sync` reads no document, but still sees that it has one.
-        if kind == Some(ENTITY_TYPE_MESSAGE)
+        // `sync` reads no document, but still sees that it has one. A row the
+        // write door refuses is sent to no model.
+        let message_without_words = kind == Some(ENTITY_TYPE_MESSAGE)
             && (revision.is_none()
                 || crate::vault::entity_revision::message_has_document_in_txn(
                     self.vault, rtxn, id,
-                )?)
+                )?);
+        if message_without_words
+            || crate::vault::entity_revision::read_entity_revision_in_txn(
+                self.vault,
+                rtxn,
+                id,
+                ReadMode::Indexed,
+            )?
+            .is_some_and(|raw| write_door_refuses_body(&raw[ENTITY_METADATA_HEADER_LEN..]))
         {
             return Ok(BoundWords {
                 unscored: true,
@@ -305,25 +332,24 @@ impl PipelineBuilder<'_> {
         )? {
             return Ok(words);
         }
-        match self.turn_words(rtxn, &turn)? {
+        match self.turn_text(rtxn, &turn)?.map(|text| text.revision) {
             Some(revision) => words.turn = Some((turn, revision)),
             None => words.unpinned = Some(turn),
         }
         Ok(words)
     }
 
-    /// The text revision of the words `turn` holds in this transaction, which
-    /// commits to the state of every message they come from; `None` when its
-    /// messages show none.
-    fn turn_words(&self, rtxn: &heed::RoTxn<'_>, turn: &EntityId) -> Result<Option<RevisionRef>> {
+    /// The words `turn` holds in this transaction, under the text revision
+    /// that commits to the state of every message they come from; `None`
+    /// when its messages show none.
+    fn turn_text(&self, rtxn: &heed::RoTxn<'_>, turn: &EntityId) -> Result<Option<TurnText>> {
         Ok(crate::vault::entity_revision::served_turn_text_in_txn(
             self.vault,
             rtxn,
             turn,
             ReadMode::Indexed,
         )?
-        .filter(|text| !text.messages.is_empty())
-        .map(|text| text.revision))
+        .filter(|text| !text.messages.is_empty()))
     }
 }
 
