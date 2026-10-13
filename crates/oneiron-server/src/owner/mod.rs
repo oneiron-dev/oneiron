@@ -8,6 +8,7 @@
 
 pub(crate) mod backup;
 pub(crate) mod cleanup;
+pub(crate) mod embedder;
 pub(crate) mod feedback;
 pub(crate) mod graph_fs;
 pub(crate) mod healer;

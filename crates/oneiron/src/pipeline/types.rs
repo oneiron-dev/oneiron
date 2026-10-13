@@ -264,6 +264,9 @@ pub(super) struct ClaimStatusGateCache {
 pub(crate) struct PipelineOutput {
     pub(crate) vector_completed: bool,
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
+    /// The ids whose words a reranker scored at their pin in `revisions`.
+    /// Those words are what the pack serves, never a later projection.
+    pub(crate) words_bound: std::collections::HashSet<EntityId>,
     pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
     /// Per TURN in `scores`, the MESSAGE rows it took the place of, best

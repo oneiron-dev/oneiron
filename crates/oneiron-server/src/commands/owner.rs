@@ -21,6 +21,7 @@ use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
 };
 use crate::owner::backup::{self, BackupPlan};
+use crate::owner::embedder::EmbedderReport;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
 
@@ -104,10 +105,12 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
     let mut vault_config = oneiron::VaultConfig::server();
     let serve_config = resolve_serve_config(&serve);
     let unresolved = serve_config.is_err();
+    let mut embedder = None;
     let dict_search_paths = match serve_config {
         Ok(config) => {
             vault_config.dimensions = config.dimensions;
             vault_config.map_size = config.map_size;
+            embedder = config.embedder;
             config.dict_search_paths
         }
         Err(error) => {
@@ -137,7 +140,8 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
         .filter(|model| oneiron::store::validate_embedding_model_id(model).is_ok());
     let mut report = match oneiron::Vault::open_owned(&args.path, vault_config) {
         Ok(vault) => {
-            let mut report = serde_json::to_value(vault.doctor()?)?;
+            let doctor = vault.doctor()?;
+            let mut report = serde_json::to_value(&doctor)?;
             // Which device and runtime computed the stored vectors, so one
             // device's can be found and embedded again (ARCH-0036).
             report["vector_provenance"] =
@@ -152,6 +156,12 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
             }
             report["location"] =
                 serde_json::to_value(location::locate(&args.path, Some(&vault), &plan, every)?)?;
+            report["embedder"] = serde_json::to_value(EmbedderReport::unobserved(
+                embedder.as_ref(),
+                Some(&doctor),
+                "doctor reads the vault, not a running server, and loads no model; \
+                 `oneiron api raw GET /v1/owner/status` reports what a running server loaded",
+            ))?;
             report
         }
         Err(oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD)) => {
@@ -161,7 +171,13 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
                 "a running `oneiron serve` holds this vault; `oneiron api raw GET /v1/owner/status` reads the rest"
                     .to_owned(),
             );
-            serde_json::json!({ "location": location })
+            let embedder = EmbedderReport::unobserved(
+                embedder.as_ref(),
+                None,
+                "a running `oneiron serve` holds this vault; `oneiron api raw GET /v1/owner/status` \
+                 reports the model it loaded",
+            );
+            serde_json::json!({ "location": location, "embedder": embedder })
         }
         Err(error) if unresolved => anyhow::bail!(
             "open vault {} failed: {error}; it was opened without the config's dimensions and \

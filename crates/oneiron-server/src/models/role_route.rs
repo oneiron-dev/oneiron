@@ -122,6 +122,11 @@ impl ModelRuntime {
                     .into_iter()
                     .chain([seat])
                     .find_map(|seat| seat.rung(&model));
+                // Only a reranker rung speaks the rerank protocol: the bare
+                // model may be the provider's chat route.
+                if role == ModelRole::Reranker && rung.is_none() {
+                    return Err(RoleRefusal::RouteNotServed { model, route });
+                }
                 Ok(RoleRoute {
                     ladder: rung.unwrap_or(ladder),
                     model,

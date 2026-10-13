@@ -68,8 +68,14 @@ pub(crate) fn context_entity_matches_read_snapshot(
     }
     if let Some(vector) = &entity.vector {
         if let Some(revision) = entity.source_revision_ref
-            && vault.indexed_revision_from_in_txn(store, txn, &entity.id)?
-                != Some(crate::vault::RevisionRef(revision))
+            && !pins_indexed_frontier(
+                vault,
+                store,
+                txn,
+                &entity.id,
+                header.entity_type,
+                crate::vault::RevisionRef(revision),
+            )?
         {
             return Ok(false);
         }
@@ -204,6 +210,17 @@ pub(super) fn hydrate_entity(
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
+            // A NOTE's live prose is in its document, which its row pin does
+            // not hold: words a reranker scored are the pinned row's. A row
+            // the write door refuses hydrates no field, as below.
+            None if options.words_pinned => {
+                let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+                if crate::batch::export::write_door_refuses_body(body) {
+                    HashMap::new()
+                } else {
+                    decode_entity_fields(body, header.entity_type).unwrap_or_default()
+                }
+            }
             None => {
                 let body = crate::note::live_body_in_txn(
                     &vault.store,
@@ -265,7 +282,7 @@ pub(super) fn hydrate_entity(
     let vector = if options.include_vectors
         && match source_revision {
             Some(revision) => {
-                vault.indexed_revision_from_in_txn(store, rtxn, &id)? == Some(revision)
+                pins_indexed_frontier(vault, store, rtxn, &id, header.entity_type, revision)?
             }
             None => true,
         } {
@@ -286,6 +303,39 @@ pub(super) fn hydrate_entity(
         edges,
         vector,
     }))
+}
+
+/// Whether `revision` pins the indexed frontier the vector row belongs to:
+/// the indexed revision itself or, for a TURN, the text revision of the
+/// words it holds there, which a reranked turn is served at. Another of the
+/// TURN's own row revisions is history, and reads none of its words.
+fn pins_indexed_frontier(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    revision: crate::vault::RevisionRef,
+) -> Result<bool> {
+    let Some(indexed) = vault.indexed_revision_from_in_txn(store, rtxn, id)? else {
+        return Ok(false);
+    };
+    if indexed == revision {
+        return Ok(true);
+    }
+    if entity_type != crate::registry::ENTITY_TYPE_TURN
+        || crate::vault::entity_revision::entity_owns_revision_in_txn(store, rtxn, id, revision)?
+    {
+        return Ok(false);
+    }
+    Ok(crate::vault::entity_revision::served_turn_text_in_txn(
+        vault,
+        store,
+        rtxn,
+        id,
+        crate::vault::ReadMode::Indexed,
+    )?
+    .is_some_and(|text| text.revision == revision))
 }
 
 /// Projects an already-decoded CLAIM body into the hydrated-fields map —
