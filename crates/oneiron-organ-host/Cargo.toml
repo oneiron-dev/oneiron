@@ -16,6 +16,8 @@ doctest = false
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
+# An organ starts with its socket on fd 3 and stdio only.
+oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 blake3 = { workspace = true }
 # The seal binding's DER checks, at the seal organ's exact pins: general
 # ASN.1 crates, not the organ.

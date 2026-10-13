@@ -7859,6 +7859,7 @@ dependencies = [
  "oneiron-model",
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
+ "oneiron-spawn",
  "oneiron-vault-contract",
  "oneiron-xlsx-formula",
  "p256",
@@ -7964,8 +7965,10 @@ dependencies = [
  "blake3",
  "libc",
  "memchr",
+ "oneiron-spawn",
  "rcgen",
  "reqwest 0.12.28",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
@@ -7980,6 +7983,7 @@ name = "oneiron-code-check"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "oneiron-spawn",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -8228,6 +8232,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation",
  "oneiron",
+ "oneiron-spawn",
  "rmpv",
  "serde",
  "serde_json",
@@ -8292,6 +8297,7 @@ dependencies = [
  "libc",
  "oneiron",
  "oneiron-organ-protocol",
+ "oneiron-spawn",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
@@ -8440,6 +8446,7 @@ dependencies = [
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",
  "oneiron-remote",
+ "oneiron-spawn",
  "oneiron-vault-contract",
  "rand_core 0.6.4",
  "rayon",
@@ -8468,6 +8475,14 @@ dependencies = [
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
+]
+
+[[package]]
+name = "oneiron-spawn"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tokio",
 ]
 
 [[package]]

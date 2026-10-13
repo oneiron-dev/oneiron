@@ -2,3 +2,17 @@ msrv = "1.96"
 allow-unwrap-in-tests = true
 cognitive-complexity-threshold = 100
 too-many-lines-threshold = 500
+
+# Every subprocess starts through `oneiron_spawn`, which hands it only the
+# standard descriptors and the ones its caller names. Test targets and
+# processes outside the server allow this at their roots or sites.
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "start subprocesses with oneiron_spawn::command or command_with_fds" },
+    { path = "tokio::process::Command::new", reason = "start subprocesses with oneiron_spawn::tokio_command", allow-invalid = true },
+    { path = "libc::fork", reason = "start subprocesses with oneiron_spawn", allow-invalid = true },
+    { path = "libc::vfork", reason = "start subprocesses with oneiron_spawn", allow-invalid = true },
+    { path = "libc::posix_spawn", reason = "start subprocesses with oneiron_spawn", allow-invalid = true },
+    { path = "libc::posix_spawnp", reason = "start subprocesses with oneiron_spawn", allow-invalid = true },
+    { path = "nix::unistd::fork", reason = "start subprocesses with oneiron_spawn", allow-invalid = true },
+    { path = "rustix::runtime::kernel_fork", reason = "start subprocesses with oneiron_spawn", allow-invalid = true },
+]
