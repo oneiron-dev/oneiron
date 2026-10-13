@@ -308,3 +308,55 @@ With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
 configured model by its engine id (`<provider>/<model>@<revision>`, shown in
 `GET /v1/ai/status`), or a seat by its seat id. Their process-lifetime meter is
 `models.raw_budget_units`.
+
+## 8. The reranker
+
+Recall at `high`, `xhigh` and `max` reranks its top 30 or 50 candidates on
+the `reranker` role (ARCH-0004 #rerank: a cross-encoder refines the fused set
+and never replaces the blend). Route the role in `[models]` like any other,
+on an OpenAI-compatible provider whose server answers `POST /v1/rerank`
+(`{model, query, documents}` in, `{results: [{index, relevance_score}],
+usage: {total_tokens}}` out):
+
+```toml
+[models.providers.rerank]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"
+
+[models.roles.reranker]
+model = "rerank:<the model your server loaded>"
+
+[models.recall]
+rerank_budget_units = 32000   # each recall's own line; the default
+```
+
+Each paid recall runs on a line of its own under the vault's budget policy,
+as a chat turn does. The rerank call is admitted on its own permit, sent
+through the run's gate and settled: the tokens the reranker reports, or the
+call's reservation (one call's 8000 units, or the whole line if smaller) when
+it reports none. Its `Admitted`, `Dispatched` and `Settled` rows go to the
+server's run receipts. If the vault has a model manifest, its binding for the
+`reranker` role picks the model, as for chat.
+
+The recall scores exactly the block it would rerank: the candidates the
+reader may read, with each one's text as the reader's own read serves it.
+A message whose words live in its document (a streamed message, the
+server's own chat replies among them, or an edited one) is found but not
+reranked yet: it follows the reranked rows in its first-stage order.
+The model runs outside every vault transaction, and the scores apply only to
+that same block. A block that changed while it was scored (the vault was
+written to) is scored once more; if it changes again the recall is refused
+with `INVALID_STATE` (409) and nothing stale is used. The pack's
+`retrieval_meta.rerank` says what happened: `{"status": "applied", "model",
+"served_model", "candidates", "calls"}` or `{"status": "skipped", "reason":
+"no_reranker" | "no_candidates" | "deadline"}`.
+
+Without a `reranker` route, `high` and above run their graph expansion
+unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in
+for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
+`budget_spent`), and a reranker that refuses, fails or answers out of shape
+with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
+rungs cannot serve (a key variable unset, or a `key_secret` provider: the
+broker sends chat calls only for now) refuses the same way. The request
+never names the model, the endpoint or the lease; the server holds them, for
+MCP, HTTP and WebSocket recall alike.

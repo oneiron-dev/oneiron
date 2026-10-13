@@ -55,7 +55,9 @@ pub struct FoldedMachine {
     /// handoff conflict retired its root and installed no successor. Not
     /// live until the conflict settles, when the standing is judged again.
     pub admitter_unsettled: bool,
-    /// The roster key that signed the revision, and its class.
+    /// The roster key that signed the revision, and its class. The class is
+    /// judged again on the merged history: a key found to be in the host's
+    /// custody on any branch the fold holds stops its owned revision standing.
     pub signer: AuthorityKey,
     pub signer_class: SignerClass,
     /// The authority-log entry that carried the revision.
@@ -81,8 +83,14 @@ impl FoldedMachine {
     }
 
     #[must_use]
+    /// An owned revision stands only when a key the owner holds signed it.
     pub fn is_live(&self) -> bool {
-        !self.conflicted && !self.removed && !self.stale && !self.admitter_unsettled
+        !self.conflicted
+            && !self.removed
+            && !self.stale
+            && !self.admitter_unsettled
+            && (self.signer_class == SignerClass::OwnerHeld
+                || !matches!(self.profile.role, MachineRole::Owned(_)))
     }
 
     /// Mine only by the owner's explicit `Yours`, and only while live.
@@ -188,7 +196,22 @@ pub(super) fn apply_machine_profile(
 /// directly or through another custodial key. Judged from provenance and the
 /// vault's posture, so a key labelled owner-held still counts.
 fn custodial_host_root(state: &FoldState, signer: &AuthorityKey, context: FoldContext<'_>) -> bool {
-    context.hosted && state.host_custody_keys.contains(signer)
+    context.hosted && in_host_custody(state, signer)
+}
+
+/// Whether `key`, or any key up its admitters, is marked as the host's.
+fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![key];
+    while let Some(next) = pending.pop() {
+        if state.host_custody_keys.contains(next) {
+            return true;
+        }
+        if seen.insert(next) {
+            pending.extend(state.key_admitters.get(next).into_iter().flatten());
+        }
+    }
+    false
 }
 
 fn roster_chain(state: &FoldState, machine: EntityId) -> Option<&MachineChain> {
@@ -283,7 +306,9 @@ pub(super) fn merge_machine_maps(
 /// other may have given its key to two machines, or made its key or row an
 /// actor's. A machine joins once with one key, so a revision that names
 /// another key leaves it live under neither: a connection that proved the
-/// first key never speaks for the second. Every reader of a machine's
+/// first key never speaks for the second. Custody is judged on the merged
+/// history too, so a mark signed before its signer's custody reached that
+/// branch counts no more than one signed after. Every reader of a machine's
 /// standing goes through this.
 pub(super) fn derived_machine(state: &FoldState, id: EntityId) -> Option<FoldedMachine> {
     roster_chain(state, id).map(|chain| derived_head(state, id, chain))
@@ -303,6 +328,9 @@ pub(super) fn derived_chains(
 
 fn derived_head(state: &FoldState, id: EntityId, chain: &MachineChain) -> FoldedMachine {
     let mut folded = chain.head.clone();
+    if state.hosted && in_host_custody(state, &folded.signer) {
+        folded.signer_class = SignerClass::Custodial;
+    }
     let shared_key = state
         .machine_keys
         .get(&folded.profile.machine_key)

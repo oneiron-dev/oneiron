@@ -8,10 +8,16 @@ use crate::ports::EntityStoreRead;
 
 mod call_mode;
 mod items;
+mod paid;
 mod presentation;
 mod scope_honesty;
 
 pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_recall_dial};
+#[cfg(test)]
+pub(super) use self::paid::PREPARED_SCORES_TAKEN;
+pub use self::paid::{
+    RecallRerank, RecallRerankHost, RerankDocument, RerankReport, RerankScores, RerankSkip,
+};
 
 use self::presentation::{hedge_bucket_for, value_text_of};
 pub(super) use self::presentation::{parse_pack_format, truncate_text};
@@ -141,8 +147,9 @@ pub const CONTAINER_KINDS: [u8; 4] = [
 
 /// What recall refuses from its request alone, before it reads the vault: a
 /// zero limit, an `as_of` out of range, a paid effort without its lease and
-/// reranker, an unknown format or kind. A door that pays for a query vector
-/// runs this first, so a request recall would refuse costs no embedding.
+/// reranker (unless its host serves no reranker), an unknown format or kind.
+/// A door that pays for a query vector runs this first, so a request recall
+/// would refuse costs no embedding.
 pub(crate) fn check_recall_request(
     effort: Effort,
     scope: &RecallScope,
@@ -155,7 +162,7 @@ pub(crate) fn check_recall_request(
         return Err(MemoryError::bad_request("recall limit must be at least 1"));
     }
     crate::memory::caps::check_as_of(execution.as_of)?;
-    if effort.requires_rerank() {
+    if effort.requires_rerank() && !execution.rerank_unavailable {
         if lease.is_none() {
             return Err(MemoryError::new(
                 MEMORY_CODE_LEASE_REQUIRED,
@@ -325,6 +332,10 @@ pub struct RetrievalMeta {
     /// recall ran on its other signals.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub temporal_hints: Vec<crate::temporal::TemporalHintReport>,
+    /// What the rerank stage of a recall at high, xhigh or max did: the
+    /// model whose scores ordered the top block, or why it was skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<RerankReport>,
 }
 
 /// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
@@ -750,9 +761,11 @@ impl Memory<'_> {
                 if !execution.phonetic_codes.is_empty() {
                     pipeline = pipeline.search_phonetic(execution.phonetic_codes);
                 }
-                if effective.requires_rerank() {
+                if effective.requires_rerank()
+                    && let Some(reranker) = execution.reranker
+                {
                     pipeline = pipeline.rerank(
-                        execution.reranker.expect("validated reranker"),
+                        reranker,
                         RerankOptions {
                             top_n: effective.rerank_top_n(),
                             query: Some(query.to_owned()),
@@ -831,9 +844,11 @@ impl Memory<'_> {
                 if !execution.phonetic_codes.is_empty() {
                     builder = builder.search_phonetic(execution.phonetic_codes);
                 }
-                if effective.requires_rerank() {
+                if effective.requires_rerank()
+                    && let Some(reranker) = execution.reranker
+                {
                     builder = builder.rerank(
-                        execution.reranker.expect("validated reranker"),
+                        reranker,
                         RerankOptions {
                             top_n: effective.rerank_top_n(),
                             query: Some(query.to_owned()),
@@ -936,6 +951,7 @@ impl Memory<'_> {
                 claims_returned,
                 deep_pending,
                 temporal_hints,
+                rerank: None,
             },
             items,
             pack_version: MEMORY_PACK_VERSION,

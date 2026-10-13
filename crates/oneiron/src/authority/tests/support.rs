@@ -387,6 +387,8 @@ pub(super) fn single_owner_state(
         host_custody_keys: BTreeSet::new(),
         worlds: BTreeMap::new(),
         refused_world_edits: BTreeSet::new(),
+        key_admitters: BTreeMap::new(),
+        hosted: false,
         actor_rows: BTreeSet::new(),
     };
     (owner, owner_key, parent, state)

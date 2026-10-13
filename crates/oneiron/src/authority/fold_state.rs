@@ -261,13 +261,19 @@ pub(super) struct FoldState {
     pub(super) machines: BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
     /// Every machine row that ever claimed each install key, merged by union.
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
-    /// Roster keys in the host's custody, merged by union: each key a host
-    /// enrolled as its own root, each key marked for the cloud (role or
-    /// tier), and each key a custodial key admitted (enrolled, rotated to or
-    /// re-rooted to), whatever labels it carries.
+    /// Roster keys marked as the host's, merged by union: each key a host
+    /// enrolled as its own root, and each key marked for the cloud (role or
+    /// tier). Custody also passes along `key_admitters`.
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
     pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
     pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// Each roster key's admitters, merged by union: the keys that enrolled,
+    /// rotated to or re-rooted to it, on any branch. A key is in the host's
+    /// custody when it, or any key up this graph, is marked as the host's,
+    /// whatever labels it carries and whichever branch carried the mark.
+    pub(super) key_admitters: BTreeMap<AuthorityKey, BTreeSet<AuthorityKey>>,
+    /// The fold judges a hosted vault (`FoldContext::hosted`), fixed at genesis.
+    pub(super) hosted: bool,
     /// Every row an accepted bind or rebind named, merged by union: the
     /// actor merge keeps one winner, and a row bound on a losing branch is
     /// still no physical machine.
@@ -489,6 +495,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());
+    for (key, admitters) in &right.key_admitters {
+        merged
+            .key_admitters
+            .entry(key.clone())
+            .or_default()
+            .extend(admitters.iter().cloned());
+    }
     merged.actor_rows.extend(right.actor_rows.iter().copied());
     merged
 }

@@ -108,6 +108,8 @@ pub(super) fn fold_entry_state(
             host_custody_keys: BTreeSet::new(),
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
+            key_admitters: BTreeMap::new(),
+            hosted: context.hosted,
             actor_rows: BTreeSet::new(),
         };
         if !tier_meets_floor(device.tier, *tier_floor) {

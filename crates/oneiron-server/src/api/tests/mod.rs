@@ -46,6 +46,7 @@ mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
 mod reactive;
+mod recall_rerank;
 mod relay_widen;
 mod retrieval_depth_quality;
 mod retrieval_shaping;

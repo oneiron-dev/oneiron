@@ -329,6 +329,13 @@ async fn agent_run_is_approved_or_declined_whole_through_the_route() {
 
 /// `auth_test_server` with the vault path and a backup plan, as `serve` builds it.
 fn owner_host_server() -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>) {
+    owner_host_server_with(None)
+}
+
+/// [`owner_host_server`] with an embedder slot.
+fn owner_host_server_with(
+    embedder: Option<crate::embedder::EmbedderSlot>,
+) -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().unwrap();
     let backups = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
@@ -345,7 +352,8 @@ fn owner_host_server() -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>
     };
     let server = SyncServer::new(vault, config)
         .unwrap()
-        .with_owner_host(host);
+        .with_owner_host(host)
+        .with_embedder(embedder);
     (dir, backups, Arc::new(server))
 }
 
@@ -383,6 +391,63 @@ async fn owner_backup_rehearse_and_status_through_the_route() {
     assert_eq!(location["backups"]["last"]["file"], taken["backup"]["file"]);
     assert_eq!(location["secret_scan"], "on");
     assert!(location["disk_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(location["embedder"]["dense"], "not_configured");
+    assert!(location["embedder"]["loaded"].is_null());
+}
+
+/// Done-means (G1 check 5): the owner's status keeps what config asks for,
+/// what the vault pins and what loaded apart, and says why dense recall
+/// does not run. A local model whose files cannot be fetched is `refused`
+/// with that reason, and nothing claims it loaded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn owner_status_reports_a_refused_embedder_load_and_its_reason() {
+    let models = tempfile::tempdir().unwrap();
+    // As config resolves a local section that names only its files: the
+    // space is the files' model.
+    let config = crate::config::EmbedderConfig {
+        provider: crate::config::EmbedderProvider::Local,
+        dimensions: 1024,
+        model_id: format!("oneiron-dev/no-such-embedding-model@{}", "0".repeat(40)),
+        local: crate::config::LocalEmbedderConfig {
+            repo: "oneiron-dev/no-such-embedding-model".to_owned(),
+            revision: "0".repeat(40),
+            models_dir: Some(models.path().to_path_buf()),
+            ..crate::config::LocalEmbedderConfig::default()
+        },
+        ..crate::config::EmbedderConfig::default()
+    };
+    let slot = crate::embedder::EmbedderSlot::from_config(&config)
+        .unwrap()
+        .unwrap()
+        .with_model_source("http://127.0.0.1:1");
+    let (_dir, _backups, server) = owner_host_server_with(Some(slot));
+    let owner = owner_recipe(&server);
+    let (status, before) = call(&server, "GET", "/v1/owner/status", owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert_eq!(before["embedder"]["dense"], "loading", "{before}");
+    let _worker = server.spawn_embedding_worker().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let report = loop {
+        let (_, report) = call(&server, "GET", "/v1/owner/status", owner.clone(), None).await;
+        if report["embedder"]["dense"] != "loading" || std::time::Instant::now() > deadline {
+            break report;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    let embedder = &report["embedder"];
+    assert_eq!(embedder["dense"], "refused", "{report}");
+    assert!(
+        !embedder["reason"].as_str().unwrap_or_default().is_empty(),
+        "{report}"
+    );
+    assert!(embedder["loaded"].is_null(), "{report}");
+    assert_eq!(embedder["configured"]["provider"], "local");
+    assert_eq!(
+        embedder["configured"]["model_id"],
+        format!("oneiron-dev/no-such-embedding-model@{}", "0".repeat(40))
+    );
+    assert_eq!(embedder["configured"]["dimensions"], 1024);
+    assert!(embedder["persisted"].is_object(), "{report}");
 }
 
 /// A request the owner door admitted, then a revocation of its slip commits
