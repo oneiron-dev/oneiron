@@ -1660,6 +1660,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityHandoffEquivocation"
+     ],
+     "path": "src/authority/handoff_equivocation.rs",
+     "purpose": "Evidence that a retired key signed beside the handoff that retired it: the first record of OF-166, ahead of…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -1757,8 +1772,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 8,
-      "re-export": 18
+      "crate-vis": 10,
+      "re-export": 19
      }
     },
     {
@@ -1797,13 +1812,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/retired_signers.rs",
+     "purpose": "A handoff retires its predecessor for good (engine-crates-03)",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/revoke_proof.rs",
-     "purpose": "Log-derived, typed actor revocation facts, independent of roster survivors",
+     "purpose": "Log-derived, typed restrictive facts (actor revocations, slip withdrawals and slip burns), independent of…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -1823,7 +1848,7 @@
      "path": "src/authority/sequence_observation.rs",
      "purpose": "Durable signer sequence maxima and content-addressed first-observation receipts",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -1978,7 +2003,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/federation_confirm.rs",
@@ -2013,9 +2038,27 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/authority/tests/handoff_arrival_order.rs",
+     "purpose": "Handoff settlement does not depend on the order rows arrive in (Astra review 1 of #1410, Engine ruling…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/handoff_settlement.rs",
+     "purpose": "Handoff settlement (engine-crates-03, Sol reviews 2 to 4): forks and cycles of handoffs install no successor…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "src/authority/tests/history_transfer.rs",
      "purpose": "Full signed-history portability, account auth and independent recovery composition",
-     "surface": {}
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -2063,7 +2106,9 @@
      "notable": [],
      "path": "src/authority/tests/observation_safety.rs",
      "purpose": "Persisted anti-rollback, bounded stale-roster approvals and advisory ingest checks",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -2135,6 +2180,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/weak_keys.rs",
+     "purpose": "A small-order Ed25519 key has no authority (engine-crates-04)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/tier_floor.rs",
@@ -2144,7 +2197,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/vault_api.rs",
@@ -2359,7 +2412,7 @@
      "path": "src/batch/authority_log.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 4
      }
     },
     {
@@ -7583,6 +7636,7 @@
       "ClaimHistoryHandoffPin",
       "ClaimTransition",
       "HandoffCodecError",
+      "HandoffKind",
       "HandoffRefusal",
       "HandoffStanding",
       "HandoffVerification",
@@ -7591,14 +7645,14 @@
      "path": "src/claim/history_handoff.rs",
      "purpose": "Bounded, canonical, signed transfer of one scoped machine-claim history",
      "surface": {
-      "const": 2,
-      "enum": 4,
+      "const": 3,
+      "enum": 5,
       "fn": 5,
       "struct": 5
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ResolvedMachineClaim"
@@ -8928,6 +8982,14 @@
      "notable": [],
      "path": "src/code_run/tests_room_saver.rs",
      "purpose": "ARCH-0052 D5: a run in a room on record writes into the vault of the owner who put it on record, and only…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/tests_room_saving.rs",
+     "purpose": "ARCH-0052 D4, D5: saving the talk of a room off record while a run keeps speaking into one turn",
      "surface": {}
     },
     {
@@ -11168,6 +11230,14 @@
      "notable": [],
      "path": "src/consent/tests/shared_brief.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/tests/stale_proofs.rs",
+     "purpose": "An owner proof acts only while it still holds, checked in the transaction that writes the act…",
      "surface": {}
     },
     {
@@ -23634,7 +23704,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/export.rs",
@@ -23888,7 +23958,7 @@
      "path": "src/memory/witness/codec.rs",
      "purpose": "Turn-speaker and message-envelope codec plus session alias formatting",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -23919,7 +23989,7 @@
      "path": "src/memory/witness/session.rs",
      "purpose": "Session overlay landing: journal staging from the door's authorized values, room-shell claim",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3
      }
     },
@@ -24051,7 +24121,7 @@
      "path": "src/memory/witness/validation.rs",
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -24653,7 +24723,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/lifecycle/promotion.rs",
@@ -24680,9 +24750,19 @@
      "path": "src/off_record/lifecycle/room.rs",
      "purpose": "Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 11,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/saving.rs",
+     "purpose": "Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -24777,7 +24857,7 @@
      "path": "src/off_record/promote.rs",
      "purpose": "Explicit promotion from an off-record session into the durable vault",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 2,
       "struct": 2
      }
@@ -26881,7 +26961,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/world_authority_tests.rs",
@@ -29053,7 +29133,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/decisions/worlds.rs",
-     "purpose": "Which worlds an executing principal may read: the owner grants and the default its `claim_of` edges reach…",
+     "purpose": "Which worlds an executing principal may read: the owner grants and the default about it, as the…",
      "surface": {
       "crate-vis": 2
      }
@@ -31091,13 +31171,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/journal.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 17
      }
     },
     {
@@ -31197,7 +31277,7 @@
      "path": "src/session_overlay/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -35575,7 +35655,7 @@
      "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
      "surface": {
       "crate-vis": 8,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -37003,7 +37083,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 17,
       "struct": 1
      }
@@ -39412,7 +39492,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 61,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39540,7 +39620,7 @@
     "claim": {
      "files": 61,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)"
     },
@@ -39580,7 +39660,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39685,7 +39765,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40154,7 +40234,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40693,10 +40773,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 36,
+   "over_bar": 37,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2469,
-   "test_files": 786
+   "source_files": 2473,
+   "test_files": 790
   },
   "oneiron-android": {
    "files": [
@@ -40773,7 +40853,7 @@
      "purpose": "Authority key material and signature verification",
      "surface": {
       "enum": 3,
-      "fn": 13,
+      "fn": 14,
       "struct": 2
      }
     },

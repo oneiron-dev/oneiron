@@ -482,6 +482,83 @@ fn export_refuses_other_people_and_unleased_owner_handles() {
     );
 }
 
+/// engine-prs-13: a live full slip is not the Owner role. Its holder exports
+/// the whole vault only while it is an owner of this vault.
+#[test]
+fn a_live_full_slip_without_the_owner_role_does_not_export_the_vault() {
+    use crate::authority::HostSlipIssuer;
+    let (_dir, vault, _owner) = owner_vault();
+    let other = put_person(&vault, 41);
+    let issuer = HostSlipIssuer::from_secret(b"fixture-export-non-owner-root").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"full-vault-export-non-owner").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = other.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            b"export-non-owner-test",
+            &issuer
+                .binding_proof(&slip, b"export-non-owner-test")
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(proof.is_full_vault_owner_grade());
+    assert_eq!(
+        facade_for(&vault, other)
+            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+    assert!(vault.export_receipts().unwrap().is_empty());
+}
+
+/// A deleted owner exports nothing with the slip it still holds (Sol review
+/// 2). A plain delete keeps the PERSON shell and its Active lifecycle, so the
+/// live-owner check reads the deletion tombstone too.
+#[test]
+fn a_deleted_owner_does_not_export_the_vault_with_a_live_slip() {
+    use crate::authority::HostSlipIssuer;
+    let (_dir, vault, actor) = owner_vault();
+    let issuer = HostSlipIssuer::from_secret(b"fixture-export-deleted-owner-root").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"full-vault-export-deleted-owner").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = actor.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            b"export-deleted-owner-test",
+            &issuer
+                .binding_proof(&slip, b"export-deleted-owner-test")
+                .unwrap(),
+        )
+        .unwrap();
+    let memory = facade_for(&vault, actor);
+    assert!(
+        memory
+            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .is_ok()
+    );
+    assert!(vault.delete_entity(&actor).unwrap());
+    assert_eq!(
+        memory
+            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+}
+
 #[test]
 fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
     use crate::authority::HostSlipIssuer;

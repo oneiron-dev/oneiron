@@ -374,6 +374,14 @@ impl From<Error> for MemoryError {
                     "Witness the turn again to say it off record; only the vault's owner, in the room, puts it back on record.",
                 ],
             ),
+            ErrorKind::OffRecordCopyConflict => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Nothing of this save was kept; what was said stays in the room until it closes.",
+                    "Export the talk to keep a copy of it.",
+                ],
+            ),
             // One answer for "no such stretch" and "not in its room", as the
             // HTTP boundary gives, so a stranger learns nothing of a room's
             // stretches here either.

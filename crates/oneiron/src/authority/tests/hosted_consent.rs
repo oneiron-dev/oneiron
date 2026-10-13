@@ -376,6 +376,7 @@ fn a_hosted_root_is_cloud_stamped_and_its_own_rows_still_validate() {
         &mut wtxn,
         &id,
         &body,
+        vault.privacy_posture(),
     )
     .unwrap();
 
