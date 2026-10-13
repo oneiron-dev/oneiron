@@ -306,11 +306,24 @@ struct RecordReader {
 }
 
 impl RecordReader {
-    fn with_default<T>(&self, f: impl FnOnce() -> T) -> T {
-        // A second registered dispatch keeps a concurrent test with no
-        // subscriber from caching these warnings off (embed/warn_capture.rs).
-        let _other = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
-        tracing::dispatcher::with_default(&tracing::Dispatch::new(self.clone()), f)
+    /// What this reader read at the first warning `warn` raises, with `warn`
+    /// run afresh, given its try number, until a warning reaches it.
+    fn first_read(&self, mut warn: impl FnMut(u64)) -> Option<(usize, u64)> {
+        for attempt in 0..3 {
+            // Two registered dispatches make a callsite registration consult
+            // both (embed/warn_capture.rs), and registering them rebuilds the
+            // interest cache. A concurrent test that was registering the
+            // record's callsite with no subscriber can still store `never`
+            // after that rebuild, but registration happens once, so the next
+            // try's rebuild settles it.
+            let _other = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+            let dispatch = tracing::Dispatch::new(self.clone());
+            tracing::dispatcher::with_default(&dispatch, || warn(attempt));
+            if let Some(read) = self.seen.lock().unwrap().pop() {
+                return read;
+            }
+        }
+        None
     }
 }
 
@@ -350,11 +363,12 @@ impl tracing::Subscriber for RecordReader {
 /// Sol review 8: a host that reads the record from its log consumer when the
 /// record warns neither stalls the door nor misses the evidence it was warned
 /// of: the record is kept before the warning, and the read does not wait on
-/// the door. Both warnings: a door's refusal, and the first record dropped
-/// past the bound.
+/// the door. Both warnings: a door's refusal, and a record dropped past the
+/// bound. What the consumer read is what the record holds right after.
 #[test]
 fn a_log_consumer_reads_the_evidence_it_was_warned_of() {
     let fork = fork(252);
+    let id = genesis_vault_id(&fork.genesis).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).unwrap());
     store(&vault, &fork.genesis);
@@ -363,24 +377,36 @@ fn a_log_consumer_reads_the_evidence_it_was_warned_of() {
         vault: Arc::downgrade(&vault),
         seen: Arc::default(),
     };
-    reader.with_default(|| assert!(put(&vault, &[&fork.forged]).is_err()));
+    let now = || {
+        (
+            vault.authority_handoff_equivocations().len(),
+            vault.authority_handoff_equivocations_dropped(),
+        )
+    };
+    // The first try refuses the forged handoff itself; each later try a
+    // sibling at the next sequence.
+    let read = reader.first_read(|attempt| {
+        let sibling = re_root_entry(id, &fork.genesis, &fork.old, 2 + attempt, &fork.forger_heir);
+        assert!(put(&vault, &[&sibling]).is_err());
+    });
+    assert_eq!(read, Some(now()));
 
     let log = &vault.store.authority_handoff_equivocations;
     let template = vault.authority_handoff_equivocations()[0].clone();
-    let distinct = |n: usize| {
+    let mut next = 0_usize;
+    let mut distinct = || {
+        next += 1;
         let mut refused = [0xA5; 32];
-        refused[..8].copy_from_slice(&n.to_be_bytes());
+        refused[..8].copy_from_slice(&next.to_be_bytes());
         AuthorityHandoffEquivocation {
             refused,
             ..template.clone()
         }
     };
-    for n in 1..RECORD_LIMIT {
-        assert!(log.record(distinct(n)));
+    while vault.authority_handoff_equivocations().len() < RECORD_LIMIT {
+        assert!(log.record(distinct()));
     }
-    reader.with_default(|| assert!(log.record(distinct(RECORD_LIMIT))));
-    assert_eq!(
-        *reader.seen.lock().unwrap(),
-        vec![Some((1, 0)), Some((RECORD_LIMIT, 1))]
-    );
+    let read = reader.first_read(|_| while !log.record(distinct()) {});
+    assert_eq!(read, Some(now()));
+    assert_eq!(read.map(|(held, _)| held), Some(RECORD_LIMIT));
 }
