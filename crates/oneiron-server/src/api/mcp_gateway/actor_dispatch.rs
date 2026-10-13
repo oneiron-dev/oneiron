@@ -130,23 +130,28 @@ impl McpCallEffect {
     /// A generated verb's effect. `claim_upsert` proposes a new claim, or a
     /// replacement that supersedes its head only once approved; one that names
     /// its `id` rewrites that claim in place, so the old value leaves at once.
-    /// The `id` is read the way dispatch reads the input, as a typed
-    /// `ClaimInput` in whatever form serde takes (a positional array too); a
-    /// spec that does not decode is refused at dispatch and writes nothing.
+    /// A booking page publication acts at once too, with or without an `id`:
+    /// the page's public address moves to the new claim as it is written, so
+    /// a revision still awaiting review takes the live page offline.
+    /// The input is read the way dispatch reads it, as a typed `ClaimInput`
+    /// in whatever form serde takes (a positional array too); a spec that
+    /// does not decode is refused at dispatch and writes nothing.
     fn of(
         tool: crate::mcp::McpGeneratedVerbTool,
         arguments: &crate::mcp::McpVerbArguments,
     ) -> Self {
-        let names_claim = || {
+        let acts_at_once = || {
             tool.name == oneiron::task_verb::sdk::AgentVerb::ClaimUpsert.as_str()
                 && arguments.spec.clone().is_some_and(|spec| {
-                    serde_json::from_value::<oneiron::memory::ClaimInput>(spec)
-                        .is_ok_and(|input| input.id.is_some())
+                    serde_json::from_value::<oneiron::memory::ClaimInput>(spec).is_ok_and(|input| {
+                        input.id.is_some()
+                            || input.predicate == oneiron::booking::BOOKING_PUBLIC_PAGE_PREDICATE
+                    })
                 })
         };
         if !tool.writes() {
             Self::Reads
-        } else if tool.proposes() && !names_claim() {
+        } else if tool.proposes() && !acts_at_once() {
             Self::Proposes
         } else {
             Self::Commits
