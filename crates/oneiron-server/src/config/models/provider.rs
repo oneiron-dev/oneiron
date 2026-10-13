@@ -79,6 +79,19 @@ impl OutputLimitField {
     }
 }
 
+/// What an OpenAI-compatible endpoint is sent for a call that asks for JSON
+/// in a schema: the schema in `response_format` (the default), or no
+/// `response_format` at all, for a server run without schema-constrained
+/// decoding. The answer meets the same validator either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormatWire {
+    #[default]
+    Schema,
+    #[serde(rename = "none")]
+    Omitted,
+}
+
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_CONTEXT_TOKENS: u64 = 128_000;
 /// Headers that carry credentials. Keys arrive through `key_env` or
@@ -104,6 +117,7 @@ pub(super) struct ProviderFile {
     context_tokens: Option<u64>,
     max_output_tokens: Option<u64>,
     output_limit_field: Option<OutputLimitField>,
+    response_format: Option<ResponseFormatWire>,
     capabilities: Option<Vec<LlmCapability>>,
     locality: Option<ModelLocality>,
     revision: Option<String>,
@@ -131,6 +145,8 @@ pub struct ProviderConfig {
     pub max_output_tokens: Option<u64>,
     /// Where an OpenAI-compatible endpoint reads that limit.
     pub output_limit_field: OutputLimitField,
+    /// Whether an OpenAI-compatible endpoint is sent a JSON call's schema.
+    pub response_format: ResponseFormatWire,
     pub capabilities: Vec<LlmCapability>,
     /// Where calls to this provider run, for the engine's route checks.
     pub locality: ModelLocality,
@@ -185,6 +201,16 @@ impl ProviderFile {
                 "models.providers.{name}.output_limit_field applies to OpenAI-compatible providers only"
             );
         }
+        if self.response_format.is_some()
+            && !matches!(
+                kind,
+                ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+            )
+        {
+            anyhow::bail!(
+                "models.providers.{name}.response_format applies to OpenAI-compatible providers only"
+            );
+        }
         if self.locality == Some(ModelLocality::OnDevice) {
             anyhow::bail!(
                 "models.providers.{name}.locality: on_device names an in-process runtime; a model server reached over HTTP, even on this machine, is own_server"
@@ -206,6 +232,7 @@ impl ProviderFile {
             context_tokens,
             max_output_tokens: self.max_output_tokens,
             output_limit_field: self.output_limit_field.unwrap_or_default(),
+            response_format: self.response_format.unwrap_or_default(),
             capabilities: self
                 .capabilities
                 .unwrap_or_else(|| kind.default_capabilities()),

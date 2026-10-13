@@ -44,6 +44,7 @@ prefer_local = true                     # false puts the cloud rung first
 [models.providers.exl3]                 # any local OpenAI-compatible server: exllamav3, llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
 kind = "local-openai-compat"
 base_url = "http://127.0.0.1:8080"
+response_format = "none"                # the EXL3 recipe below runs without the schema
 
 [models.providers.router]               # OpenRouter, or any OpenAI-compatible endpoint
 kind = "openai-compat"
@@ -74,11 +75,14 @@ key_env = "ANTHROPIC_API_KEY"
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
 the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, 7 draft
-tokens), served by an exllamav3 OpenAI-compatible server, with no JSON
-schema. The fallback is llama.cpp `llama-server` on
+tokens), served by an exllamav3 OpenAI-compatible server with no schema:
+its provider sets `response_format = "none"`, so a JSON call goes out with
+no `response_format`. The fallback is llama.cpp `llama-server` on
 `Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
-(`--spec-type draft-simple --spec-draft-n-max 8`) and the extraction JSON
-schema. Typed decisions stay on `vllm-sr/d3-flash`.
+(`--spec-type draft-simple --spec-draft-n-max 8`) and the schema, the
+default (`response_format = "schema"`). Either way the engine checks the
+answer against the call's schema, and an answer that breaks it is refused.
+Typed decisions stay on `vllm-sr/d3-flash`.
 
 Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
 saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
@@ -89,7 +93,8 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `local-openai-compat`, `oneironer`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
-`max_output_tokens`, `output_limit_field`, `capabilities` (`streaming`,
+`max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
+default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`

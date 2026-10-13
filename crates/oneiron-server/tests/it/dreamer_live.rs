@@ -12,7 +12,10 @@
 //! - `ONEIRON_LIVE_KEY_FILE`: a file holding the provider key. It is read
 //!   here and handed to the server in its environment, never printed;
 //! - `ONEIRON_LIVE_OUT`: a directory for the server logs, the receipts and
-//!   `report.json`.
+//!   `report.json`;
+//! - `ONEIRON_LIVE_RESPONSE_FORMAT` (optional): the provider's
+//!   `response_format`, `schema` (the default) or `none`. Each recorded call
+//!   says whether it carried a `response_format`.
 //!
 //! On invented data it witnesses a short conversation and declares its
 //! summary while the server is stopped, so the server queues the work at
@@ -63,6 +66,7 @@ struct Live {
     served: String,
     key: String,
     out: PathBuf,
+    response_format: String,
 }
 
 impl Live {
@@ -86,6 +90,8 @@ impl Live {
             served: var("ONEIRON_LIVE_SERVED"),
             key,
             out,
+            response_format: std::env::var("ONEIRON_LIVE_RESPONSE_FORMAT")
+                .unwrap_or_else(|_| "schema".to_owned()),
         }
     }
 }
@@ -97,6 +103,8 @@ struct Call {
     system: String,
     input: String,
     status: u16,
+    /// Whether the request carried a `response_format`.
+    response_format: bool,
     served: Vec<String>,
     answer: String,
 }
@@ -221,6 +229,7 @@ async fn forward(
         system: message(0),
         input: message(1),
         status,
+        response_format: request.get("response_format").is_some(),
         served,
         answer: redact(&String::from_utf8_lossy(&answer), &relay.key),
     });
@@ -342,11 +351,13 @@ kind = "openai-compat"
 base_url = "{relay}"
 key_env = "{KEY_ENV}"
 timeout_secs = 300
+response_format = "{response_format}"
 
 [models.dreamer]
 summary_prompt = "Summarize these records in two plain sentences."
 "#,
-        model = live.model
+        model = live.model,
+        response_format = live.response_format
     )
 }
 

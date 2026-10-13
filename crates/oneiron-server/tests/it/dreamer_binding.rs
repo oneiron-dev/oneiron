@@ -19,7 +19,7 @@ use oneiron::dreamer_consolidation::{
     enqueue_partition_attempts, read_watermark, scan_dirty_turns,
 };
 use oneiron::edge::EdgeActorClass;
-use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use oneiron::{DreamerConsolidationScope, EntityId, TimeRange, Vault};
 use serde_json::{Value, json};
 
@@ -350,4 +350,73 @@ async fn a_vault_seeded_before_the_critical_classes_holds_that_correction_too() 
         granted: false,
     })
     .await;
+}
+
+/// Engine ruling 2026-10-14 (NIGHTLY-SWITCH): a provider set to
+/// `response_format = "none"` sends the extraction call no
+/// `response_format`, and an answer that breaks the extraction schema is
+/// refused as it is under the default, which still sends the schema: the
+/// pass writes the same claims, none from that answer.
+#[tokio::test]
+async fn an_off_schema_answer_is_refused_with_or_without_the_schema_on_the_wire() {
+    let mut written = Vec::new();
+    for (line, sends) in [("", true), ("response_format = \"none\"\n", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().join("vault");
+        std::fs::create_dir_all(&vault_path).unwrap();
+        witness(
+            &vault_path,
+            EntityId::now(),
+            "I'm Oleksii and I live in Lisbon.",
+            true,
+            "schema-1",
+        );
+        let fake = FakeLlm::start(
+            Vec::new(),
+            Some(Reply::text(json!({"candidates": "Lisbon"}).to_string())),
+        )
+        .await;
+        let config = write_config(
+            dir.path(),
+            &vault_path,
+            free_port(),
+            &format!("{}{line}", models_section(&fake.base_url)),
+        );
+        let granted = oneiron(
+            &config,
+            &["dreamer", "grant", "--extraction-route", "own_server"],
+        )
+        .output()
+        .unwrap();
+        assert!(granted.status.success());
+        serve_until(&config, &fake, 1).await;
+        let seen = fake.seen();
+        let extraction: Vec<_> = seen
+            .iter()
+            .filter(|call| {
+                text(&call.body["messages"][0]).starts_with("Extract durable memory claims")
+            })
+            .collect();
+        assert!(!extraction.is_empty(), "the pass called the model");
+        for call in extraction {
+            assert_eq!(
+                call.body.get("response_format").is_some(),
+                sends,
+                "{}",
+                call.body
+            );
+        }
+        let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
+        let person = EntityId::from_hex(PERSON).unwrap();
+        assert!(claims_on(&vault, person, "residence.city").is_empty());
+        let predicates: std::collections::BTreeSet<String> = vault
+            .entities_by_type(ENTITY_TYPE_CLAIM)
+            .unwrap()
+            .iter()
+            .filter_map(|id| vault.get_claim(id).ok().flatten())
+            .map(|claim| claim.predicate)
+            .collect();
+        written.push(predicates);
+    }
+    assert_eq!(written[0], written[1], "both arms refuse it the same way");
 }
