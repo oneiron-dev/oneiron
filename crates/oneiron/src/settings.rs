@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-#[cfg(feature = "sync")]
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::side_table::{self, HexId, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
@@ -80,6 +79,10 @@ const CUSTOMIZATION_EVENT: SideTable<u64, CustomizationSettingsChangeEvent, Name
 /// syncs; the row never goes on the wire. Key: hex32 (world id).
 const DEVICE_ONLY_WORLD: SideTable<HexId, [u8; 1], Raw> =
     SideTable::new(&side_table::DEVICE_ONLY_WORLD);
+/// Bumped in every transaction that sets or clears a device-only flag, so a
+/// reader that inspected against an older flag set can tell. Key: ().
+const DEVICE_ONLY_GENERATION: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::DEVICE_ONLY_GENERATION);
 
 const TOKEN_MAX_BYTES: usize = 64;
 const WORLD_LABEL_MAX_BYTES: usize = 128;
@@ -445,7 +448,15 @@ impl Vault {
                 "base reality cannot be device-only".to_owned(),
             ));
         }
-        self.with_write_txn_grouped(|wtxn| {
+        // The flag lock is taken under the writer and released only after the
+        // commit is durable: a release verdict reading the flags waits for it,
+        // and never needs the writer while it holds the read side.
+        let _flags = self.with_write_txn(|wtxn| {
+            let flags = self
+                .store
+                .device_only_flag_lock
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if self.get_entity_type_in_txn(wtxn, &world)?
                 != Some(crate::registry::ENTITY_TYPE_WORLD)
             {
@@ -459,8 +470,26 @@ impl Vault {
             } else {
                 DEVICE_ONLY_WORLD.delete(&self.store, wtxn, &key)?;
             }
-            Ok(())
-        })
+            let generation = DEVICE_ONLY_GENERATION
+                .get(&self.store, wtxn, &())?
+                .unwrap_or(0)
+                .wrapping_add(1);
+            DEVICE_ONLY_GENERATION.put(&self.store, wtxn, &(), &generation)?;
+            Ok(flags)
+        })?;
+        Ok(())
+    }
+
+    /// Held by a release verdict from its first flag read to its acceptance.
+    /// A flag commit holds the other side, so a flag committed before a
+    /// verdict accepts is always one it read. Hold it over reads only: never
+    /// across a write or an async send.
+    #[cfg(feature = "sync")]
+    pub(crate) fn device_only_acceptance(&self) -> std::sync::RwLockReadGuard<'_, ()> {
+        self.store
+            .device_only_flag_lock
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Whether `world` is flagged device-only on this device.
@@ -605,7 +634,6 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
 mod tests;
 
 /// Every world flagged device-only on this device.
-#[cfg(feature = "sync")]
 pub(crate) fn device_only_worlds_in(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -617,10 +645,17 @@ pub(crate) fn device_only_worlds_in(
         .collect())
 }
 
-/// Whether a device-only world keeps `id` on this device: the flagged WORLD
-/// row itself, a CLAIM whose `worldId` is flagged, or a NOTE with a stored
-/// `InWorld` edge to a flagged world.
+/// The device-only flag generation: it moves whenever a flag is set or
+/// cleared. Read it in the transaction that read the flag set.
 #[cfg(feature = "sync")]
+pub(crate) fn device_only_generation_in(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
+    Ok(DEVICE_ONLY_GENERATION.get(store, txn, &())?.unwrap_or(0))
+}
+
+/// Whether a device-only world keeps `id` on this device: the flagged WORLD
+/// row itself, a CLAIM whose `worldId` is flagged (an erased or purged one by
+/// the world address its deletion kept), or a NOTE with a stored `InWorld`
+/// edge to a flagged world.
 pub(crate) fn device_only_withholds(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -634,16 +669,14 @@ pub(crate) fn device_only_withholds(
         return Ok(true);
     }
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
-        return Ok(false);
+        return claim_in_flagged_world(store, txn, flagged, id, None);
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("entity header"))?;
     match header.entity_type {
-        crate::registry::ENTITY_TYPE_CLAIM => Ok(crate::claim::decode_claim_body(
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            true,
-        )
-        .is_ok_and(|body| body.world.is_some_and(|world| flagged.contains(&world)))),
+        crate::registry::ENTITY_TYPE_CLAIM => {
+            claim_in_flagged_world(store, txn, flagged, id, Some(raw.as_slice()))
+        }
         crate::registry::ENTITY_TYPE_NOTE => {
             for edge in store.port_edges(
                 txn,
@@ -660,4 +693,45 @@ pub(crate) fn device_only_withholds(
         }
         _ => Ok(false),
     }
+}
+
+/// A CLAIM's world from its stored body. An erased claim keeps only its
+/// header (its row fenced as deleted), and a purged one nothing; its deletion
+/// kept the world window's address (`m:dw:`, `<month>@<world>`). A body that
+/// cannot be read, a bare header on a row not fenced as deleted, or an
+/// address that is not a world window's is an error, never portability: the
+/// world is unknown.
+fn claim_in_flagged_world(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    flagged: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+    raw: Option<&[u8]>,
+) -> Result<bool> {
+    let unknown = || Error::CorruptedIndex("device-only claim world");
+    if let Some(raw) = raw {
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .unwrap_or_default();
+        if !body.is_empty() {
+            let body = crate::claim::decode_claim_body(body, true).map_err(|_| unknown())?;
+            return Ok(body.world.is_some_and(|world| flagged.contains(&world)));
+        }
+        if !crate::deletion::row_deletion_marked(store, txn, id, Some(raw))? {
+            return Err(unknown());
+        }
+    }
+    let Some(label) = store
+        .sync_state
+        .get(txn, &format!("m:dw:{}", id.to_hex()))?
+    else {
+        return Ok(false);
+    };
+    let world = std::str::from_utf8(&label)
+        .ok()
+        .filter(|label| crate::deletion::parse_window_label(label).is_some())
+        .and_then(|label| label.split_once('@'))
+        .and_then(|(_, world)| EntityId::from_hex(world).ok())
+        .ok_or(Error::CorruptedIndex("deletion window address"))?;
+    Ok(flagged.contains(&world))
 }
