@@ -33,13 +33,13 @@ fn runtime() -> tokio::runtime::Runtime {
         .expect("worker runtime")
 }
 
-struct Running {
+pub(super) struct Running {
     runtime: tokio::runtime::Runtime,
     worker: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Running {
-    fn start(server: &Arc<SyncServer>) -> Self {
+    pub(super) fn start(server: &Arc<SyncServer>) -> Self {
         let runtime = runtime();
         let worker = {
             let _entered = runtime.enter();
@@ -49,7 +49,7 @@ impl Running {
         Self { runtime, worker }
     }
 
-    fn stop(mut self) {
+    pub(super) fn stop(mut self) {
         if let Some(worker) = self.worker.take() {
             worker.abort();
             let _ = self.runtime.block_on(worker);
@@ -58,7 +58,7 @@ impl Running {
     }
 }
 
-fn outcomes(server: &SyncServer) -> Vec<TaggingOutcome> {
+pub(super) fn outcomes(server: &SyncServer) -> Vec<TaggingOutcome> {
     server
         .tagger
         .as_ref()
@@ -86,7 +86,7 @@ fn history(vault: &Vault, turn: &EntityId) -> Vec<TaggingOutcome> {
         .collect()
 }
 
-fn content_digests(vault: &Vault) -> Vec<(&'static str, [u8; 32])> {
+pub(super) fn content_digests(vault: &Vault) -> Vec<(&'static str, [u8; 32])> {
     vault
         .database_digests()
         .expect("digests")
@@ -458,7 +458,7 @@ fn the_extract_carries_the_earlier_window_and_never_a_later_turn() {
     }
 }
 
-fn wait_until_long(mut done: impl FnMut() -> bool) -> bool {
+pub(super) fn wait_until_long(mut done: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         if done() {

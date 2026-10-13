@@ -4680,7 +4680,7 @@
      "path": "src/booking/lifecycle/claim.rs",
      "purpose": "Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 6,
       "struct": 1
      }
@@ -4707,7 +4707,7 @@
      "purpose": "The public verb door and the home-node consumer turn: enqueue, checkout lease, and one claimed attempt run…",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -4762,7 +4762,7 @@
      "path": "src/booking/lifecycle/passport.rs",
      "purpose": "The outbound calendar passport written at sequence 0 and superseded by reschedule and cancel",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -4794,7 +4794,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HoldLeaseSpec",
@@ -4807,7 +4807,7 @@
      "surface": {
       "crate-vis": 13,
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -5684,6 +5684,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/calendar/invite/tests/pending_passport.rs",
+     "purpose": "A pending `calendar.passport` never picks the EVENT an invite binds to",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -5765,7 +5773,7 @@
      "path": "src/calendar/passport.rs",
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 7
      }
@@ -8680,13 +8688,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/agent_verb.rs",
      "purpose": "Code mode's `self.memory.<verb>`: the run's write origin and the receipt a write keeps",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -8750,7 +8758,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 8,
       "re-export": 1,
       "struct": 1,
@@ -8880,7 +8888,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -8927,6 +8935,7 @@
      "notable": [
       "AgentVerbDoor",
       "AgentVerbRefusal",
+      "RunCall",
       "SelfAgentDefinitionPutCall",
       "SelfAgentDefinitionPutResult",
       "SelfAgentSpawnCall",
@@ -8960,7 +8969,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "enum": 5,
+      "enum": 6,
       "fn": 17,
       "struct": 23,
       "trait": 2
@@ -12526,7 +12535,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -16696,7 +16705,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/engine_executor/tests/agent_verb_regressions.rs",
@@ -23171,6 +23180,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ContextLink",
       "CorefLink",
       "EncoderGolden",
       "EncoderInput",
@@ -23181,13 +23191,17 @@
       "ExtractionEncoder",
       "NerSpan",
       "ShadowTrace",
+      "SpeakerLink",
+      "SpeakerRole",
+      "SpeakerTarget",
       "WitnessWithShadow"
      ],
      "path": "src/memory/extraction/types.rs",
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
+      "enum": 2,
       "fn": 5,
-      "struct": 10,
+      "struct": 12,
       "trait": 1
      }
     },
@@ -26469,7 +26483,7 @@
      "path": "src/pipeline/channels.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -26691,6 +26705,16 @@
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/temporal_bound.rs",
+     "purpose": "The scoped temporal bound (ARCH-0004 #temporal-bound): how far a scoped call's temporal channel widens, the…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/facet_status_world.rs",
@@ -26758,7 +26782,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/temporal.rs",
@@ -26838,7 +26862,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 5,
       "fn": 12,
       "re-export": 1,
@@ -31201,7 +31225,7 @@
      "purpose": "Persisted customization settings and client-visible change events",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 15,
       "mod": 1,
@@ -34279,7 +34303,7 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 6,
       "re-export": 1,
       "struct": 1
      }
@@ -34298,7 +34322,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/sync/chunks/tests.rs",
@@ -34314,7 +34338,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 16,
       "struct": 1
      }
@@ -34469,7 +34493,7 @@
      "path": "src/sync/connection/converge.rs",
      "purpose": "Convergence: run_convergence, re_bootstrap, server-frame pump",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34558,8 +34582,8 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 13,
-      "fn": 13,
+      "crate-vis": 14,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -34738,7 +34762,7 @@
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -35154,7 +35178,7 @@
      "purpose": "Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 12,
       "struct": 2
@@ -35187,7 +35211,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -35309,6 +35333,20 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "UpdateVerdict"
+     ],
+     "path": "src/sync/window/device_only.rs",
+     "purpose": "Export-time withholding for worlds flagged device-only",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
@@ -35377,10 +35415,10 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 6,
       "mod": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -35391,7 +35429,7 @@
      "path": "src/sync/window/reverse.rs",
      "purpose": "Reverse rematerialization plus skip/policy predicates and carrier removal",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -35400,10 +35438,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/test_hooks.rs",
-     "purpose": "Test-only hook for the REDACTION_AUDIT rematerialization race pin",
+     "purpose": "Test-only hooks",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -35481,7 +35519,7 @@
      "path": "src/tagging/input.rs",
      "purpose": "The tagger's input for one turn: the turn's MESSAGE rows, and the live register's bounded window of earlier…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -35496,9 +35534,9 @@
      "purpose": "The marker row: its kind, payload, dedupe key, derived id and the in-transaction doors that commit it",
      "surface": {
       "const": 6,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -35509,7 +35547,7 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 8
      }
     },
@@ -35522,7 +35560,7 @@
      "path": "src/tagging/output.rs",
      "purpose": "What a tagger's answer must satisfy before a marker settles on it",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 5,
       "enum": 1
      }
     },
@@ -35581,6 +35619,7 @@
       "DerivationEnvelope",
       "MentionHit",
       "MentionLink",
+      "MentionReference",
       "MergeEvidence",
       "TaggedMention",
       "TurnTags"
@@ -35588,8 +35627,8 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 13,
-      "enum": 1,
+      "crate-vis": 14,
+      "enum": 2,
       "fn": 6,
       "struct": 5
      }
@@ -38630,6 +38669,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/booking_lifecycle/caps.rs",
+     "purpose": "engine-core-03: the daily and weekly caps count confirmed bookings",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/booking_lifecycle/proposals.rs",
+     "purpose": "A pending proposal on a booking's EVENT is not the booking's record",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -39418,7 +39473,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40160,7 +40215,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40489,7 +40544,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 116,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40638,8 +40693,8 @@
    },
    "over_bar": 35,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2467,
-   "test_files": 783
+   "source_files": 2469,
+   "test_files": 786
   },
   "oneiron-android": {
    "files": [
@@ -48888,7 +48943,7 @@
      "path": "src/api/booking/public_fixture.rs",
      "purpose": "Shared fixtures for tests that enter the real public router",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -49542,7 +49597,7 @@
      "path": "src/api/git_lfs/chunks.rs",
      "purpose": "Grant-scoped binary have/want endpoint over the standing bearer identity",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -49658,7 +49713,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -50143,6 +50198,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/api/tests/mcp_booking_publication.rs",
+     "purpose": "engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert`",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/api/tests/mcp_code_check.rs",
      "purpose": "Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result",
      "surface": {}
@@ -50179,6 +50242,14 @@
      "notable": [],
      "path": "src/api/tests/mcp_quickjs/call_mode.rs",
      "purpose": "Call mode through code mode's `self.memory.recall` (retrieval hub #call-mode)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/mcp_quickjs/run_rows.rs",
+     "purpose": "The rows a code run serves itself (`self.memory.search`, `put_claim`, `supersede_claim`, `put_edge`) meet…",
      "surface": {}
     },
     {
@@ -51500,7 +51571,7 @@
      "path": "src/handler/lfs_chunks.rs",
      "purpose": "Versioned owner-authenticated chunk requests, disjoint from selector window mode",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -52538,6 +52609,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/oneironer/tests/golden.rs",
+     "purpose": "The served stack's goldens replayed through the adapter and the save path",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/oneironer/tests/links.rs",
+     "purpose": "Contract v2 through the shipped serve path: a pronoun takes an earlier turn's name through a context link, a…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -52552,7 +52639,7 @@
      "path": "src/oneironer/tests/support.rs",
      "purpose": "A stub tagger server inside the test process, and the vaults and servers the slot's tests share",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 38
      }
     },
     {
@@ -52561,7 +52648,9 @@
      "notable": [],
      "path": "src/oneironer/tests/worker.rs",
      "purpose": "The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 6
+     }
     },
     {
      "bucket": "m",
@@ -52933,7 +53022,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 2
      }
     },
@@ -52995,7 +53084,7 @@
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -53482,7 +53571,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 178,
+     "files": 180,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53608,7 +53697,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53688,7 +53777,7 @@
    "over_bar": 9,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 328,
-   "test_files": 137
+   "test_files": 141
   },
   "oneiron-uniffi": {
    "files": [

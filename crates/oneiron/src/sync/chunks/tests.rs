@@ -271,3 +271,73 @@ fn chunk_request_outside_the_grant_ceiling_is_refused() -> Result<()> {
     ));
     Ok(())
 }
+
+/// Astra #1402 finding 4: an object attached only to a NOTE of a world that
+/// turned device-only leaves by no chunk door, though the peer learned its
+/// OID and manifest while the world was portable. Once a portable row owns
+/// it too, it is portable again.
+#[test]
+fn an_object_only_a_device_only_world_owns_leaves_by_no_chunk_door() -> Result<()> {
+    use crate::sync::selector::SyncSelectorWorld;
+    let (_dir, vault, oid, manifest, principal, grant_id) = chunk_grant_fixture(|_| {})?;
+    let asset = vault.lfs_object(oid)?.expect("object").asset_id;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let actor = crate::write_envelope::WriteActor::new(owner, crate::edge::EdgeActorClass::Human);
+    let note = vault
+        .create_note("research", "private attachment", actor)
+        .unwrap();
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        time(),
+        time().start,
+        b"private world",
+    )?;
+    vault.put_edge(&note, crate::edge::EdgeKind::InWorld, &world, 1.0)?;
+    vault.put_edge(&asset, crate::edge::EdgeKind::Attached, &note, 1.0)?;
+    let selector = encode_sync_selector(&SyncSelector::new(
+        grant_id,
+        principal,
+        SyncSelectorWorld::All,
+        vec![],
+        vec![crate::federation::SelectorRange::Family(
+            crate::registry::TypeByteFamily::Content,
+        )],
+    ))?;
+    let scope = FederationGrantScope::vault(7);
+    let mut requests = Vec::new();
+    for want in [None, Some(vec![manifest.chunks[0].hash])] {
+        for selector in [Vec::new(), selector.clone()] {
+            requests.push(encode_chunk_request(&ChunkSyncRequest {
+                oid: *oid.as_bytes(),
+                selector,
+                have: vec![],
+                want: want.clone(),
+            })?);
+        }
+    }
+    let serve = |request: &[u8]| {
+        if decode::<ChunkSyncRequest>(request)?.selector.is_empty() {
+            serve_owner_chunk_request(&vault, request)
+        } else {
+            serve_chunk_request(&vault, principal, scope, request)
+        }
+    };
+    for request in &requests {
+        serve(request)?;
+    }
+
+    vault.set_world_device_only(world, true)?;
+    for request in &requests {
+        assert!(serve(request).is_err());
+    }
+    let shared = vault
+        .create_note("research", "portable attachment", actor)
+        .unwrap();
+    vault.put_edge(&asset, crate::edge::EdgeKind::Attached, &shared, 1.0)?;
+    for request in &requests {
+        serve(request)?;
+    }
+    Ok(())
+}

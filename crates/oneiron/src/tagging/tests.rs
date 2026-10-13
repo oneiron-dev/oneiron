@@ -22,6 +22,7 @@ use crate::{EntityId, ModelId, Vault, VaultConfig};
 
 const CHECKPOINT: &str = "0123456789abcdef";
 const OTHER_CHECKPOINT: &str = "fedcba9876543210";
+const STACK: &str = "00112233445566ff";
 const NOW: u64 = 1_790_000_000;
 const ROOM: &str = "51515151515151515151515151515151";
 
@@ -89,10 +90,13 @@ impl ExtractionEncoder for Scripted {
                 } else {
                     text.find(' ').unwrap_or(text.len())
                 };
+                // The unmapped span is the text's last character: spans come
+                // in order and never share coordinates.
+                let last = text.char_indices().last().map_or(0, |(at, _)| at);
                 Ok(answer_json(serde_json::json!({
                     "spans": [
                         {"message": 0, "start": 0, "end": end, "label": "PERSON", "confidence": 0.9},
-                        {"message": 0, "start": 0, "end": end, "label": "UNMAPPED", "confidence": 0.4}
+                        {"message": 0, "start": last, "end": text.len(), "label": "UNMAPPED", "confidence": 0.4}
                     ],
                     "links": [{"span": 1, "antecedent": 0}],
                     "vad": {"valence": 0.2, "arousal": 0.4, "dominance": 0.6}
@@ -567,7 +571,9 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             spans: 2,
             links: 1,
             mood: true,
-            mapped_spans: 1
+            mapped_spans: 1,
+            context_links: 0,
+            speaker_links: 0
         }
     )));
     // Every turn settled once, and its marker left the job ledger with the
@@ -1649,6 +1655,36 @@ fn a_lease_is_stamped_at_least_at_the_committed_clock_floor() {
     ));
 }
 
+/// Sol on contract v2: held tags settle only a marker owed to the stack they
+/// name. With a stack pinned, tags naming another stack, or none, are
+/// refused and the marker waits for its own stack's pass.
+#[test]
+fn held_tags_from_another_stack_leave_a_pinned_stacks_marker_waiting() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut pinned = config(false);
+    pinned.tagging = Some(shadow(CHECKPOINT).with_stack(STACK));
+    let vault = Arc::new(Vault::open(dir.path(), pinned).expect("open vault"));
+    let turn = witness(&vault, "Ada sailed north");
+    let mut tags = held(3);
+    for other in [None, Some("0f0f0f0f0f0f0f0f")] {
+        tags.stack_sha16 = other.map(str::to_owned);
+        assert_eq!(
+            vault
+                .complete_tagging_with_held_tags(&turn, &tags)
+                .expect("refused"),
+            HeldTagsOutcome::Refused(OutputRefusal::OtherStack)
+        );
+    }
+    assert_eq!(count(&vault, AttemptState::Queued), 1);
+    tags.stack_sha16 = Some(STACK.to_owned());
+    assert!(matches!(
+        vault
+            .complete_tagging_with_held_tags(&turn, &tags)
+            .expect("completed"),
+        HeldTagsOutcome::Completed(_)
+    ));
+}
+
 #[test]
 fn an_importer_completes_a_marker_with_held_tags_and_no_call() {
     let dir = tempfile::tempdir().expect("dir");
@@ -1813,7 +1849,7 @@ fn plant_settled_markers(vault: &Vault, count: u64, settled_at: u64) {
     let queue = AttemptQueue::new(vault);
     let mut txn = vault.store.env.write_txn().expect("write txn");
     let turn = EntityId::from_bytes([0x5e; 16]).expect("turn id");
-    super::marker::enqueue_marker_in_txn(vault, &mut txn, turn, CHECKPOINT, settled_at)
+    super::marker::enqueue_marker_in_txn(vault, &mut txn, turn, &shadow(CHECKPOINT), settled_at)
         .expect("marker");
     let ClaimOutcome::Claimed(leased) = queue
         .claim_kind_storage_in_txn(
@@ -3313,6 +3349,7 @@ fn trimming_history_reads_outside_the_writer_a_bounded_part_a_pass() {
                             attempt: String::new(),
                             turn: Some(*turn),
                             checkpoint: CHECKPOINT.into(),
+                            stack: None,
                             model: None,
                             input_hash: None,
                             try_number,
@@ -3398,6 +3435,7 @@ fn plant_low_range_marker(vault: &Vault, turn: EntityId) -> AttemptRecord {
     row.payload = rmp_serde::to_vec_named(&super::marker::MarkerPayload {
         turn,
         checkpoint: CHECKPOINT.into(),
+        stack: None,
     })
     .expect("payload");
     let encoded = crate::attempt_queue::encode_signal_record(&row).expect("encode");
