@@ -271,21 +271,74 @@ fn start_graph(
     Ok(InsertOutcome::Applied)
 }
 
-/// The node a room's insert enters its graph at: the entry point when the
-/// walk loads its vector, else the first node it loads one for; `None` when
-/// it loads none, and the room starts a graph of its own. A room stages its
-/// graph's count and entry point over base's, and base keeps changing its
-/// graph after the room's segment commits, so in a room the count is only
-/// advisory and the entry point may name a node base has dropped since
-/// (Astra 1397b). Base reads its own, with every corruption check.
+/// [`hnsw_insert_inner`] on a room's view. A room stages its graph's count
+/// and entry point over base's, and base keeps changing its graph after the
+/// room's segment commits, so the count is only advisory here and the entry
+/// point may name a node base has dropped since, or one whose vector the
+/// room hid (Astra 1397b). The insert enters at a node other than `id` that
+/// the walk loads a vector for ([`room_entry`]); with none, `id` is the
+/// graph's sole node.
+fn room_insert(
+    store: &impl ManifestDbs,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    (id, vector): (&EntityId, &[f32]),
+    discipline: LinkDiscipline,
+    ops: &mut u64,
+) -> Result<InsertOutcome> {
+    let entry = room_entry(store, &*wtxn, config.dimensions, id)?;
+    let count = read_count(store, &*wtxn)?;
+    if store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some() {
+        if discipline == LinkDiscipline::Legacy {
+            return Ok(InsertOutcome::NeedsLegacyRebuild);
+        }
+        // The refresh re-anchors at `id` on a count of 1 and otherwise
+        // enters at `entry`, so the room's graph decides, not its count.
+        let (count, entry) = match entry {
+            Some(entry) => (count.max(2), entry),
+            None => (1, *id),
+        };
+        hnsw_refresh_localized(store, config, wtxn, id, vector, count, entry, ops)?;
+        return Ok(InsertOutcome::Applied);
+    }
+    let Some(entry) = entry else {
+        return start_graph(store, wtxn, id);
+    };
+    let selected = nearest_neighbors(store, config, &*wtxn, id, vector, entry, ops)?;
+    write_neighbors(store, wtxn, id, &selected)?;
+    match discipline {
+        LinkDiscipline::Symmetric => {
+            attach_backlinks_symmetric(store, config, wtxn, id, &selected, ops)?;
+        }
+        LinkDiscipline::Legacy => {
+            attach_backlinks_legacy(store, config, wtxn, id, &selected, ops)?;
+        }
+    }
+    let count = count
+        .checked_add(1)
+        .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
+    store
+        .hnsw_meta()
+        .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+    Ok(InsertOutcome::Applied)
+}
+
+/// The node other than `id` that a room's insert enters its graph at: the
+/// entry point when the walk loads its vector, else the first node it loads
+/// one for; `None` when it loads none.
 fn room_entry(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     dimensions: usize,
+    id: &EntityId,
 ) -> Result<Option<EntityId>> {
+    let loads = |node: &EntityId| -> Result<bool> {
+        Ok(node != id
+            && store.hnsw_neighbors().get(txn, node.as_bytes())?.is_some()
+            && load_vector(store, txn, node, dimensions)?.is_some())
+    };
     if let Some(entry) = read_entry_point(store, txn)?
-        && store.hnsw_neighbors().get(txn, entry.as_bytes())?.is_some()
-        && load_vector(store, txn, &entry, dimensions)?.is_some()
+        && loads(&entry)?
     {
         return Ok(Some(entry));
     }
@@ -295,7 +348,7 @@ fn room_entry(
             Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
             other => other,
         })?;
-        if load_vector(store, txn, &node, dimensions)?.is_some() {
+        if loads(&node)? {
             return Ok(Some(node));
         }
     }
@@ -346,28 +399,17 @@ fn hnsw_insert_inner(
         return Ok(InsertOutcome::Applied);
     }
     *ops += 1;
-    let room_entry = if store.is_union() {
-        let entry = room_entry(store, &*wtxn, config.dimensions)?;
-        if entry.is_none() {
-            return start_graph(store, wtxn, id);
-        }
-        entry
-    } else {
-        None
-    };
+    if store.is_union() {
+        return room_insert(store, config, wtxn, (id, vector), discipline, ops);
+    }
     if store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some() {
         *ops += 1;
         let count = read_count(store, &*wtxn)?;
-        let entry_point = match room_entry {
-            Some(entry) => entry,
-            None => {
-                if count == 0 {
-                    return Err(Error::CorruptedIndex(ERR_EXISTING_NODE_ZERO_COUNT));
-                }
-                read_entry_point(store, &*wtxn)?
-                    .ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?
-            }
-        };
+        if count == 0 {
+            return Err(Error::CorruptedIndex(ERR_EXISTING_NODE_ZERO_COUNT));
+        }
+        let entry_point = read_entry_point(store, &*wtxn)?
+            .ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
         return match discipline {
             LinkDiscipline::Legacy => Ok(InsertOutcome::NeedsLegacyRebuild),
             LinkDiscipline::Symmetric => {
@@ -379,21 +421,17 @@ fn hnsw_insert_inner(
 
     let mut count = read_count(store, &*wtxn)?;
     *ops += 1;
-    let entry_point = match room_entry {
-        Some(entry) => entry,
-        None => {
-            if count == 0 {
-                if read_entry_point(store, &*wtxn)?.is_some()
-                    || store.hnsw_neighbors().first(&*wtxn)?.is_some()
-                {
-                    return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
-                }
-                return start_graph(store, wtxn, id);
-            }
-            read_entry_point(store, &*wtxn)?
-                .ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?
+    if count == 0 {
+        if read_entry_point(store, &*wtxn)?.is_some()
+            || store.hnsw_neighbors().first(&*wtxn)?.is_some()
+        {
+            return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
         }
-    };
+        return start_graph(store, wtxn, id);
+    }
+
+    let entry_point =
+        read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
     let selected = match plan {
         Some(plan) if plan.stands(store, &*wtxn, (vector, count, entry_point)) => {
             plan.selected.clone()

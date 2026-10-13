@@ -1887,10 +1887,10 @@ fn assert_base_as_without_the_room(
 
 /// A room takes a claim's body back to base's, of which base holds no
 /// vector, so the claim's node in the room's graph, its entry point and
-/// first node, has no vector the room's walk can load. The room then puts a
-/// new body for the claim and embeds it: the insert refreshes that node
-/// from a node it loads, and the room's search finds the claim by its new
-/// vector (Astra 1397b).
+/// first node, has no vector the room's walk can load. The room embeds its
+/// other row again, then puts a new body for the claim and embeds it: each
+/// refresh enters at a node it loads, and the room's search finds both rows
+/// by their new vectors (Astra 1397b, Sol R28).
 #[test]
 fn a_room_reembeds_a_claim_whose_node_it_left_without_a_vector() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1934,6 +1934,12 @@ fn a_room_reembeds_a_claim_whose_node_it_left_without_a_vector() -> Result<()> {
         ),
         "inertbaseword",
     )?;
+    // The other row, beside the inert first node, embeds again (Sol R28).
+    stage_in_room(
+        &vault,
+        &session,
+        vec![room_vector(entity_id(0xDB), [0.0, 0.0, 0.0, 1.0])],
+    )?;
     stage_in_room(
         &vault,
         &session,
@@ -1953,6 +1959,10 @@ fn a_room_reembeds_a_claim_whose_node_it_left_without_a_vector() -> Result<()> {
     assert!(
         vector_hits_in_room(&vault, &session, [0.0, 0.0, 1.0, 0.0])?.contains(&claim),
         "the room finds the claim by its new vector"
+    );
+    assert!(
+        vector_hits_in_room(&vault, &session, [0.0, 0.0, 0.0, 1.0])?.contains(&entity_id(0xDB)),
+        "the room finds its other row by its new vector"
     );
     session.close()?;
     Ok(())
@@ -2006,9 +2016,10 @@ fn a_room_embeds_again_after_base_grew_past_its_count() -> Result<()> {
 
 /// A room embeds a row of its own beside base's only graph node, then base
 /// deletes that node, which leaves base no graph while the room reads its
-/// own count and its copy of the node's neighbour list. The room embeds
-/// again, and its search finds both rows it embedded and not the deleted
-/// one. Base's graph is as it would be without the room (Astra 1397b).
+/// own count and its copy of the node's neighbour list. The room embeds its
+/// row again and then another, and its search finds both by their vectors
+/// and not the deleted row. Base's graph is as it would be without the room
+/// (Astra 1397b, Sol R28).
 #[test]
 fn a_room_embeds_again_after_base_deleted_its_last_node() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -2019,11 +2030,18 @@ fn a_room_embeds_again_after_base_deleted_its_last_node() -> Result<()> {
     let second = entity_id(0xC2);
     embed_in_room(&vault, &session, first, [1.0, 0.0, 0.0, 0.0])?;
     vault.batch().delete(&gone).commit()?;
+    // The room's first row is the one node it loads a vector for, so it
+    // embeds that row again as its graph's sole node (Sol R28).
+    stage_in_room(
+        &vault,
+        &session,
+        vec![room_vector(first, [0.0, 0.0, 0.0, 1.0])],
+    )?;
     embed_in_room(&vault, &session, second, [0.0, 0.0, 1.0, 0.0])?;
 
     assert!(
-        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&first),
-        "the room still finds its own first row"
+        vector_hits_in_room(&vault, &session, [0.0, 0.0, 0.0, 1.0])?.contains(&first),
+        "the room finds its first row by its new vector"
     );
     assert!(
         vector_hits_in_room(&vault, &session, [0.0, 0.0, 1.0, 0.0])?.contains(&second),
