@@ -228,13 +228,13 @@ impl Vault {
                 None => EntityId::from_hex(&source_project.leader)?,
             };
             // The row checks that final leader once, before anything is written.
-            let in_roster = source_project.roster.contains(&leader.to_hex());
+            let in_roster = source.member_ids.contains(&leader.to_hex());
             let allowed = if confirmed.is_some() {
                 self.get_entity_type_in_txn(txn, &leader)? == Some(ENTITY_TYPE_AGENT_DEF)
                     && (policy.allow_holder_override || in_roster)
             } else {
                 self.get_entity_type_in_txn(txn, &leader)?.is_some()
-                    && policy.allows_leader_override(leader, &source_project.roster, holder)
+                    && policy.allows_leader_override(leader, &source.member_ids, holder)
             };
             if !allowed {
                 return Err(invalid());
@@ -247,7 +247,7 @@ impl Vault {
             )?;
             project.tasks = tasks;
             project.roster = match policy.roster_selection {
-                RosterSelection::InheritSource => source_project.roster,
+                RosterSelection::InheritSource => source.member_ids,
                 RosterSelection::LeaderOnly => vec![leader.to_hex()],
             };
             if !project.roster.contains(&leader.to_hex()) {

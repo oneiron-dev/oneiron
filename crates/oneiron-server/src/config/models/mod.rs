@@ -59,13 +59,16 @@ pub(crate) struct ModelsFile {
     broker: Option<BrokerFile>,
 }
 
-/// `[models.broker]`: where the credential broker listens, and the OS user it
-/// runs as.
+/// `[models.broker]`: where the credential broker listens and the OS user it
+/// runs as, or, with neither, how this server starts its same-user child.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BrokerFile {
     socket: Option<PathBuf>,
     uid: Option<u32>,
+    program: Option<PathBuf>,
+    #[serde(default)]
+    extra_roots: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -129,20 +132,43 @@ pub struct ModelsConfig {
     pub workflows: WorkflowSettings,
     pub code_mode: CodeModeSettings,
     /// The credential broker that sends every `key_secret` provider's calls.
-    pub broker: Option<BrokerConfig>,
+    pub broker: BrokerConfig,
 }
 
-/// The credential broker (ARCH-0069 `#broker-design`): a separate process,
-/// running as its own OS user, that adds a provider key to one request and
-/// sends it. `oneiron-broker serve --socket <socket> --client-uid <this
-/// server's uid>` runs it.
+/// The credential broker (ARCH-0069 `#broker-design`): a separate process
+/// that adds a provider key to one request and sends it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BrokerConfig {
-    /// Its Unix socket, an absolute path.
-    pub socket: PathBuf,
-    /// The OS user it runs as. Each connection checks the peer is this user,
-    /// and this server refuses a broker that runs as its own user.
-    pub uid: u32,
+pub enum BrokerConfig {
+    /// It runs as its own OS user (OSH-2), the first choice.
+    /// `oneiron-broker serve --socket <socket> --client-uid <this server's
+    /// uid>` runs it.
+    SeparateUser {
+        /// Its Unix socket, an absolute path.
+        socket: PathBuf,
+        /// The OS user it runs as. Each connection checks the peer is this
+        /// user, and this server refuses a broker that runs as its own user.
+        uid: u32,
+    },
+    /// With no `socket` and `uid`, as where no separate user exists: this
+    /// server starts the broker as its own child, under its own uid
+    /// (`#broker-same-user-open`). Receipts say `same_user`.
+    SameUser {
+        /// The broker binary, an absolute path; by default the
+        /// `oneiron-broker` beside this server's binary.
+        program: Option<PathBuf>,
+        /// PEM files of roots the child trusts beside the system's, absolute
+        /// paths.
+        extra_roots: Vec<PathBuf>,
+    },
+}
+
+impl Default for BrokerConfig {
+    fn default() -> Self {
+        Self::SameUser {
+            program: None,
+            extra_roots: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -309,16 +335,7 @@ impl ModelsFile {
                 oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS
             );
         }
-        let broker = self.broker.map(BrokerFile::resolve).transpose()?;
-        if broker.is_none()
-            && let Some(name) = providers
-                .iter()
-                .find_map(|(name, provider)| provider.key_secret.as_ref().map(|_| name))
-        {
-            anyhow::bail!(
-                "models.providers.{name}.key_secret needs [models.broker]: the socket and the user of the credential broker that sends its calls"
-            );
-        }
+        let broker = self.broker.unwrap_or_default().resolve()?;
         Ok(ModelsConfig {
             providers,
             roles,
@@ -335,14 +352,38 @@ impl ModelsFile {
 
 impl BrokerFile {
     fn resolve(self) -> anyhow::Result<BrokerConfig> {
-        let socket = self
-            .socket
-            .filter(|socket| socket.is_absolute())
-            .ok_or_else(|| anyhow::anyhow!("models.broker.socket must be an absolute path"))?;
-        let uid = self
-            .uid
-            .ok_or_else(|| anyhow::anyhow!("models.broker.uid is required"))?;
-        Ok(BrokerConfig { socket, uid })
+        let absolute = |path: &PathBuf, field: &str| {
+            anyhow::ensure!(
+                path.is_absolute(),
+                "models.broker.{field} must be an absolute path"
+            );
+            Ok(())
+        };
+        match (self.socket, self.uid) {
+            (Some(socket), Some(uid)) => {
+                absolute(&socket, "socket")?;
+                anyhow::ensure!(
+                    self.program.is_none() && self.extra_roots.is_empty(),
+                    "models.broker.program and extra_roots are for the same-user child; a separate-user broker takes its own flags"
+                );
+                Ok(BrokerConfig::SeparateUser { socket, uid })
+            }
+            (None, None) => {
+                if let Some(program) = &self.program {
+                    absolute(program, "program")?;
+                }
+                for roots in &self.extra_roots {
+                    absolute(roots, "extra_roots")?;
+                }
+                Ok(BrokerConfig::SameUser {
+                    program: self.program,
+                    extra_roots: self.extra_roots,
+                })
+            }
+            _ => anyhow::bail!(
+                "models.broker.socket and uid name a separate-user broker together; with neither, this server starts a same-user child"
+            ),
+        }
     }
 }
 

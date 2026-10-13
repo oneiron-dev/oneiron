@@ -47,6 +47,10 @@ pub fn run() -> Result<()> {
             await_host_shutdown(&signals);
         }
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the guest is PID 1 inside the microVM, outside the server"
+    )]
     // SAFETY: PID 1 has created no worker threads, Wasmtime engine, or signal
     // handlers before fork. Both branches exclusively own their copied state.
     let child = unsafe { libc::fork() };
