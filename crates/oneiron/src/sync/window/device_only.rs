@@ -52,7 +52,7 @@ pub(in crate::sync) fn window_withheld(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<bool> {
-    carries_device_only(vault, &flagged_worlds(vault)?.1, key, doc)
+    carries_device_only(vault, &flagged_worlds(vault)?, key, doc)
 }
 
 /// What a raw send of window bytes may do, against the flag as it stands now.
