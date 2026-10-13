@@ -1,8 +1,17 @@
 //! Unconditional credential removal before any context/export format writer.
-use crate::batch::secret_scan::{release_credential_field, scan_file_content};
+use crate::batch::secret_scan::{
+    release_credential_field, release_joined_json, release_reads_whole_json, scan_file_content,
+};
 use serde_json::{Map, Value};
 
+/// A field name whose value no export carries: this writer's own names, and
+/// every name the release doors read as a credential (`DB_PASSWORD`,
+/// `SERVICE_API_KEY`), whatever value it holds.
 pub(super) fn credential_key(key: &str) -> bool {
+    release_credential_field(key, false, None) || writer_credential_key(key)
+}
+
+fn writer_credential_key(key: &str) -> bool {
     let normalized = key
         .chars()
         .filter(char::is_ascii_alphanumeric)
@@ -36,8 +45,14 @@ pub(super) fn credential_key(key: &str) -> bool {
 }
 
 /// No option can bypass this transform. Recursion stops closed, not by returning the input.
+/// A structure that still reads as a secret once its parts are judged, read
+/// whole as the release walks read it, is nulled whole.
 pub(crate) fn null_credentials(key: &str, value: &Value) -> Value {
-    null_at_depth(key, value, 0, false)
+    let nulled = null_at_depth(key, value, 0, false);
+    if matches!(nulled, Value::Array(_) | Value::Object(_)) && release_reads_whole_json(&nulled) {
+        return Value::Null;
+    }
+    nulled
 }
 
 /// The whole-vault document pass. Its typed MessagePack trees were judged by the
@@ -67,12 +82,20 @@ fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Valu
     match value {
         Value::String(text) if scan_file_content("", text.as_bytes()).is_some() => Value::Null,
         Value::Array(values) if encoded_credentials(values, depth) => Value::Null,
-        Value::Array(values) => Value::Array(
-            values
+        Value::Array(values) if release_joined_json(values) => Value::Null,
+        Value::Array(values) => {
+            let kept: Vec<Value> = values
                 .iter()
                 .map(|value| null_at_depth("", value, depth + 1, document))
-                .collect(),
-        ),
+                .collect();
+            // Read again once items are nulled: the text left is what a second
+            // pass reads joined, so the array is its own fixed point.
+            if release_joined_json(&kept) {
+                Value::Null
+            } else {
+                Value::Array(kept)
+            }
+        }
         Value::Object(fields) => Value::Object(
             fields
                 .iter()
@@ -106,7 +129,7 @@ fn json_bytes(values: &[Value]) -> Option<Vec<u8>> {
 
 /// An edge subject's reference holds two ids around its edge kind, and each is
 /// read as an id too: a whole-value reading of the 33 bytes stops after one.
-fn reference_carries_credential(bytes: &[u8], depth: usize) -> bool {
+pub(super) fn reference_carries_credential(bytes: &[u8], depth: usize) -> bool {
     id_carries_credential(bytes, depth)
         || matches!(
             crate::claim::ClaimSubject::decode(bytes),

@@ -2,15 +2,25 @@
 //!
 //! No raw/base64 body is shipped beside this tree. Unknown binary and extension
 //! payloads are nulled: an opaque byte string is not proof that it is public data.
+use std::borrow::Cow;
 use std::io::Cursor;
 
 use rmpv::Value as Mp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::credential_nulling::{credential_key, null_credentials};
-use crate::batch::secret_scan::scan_file_content;
+use super::credential_nulling::{credential_key, null_credentials, reference_carries_credential};
+use crate::batch::secret_scan::{
+    decode_members, nested_past_decoder, release_joined_messagepack, release_joined_strings,
+    release_reads_whole, scan_file_content, scan_undecoded_body,
+};
 use crate::error::{Error, Result};
+
+/// How deep an exported tree goes; a deeper node is nulled.
+const TREE_DEPTH: usize = 24;
+/// How deep text is read before its original bytes are kept, as deep as the
+/// document pass reads.
+const TEXT_DEPTH: usize = 128;
 
 /// A MessagePack value with explicit numeric widths and binary-reference types.
 /// Map entries stay ordered, including duplicate keys; they are not JSON objects.
@@ -81,7 +91,7 @@ impl ExportBody {
         if let Ok(value) = rmpv::decode::read_value(&mut cursor)
             && cursor.position() == bytes.len() as u64
         {
-            let mut exported = export_value(&value, "", entity_type, 0);
+            let mut exported = export_value(&value, "", entity_type, 0, TREE_DEPTH);
             if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 export_provenance_references(bytes, &mut exported);
                 if let Ok(body) = crate::claim::decode_claim_body(bytes, true) {
@@ -101,10 +111,20 @@ impl ExportBody {
             {
                 export_note_references(&note, &mut exported);
             }
-            return Self::MessagePack(exported);
+            // An id slot is required where it sits (a CLAIM's subject), so a
+            // body with one nulled is no body its codec reads: none goes out.
+            if null_credential_references(&mut exported) {
+                return Self::Nulled;
+            }
+            // Read whole once every reference is restored: the tree an
+            // importer rebuilds carries no secret spread over its parts.
+            return match exported.to_msgpack() {
+                Ok(tree) if !release_reads_whole(&tree) => Self::MessagePack(exported),
+                _ => Self::Nulled,
+            };
         }
         match std::str::from_utf8(bytes) {
-            Ok(text) if safe_text(text) => Self::Utf8(text.to_owned()),
+            Ok(text) if safe_text(text, 0) => Self::Utf8(text.to_owned()),
             _ => Self::Nulled,
         }
     }
@@ -151,6 +171,26 @@ impl ExportBody {
             ));
         }
         Ok(())
+    }
+}
+
+/// An id slot is kept as its bytes, so every one is read for credentials here,
+/// before any writer derives rows from the tree: the whole-vault document, an
+/// agent's portable knowledge (which spells ids as hex, past any later byte
+/// reading) and a bundle all start from the same nulled row.
+fn null_credential_references(value: &mut ExportValue) -> bool {
+    match value {
+        ExportValue::EntityReference(bytes) if reference_carries_credential(bytes, 0) => {
+            *value = ExportValue::Nil;
+            true
+        }
+        ExportValue::Array(values) => values.iter_mut().fold(false, |nulled, value| {
+            null_credential_references(value) | nulled
+        }),
+        ExportValue::Map(entries) => entries.iter_mut().fold(false, |nulled, (key, value)| {
+            null_credential_references(key) | null_credential_references(value) | nulled
+        }),
+        _ => false,
     }
 }
 
@@ -276,26 +316,36 @@ fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("whole-vault export: {reason}"))
 }
 
-fn safe_text(text: &str) -> bool {
+/// Text keeps its original bytes only when every reading of it is clean: its
+/// text, and, when it decodes, every member through the decode the write door
+/// runs ([`decode_members`]), a lone JSON string and each repeated key's value
+/// included, with nothing this exporter nulls.
+fn safe_text(text: &str, depth: usize) -> bool {
     let scalar = Value::String(text.to_owned());
     if null_credentials("", &scalar) != scalar {
         return false;
     }
-    match serde_json::from_str::<Value>(text) {
-        Ok(value @ (Value::Object(_) | Value::Array(_))) => null_credentials("", &value) == value,
-        _ => true,
+    match decode_members(text.as_bytes()) {
+        Some(value) if release_reads_whole(&value) => false,
+        // Text holds no codec's id slot: its tree is read as an ASSET body's.
+        Some(value) => export_value(
+            &value,
+            "",
+            crate::registry::ENTITY_TYPE_ASSET,
+            depth + 1,
+            TEXT_DEPTH,
+        )
+        .to_msgpack()
+        .is_ok_and(|read| read == value),
+        None => nested_past_decoder(text.as_bytes()).is_none(),
     }
 }
 
-fn byte_container_is_opaque_or_tainted(bytes: &[u8]) -> bool {
-    if scan_file_content("", bytes).is_some() {
+fn byte_container_is_opaque_or_tainted(bytes: &[u8], depth: usize) -> bool {
+    if scan_undecoded_body(bytes).is_some() {
         return true;
     }
-    if let Ok(text) = std::str::from_utf8(bytes)
-        && let Ok(value @ (Value::Object(_) | Value::Array(_))) =
-            serde_json::from_str::<Value>(text)
-        && null_credentials("", &value) != value
-    {
+    if std::str::from_utf8(bytes).is_ok_and(|text| !safe_text(text, depth)) {
         return true;
     }
     let mut cursor = Cursor::new(bytes);
@@ -321,8 +371,8 @@ fn reference_field(key: &str, bytes: &[u8], entity_type: u8, depth: usize) -> bo
     }
 }
 
-fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize) -> ExportValue {
-    if depth >= 24 || credential_key(key) {
+fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize, limit: usize) -> ExportValue {
+    if depth >= limit || credential_key(key) {
         return ExportValue::Nil;
     }
     match value {
@@ -332,7 +382,7 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize) -> ExportV
         Mp::F32(value) => ExportValue::F32(value.to_bits()),
         Mp::F64(value) => ExportValue::F64(value.to_bits()),
         Mp::String(value) => match value.as_str() {
-            Some(value) if safe_text(value) => ExportValue::String(value.to_owned()),
+            Some(value) if safe_text(value, depth) => ExportValue::String(value.to_owned()),
             _ => ExportValue::Nil,
         },
         Mp::Binary(bytes) if reference_field(key, bytes, entity_type, depth) => {
@@ -342,7 +392,7 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize) -> ExportV
             // A binary map is not text just because its credential's value is
             // printable. Opaque encodings are intentionally nulled as a whole.
             match std::str::from_utf8(bytes) {
-                Ok(text) if safe_text(text) && !text.chars().any(char::is_control) => {
+                Ok(text) if safe_text(text, depth) && !text.chars().any(char::is_control) => {
                     ExportValue::BinaryText(text.to_owned())
                 }
                 _ => ExportValue::Nil,
@@ -357,22 +407,32 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize) -> ExportV
                 .collect();
             if bytes
                 .as_deref()
-                .is_some_and(byte_container_is_opaque_or_tainted)
+                .is_some_and(|bytes| byte_container_is_opaque_or_tainted(bytes, depth))
             {
                 return ExportValue::Nil;
             }
-            ExportValue::Array(
-                values
-                    .iter()
-                    .map(|value| export_value(value, "", entity_type, depth + 1))
-                    .collect(),
-            )
+            // A phrase one word per item, a key one line per item, whether
+            // each item is a string or binary.
+            if release_joined_messagepack(values) {
+                return ExportValue::Nil;
+            }
+            let exported: Vec<ExportValue> = values
+                .iter()
+                .map(|value| export_value(value, "", entity_type, depth + 1, limit))
+                .collect();
+            // Read again once items are nulled: the text left is what a second
+            // pass reads joined, so the array is its own fixed point.
+            let kept: Vec<_> = exported.iter().filter_map(exported_text).collect();
+            if release_joined_strings(&kept) {
+                return ExportValue::Nil;
+            }
+            ExportValue::Array(exported)
         }
         Mp::Map(entries) => ExportValue::Map(
             entries
                 .iter()
                 .map(|(key, value)| {
-                    let exported_key = export_value(key, "", entity_type, depth + 1);
+                    let exported_key = export_value(key, "", entity_type, depth + 1, limit);
                     let exported_value = if matches!(exported_key, ExportValue::Nil) {
                         ExportValue::Nil
                     } else {
@@ -386,6 +446,7 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize) -> ExportV
                                 .unwrap_or(""),
                             entity_type,
                             depth + 1,
+                            limit,
                         )
                     };
                     (exported_key, exported_value)
@@ -393,6 +454,25 @@ fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize) -> ExportV
                 .collect(),
         ),
         Mp::Ext(_, _) => ExportValue::Nil,
+    }
+}
+
+/// An exported item as a second pass reads it joined
+/// ([`release_joined_messagepack`] over its MessagePack): a string, binary
+/// text or id bytes, and an array of byte values.
+fn exported_text(value: &ExportValue) -> Option<Cow<'_, str>> {
+    match value {
+        ExportValue::String(text) | ExportValue::BinaryText(text) => Some(Cow::Borrowed(text)),
+        ExportValue::EntityReference(bytes) => Some(String::from_utf8_lossy(bytes)),
+        ExportValue::Array(items) => items
+            .iter()
+            .map(|item| match item {
+                ExportValue::Integer(value) => value.parse::<u8>().ok(),
+                _ => None,
+            })
+            .collect::<Option<Vec<u8>>>()
+            .map(|bytes| Cow::Owned(String::from_utf8_lossy(&bytes).into_owned())),
+        _ => None,
     }
 }
 

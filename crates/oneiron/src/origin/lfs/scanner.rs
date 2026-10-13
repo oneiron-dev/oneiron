@@ -13,10 +13,72 @@ pub(super) struct CredentialStream {
     private: usize,
     seen_private: bool,
     dashes: usize,
+    seam: Option<Seam>,
+}
+
+/// The longest run of one segment a seam keeps on either side of an edge.
+const SEAM_MAX: usize = 1024;
+
+/// The write door's text rules across a feed edge. A batch scan reads each
+/// chunk alone, so a `password=` at one chunk's end and its value at the
+/// next one's start meet nowhere else: the segment an edge splits (the text
+/// between `\n`, `\r`, `,`, `;`, `{` and `}`, as the assignment rule splits
+/// it) is read whole. A segment longer than [`SEAM_MAX`] before the edge is
+/// not carried: the chunk that holds its start holds its key and value too.
+#[derive(Default)]
+struct Seam {
+    tail: Vec<u8>,
+    overlong: bool,
+}
+
+impl Seam {
+    fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+        let head_end = bytes.iter().position(|byte| segment_break(*byte));
+        if !self.tail.is_empty() && !self.overlong {
+            let head = &bytes[..head_end.unwrap_or(bytes.len()).min(SEAM_MAX)];
+            let joined = [self.tail.as_slice(), head].concat();
+            crate::batch::secret_scan::scan_write_seam(&String::from_utf8_lossy(&joined))?;
+        }
+        match bytes.iter().rposition(|byte| segment_break(*byte)) {
+            Some(at) => {
+                self.tail.clear();
+                self.overlong = false;
+                self.carry(&bytes[at + 1..]);
+            }
+            None => self.carry(bytes),
+        }
+        Ok(())
+    }
+
+    fn carry(&mut self, run: &[u8]) {
+        if self.overlong || self.tail.len() + run.len() > SEAM_MAX {
+            self.tail.clear();
+            self.overlong = true;
+        } else {
+            self.tail.extend_from_slice(run);
+        }
+    }
+}
+
+fn segment_break(byte: u8) -> bool {
+    matches!(byte, b'\n' | b'\r' | b',' | b';' | b'{' | b'}')
 }
 
 impl CredentialStream {
+    /// A stream that also reads the write door's text rules across each feed
+    /// edge ([`Seam`]). `on` is the owner's `secrets` switch, which the batch
+    /// door that scans each chunk follows too.
+    pub(super) fn with_write_seam(on: bool) -> Self {
+        Self {
+            seam: on.then(Seam::default),
+            ..Self::default()
+        }
+    }
+
     pub(super) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+        if let Some(seam) = &mut self.seam {
+            seam.feed(bytes)?;
+        }
         for &byte in bytes {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-') {
                 if self.token.len() < 128 {

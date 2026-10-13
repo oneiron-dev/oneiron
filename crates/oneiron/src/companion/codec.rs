@@ -29,38 +29,75 @@ pub fn companion_value_from_json(value: &JsonValue) -> Result<Value> {
 /// JSON-shaped public API values.
 #[must_use]
 pub fn companion_value_to_json(value: &Value) -> JsonValue {
+    projected_json(companion_value_projection(value))
+}
+
+/// What [`companion_value_to_json`] keeps of a value, still as MessagePack:
+/// binary, extension and non-finite floats as nil, a string that is no UTF-8
+/// as the `invalid_utf8_string` marker, and a map's text keys once each (the
+/// last value at the first key's place), as a JSON object keeps them. Each
+/// number keeps the width that JSON drops, so a reader can read this value
+/// exactly as the JSON it becomes.
+pub(crate) fn companion_value_projection(value: &Value) -> Value {
     match value {
-        Value::Nil => JsonValue::Null,
-        Value::Boolean(value) => JsonValue::Bool(*value),
-        Value::Integer(value) => {
-            if let Some(value) = value.as_i64() {
-                serde_json::json!(value)
-            } else if let Some(value) = value.as_u64() {
-                serde_json::json!(value)
-            } else {
-                JsonValue::Null
-            }
-        }
-        Value::F32(value) => serde_json::json!(value),
-        Value::F64(value) => serde_json::json!(value),
-        Value::String(value) => match value.as_str() {
-            Some(value) => JsonValue::String(value.to_owned()),
-            None => serde_json::json!({ "redacted": "invalid_utf8_string" }),
-        },
-        Value::Binary(_) | Value::Ext(_, _) => JsonValue::Null,
+        Value::F32(number) if !number.is_finite() => Value::Nil,
+        Value::F64(number) if !number.is_finite() => Value::Nil,
+        Value::String(text) if text.as_str().is_none() => Value::Map(vec![(
+            Value::from("redacted"),
+            Value::from("invalid_utf8_string"),
+        )]),
+        Value::Binary(_) | Value::Ext(_, _) => Value::Nil,
         Value::Array(values) => {
-            JsonValue::Array(values.iter().map(companion_value_to_json).collect())
+            Value::Array(values.iter().map(companion_value_projection).collect())
         }
         Value::Map(entries) => {
-            let mut object = serde_json::Map::new();
+            let mut kept: Vec<(Value, Value)> = Vec::with_capacity(entries.len());
+            let mut at: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::with_capacity(entries.len());
             for (key, value) in entries {
                 let Some(key) = key.as_str() else {
                     continue;
                 };
-                object.insert(key.to_owned(), companion_value_to_json(value));
+                let value = companion_value_projection(value);
+                match at.entry(key) {
+                    std::collections::hash_map::Entry::Occupied(slot) => {
+                        kept[*slot.get()].1 = value;
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(kept.len());
+                        kept.push((Value::from(key), value));
+                    }
+                }
             }
-            JsonValue::Object(object)
+            Value::Map(kept)
         }
+        other => other.clone(),
+    }
+}
+
+/// A [`companion_value_projection`] as JSON, which loses only number widths.
+fn projected_json(value: Value) -> JsonValue {
+    match value {
+        Value::Boolean(value) => JsonValue::Bool(value),
+        Value::Integer(value) => match (value.as_i64(), value.as_u64()) {
+            (Some(signed), _) => JsonValue::from(signed),
+            (None, Some(unsigned)) => JsonValue::from(unsigned),
+            (None, None) => JsonValue::Null,
+        },
+        Value::F32(value) => serde_json::json!(value),
+        Value::F64(value) => serde_json::json!(value),
+        Value::String(value) => value.into_str().map_or(JsonValue::Null, JsonValue::String),
+        Value::Array(values) => JsonValue::Array(values.into_iter().map(projected_json).collect()),
+        Value::Map(entries) => JsonValue::Object(
+            entries
+                .into_iter()
+                .filter_map(|(key, value)| match key {
+                    Value::String(key) => Some((key.into_str()?, projected_json(value))),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        Value::Nil | Value::Binary(_) | Value::Ext(_, _) => JsonValue::Null,
     }
 }
 

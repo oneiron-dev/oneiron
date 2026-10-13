@@ -70,6 +70,34 @@ mod tests {
         body
     }
     #[test]
+    fn turn_ids_that_spell_a_phrase_leave_typed_export_nulled() -> crate::Result<()> {
+        // The public BIP39 test vector, one word per turn id.
+        let phrase = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+        let turns = phrase
+            .split(' ')
+            .map(|word| {
+                let mut bytes = [b'\n'; 16];
+                bytes[1..1 + word.len()].copy_from_slice(word.as_bytes());
+                EntityId::from_bytes(bytes)
+            })
+            .collect::<crate::Result<Vec<_>>>()?;
+        let mut body = fixture();
+        let session = EntityId::from_bytes([5; 16])?;
+        body.evidence =
+            Some(crate::actor_claims::ActorClaimEvidence::chat(session, turns, 9)?.to_value());
+        let raw = crate::claim::encode_claim_body(&body)?;
+        let exported = ExportBody::from_bytes(&raw, crate::registry::ENTITY_TYPE_CLAIM);
+        exported.validate(crate::registry::ENTITY_TYPE_CLAIM)?;
+        assert!(
+            !exported
+                .to_bytes()
+                .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).contains("sausage")),
+            "{exported:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn typed_actor_citations_round_trip_but_lookalikes_do_not_gain_binary_exemptions()
     -> crate::Result<()> {
         let body = fixture();

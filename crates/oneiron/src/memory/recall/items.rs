@@ -129,12 +129,22 @@ impl Memory<'_> {
             if !claim_surfaceable(&body) {
                 return Ok(None);
             }
-            let value_json = companion_value_to_json(&body.value);
+            // A claim whose parts read as a secret together serves none of them.
+            let secret = crate::batch::export::claim_reads_as_secret(&body);
+            let value_json = if secret {
+                serde_json::Value::String("[redacted]".to_owned())
+            } else {
+                companion_value_to_json(&body.value)
+            };
             Ok(Some(MemoryItem {
                 short_id,
                 source_revision_ref,
                 kind,
-                predicate: Some(body.predicate.clone()),
+                predicate: Some(if secret {
+                    "[redacted]".to_owned()
+                } else {
+                    body.predicate.clone()
+                }),
                 value_text: truncate_text(&value_text_of(&value_json), DEFAULT_MAX_FIELD_CHARS),
                 confidence: body.confidence,
                 hedge_bucket: hedge_bucket_for(body.confidence).to_owned(),
