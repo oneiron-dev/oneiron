@@ -64,7 +64,7 @@ fn a_subprocess_started_while_a_new_socket_pair_is_open_across_exec_gets_none_of
 }
 
 /// A copy of `fd` at the lowest free number from 65,537 where the limits
-/// allow it (else from half the soft limit), with the soft limit then lowered
+/// allow it (else from a lower start that fits), with the soft limit then lowered
 /// to that number, so the copy sits above it. The guard puts the soft limit
 /// back when it drops.
 fn copy_above_a_lowered_limit(fd: &OwnedFd) -> (OwnedFd, SoftLimit) {
@@ -73,7 +73,10 @@ fn copy_above_a_lowered_limit(fd: &OwnedFd) -> (OwnedFd, SoftLimit) {
         rlim_max: 0,
     };
     // SAFETY: getrlimit writes the struct on the stack.
-    assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) }, 0);
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+        0
+    );
     let guard = SoftLimit(limit);
     let raised = libc::rlimit {
         rlim_cur: limit.rlim_max.min(70_001),
@@ -83,13 +86,34 @@ fn copy_above_a_lowered_limit(fd: &OwnedFd) -> (OwnedFd, SoftLimit) {
     // needs no privilege, and a refusal or a clamp leaves a lower one.
     unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) };
     // SAFETY: getrlimit writes the struct on the stack.
-    assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) }, 0);
-    let from = if limit.rlim_cur > 65_537 { 65_537 } else { limit.rlim_cur / 2 };
-    let from = libc::c_int::try_from(from).expect("a descriptor number");
-    // SAFETY: F_DUPFD copies an open descriptor to the lowest free number at
-    // or above `from`, without close-on-exec, and touches no other slot.
-    let high = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD, from) };
-    assert!(high >= 0, "a copy from {from}: {}", std::io::Error::last_os_error());
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+        0
+    );
+    let mut from = if limit.rlim_cur > 65_537 {
+        65_537
+    } else {
+        limit.rlim_cur / 2
+    };
+    // macOS also caps descriptor numbers at its per-process maximum, which
+    // can sit below the soft limit, and refuses a start at or above it with
+    // EINVAL: halve the start until one fits.
+    let high = loop {
+        let start = libc::c_int::try_from(from).expect("a descriptor number");
+        // SAFETY: F_DUPFD copies an open descriptor to the lowest free number
+        // at or above `start`, without close-on-exec, and touches no other
+        // slot.
+        let high = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD, start) };
+        if high >= 0 {
+            break high;
+        }
+        let error = std::io::Error::last_os_error();
+        assert!(
+            error.raw_os_error() == Some(libc::EINVAL) && from > 64,
+            "a copy from {from}: {error}"
+        );
+        from /= 2;
+    };
     // SAFETY: F_DUPFD has just opened it, and nothing else owns it.
     let copy = unsafe { OwnedFd::from_raw_fd(high) };
     let lowered = libc::rlimit {
