@@ -546,3 +546,189 @@ fn an_uncarried_mark_never_outlives_the_stale_window() {
     );
     assert!(after.machine(kept).is_some_and(FoldedMachine::is_mine));
 }
+
+/// Custody is sticky: on a hosted vault a cloud root that hands the vault to
+/// a key labelled owner-held never answers "yours" through that successor
+/// (Astra #1423 F1).
+#[test]
+fn a_custodians_successor_never_vouches_for_a_machine() {
+    let cloud = ed_key(104);
+    let key = authority_key_from_ed(&cloud);
+    let genesis = sign_ed(
+        unsigned_entry(
+            None,
+            0,
+            vec![],
+            AuthorityOp::Genesis {
+                device: device(
+                    key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
+                    AuthorityTier::CloudCustodial,
+                ),
+                genesis_nonce: [105; 32],
+                tier_floor: AuthorityTier::Software,
+                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+            },
+            key,
+            1,
+        ),
+        &cloud,
+    );
+    let id = genesis_vault_id(&genesis).unwrap();
+    let successor = ed_key(106);
+    let handoff = re_root_entry(id, &genesis, &cloud, 1, &successor);
+    let machine = EntityId::now();
+    let mark = owned_mark(id, &handoff, &successor, 1, machine, 107);
+    let fold = fold_authority_log_for_posture(
+        &[genesis, handoff.clone(), mark],
+        &BTreeMap::new(),
+        10,
+        &BTreeMap::new(),
+        crate::HostingPrivacyPosture::Hosted,
+    );
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&handoff).unwrap())
+    );
+    assert!(!fold.roster[&authority_key_from_ed(&successor)].revoked);
+    assert!(fold.machine(machine).is_none());
+}
+
+/// `signer` marks `machine` "yours" on `parent`, with the install key `key`.
+fn owned_mark(
+    id: AuthorityVaultId,
+    parent: &AuthorityLogEntry,
+    signer: &SigningKey,
+    seq: u64,
+    machine: EntityId,
+    key: u8,
+) -> AuthorityLogEntry {
+    let request = request_for(id, machine, &ed_key(key));
+    sign_ed(
+        unsigned_entry(
+            Some(id),
+            seq,
+            vec![authority_entry_hash(parent).unwrap()],
+            AuthorityOp::MachineProfile(MachineProfile {
+                machine,
+                owner: EntityId::now(),
+                machine_key: request.machine_key,
+                encryption_key: request.encryption_key,
+                role: MachineRole::Owned(MachineOwnership::Yours),
+                revision: 1,
+                machine_proof: request.machine_proof,
+                seen_world_edits: BTreeSet::new(),
+            }),
+            authority_key_from_ed(signer),
+            2,
+        ),
+        signer,
+    )
+}
+
+/// A fork of the root's handoff retires the root and installs neither
+/// successor. The roster then has no settled root, so the machines it
+/// admitted have no standing at once, and say why; the stale-roster window
+/// is for a handoff that settled (Astra #1423 F2).
+#[test]
+fn a_forked_handoff_leaves_no_machine_standing() {
+    let root = ed_key(108);
+    let genesis = genesis_entry(108, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let machine = EntityId::now();
+    let mark = owned_mark(id, &genesis, &root, 1, machine, 109);
+    let left = re_root_entry(id, &mark, &root, 2, &ed_key(110));
+    let right = re_root_entry(id, &mark, &root, 3, &ed_key(111));
+    let fold = |entries: &[&AuthorityLogEntry]| {
+        let entries: Vec<_> = entries.iter().map(|entry| (*entry).clone()).collect();
+        let first_seen: BTreeMap<_, _> = entries
+            .iter()
+            .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
+            .collect();
+        fold_authority_log_with_seen_times(&entries, &first_seen, 100)
+    };
+    let settled = fold(&[&genesis, &mark, &left]);
+    assert!(settled.machine(machine).is_some_and(FoldedMachine::is_mine));
+    for entries in [
+        [&genesis, &mark, &left, &right],
+        [&right, &left, &mark, &genesis],
+    ] {
+        let forked = fold(&entries);
+        for handoff in [&left, &right] {
+            assert!(
+                !forked
+                    .valid_entries
+                    .contains(&authority_entry_hash(handoff).unwrap())
+            );
+        }
+        let folded = forked.machine(machine).unwrap();
+        assert!(folded.admitter_unsettled && !folded.is_live() && !folded.is_mine());
+        assert!(!folded.removed);
+    }
+}
+
+/// A removal stands on every replica, whichever of its signer's rows arrived
+/// first: a sibling stored before it leaves the removal under this vault's
+/// sequence floor, and the removal still removes (Astra #1423 F3).
+#[test]
+fn a_removal_holds_whichever_sibling_arrived_first() {
+    let host = host();
+    let removed = request_for(host.vault_id, EntityId::now(), &ed_key(112));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &removed,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let before = host.vault.authority_fold().unwrap();
+    let seq = before.append_sequences[&host.issuer.public_key()];
+    let removal = host_entry(
+        &host,
+        seq + 1,
+        &before.append_heads,
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::Removed,
+            revision: 2,
+            ..before.machine(removed.machine).unwrap().profile.clone()
+        }),
+        None,
+    );
+    let node = EntityId::now();
+    let AuthorityOp::MachineProfile(profile) = profile_op(&host, node, &ed_key(113)) else {
+        unreachable!()
+    };
+    let sibling = host_entry(
+        &host,
+        seq + 2,
+        &before.append_heads,
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::HostedNode,
+            ..profile
+        }),
+        None,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let replica = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    replica
+        .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+        .unwrap();
+    for (vault, order) in [
+        (&host.vault, [&removal, &sibling]),
+        (&replica, [&sibling, &removal]),
+    ] {
+        for entry in order {
+            vault
+                .put_authority_log_entries(&[((*entry).clone(), TimeRange { start: 3, end: 3 }, 3)])
+                .unwrap();
+        }
+        let fold = vault.authority_fold().unwrap();
+        assert!(
+            fold.machine(removed.machine)
+                .is_some_and(|folded| folded.removed && !folded.is_live())
+        );
+        assert!(fold.machine(node).is_some_and(FoldedMachine::is_live));
+    }
+}

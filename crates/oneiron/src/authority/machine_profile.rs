@@ -51,6 +51,10 @@ pub struct FoldedMachine {
     /// stale-roster window, and no key still on the roster signed it again:
     /// not live on this install.
     pub stale: bool,
+    /// The admitter whose chain gives this standing has no settled root: a
+    /// handoff conflict retired its root and installed no successor. Not
+    /// live until the conflict settles, when the standing is judged again.
+    pub admitter_unsettled: bool,
     /// The roster key that signed the revision, and its class.
     pub signer: AuthorityKey,
     pub signer_class: SignerClass,
@@ -78,7 +82,7 @@ impl FoldedMachine {
 
     #[must_use]
     pub fn is_live(&self) -> bool {
-        !self.conflicted && !self.removed && !self.stale
+        !self.conflicted && !self.removed && !self.stale && !self.admitter_unsettled
     }
 
     /// Mine only by the owner's explicit `Yours`, and only while live.
@@ -153,6 +157,7 @@ pub(super) fn apply_machine_profile(
         conflicted: false,
         removed: profile.role == MachineRole::Removed || head.is_some_and(|folded| folded.removed),
         stale: false,
+        admitter_unsettled: false,
         signer: signer.clone(),
         signer_class,
         entry: hash,
@@ -313,11 +318,20 @@ fn derived_head(state: &FoldState, id: EntityId, chain: &MachineChain) -> Folded
     folded
 }
 
-/// The fold's public view: each machine with the derived poison applied.
-pub(super) fn folded_machines(state: &FoldState) -> BTreeMap<EntityId, FoldedMachine> {
+/// The fold's public view: each machine with the derived poison applied, and
+/// with no standing while the roster has no settled root.
+pub(super) fn folded_machines(
+    state: &FoldState,
+    roster_unsettled: bool,
+) -> BTreeMap<EntityId, FoldedMachine> {
     state
         .machines
         .keys()
-        .filter_map(|id| derived_machine(state, *id).map(|folded| (*id, folded)))
+        .filter_map(|id| {
+            derived_machine(state, *id).map(|mut folded| {
+                folded.admitter_unsettled = roster_unsettled;
+                (*id, folded)
+            })
+        })
         .collect()
 }

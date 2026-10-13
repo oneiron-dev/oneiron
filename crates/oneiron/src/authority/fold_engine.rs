@@ -351,14 +351,15 @@ fn fold_authority_log_inner(
         pre_handoff_entries: local.pre_handoff_entries,
     };
     // Staleness is this install's own projection, which the structural fold
-    // never sees. A machine stale here is one this install does not count, so
-    // fold again without it: its world edits then only narrow. Staleness rests
-    // on valid entries alone and counting changes no entry's validity, so the
-    // second fold finds the same stale machines.
-    let mut stale = BTreeSet::<crate::EntityId>::new();
+    // never sees, and so is a roster left with no settled root. A machine
+    // stale here, or one such a roster admitted, is one this install does not
+    // count, so fold again without it: its world edits then only narrow. Both
+    // rest on valid entries alone and counting changes no entry's validity, so
+    // the second fold finds the same machines.
+    let mut uncounted = BTreeSet::<crate::EntityId>::new();
     let mut fold = loop {
         let counted = |state: &FoldState, machine: &FoldedMachine| {
-            !stale.contains(&machine.profile.machine) && standing(state, machine)
+            !uncounted.contains(&machine.profile.machine) && standing(state, machine)
         };
         let fold = apply_stale_roster_window(
             entries,
@@ -374,16 +375,16 @@ fn fold_authority_log_inner(
             now_secs,
             stale_roster_window_secs,
         );
-        let now_stale: BTreeSet<_> = fold
+        let now_uncounted: BTreeSet<_> = fold
             .machines
             .iter()
-            .filter(|(_, machine)| machine.stale)
+            .filter(|(_, machine)| machine.stale || machine.admitter_unsettled)
             .map(|(id, _)| *id)
             .collect();
-        if fold.worlds.is_empty() || now_stale.is_subset(&stale) {
+        if fold.worlds.is_empty() || now_uncounted.is_subset(&uncounted) {
             break fold;
         }
-        stale = now_stale;
+        uncounted = now_uncounted;
     };
     (fold.append_heads, fold.side_heads) =
         super::world_privacy::log_heads(entries, &fold.valid_entries);
@@ -821,9 +822,9 @@ fn fold_authority_log_once(
             state.federation_grant_bindings.clone()
         }),
         actor_bindings,
-        machines: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, super::machine_profile::folded_machines),
+        machines: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            super::machine_profile::folded_machines(state, retirements.unsettled())
+        }),
         worlds: merged
             .as_ref()
             .map_or_else(BTreeMap::new, super::world_privacy::folded_worlds),
