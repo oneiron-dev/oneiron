@@ -28,10 +28,11 @@
 //! read either version. A rider whose words change, or that loses a
 //! MESSAGE, is read again: no attempt read its new words. A turn rides
 //! once, under its current key. A rider is also planned again when the
-//! turn it repeated is queued again, under whatever key it has then, or
-//! material older than the rider but newer than that turn is queued later
-//! (a parked turn whose edge landed, a re-dirtied turn), because either may
-//! have changed the value the rider returned to.
+//! words of the turn it repeated change, when that turn is queued again
+//! under whatever key it has then, or when material older than the rider
+//! but newer than that turn is queued later (a parked turn whose edge
+//! landed, a re-dirtied turn), because each may change the value the rider
+//! returned to.
 //!
 //! Queued and applied state are rows: a restart between queue and apply
 //! keeps the queued attempt, and the window it planned stays read. The rows
@@ -345,22 +346,8 @@ fn release_in_txn(
     let Some(first) = queued.first() else {
         return Ok(());
     };
-    let mut released = BTreeSet::new();
-    for (_, source) in queued {
-        for id in GIVEN.get(store, txn, source)?.unwrap_or_default() {
-            let Some(round) = ROUND.get(store, txn, &id)? else {
-                continue;
-            };
-            for at in &round.riders {
-                if RIDER
-                    .get(store, txn, at)?
-                    .is_some_and(|rider| rider.after.1 == *source)
-                {
-                    released.insert(at.1);
-                }
-            }
-        }
-    }
+    let sources = queued.iter().map(|(_, turn)| *turn).collect();
+    let mut released = riders_of_in_txn(store, txn, &sources)?;
     for row in RIDER.iter_range(store, txn, Bound::Excluded(first), Bound::Unbounded)? {
         let (at, rider) = row?;
         if rider.after < at
@@ -372,7 +359,44 @@ fn release_in_txn(
             released.insert(at.1);
         }
     }
-    for turn in &released {
+    requeue_riders_in_txn(store, txn, &released)
+}
+
+/// The riders that repeated one of `sources`, whatever key each has now:
+/// riders of the rounds a source gave words to, each round read once.
+fn riders_of_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    sources: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut rounds = BTreeSet::new();
+    for source in sources {
+        rounds.extend(GIVEN.get(store, txn, source)?.unwrap_or_default());
+    }
+    let mut riders = BTreeSet::new();
+    for id in &rounds {
+        let Some(round) = ROUND.get(store, txn, id)? else {
+            continue;
+        };
+        for at in &round.riders {
+            if RIDER
+                .get(store, txn, at)?
+                .is_some_and(|rider| sources.contains(&rider.after.1))
+            {
+                riders.insert(at.1);
+            }
+        }
+    }
+    Ok(riders)
+}
+
+/// Ends each turn's ride and puts it back on the carrier.
+fn requeue_riders_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    turns: &BTreeSet<EntityId>,
+) -> Result<()> {
+    for turn in turns {
         unride_in_txn(store, txn, turn)?;
         requeue_turn_in_txn(store, txn, turn)?;
     }
@@ -451,15 +475,19 @@ pub(crate) fn apply_in_txn(
 /// A TURN whose words changed. As the held turn it stops holding, for
 /// good: an attempt queued before the change may have read either version,
 /// so a later return to the queued words proves nothing. As a rider it is
-/// read again: no attempt has read its new words.
+/// read again: no attempt has read its new words. The turns that rode on
+/// what it said are read again too, whether or not its new words are
+/// queued: an attempt still pending may read them.
 pub(crate) fn words_changed_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    if unride_in_txn(store, txn, turn)? {
-        requeue_turn_in_txn(store, txn, turn)?;
+    let mut read = riders_of_in_txn(store, txn, &BTreeSet::from([*turn]))?;
+    if RIDES.get(store, txn, turn)?.is_some() {
+        read.insert(*turn);
     }
+    requeue_riders_in_txn(store, txn, &read)?;
     let Some(mut latest) = LATEST.get(store, txn, &())? else {
         return Ok(());
     };

@@ -751,3 +751,44 @@ fn a_repeat_that_loses_a_message_is_read_again() -> Result<()> {
     assert_eq!(micro_rounds(&vault)?, vec![vec![held], vec![back]]);
     Ok(())
 }
+
+/// Sol R6 (P1): the turn a repeat rode changed its words, but they repeated
+/// a later held turn, so it was consumed again instead of queued and the
+/// repeat that rode its old words was never read again, though an attempt
+/// still pending could read the new words. A turn whose words change puts
+/// back the turns that rode on it, queued or not.
+#[test]
+fn a_repeat_is_read_again_when_the_turn_it_repeated_changes_its_words() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 24, at);
+    let source = seed_turn(&vault, &session, "user", "I live in Kyoto.", at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let back = seed_turn(&vault, &session, "user", "I live in Kyoto.", at + 3);
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    let both = "I live in Kyoto. I moved to Osaka.";
+    seed_turn(&vault, &session, "user", both, at + 4);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+    complete(&vault, &claim_micro(&vault, at + 5)?, at + 6)?;
+
+    // The source now says what the held turn says, re-dirtied as a witness
+    // append re-dirties its turn.
+    vault
+        .batch()
+        .put(
+            &source,
+            ENTITY_TYPE_TURN,
+            occurred(at),
+            at,
+            &turn_body("user", both, None),
+        )
+        .commit()?;
+    vault.with_write_txn(|txn| {
+        crate::dreamer_consolidation::redirty::redirty_turn_in_txn(&vault, txn, &source)
+    })?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 7)?);
+    let rounds = micro_rounds(&vault)?;
+    assert!(rounds[rounds.len() - 1].contains(&back));
+    Ok(())
+}
