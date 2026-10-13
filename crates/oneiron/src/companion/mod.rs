@@ -28,6 +28,7 @@ pub(crate) fn is_identity_facet_body(data: &[u8]) -> bool {
     })
 }
 
+pub(crate) use self::codec::companion_value_projection;
 pub use self::codec::{companion_value_from_json, companion_value_to_json};
 pub use self::keys::{
     COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS,

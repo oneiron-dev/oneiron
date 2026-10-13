@@ -34,24 +34,33 @@ const MAX_LIST_WORD_LEN: usize = 8;
 /// valid BIP39 checksum, standing as its own segment. Text splits into
 /// segments at line breaks, clause and sentence stops, commas, quotes,
 /// brackets and `=`. A phrase is one segment of only list words (`words: a b
-/// c …`, a quoted value), or a run of one-word segments (`1. a\n2. b …`,
-/// `a, b, c, …`, a JSON array), allowing one list word on either edge of the
-/// run as a label. A run of list words inside a sentence is prose, a markdown
-/// list of short phrases is prose, and a run with a wrong checksum is no
-/// wallet. Seed-labelled fields are separately refused even when incomplete or
+/// c …`, a quoted value), a run of one-word segments (`1. a\n2. b …`, `a, b,
+/// c, …`, a JSON array), allowing one list word on either edge of the run as a
+/// label, or one segment wrapped over lines of only list words and blanks. A
+/// run of list words inside a sentence is prose, a markdown list of short
+/// phrases is prose, and a run with a wrong checksum is no wallet.
+/// Seed-labelled fields are separately refused even when incomplete or
 /// misspelled.
 pub(super) fn mnemonic(text: &str) -> bool {
     let mut group = PureSegments::default();
+    let mut wrapped = WrappedLines::default();
     let mut segment: Vec<u16> = Vec::new();
     let mut pure = true;
+    let mut blank_only = true;
     let mut chars = text.char_indices().peekable();
     while let Some((start, ch)) = chars.next() {
         if !ch.is_ascii_alphabetic() {
             if segment_break(ch) {
-                if group.close(std::mem::take(&mut segment), pure) {
+                let line_break = matches!(ch, '\n' | '\r');
+                if wrapped.close(&segment, pure && blank_only, line_break)
+                    || group.close(std::mem::take(&mut segment), pure)
+                {
                     return true;
                 }
                 pure = true;
+                blank_only = true;
+            } else if !matches!(ch, ' ' | '\t') {
+                blank_only = false;
             }
             continue;
         }
@@ -68,7 +77,42 @@ pub(super) fn mnemonic(text: &str) -> bool {
             None => pure = false,
         }
     }
-    group.close(segment, pure) || group.finish()
+    wrapped.close(&segment, pure && blank_only, false)
+        || group.close(segment, pure)
+        || group.finish()
+}
+
+/// One phrase wrapped over lines that hold only list words and blanks (`a b c
+/// d e f\ng h i j k l`, a narrow window's line breaks): the whole run of such
+/// lines, never a window of it. Bullets, numbers and punctuation keep a line
+/// out of the run, so a markdown list of short phrases stays prose.
+#[derive(Default)]
+struct WrappedLines {
+    words: Vec<u16>,
+    lines: usize,
+}
+
+impl WrappedLines {
+    /// Takes one finished segment; `true` once a wrapped phrase is found.
+    /// `wraps`: the segment holds only list words and blanks. `line_break`:
+    /// a line break ended it, so the next line may carry the run on. A blank
+    /// line between two lines neither joins nor breaks the run.
+    fn close(&mut self, words: &[u16], wraps: bool, line_break: bool) -> bool {
+        if words.is_empty() && wraps && line_break {
+            return false;
+        }
+        if !wraps || words.is_empty() {
+            return self.finish();
+        }
+        self.words.extend_from_slice(words);
+        self.lines += 1;
+        !line_break && self.finish()
+    }
+
+    fn finish(&mut self) -> bool {
+        let words = std::mem::take(&mut self.words);
+        std::mem::take(&mut self.lines) > 1 && phrase(&words)
+    }
 }
 
 /// Consecutive segments made only of list words, between impure segments.
@@ -235,6 +279,7 @@ pub(super) fn private_key_block(text: &str) -> bool {
 }
 
 fn armored_body(body: &str) -> bool {
+    let body = join_quoted_literals(body);
     let mut base64 = 0_usize;
     // A key quoted in source code keeps its line breaks as `\n` escapes.
     let lines = body
@@ -260,6 +305,31 @@ fn armored_body(body: &str) -> bool {
         base64 += line.len();
     }
     base64 >= MIN_KEY_BODY_BASE64
+}
+
+/// Source code may quote the lines of a key and join the literals, on one
+/// line or across several: `"…\\n" + "MIIE…\\n" + "…"`. Each join (a closing
+/// quote, `+`, an opening quote) is dropped, so the literals' text runs on as
+/// the key's lines. A `+` inside the base64 has no quote beside it and stays.
+fn join_quoted_literals(body: &str) -> String {
+    const QUOTES: [char; 3] = ['"', '\'', '`'];
+    let mut joined = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(at) = rest.find('+') {
+        let before = rest[..at].trim_end();
+        let after = rest[at + 1..].trim_start();
+        if let (Some(before), Some(after)) =
+            (before.strip_suffix(QUOTES), after.strip_prefix(QUOTES))
+        {
+            joined.push_str(before);
+            rest = after;
+        } else {
+            joined.push_str(&rest[..=at]);
+            rest = &rest[at + 1..];
+        }
+    }
+    joined.push_str(rest);
+    joined
 }
 
 /// RFC 1421 and RFC 4880 armor headers (`Proc-Type: 4,ENCRYPTED`, `Version: …`).
@@ -336,34 +406,78 @@ const PLACEHOLDER_WORDS: [&str; 22] = [
     "baz",
     "redacted",
 ];
-/// Fragments that mark a value as a stand-in wherever they appear.
-const PLACEHOLDER_MARKS: [&str; 10] = [
+/// Words that mark a whole value as a stand-in when every other word of it is
+/// a placeholder word, a filler word or a number: `example-key-0123456789`,
+/// `YOUR_SECRET_KEY`, `change_me`. Inside one word they mark nothing, so a real
+/// password with `dummy` in its middle is still a password.
+const PLACEHOLDER_MARKS: [&str; 8] = [
     "example",
     "changeme",
-    "change_me",
-    "change-me",
     "placeholder",
     "dummy",
     "redacted",
-    "replace_me",
-    "xxxx",
-    "****",
+    "your",
+    "change",
+    "replace",
 ];
-/// Openings of a template, a variable or a stand-in rather than a value.
-const PLACEHOLDER_OPENINGS: [&str; 7] = ["your", "<", "$", "{{", "%", "...", "…"];
+/// Words a stand-in joins its marks with (`your-api-key-here`, `replace_me`).
+const PLACEHOLDER_FILLER: [&str; 10] = [
+    "my", "the", "a", "me", "api", "key", "access", "private", "client", "here",
+];
 
 /// The write door's wider placeholder list: `password=password`, `$TOKEN`,
-/// `<your-key>`, `xxxx`, `changeme`, `example`, `dummy`, `test`, and the like.
+/// `<your-key>`, `xxxx`, `changeme`, `example-key-0123`, `dummy`, `test`, and
+/// the like. Only a whole value counts: a stand-in word, a mask, a template,
+/// or words that are all stand-in, filler or numbers with a mark among them.
 fn write_placeholder(value: &str) -> bool {
     let value = trim_value(value);
     let lower = value.to_ascii_lowercase();
     placeholder(value)
         || PLACEHOLDER_WORDS.contains(&lower.as_str())
-        || PLACEHOLDER_MARKS.iter().any(|mark| lower.contains(mark))
-        || PLACEHOLDER_OPENINGS
-            .iter()
-            .any(|opening| lower.starts_with(opening))
         || masked(value)
+        || template(value)
+        || placeholder_words(&lower)
+}
+
+/// A whole-value template, variable or elision: `<your-key>`, `{{token}}`,
+/// `${TOKEN}`, `$TOKEN`, `%TOKEN%`, or an elided value (`...`, `…abcd`) that
+/// shows at most a four-character tail.
+fn template(value: &str) -> bool {
+    let name = |text: &str| {
+        !text.is_empty()
+            && text
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    };
+    (value.starts_with('<') && value.ends_with('>'))
+        || (value.starts_with("{{") && value.ends_with("}}"))
+        || (value.starts_with("${") && value.ends_with('}'))
+        || value.strip_prefix('$').is_some_and(name)
+        || (value.len() > 2 && value.starts_with('%') && value.ends_with('%'))
+        || ["...", "…"].iter().any(|elision| {
+            value
+                .strip_prefix(elision)
+                .is_some_and(|tail| tail.chars().count() <= 4)
+        })
+}
+
+/// Every word a stand-in (`password`, `token`, `xxxx`), a filler word or a
+/// number, and at least one word a mark: `your_api_key_here`,
+/// `example-key-0123456789`. A value of one unbroken word is never this.
+fn placeholder_words(lower: &str) -> bool {
+    let words: Vec<&str> = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    words.len() > 1
+        && words.iter().any(|word| PLACEHOLDER_MARKS.contains(word))
+        && words.iter().all(|word| {
+            PLACEHOLDER_WORDS.contains(word)
+                || PLACEHOLDER_MARKS.contains(word)
+                || PLACEHOLDER_FILLER.contains(word)
+                || masked(word)
+                || word.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 /// One character repeated as a mask: `xxxxxxxx`, `********`, `00000000`.
