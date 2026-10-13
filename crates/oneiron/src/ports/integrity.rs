@@ -89,9 +89,10 @@ pub(crate) fn stale_in_txn(
 ) -> Result<bool> {
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
 }
-/// The worlds a deletion withdrew epoch summary `id` for: where the words it
-/// took sat, which the summary can no longer trace once that source, its
-/// stamp or its edges are gone. `None` where no deletion withdrew it.
+/// The worlds a deletion, or the loss of a source edge, withdrew epoch summary
+/// `id` for: where the words it took sat, which the summary can no longer
+/// trace once that source, its stamp or its edges are gone. `None` where
+/// nothing withdrew it.
 pub(crate) fn withdrawn_worlds_in(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -111,12 +112,7 @@ pub(crate) fn record_withdrawn_in_txn(
     id: &EntityId,
     worlds: &CarriedWorlds,
 ) -> Result<bool> {
-    if *worlds == CarriedWorlds::default()
-        || !super::EntityStoreRead::port_entity_record(store, txn, id)?.is_some_and(|row| {
-            row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-                && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
-        })
-    {
+    if *worlds == CarriedWorlds::default() || !epoch_summary_in(store, txn, id)? {
         return Ok(false);
     }
     let mut recorded = withdrawn_worlds_in(store, txn, id)?.unwrap_or_default();
@@ -127,6 +123,49 @@ pub(crate) fn record_withdrawn_in_txn(
         .vault_meta
         .put(txn, &withdrawn_key(id), &recorded.encode())?;
     Ok(true)
+}
+/// Retires what epoch summary `id` was withdrawn for with its body: a purge,
+/// or an erase that scrubs it. An invalidation that leaves the body (a
+/// standalone tombstone) keeps it; a regeneration clears it with the stale bit.
+pub(crate) fn retire_withdrawn_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store.vault_meta.delete(txn, &withdrawn_key(id))?;
+    Ok(())
+}
+/// Removing epoch summary `summary`'s `DerivedFrom` edge to `source` withdraws
+/// it as deleting `source` would: its body keeps the words, and the edge that
+/// said where they sat is gone. The removal is never refused, so a peer's
+/// echo of its own purge converges.
+pub(crate) fn withdraw_from_lost_source_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    summary: &EntityId,
+    source: &EntityId,
+) -> Result<()> {
+    if !epoch_summary_in(store, txn, summary)? {
+        return Ok(());
+    }
+    let worlds = carried_or_unknown(store, txn, source);
+    withdraw_in_txn(store, txn, summary, &worlds)
+}
+/// Where the words of `source` sit, read while its row, stamp and edges still
+/// stand. A source no one can place is unknown, and the write goes on.
+fn carried_or_unknown(store: &Store, txn: &RoTxn<'_>, source: &EntityId) -> CarriedWorlds {
+    crate::settings::carried_worlds_in(store, txn, source).unwrap_or(CarriedWorlds {
+        worlds: std::collections::BTreeSet::new(),
+        unknown: true,
+    })
+}
+fn epoch_summary_in(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(
+        super::EntityStoreRead::port_entity_record(store, txn, id)?.is_some_and(|row| {
+            row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+                && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
+        }),
+    )
 }
 pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     withdraw_in_txn(store, txn, id, &CarriedWorlds::default())
@@ -200,12 +239,7 @@ fn epoch_dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Res
     let prefix = [DEP, id.as_bytes()].concat();
     let mut epochs = Vec::new();
     for dependent in scan_dependents(store, txn, &prefix)? {
-        let epoch = super::EntityStoreRead::port_entity_record(store, txn, &dependent)?
-            .is_some_and(|row| {
-                row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-                    && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
-            });
-        if epoch {
+        if epoch_summary_in(store, txn, &dependent)? {
             epochs.push(dependent);
         }
     }
@@ -229,12 +263,8 @@ pub(crate) fn invalidate_source_in_txn(
     let worlds = if dependents.is_empty() {
         CarriedWorlds::default()
     } else {
-        crate::settings::carried_worlds_in(store, txn, document).unwrap_or(CarriedWorlds {
-            worlds: std::collections::BTreeSet::new(),
-            unknown: true,
-        })
+        carried_or_unknown(store, txn, document)
     };
-    store.vault_meta.delete(txn, &withdrawn_key(document))?;
     for dependent in dependents {
         if super::EntityStoreRead::port_entity_record(store, txn, &dependent)?
             .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_EVENT)

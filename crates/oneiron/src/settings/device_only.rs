@@ -74,7 +74,8 @@ impl CarriedWorlds {
 /// to a flagged world, or an epoch SUMMARY born in one. An epoch SUMMARY
 /// carries the words of every record it was written from, so it stays too
 /// when a flagged world keeps any of them, through any nested epoch, or one
-/// its withdrawal recorded. Nothing is read while no world is flagged.
+/// its withdrawal recorded, and while any world is flagged when it cannot
+/// prove where it was born. Nothing is read while no world is flagged.
 pub(crate) fn device_only_withholds(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -141,8 +142,9 @@ fn sources_worlds(
 
 /// Where the stored row `id` (`raw`) sits: the WORLD row in itself, a CLAIM in
 /// its body's world, a NOTE in each world it has an `InWorld` edge to, a
-/// SUMMARY where `record_world_in` places it and in every world its withdrawal
-/// recorded. An epoch SUMMARY's `DerivedFrom` sources go to `sources`.
+/// SUMMARY where `record_world_in` places it (unknown for an epoch it cannot
+/// place, never base) and in every world its withdrawal recorded. An epoch
+/// SUMMARY's `DerivedFrom` sources go to `sources`.
 fn row_worlds(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -181,14 +183,19 @@ fn row_worlds(
                     sources.push(edge?.target);
                 }
             }
-            let world = crate::federation::record_scope::record_world_in(
+            // An epoch that cannot prove where it was born (a replica, which
+            // arrives without its stamp, or one minted before stamps) may
+            // carry any world's words.
+            match crate::federation::record_scope::record_world_in(
                 store,
                 txn,
                 *id,
                 header.entity_type,
                 body,
-            )?;
-            carried.worlds.extend(world.flatten());
+            )? {
+                Some(world) => carried.worlds.extend(world),
+                None => carried.unknown = true,
+            }
             if let Some(withdrawn) = crate::ports::withdrawn_worlds_in(store, txn, id)? {
                 carried.absorb(&withdrawn);
             }
