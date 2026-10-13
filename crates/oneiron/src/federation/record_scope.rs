@@ -736,7 +736,7 @@ impl Vault {
         channel: &Scope,
     ) -> Result<Vec<ScopedRecord>> {
         let txn = self.store.env.read_txn()?;
-        let device_only = crate::settings::device_only_worlds_in(&self.store, &txn)?;
+        let device_only = crate::settings::device_only_worlds_in(self, &txn)?;
         let mut out = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (id, raw) = row?;

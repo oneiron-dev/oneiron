@@ -215,6 +215,7 @@ impl Vault {
             role,
             revision,
             machine_proof: request.machine_proof,
+            seen_world_edits: std::collections::BTreeSet::new(),
         };
         self.append_machine_profile_in_txn(txn, issuer, &fold, profile)
     }
@@ -224,8 +225,11 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         fold: &AuthorityFold,
-        profile: MachineProfile,
+        mut profile: MachineProfile,
     ) -> Result<FoldedMachine> {
+        // A revision that takes "yours" away keeps the effect of the machine's
+        // world edits it has seen; one it never saw only counts stricter.
+        profile.seen_world_edits = super::world_privacy::live_edits_by(fold, profile.machine);
         profile.validate()?;
         let now = self.instant_in_txn(txn)?.secs();
         let entry = next_entry(

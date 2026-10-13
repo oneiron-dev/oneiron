@@ -120,6 +120,11 @@ pub struct AuthorityFold {
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Each physical machine's folded standing, keyed by its MACHINE row.
     pub machines: BTreeMap<EntityId, FoldedMachine>,
+    /// Each edited world's settings, keyed by its WORLD row.
+    pub worlds: BTreeMap<EntityId, FoldedWorld>,
+    /// Well-signed world edits from a machine that could not edit that
+    /// world: valid entries without effect.
+    pub refused_world_edits: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -243,6 +248,8 @@ pub(super) struct FoldState {
     pub(super) machines: BTreeMap<EntityId, FoldedMachine>,
     /// Every machine row that ever claimed each install key, merged by union.
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
+    pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
+    pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
 }
 
 /// Fold-internal binding content for one authority key.
@@ -453,6 +460,10 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    merge_world_frontiers(&mut merged.worlds, &right.worlds);
+    merged
+        .refused_world_edits
+        .extend(right.refused_world_edits.iter().copied());
     merged
 }
 

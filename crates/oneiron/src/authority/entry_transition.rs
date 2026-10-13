@@ -105,6 +105,8 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            worlds: BTreeMap::new(),
+            refused_world_edits: BTreeSet::new(),
         };
         if !tier_meets_floor(device.tier, *tier_floor) {
             return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
@@ -136,6 +138,15 @@ pub(super) fn fold_entry_state(
 
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
+    }
+    // Signed by a machine's install key, never a roster key: the owner's
+    // signed "yours" mark is what makes the machine speak for the owner.
+    if let AuthorityOp::WorldPrivacy(edit) = &entry.op {
+        if let Err(issue) = apply_world_privacy(&mut state, entry, edit, hash) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
     }
     let signer = entry.signer_key().clone();
     if state
@@ -357,7 +368,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. }
-        | AuthorityOp::MachineProfile(_) => false,
+        | AuthorityOp::MachineProfile(_)
+        | AuthorityOp::WorldPrivacy(_) => false,
     }
 }
 

@@ -26,7 +26,7 @@ pub fn arm_device_only_flag_race(world: EntityId) {
 
 pub(super) fn run_device_only_flag_race(vault: &Vault) -> Result<()> {
     match DEVICE_ONLY_FLAG.with(|slot| slot.borrow_mut().take()) {
-        Some(world) => vault.set_world_device_only(world, true),
+        Some(world) => vault.keep_world_on_this_machine_for_test(world, true),
         None => Ok(()),
     }
 }

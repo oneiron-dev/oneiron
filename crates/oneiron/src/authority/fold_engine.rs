@@ -305,7 +305,7 @@ fn fold_authority_log_inner(
         now_secs,
         stale_roster_window_secs,
     );
-    fold.append_heads = fold.valid_entries.clone();
+    fold.append_heads = super::world_privacy::main_log_heads(entries, &fold.valid_entries);
     for entry in entries {
         // Advance beyond even a signed rejected local entry. A new local write
         // never reuses a sequence, though independently received siblings may.
@@ -313,11 +313,6 @@ fn fold_authority_log_inner(
             .entry(entry.signer.public_key.clone())
             .and_modify(|seq| *seq = (*seq).max(entry.seq))
             .or_insert(entry.seq);
-        if authority_entry_hash(entry).is_ok_and(|hash| fold.valid_entries.contains(&hash)) {
-            for parent in &entry.parent_hashes {
-                fold.append_heads.remove(parent);
-            }
-        }
     }
     fold
 }
@@ -471,6 +466,10 @@ fn fold_authority_log_once(
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     let mut rejected_retired = BTreeSet::new();
     let mut pending: BTreeSet<AuthorityEntryHash> = by_hash.keys().copied().collect();
+    for hash in super::world_privacy::side_branch_violations(&by_hash) {
+        pending.remove(&hash);
+        issues.push(AuthorityFoldIssue::InvalidEntry(hash));
+    }
     let mut progressed = true;
     while progressed {
         progressed = false;
@@ -603,6 +602,8 @@ fn fold_authority_log_once(
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
             machines: BTreeMap::new(),
+            worlds: BTreeMap::new(),
+            refused_world_edits: BTreeSet::new(),
             issues,
         };
     }
@@ -689,6 +690,12 @@ fn fold_authority_log_once(
         machines: merged
             .as_ref()
             .map_or_else(BTreeMap::new, super::machine_profile::folded_machines),
+        worlds: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, super::world_privacy::folded_worlds),
+        refused_world_edits: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, |state| state.refused_world_edits.clone()),
         issues,
     }
 }

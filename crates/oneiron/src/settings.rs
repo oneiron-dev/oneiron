@@ -7,7 +7,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::side_table::{self, HexId, Named, Raw, RawValue, SideTable};
+use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 pub mod model_versioning;
@@ -75,14 +75,6 @@ const CUSTOMIZATION_EVENT_SEQUENCE: SideTable<(), u64, Raw> =
 /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
 const CUSTOMIZATION_EVENT: SideTable<u64, CustomizationSettingsChangeEvent, Named> =
     SideTable::new(&side_table::CUSTOMIZATION_EVENT);
-/// One row per world this device keeps to itself. Absence means the world
-/// syncs; the row never goes on the wire. Key: hex32 (world id).
-const DEVICE_ONLY_WORLD: SideTable<HexId, [u8; 1], Raw> =
-    SideTable::new(&side_table::DEVICE_ONLY_WORLD);
-/// Bumped in every transaction that sets or clears a device-only flag, so a
-/// reader that inspected against an older flag set can tell. Key: ().
-const DEVICE_ONLY_GENERATION: SideTable<(), u64, Raw> =
-    SideTable::new(&side_table::DEVICE_ONLY_GENERATION);
 
 const TOKEN_MAX_BYTES: usize = 64;
 const WORLD_LABEL_MAX_BYTES: usize = 128;
@@ -439,47 +431,6 @@ impl Vault {
         })
     }
 
-    /// Flags `world` device-only on this device, or clears the flag. No row of
-    /// a device-only world, and no NOTE in it, reaches any peer. The world must
-    /// be a stored WORLD row; base reality can never be flagged.
-    pub fn set_world_device_only(&self, world: EntityId, device_only: bool) -> Result<()> {
-        if world == crate::claim::base_world_id() {
-            return Err(Error::InvalidConfig(
-                "base reality cannot be device-only".to_owned(),
-            ));
-        }
-        // The flag lock is taken under the writer and released only after the
-        // commit is durable: a release verdict reading the flags waits for it,
-        // and never needs the writer while it holds the read side.
-        let _flags = self.with_write_txn(|wtxn| {
-            let flags = self
-                .store
-                .device_only_flag_lock
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if self.get_entity_type_in_txn(wtxn, &world)?
-                != Some(crate::registry::ENTITY_TYPE_WORLD)
-            {
-                return Err(Error::InvalidConfig(
-                    "a device-only world must be a stored WORLD row".to_owned(),
-                ));
-            }
-            let key = HexId(world);
-            if device_only {
-                DEVICE_ONLY_WORLD.put(&self.store, wtxn, &key, &SETTINGS_BOOL_TRUE)?;
-            } else {
-                DEVICE_ONLY_WORLD.delete(&self.store, wtxn, &key)?;
-            }
-            let generation = DEVICE_ONLY_GENERATION
-                .get(&self.store, wtxn, &())?
-                .unwrap_or(0)
-                .wrapping_add(1);
-            DEVICE_ONLY_GENERATION.put(&self.store, wtxn, &(), &generation)?;
-            Ok(flags)
-        })?;
-        Ok(())
-    }
-
     /// Held by a release verdict from its first flag read to its acceptance.
     /// A flag commit holds the other side, so a flag committed before a
     /// verdict accepts is always one it read. Hold it over reads only: never
@@ -490,12 +441,6 @@ impl Vault {
             .device_only_flag_lock
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Whether `world` is flagged device-only on this device.
-    pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
-        let rtxn = self.store.env.read_txn()?;
-        DEVICE_ONLY_WORLD.contains(&self.store, &rtxn, &HexId(world))
     }
 
     /// Reads the persisted customization settings, or the default four-layer model.
@@ -633,23 +578,22 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
-/// Every world flagged device-only on this device.
+/// Every world whose settings keep it off any other machine: the world
+/// settings' one judge, asked for an unknown destination. Until a door can
+/// name the machine at the other end, every other machine is one.
 pub(crate) fn device_only_worlds_in(
-    store: &Store,
+    vault: &Vault,
     txn: &RoTxn<'_>,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
-    Ok(DEVICE_ONLY_WORLD
-        .scan_keys(store, txn, &[])?
-        .into_iter()
-        .map(|HexId(world)| world)
-        .collect())
+    Ok(crate::authority::WorldPrivacyView::load_in(vault, txn)?
+        .withheld_for(crate::authority::Destination::Unknown))
 }
 
-/// The device-only flag generation: it moves whenever a flag is set or
-/// cleared. Read it in the transaction that read the flag set.
+/// The settings generation: it moves with every authority-log write, a remote
+/// settings edit included. Read it in the transaction that read the worlds.
 #[cfg(feature = "sync")]
-pub(crate) fn device_only_generation_in(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
-    Ok(DEVICE_ONLY_GENERATION.get(store, txn, &())?.unwrap_or(0))
+pub(crate) fn device_only_generation_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<u64> {
+    Ok(crate::authority::WorldPrivacyView::load_in(vault, txn)?.generation())
 }
 
 /// Whether a device-only world keeps `id` on this device: the flagged WORLD

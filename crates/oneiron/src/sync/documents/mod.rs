@@ -561,7 +561,7 @@ pub(crate) fn owner_note_admission(
         || crate::settings::device_only_withholds(
             &vault.store,
             txn,
-            &crate::settings::device_only_worlds_in(&vault.store, txn)?,
+            &crate::settings::device_only_worlds_in(vault, txn)?,
             &id,
         )?
     {
@@ -605,7 +605,7 @@ pub(crate) fn text_withheld(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) 
     crate::settings::device_only_withholds(
         &vault.store,
         txn,
-        &crate::settings::device_only_worlds_in(&vault.store, txn)?,
+        &crate::settings::device_only_worlds_in(vault, txn)?,
         &id,
     )
 }

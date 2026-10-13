@@ -1046,7 +1046,9 @@ fn selector_withholds_a_resident_claim_once_its_world_turns_device_only() {
     insert_edge(&doc, kept_claim, EdgeKind::Supports, private_claim);
     doc.commit();
     seed_doc_stamps(&vault, &doc);
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     let selector = SyncSelector::new(
         grant_id,

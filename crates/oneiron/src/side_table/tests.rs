@@ -316,8 +316,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         );
         covered.insert(owners[0].name);
     }
-    assert_eq!(rows.len(), 535, "the sampled pre-move rows changed");
-    assert_eq!(covered.len(), 526, "the sampled table count changed");
+    assert_eq!(rows.len(), 534, "the sampled pre-move rows changed");
+    assert_eq!(covered.len(), 525, "the sampled table count changed");
     let uncovered: BTreeSet<_> = declarations
         .iter()
         .filter(|decl| !covered.contains(decl.name))
@@ -385,7 +385,6 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DELETION_ROW_FENCE_BACKFILLED",
         "DELETION_TOPOLOGY_DELETE_INTENT",
         "DELETION_WINDOW_LABEL",
-        "DEVICE_ONLY_GENERATION",
         "DISPATCH_OBSERVATION",
         "DREAMER_BUDGET_STEP_CHARGE",
         "DREAMER_CONSOLIDATION_KEY_RULES",
@@ -478,6 +477,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "OWNER_POLICY_NOTIFICATION_RULE_RECEIPT",
         "OWNER_POLICY_SECRET_SCAN_MODE",
         "OWNER_POLICY_SECRET_SCAN_RECEIPT",
+        "OWNER_POLICY_WORLD_PRIVACY_RECEIPT",
         "PROJECT_DEPTH_LOCAL_BIRTH",
         "PROJECT_GOAL_INTAKE_ADMISSION",
         "PROJECT_GOAL_INTAKE_CONFIRMATION",

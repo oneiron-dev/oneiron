@@ -2473,10 +2473,14 @@ fn device_only_claim_text_stays_journaled_until_the_flag_clears() {
         frame,
         ..
     } = journaled_claim_text();
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
-    vault.set_world_device_only(world, false).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, false)
+        .unwrap();
     assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
 }
 
@@ -2511,10 +2515,14 @@ fn claim_text_whose_world_cannot_be_read_stays_journaled_while_a_flag_stands() {
                 )
             })
             .unwrap();
-        vault.set_world_device_only(world, true).unwrap();
+        vault
+            .keep_world_on_this_machine_for_test(world, true)
+            .unwrap();
 
         assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
-        vault.set_world_device_only(world, false).unwrap();
+        vault
+            .keep_world_on_this_machine_for_test(world, false)
+            .unwrap();
         assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
     }
 }
@@ -2553,7 +2561,9 @@ fn a_flag_committed_while_the_raw_guard_inspects_withholds_the_update() {
     .unwrap();
     body.world = Some(world);
     vault.put_claim(&claim, &body, at, learned).unwrap();
-    vault.set_world_device_only(other, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(other, true)
+        .unwrap();
     let key = WindowKey::for_world(learned, world);
     let update = manager
         .open_window(&key)

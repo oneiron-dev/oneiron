@@ -41,7 +41,7 @@ pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> 
         return Ok(false);
     };
     let rtxn = vault.store.env.read_txn()?;
-    Ok(crate::settings::device_only_worlds_in(&vault.store, &rtxn)?.contains(&world))
+    Ok(crate::settings::device_only_worlds_in(vault, &rtxn)?.contains(&world))
 }
 
 /// Whether a full-window send of `doc` ships nothing now: the window belongs
@@ -217,8 +217,8 @@ pub(super) fn delta_carries_device_only(
 fn flagged_worlds(vault: &Vault) -> Result<(u64, BTreeSet<EntityId>)> {
     let rtxn = vault.store.env.read_txn()?;
     Ok((
-        crate::settings::device_only_generation_in(&vault.store, &rtxn)?,
-        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?,
+        crate::settings::device_only_generation_in(vault, &rtxn)?,
+        crate::settings::device_only_worlds_in(vault, &rtxn)?,
     ))
 }
 
@@ -312,7 +312,7 @@ pub(in crate::sync) fn device_only_ids(
     entities: &LoroMap,
     edges: &LoroMap,
 ) -> Result<HashSet<EntityId>> {
-    let flagged = crate::settings::device_only_worlds_in(&vault.store, rtxn)?;
+    let flagged = crate::settings::device_only_worlds_in(vault, rtxn)?;
     let mut withheld = HashSet::new();
     if flagged.is_empty() {
         return Ok(withheld);

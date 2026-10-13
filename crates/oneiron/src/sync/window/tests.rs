@@ -3917,7 +3917,7 @@ fn device_only_world_fixture(vault: &Vault, window: &WindowKey) -> Result<(Entit
         at,
         b"person",
     )?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let mut body = crate::claim::ClaimBody::new(
         "test.device_only",
         crate::claim::ClaimSubject::Entity(person),
@@ -4001,7 +4001,7 @@ fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
     )?;
     body.world = Some(portable_world);
     vault.put_claim(&portable_claim, &body, occurred, at)?;
-    vault.set_world_device_only(private_world, false)?;
+    vault.keep_world_on_this_machine_for_test(private_world, false)?;
     vault
         .batch()
         .edge(&portable_claim, EdgeKind::About, &person, 1.0)
@@ -4022,7 +4022,7 @@ fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
         let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
         assert!(packed.get(&key).is_some(), "{key} packed while portable");
     }
-    vault.set_world_device_only(private_world, true)?;
+    vault.keep_world_on_this_machine_for_test(private_world, true)?;
     Ok(ResidentDeviceOnly {
         private_world,
         private_claim,
@@ -4105,7 +4105,7 @@ fn clearing_device_only_exports_the_resident_claim_again() -> Result<()> {
     };
     exchange(&receiver)?;
     assert!(receiver.oplog_vv().is_empty());
-    vault.set_world_device_only(fx.private_world, false)?;
+    vault.keep_world_on_this_machine_for_test(fx.private_world, false)?;
 
     exchange(&receiver)?;
     assert!(
@@ -4225,7 +4225,7 @@ fn base_window_carrying_an_edge_to_a_device_only_claim_is_withheld_whole() -> Re
 
     let withheld = exported_to_empty_receiver(&vault, &month, &base)?;
     assert!(withheld.oplog_vv().is_empty());
-    vault.set_world_device_only(fx.private_world, false)?;
+    vault.keep_world_on_this_machine_for_test(fx.private_world, false)?;
     let shipped = exported_to_empty_receiver(&vault, &month, &base)?;
     assert!(
         shipped
@@ -4321,7 +4321,7 @@ fn base_month_withholds_a_resident_note_and_world_once_the_world_turns_device_on
     for id in [note, world] {
         assert!(base.get_map("entities").get(&id.to_hex()).is_some());
     }
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
     let received = exported_to_empty_receiver(&vault, &month, &base)?;
     for id in [note, world] {
@@ -4338,7 +4338,7 @@ fn packing_withholds_a_note_in_a_device_only_world() -> Result<()> {
     let (_dir, vault) = test_vault();
     let world = EntityId::now();
     let (note, month) = note_in_world(&vault, world)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let base = create_window_doc("base", &month);
     reverse_rematerialize(&vault, &base, &month)?;
 

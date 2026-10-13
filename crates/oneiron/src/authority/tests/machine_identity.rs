@@ -9,15 +9,15 @@ use crate::registry::ENTITY_TYPE_MACHINE;
 use crate::store::GateDecisionId;
 use crate::{Vault, VaultConfig};
 
-struct Host {
+pub(super) struct Host {
     _dir: tempfile::TempDir,
-    vault: Vault,
-    issuer: HostSlipIssuer,
-    owner: AuthenticatedOwner,
-    vault_id: [u8; 32],
+    pub(super) vault: Vault,
+    pub(super) issuer: HostSlipIssuer,
+    pub(super) owner: AuthenticatedOwner,
+    pub(super) vault_id: [u8; 32],
 }
 
-fn host() -> Host {
+pub(super) fn host() -> Host {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let issuer = crate::test_support::test_host_issuer();
@@ -37,7 +37,7 @@ fn host() -> Host {
     }
 }
 
-fn encryption_key() -> MachineEncryptionKey {
+pub(super) fn encryption_key() -> MachineEncryptionKey {
     MachineEncryptionKey {
         suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
         key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
@@ -55,7 +55,11 @@ fn joining(vault_id: [u8; 32]) -> (tempfile::TempDir, Vault, MachineEnrolmentReq
 }
 
 /// An enrolment request for an arbitrary row, signed by `key`.
-fn request_for(vault_id: [u8; 32], machine: EntityId, key: &SigningKey) -> MachineEnrolmentRequest {
+pub(super) fn request_for(
+    vault_id: [u8; 32],
+    machine: EntityId,
+    key: &SigningKey,
+) -> MachineEnrolmentRequest {
     let machine_key = key.verifying_key().to_bytes();
     MachineEnrolmentRequest {
         vault_id,
@@ -219,6 +223,7 @@ fn a_forged_mark_never_makes_a_machine_mine() {
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
     };
     let forge = |signer: &SigningKey| {
         let fold = host.vault.authority_fold().unwrap();
@@ -349,6 +354,7 @@ fn a_cloud_root_never_vouches_for_a_machine() {
                     role,
                     revision: 1,
                     machine_proof: request.machine_proof,
+                    seen_world_edits: BTreeSet::new(),
                 }),
                 key.clone(),
                 seq as u64 + 2,

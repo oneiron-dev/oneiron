@@ -518,7 +518,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
     let edges_map = doc.get_map("edges");
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
-        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
+        crate::settings::device_only_worlds_in(vault, &rtxn)?
     };
 
     let mut replayed = 0u32;
