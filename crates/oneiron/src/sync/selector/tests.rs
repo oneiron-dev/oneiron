@@ -5078,9 +5078,12 @@ fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<(
 /// summaries packed while it was portable, at every export door, until the
 /// flag clears. `placed` was born in W; `told` was born in base reality from
 /// W's CLAIM and carries its words; `lost` was written from a row this device
-/// no longer holds, so the world it sat in is unknown. The window door
-/// withholds each one's base window, the selector drops `placed` and every
-/// edge naming it, and the scoped record export drops both.
+/// no longer holds, so the world it sat in is unknown (a raw row delete: every
+/// deletion path takes the edge to the row with it, so this models a store
+/// left inconsistent). The window door withholds each one's base window, the
+/// selector drops `placed` and every edge naming it, and the scoped record
+/// export drops both. A promotion stands: the flag withholds bytes, not the
+/// grant's authority (Sol round 17 on #1384).
 #[test]
 fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> crate::Result<()> {
     use crate::compaction::EpochPlacement;
@@ -5175,8 +5178,16 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
                 &loro::VersionVector::default(),
             )?)
         };
-        assert_eq!(window(&march, &march_doc)?, shipped, "the window door, March");
-        assert_eq!(window(&april, &april_doc)?, shipped, "the window door, April");
+        assert_eq!(
+            window(&march, &march_doc)?,
+            shipped,
+            "the window door, March"
+        );
+        assert_eq!(
+            window(&april, &april_doc)?,
+            shipped,
+            "the window door, April"
+        );
         assert_eq!(window(&may, &may_doc)?, shipped, "the window door, May");
         let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
         let selected =
@@ -5188,6 +5199,15 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
         });
         assert!(ids.contains(&person));
         assert_eq!(ids.contains(&placed), shipped, "the selector, the summary");
+        let promoted = crate::sync::residence::promotion_covers_full_window(
+            &vault,
+            &march_doc,
+            &march,
+            test_selector_scope(),
+            &selector,
+            |_| Ok(true),
+        )?;
+        assert!(promoted, "the promotion stands");
         assert_eq!(
             edges.iter().any(|key| key.contains(&placed.to_hex())),
             shipped,
@@ -5198,8 +5218,149 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
             .into_iter()
             .map(|record| record.id)
             .collect::<Vec<_>>();
-        assert_eq!(exported.contains(&placed), shipped, "the scoped export, born in W");
-        assert_eq!(exported.contains(&told), shipped, "the scoped export, W's words");
+        assert_eq!(
+            exported.contains(&placed),
+            shipped,
+            "the scoped export, born in W"
+        );
+        assert_eq!(
+            exported.contains(&told),
+            shipped,
+            "the scoped export, W's words"
+        );
+        Ok(())
+    };
+    ships(true)?;
+    vault.set_world_device_only(world, true)?;
+    ships(false)?;
+    vault.set_world_device_only(world, false)?;
+    ships(true)
+}
+
+/// #1384 beside #1402: a deletion that withdraws an epoch summary records
+/// where the words it took sat, read before that source, its stamp and its
+/// edges go, so the summary keeps them home while a world is device-only.
+/// `told` was written from W's CLAIM and `plain` from a base CLAIM, both
+/// purged with their edges; `outer` from `inner`, a summary born in W that a
+/// user delete leaves as a shell with no stamp.
+#[test]
+fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Result<()> {
+    use crate::compaction::EpochPlacement;
+    use crate::deletion::DeleteEntityOptions;
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x32));
+    let world = local_world_id(0x58).entity_id();
+    let person = entity_id(0x59);
+    let (fact, told) = (entity_id(0x60), entity_id(0x61));
+    let (base_fact, plain) = (entity_id(0x64), entity_id(0x65));
+    let (inner, outer) = (entity_id(0x66), entity_id(0x67));
+    let (june, july, august) = (
+        WindowKey::new("2026-06"),
+        WindowKey::new("2026-07"),
+        WindowKey::new("2026-08"),
+    );
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    // The sources sit in September, apart from the windows checked.
+    let (sources, sources_at) = at(&WindowKey::new("2026-09"));
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"world")?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, sources, sources_at, b"person")?;
+    let claim = |world: Option<EntityId>| {
+        let mut body = ClaimBody::new(
+            "selector.fact",
+            ClaimSubject::Entity(person),
+            Value::from("the fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = world;
+        body
+    };
+    vault.put_claim(&fact, &claim(Some(world)), sources, sources_at)?;
+    vault.put_claim(&base_fact, &claim(None), sources, sources_at)?;
+    let summary = crate::registry::ENTITY_TYPE_SUMMARY;
+    let ((in_june, june_at), (in_july, july_at)) = (at(&june), at(&july));
+    let (in_august, august_at) = at(&august);
+    vault
+        .batch()
+        .put(
+            &told,
+            summary,
+            in_june,
+            june_at,
+            &epoch_summary_bytes(1, "the world fact")?,
+        )
+        .edge(&told, EdgeKind::DerivedFrom, &fact, 1.0)
+        .put(
+            &plain,
+            summary,
+            in_july,
+            july_at,
+            &epoch_summary_bytes(2, "the fact")?,
+        )
+        .edge(&plain, EdgeKind::DerivedFrom, &base_fact, 1.0)
+        .put(
+            &inner,
+            summary,
+            sources,
+            sources_at,
+            &epoch_summary_bytes(3, "the person")?,
+        )
+        .edge(&inner, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &outer,
+            summary,
+            in_august,
+            august_at,
+            &epoch_summary_bytes(4, "again")?,
+        )
+        .edge(&outer, EdgeKind::DerivedFrom, &inner, 1.0)
+        .commit()?;
+    let in_world = EpochPlacement {
+        world: Some(world),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| {
+        in_world.settle_in(&vault.store, txn, inner)?;
+        for base in [told, plain, outer] {
+            EpochPlacement::default().settle_in(&vault.store, txn, base)?;
+        }
+        Ok(())
+    })?;
+    let packed = |key: &WindowKey| -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        Ok(doc)
+    };
+    let (june_doc, july_doc, august_doc) = (packed(&june)?, packed(&july)?, packed(&august)?);
+    let purge = DeleteEntityOptions { purge: true };
+    vault.delete_entity_with_options(&fact, purge)?;
+    vault.delete_entity_with_options(&base_fact, purge)?;
+    vault.delete_entity(&inner)?;
+
+    let ships = |portable: bool| -> crate::Result<()> {
+        let window = |key: &WindowKey, doc: &LoroDoc| -> crate::Result<bool> {
+            Ok(!crate::sync::window::export_withheld(
+                &vault,
+                key,
+                doc,
+                &loro::VersionVector::default(),
+            )?)
+        };
+        assert_eq!(
+            window(&june, &june_doc)?,
+            portable,
+            "June, W's purged CLAIM"
+        );
+        assert!(window(&july, &july_doc)?, "July, a purged base CLAIM");
+        assert_eq!(
+            window(&august, &august_doc)?,
+            portable,
+            "August, a deleted W summary"
+        );
         Ok(())
     };
     ships(true)?;

@@ -72,6 +72,9 @@ pub(super) fn complete(
     store
         .vault_meta()
         .delete(txn, &super::integrity::stale_key(dependent))?;
+    store
+        .vault_meta()
+        .delete(txn, &super::integrity::withdrawn_key(dependent))?;
     Ok(true)
 }
 /// The sources `dependent` is registered as derived from.

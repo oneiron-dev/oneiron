@@ -640,13 +640,20 @@ pub(super) fn mint_epoch_summary_with(
         // A source erased or withdrawn before this mint has already run its
         // invalidation, so the summary is born withdrawn, as it would be had
         // the erasure come after it: never indexed, never embedded. Such a
-        // source takes no new dependency row; the summary is stale for good.
-        let mut born_withdrawn = false;
+        // source takes no new dependency row; the summary is stale for good,
+        // withdrawn for where that source's words sat.
+        let mut born_withdrawn = None::<crate::settings::CarriedWorlds>;
         for target in derived {
             let state =
                 crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, wtxn, target)?;
             if state.deleted || state.stale {
-                born_withdrawn = true;
+                born_withdrawn
+                    .get_or_insert_default()
+                    .absorb(&crate::settings::carried_worlds_in(
+                        &vault.store,
+                        wtxn,
+                        target,
+                    )?);
             } else {
                 batch = batch.edge(&summary_id, EdgeKind::DerivedFrom, target, 1.0);
             }
@@ -655,7 +662,7 @@ pub(super) fn mint_epoch_summary_with(
         // Explicitly scheduled for embedding inside the mint transaction, so
         // the ratified "vector-indexed, RAPTOR-retrievable" contract is a
         // durable fact of the mint rather than a later sweep's guess.
-        if !born_withdrawn {
+        if born_withdrawn.is_none() {
             vault
                 .store
                 .mark_pending_embedding(wtxn, &summary_id, &body)?;
@@ -679,7 +686,8 @@ pub(super) fn mint_epoch_summary_with(
                 turn_end,
             },
         )?;
-        if born_withdrawn {
+        if let Some(worlds) = &born_withdrawn {
+            crate::ports::record_withdrawn_in_txn(&vault.store, wtxn, &summary_id, worlds)?;
             crate::ports::RetrievalIndex::port_retrieval_mark_stale(vault, wtxn, &summary_id)?;
         }
         Ok(epoch)

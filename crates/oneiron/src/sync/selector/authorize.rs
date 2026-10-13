@@ -499,7 +499,6 @@ pub(super) fn filter_window_doc(
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
-    let device_only = crate::settings::device_only_worlds_in(&vault.store, &rtxn)?;
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -573,18 +572,6 @@ pub(super) fn filter_window_doc(
         ) else {
             return;
         };
-        // A summary born in a device-only world stays on this device, even
-        // out of a window packed before the flag.
-        if !is_tombstoned && blob.first() == Some(&crate::registry::ENTITY_TYPE_SUMMARY) {
-            match crate::settings::device_only_withholds(&vault.store, &rtxn, &device_only, &id) {
-                Ok(false) => {}
-                Ok(true) => return,
-                Err(error) => {
-                    scope_error = Some(error);
-                    return;
-                }
-            }
-        }
         candidates.insert(id);
         if facets.is_some() {
             if decision.facet_visible {

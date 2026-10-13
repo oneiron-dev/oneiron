@@ -3,17 +3,22 @@ use super::SourceSpan;
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
+use crate::settings::CarriedWorlds;
 use crate::store::ManifestDbs;
 use crate::store::Store;
 use heed::{RoTxn, RwTxn};
 pub(super) const DEP: &[u8] = b"ports:dependency:v1:";
 const STALE: &[u8] = b"ports:stale:v1:";
 const TOMBSTONE: &[u8] = b"ports:tombstone:v1:";
+const WITHDRAWN: &[u8] = b"ports:withdrawn:v1:";
 pub(super) fn tombstone_key(id: &EntityId) -> Vec<u8> {
     [TOMBSTONE, id.as_bytes()].concat()
 }
 pub(super) fn stale_key(id: &EntityId) -> Vec<u8> {
     [STALE, id.as_bytes()].concat()
+}
+pub(super) fn withdrawn_key(id: &EntityId) -> Vec<u8> {
+    [WITHDRAWN, id.as_bytes()].concat()
 }
 pub(super) fn source_prefix(source: SourceSpan) -> Vec<u8> {
     [
@@ -84,18 +89,73 @@ pub(crate) fn stale_in_txn(
 ) -> Result<bool> {
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
 }
+/// The worlds a deletion withdrew epoch summary `id` for: where the words it
+/// took sat, which the summary can no longer trace once that source, its
+/// stamp or its edges are gone. `None` where no deletion withdrew it.
+pub(crate) fn withdrawn_worlds_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<CarriedWorlds>> {
+    store
+        .vault_meta()
+        .get(txn, &withdrawn_key(id))?
+        .map(CarriedWorlds::decode)
+        .transpose()
+}
+/// Adds `worlds` to what epoch summary `id` was withdrawn for; whether that
+/// grew it. Any other row records nothing.
+pub(crate) fn record_withdrawn_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    worlds: &CarriedWorlds,
+) -> Result<bool> {
+    if *worlds == CarriedWorlds::default()
+        || !super::EntityStoreRead::port_entity_record(store, txn, id)?.is_some_and(|row| {
+            row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+                && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
+        })
+    {
+        return Ok(false);
+    }
+    let mut recorded = withdrawn_worlds_in(store, txn, id)?.unwrap_or_default();
+    if !recorded.absorb(worlds) {
+        return Ok(false);
+    }
+    store
+        .vault_meta
+        .put(txn, &withdrawn_key(id), &recorded.encode())?;
+    Ok(true)
+}
 pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    withdraw_in_txn(store, txn, id, &CarriedWorlds::default())
+}
+/// Marks `id` stale, withdrawn for `worlds`: where the words of the source
+/// whose deletion withdrew it sat.
+fn withdraw_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    worlds: &CarriedWorlds,
+) -> Result<()> {
     mark_one_stale_in_txn(store, txn, id)?;
+    record_withdrawn_in_txn(store, txn, id, worlds)?;
     // An epoch summary copies the words of what it was written from, so it
     // is withdrawn with any of them, through nested epochs (agent-runtime-v1
-    // §d7). A worklist, not recursion: no chain's depth reaches the stack.
-    // Each is marked once: a stale one is not walked again.
+    // §d7), for the same worlds. A worklist, not recursion: no chain's depth
+    // reaches the stack. A stale one is walked again only when this adds a
+    // world to it.
     let mut pending = epoch_dependents_in_txn(store, txn, id)?;
     while let Some(next) = pending.pop() {
-        if stale_in_txn(store, txn, &next)? {
+        let grew = record_withdrawn_in_txn(store, txn, &next, worlds)?;
+        let stale = stale_in_txn(store, txn, &next)?;
+        if stale && !grew {
             continue;
         }
-        mark_one_stale_in_txn(store, txn, &next)?;
+        if !stale {
+            mark_one_stale_in_txn(store, txn, &next)?;
+        }
         pending.extend(epoch_dependents_in_txn(store, txn, &next)?);
     }
     Ok(())
@@ -162,6 +222,19 @@ pub(crate) fn invalidate_source_in_txn(
     crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
     let prefix = [DEP, document.as_bytes()].concat();
     let dependents = scan_dependents(store, txn, &prefix)?;
+    // Where the deleted words sat, read while the row, its stamp and its
+    // edges still stand: an epoch summary it withdraws keeps them as its
+    // own. A source no one can place withdraws it for an unknown world, and
+    // the deletion goes on.
+    let worlds = if dependents.is_empty() {
+        CarriedWorlds::default()
+    } else {
+        crate::settings::carried_worlds_in(store, txn, document).unwrap_or(CarriedWorlds {
+            worlds: std::collections::BTreeSet::new(),
+            unknown: true,
+        })
+    };
+    store.vault_meta.delete(txn, &withdrawn_key(document))?;
     for dependent in dependents {
         if super::EntityStoreRead::port_entity_record(store, txn, &dependent)?
             .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_EVENT)
@@ -169,7 +242,7 @@ pub(crate) fn invalidate_source_in_txn(
         {
             continue;
         }
-        mark_stale_in_txn(store, txn, &dependent)?;
+        withdraw_in_txn(store, txn, &dependent, &worlds)?;
         let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
         crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
             txn,
