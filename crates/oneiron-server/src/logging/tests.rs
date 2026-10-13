@@ -115,3 +115,69 @@ async fn a_worker_panic_returns_no_payload_to_the_cli() {
     }
     assert_eq!(error.to_string(), "init panicked");
 }
+
+/// Owner ruling 2026-10-14 (fix 6): the default receipt sink logs ids, counts
+/// and codes. A run's name, a teacher's purpose, a caller's selector and the
+/// model a provider says it served are text, so none reaches the log as given.
+#[test]
+fn the_receipt_log_carries_ids_and_codes_never_run_text() {
+    use oneiron::llm::ModelLocality;
+    use oneiron::llm::run_admission::{
+        LeaseUnit, Payer, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
+    };
+
+    use crate::models::LoggedReceipts;
+
+    let admitted = RunReceipt {
+        run: format!("{SENTINEL} nightly digest"),
+        revision: 1,
+        event: RunEvent::Admitted(Box::new(PermitFacts {
+            selector: Some(format!("{SENTINEL} selector")),
+            subject: "test/model@v1".to_owned(),
+            offer: "offer-1".to_owned(),
+            route: "route-1".to_owned(),
+            locality: ModelLocality::ThirdParty,
+            payer: Payer::Host,
+            catalog_revision: None,
+            lease: "lease-7a".to_owned(),
+            reserved_units: 100,
+            unit: LeaseUnit::tokens(),
+            allocation: None,
+            allocation_reserved_units: None,
+            teacher_target: None,
+            purpose: Some(format!("summarise {SENTINEL}")),
+            rules_enforced: true,
+        })),
+    };
+    let dispatched = RunReceipt {
+        run: format!("{SENTINEL} nightly digest"),
+        revision: 1,
+        event: RunEvent::Dispatched {
+            lease: "lease-7a".to_owned(),
+            subject: "test/model@v1".to_owned(),
+            route: "route-1".to_owned(),
+            request_digest: "digest-0f".to_owned(),
+            served_model: Some(format!("{SENTINEL} as served")),
+            broker_isolation: None,
+            answered: true,
+        },
+    };
+    // A callsite registration racing another test can miss one capture; the
+    // lease id proves this capture saw the rows.
+    for _ in 0..3 {
+        let sink = CapturedSink::default();
+        sink.with_production_subscriber(|| {
+            LoggedReceipts.record(admitted.clone());
+            LoggedReceipts.record(dispatched.clone());
+        });
+        let written = sink.text();
+        if written.contains("lease-7a") {
+            assert!(!written.contains(SENTINEL), "{written}");
+            assert!(written.contains("test/model@v1"), "{written}");
+            assert!(written.contains("unrecognised"), "{written}");
+            assert!(written.contains("digest-0f"), "{written}");
+            return;
+        }
+    }
+    panic!("no receipt row was captured");
+}
