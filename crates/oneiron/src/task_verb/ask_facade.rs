@@ -300,6 +300,8 @@ impl Memory<'_> {
                 None => return Ok(None),
             },
         };
+        // The ask answers from this TASK's class.
+        self.read_producer_in(txn, task)?;
         let body = super::create_validation::task_body_in_txn(self.vault(), txn, task)?;
         let authority = self
             .vault()
@@ -361,13 +363,17 @@ impl Memory<'_> {
                 "too many tasks to find this ask's task context",
             ));
         }
+        // Off this device a TASK a device-local world keeps is no candidate.
+        let store = &self.vault().store;
+        let kept = crate::settings::device_local_worlds_at(store, txn, self.locality())?;
         let mut found = None;
         for task in scan.pages.into_iter().flatten() {
             let Ok(Some(body)) = super::wire_decode::task_verb_body_in(self.vault(), txn, task)
             else {
                 continue;
             };
-            if body.assignee.and_then(TaskAssignee::entity_ref) != Some(self.actor())
+            if crate::settings::device_local_keeps_among(store, txn, &kept, &task)?
+                || body.assignee.and_then(TaskAssignee::entity_ref) != Some(self.actor())
                 || body.terminal().is_some()
                 || !body.spec.as_map().is_some_and(|fields| {
                     fields

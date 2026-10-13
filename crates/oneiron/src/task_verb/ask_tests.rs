@@ -3075,3 +3075,63 @@ fn a_restore_never_widens_a_task_ask_class_narrowed_since() -> Result<()> {
     assert!(!destination.exists());
     Ok(())
 }
+
+/// Sol R7 F3: an ask answers from the class of the TASK it names, so it lists
+/// that TASK among the rows its answer was derived from. Once the TASK's
+/// world is device-local, a caller off this device reads it as no TASK and
+/// takes no class from it; on this device the ask still reads it.
+#[test]
+fn an_ask_off_this_device_takes_nothing_from_a_device_local_task() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("orchid errand"),
+            None,
+            None,
+            None,
+        ))?
+        .task_ref
+        .unwrap();
+    let mut input = spec(&vault, owner, "device-local");
+    input.task_ref = Some(task);
+    let can = |locality| {
+        let producers = crate::memory::ProducerRows::default();
+        let preflight = vault
+            .memory(owner, EdgeActorClass::Human)
+            .at(locality)
+            .listing_producers(&producers)
+            .tasks_can_ask(&input);
+        (
+            preflight.map_err(|error| format!("{error:?}")),
+            producers.take(),
+        )
+    };
+    let (portable, listed) = can(CallerLocality::OffDevice);
+    let portable = portable?;
+    assert_eq!(listed, vec![task]);
+
+    vault.set_world_device_only(world, true)?;
+    let (kept, listed) = can(CallerLocality::OffDevice);
+    assert!(kept.is_err(), "{kept:?}");
+    assert_eq!(listed, vec![task]);
+    let (here, listed) = can(CallerLocality::OnDevice);
+    assert_eq!(here?, portable);
+    assert_eq!(listed, vec![task]);
+    Ok(())
+}

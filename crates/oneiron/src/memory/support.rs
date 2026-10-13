@@ -382,6 +382,8 @@ pub struct Memory<'v> {
     pub(super) host_origin: Option<HostWriteOrigin>,
     /// Where the caller sits; see [`Memory::at`].
     pub(super) locality: crate::claim::CallerLocality,
+    /// Where a host collects the rows its reads pick (`listing_producers`).
+    pub(super) producers: Option<&'v super::ProducerRows>,
     /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
     pub(super) birth_position: crate::federation::record_scope::BirthPosition,
 }
@@ -431,6 +433,7 @@ impl Vault {
             room_turn: None,
             host_origin: None,
             locality: crate::claim::CallerLocality::OnDevice,
+            producers: None,
             birth_position: Default::default(),
         }
     }
@@ -460,6 +463,7 @@ impl Vault {
             room_turn: None,
             host_origin: None,
             locality: crate::claim::CallerLocality::OnDevice,
+            producers: None,
             birth_position: Default::default(),
         }
     }
@@ -494,6 +498,7 @@ impl<'v> Memory<'v> {
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
                 locality: self.locality,
+                producers: self.producers,
                 birth_position: self.birth_position,
             },
         })
@@ -514,24 +519,6 @@ impl Memory<'_> {
     pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
         self.read_proof = Some(proof.clone());
         self
-    }
-
-    /// Serves a caller at `locality`, as the host found it from the
-    /// connection. Every read lane, and the whole-vault export, then reads as
-    /// [`ScopedReadActorKey::at`](crate::claim::ScopedReadActorKey::at) does:
-    /// a caller off this device reads no device-local world (DEC-0005). It
-    /// only narrows; a handle off the device never reads on it again.
-    #[must_use]
-    pub fn at(mut self, locality: crate::claim::CallerLocality) -> Self {
-        if locality == crate::claim::CallerLocality::OffDevice {
-            self.locality = locality;
-        }
-        self
-    }
-
-    /// Where this surface's caller reads from.
-    pub(crate) const fn locality(&self) -> crate::claim::CallerLocality {
-        self.locality
     }
 
     /// Binds this surface's claim writes to a host-owned origin: every claim

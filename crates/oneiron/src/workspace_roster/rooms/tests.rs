@@ -855,6 +855,111 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     Ok(())
 }
 
+/// Sol R7 F4: a room thread's rows and counts are derived from the TASKs on
+/// the thread and the results they delivered. Each projection lists those
+/// rows among the rows its answer was derived from, so a host judges the
+/// answer by them again before it leaves this device (DEC-0005).
+#[test]
+fn room_projections_list_the_tasks_and_results_they_count() -> Result<()> {
+    use crate::task_verb::{
+        TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = EntityId::now();
+    let agent = EntityId::from_bytes([0xE1; 16])?;
+    for actor in [owner, agent] {
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"room member",
+        )?;
+    }
+    let project = EntityId::now();
+    let mut record = ProjectRecord::new(
+        project,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        owner,
+    )
+    .unwrap();
+    record.roster.push(agent.to_hex());
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner, agent])?;
+    let worker = vault.memory(agent, EdgeActorClass::Agent);
+    let (trunk, root) = (EntityId::now(), EntityId::now());
+    let human = vault.memory(owner, EdgeActorClass::Human);
+    for (id, metadata, at) in [
+        (trunk, serde_json::json!({}), 2),
+        (
+            root,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            3,
+        ),
+    ] {
+        human
+            .rooms_speak(&turn(room, id, WitnessAuthor::User, metadata, at))
+            .unwrap();
+    }
+    let spec = TaskCreateSpec::new(
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("thread_ref"),
+            rmpv::Value::from(root.to_hex()),
+        )]),
+        None,
+        None,
+        Some(4),
+    )
+    .with_assignee(TaskAssignee::Dreamer);
+    let task = worker.tasks_create(&spec).unwrap().task_ref.unwrap();
+    let policy = RoomThreadPolicy {
+        now: 1_000_000,
+        fresh_for: 1,
+        rows_per_list: 4,
+        tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
+    };
+    let producers = crate::memory::ProducerRows::default();
+    let listing = vault
+        .memory(owner, EdgeActorClass::Human)
+        .listing_producers(&producers);
+    assert!(
+        listing
+            .rooms_render_threads(room, policy)
+            .unwrap()
+            .iter()
+            .any(|row| row.starts_with("threads active: 1"))
+    );
+    assert_eq!(producers.take(), vec![task]);
+    assert_eq!(
+        listing
+            .rooms_get_thread(room, root)
+            .unwrap()
+            .unwrap()
+            .open_tasks,
+        1
+    );
+    assert_eq!(producers.take(), vec![task]);
+
+    worker
+        .land_task_result(
+            task,
+            &TaskResultInput {
+                result_ref: trunk,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: 5,
+            },
+        )
+        .unwrap();
+    assert_eq!(listing.rooms_trunk(room, trunk).unwrap().headers.len(), 1);
+    assert_eq!(producers.take(), vec![task, trunk]);
+    Ok(())
+}
+
 #[test]
 fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Result<()> {
     use crate::task_verb::{

@@ -1005,6 +1005,114 @@ async fn a_claim_receipt_off_this_device_names_no_claim_its_world_made_device_lo
     assert!(!refused.to_string().contains(&reference), "{refused}");
 }
 
+/// Sol R7 F1: a refusal states the scope its credential resolved to. Once
+/// that scope's world is device-local, a refusal off this device states no
+/// scope and names no world: it leaves as its code alone. While the world is
+/// portable the refusal states its scope.
+#[tokio::test]
+async fn a_refusal_off_this_device_states_no_scope_a_device_local_world_narrows() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let world = put_world(&server.vault);
+    let actor = EntityId::now();
+    let scope = crate::mcp::McpConnectorScope::scoped(Some(world), None);
+    register_scoped_mcp_actor(&server, "narrowed", actor, scope.clone()).await;
+    let subscribe = || {
+        mcp_refusal(
+            &server,
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                "narrowed",
+                "narrowed-subscribe",
+                "board.subscribe",
+                mcp_merge_args(
+                    mcp_scoped_envelope(actor, "read_board", &scope),
+                    json!({"arguments": {"scopes": ["memories"]}}),
+                ),
+            ),
+        )
+    };
+    let portable = subscribe().await;
+    assert_mcp_structured_error(&portable, "mcp_scope_refused");
+    assert_eq!(
+        portable["error"]["data"]["effective_scope"]["world_ref"],
+        json!(world.to_hex()),
+        "{portable}"
+    );
+
+    server.vault.set_world_device_only(world, true).unwrap();
+    let kept = subscribe().await;
+    assert!(
+        kept["error"]["data"].get("effective_scope").is_none(),
+        "{kept}"
+    );
+    assert!(!kept.to_string().contains(&world.to_hex()), "{kept}");
+}
+
+/// Sol R7 F2: a cancel receipt does not name the TASK it cancelled, yet it is
+/// derived from that TASK. Flagged after the cancel and before the receipt is
+/// released, the TASK's world keeps the receipt on this device: the caller
+/// reads that its result changed. While the world is portable the receipt
+/// goes out.
+#[tokio::test]
+async fn a_cancel_receipt_off_this_device_is_released_by_the_task_it_cancelled() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let actor = EntityId::now();
+    register_mcp_actor(&server, "cancels", actor, oneiron::EdgeActorClass::Human).await;
+    let world = put_world(&server.vault);
+    let task = || {
+        server
+            .vault
+            .memory(actor, oneiron::EdgeActorClass::Human)
+            .with_birth_position(oneiron::federation::record_scope::BirthPosition {
+                world: Some(world),
+                facet: None,
+            })
+            .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+                rmpv::Value::from("orchid errand"),
+                None,
+                None,
+                None,
+            ))
+            .unwrap()
+            .task_ref
+            .unwrap()
+    };
+    let cancel = |task: EntityId| {
+        let server = Arc::clone(&server);
+        let arguments = mcp_merge_args(
+            mcp_endpoint_envelope(actor, "write_tasks"),
+            json!({"arguments": {"task_ref": task.to_hex()}}),
+        );
+        async move {
+            let request = mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                "cancels",
+                "cancel",
+                "cancel",
+                arguments,
+            );
+            route_json(server, request).await.1
+        }
+    };
+    let portable = cancel(task()).await;
+    assert!(
+        portable["result"]["structuredContent"]["output"].is_object(),
+        "{portable}"
+    );
+
+    let kept = task();
+    crate::api::mcp_gateway::release_hook::arm(world);
+    let changed = cancel(kept).await;
+    assert!(changed.get("result").is_none(), "{changed}");
+    assert_mcp_structured_error(&changed, "mcp_result_changed");
+}
+
 /// Sol R3 F5: an agent's standing block is pinned to one world. Once that
 /// world is device-local, a board off this device takes no block of it: the
 /// agent reads as one with no standing block, and the world is never named.

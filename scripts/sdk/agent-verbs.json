@@ -68,6 +68,7 @@
       "name": "cancel",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
+      "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
       "call": "memory.cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
       "scope": "Write",
       "proposes": true,
@@ -162,6 +163,7 @@
       "name": "tasks.update",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
+      "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
       "call": "memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)?",
       "scope": "Write",
       "mcp_scope": "addressed",
@@ -562,6 +564,7 @@
       "name": "tasks.wait",
       "input": "crate::task_verb::sdk::TaskWaitRequest",
       "output": "crate::task_verb::TaskAskWait",
+      "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_wait(input.handle, Some(&input.step_key))?",
       "scope": "Write",
       "mcp_fields": {
@@ -574,6 +577,7 @@
       "name": "tasks.answer",
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
+      "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_answer(&input.handle, &input.word)?",
       "scope": "Write",
       "mcp_fields": {

@@ -377,7 +377,8 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
 /// a code-mode call's claims are written under its run's host `origin`.
-/// Every row the result was derived from is listed in `served`.
+/// Every row the result was derived from is listed in `served`: those its
+/// input names, and those the verb's reads picked themselves.
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
@@ -386,12 +387,29 @@ pub(crate) async fn execute_agent_verb_input(
         origin: Option<oneiron::memory::HostWriteOrigin>,
         served: &mut Vec<oneiron::EntityId>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+        let producers = oneiron::memory::ProducerRows::default();
+        let produced = execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served).await;
+        served.extend(producers.take());
+        produced
+    }
+
+/// [`execute_agent_verb_input`], its surface listing in `producers` the rows
+/// its reads pick.
+async fn execute_agent_verb_listing(
+        server: &Arc<SyncServer>,
+        tool: &str,
+        input: Value,
+        actor: &McpCallContext,
+        origin: Option<oneiron::memory::HostWriteOrigin>,
+        producers: &oneiron::memory::ProducerRows,
+        served: &mut Vec<oneiron::EntityId>,
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
     }
     // A narrowed connector's TASKs are born in its own world and facet.
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(actor.scope.birth_position());
+    let memory = server.vault.memory(actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(actor.scope.birth_position()).listing_producers(producers);
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
     match tool {
 '''

@@ -789,13 +789,40 @@ pub(crate) fn mcp_agent_verb_arguments(
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
 /// a code-mode call's claims are written under its run's host `origin`.
-/// Every row the result was derived from is listed in `served`.
+/// Every row the result was derived from is listed in `served`: those its
+/// input names, and those the verb's reads picked themselves.
 pub(crate) async fn execute_agent_verb_input(
     server: &Arc<SyncServer>,
     tool: &str,
     input: Value,
     actor: &McpCallContext,
     origin: Option<oneiron::memory::HostWriteOrigin>,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+    ),
+    McpGatewayError,
+> {
+    let producers = oneiron::memory::ProducerRows::default();
+    let produced =
+        execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served).await;
+    served.extend(producers.take());
+    produced
+}
+
+/// [`execute_agent_verb_input`], its surface listing in `producers` the rows
+/// its reads pick.
+async fn execute_agent_verb_listing(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    input: Value,
+    actor: &McpCallContext,
+    origin: Option<oneiron::memory::HostWriteOrigin>,
+    producers: &oneiron::memory::ProducerRows,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
@@ -825,7 +852,8 @@ pub(crate) async fn execute_agent_verb_input(
         .vault
         .memory(actor.actor_ref, actor.actor_class)
         .at(actor.locality())
-        .with_birth_position(actor.scope.birth_position());
+        .with_birth_position(actor.scope.birth_position())
+        .listing_producers(producers);
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
@@ -866,6 +894,7 @@ pub(crate) async fn execute_agent_verb_input(
         "cancel" => {
             let input: oneiron::task_verb::sdk::TaskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
             let output =
                 oneiron::task_verb::sdk::cancel(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -913,6 +942,7 @@ pub(crate) async fn execute_agent_verb_input(
         "tasks.update" => {
             let input: oneiron::task_verb::sdk::TaskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
             let output =
                 oneiron::task_verb::sdk::tasks_update(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -1081,6 +1111,7 @@ pub(crate) async fn execute_agent_verb_input(
         "tasks.wait" => {
             let input: oneiron::task_verb::sdk::TaskWaitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.handle.group_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_wait(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -1089,6 +1120,7 @@ pub(crate) async fn execute_agent_verb_input(
         "tasks.answer" => {
             let input: oneiron::task_verb::sdk::TaskAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.handle.group_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_answer(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);

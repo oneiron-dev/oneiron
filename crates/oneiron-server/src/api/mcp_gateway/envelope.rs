@@ -291,10 +291,15 @@ pub(crate) async fn handle_mcp_request(
             // scoped-grant refusal, board/task dispatch, projection, facade, or
             // engine failure — leaves with the effective scope attached. Only
             // failures before this point are legitimately scope-less. Each is
-            // released as a result is, by the rows its words name (DEC-0005).
+            // released as a result is, by the rows its words and its scope
+            // name (DEC-0005).
             called.map_err(|error| {
-                super::device_release::mcp_release_error(server, &actor, Some(&[]), error)
-                    .with_effective_scope(&actor)
+                super::device_release::mcp_release_error(
+                    server,
+                    &actor,
+                    Some(&[]),
+                    error.with_effective_scope(&actor),
+                )
             })
         }
         _ => Err(McpGatewayError::new(

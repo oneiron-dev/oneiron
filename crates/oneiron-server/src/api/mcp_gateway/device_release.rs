@@ -92,10 +92,11 @@ pub(super) fn mcp_release_result(
 }
 
 /// A refusal is released as a result is (DEC-0005): by `rows`, those its
-/// call served before it failed, and every row its words name, a whole id or
-/// a short ref among them. Off this device one naming a row a device-local
-/// world keeps now, or a short ref that resolves to no row, or whose call's
-/// rows are unknown (`None`), leaves as its code alone.
+/// call served before it failed, and every row its words and its effective
+/// scope name, a whole id or a short ref among them. Off this device one
+/// naming a row a device-local world keeps now, or a short ref that resolves
+/// to no row, or whose call's rows are unknown (`None`), leaves as its code
+/// alone, with no scope.
 pub(super) fn mcp_release_error(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -110,6 +111,7 @@ pub(super) fn mcp_release_error(
         &error.field,
         &error.successor_short_id,
         &error.vault_read,
+        &error.effective_scope,
     ))
     .ok();
     let released = rows.zip(words).is_some_and(|(rows, words)| {

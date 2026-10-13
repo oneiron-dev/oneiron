@@ -179,6 +179,8 @@ pub(crate) fn thread_tasks(
             Some((result, at)) if scoped.is_entity_readable_now(&result)? => Some((result, at)),
             _ => None,
         };
+        // The thread's counts are derived from this TASK and its result.
+        memory.produced_from(std::iter::once(id).chain(delivered.map(|(result, _)| result)));
         result.push(RoomThreadTask {
             task: id,
             thread,
