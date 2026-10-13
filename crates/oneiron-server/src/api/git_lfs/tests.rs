@@ -577,18 +577,9 @@ async fn authenticated_interrupted_upload_consumes_prefix_without_publishing_obj
     assert!(server.vault.lfs_object(oid).unwrap().is_some());
 }
 
-/// Sol on #1402 (r9): an object attached only to a NOTE of a world turned
-/// device-only is neither offered nor served by the Git-LFS download doors,
-/// though it was downloadable while the world was portable.
-#[tokio::test]
-async fn lfs_download_withholds_an_object_only_a_device_only_world_owns() {
-    let (_dir, server) = test_server(secret_config());
-    let token = writer_token();
-    let bytes = b"private attachment bytes".to_vec();
-    let oid = LfsOid::digest(&bytes);
-    let size = u64::try_from(bytes.len()).expect("length fits u64");
-    assert_eq!(upload(&server, &token, &bytes).await, StatusCode::OK);
-    let vault = server.vault();
+/// Attaches the uploaded object `oid` only to a NOTE of a new, portable
+/// world, and returns that world.
+fn attach_to_a_note_in_a_world(vault: &oneiron::Vault, oid: LfsOid) -> oneiron::EntityId {
     let asset = vault.lfs_object(oid).unwrap().expect("object").asset_id;
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let note = vault
@@ -614,6 +605,22 @@ async fn lfs_download_withholds_an_object_only_a_device_only_world_owns() {
     vault
         .put_edge(&asset, oneiron::EdgeKind::Attached, &note, 1.0)
         .unwrap();
+    world
+}
+
+/// Sol on #1402 (r9): an object attached only to a NOTE of a world turned
+/// device-only is neither offered nor served by the Git-LFS download doors,
+/// though it was downloadable while the world was portable.
+#[tokio::test]
+async fn lfs_download_withholds_an_object_only_a_device_only_world_owns() {
+    let (_dir, server) = test_server(secret_config());
+    let token = writer_token();
+    let bytes = b"private attachment bytes".to_vec();
+    let oid = LfsOid::digest(&bytes);
+    let size = u64::try_from(bytes.len()).expect("length fits u64");
+    assert_eq!(upload(&server, &token, &bytes).await, StatusCode::OK);
+    let vault = server.vault();
+    let world = attach_to_a_note_in_a_world(vault, oid);
     let get = || {
         request(
             "GET",
@@ -640,4 +647,76 @@ async fn lfs_download_withholds_an_object_only_a_device_only_world_owns() {
     let parsed = json_body(&body);
     assert!(parsed["objects"][0]["actions"]["download"].is_null());
     assert_eq!(parsed["objects"][0]["error"]["code"], LFS_BATCH_NOT_FOUND);
+}
+
+/// Astra #1402 re-check finding 2: a grant's chunk reply is judged again when
+/// the handler releases it. A flag committed after the worker built the reply
+/// returns none of the object's bytes.
+#[tokio::test]
+async fn a_chunk_reply_built_before_its_world_turns_device_only_is_not_released() {
+    let (_dir, server) = test_server(secret_config());
+    let bytes = b"private attachment bytes".to_vec();
+    let oid = LfsOid::digest(&bytes);
+    let vault = server.vault();
+    let at = oneiron::TimeRange {
+        start: 1_700_000_000,
+        end: 1_700_000_000,
+    };
+    vault.put_lfs_object(oid, &bytes, at, at.start).unwrap();
+    let world = attach_to_a_note_in_a_world(vault, oid);
+    let principal = oneiron::EntityId::now();
+    let grant_id = oneiron::EntityId::now();
+    oneiron::sync::put_selector_test_federation_grant(
+        vault,
+        &grant_id,
+        &oneiron::federation::FederationGrant::new(
+            crate::handler::selector_grant_scope(),
+            principal,
+            oneiron::federation::FederationGrantRole::Viewer,
+            oneiron::federation::FederationGrantPreset::ReadOnly,
+        ),
+        1,
+    )
+    .unwrap();
+    let selector = oneiron::sync::encode_sync_selector(&oneiron::sync::SyncSelector::new(
+        grant_id,
+        principal,
+        oneiron::sync::SyncSelectorWorld::All,
+        vec![],
+        vec![oneiron::federation::SelectorRange::Family(
+            oneiron::registry::TypeByteFamily::Content,
+        )],
+    ))
+    .unwrap();
+    let want =
+        oneiron::sync::chunks::encode_chunk_request(&oneiron::sync::chunks::ChunkSyncRequest {
+            oid: *oid.as_bytes(),
+            selector,
+            have: vec![],
+            want: Some(vec![
+                vault.lfs_manifest(oid).unwrap().expect("manifest").chunks[0].hash,
+            ]),
+        })
+        .unwrap();
+    let token = format!(
+        "{}scope=core:read;principal_ref={}",
+        crate::test_credentials::RECIPE_PREFIX,
+        principal.to_hex()
+    );
+    let exchange = || {
+        request(
+            "POST",
+            &format!("/git/{REPO}/info/lfs/chunks"),
+            Some(&token),
+            Body::from(want.clone()),
+        )
+    };
+    let carries = |body: &[u8]| body.windows(bytes.len()).any(|window| window == bytes);
+    let (status, _, body) = route(&server, exchange()).await;
+    assert!(status == StatusCode::OK && carries(&body));
+
+    super::chunks::release_hook::arm(world);
+    let (status, _, body) = route(&server, exchange()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(!carries(&body));
 }

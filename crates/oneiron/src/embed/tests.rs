@@ -456,6 +456,7 @@ fn stale_completion_preserves_newer_pending_job() -> Result<()> {
         &leased.work[0],
         &[1.0, 0.0, 0.0, 0.0],
         EmbedderLocality::OnDevice,
+        &EmbeddingProvenance::unknown(),
     )?;
     assert!(!filled, "old-token fill must be stale");
     assert!(
@@ -579,5 +580,6 @@ fn zero_remote_lease_duration_is_rejected() {
     assert!(matches!(err, Error::InvalidConfig(_)));
 }
 
+mod device;
 mod device_local;
 mod payload;

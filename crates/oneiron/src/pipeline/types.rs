@@ -118,6 +118,14 @@ pub(super) const PPR_DAMPING: f32 = 0.15;
 pub(super) const ADAPTIVE_ROUNDS: usize = 3;
 pub(super) const PER_SCAN_CAP_FACTOR: usize = 4;
 pub(super) const MAX_TEMPORAL_SEEK_BUFFER: usize = 8_192;
+/// A scoped temporal channel widens to at most this multiple of the rows it
+/// was asked for, and to at least [`TEMPORAL_WIDENING_FLOOR`] (ARCH-0004
+/// #temporal-bound). The floor is the smallest that kept a reader whose
+/// scope holds 0.5% of the vault exact in every call measured at 10k and
+/// 100k records; the golden test `scoped_temporal_widening_stops_at_its_bound`
+/// holds both.
+pub(super) const TEMPORAL_WIDENING_MULTIPLE: usize = 8;
+pub(super) const TEMPORAL_WIDENING_FLOOR: usize = 4_000;
 pub(super) const COSINE_GHOST_VECTOR_THRESHOLD: f32 = 0.3;
 // RET-01 only gates context-pack assembly. These are deliberately
 // conservative: the vector floor needs an absent keyword signal too, while
@@ -138,6 +146,12 @@ pub(super) struct TemporalSearchConfig {
     pub(super) anchor_mode: TemporalAnchorMode,
     pub(super) adaptive: bool,
     pub(super) limit: usize,
+    /// A scoped call's widening: the rows the channel collects, scores and
+    /// returns before the scope narrows them to `limit`. The window grows
+    /// until it can fill them, but sigma settles once the window can fill
+    /// `limit`, as an unscoped call's does, so a scope never changes sigma.
+    /// `None` means `limit`.
+    pub(super) widened: Option<usize>,
     /// Query-derived occurred restriction. Applied before temporal scan caps
     /// and score truncation; host-supplied temporal modes leave this unset.
     pub(super) query_occurred_range: Option<(u64, u64)>,
@@ -301,12 +315,15 @@ pub struct RetrievalWithPendingVectors<T> {
 impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
-    /// scoped caller's final admission gate. Nor does a row of the
-    /// `device_local` worlds a caller off this device reads nothing of.
+    /// scoped caller's final admission gate. Nor does a TASK outside the
+    /// worlds or facets of the `credential` the run retrieves under, nor a
+    /// row of the `device_local` worlds a caller off this device reads
+    /// nothing of.
     pub(super) fn countable_suppressed(
         &self,
         store: &Store,
         txn: &RoTxn<'_>,
+        credential: Option<&crate::federation::Scope>,
         device_local: Option<&std::collections::BTreeSet<EntityId>>,
     ) -> Result<usize> {
         let mut count = 0;
@@ -322,10 +339,21 @@ impl EntityMetadataCache {
             let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 continue;
             };
-            count += usize::from(crate::note::countable_read_suppression(
-                header.entity_type,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            ));
+            let outside = match credential {
+                Some(credential) if header.entity_type == crate::registry::ENTITY_TYPE_TASK => {
+                    !crate::federation::record_scope::task_inside_credential(
+                        store, txn, *id, &raw, credential,
+                    )?
+                }
+                _ => false,
+            };
+            count += usize::from(
+                !outside
+                    && crate::note::countable_read_suppression(
+                        header.entity_type,
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                    ),
+            );
         }
         Ok(count)
     }

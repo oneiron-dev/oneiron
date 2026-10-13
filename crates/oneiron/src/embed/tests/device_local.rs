@@ -97,11 +97,11 @@ impl Embedder for FlaggedBeforeSend {
         &self,
         inputs: &[PendingEmbeddingInput],
         release: &dyn Fn(&[EntityId]) -> Result<()>,
-    ) -> Result<Vec<Vec<f32>>> {
+    ) -> Result<Vec<(Vec<f32>, crate::embed::EmbeddingProvenance)>> {
         self.vault.set_world_device_only(self.world, true)?;
         let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         release(&rows)?;
-        self.inner.embed(inputs)
+        self.inner.embed_marked(inputs)
     }
 }
 

@@ -7954,6 +7954,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-broker"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "libc",
+ "memchr",
+ "rcgen",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-rustls",
+ "zeroize",
+]
+
+[[package]]
 name = "oneiron-code-check"
 version = "0.1.0"
 dependencies = [
@@ -8402,6 +8421,7 @@ dependencies = [
  "libc",
  "loro",
  "oneiron",
+ "oneiron-broker",
  "oneiron-code-check",
  "oneiron-driver",
  "oneiron-llm-anthropic",

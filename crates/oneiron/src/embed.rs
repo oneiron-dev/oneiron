@@ -1,8 +1,11 @@
 mod cold_attach;
+mod device;
 mod eligibility;
 mod locality;
 mod turn;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
+pub use device::{EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount};
+pub(crate) use device::{clear_all_embedding_devices_in_txn, record_embedding_device_in_txn};
 pub(crate) use eligibility::{
     embeddable_payload, embeddable_payload_in_txn, indexed_payload, joined_turn_text,
     turn_text_in_txn,
@@ -86,19 +89,38 @@ pub trait Embedder: Send + Sync {
     fn dimensions(&self) -> usize;
     fn locality(&self) -> EmbedderLocality;
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>>;
+    /// The device and runtime that compute what [`Self::embed`] returns,
+    /// stored beside each vector it fills. Unknown unless overridden.
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::unknown()
+    }
+    /// [`Self::embed`], each vector with the device and runtime that computed
+    /// it. An embedder whose answers name their own (an endpoint that says)
+    /// overrides this; any other marks each with [`Self::provenance`].
+    fn embed_marked(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+        let provenance = self.provenance();
+        Ok(self
+            .embed(inputs)?
+            .into_iter()
+            .map(|vector| (vector, provenance.clone()))
+            .collect())
+    }
 
-    /// [`Self::embed`] for an embedder off this device: `release` judges the
-    /// rows of each request it sends right before that request leaves, and a
-    /// refusal sends nothing and fails the embed. One that sends a single
-    /// request needs no more than this default.
+    /// [`Self::embed_marked`] for an embedder off this device: `release`
+    /// judges the rows of each request it sends right before that request
+    /// leaves, and a refusal sends nothing and fails the embed. One that
+    /// sends a single request needs no more than this default.
     fn embed_released(
         &self,
         inputs: &[PendingEmbeddingInput],
         release: &dyn Fn(&[EntityId]) -> Result<()>,
-    ) -> Result<Vec<Vec<f32>>> {
+    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
         let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         release(&rows)?;
-        self.embed(inputs)
+        self.embed_marked(inputs)
     }
 }
 
@@ -459,17 +481,18 @@ impl PendingEmbeddingReconciler {
         self.fill_batch(work, &vectors, self.embedder.locality(), report)
     }
 
-    /// `embedder`'s vectors for `inputs`. One off this device sends each
-    /// request only once the vault releases its rows: none of them is one a
-    /// device-local world keeps (DEC-0005), whatever the host's egress list
-    /// says. A refusal fails the embed and sends nothing.
+    /// `embedder`'s vectors for `inputs`, each marked with the device and
+    /// runtime that computed it. One off this device sends each request only
+    /// once the vault releases its rows: none of them is one a device-local
+    /// world keeps (DEC-0005), whatever the host's egress list says. A
+    /// refusal fails the embed and sends nothing.
     fn embed_on(
         &self,
         embedder: &dyn Embedder,
         inputs: &[PendingEmbeddingInput],
-    ) -> Result<Vec<Vec<f32>>> {
+    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
         if embedder.locality() == EmbedderLocality::OnDevice {
-            return embedder.embed(inputs);
+            return embedder.embed_marked(inputs);
         }
         embedder.embed_released(inputs, &|rows| {
             if self.vault.rows_may_leave_device(rows)? {
@@ -483,15 +506,17 @@ impl PendingEmbeddingReconciler {
         })
     }
 
+    /// Fills each leased row with its vector, marked with the device and
+    /// runtime that computed that vector.
     fn fill_batch(
         &self,
         work: &[LeasedPendingEmbedding],
-        vectors: &[Vec<f32>],
+        vectors: &[(Vec<f32>, EmbeddingProvenance)],
         locality: EmbedderLocality,
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
-        for (item, vector) in work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(item, vector, locality)? {
+        for (item, (vector, provenance)) in work.iter().zip(vectors.iter()) {
+            if self.complete_leased_work(item, vector, locality, provenance)? {
                 report.filled += 1;
             } else {
                 report.stale_fills += 1;
@@ -635,6 +660,7 @@ impl PendingEmbeddingReconciler {
         work: &LeasedPendingEmbedding,
         vector: &[f32],
         locality: EmbedderLocality,
+        provenance: &EmbeddingProvenance,
     ) -> Result<bool> {
         let mut filled_current = false;
         self.vault.with_write_txn_grouped(|wtxn| {
@@ -651,6 +677,7 @@ impl PendingEmbeddingReconciler {
                     id: work.input.entity_id,
                     vector: vector.to_vec(),
                     pending_embedding_token: Some(work.input.pending_embedding_token.clone()),
+                    provenance: Some(provenance.clone()),
                 }],
                 self.vault
                     .text_index_trusted

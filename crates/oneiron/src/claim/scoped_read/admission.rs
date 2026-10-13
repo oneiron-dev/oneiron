@@ -69,8 +69,9 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
-    /// Read only rows in `worlds`, a claim by its own world and any other
-    /// record as base reality. The ceiling rides the key, so a lane built
+    /// Read only rows in `worlds`, each where `record_world_in` places it: a
+    /// claim by its own world, a TASK and its facts by their birth, any
+    /// other record as base reality. The ceiling rides the key, so a lane built
     /// from it keeps it too, and it meets any ceiling the key already holds.
     /// A room assembly passes the room's world set (ARCH-0067 §8).
     #[must_use]
@@ -139,7 +140,10 @@ impl<'a> ScopedRead<'a> {
         if self.actor_key.room_turn.is_none() && self.actor_key.worlds.is_none() {
             return self.audience_conjunct_in(txn, id, raw);
         }
-        let Some(world) = revision_world(raw)? else {
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let data = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        let Some(world) = self.record_world_in(txn, id, header.entity_type, data)? else {
             return Ok(false);
         };
         if self
@@ -453,11 +457,13 @@ impl ScopedRead<'_> {
         // A row outside the worlds the read asked for is not withheld by
         // policy; scope honesty names its world instead. A row in a world the
         // credential cannot read, or one a device-local world keeps from a
-        // caller off this device, has no name and no count (DEC-0005).
+        // caller off this device, has no name and no count (DEC-0005), and
+        // neither has a TASK outside the credential's worlds or facets.
         if self.actor_key.room_turn.is_none()
-            && !self.outside_asked_worlds(&row)
+            && !self.outside_asked_worlds_in(txn, id, &row)?
             && !self.outside_credential_worlds_in(txn, id, &row)?
             && !self.device_withholds_in(txn, id, None)?
+            && !self.outside_credential_task_position_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
         {
             Ok(ReadAdmission::Suppressed)
@@ -466,25 +472,67 @@ impl ScopedRead<'_> {
         }
     }
 
-    fn outside_asked_worlds(&self, row: &EntityRecord) -> bool {
+    fn outside_asked_worlds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &EntityRecord,
+    ) -> Result<bool> {
         let Some(worlds) = &self.actor_key.worlds else {
-            return false;
+            return Ok(false);
         };
-        let world = if row.entity_type == ENTITY_TYPE_CLAIM {
-            match crate::claim::decode_claim_body(&row.body, true) {
-                Ok(body) => body.world,
-                Err(_) => return true,
-            }
-        } else {
-            None
+        Ok(self
+            .record_world_in(txn, id, row.entity_type, &row.body)?
+            .is_none_or(|world| !worlds.admits(world)))
+    }
+
+    /// Whether `row` of `id` is a TASK, or one of its authority facts, whose
+    /// birth stamp sits outside the worlds or facets the read's verified
+    /// credential grants (ARCH-0067 §5, DEC-0005). One that cannot prove its
+    /// position counts as outside.
+    fn outside_credential_task_position_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &EntityRecord,
+    ) -> Result<bool> {
+        use crate::federation::record_scope::task_inside_credential;
+        let Some(granted) = self.actor_key.authority_scope() else {
+            return Ok(false);
         };
-        !worlds.admits(world)
+        if row.entity_type != crate::registry::ENTITY_TYPE_TASK {
+            return Ok(false);
+        }
+        let raw = row.encode();
+        let inside = match self.session_view {
+            Some(view) => task_inside_credential(view, txn, *id, &raw, granted)?,
+            None => task_inside_credential(&self.vault.store, txn, *id, &raw, granted)?,
+        };
+        Ok(!inside)
+    }
+
+    /// The world the stored row `id` sits in, read in `txn` over this read's
+    /// own store (`record_scope::record_world_in`). `None` where the row
+    /// cannot prove one.
+    fn record_world_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+        data: &[u8],
+    ) -> Result<Option<Option<EntityId>>> {
+        use crate::federation::record_scope::record_world_in;
+        match self.session_view {
+            Some(view) => record_world_in(view, txn, *id, kind, data),
+            None => record_world_in(&self.vault.store, txn, *id, kind, data),
+        }
     }
 
     /// Whether the stored row `row` of `id` sits wholly outside the worlds
-    /// the read's verified credential grants: a record that is not a claim
-    /// in base reality, otherwise at the position the read door selects it.
-    /// A claim with no such position is judged by the other axes.
+    /// the read's verified credential grants: a claim at the position the
+    /// read door selects it; any other record where `record_world_in` places
+    /// it. A claim with no such position is judged by the other axes; a TASK
+    /// that cannot prove its world is outside.
     fn outside_credential_worlds_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -497,21 +545,21 @@ impl ScopedRead<'_> {
         if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
             return Ok(false);
         }
-        // Every record that is not a claim is base reality, stamped or not
-        // (as `revision_world` reads it): a row replayed with no stamp is no
-        // less outside a credential that cannot read base (Astra #1388b P2).
-        if row.entity_type != ENTITY_TYPE_CLAIM
-            && !granted
-                .worlds
-                .contains(&crate::federation::ScopeId(crate::claim::base_world_id()))
-        {
-            return Ok(true);
+        // A TASK and its authority facts sit at their birth. Every other
+        // record that is not a claim is base reality, stamped or not: a row
+        // replayed with no stamp is no less outside a credential that cannot
+        // read base (Astra #1388b P2).
+        if row.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(self
+                .record_world_in(txn, id, row.entity_type, &row.body)?
+                .is_none_or(|world| {
+                    let world = world.unwrap_or_else(crate::claim::base_world_id);
+                    !granted.worlds.contains(&crate::federation::ScopeId(world))
+                }));
         }
         // A claim with no decodable world names none, as a read that asked
         // for worlds judges it.
-        if row.entity_type == ENTITY_TYPE_CLAIM
-            && crate::claim::decode_claim_body(&row.body, true).is_err()
-        {
+        if crate::claim::decode_claim_body(&row.body, true).is_err() {
             return Ok(true);
         }
         let record = crate::federation::record_scope::disclosure_scope_for_stored_row(
@@ -536,18 +584,4 @@ impl ScopedRead<'_> {
                 .map(|allowed| allowed.then_some(()))
         })
     }
-}
-
-/// The world of the revision `raw`: a claim's own, `None` for base reality,
-/// which also holds every record that is not a claim. An erased claim cannot
-/// prove its world, so it has none (`Ok(None)`).
-fn revision_world(raw: &[u8]) -> Result<Option<Option<EntityId>>> {
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-        return Ok(Some(None));
-    }
-    Ok(raw
-        .get(ENTITY_METADATA_HEADER_LEN..)
-        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-        .map(|body| body.world))
 }

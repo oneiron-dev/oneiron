@@ -425,6 +425,7 @@ impl PipelineBuilder<'_> {
                     read_suppressed: metadata_cache.countable_suppressed(
                         &self.vault.store,
                         rtxn,
+                        authority_filter.credential.as_ref(),
                         filter_config.device_local,
                     )?,
                     deferred_ppr_cache_writes: Vec::new(),
@@ -756,6 +757,7 @@ impl PipelineBuilder<'_> {
                 read_suppressed: metadata_cache.countable_suppressed(
                     &self.vault.store,
                     rtxn,
+                    authority_filter.credential.as_ref(),
                     filter_config.device_local,
                 )?,
                 deferred_ppr_cache_writes,

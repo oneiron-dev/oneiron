@@ -22,7 +22,9 @@ for row in RUN_ROWS:
 # so a row carries no opt-out. A row's tool takes its whole typed input as `spec`
 # unless it names a projection, and refuses a world/facet-narrowed connector
 # unless it names a scope it can carry: a new row is listed, and fails closed.
-MCP_SCOPES = {'filtered', 'unrestricted', 'addressed'}
+# `born` carries the connector's own world and facet into what it writes: the
+# TASK it mints is born there (ARCH-0067 §5).
+MCP_SCOPES = {'filtered', 'unrestricted', 'addressed', 'born'}
 for row in ROWS:
     if 'mcp' in row: raise ValueError(f'{row["name"]}: every verb row is an MCP tool; drop "mcp"')
     row.setdefault('mcp_fields', {'spec': '$'})
@@ -301,7 +303,7 @@ def mcp_input_dispatch(row):
                  '    let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  '    let value = crate::api::context_board::describe_self_for_auth(server, auth, &input).await.map_err(|_| invalid())?;\n'
                  '    let output: oneiron::task_verb::TaskDescription = serde_json::from_value(value).map_err(|_| invalid())?;\n'
-                 '    let (value, source) = mcp_describe_result(server, actor, output)?;\n'
+                 '    let (value, source) = mcp_describe_result(output)?;\n'
                  '    return Ok((value, source, McpCarrierPolicy::Drain, None));\n'
                  '}\n')
     admission = row.get('admission', {})
@@ -318,7 +320,17 @@ def mcp_input_dispatch(row):
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
                  f'let output = server.{row["server_door"]}(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input).await.map_err(mcp_facade_error)?;\n')
     else:
-        body += decode + f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
+        body += decode
+        if name == 'describe':
+            # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
+            body += ('if input.task_ref.is_none() && !input.self_target {\n'
+                     '    // The section is narrowed to this credential before its\n'
+                     "    // render cap, so its counts are the credential's rows alone.\n"
+                     '    let rows = memory.describe_rows().map_err(mcp_facade_error)?;\n'
+                     '    let (value, source) = mcp_tasks_section(server, actor, rows)?;\n'
+                     '    return Ok((value, source, McpCarrierPolicy::Drain, None));\n'
+                     '}\n')
+        body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
     if row.get('lands_turn'):
         body += 'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
     if 'mcp_result' in row:
@@ -370,7 +382,8 @@ pub(crate) async fn execute_agent_verb_input(
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
     }
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class).at(actor.locality());
+    // A narrowed connector's TASKs are born in its own world and facet.
+    let memory = server.vault.memory(actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(actor.scope.birth_position());
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
     match tool {
 '''
@@ -694,6 +707,7 @@ export function agentVerbs(invoke: AgentInvoke) {
         ('continuable', lambda r: r.get('mcp_page', 'page' in r or r['output'].startswith('Vec<'))),
         ('filtered_read', lambda r: r['mcp_scope'] == 'filtered'),
         ('requires_unscoped', lambda r: r['mcp_scope'] == 'unrestricted'),
+        ('born_in_scope', lambda r: r['mcp_scope'] == 'born'),
         ('writes', lambda r: r['scope'] == 'Write'),
         ('proposes', lambda r: r.get('proposes', False)),
     ]:

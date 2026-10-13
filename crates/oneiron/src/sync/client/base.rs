@@ -208,8 +208,8 @@ impl SyncClient {
 
     /// Whether an outgoing frame carries what a device-only world now keeps
     /// here, judged as it is released: a window UPDATE by the raw verdict
-    /// (a frame that cannot be read stays), a document data frame by its
-    /// text ([`crate::sync::documents::document_frame_withheld`]).
+    /// (a frame that cannot be read stays), a document frame, a NOTE command
+    /// included, by its text ([`crate::sync::documents::document_frame_withheld`]).
     pub(crate) fn frame_withheld(&self, frame: &[u8]) -> bool {
         if frame.first() == Some(&transport::TAG_WINDOW_SYNC) {
             return frame

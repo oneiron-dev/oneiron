@@ -572,10 +572,12 @@ pub(crate) fn owner_note_admission(
     Ok(())
 }
 
-/// Whether an outgoing document data frame carries text a device-only world
-/// now keeps here, judged as it is released: the flags are read and the frame
-/// accepted under the vault's device-only acceptance lock. NOTE frames answer
-/// to their own authority; a frame that cannot be judged stays.
+/// Whether an outgoing document frame carries text a device-only world now
+/// keeps here, judged as it is released: the flags are read and the frame
+/// accepted under the vault's device-only acceptance lock. Every frame that
+/// can carry text is judged, a NOTE's state, update, command and receipt
+/// included: NOTE authority is a further check, never an exemption. Requests
+/// and acks carry version vectors only. A frame that cannot be judged stays.
 pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
     if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
         return false;
@@ -583,20 +585,15 @@ pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
     let Ok(document) = crate::sync::transport::decode_document(&frame[1..]) else {
         return false;
     };
-    if !matches!(
+    if matches!(
         document.kind,
-        document_sub_tags::UPDATE | document_sub_tags::STATE
+        document_sub_tags::REQUEST | document_sub_tags::ACK
     ) {
         return false;
     }
     (|| -> Result<bool> {
         let _accepting = vault.device_only_acceptance();
         let rtxn = vault.store.env.read_txn()?;
-        if vault.get_entity_type_in_txn(&rtxn, &document.entity)?
-            == Some(crate::registry::ENTITY_TYPE_NOTE)
-        {
-            return Ok(false);
-        }
         text_withheld(vault, &rtxn, document.entity)
     })()
     .unwrap_or(true)

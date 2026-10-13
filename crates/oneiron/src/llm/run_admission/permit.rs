@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use super::super::{
-    BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, ModelLocality, PinnedConfigViolation,
+    BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, DispatchBinding, ModelLocality,
+    PinnedConfigViolation,
 };
 use super::admission::{RunCall, RunDenied, RunInner};
 use super::declaration::{LeaseUnit, RunDeclaration};
@@ -102,6 +103,7 @@ impl RunInner {
         declaration: &RunDeclaration,
         revision: u32,
         call: RunCall<'_>,
+        request_digest: Option<String>,
     ) -> Result<RunPermit, RunDenied> {
         let RunCall {
             selector,
@@ -139,7 +141,10 @@ impl RunInner {
         let rules_enforced = custody(declaration, offer.payer, offer.custody, &offer.offer)?;
         let tokens = LeaseUnit::tokens();
         let line = declaration.budget();
-        let binding = offer.dispatch_binding();
+        let binding = DispatchBinding {
+            request_digest,
+            ..offer.dispatch_binding()
+        };
         let local = offer.payer == Payer::Local && offer.locality == ModelLocality::OnDevice;
         let (lease, reserved_units) = if local {
             let lease = self

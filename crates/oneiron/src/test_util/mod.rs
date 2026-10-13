@@ -383,7 +383,9 @@ pub(crate) const SYNTHETIC_PRIVATE_KEY_BLOCK: &str = "-----BEGIN PRIVATE KEY----
 U3ludGhldGljIGZpeHR1cmUgYm9keSBmb3IgdGhlIHNlY3JldCBzY2FuIHRlc3RzLiBJdCBpcyBub3QgYSBrZXku\n\
 -----END PRIVATE KEY-----";
 
-fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
+/// Removes the shipped default policy manifest that `Vault::open` seeds, so a
+/// fixture writes under the legacy open policy from here on.
+pub(crate) fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
     let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
     vault
         .with_write_txn(|wtxn| {

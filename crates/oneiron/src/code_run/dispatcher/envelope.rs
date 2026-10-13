@@ -176,9 +176,11 @@ impl HostSelfDispatcher<'_> {
 /// The session side reaches it through
 /// [`OffRecordSession::executor_check_write_gate`], which owns the routing.
 ///
-/// `landing` runs first in the gate's write transaction, before any decision
-/// is recorded: the decision is a durable write, so a session run's room
-/// keeps it only while the write it decides could land there.
+/// `landing` runs first in the gate's write transaction, before the actor's
+/// row is read or any decision is recorded: the decision is a durable write,
+/// so a session run's room keeps it only while the write it decides could
+/// land there, and a run removed from the room hears only that, whatever
+/// has become of its row since.
 pub(crate) fn check_write_gate_against_vault(
     vault: &Vault,
     id: EntityId,
@@ -187,9 +189,9 @@ pub(crate) fn check_write_gate_against_vault(
     can_resolve_pending_consent: bool,
     landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
-    validate_write_actor_binding(vault, envelope)?;
     let mut wtxn = vault.store.env.write_txn()?;
     landing(&wtxn)?;
+    validate_write_actor_binding(vault, &wtxn, envelope)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let gate_result = crate::gate::check_claim_policy_for_write(
         &vault.store,
@@ -213,13 +215,16 @@ pub(crate) fn check_write_gate_against_vault(
     gate_result
 }
 
-fn validate_write_actor_binding(vault: &Vault, envelope: &WriteEnvelope) -> Result<()> {
+fn validate_write_actor_binding(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    envelope: &WriteEnvelope,
+) -> Result<()> {
     crate::gate::validate_write_envelope(envelope)?;
     let actor = envelope.actor();
-    let rtxn = vault.store.env.read_txn()?;
     let actor_raw = vault
         .store
-        .port_entity_record(&rtxn, &actor.entity_ref())?
+        .port_entity_record(txn, &actor.entity_ref())?
         .ok_or(Error::EntityNotFound)?;
     crate::provenance::validate_actor_class(actor_raw.entity_type, actor.actor_class())
 }
