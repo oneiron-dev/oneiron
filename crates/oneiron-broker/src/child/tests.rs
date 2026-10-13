@@ -59,10 +59,16 @@ fn a_child_that_let_its_channel_go_is_replaced_or_refused() {
     std::fs::write(&go, b"").expect("go");
     let deadline = Instant::now() + Duration::from_secs(20);
     while !closed.exists() {
-        assert!(Instant::now() < deadline, "the first child never let its channel go");
+        assert!(
+            Instant::now() < deadline,
+            "the first child never let its channel go"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     child.ensure().expect("a new child");
-    let count = std::fs::read_to_string(&starts).expect("starts").lines().count();
+    let count = std::fs::read_to_string(&starts)
+        .expect("starts")
+        .lines()
+        .count();
     assert_eq!(count, 2, "the child that let its channel go was kept");
 }

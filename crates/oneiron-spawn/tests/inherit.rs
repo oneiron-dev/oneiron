@@ -26,7 +26,7 @@ fn a_subprocess_started_while_a_new_socket_pair_is_open_across_exec_gets_none_of
     assert_eq!(made, 0, "socketpair: {}", std::io::Error::last_os_error());
     // SAFETY: socketpair has just opened both, and nothing else owns them.
     let (ours, theirs) = unsafe { (OwnedFd::from_raw_fd(pair[0]), OwnedFd::from_raw_fd(pair[1])) };
-    let high = copy_above_the_limit(&theirs);
+    let (high, limit) = copy_above_a_lowered_limit(&theirs);
     let numbers = format!(
         "{} {} {}",
         ours.as_raw_fd(),
@@ -46,6 +46,7 @@ fn a_subprocess_started_while_a_new_socket_pair_is_open_across_exec_gets_none_of
     // end go and writes the frame on its own.
     drop(theirs);
     drop(high);
+    drop(limit);
     let mut ours = UnixStream::from(ours);
     // Refused once nothing holds the far end.
     let _ = ours.write_all(SENTINEL.as_bytes());
@@ -62,38 +63,53 @@ fn a_subprocess_started_while_a_new_socket_pair_is_open_across_exec_gets_none_of
     );
 }
 
-/// A copy of `fd` above 1024, after which the soft limit drops below it.
-fn copy_above_the_limit(fd: &OwnedFd) -> OwnedFd {
+/// A copy of `fd` at the lowest free number from 65,537 where the limits
+/// allow it (else from half the soft limit), with the soft limit then lowered
+/// to that number, so the copy sits above it. The guard puts the soft limit
+/// back when it drops.
+fn copy_above_a_lowered_limit(fd: &OwnedFd) -> (OwnedFd, SoftLimit) {
     let mut limit = libc::rlimit {
         rlim_cur: 0,
         rlim_max: 0,
     };
     // SAFETY: getrlimit writes the struct on the stack.
     assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) }, 0);
-    let original = limit.rlim_cur;
+    let guard = SoftLimit(limit);
     let raised = libc::rlimit {
         rlim_cur: limit.rlim_max.min(70_001),
         rlim_max: limit.rlim_max,
     };
     // SAFETY: setrlimit reads the struct; a soft limit up to the hard one
-    // needs no privilege, and a refusal leaves the old one.
+    // needs no privilege, and a refusal or a clamp leaves a lower one.
     unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) };
-    // SAFETY: as above.
+    // SAFETY: getrlimit writes the struct on the stack.
     assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) }, 0);
-    let high = RawFd::try_from(limit.rlim_cur - 1).expect("a descriptor number");
-    assert!(high > 1024, "no room above 1024 under this host's descriptor limit");
-    // SAFETY: dup2 copies an open descriptor to a number below the soft limit
-    // that nothing here uses; the copy has no close-on-exec flag.
-    assert_eq!(unsafe { libc::dup2(fd.as_raw_fd(), high) }, high);
+    let from = if limit.rlim_cur > 65_537 { 65_537 } else { limit.rlim_cur / 2 };
+    let from = libc::c_int::try_from(from).expect("a descriptor number");
+    // SAFETY: F_DUPFD copies an open descriptor to the lowest free number at
+    // or above `from`, without close-on-exec, and touches no other slot.
+    let high = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD, from) };
+    assert!(high >= 0, "a copy from {from}: {}", std::io::Error::last_os_error());
+    // SAFETY: F_DUPFD has just opened it, and nothing else owns it.
+    let copy = unsafe { OwnedFd::from_raw_fd(high) };
     let lowered = libc::rlimit {
-        rlim_cur: original.min(1024),
+        rlim_cur: libc::rlim_t::try_from(high).expect("a limit"),
         rlim_max: limit.rlim_max,
     };
     // SAFETY: setrlimit reads the struct; lowering the soft limit leaves
     // descriptors already open above it.
     assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lowered) }, 0);
-    // SAFETY: dup2 has just opened it, and nothing else owns it.
-    unsafe { OwnedFd::from_raw_fd(high) }
+    (copy, guard)
+}
+
+/// The soft limit to put back.
+struct SoftLimit(libc::rlimit);
+
+impl Drop for SoftLimit {
+    fn drop(&mut self) {
+        // SAFETY: setrlimit reads the struct.
+        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &self.0) };
+    }
 }
 
 /// The subprocess: says how many of the numbers it was given are sockets it

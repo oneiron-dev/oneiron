@@ -174,16 +174,19 @@ fn mark_listed(listing: RawFd, first: RawFd) -> io::Result<()> {
         if got == 0 {
             return Ok(());
         }
+        // Only the bytes it returned; an entry that runs past them, or a
+        // name with no NUL, fails the walk.
+        let returned = entries.get(..got).unwrap_or_default();
         let mut at = 0;
-        while at < got {
-            let Some(&[low, high]) = entries.get(at + 16..at + 18) else {
+        while at < returned.len() {
+            let Some(&[low, high]) = returned.get(at + 16..at + 18) else {
                 return Err(io::Error::from_raw_os_error(libc::EIO));
             };
             let length = usize::from(u16::from_ne_bytes([low, high]));
-            if length <= NAME {
-                return Err(io::Error::from_raw_os_error(libc::EIO));
-            }
-            let name = entries.get(at + NAME..at + length).unwrap_or_default();
+            let name = match returned.get(at + NAME..at + length) {
+                Some(name) if name.contains(&0) => name,
+                _ => return Err(io::Error::from_raw_os_error(libc::EIO)),
+            };
             if let Some(fd) = descriptor_named(name)
                 && fd >= first
                 && fd != listing
@@ -204,7 +207,9 @@ fn descriptor_named(name: &[u8]) -> Option<RawFd> {
         if !byte.is_ascii_digit() {
             return None;
         }
-        number = number.checked_mul(10)?.checked_add(RawFd::from(byte - b'0'))?;
+        number = number
+            .checked_mul(10)?
+            .checked_add(RawFd::from(byte - b'0'))?;
         digits += 1;
     }
     (digits > 0).then_some(number)
@@ -216,7 +221,8 @@ fn descriptor_named(name: &[u8]) -> Option<RawFd> {
 #[cfg(target_vendor = "apple")]
 fn close_on_exec_walk(first: RawFd) -> io::Result<()> {
     const SIZE: usize = size_of::<libc::proc_bsdinfo>();
-    let size = libc::c_int::try_from(SIZE).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+    let size =
+        libc::c_int::try_from(SIZE).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
     // SAFETY: proc_pidinfo is libproc's wrapper for the proc_info system call:
     // it writes at most `size` bytes into the struct on the stack, takes no
@@ -247,13 +253,21 @@ fn close_on_exec_walk(_first: RawFd) -> io::Result<()> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }
 
-/// Sets close-on-exec on `fd`; a number that is not open is skipped.
+/// Sets close-on-exec on `fd`. A number that is not open (EBADF) is skipped;
+/// any other failure fails the spawn.
 #[cfg(unix)]
 fn mark(fd: RawFd) -> io::Result<()> {
     // SAFETY: fcntl on a descriptor number that may not be open; one that is
     // not fails with EBADF.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if flags < 0 || flags & libc::FD_CLOEXEC != 0 {
+    if flags < 0 {
+        let error = io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(libc::EBADF) => Ok(()),
+            _ => Err(error),
+        };
+    }
+    if flags & libc::FD_CLOEXEC != 0 {
         return Ok(());
     }
     // SAFETY: as above; this only sets the flag on an open descriptor.
