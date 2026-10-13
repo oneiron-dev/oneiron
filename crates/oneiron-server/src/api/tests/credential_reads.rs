@@ -356,6 +356,49 @@ async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
     }
 }
 
+/// CodeRabbit on #1413: the campaign surface binds its handle as a person
+/// whatever class the credential names, and the read lane judged the owner's
+/// exemption by that bound class. So an agent-class credential held by the
+/// owner's PERSON read a relationship's words on that handle with no grant,
+/// while `/v1/core/query` withheld them. Both withhold them now, and the
+/// owner's own person-class credential still reads them on both.
+#[tokio::test]
+async fn an_agent_class_credential_on_the_owners_person_is_not_the_owners() {
+    let room = room();
+    let owner = room.owner.to_hex();
+    for (class, spaced) in [("agent", false), ("human", true)] {
+        let recipe = format!("scope=core:read;principal_ref={owner};actor_class={class}");
+        let auth = slip_credentials::authenticate(&room.server, &recipe);
+        // Bound as `campaign::dispatch` binds it.
+        let memory = crate::api::credential_memory(
+            &room.server.vault,
+            Some(&auth),
+            room.owner,
+            oneiron::EdgeActorClass::Human,
+        );
+        let messages = oneiron::task_verb::sdk::invoke(
+            &memory,
+            "rooms.messages",
+            json!({ "room_ref": room.room.to_hex() }),
+        )
+        .expect("rooms.messages")
+        .to_string();
+        assert_eq!(
+            (
+                messages.contains(&room.spaced.to_hex()),
+                messages.contains(&room.unscoped.to_hex())
+            ),
+            (spaced, true),
+            "{class} on the campaign surface's handle: {messages}"
+        );
+        assert_eq!(
+            room.reads(&recipe, "/v1/core/query").await,
+            (spaced, true),
+            "{class} on /v1/core/query"
+        );
+    }
+}
+
 /// Sol R1-005: a slip cut from the host root and handed to another key
 /// (`attenuate_to`) still names the host, but no grant can name its holder.
 /// It reads the unscoped words its records name, and no relationship's.
