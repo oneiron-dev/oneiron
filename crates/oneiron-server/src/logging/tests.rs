@@ -120,7 +120,7 @@ async fn a_worker_panic_returns_no_payload_to_the_cli() {
 /// and codes. A run's name, a teacher's purpose, a caller's selector, the
 /// lease id (it begins with the run's name), a refused connector's name and
 /// the model a provider says it served are text, so none reaches the log as
-/// given.
+/// given; a route, a unit and a digest are logged only when each is an id.
 #[test]
 fn the_receipt_log_carries_ids_and_codes_never_run_text() {
     use oneiron::llm::ModelLocality;
@@ -137,13 +137,17 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             selector: Some(format!("{SENTINEL} selector")),
             subject: "test/model@v1".to_owned(),
             offer: "offer-1".to_owned(),
-            route: "route-1".to_owned(),
+            route: format!("{SENTINEL} route"),
             locality: ModelLocality::ThirdParty,
             payer: Payer::Host,
             catalog_revision: None,
             lease: format!("{SENTINEL} nightly digest:call:7"),
             reserved_units: 100,
-            unit: LeaseUnit::tokens(),
+            // A unit read from config skips `LeaseUnit::new`.
+            unit: serde_json::from_value::<LeaseUnit>(serde_json::json!(format!(
+                "{SENTINEL} unit"
+            )))
+            .expect("a unit from config"),
             allocation: None,
             allocation_reserved_units: None,
             teacher_target: None,
@@ -160,6 +164,19 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             route: "route-1".to_owned(),
             request_digest: "digest-0f".to_owned(),
             served_model: Some(format!("{SENTINEL} as served")),
+            broker_isolation: None,
+            answered: true,
+        },
+    };
+    let digest_from_backend = RunReceipt {
+        run: "nightly".to_owned(),
+        revision: 1,
+        event: RunEvent::Dispatched {
+            lease: "nightly:call:8".to_owned(),
+            subject: "test/model@v1".to_owned(),
+            route: "route-1".to_owned(),
+            request_digest: format!("{SENTINEL} digest"),
+            served_model: None,
             broker_isolation: None,
             answered: true,
         },
@@ -183,6 +200,7 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
         sink.with_production_subscriber(|| {
             LoggedReceipts.record(admitted.clone());
             LoggedReceipts.record(dispatched.clone());
+            LoggedReceipts.record(digest_from_backend.clone());
             LoggedReceipts.record(denied.clone());
         });
         let written = sink.text();
@@ -192,7 +210,7 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             assert!(written.contains("undeclared_connector"), "{written}");
             assert!(written.contains("test/model@v1"), "{written}");
             assert!(written.contains("unrecognised"), "{written}");
-            assert!(written.contains("digest-0f"), "{written}");
+            assert!(written.contains("route-1"), "{written}");
             return;
         }
     }

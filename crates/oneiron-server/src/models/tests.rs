@@ -911,10 +911,11 @@ async fn a_declared_runs_receipt_log_carries_no_run_text() {
     const SENTINEL: &str = "sentinel-world-text-3d8e";
     let own = FakeLlm::start(vec![], Some(Reply::text("own"))).await;
     let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"own:small\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}]\n",
+        "default = \"own:small\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}, {{ model = \"own:other\" }}]\n",
         own.base_url
     ))));
     let own_id = ModelId::new("own/small@live").unwrap();
+    // Served here, so the refusal is the run's: it did not declare this teacher.
     let undeclared = ModelId::new("own/other@live").unwrap();
     let declaration = RunDeclaration::declared(BudgetLine {
         limit_units: 100_000,
