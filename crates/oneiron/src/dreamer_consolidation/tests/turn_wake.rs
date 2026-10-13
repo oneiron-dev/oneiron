@@ -856,3 +856,43 @@ fn a_repeat_is_read_again_when_what_it_repeated_is_marked_stale() -> Result<()> 
     assert_eq!(micro_rounds(&vault)?, vec![vec![held], vec![back]]);
     Ok(())
 }
+
+/// The other half of Sol R8: a regeneration that clears a MESSAGE's stale
+/// mark puts its words back in its turn, so the repeat that rode the turn's
+/// words without them is read again. The mark lands before the row, so the
+/// regeneration needs no re-put of a witnessed MESSAGE.
+#[test]
+fn a_repeat_is_read_again_when_what_it_repeated_is_regenerated() -> Result<()> {
+    use super::witnessed_turns::{allow_system_rows, message};
+    use crate::memory::WitnessAuthor;
+    use crate::ports::{DependencyIndex, RetrievalIndex};
+    let (_dir, vault) = open_vault();
+    let person = EntityId::from_bytes([0x77; 16])?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
+    allow_system_rows(&vault, person)?;
+    let conversation = EntityId::from_bytes([0x78; 16])?;
+    let kyoto = || message(0, WitnessAuthor::User, "I live in Kyoto.", true);
+    let first = vec![
+        kyoto(),
+        message(1, WitnessAuthor::User, "I moved to Osaka.", true),
+    ];
+    let moved = EntityId::from_hex(first[1].id.as_deref().expect("message id"))?;
+    vault.with_write_txn(|txn| vault.port_retrieval_mark_stale(txn, &moved))?;
+    let held = witness_into(&vault, person, conversation, first);
+    let at = vault.now_recorded_at();
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let back = witness_into(&vault, person, conversation, vec![kyoto()]);
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+
+    let raw = vault.get_raw(&moved)?.expect("the MESSAGE");
+    let learned_at = crate::batch::EntityMetadataHeader::parse(&raw)
+        .expect("a MESSAGE header")
+        .learned_at;
+    assert!(vault.with_write_txn(|txn| {
+        vault.port_dependency_complete_regeneration(txn, &moved, learned_at, &[])
+    })?);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![held], vec![back]]);
+    Ok(())
+}

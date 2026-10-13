@@ -59,9 +59,9 @@ pub(crate) fn erase_in_txn(
 
 /// The publication hook: a TURN, or a MESSAGE inside one, whose text a
 /// write changed or may have changed (a document write, its restore, an
-/// idle revision, a re-put of the row) has its turn's words changed,
-/// committed with the text. Unlike the tag and vector marks it needs no
-/// model configured.
+/// idle revision, a re-put of the row, a regeneration that clears its stale
+/// mark) has its turn's words changed, committed with the text. Unlike the
+/// tag and vector marks it needs no model configured.
 pub(crate) fn mark_on_publication_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
