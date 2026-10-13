@@ -73,10 +73,8 @@ fn copy_above_a_lowered_limit(fd: &OwnedFd) -> (OwnedFd, SoftLimit) {
         rlim_max: 0,
     };
     // SAFETY: getrlimit writes the struct on the stack.
-    assert_eq!(
-        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
-        0
-    );
+    let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) };
+    assert_eq!(read, 0);
     let guard = SoftLimit(limit);
     let raised = libc::rlimit {
         rlim_cur: limit.rlim_max.min(70_001),
@@ -86,10 +84,8 @@ fn copy_above_a_lowered_limit(fd: &OwnedFd) -> (OwnedFd, SoftLimit) {
     // needs no privilege, and a refusal or a clamp leaves a lower one.
     unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) };
     // SAFETY: getrlimit writes the struct on the stack.
-    assert_eq!(
-        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
-        0
-    );
+    let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) };
+    assert_eq!(read, 0);
     let mut from = if limit.rlim_cur > 65_537 {
         65_537
     } else {
