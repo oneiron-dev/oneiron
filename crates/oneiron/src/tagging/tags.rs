@@ -22,6 +22,7 @@ use super::provisional;
 use crate::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::error::Result;
+use crate::memory::extraction::SpeakerTarget;
 use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
@@ -45,6 +46,10 @@ pub struct DerivationEnvelope {
     /// What made them: `model@checkpoint` for the slot's tagger,
     /// `held@checkpoint` for tags an importer held.
     pub model_id: String,
+    /// The served stack the answer names beside the checkpoint, when it
+    /// names one: a head swap at a fixed checkpoint is another derivation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
     /// The save path's version.
     pub version: String,
     /// Digest of the decode parameters: the label table and the live window.
@@ -57,9 +62,11 @@ pub struct DerivationEnvelope {
 pub enum MentionLink {
     /// The label maps to no entity kind: the span stays a tag.
     Tag,
-    /// The identity key named these entities, real or provisional. A hit,
-    /// even a single one, is a soft link: the linker decides whether the
-    /// mention is any of them (ARCH-0055 §10).
+    /// The identity key named these entities, real or provisional, or the
+    /// span took them from what it corefers with: an antecedent, an earlier
+    /// turn's saved span, or the turn's speaker or addressee. A hit, even a
+    /// single one, is a soft link: the linker decides whether the mention is
+    /// any of them (ARCH-0055 §10).
     Candidates { kind: u8, entities: Vec<EntityId> },
     /// The key named nothing, so the save minted this provisional entity.
     Minted { kind: u8, entity: EntityId },
@@ -143,6 +150,32 @@ pub struct TaggedMention {
     /// coreferent span takes its antecedent's link unless its own name keys
     /// to an entity.
     pub antecedent: Option<usize>,
+    /// Where the tagger put this span's referent outside this turn's spans,
+    /// when it did and the save kept the decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<MentionReference>,
+    /// The tagger's confidence in the span's link, context link or speaker
+    /// link, when it gave one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_confidence: Option<f32>,
+}
+
+/// A coreference decision that reaches outside the turn's own spans. A span
+/// takes the link it resolves to as it takes an antecedent's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MentionReference {
+    /// The span corefers with a span of an earlier turn in its window, and
+    /// the save found that span saved: the span took its link.
+    Context,
+    /// The span is its turn's speaker or addressee. `resolved` says whether
+    /// the save named one person for it: the turn's author for the speaker,
+    /// the one other party of a 1:1 room for the addressee. An unresolved
+    /// decision names no one.
+    Speaker {
+        target: SpeakerTarget,
+        resolved: bool,
+    },
 }
 
 /// A coreference link that joins two spans linked to different entities:
@@ -283,7 +316,7 @@ pub(super) fn tag_set_in_txn(
 
 /// The tag set of `turn` while the text it was read from reads: the turn and
 /// every message it was read from are stored and none reads deleted.
-fn readable_in_txn(
+pub(super) fn readable_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,

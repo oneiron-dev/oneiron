@@ -59,15 +59,17 @@ pub use output::OutputRefusal;
 pub use provisional::ProvisionalEntity;
 pub use reconciler::{TaggingBackoff, TaggingPass, TaggingReconciler};
 pub use tags::{
-    DerivationEnvelope, MentionHit, MentionLink, MergeEvidence, TaggedMention, TurnTags,
+    DerivationEnvelope, MentionHit, MentionLink, MentionReference, MergeEvidence, TaggedMention,
+    TurnTags,
 };
 pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
 
 pub(crate) use held::settle_held_tags_in_txn;
-pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in_txn};
+pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in_txn, turn_role};
 #[cfg(feature = "sync")]
 pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn};
+pub(crate) use output::{check_links, check_span_order};
 pub(crate) use provisional::{refuse_held_id_in_txn, release_held_id_in_txn};
 pub(crate) use save::save_shadow_output_in_txn;
 pub(crate) use tags::{
