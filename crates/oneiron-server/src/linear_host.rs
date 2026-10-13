@@ -313,9 +313,10 @@ async fn build_bridge(
     token: Option<String>,
     timeout_secs: u64,
 ) -> anyhow::Result<Option<LinearBridge>> {
-    tokio::task::spawn_blocking(move || LinearBridge::configured(base, token, timeout_secs))
-        .await
-        .map_err(|error| anyhow::anyhow!("Linear bridge setup failed: {error}"))?
+    crate::logging::off_runtime("Linear bridge setup", move || {
+        LinearBridge::configured(base, token, timeout_secs)
+    })
+    .await?
 }
 
 /// Start a scheduled mirror when the host configured its authenticated bridge.

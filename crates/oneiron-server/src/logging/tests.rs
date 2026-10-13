@@ -94,3 +94,24 @@ fn a_panic_reaches_the_log_as_location_and_kind_never_its_payload() {
     );
     assert!(written.contains("logging/tests.rs:"), "{written}");
 }
+
+/// Owner ruling 2026-10-14 (fix 6): a blocking worker's panic payload never
+/// reaches the error a command returns, which the binary prints to stderr.
+/// `init`, `reembed`, serve's slot builders and the Linear bridge all join
+/// their workers through `off_runtime`.
+#[tokio::test]
+async fn a_worker_panic_returns_no_payload_to_the_cli() {
+    let error = off_runtime("init", || -> anyhow::Result<()> {
+        panic!("could not parse row: sentinel-world-text-6a0e")
+    })
+    .await
+    .expect_err("the worker panicked");
+    for shown in [
+        format!("{error}"),
+        format!("{error:#}"),
+        format!("{error:?}"),
+    ] {
+        assert!(!shown.contains("sentinel-world-text-6a0e"), "{shown}");
+    }
+    assert_eq!(error.to_string(), "init panicked");
+}

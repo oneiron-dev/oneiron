@@ -35,5 +35,23 @@ pub(crate) fn engine_kind(error: &anyhow::Error) -> Option<oneiron::ErrorKind> {
         .map(oneiron::Error::kind)
 }
 
+/// Runs `work` on a blocking thread. A join failure comes back as `what` and
+/// whether the worker panicked or was cancelled, never as the `JoinError`:
+/// its Display carries the panic payload, and the binary prints the error a
+/// command returns.
+pub(crate) async fn off_runtime<T: Send + 'static>(
+    what: &'static str,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> anyhow::Result<T> {
+    tokio::task::spawn_blocking(work).await.map_err(|error| {
+        let how = if error.is_panic() {
+            "panicked"
+        } else {
+            "was cancelled"
+        };
+        anyhow::anyhow!("{what} {how}")
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod tests;

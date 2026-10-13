@@ -157,7 +157,5 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
 pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
-    tokio::task::spawn_blocking(move || build_slot(config.as_ref()))
-        .await
-        .map_err(|error| anyhow::anyhow!("tagger slot task failed: {error}"))?
+    crate::logging::off_runtime("tagger slot task", move || build_slot(config.as_ref())).await?
 }

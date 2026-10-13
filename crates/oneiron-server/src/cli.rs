@@ -673,7 +673,9 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Serve(args) => commands::serve(*args).await,
         Command::Revoke(args) => commands::revoke(*args).await,
         Command::SkillsPack(args) => commands::skills_pack(args),
-        Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
+        Command::Init(args) => {
+            crate::logging::off_runtime("init", move || commands::init(args)).await?
+        }
         Command::Doctor(args) => commands::doctor(args),
         Command::Whoami(args) => commands::whoami(*args),
         Command::Backup(args) => commands::backup(*args),
@@ -687,7 +689,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Runs(command) => commands::runs(command),
         // Blocking: an endpoint's transform is read over blocking HTTP.
         Command::Reembed(args) => {
-            tokio::task::spawn_blocking(move || commands::reembed(*args)).await?
+            crate::logging::off_runtime("reembed", move || commands::reembed(*args)).await?
         }
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
