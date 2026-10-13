@@ -73,6 +73,7 @@ pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
+pub(crate) use persistence::conflict_close_candidate;
 pub use provenance::*;
 pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,

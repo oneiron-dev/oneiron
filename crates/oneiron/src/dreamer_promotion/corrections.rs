@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use super::*;
 use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
-use crate::dreamer_consolidation::close_persistent_conflict;
+use crate::dreamer_consolidation::conflict_close_candidate;
 use crate::dreamer_consolidation::resources::ConsolidationFence;
 use crate::edge::EdgeKind;
 
@@ -83,12 +83,16 @@ pub(super) fn superseded_prior(vault: &Vault, head: EntityId) -> Result<Option<E
 
 /// Closes each open conflict on `replacement`'s subject that named `prior`
 /// on `replacement`'s own world, facet, relationship and project, citing
-/// `evidence` and recording `replacement` as its resolution. A marker a
-/// standing resolution already answers is left as it is, so a replay closes
-/// nothing twice; a proposed, refused, closed or stale one answers nothing.
+/// `evidence` and recording `replacement` as its resolution. Each close is
+/// written under the handoff's `fence`. A marker a standing resolution
+/// already answers is left as it is, so a replay closes nothing twice; a
+/// proposed, refused, closed or stale one answers nothing. A replacement that
+/// no longer stands (retracted, closed or stale since it landed, as a replay
+/// meets it) answers nothing either.
 pub(super) fn close_conflicts_naming(
     vault: &Vault,
     run: &DreamerRunContext,
+    fence: &ConsolidationFence,
     replacement: EntityId,
     prior: EntityId,
     evidence: &[EntityId],
@@ -96,6 +100,9 @@ pub(super) fn close_conflicts_naming(
     let Some(body) = vault.get_claim(&replacement)? else {
         return Ok(());
     };
+    if !crate::claim::claim_surfaceable(&body) {
+        return Ok(());
+    }
     let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
         return Ok(());
     };
@@ -126,14 +133,18 @@ pub(super) fn close_conflicts_naming(
     for marker in open.into_iter().filter(|marker| !resolved.contains(marker)) {
         // A marker this close cannot land stays open, and in the owner's
         // view; the correction itself has landed.
-        let reason = match close_persistent_conflict(
+        let reason = match conflict_close_candidate(
             vault,
             run,
             marker,
             resolution.clone(),
             evidence.to_vec(),
         ) {
-            Ok(closed) => closed.rejected.into_iter().next().map(|(_, reason)| reason),
+            Ok(close) => match promote_one(vault, run, close, None, Some(fence), None) {
+                Ok(ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed) => None,
+                Ok(other) => Some(format!("the close was {}", other.as_str())),
+                Err(reason) => Some(reason),
+            },
             Err(error) => Some(error.to_string()),
         };
         if let Some(reason) = reason {

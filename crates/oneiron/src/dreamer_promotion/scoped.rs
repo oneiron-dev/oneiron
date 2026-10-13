@@ -31,6 +31,7 @@ pub fn promote_scoped_consolidation(
                 corrections::close_conflicts_naming(
                     vault,
                     run,
+                    &write.fence,
                     head,
                     prior,
                     &candidate.evidence_turn_refs,
@@ -77,7 +78,14 @@ pub fn promote_scoped_consolidation(
         // This attempt's own correction, granted before a kill: what its
         // grant left to close still closes, once.
         if let Some(prior) = corrections::granted_correction(vault, &candidate)? {
-            corrections::close_conflicts_naming(vault, run, id, prior, &evidence_refs)?;
+            corrections::close_conflicts_naming(
+                vault,
+                run,
+                &write.fence,
+                id,
+                prior,
+                &evidence_refs,
+            )?;
             outcome.landed.push(id);
             continue;
         }
@@ -94,7 +102,14 @@ pub fn promote_scoped_consolidation(
                 match corrections::grant_allowed_replacement(vault, run, &write.fence, id, checker)
                 {
                     Some(prior) => {
-                        corrections::close_conflicts_naming(vault, run, id, prior, &evidence_refs)?;
+                        corrections::close_conflicts_naming(
+                            vault,
+                            run,
+                            &write.fence,
+                            id,
+                            prior,
+                            &evidence_refs,
+                        )?;
                         outcome.landed.push(id);
                     }
                     None => outcome.pended.push(id),

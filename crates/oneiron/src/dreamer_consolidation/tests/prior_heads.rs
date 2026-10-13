@@ -820,6 +820,129 @@ fn project_local_exact_head_attachment_keeps_its_provenance_in_the_project() -> 
     Ok(())
 }
 
+/// The seeded manifest with `profile.name` single-valued: a different name
+/// replaces the head with no verdict call.
+fn single_valued_names(vault: &Vault) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let raw = vault.get_raw(&id)?.expect("manifest");
+    let mut cursor = std::io::Cursor::new(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
+        panic!("manifest map");
+    };
+    entries.push((
+        "single_valued_predicates".into(),
+        Value::Array(vec!["profile.name".into()]),
+    ));
+    let bytes = super::super::support::encode_value(&Value::Map(entries))?;
+    crate::test_util::put_policy_manifest_bytes(vault, id, &bytes)
+}
+
+/// An open conflict an earlier pass left against the fixture's head.
+fn open_conflict_on_head(vault: &Vault, fx: &Fixture) -> Result<EntityId> {
+    let marker = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate(
+            &marker,
+            ClaimCandidate::new(
+                crate::claim::PREDICATE_CONFLICT_OPEN,
+                ClaimSubject::Entity(fx.subject),
+                Value::Map(vec![(
+                    "prior_head".into(),
+                    Value::Binary(fx.head.as_bytes().to_vec()),
+                )]),
+                1.0,
+            ),
+            &WriteEnvelope::new(
+                WriteActor::new(fx.subject, EdgeActorClass::Human),
+                ClaimSource::Generated,
+                WriteProvenance::new("an earlier escalation".into())?,
+                ClaimApprovalStatus::Approved,
+            ),
+            occurred(3),
+            3,
+        )
+        .commit()?;
+    Ok(marker)
+}
+
+/// The closes of open conflicts on `subject`.
+fn conflict_closes(vault: &Vault, subject: EntityId) -> Result<usize> {
+    Ok(vault
+        .claims_for_subject(&subject)?
+        .into_iter()
+        .filter_map(|id| vault.get_claim(&id).transpose())
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_RESOLVED)
+        .count())
+}
+
+/// What the replay meets once a kill came between a grant and its close.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Replay {
+    /// The replacement stands and every pinned source holds.
+    Stands,
+    /// The owner retracted the replacement.
+    Retracted,
+    /// The cited turn changed after the replay sealed its handoff.
+    SourceMoved,
+}
+
+/// Wonder r1 (#1417): a replay closed the open conflicts its landed
+/// correction answered without asking whether the replacement still stood,
+/// and with none of the handoff's pin checks. A server killed between the
+/// grant and its close leaves the conflict open. While the replacement stands
+/// and the sources hold, the replay closes that conflict once; a retracted
+/// replacement, or a source that moved under the handoff, closes nothing.
+#[test]
+fn a_replay_closes_no_conflict_for_a_replacement_that_no_longer_stands() -> Result<()> {
+    for replay in [Replay::Stands, Replay::Retracted, Replay::SourceMoved] {
+        let (_dir, vault) = open_vault();
+        let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+        single_valued_names(&vault)?;
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Alex"))]);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())
+            .unwrap_or_else(|error| panic!("the pass refused: {error}; {:?}", sink.outcome));
+        let [new] = sink.outcome.landed.as_slice() else {
+            panic!("one granted replacement: {:?}", sink.outcome);
+        };
+        let new = *new;
+        drop(sink);
+        assert_eq!(
+            vault.get_claim(&fx.head)?.expect("closed").lifecycle,
+            crate::ClaimLifecycleStatus::Superseded
+        );
+        open_conflict_on_head(&vault, &fx)?;
+        if replay == Replay::Retracted {
+            vault.retract_claim(&new, 20)?;
+        }
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Alex"))]);
+        let inner = PromotionWriterSink::new(&vault, fx.run.clone());
+        let (result, outcome) = if replay == Replay::SourceMoved {
+            let mut sink = DriftSink {
+                inner,
+                drift: Drift::Source(fx.turn),
+            };
+            let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
+            (result, sink.inner.outcome)
+        } else {
+            let mut sink = inner;
+            let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
+            (result, sink.outcome)
+        };
+        result
+            .unwrap_or_else(|error| panic!("{replay:?}: the replay refused: {error}; {outcome:?}"));
+        assert_eq!(
+            conflict_closes(&vault, fx.subject)?,
+            usize::from(replay == Replay::Stands),
+            "{replay:?}: {outcome:?}"
+        );
+    }
+    Ok(())
+}
+
 /// Gate 3 (map gap 9): an ordinary trust-compatible correction lands with
 /// its Auto grant in the pass that staged it, closes exactly its named prior
 /// and the open conflict that named it, and a replay of the same attempt (a
@@ -833,45 +956,10 @@ fn a_correction_the_policy_allows_lands_with_its_grant_and_closes_its_conflict_o
         let (_dir, vault) = open_vault();
         let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
         if fast_path {
-            let id = crate::gate::default_policy_manifest_id()?;
-            let raw = vault.get_raw(&id)?.expect("manifest");
-            let mut cursor = std::io::Cursor::new(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
-            let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode")
-            else {
-                panic!("manifest map");
-            };
-            entries.push((
-                "single_valued_predicates".into(),
-                Value::Array(vec!["profile.name".into()]),
-            ));
-            let bytes = super::super::support::encode_value(&Value::Map(entries))?;
-            crate::test_util::put_policy_manifest_bytes(&vault, id, &bytes)?;
+            single_valued_names(&vault)?;
         }
         // An earlier pass left the question open against the head.
-        let marker = EntityId::now();
-        vault
-            .batch()
-            .claim_candidate(
-                &marker,
-                ClaimCandidate::new(
-                    crate::claim::PREDICATE_CONFLICT_OPEN,
-                    ClaimSubject::Entity(fx.subject),
-                    Value::Map(vec![(
-                        "prior_head".into(),
-                        Value::Binary(fx.head.as_bytes().to_vec()),
-                    )]),
-                    1.0,
-                ),
-                &WriteEnvelope::new(
-                    WriteActor::new(fx.subject, EdgeActorClass::Human),
-                    ClaimSource::Generated,
-                    WriteProvenance::new("an earlier escalation".into())?,
-                    ClaimApprovalStatus::Approved,
-                ),
-                occurred(3),
-                3,
-            )
-            .commit()?;
+        let marker = open_conflict_on_head(&vault, &fx)?;
         let script = || {
             let mut script = vec![Ok(extract(&fx, "Alex"))];
             if !fast_path {
@@ -2704,6 +2792,97 @@ fn missing_head_rights_revoked_actor_and_write_time_source_drift_refuse() -> Res
                 .sources(&fx.head, EdgeKind::Supports, None)?
                 .is_empty()
         );
+    }
+    Ok(())
+}
+
+/// What happens to the head once the handoff is sealed: an earlier grant in
+/// the same handoff closes it, then it is left, re-opened, or narrowed to
+/// another principal so the Dreamer no longer reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AfterClose {
+    Kept,
+    Reopened,
+    Unread,
+}
+
+struct ClosedHeadSink<'a> {
+    inner: PromotionWriterSink<'a>,
+    head: EntityId,
+    after: AfterClose,
+}
+impl ConsolidationSink for ClosedHeadSink<'_> {
+    fn accept(&mut self, _candidates: Vec<PromotionCandidate>) -> Result<()> {
+        panic!("scoped executor must not call unbounded persistence")
+    }
+    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        let vault = self.inner.vault;
+        let mut body = vault.get_claim(&self.head)?.expect("head");
+        body.lifecycle = crate::ClaimLifecycleStatus::Superseded;
+        vault.put_claim(&self.head, &body, occurred(2), 2)?;
+        write.fence.closed_by_this_write(self.head);
+        match self.after {
+            AfterClose::Kept => {}
+            AfterClose::Reopened => {
+                body.lifecycle = crate::ClaimLifecycleStatus::Active;
+                body.value = Value::from("owner corrected value");
+                vault.put_claim(&self.head, &body, occurred(2), 2)?;
+            }
+            AfterClose::Unread => {
+                let mut scope = match body.scope.take() {
+                    Some(Value::Map(rows)) => rows,
+                    _ => Vec::new(),
+                };
+                scope.push((
+                    "principal".into(),
+                    Value::Binary(EntityId::now().as_bytes().to_vec()),
+                ));
+                body.scope = Some(Value::Map(scope));
+                vault.put_claim(&self.head, &body, occurred(2), 2)?;
+            }
+        }
+        self.inner.accept_scoped(write)
+    }
+}
+
+/// Wonder r1 (#1417): a prior that an earlier grant in the same handoff
+/// closed dropped out of the fence, so the handoff's later writes held it to
+/// nothing. Only the grant's own rewrite is excused: a later write lands
+/// beside a prior left closed, and refuses once that prior is re-opened or
+/// no longer reads for the Dreamer.
+#[test]
+fn a_prior_the_handoff_closed_still_fences_its_later_writes() -> Result<()> {
+    for after in [AfterClose::Kept, AfterClose::Reopened, AfterClose::Unread] {
+        let (_dir, vault) = open_vault();
+        let fx = fixture(&vault)?;
+        let backend = ScriptedBackend::new(vec![
+            Ok(extract(&fx, "Alex")),
+            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+        ]);
+        let mut sink = ClosedHeadSink {
+            inner: PromotionWriterSink::new(&vault, fx.run.clone()),
+            head: fx.head,
+            after,
+        };
+        let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 2, "{after:?}");
+        if after == AfterClose::Kept {
+            result.unwrap_or_else(|error| {
+                panic!(
+                    "{after:?}: the write refused: {error}; {:?}",
+                    sink.inner.outcome
+                )
+            });
+            assert_eq!(
+                sink.inner.outcome.landed.len(),
+                1,
+                "{after:?}: {:?}",
+                sink.inner.outcome
+            );
+        } else {
+            assert!(result.is_err(), "{after:?}: {:?}", sink.inner.outcome);
+            assert!(sink.inner.outcome.landed.is_empty(), "{after:?}");
+        }
     }
     Ok(())
 }

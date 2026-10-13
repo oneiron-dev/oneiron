@@ -110,12 +110,18 @@ struct Call {
     status: u16,
     /// Whether the request carried a `response_format`.
     response_format: bool,
+    /// The models the answer named. A name other than the expected one is
+    /// kept as `ANOTHER_MODEL`: the provider chose its words.
     served: Vec<String>,
-    /// The answer's assistant text. Nothing else of the provider's body is
-    /// kept, so no provider diagnostic can carry the key into the report.
+    /// The assistant text of the answer's first choice, the one the server
+    /// reads. Nothing else of the provider's body is kept, so no provider
+    /// diagnostic can carry the key into the report.
     content: String,
     answer_bytes: usize,
 }
+
+/// What the report keeps for a model name other than the expected one.
+const ANOTHER_MODEL: &str = "(another model)";
 
 /// Forwards the server's model calls to the provider unchanged. It holds a
 /// call instead when asked to, and refuses an answer another model served.
@@ -139,7 +145,7 @@ impl Relay {
             origin: live.origin.clone(),
             served: live.served.clone(),
             key: live.key.clone(),
-            client: reqwest::Client::new(),
+            client: no_redirects(),
             phase: Mutex::new(String::new()),
             hold: AtomicBool::new(false),
             holding: Notify::new(),
@@ -238,7 +244,16 @@ async fn forward(
         input: message(1),
         status,
         response_format: request.get("response_format").is_some(),
-        served,
+        served: served
+            .into_iter()
+            .map(|model| {
+                if model == relay.served {
+                    model
+                } else {
+                    ANOTHER_MODEL.to_owned()
+                }
+            })
+            .collect(),
         content: redact_answer(&answer_content(&answer), &relay.key),
         answer_bytes: answer.len(),
     });
@@ -433,20 +448,17 @@ fn served_models(answer: &[u8]) -> Vec<String> {
     models
 }
 
-/// The assistant text an answer carries: a JSON body's message content, or
-/// a stream's content deltas joined in order.
+/// The assistant text an answer carries, as the server reads it: the first
+/// choice's message content, or a stream's first-choice content deltas
+/// joined in order.
 fn answer_content(answer: &[u8]) -> String {
     let content = |event: &Value| -> String {
-        event["choices"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|choice| {
-                choice["message"]["content"]
-                    .as_str()
-                    .or_else(|| choice["delta"]["content"].as_str())
-            })
-            .collect()
+        let choice = &event["choices"][0];
+        choice["message"]["content"]
+            .as_str()
+            .or_else(|| choice["delta"]["content"].as_str())
+            .unwrap_or_default()
+            .to_owned()
     };
     let text = String::from_utf8_lossy(answer);
     match serde_json::from_str::<Value>(&text) {
@@ -463,7 +475,7 @@ fn answer_content(answer: &[u8]) -> String {
 /// One direct call before anything else: the provider must answer as the
 /// model the run expects, or the run stops here.
 async fn probe(live: &Live) -> Value {
-    let answer: Value = reqwest::Client::new()
+    let answer: Value = no_redirects()
         .post(format!("{}/v1/chat/completions", live.origin))
         .bearer_auth(&live.key)
         .json(&json!({
@@ -473,16 +485,25 @@ async fn probe(live: &Live) -> Value {
         }))
         .send()
         .await
-        .expect("the provider answers")
+        .unwrap_or_else(|_| panic!("the provider did not answer the probe"))
         .json()
         .await
-        .expect("the provider answers JSON");
-    assert_eq!(
-        answer["model"].as_str(),
-        Some(live.served.as_str()),
+        .unwrap_or_else(|_| panic!("the provider's probe answer is not JSON"));
+    // The message names neither model: the provider chose the one it sent.
+    assert!(
+        answer["model"].as_str() == Some(live.served.as_str()),
         "the provider served another model; stopping"
     );
     answer
+}
+
+/// A client that never follows a redirect, so no provider-chosen location
+/// reaches an error the run prints.
+fn no_redirects() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
 }
 
 fn models_section(relay: &str, live: &Live) -> String {
@@ -576,6 +597,13 @@ fn claims(vault: &Vault) -> Vec<Value> {
             !body.predicate.starts_with("policy.") && !body.predicate.starts_with("machine.")
         })
         .map(|(id, body)| {
+            // A Dreamer step record holds the provider's whole answer, so the
+            // report keeps only its size.
+            let value = if body.predicate.starts_with("dreamer.") {
+                json!({"omitted_bytes": format!("{:?}", body.value).len()})
+            } else {
+                json!(format!("{:?}", body.value))
+            };
             let supersedes: Vec<_> = vault
                 .edges_out(&id)
                 .unwrap()
@@ -587,7 +615,7 @@ fn claims(vault: &Vault) -> Vec<Value> {
                 "id": id.to_hex(),
                 "subject": format!("{:?}", body.subject),
                 "predicate": body.predicate,
-                "value": format!("{:?}", body.value),
+                "value": value,
                 "source": format!("{:?}", body.source),
                 "approval": format!("{:?}", body.approval),
                 "lifecycle": format!("{:?}", body.lifecycle),
@@ -703,6 +731,26 @@ fn receipts(logs: &[PathBuf]) -> Vec<Value> {
         .collect()
 }
 
+/// A receipt as the report keeps it: the fields the run checks. A served
+/// model other than `served` and any error text are replaced by what they
+/// say, since the provider may have chosen their words; the serve logs keep
+/// the rows whole.
+fn receipt_summary(row: &Value, served: &str) -> Value {
+    json!({
+        "event": row["event"],
+        "run": row["run"],
+        "lease": row["lease"],
+        "answered": row["answered"],
+        "served_model": match row["served_model"].as_str() {
+            Some(model) if model == served => json!(model),
+            Some(_) => json!(ANOTHER_MODEL),
+            None => Value::Null,
+        },
+        "error": !row["error"].is_null(),
+        "allocation_error": !row["allocation_error"].is_null(),
+    })
+}
+
 /// What the run has found so far. The report is written from it whether the
 /// run passes or fails.
 #[derive(Default)]
@@ -786,6 +834,19 @@ fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
 async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_model() {
     use futures_util::FutureExt as _;
     let live = Live::from_env();
+    // Every panic message is redacted before it is printed: a panic can
+    // carry the server's or a provider's text.
+    let default_hook = std::panic::take_hook();
+    let key = live.key.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        let place = info
+            .location()
+            .map_or_else(String::new, |at| format!(" at {}:{}", at.file(), at.line()));
+        eprintln!(
+            "panicked{place}: {}",
+            redact_text(&panic_text(info.payload()), &key)
+        );
+    }));
     let (relay, relay_url) = Relay::start(&live).await;
     let logs: Vec<_> = (1..=5)
         .map(|n| live.out.join(format!("serve-{n}.log")))
@@ -818,7 +879,11 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
         "in_flight_at_end",
         json!(relay.in_flight.load(Ordering::SeqCst)),
     );
-    notes.put("receipts", json!(receipts(&logs)));
+    let kept: Vec<_> = receipts(&logs)
+        .iter()
+        .map(|row| receipt_summary(row, &live.served))
+        .collect();
+    notes.put("receipts", json!(kept));
     // The key scan runs before the report, so a leak is in the report too.
     let mut leaked = scrub(&live.out, &live.key);
     if !leaked.is_empty() {
@@ -832,6 +897,7 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     )
     .unwrap();
     leaked.extend(scrub(&live.out, &live.key));
+    std::panic::set_hook(default_hook);
     assert!(leaked.is_empty(), "the provider key reached {leaked:?}");
     if let Err(panic) = run {
         std::panic::resume_unwind(panic);
@@ -1009,23 +1075,30 @@ async fn run(
         !relay.wrong_model.load(Ordering::SeqCst),
         "a call was answered by another model, or by none it named"
     );
-    first.2.unwrap();
+    // The findings themselves are in the report.
+    assert!(first.2.is_ok(), "the first pass stated no Lisbon claim");
     assert!(first.1 > 0, "the declared summary landed");
-    corrected.1.unwrap();
-    last.1.unwrap();
+    assert!(corrected.1.is_ok(), "the correction did not land once");
+    assert!(
+        last.1.is_ok(),
+        "the correction did not hold after a restart"
+    );
     assert_eq!(after_restart, consolidated, "a finished pass called again");
     assert_eq!(
         relay.calls().len(),
         before_last,
         "a finished correction called again"
     );
-    assert_eq!(last.0, corrected.0, "the correction did not hold once");
+    assert!(last.0 == corrected.0, "the correction did not hold once");
     let receipts = receipts(logs);
     for row in receipts
         .iter()
         .filter(|row| row["event"] == "dispatched" && row["answered"] == true)
     {
-        assert_eq!(row["served_model"], json!(live.served), "{row}");
+        assert!(
+            row["served_model"] == json!(live.served),
+            "an answered call's receipt names another model"
+        );
     }
     // The instrument: the verdict role's call was answered by the expected
     // model and settled, whichever way it ruled.
@@ -1045,7 +1118,7 @@ async fn run(
                         && settled["allocation_error"].is_null()
                 })
         }),
-        "the verdict role's answered call settled: {verdict:?}"
+        "the verdict role's answered call did not settle"
     );
     // Every server stopped on SIGTERM within its grace, with a zero exit.
     let stops = notes.0.lock().unwrap()["stops"].clone();

@@ -3,7 +3,7 @@
 use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
 #[cfg(test)]
 use crate::claim::ClaimSource;
-use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
+use crate::claim::{ClaimLifecycleStatus, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
 use crate::dreamer_consolidation::support::invalid_consolidation;
@@ -168,6 +168,9 @@ impl ConsolidationFence {
             self.actor.actor_class().gate_actor_class(),
         )
         .ok_or_else(|| invalid_consolidation("invalid pinned actor"))?;
+        let recorded = vault
+            .scoped_read(actor.clone())
+            .with_claim_status(crate::claim::ClaimReadStatus::Recorded);
         let read = vault.scoped_read(actor);
         let rules: crate::dreamer_consolidation::routing::PredicateKeyRules =
             match crate::dreamer_consolidation::routing::KEY_RULES.get(&vault.store, txn, &())? {
@@ -201,6 +204,20 @@ impl ConsolidationFence {
             .lock()
             .map_err(|_| invalid_consolidation("fence closed-prior lock"))?
             .clone();
+        // A prior this handoff's own grant closed: the grant rewrote it, so
+        // only its revision is excused. It must still be the closed claim,
+        // and still read for the actor under the fresh policy, lifecycle aside.
+        for id in &closed {
+            let still_closed = vault
+                .get_claim_in_txn(txn, id)?
+                .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Superseded);
+            if !still_closed {
+                return Err(invalid_consolidation("pinned source revision changed"));
+            }
+            if !recorded.is_entity_readable_with_policy_in(txn, &policy, id)? {
+                return Err(invalid_consolidation("pinned source read revoked"));
+            }
+        }
         for (id, pin) in self.sources.iter().filter(|(id, _)| !closed.contains(id)) {
             if !read.is_entity_readable_with_policy_in(txn, &policy, id)? {
                 return Err(invalid_consolidation("pinned source read revoked"));
