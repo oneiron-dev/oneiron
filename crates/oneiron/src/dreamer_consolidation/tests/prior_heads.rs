@@ -1543,27 +1543,13 @@ fn a_correction_of_a_head_the_listing_did_not_show_asks_the_verdict() -> Result<
     Ok(())
 }
 
-/// Keeps each scoped write's read receipt, then lands the write.
-struct ReceiptSink<'a> {
-    inner: PromotionWriterSink<'a>,
-    receipts: Vec<crate::claim::ScopedReadReceipt>,
-}
-impl ConsolidationSink for ReceiptSink<'_> {
-    fn accept(&mut self, candidates: Vec<PromotionCandidate>) -> Result<()> {
-        self.inner.accept(candidates)
-    }
-    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
-        self.receipts.push(write.read_receipt().clone());
-        self.inner.accept_scoped(write)
-    }
-}
-
 /// Real run 2 (2026-10-14): one wake listed the same head for two passages,
 /// the first one's correction closed it, and the second's admission then
 /// failed the whole pass ("prior head read revoked"). The Dreamer reads only
 /// what it may read, without dropping or wedging work: the head it can no
 /// longer read leaves the second branch's listing and is counted on its read
-/// receipt, and the branch runs on the rest.
+/// receipt, and the branch runs on the rest. Sol r5: a TURN that supports the
+/// closed head is still a member of its partition.
 #[test]
 fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -1648,6 +1634,15 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
         };
         assert!(plan.neighbourhood().shows(head), "the wake listed the head");
         let turn = plan.turn_ids()[0];
+        if !corrects {
+            // The second TURN supports the head, as one an earlier pass took
+            // as its evidence does: its edge to the closed head is withheld.
+            vault.put_edge(&turn, EdgeKind::Supports, &head, 1.0)?;
+        }
+        // What the branch's admission withheld, read before any later step.
+        let opened = BranchResources::open_prepared(&vault, actor, plan, &pin)
+            .unwrap_or_else(|error| panic!("corrects {corrects}: the branch refused: {error}"))
+            .read_receipt()?;
         let item = if corrects {
             serde_json::json!({
                 "subject": person.to_hex(), "predicate": "residence.city", "value": "Porto",
@@ -1673,10 +1668,7 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
             agent_actor: actor,
             now_ms: 21_000,
         };
-        let mut sink = ReceiptSink {
-            inner: PromotionWriterSink::new(&vault, run),
-            receipts: Vec::new(),
-        };
+        let mut sink = PromotionWriterSink::new(&vault, run);
         let mut executor = ConsolidationExecutor {
             roles: Default::default(),
             backend: &backend,
@@ -1706,10 +1698,10 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
         );
         assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 1);
         assert_eq!(
-            sink.inner.outcome.landed.len(),
+            sink.outcome.landed.len(),
             1,
             "corrects {corrects}: {:?}",
-            sink.inner.outcome
+            sink.outcome
         );
         let prompt: String = backend.requests.lock().unwrap()[0]
             .messages
@@ -1720,10 +1712,7 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
                 _ => None,
             })
             .collect();
-        let [receipt] = sink.receipts.as_slice() else {
-            panic!("one scoped write: {:?}", sink.receipts);
-        };
-        seen.push((prompt.contains(&head.to_hex()), receipt.clone()));
+        seen.push((prompt.contains(&head.to_hex()), opened));
     }
     assert_eq!(
         vault.get_claim(&head)?.expect("closed").lifecycle,

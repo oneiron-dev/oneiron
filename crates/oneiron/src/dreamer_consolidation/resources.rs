@@ -431,7 +431,10 @@ impl<'a> BranchResources<'a> {
             .ok_or_else(|| invalid_consolidation("unlisted branch turn"))?
             .recheck(scope, &self.read, id)?;
         let parent = decode_turn_body(&conversation);
-        let edges = self.read.edges_out(id)?;
+        // Membership is the TURN's ChildOf edge alone. An edge of another
+        // kind may reach a row the Dreamer no longer reads, as a head an
+        // earlier branch of the pass closed, which never refuses the turn.
+        let edges = self.read.edges_out_of_kind(id, EdgeKind::ChildOf)?;
         self.fold_read_receipt(&edges.receipt)?;
         if edges.receipt.suppressed_count != 0 {
             return Err(invalid_consolidation("branch turn graph is incomplete"));

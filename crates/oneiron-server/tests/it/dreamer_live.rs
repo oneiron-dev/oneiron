@@ -236,7 +236,7 @@ async fn forward(
         status,
         response_format: request.get("response_format").is_some(),
         served,
-        answer: redact(&String::from_utf8_lossy(&answer), &relay.key),
+        answer: redact_answer(&String::from_utf8_lossy(&answer), &relay.key),
     });
     relay.in_flight.fetch_sub(1, Ordering::SeqCst);
     if wrong {
@@ -257,6 +257,13 @@ async fn forward(
 fn key_forms(key: &str) -> Vec<String> {
     use base64::Engine as _;
     let mut forms = vec![key.to_owned()];
+    // The escaped forms a JSON string or a debug print carries the key in.
+    let json = serde_json::to_string(key).unwrap();
+    let json = &json[1..json.len() - 1];
+    forms.push(json.to_owned());
+    forms.push(json.replace('/', "\\/"));
+    let debug = format!("{key:?}");
+    forms.push(debug[1..debug.len() - 1].to_owned());
     for offset in 0..3 {
         let mut bytes = vec![0_u8; offset];
         bytes.extend_from_slice(key.as_bytes());
@@ -269,6 +276,7 @@ fn key_forms(key: &str) -> Vec<String> {
             forms.push(middle.replace('+', "-").replace('/', "_"));
         }
     }
+    forms.sort();
     forms.dedup();
     forms
 }
@@ -279,6 +287,48 @@ fn redact(text: &str, key: &str) -> String {
     key_forms(key).iter().fold(text.to_owned(), |text, form| {
         text.replace(form, "[provider key]")
     })
+}
+
+/// Every string in `value`, keys included, with `key` cut out of its decoded
+/// text, where no escape can hide it.
+fn redact_value(value: &mut Value, key: &str) {
+    match value {
+        Value::String(text) => *text = redact(text, key),
+        Value::Array(items) => items.iter_mut().for_each(|item| redact_value(item, key)),
+        Value::Object(map) => {
+            *map = std::mem::take(map)
+                .into_iter()
+                .map(|(name, mut item)| {
+                    redact_value(&mut item, key);
+                    (redact(&name, key), item)
+                })
+                .collect();
+        }
+        _ => {}
+    }
+}
+
+/// A provider answer with `key` cut out: a JSON body, or each JSON event of
+/// a stream, is decoded first, since JSON may escape any character of it.
+fn redact_answer(answer: &str, key: &str) -> String {
+    let decoded = |text: &str| {
+        serde_json::from_str::<Value>(text).ok().map(|mut value| {
+            redact_value(&mut value, key);
+            value.to_string()
+        })
+    };
+    let answer = decoded(answer).unwrap_or_else(|| {
+        answer
+            .lines()
+            .map(|line| {
+                line.strip_prefix("data:")
+                    .and_then(|data| decoded(data.trim()))
+                    .map_or_else(|| line.to_owned(), |event| format!("data: {event}"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
+    redact(&answer, key)
 }
 
 /// Cuts the key out of every file under `out`, returning the files it was in.
@@ -579,31 +629,56 @@ impl Notes {
     }
 }
 
+/// The server a phase runs, held outside the phase so that a failing phase's
+/// server is still stopped before the report is written.
+#[derive(Default)]
+struct Running(Mutex<Option<Child>>);
+
+impl Running {
+    fn start(&self, child: Child) {
+        *self.0.lock().unwrap() = Some(child);
+    }
+
+    fn take(&self) -> Option<Child> {
+        self.0.lock().unwrap().take()
+    }
+}
+
 /// Stops the server gracefully. A pass in flight runs its attempt to the end,
 /// model calls included, so the grace covers one provider call; past it the
-/// server is killed by its exact PID. Each stop is noted.
-fn halt(mut child: Child, phase: &str, notes: &Notes) {
+/// server is killed by its exact PID. Each stop is noted with how the server
+/// exited; only a zero exit after SIGTERM is clean.
+fn halt(child: Option<Child>, phase: &str, notes: &Notes) {
+    let Some(mut child) = child else {
+        return;
+    };
     let started = Instant::now();
-    let sent = std::process::Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(sent.success());
-    let grace = Duration::from_secs(PROVIDER_TIMEOUT_SECS + 30);
-    let mut stopped = false;
-    while started.elapsed() < grace {
-        if child.try_wait().unwrap().is_some() {
-            stopped = true;
-            break;
+    let mut status = child.try_wait().unwrap();
+    // A server that already exited is noted as it exited, never signalled.
+    let signalled = status.is_none();
+    if signalled {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status();
+        let grace = Duration::from_secs(PROVIDER_TIMEOUT_SECS + 30);
+        while status.is_none() && started.elapsed() < grace {
+            std::thread::sleep(Duration::from_millis(100));
+            status = child.try_wait().unwrap();
         }
-        std::thread::sleep(Duration::from_millis(100));
     }
-    if !stopped {
+    let killed = status.is_none();
+    if killed {
         kill(child);
     }
     notes.push(
         "stops",
-        json!({"phase": phase, "secs": started.elapsed().as_secs_f64(), "killed": !stopped}),
+        json!({
+            "phase": phase,
+            "secs": started.elapsed().as_secs_f64(),
+            "killed": killed,
+            "exit": status.map(|status| status.to_string()),
+            "clean": signalled && status.is_some_and(|status| status.success()),
+        }),
     );
 }
 
@@ -624,12 +699,28 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     let logs: Vec<_> = (1..=5)
         .map(|n| live.out.join(format!("serve-{n}.log")))
         .collect();
+    // Only this run's logs and report: a log a phase never reached is absent.
+    for stale in logs.iter().chain([&live.out.join("report.json")]) {
+        let _ = std::fs::remove_file(stale);
+    }
+    let dir = tempfile::tempdir().unwrap();
     let notes = Notes::default();
-    let run = std::panic::AssertUnwindSafe(run(&live, &relay, &relay_url, &logs, &notes))
-        .catch_unwind()
-        .await;
+    let running = Running::default();
+    let run = std::panic::AssertUnwindSafe(run(
+        &live,
+        &relay,
+        &relay_url,
+        &logs,
+        dir.path(),
+        &running,
+        &notes,
+    ))
+    .catch_unwind()
+    .await;
     if let Err(panic) = &run {
         notes.put("failure", json!(panic_text(panic.as_ref())));
+        // The failing phase's server stops before its logs are read.
+        halt(running.take(), "after the failure", &notes);
     }
     notes.put("calls", json!(relay.calls()));
     notes.put(
@@ -637,29 +728,42 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
         json!(relay.in_flight.load(Ordering::SeqCst)),
     );
     notes.put("receipts", json!(receipts(&logs)));
-    let report = Value::Object(notes.0.into_inner().unwrap());
+    // The key scan runs before the report, so a leak is in the report too.
+    let mut leaked = scrub(&live.out, &live.key);
+    if !leaked.is_empty() {
+        notes.put("key_found_in", json!(leaked));
+    }
+    let mut report = Value::Object(notes.0.into_inner().unwrap());
+    redact_value(&mut report, &live.key);
     std::fs::write(
         live.out.join("report.json"),
         redact(&serde_json::to_string_pretty(&report).unwrap(), &live.key),
     )
     .unwrap();
-    let leaked = scrub(&live.out, &live.key);
+    leaked.extend(scrub(&live.out, &live.key));
     assert!(leaked.is_empty(), "the provider key reached {leaked:?}");
     if let Err(panic) = run {
         std::panic::resume_unwind(panic);
     }
 }
 
-async fn run(live: &Live, relay: &Relay, relay_url: &str, logs: &[PathBuf], notes: &Notes) {
+async fn run(
+    live: &Live,
+    relay: &Relay,
+    relay_url: &str,
+    logs: &[PathBuf],
+    dir: &Path,
+    running: &Running,
+    notes: &Notes,
+) {
     notes.put("model_asked", json!(live.model));
     notes.put("model_expected", json!(live.served));
     let probe = probe(live).await;
     notes.put("probe_model", probe["model"].clone());
-    let dir = tempfile::tempdir().unwrap();
-    let vault_path = dir.path().join("vault");
+    let vault_path = dir.join("vault");
     std::fs::create_dir_all(&vault_path).unwrap();
     let config = write_config(
-        dir.path(),
+        dir,
         &vault_path,
         free_port(),
         &models_section(relay_url, live),
@@ -712,24 +816,24 @@ async fn run(live: &Live, relay: &Relay, relay_url: &str, logs: &[PathBuf], note
     // 1. Between queue and apply: the first call is held and never sent.
     relay.enter("held");
     relay.hold.store(true, Ordering::SeqCst);
-    let child = serve(&config, live, &logs[0]);
+    running.start(serve(&config, live, &logs[0]));
     tokio::time::timeout(PHASE, relay.holding.notified())
         .await
         .expect("the server's first pass reached its model call");
-    kill(child);
+    kill(running.take().unwrap());
 
     // 2. After apply: the passes run on the real model and land.
     relay.enter("consolidate");
-    let child = serve(&config, live, &logs[1]);
+    running.start(serve(&config, live, &logs[1]));
     relay.settle(1).await;
-    kill(child);
+    kill(running.take().unwrap());
     let consolidated = relay.calls().len();
 
     // 3. Nothing finished runs again.
     relay.enter("restart");
-    let child = serve(&config, live, &logs[2]);
+    running.start(serve(&config, live, &logs[2]));
     relay.settle(0).await;
-    halt(child, "restart", notes);
+    halt(running.take(), "restart", notes);
     let after_restart = relay.calls().len();
     let first = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
@@ -787,9 +891,9 @@ async fn run(live: &Live, relay: &Relay, relay_url: &str, logs: &[PathBuf], note
         ]),
     );
     relay.enter("correct");
-    let child = serve(&config, live, &logs[3]);
+    running.start(serve(&config, live, &logs[3]));
     relay.settle(after_restart + 1).await;
-    halt(child, "correct", notes);
+    halt(running.take(), "correct", notes);
     let corrected = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         (claims(&vault), corrected_once(&vault, person))
@@ -800,9 +904,9 @@ async fn run(live: &Live, relay: &Relay, relay_url: &str, logs: &[PathBuf], note
     // 5. The correction holds once.
     relay.enter("hold-once");
     let before_last = relay.calls().len();
-    let child = serve(&config, live, &logs[4]);
+    running.start(serve(&config, live, &logs[4]));
     relay.settle(0).await;
-    halt(child, "hold-once", notes);
+    halt(running.take(), "hold-once", notes);
     let last = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         (claims(&vault), corrected_once(&vault, person))
@@ -852,13 +956,14 @@ async fn run(live: &Live, relay: &Relay, relay_url: &str, logs: &[PathBuf], note
         }),
         "the verdict role's answered call settled: {verdict:?}"
     );
-    // Every server stopped on SIGTERM within its grace.
+    // Every server stopped on SIGTERM within its grace, with a zero exit.
+    let stops = notes.0.lock().unwrap()["stops"].clone();
     assert!(
-        !notes.0.lock().unwrap()["stops"]
+        stops
             .as_array()
             .unwrap()
             .iter()
-            .any(|stop| stop["killed"] == true),
-        "a server did not stop on SIGTERM within its grace and was killed"
+            .all(|stop| stop["clean"] == true),
+        "a server did not stop cleanly on SIGTERM: {stops}"
     );
 }
