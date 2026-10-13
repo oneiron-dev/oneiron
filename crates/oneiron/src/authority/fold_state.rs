@@ -240,7 +240,7 @@ pub(super) struct FoldState {
     pub(super) actor_binding_revocations: BTreeMap<AuthorityKey, u64>,
     pub(super) actor_revocation_hashes: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     pub(super) seqs: BTreeMap<AuthorityKey, u64>,
-    pub(super) machines: BTreeMap<EntityId, FoldedMachine>,
+    pub(super) machines: BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
     /// Every machine row that ever claimed each install key, merged by union.
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
     /// Roster keys in the host's custody, merged by union: each key a host

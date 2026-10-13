@@ -361,3 +361,114 @@ fn a_refused_profile_never_blocks_an_actor_revoke() {
         ActorBindingStatus::Revoked
     );
 }
+
+fn entries_of(host: &Host) -> Vec<AuthorityLogEntry> {
+    let txn = host.vault.store.env.read_txn().unwrap();
+    authority_log_rows_in_txn(&host.vault.store, &txn)
+        .unwrap()
+        .into_iter()
+        .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
+        .collect()
+}
+
+/// A removal signed after a mark that one fold refuses still removes there:
+/// a refused grant never shields a withdrawal.
+#[test]
+fn a_removal_crosses_a_refused_mark() {
+    let host = host();
+    let node = request_for(host.vault_id, EntityId::now(), &ed_key(92));
+    let yours = request_for(host.vault_id, EntityId::now(), &ed_key(93));
+    host.vault
+        .enroll_machine(&host.issuer, &host.owner, &node, MachineRole::ExecutionNode)
+        .unwrap();
+    // A hosted fold refuses this mark: there the host's root never answers
+    // "yours". The removal below names it as a parent.
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &yours,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    host.vault
+        .set_machine_role(
+            &host.issuer,
+            &host.owner,
+            node.machine,
+            MachineRole::Removed,
+        )
+        .unwrap();
+    let entries = entries_of(&host);
+    for posture in [
+        crate::HostingPrivacyPosture::SelfHostLocal,
+        crate::HostingPrivacyPosture::Hosted,
+    ] {
+        let fold = fold_authority_log_for_posture(
+            &entries,
+            &BTreeMap::new(),
+            10,
+            &BTreeMap::new(),
+            posture,
+        );
+        assert!(
+            fold.machine(node.machine)
+                .is_some_and(|folded| folded.removed && !folded.is_live())
+        );
+    }
+}
+
+/// A root the owner retired cannot mark a machine on history from before
+/// its retirement for longer than the stale-roster window, while the
+/// machines the move carried keep their standing under the new root.
+#[test]
+fn a_retired_roots_mark_never_outlives_the_stale_window() {
+    let host = host();
+    let kept = request_for(host.vault_id, EntityId::now(), &ed_key(94));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &kept,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let before = host.vault.authority_fold().unwrap();
+    let next = HostSlipIssuer::from_secret(b"successor self-host root").unwrap();
+    let moved = host.vault.re_root_host(&host.issuer, &next).unwrap();
+    assert_eq!(moved.machines_carried, 1);
+
+    let forged = EntityId::now();
+    let replayed = host_entry(
+        &host,
+        before.append_sequences[&host.issuer.public_key()] + 1,
+        &before.append_heads,
+        profile_op(&host, forged, &ed_key(95)),
+        None,
+    );
+    host.vault
+        .put_authority_log_entries(&[(replayed, TimeRange { start: 3, end: 3 }, 3)])
+        .unwrap();
+    let entries = entries_of(&host);
+    let first_seen: BTreeMap<_, _> = entries
+        .iter()
+        .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
+        .collect();
+    let within = fold_authority_log_with_seen_times(&entries, &first_seen, 100);
+    assert!(within.machine(forged).is_some_and(FoldedMachine::is_mine));
+    let after = fold_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
+    );
+    assert!(
+        after
+            .machine(forged)
+            .is_some_and(|folded| folded.stale && !folded.is_mine())
+    );
+    assert!(
+        after
+            .machine(kept.machine)
+            .is_some_and(FoldedMachine::is_mine)
+    );
+}

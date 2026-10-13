@@ -110,7 +110,7 @@ pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine,
     machine_connection_transcript, machine_proof_header_value,
 };
-pub use machine_profile::FoldedMachine;
+pub use machine_profile::{FoldedMachine, MachineAdmitter, SignerClass};
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
@@ -142,7 +142,7 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 // Module-internal only: nothing here leaves `authority`.
 use ancestor_index::*;
 use entry_transition::*;
-use machine_profile::{apply_machine_profile, merge_machine_maps};
+use machine_profile::{MachineChain, apply_machine_profile, merge_machine_maps};
 pub(crate) use machine_write::{
     evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
     machine_history_authority_descends, machine_history_host_context, verify_machine_claim_in_txn,

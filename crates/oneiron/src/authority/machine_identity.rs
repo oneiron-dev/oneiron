@@ -210,6 +210,38 @@ impl Vault {
         self.append_machine_profile_in_txn(txn, issuer, &fold, profile)
     }
 
+    /// Signs every live machine's standing again under `next`, in the
+    /// caller's transaction. A re-root revokes every roster key, and a
+    /// standing that rests on a revoked key goes stale.
+    pub(super) fn carry_machine_standing_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        before: &AuthorityFold,
+        next: &HostSlipIssuer,
+    ) -> Result<usize> {
+        let mut carried = 0;
+        for machine in before
+            .machines
+            .iter()
+            .filter(|(_, folded)| folded.is_live())
+            .map(|(machine, _)| *machine)
+        {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let current = fold.machine(machine).ok_or_else(invalid_authority)?;
+            let profile = MachineProfile {
+                revision: current
+                    .profile
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(invalid_authority)?,
+                ..current.profile.clone()
+            };
+            self.append_machine_profile_in_txn(txn, next, &fold, profile)?;
+            carried += 1;
+        }
+        Ok(carried)
+    }
+
     fn append_machine_profile_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

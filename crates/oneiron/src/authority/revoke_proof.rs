@@ -1,4 +1,5 @@
-//! Log-derived, typed actor revocation facts, independent of roster survivors.
+//! Log-derived, typed restrictive facts, independent of roster survivors: actor
+//! revocations and machine removals.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,9 +15,19 @@ struct VerifiedActorRevoke {
     epoch: u64,
 }
 
+/// A verified machine removal: the machine's chains on the removal's own
+/// branch, whose head is the terminal revision.
+#[derive(Clone, Debug)]
+struct VerifiedMachineRemoval {
+    vault_id: AuthorityVaultId,
+    machine: EntityId,
+    chains: BTreeMap<MachineAdmitter, MachineChain>,
+}
+
 #[derive(Default)]
 pub(super) struct RevokeFacts {
     by_hash: BTreeMap<AuthorityEntryHash, VerifiedActorRevoke>,
+    removals: BTreeMap<AuthorityEntryHash, VerifiedMachineRemoval>,
 }
 
 impl RevokeFacts {
@@ -31,6 +42,22 @@ impl RevokeFacts {
         {
             record_actor_revoke(state, &fact.authority_key, fact.epoch, fact.entry_hash);
         }
+        for removal in self
+            .removals
+            .values()
+            .filter(|removal| removal.vault_id == vault_id)
+        {
+            super::machine_profile::merge_machine_chains(state, removal.machine, &removal.chains);
+        }
+    }
+}
+
+/// A signed withdrawal that may cross rejected permissive ancestry.
+pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::RevokeActor { .. } => true,
+        AuthorityOp::MachineProfile(profile) => profile.role == MachineRole::Removed,
+        _ => false,
     }
 }
 
@@ -45,23 +72,40 @@ pub(super) fn derive_revoke_facts(
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
     for (hash, entry) in entries {
-        let AuthorityOp::RevokeActor {
-            authority_key,
-            epoch,
-        } = &entry.op
-        else {
+        if !restrictive_withdrawal(&entry.op) {
+            continue;
+        }
+        let Some(state) = verify_signed_branch(*hash, entries, ancestors, context) else {
             continue;
         };
-        if let Some(vault_id) = verify_signed_branch(*hash, entries, ancestors, context) {
-            facts.by_hash.insert(
-                *hash,
-                VerifiedActorRevoke {
-                    vault_id,
-                    entry_hash: *hash,
-                    authority_key: authority_key.clone(),
-                    epoch: *epoch,
-                },
-            );
+        match &entry.op {
+            AuthorityOp::RevokeActor {
+                authority_key,
+                epoch,
+            } => {
+                facts.by_hash.insert(
+                    *hash,
+                    VerifiedActorRevoke {
+                        vault_id: state.vault_id,
+                        entry_hash: *hash,
+                        authority_key: authority_key.clone(),
+                        epoch: *epoch,
+                    },
+                );
+            }
+            AuthorityOp::MachineProfile(profile) => {
+                if let Some(chains) = state.machines.get(&profile.machine) {
+                    facts.removals.insert(
+                        *hash,
+                        VerifiedMachineRemoval {
+                            vault_id: state.vault_id,
+                            machine: profile.machine,
+                            chains: chains.clone(),
+                        },
+                    );
+                }
+            }
+            _ => {}
         }
     }
     facts
@@ -72,7 +116,7 @@ fn verify_signed_branch(
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     context: FoldContext<'_>,
-) -> Option<AuthorityVaultId> {
+) -> Option<FoldState> {
     let mut pending = ancestors.get(&target)?.clone();
     pending.insert(target);
     let mut signer_seqs = BTreeMap::new();
@@ -123,8 +167,8 @@ fn verify_signed_branch(
                 EntryFold::Waiting => {}
             }
         }
-        if let Some(state) = states.get(&target) {
-            return Some(state.vault_id);
+        if let Some(state) = states.remove(&target) {
+            return Some(state);
         }
         if progressed {
             continue;
@@ -145,7 +189,7 @@ fn verify_signed_branch(
             .collect();
         let mut rescued = false;
         for hash in pending.clone() {
-            if !matches!(entries[&hash].op, AuthorityOp::RevokeActor { .. }) {
+            if !restrictive_withdrawal(&entries[&hash].op) {
                 continue;
             }
             if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(

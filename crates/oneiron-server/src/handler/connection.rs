@@ -189,7 +189,11 @@ async fn handle_connection(
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
-    tracing::debug!(conn_id, machine = ?conn_state.peer_machine, "socket machine");
+    tracing::debug!(
+        conn_id,
+        machine = ?conn_state.peer_machine(server.vault()),
+        "socket machine"
+    );
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
