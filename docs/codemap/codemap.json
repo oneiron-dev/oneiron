@@ -2643,13 +2643,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/credential_filter.rs",
      "purpose": "Credential filtering at memory serve and export serialization boundaries",
      "surface": {
-      "fn": 6
+      "crate-vis": 1,
+      "fn": 9
      }
     },
     {
@@ -2848,7 +2849,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 9
      }
     },
@@ -3153,7 +3154,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 23,
       "enum": 1
      }
     },
@@ -10360,7 +10361,7 @@
      "path": "src/companion/codec.rs",
      "purpose": "Scope/subject task payload codecs and JSON value conversion for persona input",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -10383,7 +10384,7 @@
      "path": "src/companion/mod.rs",
      "purpose": "Companion task queue and PERSON/FACET persona compilation",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 5
      }
     },
@@ -12211,7 +12212,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/l2_base/tests.rs",
@@ -17457,7 +17458,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BirthPosition",
@@ -24878,7 +24879,7 @@
      "path": "src/origin/lfs/lifecycle.rs",
      "purpose": "Last-reference byte reclamation and permanent object deletion markers",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 4
      }
     },
@@ -24946,7 +24947,7 @@
      "path": "src/origin/lfs/scanner.rs",
      "purpose": "Bounded credential scanning across transport and content-defined boundaries",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -24974,13 +24975,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/lfs/upload.rs",
      "purpose": "Bounded streaming ingress: validate before publishing, then commit small chunk transactions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -30801,7 +30802,7 @@
      "path": "src/serialize/credential_nulling.rs",
      "purpose": "Unconditional credential removal before any context/export format writer",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -32480,7 +32481,7 @@
      "path": "src/skill_hub/refinement_custody.rs",
      "purpose": "Candidate-owned custody for inert refinement rulings",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -40691,7 +40692,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 35,
+   "over_bar": 36,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2469,
    "test_files": 786
