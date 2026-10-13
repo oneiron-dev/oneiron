@@ -182,9 +182,11 @@ pub(super) fn invalid(why: &'static str) -> Error {
 pub(super) fn chunk_id(hash: &[u8; 32]) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(CHUNK_DOMAIN, &[hash])
 }
+/// The LFS store's own read of a manifest or chunk, a chunk of an object not
+/// yet published included. Only an ASSET passes, so no custody row does.
 pub(super) fn asset_body(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     let raw = vault
-        .get_raw(id)?
+        .get_raw_unsealed(id)?
         .ok_or(Error::CorruptedIndex("missing lfs asset"))?;
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("lfs asset header"))?;
@@ -204,7 +206,7 @@ pub(super) fn read_chunk(vault: &Vault, chunk: &LfsChunkRef) -> Result<Vec<u8>> 
 #[cfg(feature = "sync")]
 impl Vault {
     pub(crate) fn lfs_chunk_if_present(&self, chunk: &LfsChunkRef) -> Result<Option<Vec<u8>>> {
-        if self.get_raw(&chunk_id(&chunk.hash)?)?.is_none() {
+        if self.get_raw_unsealed(&chunk_id(&chunk.hash)?)?.is_none() {
             return Ok(None);
         }
         read_chunk(self, chunk).map(Some)

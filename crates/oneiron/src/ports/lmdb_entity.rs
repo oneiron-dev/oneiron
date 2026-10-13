@@ -17,7 +17,10 @@ impl EntityStore for Vault {
         if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
-        if self.port_tombstone_is_deleted(txn, id)? || stale_in_txn(&self.store, txn, id)? {
+        if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&self.store, txn, id, row.entity_type)?
+            || self.port_tombstone_is_deleted(txn, id)?
+            || stale_in_txn(&self.store, txn, id)?
+        {
             return Ok(None);
         }
         if super::safe_read::body_is_stale(&row.body) {
