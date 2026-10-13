@@ -111,7 +111,10 @@ struct Call {
     /// Whether the request carried a `response_format`.
     response_format: bool,
     served: Vec<String>,
-    answer: String,
+    /// The answer's assistant text. Nothing else of the provider's body is
+    /// kept, so no provider diagnostic can carry the key into the report.
+    content: String,
+    answer_bytes: usize,
 }
 
 /// Forwards the server's model calls to the provider unchanged. It holds a
@@ -236,7 +239,8 @@ async fn forward(
         status,
         response_format: request.get("response_format").is_some(),
         served,
-        answer: redact_answer(&String::from_utf8_lossy(&answer), &relay.key),
+        content: redact_answer(&answer_content(&answer), &relay.key),
+        answer_bytes: answer.len(),
     });
     relay.in_flight.fetch_sub(1, Ordering::SeqCst);
     if wrong {
@@ -264,6 +268,24 @@ fn key_forms(key: &str) -> Vec<String> {
     forms.push(json.replace('/', "\\/"));
     let debug = format!("{key:?}");
     forms.push(debug[1..debug.len() - 1].to_owned());
+    // Hex, and percent-encoding of every byte or of the reserved ones only.
+    let hex: String = key.bytes().map(|byte| format!("{byte:02x}")).collect();
+    forms.push(hex.to_uppercase());
+    forms.push(hex);
+    let percent = |all: bool| -> String {
+        key.bytes()
+            .map(|byte| {
+                if !all && (byte.is_ascii_alphanumeric() || b"-._~".contains(&byte)) {
+                    char::from(byte).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect()
+    };
+    forms.push(percent(true).to_lowercase());
+    forms.push(percent(true));
+    forms.push(percent(false));
     for offset in 0..3 {
         let mut bytes = vec![0_u8; offset];
         bytes.extend_from_slice(key.as_bytes());
@@ -293,29 +315,31 @@ fn redact(text: &str, key: &str) -> String {
 /// text, where no escape can hide it, nested JSON strings included.
 fn redact_value(value: &mut Value, key: &str) {
     match value {
-        Value::String(text) => {
-            // A string that is itself JSON may carry the key escaped: it is
-            // decoded and redacted too, and kept as it was when clean.
-            if let Ok(mut nested) = serde_json::from_str::<Value>(text) {
-                let clean = nested.clone();
-                redact_value(&mut nested, key);
-                if nested != clean {
-                    *text = nested.to_string();
-                }
-            }
-            *text = redact(text, key);
-        }
+        Value::String(text) => *text = redact_text(text, key),
         Value::Array(items) => items.iter_mut().for_each(|item| redact_value(item, key)),
         Value::Object(map) => {
             *map = std::mem::take(map)
                 .into_iter()
                 .map(|(name, mut item)| {
                     redact_value(&mut item, key);
-                    (redact(&name, key), item)
+                    (redact_text(&name, key), item)
                 })
                 .collect();
         }
         _ => {}
+    }
+}
+
+/// `text` with `key` cut out. Text that is itself a JSON object or array may
+/// carry the key escaped, so it is decoded, redacted and written back in
+/// its decoded form (a member a duplicate name hid is dropped with it).
+fn redact_text(text: &str, key: &str) -> String {
+    match serde_json::from_str::<Value>(text) {
+        Ok(mut nested @ (Value::Object(_) | Value::Array(_))) => {
+            redact_value(&mut nested, key);
+            redact(&nested.to_string(), key)
+        }
+        _ => redact(text, key),
     }
 }
 
@@ -407,6 +431,33 @@ fn served_models(answer: &[u8]) -> Vec<String> {
     };
     models.dedup();
     models
+}
+
+/// The assistant text an answer carries: a JSON body's message content, or
+/// a stream's content deltas joined in order.
+fn answer_content(answer: &[u8]) -> String {
+    let content = |event: &Value| -> String {
+        event["choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|choice| {
+                choice["message"]["content"]
+                    .as_str()
+                    .or_else(|| choice["delta"]["content"].as_str())
+            })
+            .collect()
+    };
+    let text = String::from_utf8_lossy(answer);
+    match serde_json::from_str::<Value>(&text) {
+        Ok(body) => content(&body),
+        Err(_) => text
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .filter_map(|data| serde_json::from_str::<Value>(data.trim()).ok())
+            .map(|event| content(&event))
+            .collect(),
+    }
 }
 
 /// One direct call before anything else: the provider must answer as the
