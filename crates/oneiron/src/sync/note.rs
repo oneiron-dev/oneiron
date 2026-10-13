@@ -99,6 +99,18 @@ fn bundle_notes(bundle: &NoteReviewBundle) -> BTreeSet<EntityId> {
         .chain(bundle.landed.iter().map(|row| row.note))
         .collect()
 }
+/// Whether a device-only world keeps `note` on this device. Unlike a blocked
+/// NOTE it is never removed from a window that already carries it: a removal
+/// would delete a receiver's copy once the flag clears. The export doors
+/// withhold such a window whole instead.
+fn held(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    note: &EntityId,
+) -> Result<bool> {
+    crate::settings::device_only_withholds(&vault.store, txn, flagged, note)
+}
 fn blocked(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &LoroDoc, note: &EntityId) -> Result<bool> {
     if crate::sync::loro_support::tombstone_map_contains_id(&doc.get_map("tombstones"), note)
         || vault.local_hard_delete_marker_exists_in_txn(txn, note)?

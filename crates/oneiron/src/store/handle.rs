@@ -203,6 +203,11 @@ pub struct StoreCore {
     pub(in crate::store) gate_custody_archived_at_open: bool,
     /// Exterior retirement cannot race a live snapshot's decision decrypt.
     pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
+    /// A device-only flag commits under the write side; a raw send's verdict
+    /// reads the flags and accepts under the read side. A flag committed
+    /// before a verdict reads is seen by it; one committed later finds the
+    /// send already past its guard.
+    pub(crate) device_only_flag_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
     pub(crate) env: StoreEnv,
