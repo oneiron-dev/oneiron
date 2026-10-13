@@ -171,21 +171,36 @@ fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
         .into_iter()
         .zip(bodies)
         .map(|(member, body)| {
-            // Redact a copy of the stored MessagePack before projecting it:
-            // a value stored while the ingest scan was off is still never
-            // served, and binary is checked before it becomes hex.
-            let mut value = body.value;
+            // A claim the write door refuses, stored while the ingest scan
+            // was off, serves none of its parts: no read follows this
+            // projection exactly (a key turned to text), so the whole body is
+            // withheld. Nor does a claim whose parts read as a secret together.
+            let secret = oneiron::batch::export::write_door_refuses_claim(&body)
+                || oneiron::batch::export::claim_reads_as_secret(&body);
+            let mut value = if secret {
+                rmpv::Value::from("[redacted]")
+            } else {
+                body.value
+            };
+            // Redact a copy of the stored MessagePack before projecting it,
+            // so binary is checked before it becomes hex, then the projection.
             oneiron::batch::export::redact_messagepack_credentials(&mut value);
+            let mut value = crate::commands::msgpack_value_json(&value);
+            oneiron::batch::export::redact_credentials(&mut value);
             RunProposal {
                 claim_id: member.claim_id.to_hex(),
-                predicate: redacted(body.predicate),
+                predicate: if secret {
+                    "[redacted]".to_owned()
+                } else {
+                    redacted(body.predicate)
+                },
                 subject: match &body.subject {
                     ClaimSubject::Entity(id) => id.to_hex(),
                     ClaimSubject::Edge { source, target, .. } => {
                         format!("{}->{}", source.to_hex(), target.to_hex())
                     }
                 },
-                value: crate::commands::msgpack_value_json(&value),
+                value,
                 reason_codes: member.reason_codes,
                 created_at: member.created_at,
             }
@@ -330,5 +345,59 @@ mod tests {
         assert!(!shown.contains(token), "{shown}");
         assert!(!shown.contains(&hex), "{shown}");
         assert!(!shown.contains("sk-not-for-display"), "{shown}");
+    }
+
+    /// Sol R8: a proposal the write door refuses shows none of its parts,
+    /// though only this review's projection (a key turned to text) brings its
+    /// words together; one it accepts shows all but its credential field.
+    #[test]
+    fn runs_show_withholds_a_body_the_write_door_refuses() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let owner = super::super::local_owner(&vault).unwrap();
+        vault
+            .set_secret_scan_mode(
+                &owner,
+                oneiron::policy_model::SecretScanMode::Off,
+                vault.now_recorded_at(),
+            )
+            .unwrap();
+        // The public BIP39 test vector, a word per entry behind a key of byte
+        // values, and whole under a credential name.
+        let phrase = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+        let mut entries: Vec<_> = (20_u8..)
+            .zip(phrase.split(' '))
+            .map(|(at, word)| {
+                let key = b"PROSE"
+                    .iter()
+                    .chain([&at])
+                    .map(|&byte| rmpv::Value::from(byte));
+                (rmpv::Value::Array(key.collect()), rmpv::Value::from(word))
+            })
+            .collect();
+        entries.push((rmpv::Value::from("password"), rmpv::Value::from(phrase)));
+        let accepted = rmpv::Value::Map(vec![
+            (rmpv::Value::from("title"), rmpv::Value::from("kept words")),
+            (rmpv::Value::from("password"), rmpv::Value::from("changeme")),
+        ]);
+        let agent = EntityId::now();
+        for (run, value) in [
+            ("refused-run", rmpv::Value::Map(entries)),
+            ("kept-run", accepted),
+        ] {
+            vault
+                .park_run_proposal_for_test(run, agent, EntityId::now(), value)
+                .unwrap();
+        }
+        let shown = |run| review(&vault, &owner, RunName::Id(run)).unwrap().proposals;
+        // Withheld whole, as a claim whose parts read as a secret together is:
+        // neither its predicate nor its value, whatever the JSON read finds.
+        let refused = shown("refused-run");
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].predicate, "[redacted]");
+        assert_eq!(refused[0].value, serde_json::json!("[redacted]"));
+        let kept = serde_json::to_string(&shown("kept-run")).unwrap();
+        assert!(kept.contains("kept words"), "{kept}");
+        assert!(!kept.contains("changeme"), "{kept}");
     }
 }
