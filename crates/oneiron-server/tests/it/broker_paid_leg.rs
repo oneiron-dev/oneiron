@@ -20,6 +20,14 @@
 //! key, no key read at the door, no change in units used or reserved, and one
 //! more denial row. No receipt row ever holds the key.
 //!
+//! P2 and N4b run again with the same-user child of `#broker-same-user-open`
+//! (BROKER-MAC = A), which the runtime starts from the same binary. Its
+//! receipts say `same_user`, and neither the runner nor the daemon that
+//! started it can read its memory, though both share its uid. The child binds
+//! no path and holds no listening socket, and a listener at the old child
+//! socket path gets nothing: the daemon reaches the child only over the
+//! channel it made at the start.
+//!
 //! The broker runs as the first uid of this user's `/etc/subuid` range, in a
 //! user namespace that maps that uid and this one to themselves. A host that
 //! cannot make such a namespace (no `unshare` or `newuidmap`, no range, or a
@@ -27,7 +35,7 @@
 //! `ONEIRON_BROKER_FIXTURE=require`, which makes it fail instead. A broker
 //! that does not start on a host that can always fails.
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -268,36 +276,85 @@ impl KeyDoor for CountingDoor {
     }
 }
 
+/// Where the fixture's broker runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// As a second OS user (OSH-2).
+    SeparateUser,
+    /// As the runtime's own child, under this process's uid.
+    SameUser,
+}
+
 struct Fixture {
     key: String,
     fake: FakeProvider,
-    broker: Broker,
+    /// The separate-user broker; `None` for the runtime's same-user child.
+    broker: Option<Broker>,
+    /// The `[broker]` table the runtime was built with.
+    table: String,
     keys: Arc<CountingDoor>,
     receipts: Arc<MemoryReceipts>,
     runtime: ModelRuntime,
     _vault_dir: tempfile::TempDir,
+    _files: tempfile::TempDir,
+    /// A same-user fixture's hold on [`ONE_CHILD`].
+    _one_child: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+/// Held while a same-user child of this process may live, so that, even with
+/// every case in one process, a scan finds only the child of the case that
+/// holds it.
+static ONE_CHILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn one_child() -> std::sync::MutexGuard<'static, ()> {
+    ONE_CHILD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The fixture, or `None` (with the reason printed) where this host cannot
 /// run a process as a second user.
 fn fixture() -> Option<Fixture> {
-    let second = match SecondUser::probe() {
-        Ok(second) => second,
-        Err(reason) => {
-            let reason = format!("this host cannot run a second user: {reason}");
-            assert!(
-                std::env::var("ONEIRON_BROKER_FIXTURE").as_deref() != Ok("require"),
-                "{reason}"
-            );
-            eprintln!("skipped: {reason}");
-            return None;
-        }
+    fixture_in(Mode::SeparateUser)
+}
+
+/// The fixture with its broker run as `mode` says. A same-user child needs
+/// no second user, so that fixture is never skipped.
+fn fixture_in(mode: Mode) -> Option<Fixture> {
+    let second = match mode {
+        Mode::SeparateUser => match SecondUser::probe() {
+            Ok(second) => Some(second),
+            Err(reason) => {
+                let reason = format!("this host cannot run a second user: {reason}");
+                assert!(
+                    std::env::var("ONEIRON_BROKER_FIXTURE").as_deref() != Ok("require"),
+                    "{reason}"
+                );
+                eprintln!("skipped: {reason}");
+                return None;
+            }
+        },
+        Mode::SameUser => None,
     };
+    let one = (mode == Mode::SameUser).then(one_child);
     let key = sentinel();
     let fake = FakeProvider::start(FakeReply::json(401, &json!({})));
     answer_with_key(&fake, &key, "an answer");
-    let broker = Broker::start(&second, fake.ca_pem())
-        .unwrap_or_else(|reason| panic!("the broker did not start as a second user: {reason}"));
+    let files = tempfile::tempdir().expect("fixture dir");
+    let (broker, table) = match &second {
+        Some(second) => {
+            let broker = Broker::start(second, fake.ca_pem()).unwrap_or_else(|reason| {
+                panic!("the broker did not start as a second user: {reason}")
+            });
+            let table = separate_user_table(&broker);
+            (Some(broker), table)
+        }
+        None => {
+            let ca = files.path().join("ca.pem");
+            std::fs::write(&ca, fake.ca_pem()).expect("ca");
+            (None, same_user_table(&ca))
+        }
+    };
     let vault_dir = tempfile::tempdir().expect("vault dir");
     let vault = Arc::new(Vault::open(vault_dir.path(), VaultConfig::default()).expect("vault"));
     vault
@@ -317,23 +374,45 @@ fn fixture() -> Option<Fixture> {
         reads: AtomicUsize::new(0),
     });
     let receipts = Arc::new(MemoryReceipts::default());
-    let runtime = runtime(fake.origin(), &broker, &keys, &receipts, "");
+    let runtime = runtime(fake.origin(), &table, &keys, &receipts, "");
     Some(Fixture {
         key,
         fake,
         broker,
+        table,
         keys,
         receipts,
         runtime,
         _vault_dir: vault_dir,
+        _files: files,
+        _one_child: one,
     })
 }
 
-/// A runtime whose `paid` provider at `base_url` sends through `broker`,
-/// with the extra `provider` lines.
+/// The `[broker]` table of a broker run as a second user.
+fn separate_user_table(broker: &Broker) -> String {
+    format!(
+        "[broker]\nsocket = \"{}\"\nuid = {}\n",
+        broker.socket.display(),
+        broker.uid
+    )
+}
+
+/// The `[broker]` table of a same-user child run from the built binary,
+/// trusting `ca`.
+fn same_user_table(ca: &Path) -> String {
+    format!(
+        "[broker]\nprogram = \"{}\"\nextra_roots = [\"{}\"]\n",
+        env!("CARGO_BIN_EXE_oneiron-broker"),
+        ca.display()
+    )
+}
+
+/// A runtime whose `paid` provider at `base_url` sends through the broker
+/// `table` names, with the extra `provider` lines.
 fn runtime(
     base_url: &str,
-    broker: &Broker,
+    table: &str,
     keys: &Arc<CountingDoor>,
     receipts: &Arc<MemoryReceipts>,
     provider: &str,
@@ -351,12 +430,7 @@ timeout_secs = 20
 [roles.checker]
 rungs = [{{ model = "paid:teacher-small" }}, {{ model = "paid:teacher-large" }}]
 
-[broker]
-socket = "{socket}"
-uid = {uid}
-"#,
-            socket = broker.socket.display(),
-            uid = broker.uid,
+{table}"#,
         ),
         None,
     )
@@ -516,6 +590,15 @@ impl Fixture {
         self.assert_no_key_in_receipts();
     }
 
+    /// The broker's pid: the second user's process, or the runtime's child,
+    /// which a call has started.
+    fn broker_pid(&self) -> u32 {
+        match &self.broker {
+            Some(broker) => broker.pid(),
+            None => child_broker_pid().expect("the runtime started its broker child"),
+        }
+    }
+
     /// No receipt row holds the key, raw or base64.
     fn assert_no_key_in_receipts(&self) {
         let encoded = base64::engine::general_purpose::STANDARD.encode(&self.key);
@@ -529,7 +612,28 @@ impl Fixture {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn p2_a_declared_teacher_call_goes_out_once_with_the_key_and_settles_its_usage() {
-    let Some(f) = fixture() else { return };
+    p2(Mode::SeparateUser).await;
+}
+
+/// BROKER-MAC: the same call through the same-user child works the same, and
+/// its receipt says `same_user`.
+#[tokio::test(flavor = "multi_thread")]
+async fn p2_same_user_the_child_sends_the_call_and_its_receipt_says_so() {
+    p2(Mode::SameUser).await;
+}
+
+async fn p2(mode: Mode) {
+    let Some(f) = fixture_in(mode) else { return };
+    let isolation = match mode {
+        Mode::SeparateUser => BrokerIsolation::SeparateUser,
+        Mode::SameUser => BrokerIsolation::SameUser,
+    };
+    // The owner's status names the mode, and the same-user child's badge.
+    let provider = &f.runtime.status().providers[0];
+    assert_eq!(
+        (provider.broker_isolation, provider.unproven),
+        (Some(isolation), mode == Mode::SameUser)
+    );
     let run = f.run("p2", 20);
     let answer = run
         .generate(SMALL, request(SMALL, "hi"))
@@ -564,10 +668,10 @@ async fn p2_a_declared_teacher_call_goes_out_once_with_the_key_and_settles_its_u
             &row.event,
             RunEvent::Dispatched {
                 request_digest,
-                broker_isolation: Some(BrokerIsolation::SeparateUser),
+                broker_isolation: Some(named),
                 answered: true,
                 ..
-            } if *request_digest == digest
+            } if *request_digest == digest && *named == isolation
         )),
         "{rows:?}"
     );
@@ -654,7 +758,7 @@ async fn n5_a_redirect_gets_no_second_send_and_a_lookalike_host_gets_nothing() {
     // `localhost` reaches the same fake, whose certificate names only
     // 127.0.0.1: the TLS check fails before any request is written.
     let lookalike = f.fake.origin().replace("127.0.0.1", "localhost");
-    let runtime = runtime(&lookalike, &f.broker, &f.keys, &f.receipts, "");
+    let runtime = runtime(&lookalike, &f.table, &f.keys, &f.receipts, "");
     let run = runtime.declared_run(
         "n5-lookalike",
         RunDeclaration::declared(BudgetLine {
@@ -691,7 +795,7 @@ async fn a_provider_set_to_no_schema_sends_no_response_format_through_the_broker
     let Some(f) = fixture() else { return };
     answer_with_key(&f.fake, &f.key, "{}");
     for (line, sends) in [("", true), ("response_format = \"none\"", false)] {
-        let runtime = runtime(f.fake.origin(), &f.broker, &f.keys, &f.receipts, line);
+        let runtime = runtime(f.fake.origin(), &f.table, &f.keys, &f.receipts, line);
         let mut call = request(SMALL, "extract");
         call.envelope.response_format = ResponseFormat::Json {
             schema: json!({"type": "object"}),
@@ -755,7 +859,18 @@ async fn n11_a_key_the_provider_echoes_comes_back_redacted() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn n4b_a_runner_holding_the_handle_carries_no_key() {
-    let Some(f) = fixture() else { return };
+    n4b(Mode::SeparateUser).await;
+}
+
+/// BROKER-MAC: a runner of the same user as the child broker still carries
+/// no key and cannot read or trace the child.
+#[tokio::test(flavor = "multi_thread")]
+async fn n4b_same_user_a_runner_of_the_childs_user_cannot_read_it() {
+    n4b(Mode::SameUser).await;
+}
+
+async fn n4b(mode: Mode) {
+    let Some(f) = fixture_in(mode) else { return };
     // The daemon's own call goes out with the key first.
     let run = f.run("n4b", 20);
     run.generate(SMALL, request(SMALL, "hi"))
@@ -770,6 +885,7 @@ async fn n4b_a_runner_holding_the_handle_carries_no_key() {
     let workdir = tempfile::tempdir().expect("runner dir");
     let ca = workdir.path().join("ca.pem");
     std::fs::write(&ca, f.fake.ca_pem()).expect("ca");
+    let broker = f.broker_pid();
     let mut runner = Command::new(std::env::current_exe().expect("test binary"))
         .args(["--exact", "broker_paid_leg::n4b_runner", "--nocapture"])
         .env_clear()
@@ -780,7 +896,7 @@ async fn n4b_a_runner_holding_the_handle_carries_no_key() {
                 f.fake.origin(),
                 HANDLE,
                 ca.display(),
-                f.broker.pid()
+                broker
             ),
         )
         .current_dir(workdir.path())
@@ -804,6 +920,18 @@ async fn n4b_a_runner_holding_the_handle_carries_no_key() {
             && report.iter().any(|line| line == "BROKER MEM DENIED"),
         "the runner read the broker: {report:?}"
     );
+    // It was the live broker that refused.
+    assert!(alive(broker), "the broker is gone");
+    assert_eq!(f.broker_pid(), broker);
+    // The second user here lives in a user namespace this uid made, and a
+    // namespace's maker may trace inside it, so only the same-user child's
+    // trace check says something about the broker.
+    if mode == Mode::SameUser {
+        assert!(
+            report.iter().any(|line| line == "BROKER PTRACE DENIED"),
+            "the runner could trace the broker: {report:?}"
+        );
+    }
     assert!(
         report.iter().any(|line| line == "SENT 401"),
         "the provider served the runner: {report:?}"
@@ -858,16 +986,23 @@ fn n4b_runner() {
         task.next().expect("ca"),
         task.next().expect("broker pid"),
     );
-    // The broker is another user: its environment and memory are closed.
+    // The broker is another user, or a same-user child that closed itself:
+    // its environment and memory are closed, and it cannot be traced.
     // Reading `mem` needs a mapped address, so a `mem` that opens is open.
+    // Only a refusal counts as closed: a broker that is gone proves nothing.
     for (what, path) in [("ENVIRON", "environ"), ("MEM", "mem")] {
-        let open = match std::fs::File::open(format!("/proc/{broker}/{path}")) {
-            Err(_) => false,
-            Ok(_) if path == "mem" => true,
-            Ok(mut file) => file.read(&mut [0; 1]).is_ok(),
+        let state = match std::fs::File::open(format!("/proc/{broker}/{path}")) {
+            Ok(_) if path == "mem" => Ok(()),
+            Ok(mut file) => file.read(&mut [0; 1]).map(drop),
+            Err(error) => Err(error),
         };
-        println!("BROKER {what} {}", if open { "OPEN" } else { "DENIED" });
+        println!("BROKER {what} {}", closing(state));
     }
+    let traced = broker
+        .parse::<u32>()
+        .map_err(std::io::Error::other)
+        .and_then(seize);
+    println!("BROKER PTRACE {}", closing(traced));
     // A direct call with what the runner holds: the handle, not the key.
     let client = reqwest::blocking::Client::builder()
         .add_root_certificate(
@@ -937,4 +1072,382 @@ fn scan_memory(pid: u32, needle: &[u8]) -> usize {
         scanned += len;
     }
     scanned
+}
+
+/// BROKER-MAC: the same-user child shares the daemon's uid, so only its own
+/// closing keeps its memory from the daemon. The daemon, its parent, can open
+/// and trace a child that did not close itself, and not the broker.
+#[tokio::test(flavor = "multi_thread")]
+async fn same_user_the_child_is_closed_to_the_daemon_that_started_it() {
+    let Some(f) = fixture_in(Mode::SameUser) else {
+        return;
+    };
+    f.run("closed", 20)
+        .generate(SMALL, request(SMALL, "hi"))
+        .await
+        .expect("the child's call");
+    let mut open = Command::new("sleep")
+        .arg("30")
+        .stdin(Stdio::null())
+        .spawn()
+        .expect("an open child");
+    let control =
+        std::fs::File::open(format!("/proc/{}/mem", open.id())).is_ok() && seize(open.id()).is_ok();
+    let _ = open.kill();
+    let _ = open.wait();
+    if !control {
+        let reason = "this host closes a child's memory to its parent, so it cannot tell the broker's own closing";
+        assert!(
+            std::env::var("ONEIRON_BROKER_FIXTURE").as_deref() != Ok("require"),
+            "{reason}"
+        );
+        eprintln!("skipped: {reason}");
+        return;
+    }
+    let pid = f.broker_pid();
+    for path in ["mem", "environ"] {
+        let opened = std::fs::File::open(format!("/proc/{pid}/{path}")).map(drop);
+        assert_eq!(closing(opened), "DENIED", "the child's {path}");
+    }
+    assert_eq!(closing(seize(pid)), "DENIED", "a trace of the child");
+    // It was the live broker child that refused.
+    assert!(alive(pid), "the child is gone");
+    assert_eq!(child_broker_pid(), Some(pid));
+}
+
+/// How a probe of the broker's memory ended: `DENIED` only for a refusal.
+fn closing(probe: std::io::Result<()>) -> &'static str {
+    match probe {
+        Ok(()) => "OPEN",
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => "DENIED",
+        Err(_) => "FAILED",
+    }
+}
+
+/// The pid of this process's one live `oneiron-broker` child under its own
+/// uid: the runtime's same-user child, while [`ONE_CHILD`] is held.
+fn child_broker_pid() -> Option<u32> {
+    let parent = std::process::id().to_string();
+    let uid = std::fs::metadata("/proc/self").ok()?.uid().to_string();
+    let mut children: Vec<u32> = std::fs::read_dir("/proc")
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+            // `pid (comm) state ppid …`: comm may hold spaces and parentheses.
+            let (head, rest) = stat.rsplit_once(')')?;
+            let mut fields = rest.split_whitespace();
+            let (state, ppid) = (fields.next()?, fields.next()?);
+            let status = std::fs::read_to_string(entry.path().join("status")).ok()?;
+            let owner = status
+                .lines()
+                .find_map(|line| line.strip_prefix("Uid:"))?
+                .split_whitespace()
+                .next()?;
+            (head.ends_with("(oneiron-broker")
+                && ppid == parent
+                && owner == uid
+                && !matches!(state, "Z" | "X"))
+            .then_some(pid)
+        })
+        .collect();
+    assert!(children.len() <= 1, "broker children {children:?}");
+    children.pop()
+}
+
+/// Whether `pid` is a process that has not exited: a zombie's memory files
+/// refuse like a closed process's do.
+fn alive(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .is_some_and(|state| !matches!(state, "Z" | "X"))
+    })
+}
+
+/// Traces `pid`, or why not. A seize stops nothing, and a seized process is
+/// let go when this one ends.
+fn seize(pid: u32) -> std::io::Result<()> {
+    let pid = libc::pid_t::try_from(pid).map_err(std::io::Error::other)?;
+    // SAFETY: PTRACE_SEIZE reads and writes no memory through its null
+    // address and data.
+    let seized = unsafe {
+        libc::ptrace(
+            libc::PTRACE_SEIZE,
+            pid,
+            std::ptr::null_mut::<libc::c_void>(),
+            std::ptr::null_mut::<libc::c_void>(),
+        )
+    };
+    if seized == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// What a channel case's runner reads its case from. Unset, the runner is a
+/// no-op, as it is in a normal test run.
+const CHANNEL_RUNNER_ENV: &str = "ONEIRON_BROKER_CHANNEL_RUNNER";
+
+/// BROKER-MAC: the same-user child binds no path and holds no listening
+/// socket; it takes its calls over the channel the daemon made. The case runs
+/// in a user and network namespace of its own, where every Unix socket is the
+/// case's or the child's, so the child's own sockets can be told apart.
+#[test]
+fn same_user_the_child_binds_no_path_and_holds_no_listener() {
+    if let Err(reason) = own_network() {
+        let reason = format!("this host cannot give a case its own network: {reason}");
+        assert!(
+            std::env::var("ONEIRON_BROKER_FIXTURE").as_deref() != Ok("require"),
+            "{reason}"
+        );
+        eprintln!("skipped: {reason}");
+        return;
+    }
+    run_channel_case("census", true);
+}
+
+/// BROKER-MAC: a listener of this uid at the old child socket path, put
+/// there after the child served, gets no connection and no bytes during a
+/// full paid call, which the real child sends.
+#[test]
+fn same_user_a_listener_at_the_old_child_path_gets_nothing() {
+    run_channel_case("impostor", false);
+}
+
+/// Runs the channel `case` in this test binary again, with a temporary
+/// directory of its own, inside a new user and network namespace when
+/// `namespace`, and asserts it passed.
+fn run_channel_case(case: &str, namespace: bool) {
+    // Under /tmp: the old child socket path below it must fit a Unix socket
+    // address, which a fleet job's long TMPDIR could overrun.
+    let tmp = tempfile::Builder::new()
+        .prefix("broker-channel-")
+        .tempdir_in("/tmp")
+        .expect("runner tmp");
+    let exe = std::env::current_exe().expect("test binary");
+    let mut runner = if namespace {
+        let mut unshare = Command::new("unshare");
+        unshare
+            .args(["--user", "--map-root-user", "--net", "--"])
+            .arg(&exe);
+        unshare
+    } else {
+        Command::new(&exe)
+    };
+    runner
+        .args(["--exact", "broker_paid_leg::channel_runner", "--nocapture"])
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("TMPDIR", tmp.path())
+        .env(CHANNEL_RUNNER_ENV, case)
+        .stdin(Stdio::null());
+    let ran = runner.output().expect("runner");
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&ran.stdout),
+        String::from_utf8_lossy(&ran.stderr),
+    );
+    assert!(
+        ran.status.success() && stdout.lines().any(|line| line == "RUNNER DONE"),
+        "the {case} case failed ({}):\n{stdout}\n{stderr}",
+        ran.status
+    );
+}
+
+/// Whether this user can make a user and network namespace and bring its
+/// loopback up, or why not.
+fn own_network() -> Result<(), String> {
+    let ran = Command::new("unshare")
+        .args(["--user", "--map-root-user", "--net", "--"])
+        .args(["ip", "link", "set", "lo", "up"])
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("unshare: {error}"))?;
+    if ran.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "unshare --net failed ({}): {}",
+            ran.status,
+            String::from_utf8_lossy(&ran.stderr).trim()
+        ))
+    }
+}
+
+/// The runner of the channel cases: a no-op unless one of them started it.
+#[tokio::test(flavor = "multi_thread")]
+async fn channel_runner() {
+    let Ok(case) = std::env::var(CHANNEL_RUNNER_ENV) else {
+        return;
+    };
+    match case.as_str() {
+        "census" => census().await,
+        "impostor" => impostor().await,
+        other => panic!("no channel case {other}"),
+    }
+    // On a line of its own: a serial harness prints the test's name, with no
+    // line end, before the test runs.
+    println!("\nRUNNER DONE");
+}
+
+/// In a network namespace of its own, after a full paid call: some socket
+/// is the live child's (its end of the channel), none of the child's sockets
+/// listens or is bound to a path, and the daemon's temporary directory holds
+/// no socket file.
+async fn census() {
+    let up = Command::new("ip")
+        .args(["link", "set", "lo", "up"])
+        .status()
+        .expect("ip");
+    assert!(up.success(), "the namespace's loopback did not come up");
+    let f = fixture_in(Mode::SameUser).expect("the same-user fixture");
+    f.run("census", 20)
+        .generate(SMALL, request(SMALL, "hi"))
+        .await
+        .expect("the child's call");
+    let child = f.broker_pid();
+    // Read on both sides of the table, so a socket of this process that
+    // opened or closed meanwhile is never counted as the child's.
+    let before = own_sockets();
+    let table = unix_sockets();
+    let after = own_sockets();
+    let child_sockets: Vec<&UnixSocket> = table
+        .iter()
+        .filter(|socket| !before.contains(&socket.inode) && !after.contains(&socket.inode))
+        .collect();
+    assert!(
+        !child_sockets.is_empty(),
+        "no socket of the child: {table:?}"
+    );
+    for socket in &child_sockets {
+        assert!(
+            !socket.listening,
+            "the child holds a listening socket: {socket:?}"
+        );
+        assert!(socket.path.is_empty(), "the child bound a path: {socket:?}");
+    }
+    let tmp = std::env::temp_dir();
+    let files: Vec<PathBuf> = walk(&tmp)
+        .into_iter()
+        .filter(|path| {
+            std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_socket())
+        })
+        .collect();
+    assert!(
+        files.is_empty(),
+        "socket files under the daemon's temporary directory: {files:?}"
+    );
+    assert!(alive(child), "the child is gone");
+}
+
+/// After the child served a first call, a listener of this uid is renamed
+/// over the old child socket path. A second paid call goes out with the key
+/// through the real child, and the listener gets no connection.
+async fn impostor() {
+    let f = fixture_in(Mode::SameUser).expect("the same-user fixture");
+    let run = f.run("impostor", 20);
+    run.generate(SMALL, request(SMALL, "first"))
+        .await
+        .expect("the first call");
+    let path = old_child_socket(&std::env::temp_dir());
+    let parked = path.with_file_name("impostor.sock");
+    let impostor = std::os::unix::net::UnixListener::bind(&parked).expect("impostor");
+    impostor.set_nonblocking(true).expect("nonblocking");
+    std::fs::rename(&parked, &path).expect("over the old child socket path");
+    let second = run.generate(SMALL, request(SMALL, "second")).await;
+    match impostor.accept() {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        Ok((mut stream, _)) => {
+            let mut got = Vec::new();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("timeout");
+            let _ = stream.read_to_end(&mut got);
+            panic!(
+                "the daemon connected to the listener at {} and sent it {} bytes",
+                path.display(),
+                got.len()
+            );
+        }
+        Err(error) => panic!("accept: {error}"),
+    }
+    let answer = second.expect("the second call, through the child");
+    assert_eq!(text_of(&answer.message), "an answer");
+    assert_eq!(f.keyed(&f.fake.seen()), 2, "both calls carried the key");
+    assert_eq!(f.reads(), 2, "one key read per call");
+}
+
+/// The old child socket path: `broker.sock` in the `oneiron-broker-<id>`
+/// directory under the daemon's temporary directory `tmp`, where the child
+/// listened before it took its calls over a channel. A daemon that made no
+/// such directory gets one made here, empty.
+fn old_child_socket(tmp: &Path) -> PathBuf {
+    let made = std::fs::read_dir(tmp)
+        .expect("tmp")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("oneiron-broker-"))
+        });
+    let dir = made.unwrap_or_else(|| {
+        let dir = tmp.join("oneiron-broker-0000000000000000");
+        std::fs::create_dir(&dir).expect("the old child directory");
+        set_mode(&dir, 0o700);
+        dir
+    });
+    dir.join("broker.sock")
+}
+
+/// A Unix socket of this network namespace, as `/proc/net/unix` lists it.
+#[derive(Debug)]
+struct UnixSocket {
+    inode: u64,
+    listening: bool,
+    path: String,
+}
+
+/// Every Unix socket of this network namespace.
+fn unix_sockets() -> Vec<UnixSocket> {
+    // `__SO_ACCEPTCON`: the Flags of a listening socket.
+    const ACCEPTING: u32 = 1 << 16;
+    let table = std::fs::read_to_string("/proc/net/unix").expect("/proc/net/unix");
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            // `Num RefCount Protocol Flags Type St Inode [Path]`
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let flags = u32::from_str_radix(fields.get(3)?, 16).ok()?;
+            Some(UnixSocket {
+                inode: fields.get(6)?.parse().ok()?,
+                listening: flags & ACCEPTING != 0,
+                path: fields.get(7..).unwrap_or_default().join(" "),
+            })
+        })
+        .collect()
+}
+
+/// The inodes of the sockets this process holds.
+fn own_sockets() -> std::collections::HashSet<u64> {
+    std::fs::read_dir("/proc/self/fd")
+        .expect("/proc/self/fd")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let target = std::fs::read_link(entry.path()).ok()?;
+            target
+                .to_str()?
+                .strip_prefix("socket:[")?
+                .strip_suffix(']')?
+                .parse()
+                .ok()
+        })
+        .collect()
 }
