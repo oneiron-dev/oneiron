@@ -11,7 +11,6 @@ use super::event::{
     DiagnosticSourceKind, MAX_EVIDENCE_REFS, MAX_REF_LEN, MAX_TOKEN_LEN, invalid_diagnostic,
 };
 use super::invariant_canonical::{canonical_invariant_field, canonical_invariant_value};
-use super::untrusted_text::is_forbidden_text_scalar;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
@@ -319,14 +318,22 @@ fn canonical_optional_ref(value: Option<&str>) -> Result<Value> {
     }
 }
 
+/// A ref is an id, never prose (owner ruling 2026-10-14, fix 6): ASCII
+/// letters, digits and `.` `_` `-` `:` `/` `@`. Both codec doors check it, so
+/// a DIAGNOSTIC body with a sentence in a replay coordinate neither encodes
+/// nor decodes.
 pub(super) fn validate_ref(text: &str) -> Result<()> {
     if text.is_empty() || text.len() > MAX_REF_LEN {
         return Err(invalid_diagnostic("replay ref is empty or too long"));
     }
-    if text.chars().any(is_forbidden_text_scalar) {
-        return Err(invalid_diagnostic("replay ref carries control data"));
+    if !text.bytes().all(is_ref_byte) {
+        return Err(invalid_diagnostic("replay ref is not an id"));
     }
     Ok(())
+}
+
+fn is_ref_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/' | b'@')
 }
 
 pub(super) fn validate_token(token: &str, reason: &'static str) -> Result<()> {

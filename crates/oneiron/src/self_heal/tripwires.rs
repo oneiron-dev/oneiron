@@ -16,7 +16,6 @@ fn draft(
     id: &str,
     class: DiagnosticEventClass,
     source: DiagnosticSourceKind,
-    input: &DiagnosticWorkingSet<'_>,
     observation: &DiagnosticObservation,
 ) -> DiagnosticEvent {
     DiagnosticEvent {
@@ -31,7 +30,8 @@ fn draft(
         delta: Value::from(-1),
         replay: DiagnosticReplayCoordinate {
             content_hash: observation.payload_digest,
-            run_ref: Some(input.scope_ref.into()),
+            // The receipt's id, never the scope label a caller wrote.
+            run_ref: Some(observation.source_ref.to_hex()),
             checkpoint_ref: None,
         },
         evidence_refs: vec![observation.source_ref],
@@ -56,7 +56,6 @@ macro_rules! point_detector {
                             $id,
                             DiagnosticEventClass::$class,
                             DiagnosticSourceKind::$source,
-                            input,
                             o,
                         )
                     })
@@ -181,13 +180,7 @@ fn window_event(
     let Some(last) = observations.last() else {
         return vec![];
     };
-    let mut event = draft(
-        rule.id,
-        rule.class,
-        DiagnosticSourceKind::Receipt,
-        input,
-        last,
-    );
+    let mut event = draft(rule.id, rule.class, DiagnosticSourceKind::Receipt, last);
     event.actor_ref = actor;
     event.expected = Value::from(threshold);
     event.actual = Value::from(observations.len() as u64);

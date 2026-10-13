@@ -16,7 +16,7 @@ fn draft() -> DiagnosticEvent {
         .remove(0)
 }
 
-fn replace_field(body: &[u8], key: &str, value: Value) -> Vec<u8> {
+pub(super) fn replace_field(body: &[u8], key: &str, value: Value) -> Vec<u8> {
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut Cursor::new(body)).unwrap() else {
         panic!("body map");
     };

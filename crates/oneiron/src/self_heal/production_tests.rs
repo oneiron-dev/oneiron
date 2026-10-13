@@ -45,6 +45,37 @@ fn body(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     Ok(vault.get_raw(id)?.expect("stored diagnostic")[ENTITY_METADATA_HEADER_LEN..].to_vec())
 }
 
+/// Owner ruling 2026-10-14 (fix 6): a diagnostic carries no world text. The
+/// scope label is a caller's string, so no row the detector writes holds it,
+/// and a DIAGNOSTIC body with prose in a replay coordinate does not decode.
+#[test]
+fn a_prose_scope_label_reaches_no_stored_row() -> Result<()> {
+    const PROSE: &str = "sentinel-world-text-4e19 my sister's diagnosis";
+    let (_dir, vault, _, query) = consent_vault()?;
+    let ids = vault.run_consent_denied_detector(PROSE, query)?;
+    assert_eq!(ids.len(), 2, "both refusals are found");
+    for (table, rows) in crate::test_util::row_dump::dump_rows(&vault) {
+        for (key, value) in rows {
+            assert!(
+                !value
+                    .windows(b"sentinel-world-text-4e19".len())
+                    .any(|w| w == b"sentinel-world-text-4e19"),
+                "{table} row {key:?} holds the scope label"
+            );
+        }
+    }
+    let canonical = body(&vault, &ids[0])?;
+    for key in ["replay_run_ref", "replay_checkpoint_ref"] {
+        let hostile = super::text_tests::replace_field(&canonical, key, Value::from(PROSE));
+        assert_eq!(
+            decode_diagnostic_event_body(&hostile).unwrap_err().kind(),
+            crate::ErrorKind::InvalidDiagnosticBody,
+            "{key}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn detector_emits_typed_event() -> Result<()> {
     let (_dir, vault, _, query) = consent_vault()?;
@@ -71,7 +102,10 @@ fn detector_emits_typed_event() -> Result<()> {
             .find(|fact| event.evidence_refs == [fact.source_ref])
             .unwrap();
         assert_eq!(event.replay.content_hash, fact.payload_digest);
-        assert_eq!(event.replay.run_ref.as_deref(), Some("scope.consent"));
+        assert_eq!(
+            event.replay.run_ref.as_deref(),
+            Some(fact.source_ref.to_hex().as_str())
+        );
         assert_eq!(event.replay.checkpoint_ref, None);
         assert_eq!(event.valid_from, fact.observed_at);
         assert_eq!(event.valid_to, None);
