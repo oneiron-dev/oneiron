@@ -22,6 +22,7 @@ use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation
 use loro::{LoroDoc, Subscription};
 
 mod admission;
+mod device_only;
 mod egress;
 mod forward;
 mod reverse;
@@ -35,6 +36,10 @@ pub(in crate::sync) use self::admission::validate_window_update_residence;
 pub(in crate::sync) use self::admission::validate_window_update_with_staged_worlds;
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
+};
+pub use self::device_only::{UpdateVerdict, export_withheld, raw_update_verdict};
+pub(in crate::sync) use self::device_only::{
+    device_only_ids, window_is_device_only, window_withheld,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
@@ -50,6 +55,7 @@ pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
+pub(in crate::sync) use self::reverse::reverse_rematerialize_with;
 pub(crate) use self::tombstones::{DeleteBearingUpdate, export_tombstone_commit_delta};
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,
