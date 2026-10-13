@@ -321,16 +321,17 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     /// A manifest grant never lists a world of its own: it only says where a
     /// reader other than the owner may read. A page can end inside a run of
     /// worlds this reader may not see, so its cursor is sealed and names none
-    /// of them. A credential dead in that snapshot lists nothing, not even a
-    /// cursor that would say how many worlds it passed over.
+    /// of them. A reader that could read no row in that snapshot (a dead
+    /// credential, one that reads nothing, or a peer of either) lists
+    /// nothing, not even a cursor that would say how many worlds it passed
+    /// over.
     fn listdir_worlds(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
-        if !self.scoped_read.proof_live_in(&rtxn)?
-            || (self.scoped_read.actor_key().vault_owner_ref().is_none()
-                && policy.diagnostics().loaded_manifest_forces_fail_closed())
-        {
+        if !self.scoped_read.every_lane_in(&rtxn, |lane| {
+            Ok(lane.proof_live_in(&rtxn)? && lane_reads_some_row(lane, &policy))
+        })? {
             return Ok(empty_page(path, self.options.mount));
         }
         let scope = self.cursor_scope(path);
@@ -373,43 +374,17 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     /// Whether this reader may walk into `world` (`None` is base reality) in
-    /// `rtxn`, judged as claim admission judges a claim's world: the
-    /// credential must be live and the worlds the read asked for and its
-    /// Scope must admit it; the owner then reads every world of their vault
-    /// (ARCH-0057). Any other reader reads where a read grant for it reads
-    /// the world ([`crate::gate::scoped_read_grant_reads_world`]), anywhere
-    /// while the manifest holds no read grant, and, with a credential no
-    /// grant names, wherever that credential reads.
+    /// `rtxn`: its own lane and each peer lane its reads conjoin
+    /// ([`crate::claim::ScopedRead::with_peer_reads`]) must each walk there
+    /// ([`lane_walks_world`]), as each must admit a row it serves (Sol R5-006).
     pub(super) fn world_visible(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         world: Option<EntityId>,
     ) -> Result<bool> {
-        let key = self.scoped_read.actor_key();
-        if !self.scoped_read.world_readable_in(rtxn, world)? {
-            return Ok(false);
-        }
-        if key.vault_owner_ref().is_some() {
-            return Ok(true);
-        }
-        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
-            return Ok(false);
-        }
-        if !policy.has_scoped_read_grants() {
-            return Ok(true);
-        }
-        let mut matched = false;
-        for grant in policy.scoped_grants() {
-            if !read_grant_matches_actor(grant, key) {
-                continue;
-            }
-            matched = true;
-            if crate::gate::scoped_read_grant_reads_world(grant, world) {
-                return Ok(true);
-            }
-        }
-        Ok(key.authority_scope().is_some() && !matched)
+        self.scoped_read
+            .every_lane_in(rtxn, |lane| lane_walks_world(lane, rtxn, policy, world))
     }
 
     fn listdir_entities(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
@@ -711,6 +686,55 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         }
         Ok(builder.finish(next_cursor))
     }
+}
+
+/// Whether `lane` may walk into `world` (`None` is base reality) in `rtxn`,
+/// judged as claim admission judges a claim's world: the lane must read
+/// some row ([`lane_reads_some_row`]), its credential must be live, and the
+/// worlds the read asked for and its Scope must admit `world`; the owner then
+/// reads every world of their vault (ARCH-0057). Any other reader reads where
+/// a read grant for it reads the world
+/// ([`crate::gate::scoped_read_grant_reads_world`]), anywhere while the
+/// manifest holds no read grant, and, with a credential no grant names,
+/// wherever that credential reads.
+fn lane_walks_world(
+    lane: &ScopedRead<'_>,
+    rtxn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    world: Option<EntityId>,
+) -> Result<bool> {
+    let key = lane.actor_key();
+    if !lane_reads_some_row(lane, policy) || !lane.world_readable_in(rtxn, world)? {
+        return Ok(false);
+    }
+    if key.vault_owner_ref().is_some() {
+        return Ok(true);
+    }
+    if !policy.has_scoped_read_grants() {
+        return Ok(true);
+    }
+    let mut matched = false;
+    for grant in policy.scoped_grants() {
+        if !read_grant_matches_actor(grant, key) {
+            continue;
+        }
+        matched = true;
+        if crate::gate::scoped_read_grant_reads_world(grant, world) {
+            return Ok(true);
+        }
+    }
+    Ok(key.authority_scope().is_some() && !matched)
+}
+
+/// Whether `lane`'s ordinary reads could admit any row under `policy`: the
+/// retrieval floor every read applies is not deny-all. A credential without
+/// the read verb, or with its bands, audience, sensitivity or worlds at
+/// bottom, a fail-closed manifest, and grants that read nothing each leave
+/// it none, so it walks no world either (Sol R7-003).
+fn lane_reads_some_row(lane: &ScopedRead<'_>, policy: &PolicyManifestResolution) -> bool {
+    !policy
+        .retrieval_floor_for_actor(Some(lane.actor_key()))
+        .deny_all
 }
 
 pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {

@@ -131,28 +131,11 @@ impl RetrievalPolicyFloor {
             {
                 continue;
             }
-            let Some(mut row) = Self::from_scope(grant.scope.as_ref()).filter(|row| !row.deny_all)
-            else {
+            let Some(row) = Self::from_grant(grant) else {
                 // Invalid or empty alternatives authorize nothing, not a veto
                 // of another independently valid complete grant.
                 continue;
             };
-            let authority = &grant.authority_scope;
-            match &authority.bands {
-                crate::federation::ScopeAxis::All => {}
-                crate::federation::ScopeAxis::Some(kinds) if !kinds.is_empty() => {
-                    row.allowed_entity_types = Some(match row.allowed_entity_types {
-                        Some(existing) => existing.intersection(kinds).copied().collect(),
-                        None => kinds.clone(),
-                    });
-                }
-                _ => continue,
-            }
-            let max = match authority.sensitivity {
-                crate::federation::SensitivityCeiling::Bottom => continue,
-                crate::federation::SensitivityCeiling::AtMost(max) => max as u8,
-            };
-            row.max_sensitivity_band = row.max_sensitivity_band.min(max);
             floor = Some(match floor {
                 None => row,
                 Some(existing) => existing.union_envelope(row),
@@ -163,6 +146,30 @@ impl RetrievalPolicyFloor {
         } else {
             None
         }
+    }
+
+    /// One complete read grant's floor: its retrieval selectors met with its
+    /// canonical Scope's bands and sensitivity. `None` when an invalid or
+    /// empty selector, or a band or sensitivity at bottom, leaves it no row.
+    fn from_grant(grant: &PolicyScopedGrant) -> Option<Self> {
+        let mut row = Self::from_scope(grant.scope.as_ref()).filter(|row| !row.deny_all)?;
+        let authority = &grant.authority_scope;
+        match &authority.bands {
+            crate::federation::ScopeAxis::All => {}
+            crate::federation::ScopeAxis::Some(kinds) if !kinds.is_empty() => {
+                row.allowed_entity_types = Some(match row.allowed_entity_types {
+                    Some(existing) => existing.intersection(kinds).copied().collect(),
+                    None => kinds.clone(),
+                });
+            }
+            _ => return None,
+        }
+        let max = match authority.sensitivity {
+            crate::federation::SensitivityCeiling::Bottom => return None,
+            crate::federation::SensitivityCeiling::AtMost(max) => max as u8,
+        };
+        row.max_sensitivity_band = row.max_sensitivity_band.min(max);
+        Some(row)
     }
 
     fn from_authority_scope(scope: &crate::federation::Scope) -> Self {
@@ -341,6 +348,17 @@ fn parse_minimum(value: &Value) -> Option<f32> {
         rounded.next_up()
     } else {
         rounded
+    })
+}
+
+/// Whether `grant`, read as retrieval reads it, leaves a row of some entity
+/// type: its selectors and canonical bands share one. A grant reads a world
+/// only then (Sol R7-004).
+pub(crate) fn scoped_read_grant_reads_some_type(grant: &PolicyScopedGrant) -> bool {
+    RetrievalPolicyFloor::from_grant(grant).is_some_and(|row| {
+        row.allowed_entity_types
+            .as_ref()
+            .is_none_or(|types| !types.is_empty())
     })
 }
 

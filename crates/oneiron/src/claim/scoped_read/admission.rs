@@ -318,6 +318,34 @@ impl<'a> ScopedRead<'a> {
         Ok(fold.slip_is_live(&claims.slip_id))
     }
 
+    /// Whether `judge` holds for this read and for each peer it conjoins
+    /// ([`Self::with_peer_reads`]), each lane judged as itself in `txn`. A
+    /// peer read as the owner that is no longer the owner there fails, as it
+    /// keeps every row out of a point read.
+    pub(crate) fn every_lane_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mut judge: impl FnMut(&ScopedRead<'a>) -> Result<bool>,
+    ) -> Result<bool> {
+        if !judge(self)? {
+            return Ok(false);
+        }
+        for peer in &self.peer_reads {
+            let peer = self.vault.scoped_read(peer.clone());
+            match peer.owner_live_in(txn) {
+                Ok(()) => {}
+                Err(Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_))) => {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
+            if !judge(&peer)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     #[must_use]
     pub fn vault(&self) -> &'a crate::Vault {
         self.vault
