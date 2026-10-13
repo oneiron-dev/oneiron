@@ -8,22 +8,16 @@ use super::claim::{
 };
 use super::door::BookingLifecycleConsumerInput;
 use super::occurrence::{inclusive_occurrence, offers_slot};
-use super::passport::supersede_outbound_passport;
+use super::passport::{outbound_passport_in, supersede_outbound_passport};
 use super::storage::{
     RECEIPT, booking_writer, encode_claim_value, engine_failure, read_txn, revision_receipt_key,
     write_receipt,
 };
 use super::token::{OpaqueLifecycleToken, mint_raw_token, token_digest};
-use super::types::{
-    BOOKING_PASSPORT_SYSTEM, BOOKING_STATUS_PREDICATE, BookingStatus, BookingStatusValue,
-    CalendarRevision,
-};
+use super::types::{BOOKING_STATUS_PREDICATE, BookingStatus, BookingStatusValue, CalendarRevision};
 use super::{BookingContent, LifecycleReceiptRow};
 use crate::booking::BookingError;
-use crate::calendar::claims::{
-    CalendarStatus, PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS,
-};
-use crate::claim::ClaimLifecycleStatus;
+use crate::calendar::claims::{CalendarStatus, PREDICATE_CALENDAR_STATUS};
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, SideTable, VersionedNamed};
@@ -76,35 +70,7 @@ pub(in crate::booking) fn emergency_current_revision_in(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<CalendarRevision, BookingError> {
-    let mut values = Vec::new();
-    for id in vault
-        .claims_for_subject_in_txn(txn, &event)
-        .map_err(|error| engine_failure("booking passport scan", error))?
-    {
-        if let Some(body) = vault
-            .get_claim_in_txn(txn, &id)
-            .map_err(|error| engine_failure("booking passport read", error))?
-            && body.lifecycle == ClaimLifecycleStatus::Active
-            && body.predicate == PREDICATE_CALENDAR_PASSPORT
-        {
-            let value =
-                crate::calendar::claims::decode_passport_value(&body.value).map_err(|_| {
-                    emergency_refused("booking has malformed calendar passport metadata")
-                })?;
-            if value.system == BOOKING_PASSPORT_SYSTEM {
-                values.push((id, value));
-            }
-        }
-    }
-    let mut passports = values.into_iter();
-    let (_, current) = passports
-        .next()
-        .ok_or_else(|| emergency_refused("booking carries no outbound calendar passport"))?;
-    if passports.next().is_some() {
-        return Err(emergency_refused(
-            "booking has competing outbound passports",
-        ));
-    }
+    let (_, current) = outbound_passport_in(vault, txn, &event, emergency_refused)?;
     Ok(CalendarRevision {
         event_ref: event,
         uid: current.uid,

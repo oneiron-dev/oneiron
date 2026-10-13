@@ -1,7 +1,11 @@
 //! Confirmed-booking tallies per visitor-local day and week.
 
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+
 use serde::{Deserialize, Serialize};
 
+use super::civil_date::{local_day, visitor_zone_error, week_of};
 use crate::booking::{BookingError, EventTypeKey};
 use crate::entity_id::EntityId;
 use crate::temporal::TimeRange;
@@ -36,35 +40,72 @@ pub struct BookingCounts {
 ///
 /// `window` is the bookable extent — the caller's window already clipped to the
 /// page's horizon — so it is bounded, not caller-controlled. A cap is charged
-/// over a whole visitor-local period, so layer 2 widens `window` to the periods
-/// its candidates fall in rather than assuming it already covers them.
+/// over a whole visitor-local period, so the read widens `window` to every
+/// visitor-local week it touches: a booking earlier on a candidate's day, or
+/// earlier in its week, counts even though it lies outside `window`.
 ///
-/// STACK SEAM. Confirmed bookings live in the session-keyed lifecycle rows
-/// ONE-1813 lands in BK-A layer 2; on this layer there is no such store, so
-/// there is nothing to count and the table is empty. An empty table binds no
-/// cap — deliberately, because a missing bucket is zero confirmed bookings.
-/// The visitor-local day/week identity that decides which bucket a candidate is
-/// charged against lives in the cap stage, so layer 2 supplies `confirmed` here
-/// and changes nothing else.
+/// Each bucket holds one period's bookings and spans exactly them, from the
+/// first one's start to just past the last one's, so its `window_start_utc`
+/// falls on the period it is charged to. `moving` is a booking being moved,
+/// which never charges against its own move.
 ///
 /// # Errors
 ///
-/// [`BookingError::SlotOracle`] once layer 2 reads storage here.
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the fallible signature is the ratified layer-2 contract; the lint \
-              fires only while the body is storage-free, and unfulfilling it is \
-              how ONE-1813 is told to delete this attribute"
-)]
+/// [`BookingError::SlotOracle`] when committed state cannot be read;
+/// [`BookingError::InvalidConstraint`] when a booking's start has no
+/// visitor-local date in `visitor_tz`.
 pub(super) fn load_booking_counts(
-    _vault: &Vault,
-    _page_ref: EntityId,
-    _event_type: &EventTypeKey,
-    _window: TimeRange,
-    _visitor_tz: &str,
+    vault: &Vault,
+    page_ref: EntityId,
+    event_type: &EventTypeKey,
+    window: TimeRange,
+    visitor_tz: &str,
+    moving: Option<EntityId>,
 ) -> Result<BookingCounts, BookingError> {
+    let first_week = week_of(local_day(window.start, visitor_tz).map_err(visitor_zone_error)?);
+    let last_week = week_of(local_day(window.end, visitor_tz).map_err(visitor_zone_error)?);
+    // A visitor-local week starts at most seven days plus the widest zone
+    // offset before any instant in it, and ends as far after: eight days
+    // either side reads every booking those weeks hold, whatever the zone.
+    let starts = crate::booking::lifecycle::confirmed_booking_starts(
+        vault,
+        page_ref,
+        event_type,
+        TimeRange {
+            start: window.start.saturating_sub(SCAN_MARGIN_SECS),
+            end: window.end.saturating_add(SCAN_MARGIN_SECS),
+        },
+        moving,
+    )?;
+    let mut daily: BTreeMap<i64, BookingCountBucket> = BTreeMap::new();
+    let mut weekly: BTreeMap<i64, BookingCountBucket> = BTreeMap::new();
+    for start in starts {
+        let day = local_day(start, visitor_tz).map_err(visitor_zone_error)?;
+        let week = week_of(day);
+        if week < first_week || week > last_week {
+            continue;
+        }
+        charge(daily.entry(day), start);
+        charge(weekly.entry(week), start);
+    }
     Ok(BookingCounts {
-        daily: Vec::new(),
-        weekly: Vec::new(),
+        daily: daily.into_values().collect(),
+        weekly: weekly.into_values().collect(),
     })
+}
+
+/// Eight days, in seconds: one week plus more than any zone's UTC offset.
+const SCAN_MARGIN_SECS: u64 = 8 * 86_400;
+
+/// Adds one booking starting at `start` to its period's bucket.
+fn charge(entry: Entry<'_, i64, BookingCountBucket>, start: u64) {
+    let end = start.saturating_add(1);
+    let bucket = entry.or_insert(BookingCountBucket {
+        window_start_utc: start,
+        window_end_utc: end,
+        confirmed: 0,
+    });
+    bucket.window_start_utc = bucket.window_start_utc.min(start);
+    bucket.window_end_utc = bucket.window_end_utc.max(end);
+    bucket.confirmed = bucket.confirmed.saturating_add(1);
 }

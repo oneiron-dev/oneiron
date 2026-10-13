@@ -92,6 +92,37 @@ pub(super) fn write_outbound_passport(
     .map(|_| ())
 }
 
+/// The booking's outbound passport: its one admitted head carrying the
+/// booking system, which every amendment derives its UID and next SEQUENCE
+/// from.
+///
+/// Admitted means surfaceable and about the EVENT itself, as the booking facts
+/// read. A pending, stale or future-dated proposal is never revision authority:
+/// it can neither block an amendment nor steer its UID or SEQUENCE, and no
+/// amendment supersedes it. Two admitted heads are refused through `refuse`,
+/// never picked by scan order.
+pub(super) fn outbound_passport_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+    refuse: fn(&'static str) -> BookingError,
+) -> Result<(EntityId, CalendarPassportValue), BookingError> {
+    let mut own =
+        crate::calendar::passport::admitted_passports_for_event_in_txn(vault, txn, event_ref)
+            .map_err(calendar_wrap)?
+            .into_iter()
+            .filter(|(_, value)| value.system == BOOKING_PASSPORT_SYSTEM);
+    let head = own
+        .next()
+        .ok_or_else(|| refuse("booking carries no outbound calendar passport"))?;
+    if own.next().is_some() {
+        return Err(refuse(
+            "booking carries competing outbound calendar passports",
+        ));
+    }
+    Ok(head)
+}
+
 /// Supersedes this booking's outbound passport at `last_sequence + 1`.
 ///
 /// CAL-02's `supersede_calendar_passport` opens its OWN write transaction, so
@@ -107,12 +138,7 @@ pub(super) fn supersede_outbound_passport(
     now_utc: u64,
 ) -> Result<CalendarRevision, BookingError> {
     crate::booking::emergency_reschedule::ensure_no_pending_effect_in(vault, wtxn, *event_ref)?;
-    let (old_id, current) =
-        crate::calendar::passport::live_passports_for_event_in_txn(vault, wtxn, event_ref)
-            .map_err(calendar_wrap)?
-            .into_iter()
-            .find(|(_, value)| value.system == BOOKING_PASSPORT_SYSTEM)
-            .ok_or_else(|| refused("booking carries no outbound calendar passport"))?;
+    let (old_id, current) = outbound_passport_in(vault, wtxn, event_ref, refused)?;
     let sequence = current
         .last_sequence
         .checked_add(1)

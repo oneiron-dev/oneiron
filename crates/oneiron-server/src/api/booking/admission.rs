@@ -6,13 +6,17 @@ use oneiron::booking::anti_abuse::{
     BookingRequestFacts, EmailValidationEvidence, booking_email_hash, booking_ip_hash,
     booking_session_hash,
 };
+use oneiron::booking::lifecycle::{confirm_event_type, token_event_type};
 use oneiron::booking::{
     ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE,
-    BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingSourcePageValue, BookingStatus,
-    BookingStatusValue, SessionKey, VaultActiveHoldSource,
+    BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingError, BookingSourcePageValue,
+    BookingStatus, BookingStatusValue, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
 };
 use oneiron::registry::ENTITY_TYPE_EVENT;
-use oneiron::{CalendarReadRequest, ClaimLifecycleStatus, EntityId, TimeRange, Vault};
+use oneiron::{
+    CalendarReadRequest, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, EntityId,
+    TimeRange, Vault,
+};
 
 use super::BookingTransportContext;
 use super::constants::{INTAKE_DOMAIN, SELECTED_SLOT_DOMAIN};
@@ -48,6 +52,11 @@ pub(super) fn admission_facts(
     }
     let ip_hash = booking_ip_hash(&ip_material);
 
+    // A confirm or an amendment does not carry its event type, so it is read
+    // from what the request names: the hold or the booking it already made,
+    // or the booking an action token is for. Without it, every control the
+    // owner scoped to one event type would skip these requests. A confirm
+    // that names neither is refused before the writer, after admission.
     let (event_type, session_ref, booker_email, selected_slot, intake) = match request {
         BookingOperationRequest::Availability(input) => (
             Some(input.event_type.clone()),
@@ -64,16 +73,41 @@ pub(super) fn admission_facts(
             None,
         ),
         BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => (
-            None,
+            match confirm_event_type(
+                &server.vault,
+                &session_key(page_ref, &input.session_ref),
+                &OpaqueLifecycleToken(input.hold_token.clone()),
+                now,
+            ) {
+                Ok(event_type) => Some(event_type),
+                Err(BookingError::InvalidConstraint(_)) => None,
+                Err(error) => return Err(error.into()),
+            },
             Some(input.session_ref.as_str()),
             Some(input.booker_email.as_str()),
             None,
             Some(input.intake.as_slice()),
         ),
-        BookingOperationRequest::Reschedule(input) => {
-            (None, None, None, Some(input.selected_slot), None)
-        }
-        BookingOperationRequest::Cancel(_) => (None, None, None, None, None),
+        BookingOperationRequest::Reschedule(input) => (
+            token_event_type(
+                &server.vault,
+                &OpaqueLifecycleToken(input.reschedule_token.clone()),
+            )?,
+            None,
+            None,
+            Some(input.selected_slot),
+            None,
+        ),
+        BookingOperationRequest::Cancel(input) => (
+            token_event_type(
+                &server.vault,
+                &OpaqueLifecycleToken(input.cancel_token.clone()),
+            )?,
+            None,
+            None,
+            None,
+            None,
+        ),
     };
 
     let session_hash = session_ref.map(booking_session_hash);
@@ -274,7 +308,16 @@ fn booking_is_active_future_for(
         let Some(body) = vault.get_claim(&claim_id).map_err(engine_read_error)? else {
             continue;
         };
-        if body.lifecycle != ClaimLifecycleStatus::Active {
+        // The engine's surfaceable record only, as the lifecycle writer reads
+        // it: a pending proposal beside it must not shrink this tally.
+        if body.lifecycle != ClaimLifecycleStatus::Active
+            || body.stale
+            || !matches!(
+                body.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+            || body.subject != ClaimSubject::Entity(event_ref)
+        {
             continue;
         }
         match body.predicate.as_str() {

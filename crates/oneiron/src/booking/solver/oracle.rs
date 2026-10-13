@@ -47,6 +47,7 @@ impl SlotOracle for BookingSolver<'_> {
         &self,
         req: &SolveRequest,
         hosts: &[String],
+        moving: EntityId,
     ) -> Result<SolveResult, BookingError> {
         let mut config = match &self.synthetic_config {
             Some(config) => config.clone(),
@@ -80,10 +81,30 @@ impl SlotOracle for BookingSolver<'_> {
             now_utc: self.now_utc,
             synthetic_config: Some(config),
         }
-        .solve(req)
+        .solve_moving(req, moving)
     }
 
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
+        self.solve_excluding(req, None)
+    }
+
+    fn solve_moving(
+        &self,
+        req: &SolveRequest,
+        moving: EntityId,
+    ) -> Result<SolveResult, BookingError> {
+        self.solve_excluding(req, Some(moving))
+    }
+}
+
+impl BookingSolver<'_> {
+    /// The pipeline. `moving` is a booking being moved: its own place does
+    /// not count against the caps its move is solved under.
+    fn solve_excluding(
+        &self,
+        req: &SolveRequest,
+        moving: Option<EntityId>,
+    ) -> Result<SolveResult, BookingError> {
         // The visitor zone is validated at the calendar border, not guessed:
         // a malformed zone fails typed here rather than falling back to UTC.
         validate_visitor_tz(&req.visitor_tz)?;
@@ -126,13 +147,22 @@ impl SlotOracle for BookingSolver<'_> {
                 end: window.end.saturating_add(pad),
             },
         )?;
-        let counts = load_booking_counts(
-            self.vault,
-            self.page_ref,
-            &req.event_type,
-            inclusive(window),
-            &req.visitor_tz,
-        )?;
+        // Counting reads every booking EVENT, so a page with no cap does not.
+        let counts = if config.daily_cap.is_none() && config.weekly_cap.is_none() {
+            BookingCounts {
+                daily: Vec::new(),
+                weekly: Vec::new(),
+            }
+        } else {
+            load_booking_counts(
+                self.vault,
+                self.page_ref,
+                &req.event_type,
+                inclusive(window),
+                &req.visitor_tz,
+                moving,
+            )?
+        };
         let holds = self
             .holds
             .active_holds(self.page_ref, window, self.now_utc, None)?;

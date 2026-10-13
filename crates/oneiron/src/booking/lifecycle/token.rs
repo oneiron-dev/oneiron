@@ -4,11 +4,11 @@
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use super::claim::read_booking_facts;
-use super::storage::{HOLD, engine_failure, read_txn, refused};
+use super::claim::{booking_event_type_in, read_booking_facts};
+use super::storage::{HOLD, confirm_receipt_key, engine_failure, read_receipt, read_txn, refused};
 use super::types::{LifecycleTokenScope, SoftHoldRow};
 use super::{LifecycleTokenRow, TOKEN};
-use crate::booking::BookingError;
+use crate::booking::{BookingError, EventTypeKey};
 use crate::{EntityId, Vault};
 
 /// Raw opaque-token width, and therefore the bearer secret's entropy.
@@ -232,4 +232,71 @@ pub fn token_page_ref(
     Ok(read_booking_facts(vault, &rtxn, &row.event_ref)
         .ok()
         .map(|facts| facts.page_ref))
+}
+
+/// The event type a confirm is for, read the way the writer reads it and
+/// refused the way the writer refuses it.
+///
+/// A confirm that already booked names its booking's type through the
+/// receipt its hold token recorded; a first confirm names its live hold's.
+/// Admission reads this before the writer runs, so a control the owner
+/// scoped to one event type binds every confirm of that type, a retry too.
+/// The transport reads it before it records anything for the request, so a
+/// confirm that names no hold of its session leaves nothing behind.
+///
+/// # Errors
+///
+/// [`BookingError::InvalidConstraint`] with the writer's own refusal when
+/// the hold is absent, expired or another's, or the recorded booking is
+/// another session's; [`BookingError::SlotOracle`] when committed state
+/// cannot be read.
+pub fn confirm_event_type(
+    vault: &Vault,
+    session_key: &SessionKey,
+    hold_token: &OpaqueLifecycleToken,
+    now_utc: u64,
+) -> Result<EventTypeKey, BookingError> {
+    let rtxn = read_txn(vault)?;
+    let hold_hash = token_digest(hold_token);
+    if let Some(recorded) = read_receipt(vault, &rtxn, &confirm_receipt_key(&hold_hash))? {
+        if recorded.session_hash != Some(session_digest(session_key)) {
+            return Err(refused("recorded booking belongs to another session"));
+        }
+        return booking_event_type_in(vault, &rtxn, &recorded.event_ref)?
+            .ok_or_else(|| refused("booking carries no event type claim"));
+    }
+    let Some(hold): Option<SoftHoldRow> = HOLD
+        .get(&vault.store, &rtxn, &hold_digest(session_key))
+        .map_err(|error| engine_failure("meta read", error))?
+    else {
+        return Err(refused("no hold exists for this session"));
+    };
+    if !hold.is_live_at(now_utc) {
+        return Err(refused("hold has expired"));
+    }
+    if hold.token_hash != hold_hash {
+        return Err(refused("hold token does not match this session's hold"));
+    }
+    Ok(hold.event_type)
+}
+
+/// The event type of the booking a reschedule or cancel token belongs to.
+///
+/// Read-only and shaped like [`token_page_ref`], for the same admission
+/// reason as [`confirm_event_type`]. A token that resolves to no booking
+/// yields `None`; the writer gives the typed refusal.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] when committed state cannot be read;
+/// [`BookingError::InvalidConstraint`] when a stored row does not decode.
+pub fn token_event_type(
+    vault: &Vault,
+    token: &OpaqueLifecycleToken,
+) -> Result<Option<EventTypeKey>, BookingError> {
+    let rtxn = read_txn(vault)?;
+    let Some(row) = read_token_row(vault, &rtxn, token)? else {
+        return Ok(None);
+    };
+    booking_event_type_in(vault, &rtxn, &row.event_ref)
 }

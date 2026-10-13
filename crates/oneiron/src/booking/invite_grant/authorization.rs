@@ -11,7 +11,7 @@ use crate::booking::lifecycle::{
     BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus, BookingStatusValue,
 };
 use crate::calendar::CALENDAR_INVITE_CHANNEL;
-use crate::claim::ClaimLifecycleStatus;
+use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::StandingOutboundGrantScope;
 use crate::ports::EntityStoreRead;
@@ -187,7 +187,11 @@ fn confirmed_booking_binding_in_txn(
         else {
             continue;
         };
-        if body.lifecycle != ClaimLifecycleStatus::Active {
+        // Only the engine's surfaceable record binds a recipient: a pending
+        // proposal must not name a new booker before anyone approves it.
+        if !crate::claim::claim_surfaceable(&body)
+            || body.subject != ClaimSubject::Entity(*booking_ref)
+        {
             continue;
         }
         match body.predicate.as_str() {

@@ -87,7 +87,7 @@ pub(super) fn invite_head_in(
     txn: &heed::RoTxn<'_>,
     calendar: &CalendarRevision,
 ) -> Result<Option<crate::calendar::CalendarPassportValue>, BookingError> {
-    crate::calendar::passport::live_passport_for_in_txn(
+    crate::calendar::passport::admitted_passport_for_in_txn(
         vault,
         txn,
         &calendar.event_ref,

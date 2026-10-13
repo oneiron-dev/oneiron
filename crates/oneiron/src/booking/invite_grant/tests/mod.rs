@@ -792,6 +792,46 @@ fn authorization_resolves_page_and_recipient_from_vault_claims() {
     );
 }
 
+/// A pending proposal naming a different booker does not add that person
+/// to the page grant before anyone approves it.
+#[test]
+fn a_proposed_booker_does_not_widen_the_page_grant() {
+    let fixture = fixture();
+    let stranger = person(&fixture.vault, 0x90, STRANGER.as_bytes());
+    let proposal = ClaimBody::new(
+        BOOKING_BOOKER_CONTACT_PREDICATE,
+        ClaimSubject::Entity(fixture.booking),
+        claim_value(&BookingBookerContactValue {
+            contact_ref: stranger,
+        }),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    // The highest id scans last, where an approval-blind reader lets it win.
+    fixture
+        .vault
+        .put_claim(
+            &entity(0xF0),
+            &proposal,
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+        )
+        .expect("the proposal is stored pending review");
+    assert!(
+        !booking_page_grant_covers_recipient(&fixture.vault, &fixture.page, STRANGER)
+            .expect("covers")
+    );
+    assert!(
+        booking_page_grant_covers_recipient(&fixture.vault, &fixture.page, RECIPIENT)
+            .expect("covers")
+    );
+}
+
 // ── dispatch ────────────────────────────────────────────────────────
 
 #[test]

@@ -455,3 +455,345 @@ async fn public_booking_cross_page_action_credentials_are_non_oracular() {
         assert_eq!(bytes(known).await, bytes(unknown).await);
     }
 }
+
+/// engine-crates-01: a confirm answers with its own attempt's receipt. A
+/// first visitor's confirm is queued and its request has not run its turn
+/// yet. A second visitor's confirm must not run that attempt and answer with
+/// the first visitor's cancel and reschedule tokens, whether it carries
+/// another idempotency key or the very same one.
+#[tokio::test]
+async fn a_confirm_answers_with_its_own_attempt_never_another_visitors() {
+    use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+    use oneiron::booking::lifecycle::enqueue_booking_verb_with_publication;
+    use oneiron::booking::publication::PublicBookingAuthority;
+
+    let fixture = Fixture::new();
+    let slots = fixture.slots().await;
+    assert!(slots.len() > 4);
+    for (round, shared_key) in [(0_usize, false), (1, true)] {
+        let first = format!("first-{round}");
+        let second = format!("second-{round}");
+        let first_hold = held_token(&fixture, &slots[2 * round], &first).await;
+        let second_hold = held_token(&fixture, &slots[2 * round + 1], &second).await;
+
+        let now = now_secs().expect("clock");
+        let (page_ref, publication) =
+            resolve_public_booking_page(&fixture.server, &fixture.token).expect("live page");
+        let authority = PublicBookingAuthority {
+            page_ref,
+            publication,
+        };
+        let first_key = format!("confirm-{first}");
+        let queued = enqueue_booking_verb_with_publication(
+            &fixture.server.vault,
+            BookingVerbRequest::Confirm(ConfirmSpec {
+                hold_token: OpaqueLifecycleToken(first_hold),
+                session_key: session_key(fixture.page, &first),
+                booker_contact: resolve_booker_contact(
+                    &fixture.server,
+                    "first@example.test",
+                    now,
+                    Some(&authority),
+                )
+                .expect("first booker"),
+                intake: Vec::new(),
+                idempotency_key: Some(first_key.clone()),
+            }),
+            now,
+            Some(authority),
+        )
+        .expect("first visitor's confirm is queued");
+
+        let key = if shared_key {
+            first_key
+        } else {
+            format!("confirm-{second}")
+        };
+        let answered = confirmed_tokens(
+            fixture
+                .dispatch(
+                    "booking.confirm",
+                    confirm_with_key(second_hold.clone(), &second, &key),
+                )
+                .await
+                .expect("second visitor confirms"),
+        );
+        // A retry under a fresh key reaches the receipt recorded for this
+        // hold token, which carries the second visitor's own tokens.
+        let own = confirmed_tokens(
+            fixture
+                .dispatch(
+                    "booking.confirm",
+                    confirm_with_key(second_hold, &second, &format!("retry-{second}")),
+                )
+                .await
+                .expect("second visitor retries"),
+        );
+        assert_eq!(
+            answered, own,
+            "round {round}: the confirm answered with another visitor's tokens"
+        );
+        let first_row = AttemptQueue::new(&fixture.server.vault)
+            .get(queued)
+            .expect("queue read")
+            .expect("first visitor's attempt");
+        assert_eq!(
+            first_row.state,
+            AttemptState::Queued,
+            "round {round}: another request ran the first visitor's attempt"
+        );
+    }
+}
+
+async fn held_token(fixture: &Fixture, slot: &RankedSlot, session: &str) -> String {
+    let held = fixture
+        .dispatch("booking.hold", hold(selected(slot), session, None))
+        .await
+        .expect("hold");
+    let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = held else {
+        panic!("held")
+    };
+    hold_token
+}
+
+fn confirm_with_key(token: String, session: &str, key: &str) -> BookingOperationRequest {
+    let mut request = confirm(token, session);
+    if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = &mut request {
+        key.clone_into(&mut input.idempotency_key);
+    }
+    request
+}
+
+fn confirmed_tokens(response: BookingOperationResponse) -> (String, String) {
+    let BookingOperationResponse::Book(BookingBookResult::Confirmed {
+        reschedule_token,
+        cancel_token,
+    }) = response
+    else {
+        panic!("confirmed, got {response:?}")
+    };
+    (reschedule_token, cancel_token)
+}
+
+/// engine-crates-24: a control the owner scoped to one event type binds a
+/// confirm for that type. A confirm names its event type only through its
+/// hold, or once the hold is spent through the booking it made, so a retry
+/// of a confirm is bound too. A confirm naming no hold of its session is
+/// refused before anything is recorded for it.
+#[tokio::test]
+async fn an_event_scoped_required_intake_refuses_a_confirm_for_that_event() {
+    let fixture = Fixture::new();
+    let slots = fixture.slots().await;
+    assert!(slots.len() > 2);
+    let booked = held_token(&fixture, &slots[0], "booked").await;
+    let mut first = confirm(booked, "booked");
+    if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = &mut first {
+        input.intake = vec![oneiron::booking::agent_api::BookingIntakeAnswer {
+            field_key: "topic".to_owned(),
+            value: "short".to_owned(),
+        }];
+    }
+    confirmed_tokens(
+        fixture
+            .dispatch("booking.confirm", first.clone())
+            .await
+            .expect("confirm before the rule"),
+    );
+
+    let scope = BookingRuleScope {
+        page_ref: fixture.page,
+        event_type: Some(EventTypeKey("intro".to_owned())),
+    };
+    let rule = BookingAntiAbuseRule::RequiredIntake {
+        min_chars: NonZeroU16::new(10).expect("positive"),
+    };
+    apply_rule_amendment(
+        &fixture.server.vault,
+        0,
+        BookingAntiAbuseRuleRow {
+            row_id: booking_rule_row_id(&scope, &rule),
+            scope,
+            rule,
+            version: 1,
+            amended_at: 0,
+            amended_by: fixture.page,
+            owner_stamp_ref: None,
+        },
+        None,
+    )
+    .expect("event-scoped intake rule");
+
+    let held = held_token(&fixture, &slots[1], "empty-intake").await;
+    assert_eq!(
+        fixture
+            .dispatch("booking.confirm", confirm(held, "empty-intake"))
+            .await
+            .expect_err("an empty intake is refused for the scoped event type"),
+        StatusCode::BAD_REQUEST
+    );
+    // The retry is refused for its intake, not for its spent hold.
+    let retry = fixture
+        .route(
+            "POST",
+            &format!("/public/booking/{}/verbs/booking.confirm", fixture.token),
+            serde_json::to_value(first).expect("wire"),
+        )
+        .await;
+    assert_eq!(retry.status(), StatusCode::BAD_REQUEST);
+    let body = String::from_utf8(bytes(retry).await).expect("utf-8");
+    assert!(body.contains("intake"), "{body}");
+
+    let mut stranger = confirm("ab".repeat(32), "no-hold");
+    if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = &mut stranger {
+        "stranger@example.test".clone_into(&mut input.booker_email);
+    }
+    assert_eq!(
+        fixture
+            .dispatch("booking.confirm", stranger)
+            .await
+            .expect_err("a confirm naming no hold is refused"),
+        StatusCode::BAD_REQUEST
+    );
+    let contact =
+        super::super::subject::booker_contact_ref("stranger@example.test").expect("contact ref");
+    assert!(
+        fixture
+            .server
+            .vault
+            .get(&contact)
+            .expect("contact read")
+            .is_none(),
+        "a refused confirm recorded a booker contact"
+    );
+}
+
+/// engine-core-03 on the public route: with a daily cap of one, a second
+/// visitor's confirm on a day already booked is refused, and the first
+/// booking still moves within its own day, which it does not fill twice.
+#[tokio::test]
+async fn a_daily_cap_closes_a_booked_day_but_lets_its_booking_move_within_it() {
+    let mut config = fixture_config();
+    config.daily_cap = Some(1);
+    let fixture = Fixture::with_config(config);
+    let slots = fixture.slots().await;
+    let day = |slot: &RankedSlot| slot.start_utc / 86_400;
+    let busiest = slots
+        .iter()
+        .map(day)
+        .max_by_key(|candidate| slots.iter().filter(|slot| day(slot) == *candidate).count())
+        .expect("slots");
+    let same_day: Vec<&RankedSlot> = slots.iter().filter(|slot| day(slot) == busiest).collect();
+    assert!(same_day.len() > 4);
+
+    let first = held_token(&fixture, same_day[0], "first").await;
+    let second = held_token(&fixture, same_day[2], "second").await;
+    let (reschedule_token, _) = confirmed_tokens(
+        fixture
+            .dispatch("booking.confirm", confirm(first, "first"))
+            .await
+            .expect("first confirm"),
+    );
+    assert!(matches!(
+        fixture
+            .dispatch("booking.confirm", confirm(second, "second"))
+            .await
+            .expect("second confirm answers"),
+        BookingOperationResponse::Book(BookingBookResult::SlotTaken { .. })
+    ));
+
+    let moved = fixture
+        .dispatch(
+            "booking.reschedule",
+            reschedule(reschedule_token, selected(same_day[4]), "same-day-move"),
+        )
+        .await
+        .expect("a booking moves within its own capped day");
+    assert!(matches!(moved, BookingOperationResponse::Reschedule { .. }));
+}
+
+/// A pending `status: cancelled` proposal filed beside a confirmed booking
+/// does not free its visitor's place under the owner's active-booking cap.
+#[tokio::test]
+async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_cap() {
+    let fixture = Fixture::new();
+    let slots = fixture.slots().await;
+    assert!(slots.len() > 1);
+    let scope = BookingRuleScope {
+        page_ref: fixture.page,
+        event_type: None,
+    };
+    let rule = BookingAntiAbuseRule::BookRate {
+        per_minute_per_ip: NonZeroU32::new(100).expect("positive"),
+        max_active_future_per_email: 1,
+    };
+    apply_rule_amendment(
+        &fixture.server.vault,
+        0,
+        BookingAntiAbuseRuleRow {
+            row_id: booking_rule_row_id(&scope, &rule),
+            scope,
+            rule,
+            version: 1,
+            amended_at: 0,
+            amended_by: fixture.page,
+            owner_stamp_ref: None,
+        },
+        None,
+    )
+    .expect("active-booking cap");
+
+    let first = held_token(&fixture, &slots[0], "first").await;
+    confirmed_tokens(
+        fixture
+            .dispatch("booking.confirm", confirm(first, "first"))
+            .await
+            .expect("the visitor's one booking"),
+    );
+    let events = fixture
+        .server
+        .vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_EVENT)
+        .expect("events");
+    let [booking] = events.as_slice() else {
+        panic!("one booking EVENT, got {events:?}")
+    };
+    let now = now_secs().expect("clock");
+    let proposal = oneiron::ClaimBody::new(
+        oneiron::booking::BOOKING_STATUS_PREDICATE,
+        oneiron::ClaimSubject::Entity(*booking),
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("status"), rmpv::Value::from("cancelled")),
+            (rmpv::Value::from("recorded_at"), rmpv::Value::from(now)),
+        ]),
+        1.0,
+        oneiron::ClaimApprovalStatus::Proposed,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .expect("claim body");
+    // The highest id scans last, where an approval-blind reader lets it win.
+    fixture
+        .server
+        .vault
+        .put_claim(
+            &oneiron::EntityId::from_bytes([0xF0; 16]).expect("id"),
+            &proposal,
+            oneiron::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .expect("the proposal is stored pending review");
+
+    let second = held_token(&fixture, &slots[1], "second").await;
+    let refused = fixture
+        .route(
+            "POST",
+            &format!("/public/booking/{}/verbs/booking.confirm", fixture.token),
+            serde_json::to_value(confirm(second, "second")).expect("wire"),
+        )
+        .await;
+    assert!(!refused.status().is_success(), "{}", refused.status());
+    let body = String::from_utf8(bytes(refused).await).expect("utf-8");
+    assert!(body.contains("active upcoming"), "{body}");
+}

@@ -622,6 +622,15 @@ async fn execute_confirm(
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingOperationResponse, ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
+    // A confirm naming no live hold of this session, and no booking its hold
+    // token already made, gets the writer's own refusal here, before a
+    // booker contact is recorded for it.
+    oneiron::booking::lifecycle::confirm_event_type(
+        &server.vault,
+        &session_key,
+        &OpaqueLifecycleToken(input.hold_token.clone()),
+        now,
+    )?;
     let booker_contact =
         resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
     let receipt = run_booking_verb(
