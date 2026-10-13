@@ -2,7 +2,7 @@
 //!
 //! Logs and crash reports never carry world text (owner ruling 2026-10-14).
 //! Both sinks (the normal one and managed mode's) build their subscriber here,
-//! so a check run through [`subscriber`] is a check of what production writes.
+//! so a check run through `subscriber` is a check of what production writes.
 //!
 //! Rust's default panic hook prints the panic payload, and a payload is
 //! arbitrary text: an `expect` on a parsed body, a `{row:?}` in an assert, a
