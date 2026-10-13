@@ -164,7 +164,7 @@ impl SyncServer {
                         );
                     }
                     Err(error) => {
-                        tracing::warn!(panicked = error.is_panic(), "scheduled backup task failed")
+                        tracing::warn!(panicked = error.is_panic(), "scheduled backup task failed");
                     }
                 }
             }

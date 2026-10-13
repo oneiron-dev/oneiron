@@ -116,7 +116,7 @@ pub(crate) async fn get_entity(
     let scoped_read = scoped_read_for_legacy_api(&server)?;
     let read = scoped_read
         .read(&[oneiron::claim::PointRead::id(id)], None)
-        .inspect_err(|error| tracing::error!(kind = ?error.kind(),"get entity failed"))
+        .inspect_err(|error| tracing::error!(kind = ?error.kind(), "get entity failed"))
         .map_err(|_| ApiError::internal_server_error("get entity failed"))?
         .single();
     let response = match read

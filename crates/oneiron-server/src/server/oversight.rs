@@ -90,10 +90,10 @@ impl SyncServer {
                 match server.emit_healer_oversight_admitted(admission).await {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {
-                        tracing::warn!(kind = ?error.kind(), "healer oversight emission failed")
+                        tracing::warn!(kind = ?error.kind(), "healer oversight emission failed");
                     }
                     Err(error) => {
-                        tracing::warn!(panicked = error.is_panic(), "healer oversight task failed")
+                        tracing::warn!(panicked = error.is_panic(), "healer oversight task failed");
                     }
                 }
             }
