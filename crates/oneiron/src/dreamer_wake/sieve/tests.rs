@@ -487,10 +487,12 @@ fn a_message_withheld_beside_unchanged_words_is_read_once_a_grant_lets_it() {
 /// across it and reset the sentence a name runs in; a window that saw no
 /// close read inline code as prose; a cut inside a word gave the next
 /// segment a word edge, and so a date, the text does not have; a cut in the
-/// line that closes a fence left the fence open. A long text is read in
-/// segments that end where no word or span the rules see runs across, read
-/// from the character before, and carry the sentence and code they end in,
-/// so each text below reads as a short one would.
+/// line that closes a fence left the fence open; a cut forced by a long word
+/// split a short date inside it, and the rest of a long run read as a name.
+/// A long text is read in segments that end where no word or span the rules
+/// see runs across, or, inside an extent too long to be a span, where no
+/// shorter one does, and carry the sentence, the code and the word or run
+/// they end in, so each text below reads as a short one would.
 #[test]
 fn a_long_text_is_cut_where_no_span_runs_across() {
     let dir = tempfile::tempdir().expect("dir");
@@ -529,6 +531,30 @@ fn a_long_text_is_cut_where_no_span_runs_across() {
         ),
         (
             "x ".repeat(2_040) + "`Alice 2026-10-12` Bob arrives. " + &"x ".repeat(2_000),
+            vec![(name, "Bob")],
+        ),
+        // The rest of a word a cut splits opens no name, and a date reads
+        // a word edge only where the text has one.
+        (
+            "x".repeat(4_095) + "-Alice arrives. " + &"x ".repeat(400),
+            vec![],
+        ),
+        (
+            "a_".repeat(2_048) + "2026-10-12 ok. " + &"x ".repeat(400),
+            vec![],
+        ),
+        // A cut inside a word too long to be a name splits no date in it,
+        // and a run too long to be a name gives none, not even its rest.
+        (
+            "A".repeat(4_090) + "-2026-10-12 " + &"x ".repeat(300),
+            vec![(date, "2026-10-12")],
+        ),
+        (
+            "ア".repeat(1_366) + "、アリス。" + &"x ".repeat(1_000),
+            vec![(name, "アリス")],
+        ),
+        (
+            "Aa ".repeat(1_400) + "x Bob arrives. " + &"x ".repeat(300),
             vec![(name, "Bob")],
         ),
     ];
@@ -659,7 +685,7 @@ fn grants_written_while_turns_wait_never_hold_a_new_turn_back() {
     let vault = open(dir.path(), false);
     let private = Some(serde_json::json!({"scope": {"private": true}}));
     for index in 0..64_u8 {
-        let turn_ref = format!("{:02x}", 0x30 + index).repeat(16);
+        let turn_ref = format!("{:02x}", 0xb0 + index).repeat(16);
         witness_with(
             &vault,
             &turn_ref,

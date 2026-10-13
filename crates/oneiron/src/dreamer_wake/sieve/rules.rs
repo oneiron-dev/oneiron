@@ -10,7 +10,11 @@
 //!
 //! A long text is read one segment at a time, so one pass's work stays
 //! within its bound. Where a segment ends depends on the text alone: a
-//! reading is the same whether one pass or many read it.
+//! reading is the same whether one pass or many read it. Every span a rule
+//! flags is short: a run of space inside a date holds at most 8 characters,
+//! and a temporal phrase longer than [`PHRASE_BYTES`] is no date, a run of
+//! capitalized words or of katakana longer than [`NAME_BYTES`] no name. So a
+//! window sees each span whole, and a segment ends where none runs across.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -67,17 +71,26 @@ pub(super) const SEGMENT_WINDOW: usize = SEGMENT_BYTES + SEGMENT_REACH;
 /// [`SEGMENT_REACH`], so a window always sees whether a backtick before its
 /// cut opens one.
 const INLINE_CODE_BYTES: usize = 256;
+/// The longest temporal phrase read as a date, for the same reason.
+const PHRASE_BYTES: usize = 256;
+/// The longest name: a longer run of capitalized words or of katakana is
+/// running text, not a name.
+const NAME_BYTES: usize = 256;
 
 /// What the text before a segment leaves its reading: whether the segment
 /// starts inside a sentence (its first word opens none), inside a fenced
-/// code block (and inside the line that closes it), or inside an inline
-/// code span.
+/// code block (and inside the line that closes it), inside an inline code
+/// span, and, after a cut inside an extent too long to be a span, inside a
+/// word, a run of capitalized words or a katakana run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Carry {
     pub(super) in_sentence: bool,
     pub(super) in_fence: bool,
     pub(super) closing_fence: bool,
     pub(super) in_code: bool,
+    pub(super) in_word: bool,
+    pub(super) in_name: bool,
+    pub(super) in_kana: bool,
 }
 
 /// One segment's reading.
@@ -101,13 +114,17 @@ struct CodeRange {
 }
 
 /// The rules' reading of one window, in offsets into it: its spans, its
-/// code, and every word, extent a rule considered, inline code span and
-/// fence line, which a cut must not split.
+/// code, its words, runs of capitalized words and katakana runs, each name
+/// or not, and every extent a rule considered, inline code span and fence
+/// line, which a cut must not split.
 struct Seen {
     spans: Vec<RuleSpan>,
     code: Vec<CodeRange>,
     /// Fence lines, each with whether it closes a block.
     fences: Vec<(usize, usize, bool)>,
+    words: Vec<(usize, usize)>,
+    names: Vec<(usize, usize)>,
+    kana: Vec<(usize, usize)>,
     cover: Vec<(usize, usize)>,
 }
 
@@ -184,17 +201,17 @@ impl Rules {
                 RuleClass::AbsoluteDate,
             ),
             (
-                format!(r"(?i)\b(?:{MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?\b(?:,?\s+\d{{4}}\b)?"),
+                format!(r"(?i)\b(?:{MONTHS})\.?\s{{1,8}}\d{{1,2}}(?:st|nd|rd|th)?\b(?:,?\s{{1,8}}\d{{4}}\b)?"),
                 RuleClass::AbsoluteDate,
             ),
             (
                 format!(
-                    r"(?i)\b\d{{1,2}}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:{MONTHS})\b\.?(?:,?\s+\d{{4}}\b)?"
+                    r"(?i)\b\d{{1,2}}(?:st|nd|rd|th)?\s{{1,8}}(?:of\s{{1,8}})?(?:{MONTHS})\b\.?(?:,?\s{{1,8}}\d{{4}}\b)?"
                 ),
                 RuleClass::AbsoluteDate,
             ),
             (
-                r"(?i)\b(?:january|february|march|april|june|july|august|september|october|november|december)\s+\d{4}\b".to_owned(),
+                r"(?i)\b(?:january|february|march|april|june|july|august|september|october|november|december)\s{1,8}\d{4}\b".to_owned(),
                 RuleClass::AbsoluteDate,
             ),
             (
@@ -234,9 +251,12 @@ impl Rules {
     /// else a sentence end, else a space, else any character, where no
     /// word, no extent its rules considered, no inline code span and no
     /// fence line runs across; the segment keeps the spans that end by then.
-    /// Only a word or extent that fills the whole half is cut, at
-    /// [`SEGMENT_BYTES`]: the spans across the cut are dropped, and the next
-    /// segment reads on inside it, starting no word or span there.
+    /// Where only an extent too long to be a span fills the half (a word, a
+    /// run, a phrase or a fence line of half a segment or more), the cut
+    /// falls inside it, outside every shorter one, and the next segment reads
+    /// on inside the word or run, starting none there. Only shorter extents
+    /// that overlap across the whole half are cut at [`SEGMENT_BYTES`], and
+    /// the spans across that cut are dropped.
     pub(super) fn segment(&self, text: &str, at: usize, carry: Carry) -> Segment {
         let rest = &text[at..];
         let end = if rest.len() <= SEGMENT_WINDOW {
@@ -265,7 +285,15 @@ impl Rules {
             };
         }
         let window = &text[at..end];
-        let cut = cut_in(window, &merged(seen.cover));
+        let short: Vec<(usize, usize)> = seen
+            .cover
+            .iter()
+            .copied()
+            .filter(|&(start, end)| end - start < SEGMENT_BYTES / 2)
+            .collect();
+        let cut = cut_in(window, &merged(seen.cover))
+            .or_else(|| cut_in(window, &merged(short)))
+            .unwrap_or_else(|| floor_boundary(window, SEGMENT_BYTES));
         let inside = |fenced: bool| {
             seen.code
                 .iter()
@@ -275,6 +303,9 @@ impl Rules {
             .fences
             .iter()
             .any(|&(start, end, closes)| closes && start < cut && cut < end);
+        let splits = |extents: &[(usize, usize)]| {
+            extents.iter().any(|&(start, end)| start < cut && cut < end)
+        };
         Segment {
             end: at + cut,
             carry: Carry {
@@ -282,6 +313,9 @@ impl Rules {
                 in_fence: inside(true),
                 closing_fence,
                 in_code: inside(false),
+                in_word: splits(&seen.words),
+                in_name: splits(&seen.names),
+                in_kana: splits(&seen.kana),
             },
             spans: shift(seen.spans, cut),
             read: window.len(),
@@ -290,84 +324,112 @@ impl Rules {
 
     /// The rules' reading of `text[from..to]` from the state `carry` leaves
     /// it: every date and name span, in text order, none overlapping and none
-    /// inside code. The character before `from` is read as well, so the
-    /// window's start is no word or token edge the text does not have; a
-    /// span that starts in it is the text before's. Each list is filtered
-    /// against the next in one ordered sweep, so a flood of spans costs its
-    /// length, not its square.
+    /// inside code, and what a cut must not split. A run a cut split goes on
+    /// from the text before, the rest of one too long to be a name, and the
+    /// rest of a word a cut split opens no run. Each list is filtered against
+    /// the next in one ordered sweep, so a flood of spans costs its length,
+    /// not its square.
     fn read(&self, text: &str, (from, to): (usize, usize), carry: Carry) -> Seen {
+        let window = &text[from..to];
         let line_start = from == 0 || text.as_bytes().get(from - 1) == Some(&b'\n');
-        let (code, fences) = code_ranges(&text[from..to], carry, line_start);
-        let context = text[..from].chars().next_back().map_or(0, char::len_utf8);
-        let hay = &text[from - context..to];
-        let mut dates: Vec<RuleSpan> = self
-            .dates
-            .iter()
-            .flat_map(|(pattern, class)| {
-                pattern.find_iter(hay).map(|found| RuleSpan {
-                    start: found.start(),
-                    end: found.end(),
-                    class: *class,
-                })
-            })
-            .chain(
-                temporal_phrase_spans(hay)
-                    .into_iter()
-                    .map(|phrase| RuleSpan {
-                        start: phrase.start,
-                        end: phrase.end,
-                        class: if phrase.resolved {
-                            RuleClass::RelativeDate
-                        } else {
-                            RuleClass::VagueDate
-                        },
-                    }),
-            )
-            .collect();
+        let (code, fences) = code_ranges(window, carry, line_start);
+        let (mut dates, phrases) = self.dates_in(text, (from, to));
         dates.sort_by_key(|span| (span.start, std::cmp::Reverse(span.end)));
-        let words = words(hay, carry.in_sentence);
-        let mut names = name_spans(hay, &words);
-        names.sort_by_key(|span| (span.start, span.end));
-        // Offsets from here on are into the window, past the context.
-        let into = |(start, end): (usize, usize)| {
-            (start.saturating_sub(context), end.saturating_sub(context))
+        let parsed = words(window, carry.in_sentence);
+        let opening = if carry.in_name {
+            Opening::Continues
+        } else if carry.in_word {
+            Opening::Rest
+        } else {
+            Opening::Fresh
         };
-        let cover = dates
+        let runs = capitalized_runs(window, &parsed, opening);
+        let kana = katakana_runs(window);
+        let mut names: Vec<RuleSpan> = runs
             .iter()
-            .chain(&names)
-            .map(|span| into((span.start, span.end)))
-            .chain(words.iter().map(|word| into((word.start, word.end))))
+            .skip(usize::from(carry.in_name))
+            .chain(kana.iter().filter(|run| !carry.in_kana || run.start > 0))
+            .filter(|name| name.end - name.start <= NAME_BYTES)
+            .copied()
+            .collect();
+        names.sort_by_key(|span| (span.start, span.end));
+        let extents = |spans: &[RuleSpan]| -> Vec<(usize, usize)> {
+            spans.iter().map(|span| (span.start, span.end)).collect()
+        };
+        let (runs, kana) = (extents(&runs), extents(&kana));
+        let words: Vec<(usize, usize)> = parsed.iter().map(|word| (word.start, word.end)).collect();
+        let cover = extents(&dates)
+            .into_iter()
+            .chain(extents(&phrases))
+            .chain(runs.iter().copied())
+            .chain(kana.iter().copied())
+            .chain(words.iter().copied())
             .chain(
                 code.iter()
                     .filter(|range| !range.fenced)
                     .map(|range| (range.start, range.end)),
             )
             .chain(fences.iter().map(|&(start, end, _)| (start, end)))
-            .filter(|&(start, end)| start < end)
             .collect();
-        let blocks: Vec<(usize, usize)> = code
-            .iter()
-            .map(|range| (context + range.start, context + range.end))
-            .collect();
+        let blocks: Vec<(usize, usize)> =
+            code.iter().map(|range| (range.start, range.end)).collect();
         let mut spans = longest_first(&mut clear_of(dates, &blocks));
         let held: Vec<_> = spans.iter().map(|date| (date.start, date.end)).collect();
         spans.extend(clear_of(clear_of(names, &blocks), &held));
-        let mut spans: Vec<RuleSpan> = spans
-            .into_iter()
-            .filter(|span| span.start >= context)
-            .map(|span| RuleSpan {
-                start: span.start - context,
-                end: span.end - context,
-                ..span
-            })
-            .collect();
         spans.sort_by_key(|span| (span.start, span.end));
         Seen {
             spans,
             code,
             fences,
+            words,
+            names: runs,
+            kana,
             cover,
         }
+    }
+
+    /// The date candidates of `text[from..to]`, in offsets into it, and apart
+    /// every temporal phrase, the ones too long to be a date as well. The
+    /// patterns and the phrase reader read the character before `from` too,
+    /// so the window's start is a word edge only where the text has one; a
+    /// candidate that starts in that character is the text before's.
+    fn dates_in(&self, text: &str, (from, to): (usize, usize)) -> (Vec<RuleSpan>, Vec<RuleSpan>) {
+        let context = text[..from].chars().next_back().map_or(0, char::len_utf8);
+        let hay = &text[from - context..to];
+        let into = |start: usize, end: usize, class: RuleClass| {
+            start.checked_sub(context).map(|start| RuleSpan {
+                start,
+                end: end - context,
+                class,
+            })
+        };
+        let phrases: Vec<RuleSpan> = temporal_phrase_spans(hay)
+            .into_iter()
+            .filter_map(|phrase| {
+                let class = if phrase.resolved {
+                    RuleClass::RelativeDate
+                } else {
+                    RuleClass::VagueDate
+                };
+                into(phrase.start, phrase.end, class)
+            })
+            .collect();
+        let dates = self
+            .dates
+            .iter()
+            .flat_map(|(pattern, class)| {
+                pattern
+                    .find_iter(hay)
+                    .filter_map(move |found| into(found.start(), found.end(), *class))
+            })
+            .chain(
+                phrases
+                    .iter()
+                    .copied()
+                    .filter(|phrase| phrase.end - phrase.start <= PHRASE_BYTES),
+            )
+            .collect();
+        (dates, phrases)
     }
 }
 
@@ -399,11 +461,10 @@ fn merged(mut extents: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     joined
 }
 
-/// Where a segment of `window` ends: the last point in the second half of
-/// [`SEGMENT_BYTES`] after a line break, else a sentence end, else a space,
-/// else any character, inside none of `cover` (sorted, disjoint). With none,
-/// it ends at [`SEGMENT_BYTES`].
-fn cut_in(window: &str, cover: &[(usize, usize)]) -> usize {
+/// Where a segment of `window` may end: the last point in the second half
+/// of [`SEGMENT_BYTES`] after a line break, else a sentence end, else a
+/// space, else any character, inside none of `cover` (sorted, disjoint).
+fn cut_in(window: &str, cover: &[(usize, usize)]) -> Option<usize> {
     let limit = floor_boundary(window, SEGMENT_BYTES);
     let clear = |cut: usize| {
         let next = cover.partition_point(|&(_, end)| end <= cut);
@@ -422,13 +483,11 @@ fn cut_in(window: &str, cover: &[(usize, usize)]) -> usize {
         &|_, ch| ch.is_whitespace(),
         &|_, _| true,
     ];
-    for ends in ends {
-        if let Some((_, _, cut)) = points().find(|&(index, ch, cut)| ends(index, ch) && clear(cut))
-        {
-            return cut;
-        }
-    }
-    limit
+    ends.into_iter().find_map(|ends| {
+        points()
+            .find(|&(index, ch, cut)| ends(index, ch) && clear(cut))
+            .map(|(_, _, cut)| cut)
+    })
 }
 
 /// Whether the character at `index` of `text` ends a sentence: a CJK full
@@ -625,19 +684,38 @@ fn capitalized(word: &str) -> bool {
         && !NOT_NAMES.contains(&word.to_lowercase().as_str())
 }
 
-/// Runs of capitalized `words` of `text`, and katakana runs.
-fn name_spans(text: &str, words: &[Word]) -> Vec<RuleSpan> {
+/// How the first word of a window stands to the text before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Opening {
+    /// A word of its own.
+    Fresh,
+    /// The rest of a word a cut split, in no run: it opens none.
+    Rest,
+    /// The rest of a run of capitalized words a cut split: it goes on with
+    /// the run, whatever its case.
+    Continues,
+}
+
+/// Runs of capitalized `words` of `text`, the first word standing as
+/// `opening` says.
+fn capitalized_runs(text: &str, words: &[Word], opening: Opening) -> Vec<RuleSpan> {
+    let capitalized_at = |index: usize| capitalized(&text[words[index].start..words[index].end]);
     let mut spans = Vec::new();
     let mut index = 0;
     while index < words.len() {
-        if !capitalized(&text[words[index].start..words[index].end]) {
+        let opens_run = match (index, opening) {
+            (0, Opening::Continues) => true,
+            (0, Opening::Rest) => false,
+            _ => capitalized_at(index),
+        };
+        if !opens_run {
             index += 1;
             continue;
         }
         let first = index;
         // A run continues over adjacent capitalized words joined by one space.
         while index + 1 < words.len()
-            && capitalized(&text[words[index + 1].start..words[index + 1].end])
+            && capitalized_at(index + 1)
             && !words[index + 1].opens
             && &text[words[index].end..words[index + 1].start] == " "
         {
@@ -655,8 +733,6 @@ fn name_spans(text: &str, words: &[Word]) -> Vec<RuleSpan> {
         });
         index += 1;
     }
-    spans.extend(katakana_runs(text));
-    spans.sort_by_key(|span| span.start);
     spans
 }
 
