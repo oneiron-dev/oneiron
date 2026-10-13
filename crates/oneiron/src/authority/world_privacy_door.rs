@@ -101,7 +101,7 @@ impl Vault {
                 "world settings need a live WORLD row".to_owned(),
             ));
         }
-        let key = crate::identity::read_device_signing_key_in_txn(self, txn)?
+        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
             .ok_or_else(|| refused("this install has no machine key"))?;
         let public_key = key.verifying_key().to_bytes();
         let fold = self.authority_view_readonly_in_txn(txn)?;

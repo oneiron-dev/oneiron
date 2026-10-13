@@ -431,6 +431,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "IDENTITY_DEVICE_PK",
         "IDENTITY_DEVICE_SK",
         "IDENTITY_MACHINE_ID",
+        "IDENTITY_MACHINE_SK",
         "INGEST_DOCS_DEEP_CEILING",
         "INGEST_DOCS_DEEP_RECEIPT",
         "INGEST_HISTORY_LEDGER",

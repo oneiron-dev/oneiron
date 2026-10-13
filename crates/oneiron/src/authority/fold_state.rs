@@ -252,6 +252,10 @@ pub(super) struct FoldState {
     pub(super) host_root_keys: BTreeSet<AuthorityKey>,
     pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
     pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// Every row an accepted bind or rebind named, merged by union: the
+    /// actor merge keeps one winner, and a row bound on a losing branch is
+    /// still no physical machine.
+    pub(super) actor_rows: BTreeSet<EntityId>,
 }
 
 /// Fold-internal binding content for one authority key.
@@ -469,6 +473,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .host_root_keys
         .extend(right.host_root_keys.iter().cloned());
+    merged.actor_rows.extend(right.actor_rows.iter().copied());
     merged
 }
 

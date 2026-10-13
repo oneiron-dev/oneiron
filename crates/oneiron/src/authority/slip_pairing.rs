@@ -187,15 +187,13 @@ impl Vault {
         principal: PairingPrincipal,
         ownership: MachineOwnership,
     ) -> Result<PairingLink> {
-        {
-            let txn = self.store.env.read_txn()?;
-            owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        }
-        let machine = PendingMachine {
-            owner: owner.actor(),
-            ownership,
-        };
-        self.issue_pairing_link_in(issuer, scope, slip_lifetime_secs, principal, Some(machine))
+        self.issue_pairing_link_in(
+            issuer,
+            scope,
+            slip_lifetime_secs,
+            principal,
+            Some((owner, ownership)),
+        )
     }
     fn issue_pairing_link_in(
         &self,
@@ -203,12 +201,24 @@ impl Vault {
         scope: Scope,
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
-        machine: Option<PendingMachine>,
+        answer: Option<(&crate::consent::AuthenticatedOwner, MachineOwnership)>,
     ) -> Result<PairingLink> {
         if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
         }
         let mut txn = self.store.env.write_txn()?;
+        // The owner answers for a machine only while their credential is
+        // live, judged in the transaction that stores the answer.
+        let machine = match answer {
+            None => None,
+            Some((owner, ownership)) => {
+                owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+                Some(PendingMachine {
+                    owner: owner.actor(),
+                    ownership,
+                })
+            }
+        };
         require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);

@@ -108,6 +108,7 @@ pub(super) fn fold_entry_state(
             host_root_keys: BTreeSet::new(),
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
+            actor_rows: BTreeSet::new(),
         };
         if !tier_meets_floor(device.tier, *tier_floor) {
             return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));

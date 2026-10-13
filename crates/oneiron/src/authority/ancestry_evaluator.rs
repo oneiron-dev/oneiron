@@ -42,13 +42,15 @@ pub(super) fn evaluate_entry(
 /// Rejected entries may only be crossed when they are permissive. The
 /// caller's diagnostic set is not enough to bypass an arbitrary operation.
 pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
+    match op {
         AuthorityOp::BindActor { .. }
-            | AuthorityOp::RebindActor { .. }
-            | AuthorityOp::EnrollDevice { .. }
-            | AuthorityOp::FederationLifecycle(_)
-    )
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::EnrollDevice { .. }
+        | AuthorityOp::FederationLifecycle(_) => true,
+        // A profile grants standing; a removal withdraws it and never is.
+        AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
+        _ => false,
+    }
 }
 
 /// Try a stalled withdrawal against explicitly rejected parents, which

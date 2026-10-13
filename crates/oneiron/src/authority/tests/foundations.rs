@@ -407,6 +407,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         host_root_keys: BTreeSet::new(),
         worlds: BTreeMap::new(),
         refused_world_edits: BTreeSet::new(),
+        actor_rows: BTreeSet::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(

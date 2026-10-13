@@ -332,6 +332,7 @@ impl LocalFoldContext {
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
+            hosted: false,
             pre_handoff_entries: None,
         }
     }
@@ -385,6 +386,7 @@ pub(super) fn single_owner_state(
         host_root_keys: BTreeSet::new(),
         worlds: BTreeMap::new(),
         refused_world_edits: BTreeSet::new(),
+        actor_rows: BTreeSet::new(),
     };
     (owner, owner_key, parent, state)
 }

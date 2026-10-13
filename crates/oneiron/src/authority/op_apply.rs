@@ -199,6 +199,7 @@ pub(super) fn apply_actor_binding(
             conflicted: false,
         },
     );
+    state.actor_rows.insert(*actor_ref);
     Ok(())
 }
 

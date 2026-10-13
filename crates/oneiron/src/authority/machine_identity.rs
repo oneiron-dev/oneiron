@@ -2,7 +2,7 @@
 //! enrolment door, and the proof a connection carries.
 //!
 //! Three identities stay apart. The MACHINE row an install is (its id lives
-//! beside the install key, `identity.rs`); the engine's writer actors, which
+//! with its own machine key, `identity.rs`); the engine's writer actors, which
 //! are MACHINE rows bound as `system` actors and never get a profile; and the
 //! Loro client id, a CRDT peer id that names no machine.
 
@@ -45,7 +45,7 @@ pub struct LocalMachine {
 /// The machine at the other end of a connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerMachine {
-    /// A live profiled machine that proved its install key on this connection.
+    /// A live profiled machine that proved its machine key on this connection.
     Proven(EntityId),
     /// No proof, a proof that did not verify, or a machine not live here. It
     /// is never read as this machine or as one of the owner's.
@@ -72,7 +72,7 @@ pub fn machine_connection_transcript(
     bytes
 }
 
-/// The [`MACHINE_PROOF_HEADER`] value: the machine and its install key's
+/// The [`MACHINE_PROOF_HEADER`] value: the machine and its machine key's
 /// signature over [`machine_connection_transcript`].
 #[must_use]
 pub fn machine_proof_header_value(machine: EntityId, signature: &[u8; 64]) -> String {
@@ -87,7 +87,8 @@ impl Vault {
         let Some(id) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
             return Ok(None);
         };
-        let key = crate::identity::read_device_verifying_key_in_txn(self, &txn)?;
+        let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
+            .map(|key| key.verifying_key().to_bytes());
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let profile = fold
             .machine(id)
@@ -97,7 +98,7 @@ impl Vault {
     }
 
     /// Called on the machine that joins: mints (once) and keeps this install's
-    /// machine id, and signs its identity for `vault_id` with the install key.
+    /// machine id and key, and signs its identity for `vault_id` with that key.
     pub fn machine_enrolment_request(
         &self,
         vault_id: [u8; 32],
@@ -106,11 +107,9 @@ impl Vault {
         encryption_key.validate()?;
         let mut request = None;
         self.with_write_txn_grouped(|wtxn| {
-            let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
-            let machine = crate::identity::load_or_mint_machine_id_in_txn(self, wtxn)?;
-            let machine_key = identity.signing_key.verifying_key().to_bytes();
-            let machine_proof = identity
-                .signing_key
+            let (machine, key) = crate::identity::load_or_mint_machine_in_txn(self, wtxn)?;
+            let machine_key = key.verifying_key().to_bytes();
+            let machine_proof = key
                 .sign(&machine_profile_proof_transcript(
                     &vault_id,
                     machine,
@@ -190,22 +189,14 @@ impl Vault {
     ) -> Result<FoldedMachine> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
+        // A machine joins once. A later answer changes its role through
+        // `set_machine_role`; nothing that joins replaces its key.
         if role == MachineRole::Removed
             || fold.vault_id != Some(request.vault_id)
-            || fold
-                .machine(request.machine)
-                .is_some_and(|folded| folded.removed)
+            || fold.machine(request.machine).is_some()
         {
             return Err(invalid_authority());
         }
-        let revision = match fold.machine(request.machine) {
-            Some(folded) => folded
-                .profile
-                .revision
-                .checked_add(1)
-                .ok_or_else(invalid_authority)?,
-            None => 1,
-        };
         self.ensure_machine_row_in_txn(txn, request.machine)?;
         let profile = MachineProfile {
             machine: request.machine,
@@ -213,7 +204,7 @@ impl Vault {
             machine_key: request.machine_key,
             encryption_key: request.encryption_key.clone(),
             role,
-            revision,
+            revision: 1,
             machine_proof: request.machine_proof,
             seen_world_edits: std::collections::BTreeSet::new(),
         };
@@ -300,7 +291,7 @@ impl Vault {
         let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
             return Ok(None);
         };
-        let Some(key) = crate::identity::read_device_signing_key_in_txn(self, &txn)? else {
+        let Some(key) = crate::identity::read_machine_signing_key_in_txn(self, &txn)? else {
             return Ok(None);
         };
         let Some(vault_id) = self.authority_view_readonly_in_txn(&txn)?.vault_id else {
