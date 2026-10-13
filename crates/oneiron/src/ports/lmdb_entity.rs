@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 
 impl Vault {
     /// [`EntityStore::port_entity_get`] read through `store`, a room's view
-    /// included. A NOTE's document and an entity document stay the vault's:
-    /// their live projection reads its own store.
+    /// included. A NOTE's document, an entity document and an LFS chunk's
+    /// publication stay the vault's: they read its own store.
     pub(crate) fn live_entity_in_txn(
         &self,
         store: &impl ManifestDbs,
@@ -25,7 +25,10 @@ impl Vault {
         if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
-        if store.port_deletion_state(txn, id)?.deleted || stale_in_txn(store, txn, id)? {
+        if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&self.store, txn, id, row.entity_type)?
+            || store.port_deletion_state(txn, id)?.deleted
+            || stale_in_txn(store, txn, id)?
+        {
             return Ok(None);
         }
         if super::safe_read::body_is_stale(&row.body) {

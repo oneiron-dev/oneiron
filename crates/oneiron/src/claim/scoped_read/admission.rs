@@ -345,15 +345,29 @@ impl<'a> ScopedRead<'a> {
     }
 
     /// Both canonical and session reads use the same ports. A session adapter
-    /// composes overlay union base without changing policy admission.
+    /// composes overlay union base without changing policy admission. An LFS
+    /// chunk no published object holds yet is no record a scoped read finds.
     pub(super) fn entity_record_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityRecord>> {
-        match self.session_view {
-            Some(view) => view.port_entity_record(txn, id),
-            None => self.vault.port_entity_record(txn, id),
+        let record = match self.session_view {
+            Some(view) => view.port_entity_record(txn, id)?,
+            None => self.vault.port_entity_record(txn, id)?,
+        };
+        match record {
+            Some(row)
+                if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                    &self.vault.store,
+                    txn,
+                    id,
+                    row.entity_type,
+                )? =>
+            {
+                Ok(None)
+            }
+            record => Ok(record),
         }
     }
 
