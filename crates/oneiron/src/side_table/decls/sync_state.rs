@@ -141,6 +141,9 @@ side_tables! {
     DELETION_WINDOW_LABEL: SyncState b"m:dw:" Raw;
     /// Client-only: last Unix-seconds timestamp this device reached fully-synced status. Key: ().
     SYNC_M_LAST_SYNC: SyncState b"m:last_sync" Raw;
+    /// The MACHINE row this install is (16 B entity id), minted once beside the device key; never
+    /// synced and never restored from another install. Key: ().
+    IDENTITY_MACHINE_ID: SyncState b"m:machine_id" Raw;
     /// Monotonic counter allocating the next u:e: sequence number for one entity's text document.
     /// Key: hex32 (entity id).
     SYNC_M_U_SEQ_E: SyncState b"m:u_seq:e:" Raw;

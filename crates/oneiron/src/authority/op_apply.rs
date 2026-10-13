@@ -84,6 +84,8 @@ pub(super) fn apply_op(
         AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. } => {}
+        // `fold_entry_state`'s machine-profile arm returns before reaching here.
+        AuthorityOp::MachineProfile(_) => {}
     }
 }
 

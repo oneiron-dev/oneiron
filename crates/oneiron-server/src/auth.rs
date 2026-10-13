@@ -17,6 +17,7 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 
 mod binding_admission;
+mod machine_proof;
 mod slips;
 pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use slips::{BindingProof, parse_signature, parse_slip_id};

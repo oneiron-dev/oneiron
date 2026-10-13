@@ -431,6 +431,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GMAIL_MAILBOX_CURSOR",
         "IDENTITY_DEVICE_PK",
         "IDENTITY_DEVICE_SK",
+        "IDENTITY_MACHINE_ID",
         "INGEST_DOCS_DEEP_CEILING",
         "INGEST_DOCS_DEEP_RECEIPT",
         "INGEST_HISTORY_LEDGER",

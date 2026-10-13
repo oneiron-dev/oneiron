@@ -28,6 +28,9 @@ pub(super) struct ConnState {
     pub(super) bound_auth: Option<CoreAuth>,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
+    /// The machine this socket's upgrade proved, independent of its actor.
+    /// `Unknown` is an unknown destination: never this machine or the owner's.
+    pub(super) peer_machine: oneiron::authority::PeerMachine,
 }
 
 impl ConnState {
@@ -44,7 +47,13 @@ impl ConnState {
             protocol_version,
             bound_auth: None,
             residence_index: None,
+            peer_machine: oneiron::authority::PeerMachine::Unknown,
         }
+    }
+
+    pub(super) fn with_peer_machine(mut self, machine: oneiron::authority::PeerMachine) -> Self {
+        self.peer_machine = machine;
+        self
     }
 
     pub(super) fn touch_window(

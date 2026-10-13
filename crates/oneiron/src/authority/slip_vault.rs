@@ -600,7 +600,7 @@ impl Vault {
         Ok(())
     }
 }
-fn next_entry(
+pub(super) fn next_entry(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,
     op: AuthorityOp,

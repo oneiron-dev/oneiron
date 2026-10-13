@@ -118,6 +118,8 @@ pub struct AuthorityFold {
     pub federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
     /// Folded actor-binding tuples keyed by authority key (ONE-1604-D2).
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
+    /// Each physical machine's folded standing, keyed by its MACHINE row.
+    pub machines: BTreeMap<EntityId, FoldedMachine>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -238,6 +240,9 @@ pub(super) struct FoldState {
     pub(super) actor_binding_revocations: BTreeMap<AuthorityKey, u64>,
     pub(super) actor_revocation_hashes: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     pub(super) seqs: BTreeMap<AuthorityKey, u64>,
+    pub(super) machines: BTreeMap<EntityId, FoldedMachine>,
+    /// Every machine row that ever claimed each install key, merged by union.
+    pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
 }
 
 /// Fold-internal binding content for one authority key.
@@ -447,6 +452,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .and_modify(|current| *current = (*current).max(*seq))
             .or_insert(*seq);
     }
+    merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
     merged
 }
 

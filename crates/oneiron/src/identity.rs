@@ -55,6 +55,9 @@ const CLIENT_ID: SideTable<(), ClientId, Raw> = SideTable::new(&side_table::IDEN
 const DEVICE_SK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_SK);
 /// Cached Ed25519 verifying key derived from the seed. Key: `()`.
 const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_PK);
+/// The MACHINE row this install is (16 B entity id), minted once beside the
+/// signing key. Not the client id: that is a CRDT peer id. Key: `()`.
+const MACHINE_ID: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_ID);
 
 /// [`CLIENT_ID`]'s value: u64 LE, nonzero (ONE-1155 — 0 collides with Loro's
 /// unset peer id). A wrong-length row and an 8-byte zero row are distinct
@@ -184,6 +187,54 @@ pub(crate) fn read_device_verifying_key_in_txn(
         .map(|raw| {
             <[u8; 32]>::try_from(raw.as_slice())
                 .map_err(|_| Error::CorruptedIndex("device public key row"))
+        })
+        .transpose()
+}
+
+/// This install's MACHINE id, minted once inside the caller's txn. The
+/// install key ([`ensure_device_identity_in_txn`]) is the machine's key, so the
+/// two are minted together and never move to another install.
+pub(crate) fn load_or_mint_machine_id_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<crate::EntityId> {
+    if let Some(id) = read_machine_id_in_txn(vault, wtxn)? {
+        return Ok(id);
+    }
+    let id = vault.store.clock.entity_id()?;
+    MACHINE_ID.put(&vault.store, wtxn, &(), &id.as_bytes().to_vec())?;
+    Ok(id)
+}
+
+/// This install's MACHINE id, or `None` before it asked to join a vault.
+pub(crate) fn read_machine_id_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<crate::EntityId>> {
+    MACHINE_ID
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 16]>::try_from(raw.as_slice())
+                .ok()
+                .and_then(|bytes| crate::EntityId::from_bytes(bytes).ok())
+                .ok_or(Error::CorruptedIndex("machine id row"))
+        })
+        .transpose()
+}
+
+/// This device's signing key under the caller's transaction, or `None`
+/// before the identity is minted. Never mints: a request that only names the
+/// machine must not take the writer.
+pub(crate) fn read_device_signing_key_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<SigningKey>> {
+    DEVICE_SK
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 32]>::try_from(raw.as_slice())
+                .map(|seed| SigningKey::from_bytes(&seed))
+                .map_err(|_| Error::CorruptedIndex("device signing key row"))
         })
         .transpose()
 }

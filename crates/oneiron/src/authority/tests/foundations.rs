@@ -402,6 +402,8 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         actor_binding_revocations: BTreeMap::new(),
         actor_revocation_hashes: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
+        machines: BTreeMap::new(),
+        machine_keys: BTreeMap::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(

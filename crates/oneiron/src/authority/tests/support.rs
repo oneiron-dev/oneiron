@@ -380,6 +380,8 @@ pub(super) fn single_owner_state(
         actor_binding_revocations: BTreeMap::new(),
         actor_revocation_hashes: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
+        machines: BTreeMap::new(),
+        machine_keys: BTreeMap::new(),
     };
     (owner, owner_key, parent, state)
 }
