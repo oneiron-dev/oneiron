@@ -206,9 +206,13 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     // retired signs nothing new here, and nothing new stands on a row one
     // signed, so its fork never reaches the log.
     if !crate::authority::authority_row_resident(store, wtxn, &entry)?
-        && local_fold.stands_on_retired_key(&entry_hash, &entry, &mut |hash| {
-            crate::authority::stored_authority_row(store, wtxn, hash)
-        })?
+        && crate::authority::door_refuses_retired_standing(
+            store,
+            &local_fold,
+            &entry_hash,
+            &entry,
+            &mut |hash| crate::authority::stored_authority_row(store, wtxn, hash),
+        )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "authority row signed by a key a handoff retired",

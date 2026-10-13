@@ -8,6 +8,11 @@
 //! - A handoff takes effect only on its own rows: it and its whole ancestry
 //!   fold on their own, and no confirmation collision or concurrent tier
 //!   floor prunes them. A pruned handoff installs nothing and retires nothing.
+//! - Settlement does not depend on the order rows arrived in. A local
+//!   sequence floor records only which of a signer's rows this vault saw
+//!   first, so none applies inside a handoff's line: a sibling handoff that
+//!   arrived first conflicts with it rather than refusing it. Floors still
+//!   refuse every row outside such a line.
 //! - Its fence holds every key in its parents' rosters, live or revoked,
 //!   except its successor. Such a key signs nothing that stands outside the
 //!   handoff and its own ancestry. No later handoff or merge widens that line,

@@ -530,7 +530,10 @@ fn a_retired_root_installs_no_second_root() {
 
 /// engine-crates-03 at the doors: after a handoff, a row the old root signs
 /// is refused by the signed re-root door, by replicated replay and by
-/// signed-history import, so the fork never reaches the log.
+/// signed-history import, so the fork never reaches the log. The first
+/// handoff a vault settles keeps it, and each refusal of the sibling is
+/// recorded as evidence that the old key signed both (Engine ruling
+/// 2026-10-14, the first record of OF-166).
 #[test]
 fn every_door_refuses_a_row_the_retired_root_signs() {
     let dir = tempfile::tempdir().unwrap();
@@ -578,6 +581,14 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
     let fold = vault.authority_fold().unwrap();
     assert!(!fold.roster[&authority_key_from_ed(&next)].revoked);
     assert!(!fold.roster.contains_key(&authority_key_from_ed(&fork)));
+    assert_eq!(
+        vault.authority_handoff_equivocations(),
+        vec![AuthorityHandoffEquivocation {
+            signer: authority_key_from_ed(&old),
+            handoffs: BTreeSet::from([authority_entry_hash(&handoff).unwrap()]),
+            refused: authority_entry_hash(&forked).unwrap(),
+        }]
+    );
 }
 
 fn re_root_to_host(

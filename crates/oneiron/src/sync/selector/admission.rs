@@ -439,9 +439,13 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
     }
     let rtxn = vault.store.env.read_txn()?;
     if !crate::authority::authority_row_resident(&vault.store, &rtxn, &entry)?
-        && local.stands_on_retired_key(&authority_entry_hash(&entry)?, &entry, &mut |hash| {
-            crate::authority::stored_authority_row(&vault.store, &rtxn, hash)
-        })?
+        && crate::authority::door_refuses_retired_standing(
+            &vault.store,
+            &local,
+            &authority_entry_hash(&entry)?,
+            &entry,
+            &mut |hash| crate::authority::stored_authority_row(&vault.store, &rtxn, hash),
+        )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "authority row signed by a key a handoff retired",

@@ -261,7 +261,14 @@ fn fold_authority_log_inner(
             local,
         );
         loop {
-            let allowed = verified_handoff_ancestors(entries, &candidates);
+            let handoffs: BTreeSet<_> = candidates.keys().copied().collect();
+            let allowed = verified_handoff_ancestors(entries, &handoffs);
+            // Each candidate's line settles as it probed, under no local
+            // sequence floor; every other row keeps its floor.
+            let lines: BTreeSet<_> = candidates.values().flatten().copied().collect();
+            let observations = local
+                .observations
+                .map(|observations| observations.without_floors_on(&lines));
             let result = fold_authority_log_inner(
                 entries,
                 first_seen_at_secs,
@@ -269,26 +276,21 @@ fn fold_authority_log_inner(
                 peer_consent_roots,
                 consent_arm,
                 FoldLocalInputs {
+                    observations: observations.as_ref(),
                     retire_device_ops: false,
                     pre_handoff_entries: Some(&allowed),
-                    handoff_candidates: Some(&candidates),
-                    ..local
+                    handoff_candidates: Some(&handoffs),
                 },
             );
             // A handoff in conflict keeps its standing here: its fence stays
             // closed, so the handoff it conflicts with never settles alone.
-            let retained: BTreeSet<_> = candidates
-                .iter()
-                .filter(|candidate| {
-                    result.valid_entries.contains(*candidate)
-                        || result.closed_handoffs.contains(*candidate)
-                })
-                .copied()
-                .collect();
-            if retained == candidates {
+            candidates.retain(|candidate, _| {
+                result.valid_entries.contains(candidate)
+                    || result.closed_handoffs.contains(candidate)
+            });
+            if candidates.len() == handoffs.len() {
                 return result;
             }
-            candidates = retained;
         }
     }
     let sequence_floors = local
@@ -334,9 +336,15 @@ fn fold_authority_log_inner(
     fold
 }
 
-/// Probe each signed re-root against its own causal history. A tier-floor or
-/// other retired sibling outside that history has zero authority to eliminate
-/// a candidate. The final strict fold rechecks these candidates as a set.
+/// Probe each signed re-root against its own causal history, and map each
+/// that stands there to that history, its line. A tier-floor or other retired
+/// sibling outside the line has zero authority to eliminate a candidate, and
+/// neither has a local sequence floor. A floor records only which rows of a
+/// signer this vault saw first, so a sibling that arrived first would decide
+/// the settlement, and the same rows would settle differently in another
+/// arrival order. The handoff vouches for its line as it vouches for its
+/// parents, so the probe applies no floor inside it. The final strict fold
+/// rechecks these candidates as a set, under the same rule.
 fn verified_handoff_candidates(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
@@ -344,12 +352,12 @@ fn verified_handoff_candidates(
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
-) -> BTreeSet<AuthorityEntryHash> {
+) -> BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>> {
     let by_hash: BTreeMap<_, _> = entries
         .iter()
         .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
         .collect();
-    let mut candidates = BTreeSet::new();
+    let mut candidates = BTreeMap::new();
     for (candidate, entry) in &by_hash {
         if !matches!(entry.op, AuthorityOp::ReRoot { .. })
             || entry.validate_shape().is_err()
@@ -377,6 +385,9 @@ fn verified_handoff_candidates(
             .iter()
             .map(|hash| (*by_hash[hash]).clone())
             .collect();
+        let observations = local
+            .observations
+            .map(|observations| observations.without_floors_on(&closure));
         let probe = fold_authority_log_inner(
             &scoped,
             first_seen_at_secs,
@@ -384,13 +395,14 @@ fn verified_handoff_candidates(
             peer_consent_roots,
             consent_arm,
             FoldLocalInputs {
+                observations: observations.as_ref(),
                 retire_device_ops: false,
                 pre_handoff_entries: None,
                 ..local
             },
         );
         if !probe.vault_root_is_conflicted() && probe.valid_entries.contains(candidate) {
-            candidates.insert(*candidate);
+            candidates.insert(*candidate, closure);
         }
     }
     candidates

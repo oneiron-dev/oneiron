@@ -100,9 +100,13 @@ impl Vault {
         let local = self.authority_fold_readonly_in_txn(&txn)?;
         for (hash, _, entry) in &decoded {
             if !resident.contains(hash)
-                && local.stands_on_retired_key(hash, entry, &mut |parent| {
-                    Ok(merged.get(parent).map(|(_, row)| row.clone()))
-                })?
+                && super::door_refuses_retired_standing(
+                    &self.store,
+                    &local,
+                    hash,
+                    entry,
+                    &mut |parent| Ok(merged.get(parent).map(|(_, row)| row.clone())),
+                )?
             {
                 return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
                     "authority history standing on a key a handoff retired",

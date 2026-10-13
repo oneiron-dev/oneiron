@@ -38,6 +38,7 @@ mod weak_keys;
 
 mod causal_claim;
 mod checkpoint;
+mod handoff_arrival_order;
 mod handoff_settlement;
 mod history_transfer;
 mod host_re_root;

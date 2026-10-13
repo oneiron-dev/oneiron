@@ -101,7 +101,9 @@ impl Vault {
             }
             if let Some(fold) = &local
                 && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
-                && fold.stands_on_retired_key(
+                && super::door_refuses_retired_standing(
+                    &self.store,
+                    fold,
                     &authority_entry_hash(entry)?,
                     entry,
                     &mut |hash| match batch.get(hash) {
