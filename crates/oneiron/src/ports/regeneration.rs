@@ -57,9 +57,12 @@ pub(super) fn complete(
         }
     }
     // Every export door judges an epoch summary by the sources its
-    // `DerivedFrom` edges name, so its withdrawal ends only once they name
-    // every source it was regenerated from: a dependency row alone certifies
-    // nothing a door reads, and a lost edge stays a withdrawal.
+    // `DerivedFrom` edges name, and a deletion withdraws it through its
+    // dependency rows. It is fresh again only once the two agree: the edges
+    // name exactly the sources it was regenerated from. A dependency row
+    // alone certifies nothing a door reads, and an edge to an undeclared
+    // source would lose the row that withdraws it on that source's erase; an
+    // obsolete edge goes through the batch door first, which withdraws.
     if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
         && crate::compaction::decode_epoch_summary_body(&row.body).is_ok()
     {
@@ -73,10 +76,11 @@ pub(super) fn complete(
         )?
         .map(|edge| edge.map(|edge| edge.target))
         .collect::<Result<std::collections::BTreeSet<_>>>()?;
-        if sources
+        let declared = sources
             .iter()
-            .any(|source| !named.contains(&source.document))
-        {
+            .map(|source| source.document)
+            .collect::<std::collections::BTreeSet<_>>();
+        if named != declared {
             return Ok(false);
         }
     }
@@ -93,12 +97,12 @@ pub(super) fn complete(
     for source in sources {
         super::integrity::record_dependency_in_txn(store, txn, *source, dependent)?;
     }
+    // What an epoch summary was withdrawn for stays: its old words still sit
+    // in window history and in snapshots already packed, which a door judges
+    // by this row (Sol round 20). It retires with the body.
     store
         .vault_meta()
         .delete(txn, &super::integrity::stale_key(dependent))?;
-    store
-        .vault_meta()
-        .delete(txn, &super::integrity::withdrawn_key(dependent))?;
     Ok(true)
 }
 /// The sources `dependent` is registered as derived from.

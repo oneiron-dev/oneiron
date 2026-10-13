@@ -126,7 +126,8 @@ pub(crate) fn record_withdrawn_in_txn(
 }
 /// Retires what epoch summary `id` was withdrawn for with its body: a purge,
 /// or an erase that scrubs it. An invalidation that leaves the body (a
-/// standalone tombstone) keeps it; a regeneration clears it with the stale bit.
+/// standalone tombstone) keeps it, and so does a regeneration: the old words
+/// outlive the rewrite in window history and packed snapshots.
 pub(crate) fn retire_withdrawn_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,

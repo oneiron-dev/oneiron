@@ -5766,45 +5766,78 @@ fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
         );
     }
     drop(rtxn);
-    // A regeneration from W's CLAIM ends the withdrawal only once the
-    // summary's edges name it again: export doors read those (Sol round 19).
-    let regenerate = |at: u64| -> crate::Result<bool> {
-        let fact_at = EntityMetadataHeader::parse(&vault.get_raw(&fact)?.unwrap())
+    // A regeneration from W's CLAIM completes only once the summary's edges
+    // name it again: export doors read those (Sol round 19).
+    let regenerate = |summary: EntityId, source: EntityId, at: u64| -> crate::Result<bool> {
+        let source_at = EntityMetadataHeader::parse(&vault.get_raw(&source)?.unwrap())
             .unwrap()
             .learned_at;
         vault
             .batch()
             .put(
-                &batched,
+                &summary,
                 crate::registry::ENTITY_TYPE_SUMMARY,
                 TimeRange { start: at, end: at },
                 at,
-                &epoch_summary_bytes(1, "the world fact, again")?,
+                &epoch_summary_bytes(1, "the fact, again")?,
             )
             .commit()?;
         vault.with_write_txn(|txn| {
             crate::ports::DependencyIndex::port_dependency_complete_regeneration(
                 &*vault,
                 txn,
-                &batched,
+                &summary,
                 at,
                 &[crate::ports::SourceSpan {
-                    document: fact,
-                    frontier: fact_at,
+                    document: source,
+                    frontier: source_at,
                 }],
             )
         })
     };
     let rewritten = october.start_timestamp().unwrap() + 120;
     assert!(
-        !regenerate(rewritten)?,
+        !regenerate(batched, fact, rewritten)?,
         "a regeneration the graph does not name ends nothing"
     );
+    // An edge the regeneration does not declare would lose the dependency
+    // row that withdraws the summary when that source is erased (Sol round
+    // 20); it goes through the batch door first.
     vault
         .batch()
         .edge(&batched, EdgeKind::DerivedFrom, &fact, 1.0)
+        .edge(&batched, EdgeKind::DerivedFrom, &person, 1.0)
         .commit()?;
-    assert!(regenerate(rewritten + 60)?);
+    assert!(
+        !regenerate(batched, fact, rewritten + 60)?,
+        "a regeneration that leaves a named source undeclared ends nothing"
+    );
+    vault
+        .batch()
+        .delete_edge(&batched, EdgeKind::DerivedFrom, &person)
+        .commit()?;
+    assert!(regenerate(batched, fact, rewritten + 120)?);
+    // A regeneration from a base PERSON alone still keeps W: the summary's
+    // old words sit in the November snapshot packed before any of this,
+    // which a door judges by the current row (Sol round 20).
+    vault
+        .batch()
+        .edge(&bridged, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    assert!(regenerate(
+        bridged,
+        person,
+        november.start_timestamp().unwrap() + 120
+    )?);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(!crate::ports::stale_in_txn(&vault.store, &rtxn, &bridged)?);
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &bridged)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a regeneration keeps what the summary was withdrawn for"
+    );
+    drop(rtxn);
     let ships = |shipped: bool| -> crate::Result<()> {
         assert_eq!(
             owner_window_ships(&vault, &october, &october_doc)?,
