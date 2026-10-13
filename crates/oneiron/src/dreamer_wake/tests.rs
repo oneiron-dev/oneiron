@@ -587,6 +587,65 @@ impl DreamerAttemptExecutor for RowQuotingPanicExecutor {
     }
 }
 
+/// Set when `an_embedded_dreamer_panic_prints_no_row_text` starts this test
+/// binary as its child.
+const PANIC_CHILD_ENV: &str = "ONEIRON_TEST_DREAMER_PANIC_CHILD";
+const PANIC_CHILD_DONE: &str = "dreamer panic child: pass returned";
+
+/// The child half of `an_embedded_dreamer_panic_prints_no_row_text`: a host
+/// that installed the engine's hook opens a vault and runs a pass whose
+/// executor panics. A no-op unless that check started it.
+#[test]
+fn embedded_dreamer_panic_child() -> Result<()> {
+    if std::env::var_os(PANIC_CHILD_ENV).is_none() {
+        return Ok(());
+    }
+    crate::panic_report::install_panic_hook();
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "row-quoting", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let result = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut RowQuotingPanicExecutor,
+        &WakeCancellation::new(),
+    ));
+    assert!(matches!(result, Err(crate::Error::InvariantViolation(_))));
+    eprintln!("{PANIC_CHILD_DONE}");
+    Ok(())
+}
+
+/// Owner ruling 2026-10-14 (fix 6): crash output never carries world text,
+/// embedded vaults included. The panic hook runs before the driver's
+/// `catch_unwind` returns, so the host's hook, not the driver's log line,
+/// decides what a caught Dreamer panic prints to stderr. The hook is
+/// process-global and stderr is the sink, so the pass runs in a child.
+#[test]
+fn an_embedded_dreamer_panic_prints_no_row_text() {
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "dreamer_wake::tests::embedded_dreamer_panic_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(PANIC_CHILD_ENV, "1")
+        .output()
+        .expect("the child test runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for shown in [&stdout, &stderr] {
+        assert!(!shown.contains("sentinel-row-text-7f3a"), "{shown}");
+    }
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains(PANIC_CHILD_DONE),
+        "the child ran the pass: {stderr}"
+    );
+    assert!(stderr.contains("payload withheld"), "{stderr}");
+}
+
 #[test]
 fn executor_panic_leaves_no_row_text_in_logs() -> Result<()> {
     // Owner ruling 2026-10-14 (fix 6): logs never carry world text. A panic

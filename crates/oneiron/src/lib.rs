@@ -211,6 +211,7 @@ pub mod context_board;
 pub mod genui;
 pub mod lens;
 pub mod memory;
+pub mod panic_report;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
