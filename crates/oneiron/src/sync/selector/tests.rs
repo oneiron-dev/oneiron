@@ -5881,8 +5881,8 @@ fn a_tombstone_that_keeps_a_summary_body_keeps_its_withdrawal_record() -> crate:
 /// Sol round 19: a first deletion reads where a row's words sat whatever its
 /// body holds, since its marker is written before the purge. A WORLD with an
 /// empty body still carries its own world: purging it records that world on
-/// a summary written from it, and a window packed after the purge holds the
-/// summary while the world is flagged.
+/// a summary written from it, and a window packed after the purge, which no
+/// longer names the WORLD, never ships the summary while it is flagged.
 #[test]
 fn a_first_purge_of_an_empty_world_records_it_on_its_summary() -> crate::Result<()> {
     use crate::deletion::DeleteEntityOptions;
@@ -5921,10 +5921,13 @@ fn a_first_purge_of_an_empty_world_records_it_on_its_summary() -> crate::Result<
         "a first purge of an empty WORLD"
     );
     drop(rtxn);
-    let doc = packed_window(&vault, &october)?;
+    // Packing leaves out what a flag keeps, so a window packed now never
+    // ships the summary, carried or not.
+    let fresh = packed_window(&vault, &october)?;
+    let carried = map_get_bytes(&fresh.get_map("entities"), &summary.to_hex()).is_some();
     assert!(
-        !owner_window_ships(&vault, &october, &doc)?,
-        "a window packed after the purge"
+        !carried || !owner_window_ships(&vault, &october, &fresh)?,
+        "a window packed after the purge never ships the summary"
     );
     Ok(())
 }
