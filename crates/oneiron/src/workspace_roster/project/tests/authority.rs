@@ -713,9 +713,9 @@ fn project_slice_entity_refs_cannot_publish_live_off_record_ids() -> Result<()> 
 }
 
 /// Every entity-bearing position a signed proof carries meets the off-record
-/// guard: slip scope, pact grant and pact bound worlds and facets, and the
-/// roster of the anchor it carries (Sol roster review 1), at the typed, batch
-/// and replay doors.
+/// guard: slip scope, pact grant and pact bound worlds and facets, the roster
+/// of the anchor it carries (Sol roster review 1) and the slip's holder (Sol
+/// roster review 2), at the typed, batch and replay doors.
 #[test]
 fn signed_proof_positions_cannot_hide_an_off_record_reference() -> Result<()> {
     use crate::federation::{FederationDirectionScope, ScopeAxis, ScopeId};
@@ -740,10 +740,14 @@ fn signed_proof_positions_cannot_hide_an_off_record_reference() -> Result<()> {
     let root = vault.ensure_host_root_slip(&issuer)?;
     let actor = EntityId::from_hex(&before.leader)?;
     let tainted = ScopeAxis::Some(BTreeSet::from([ScopeId(overlay_id)]));
-    for position in 0..4 {
+    for position in 0..5 {
         let mut claims = root.claims.clone();
         claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
-        claims.holder_ref = actor.to_hex();
+        claims.holder_ref = if position == 4 {
+            overlay_id.to_hex()
+        } else {
+            actor.to_hex()
+        };
         claims.binding_key = holder_key(actor).verifying_key().to_bytes();
         if position == 0 {
             claims.scope.worlds = tainted.clone();
@@ -1262,13 +1266,23 @@ fn only_the_board_adds_a_member_and_the_leader_may_remove_one() -> Result<()> {
     // leader to seat the board (Sol roster review 1).
     let mut body = vault.project(child_id)?.unwrap();
     let anchor = body.anchor();
-    sign_legacy(&vault, child_id, &mut body, Some(child_leader), Some(anchor))?;
+    sign_legacy(
+        &vault,
+        child_id,
+        &mut body,
+        Some(child_leader),
+        Some(anchor),
+    )?;
     assert_eq!(
         vault.put_project(child_id, &body, 5).unwrap_err().kind(),
         ErrorKind::InvalidProjectBody,
         "a leader's older proof seated the board"
     );
-    assert!(vault.bind_room_handle(room, "@board", parent_leader).is_err());
+    assert!(
+        vault
+            .bind_room_handle(room, "@board", parent_leader)
+            .is_err()
+    );
     assert_eq!(seated(&vault, child_id)?, BTreeSet::from([child_leader]));
     Ok(())
 }

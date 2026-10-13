@@ -134,6 +134,10 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         if let Some(org) = &slip.claims.org_ref {
             ids.push(EntityId::from_hex(org).map_err(|_| invalid())?);
         }
+        // The holder is the actor the proof writes as; `host` names none.
+        if let Ok(holder) = EntityId::from_hex(&slip.claims.holder_ref) {
+            ids.push(holder);
+        }
         slip_scope_refs(&slip.claims.scope, &mut ids);
         for block in &slip.caveats {
             if let Some(scope) = &block.caveat.scope {
