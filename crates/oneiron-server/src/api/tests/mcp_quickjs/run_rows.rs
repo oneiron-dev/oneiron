@@ -262,6 +262,25 @@ async fn quickjs_a_runs_search_reads_under_the_credential_builders_key() {
         oneiron::EdgeActorClass::Agent,
     )
     .await;
+    // A connector agent needs its own ceiling: the shipped manifest names
+    // only the first-party one.
+    let owner = mode.vault.ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &mode.vault,
+        oneiron::write_envelope::WriteActor::new(owner, oneiron::edge::EdgeActorClass::Human),
+        seeded_test_entity_id(0x0024_65c8),
+        &json!({
+            "schema_version": "1.2", "pack_id": "agent-run-search", "pack_version": "v1",
+            "min_engine_version": "0.0.0",
+            "defaults": { "criticality": "normal", "sensitivity": "normal" },
+            "rules": [],
+            "actor_ceilings": [
+                { "actor_class": "human", "ceiling": "auto" },
+                { "actor_class": "agent", "actor_ref": agent.to_hex(), "ceiling": "auto" },
+            ],
+        }),
+    )
+    .unwrap();
     let space = seeded_test_entity_id(0x0024_65c3);
     let spaced = (
         seeded_test_entity_id(0x0024_65c4),
