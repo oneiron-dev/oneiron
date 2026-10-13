@@ -648,7 +648,9 @@ fn a_grant_that_opens_a_long_turn_keeps_the_pass_going() {
 
 /// Sol R11 (P2): a read that went on in a MESSAGE kept reading it after the
 /// MESSAGE left its TURN, so the turn queued words it no longer holds. A read
-/// goes on only in a MESSAGE that is still part of the turn.
+/// goes on only in a MESSAGE that is still part of the turn. The batch door
+/// refuses to move a room MESSAGE's PartOf edge, so the edge is torn below
+/// that door, as a membership change from any other path would leave it.
 #[test]
 fn a_message_taken_out_of_its_turn_is_not_read_on() {
     let dir = tempfile::tempdir().expect("dir");
@@ -666,11 +668,18 @@ fn a_message_taken_out_of_its_turn_is_not_read_on() {
         "the bound cut it"
     );
     let message = EntityId::from_hex(id).expect("message id");
-    vault
-        .batch()
-        .delete_edge(&message, crate::edge::EdgeKind::PartOf, &turn)
-        .commit()
+    let torn = vault
+        .with_write_txn(|txn| {
+            crate::ports::EdgeStoreStaging::port_remove_edge_rows(
+                &vault.store,
+                txn,
+                &message,
+                crate::edge::EdgeKind::PartOf,
+                &turn,
+            )
+        })
         .expect("edge");
+    assert!(torn, "the edge existed");
     drain(&vault, NOW + 1);
     assert!(flags(&vault, &turn, &text).is_empty());
 }
@@ -685,7 +694,7 @@ fn grants_written_while_turns_wait_never_hold_a_new_turn_back() {
     let vault = open(dir.path(), false);
     let private = Some(serde_json::json!({"scope": {"private": true}}));
     for index in 0..64_u8 {
-        let turn_ref = format!("{:02x}", 0xb0 + index).repeat(16);
+        let turn_ref = format!("5e{index:030x}");
         witness_with(
             &vault,
             &turn_ref,
