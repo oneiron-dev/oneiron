@@ -333,7 +333,11 @@ impl Memory<'_> {
         rostered: bool,
         wtxn: &heed::RoTxn<'_>,
     ) -> MemoryResult<Option<EntityId>> {
-        let named = plan.turn.messages.iter().any(|message| message.id.is_some());
+        let named = plan
+            .turn
+            .messages
+            .iter()
+            .any(|message| message.id.is_some());
         if rostered && named {
             return Err(MemoryError::bad_request_with(
                 "a participant names no message id in an off-record stretch",
