@@ -489,15 +489,20 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
         .vault()
         .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
     let missing = "ffffffffffffffffffffffffffffffff".to_owned();
+    // High recall on a host with no reranker now runs unreranked, so the
+    // recall case is a scope the engine refuses on both doors.
     let cases = [
         (
             "recall",
-            json!({"query":"solar","effort":"high"}),
+            json!({"query":"solar","effort":"medium","scope":{"kinds":[]}}),
             memory
                 .recall(
                     "solar",
-                    Effort::High,
-                    &RecallScope::default(),
+                    Effort::Medium,
+                    &RecallScope {
+                        kinds: Some(Vec::new()),
+                        ..RecallScope::default()
+                    },
                     10,
                     None,
                     None,
