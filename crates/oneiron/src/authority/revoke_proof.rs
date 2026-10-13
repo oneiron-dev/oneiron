@@ -3,6 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::entity_id::EntityId;
+
 use super::*;
 
 /// One fully verified restrictive fact. Scratch ancestry is proof only; it
