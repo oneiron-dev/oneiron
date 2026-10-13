@@ -641,16 +641,24 @@ fn a_credential_that_reads_no_row_walks_no_world() -> Result<()> {
         (vec![world.to_hex()], false, true),
         "a credential that leaves out base reality"
     );
-    let shapes: [(&str, fn(&mut Scope)); 3] = [
-        ("no band", |scope| scope.bands = ScopeAxis::Bottom),
-        ("no audience", |scope| scope.audience = ScopeAxis::Bottom),
-        ("no sensitivity", |scope| {
-            scope.sensitivity = SensitivityCeiling::Bottom;
-        }),
-    ];
-    for (label, shape) in shapes {
-        let mut scope = crate::federation::scope_codec::read_preset();
-        shape(&mut scope);
+    let preset = crate::federation::scope_codec::read_preset;
+    let no_band = Scope {
+        bands: ScopeAxis::Bottom,
+        ..preset()
+    };
+    let no_audience = Scope {
+        audience: ScopeAxis::Bottom,
+        ..preset()
+    };
+    let no_sensitivity = Scope {
+        sensitivity: SensitivityCeiling::Bottom,
+        ..preset()
+    };
+    for (label, scope) in [
+        ("no band", no_band),
+        ("no audience", no_audience),
+        ("no sensitivity", no_sensitivity),
+    ] {
         assert_eq!(
             walk(label, scope)?,
             (Vec::new(), false, false),
