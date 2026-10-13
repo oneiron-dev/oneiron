@@ -1,0 +1,25 @@
+[package]
+name = "oneiron-spawn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Starts a subprocess with only the standard descriptors and the ones its caller names"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+# `tokio_command` and `tokio_command_with_fds`.
+tokio = ["dep:tokio"]
+
+[dependencies]
+tokio = { version = "1", features = ["process"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

@@ -339,6 +339,7 @@ fn session_error(error: oneiron::Error, session_ref: &str) -> OwnerError {
         ErrorKind::OffRecordOverlayFull => OwnerError::Refused(
             "the session is full; promote or close it before writing more".to_owned(),
         ),
+        ErrorKind::OffRecordCopyConflict => OwnerError::Changed(error.to_string()),
         _ => OwnerError::from(error),
     }
 }

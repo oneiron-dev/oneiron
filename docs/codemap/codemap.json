@@ -8933,6 +8933,14 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/tests_room_saving.rs",
+     "purpose": "ARCH-0052 D4, D5: saving the talk of a room off record while a run keeps speaking into one turn",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "AgentVerbDoor",
       "AgentVerbRefusal",
@@ -23888,7 +23896,7 @@
      "path": "src/memory/witness/codec.rs",
      "purpose": "Turn-speaker and message-envelope codec plus session alias formatting",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -23919,7 +23927,7 @@
      "path": "src/memory/witness/session.rs",
      "purpose": "Session overlay landing: journal staging from the door's authorized values, room-shell claim",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3
      }
     },
@@ -24051,7 +24059,7 @@
      "path": "src/memory/witness/validation.rs",
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -24653,7 +24661,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/lifecycle/promotion.rs",
@@ -24680,9 +24688,19 @@
      "path": "src/off_record/lifecycle/room.rs",
      "purpose": "Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 11,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/saving.rs",
+     "purpose": "Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -24777,7 +24795,7 @@
      "path": "src/off_record/promote.rs",
      "purpose": "Explicit promotion from an off-record session into the durable vault",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 2,
       "struct": 2
      }
@@ -31091,13 +31109,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/journal.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 17
      }
     },
     {
@@ -31197,7 +31215,7 @@
      "path": "src/session_overlay/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -35575,7 +35593,7 @@
      "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
      "surface": {
       "crate-vis": 8,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -37003,7 +37021,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 17,
       "struct": 1
      }
@@ -38271,6 +38289,7 @@
      "notable": [
       "ProjectAnchor",
       "ProjectAuthority",
+      "ProjectProofVersion",
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
@@ -38282,9 +38301,9 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 34,
-      "enum": 1,
-      "fn": 15,
+      "crate-vis": 35,
+      "enum": 2,
+      "fn": 16,
       "re-export": 6,
       "struct": 7
      }
@@ -39579,7 +39598,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40153,7 +40172,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40694,7 +40713,7 @@
    },
    "over_bar": 36,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2469,
+   "source_files": 2471,
    "test_files": 786
   },
   "oneiron-android": {
@@ -42381,6 +42400,27 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ChildBroker"
+     ],
+     "path": "src/child.rs",
+     "purpose": "The same-user broker (ARCH-0069 `#broker-same-user-open`)",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/child/tests.rs",
+     "purpose": "A live child that let its channel go is not taken as ready (Astra on #1416): the daemon replaces it, or…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -42401,7 +42441,7 @@
      "path": "src/client.rs",
      "purpose": "The daemon's side of the socket",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -42452,7 +42492,7 @@
       "enum": 1,
       "fn": 1,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -42462,7 +42502,7 @@
      "path": "src/peer.rs",
      "purpose": "Who this process is, and closing its memory to processes of its own uid",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -42487,6 +42527,8 @@
      "path": "src/serve.rs",
      "purpose": "The broker's side of the socket: one call per connection, from the daemon's uid only",
      "surface": {
+      "const": 1,
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -42563,6 +42605,13 @@
      "largest_src_bucket": "s",
      "layout": "file+dir",
      "purpose": "One call's header and its reply's header, and the checks both sides run"
+    },
+    "child": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "The same-user broker (ARCH-0069 `#broker-same-user-open`)"
     },
     "cli": {
      "files": 1,
@@ -42644,8 +42693,8 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 13,
-   "test_files": 4
+   "source_files": 14,
+   "test_files": 5
   },
   "oneiron-code-check": {
    "files": [
@@ -51035,9 +51084,10 @@
      "purpose": "`[models]`: which model serves each role, at three levels of detail",
      "surface": {
       "crate-vis": 2,
+      "enum": 1,
       "fn": 2,
       "re-export": 2,
-      "struct": 7
+      "struct": 6
      }
     },
     {
@@ -52353,7 +52403,7 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -53526,7 +53576,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/managed_mode.rs",
-     "purpose": "Managed serve mode: the engine as a supervised child process (ONE-1595)",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -53779,6 +53829,49 @@
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 328,
    "test_files": 141
+  },
+  "oneiron-spawn": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Starting a subprocess with only the descriptors it is meant to have",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "The walk that stands in where close_range is missing or refused finds a descriptor above the soft limit…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inherit.rs",
+     "purpose": "A subprocess started through the helper while a new socket pair is still open across exec gets none of it",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "The walk that stands in where close_range is missing or refused finds a descriptor above the soft limit…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Starting a subprocess with only the descriptors it is meant to have",
+   "source_files": 1,
+   "test_files": 2
   },
   "oneiron-uniffi": {
    "files": [

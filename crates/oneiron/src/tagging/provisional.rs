@@ -47,6 +47,26 @@ pub struct ProvisionalEntity {
 }
 
 impl Vault {
+    /// Holds `id` as a provisional entity named `name`, from the turn
+    /// `origin`, as a save mints one. For fixtures outside this module.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn hold_provisional_id_for_test(
+        &self,
+        id: &EntityId,
+        name: &str,
+        origin: &EntityId,
+    ) -> Result<()> {
+        let entity = ProvisionalEntity {
+            kind: crate::registry::ENTITY_TYPE_PERSON,
+            name: name.to_owned(),
+            origin: *origin,
+            facet: None,
+            minted_at: 1,
+        };
+        self.with_write_txn(|txn| mint_in_txn(&self.store, txn, id, &entity))
+    }
+
     /// A provisional entity, while it is one and the text its name came from
     /// reads.
     pub fn provisional_entity(&self, id: &EntityId) -> Result<Option<ProvisionalEntity>> {

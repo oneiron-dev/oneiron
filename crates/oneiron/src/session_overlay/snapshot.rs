@@ -10,7 +10,8 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use super::journal::JournalScope;
 use super::journal::{
-    JournalEntry, JournalRole, PromotePlan, journal_entry_in_closure, promotion_replay_op,
+    JournalEntry, JournalRole, PromotePlan, PublishedEntry, journal_entry_in_closure,
+    promotion_replay_op,
 };
 use super::keyspace::{
     KeyspaceState, OverlayKeyspace, OverlayState, OverlayValue, duplicate_identity,
@@ -266,7 +267,7 @@ impl OverlaySnapshot {
     }
 
     /// Read view of the typed journal, in staging order.
-    pub(crate) fn journal_entries(&self) -> &[JournalEntry] {
+    pub(crate) fn journal_entries(&self) -> &[PublishedEntry] {
         &self.state.journal
     }
 
@@ -300,8 +301,8 @@ impl OverlaySnapshot {
 
     /// [`Self::plan_promotion`] replaying only the closure entries `keep`
     /// admits. A copy of a room's talk (ARCH-0052 D5) keeps what the room
-    /// showed: the rows it leaves out never reach base, and they still retire
-    /// from the journal with the turn, so no later save picks them up.
+    /// showed: the rows it leaves out never reach base, and they stay in the
+    /// journal, unsaved, until the room closes.
     pub(crate) fn plan_promotion_where(
         &self,
         turn: EntityId,
@@ -316,13 +317,37 @@ impl OverlaySnapshot {
                     && matches!(&entry.op, BatchOp::Put { id, .. } if *id == turn)
             })
             .map(|entry| entry.scope.conversation())
-            .ok_or_else(|| {
-                Error::OffRecord(OffRecordError::OffRecordTurnNotInJournal {
-                    turn_ref: turn.to_hex(),
-                })
-            })?;
+            .ok_or_else(|| not_in_journal(turn))?;
+        self.cut(turn, conversation, false, keep)
+    }
 
+    /// The messages said into `turn` since this stretch saved it, as a plan
+    /// that adds them to the turn in base: the closure entries `keep` admits
+    /// of a turn whose TURN is no longer in the journal. Refused when the
+    /// journal holds nothing of the turn.
+    pub(crate) fn plan_append_where(
+        &self,
+        turn: EntityId,
+        keep: impl Fn(&JournalEntry) -> bool,
+    ) -> Result<PromotePlan> {
+        let conversation = self
+            .journal_entries()
+            .iter()
+            .find(|entry| entry.scope.turn() == turn)
+            .map(|entry| entry.scope.conversation())
+            .ok_or_else(|| not_in_journal(turn))?;
+        self.cut(turn, conversation, true, keep)
+    }
+
+    fn cut(
+        &self,
+        turn: EntityId,
+        conversation: EntityId,
+        appends: bool,
+        keep: impl Fn(&JournalEntry) -> bool,
+    ) -> Result<PromotePlan> {
         let mut ops = Vec::new();
+        let mut cut_from = Vec::new();
         let mut replayed = Vec::new();
         let mut source_learned_at = BTreeSet::new();
         for entry in self
@@ -335,6 +360,7 @@ impl OverlaySnapshot {
             }
             source_learned_at.insert(entry.learned_at);
             ops.push(promotion_replay_op(entry)?);
+            cut_from.push(entry.seq);
         }
 
         // In-room aliases, read from the overlay's OWN short-id tables. Base
@@ -357,8 +383,10 @@ impl OverlaySnapshot {
             replayed,
             temporary_short_ids,
             source_learned_at: source_learned_at.into_iter().collect(),
+            cut_from,
             turn,
             conversation,
+            appends,
         })
     }
 
@@ -376,4 +404,10 @@ impl OverlaySnapshot {
     pub(crate) fn bytes_used(&self) -> usize {
         self.state.bytes_used
     }
+}
+
+fn not_in_journal(turn: EntityId) -> Error {
+    Error::OffRecord(OffRecordError::OffRecordTurnNotInJournal {
+        turn_ref: turn.to_hex(),
+    })
 }
