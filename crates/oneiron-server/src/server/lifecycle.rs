@@ -147,6 +147,13 @@ impl SyncServer {
                     );
                 }
                 for (window_key, update) in report.window_updates {
+                    if super::windows::withheld_from_peers(
+                        &self.reassert_manager,
+                        &window_key,
+                        &update,
+                    ) {
+                        continue;
+                    }
                     match crate::protocol::encode_window_sync(
                         &window_key,
                         crate::protocol::window_sub_tags::UPDATE,

@@ -99,6 +99,18 @@ fn bundle_notes(bundle: &NoteReviewBundle) -> BTreeSet<EntityId> {
         .chain(bundle.landed.iter().map(|row| row.note))
         .collect()
 }
+/// Whether a device-only world keeps `note` on this device. Unlike a blocked
+/// NOTE it is never removed from a window that already carries it: a removal
+/// would delete a receiver's copy once the flag clears. The export doors
+/// withhold such a window whole instead.
+fn held(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    note: &EntityId,
+) -> Result<bool> {
+    crate::settings::device_only_withholds(&vault.store, txn, flagged, note)
+}
 /// Whether no export of `doc` carries `note`: it is tombstoned there, deleted
 /// here, off the record, or an erased shell.
 pub(crate) fn blocked(

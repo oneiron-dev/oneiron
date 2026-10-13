@@ -791,6 +791,7 @@ impl Vault {
         Ok(out)
     }
     /// Export never has a debug mode and requires the export verb class.
+    /// A row a device-only world keeps on this device is never exported.
     pub fn export_records_in_scope(
         &self,
         selector: &Scope,
@@ -798,9 +799,13 @@ impl Vault {
         channel: &Scope,
     ) -> Result<Vec<ScopedRecord>> {
         let txn = self.store.env.read_txn()?;
+        let device_only = crate::settings::device_only_worlds_in(&self.store, &txn)?;
         let mut out = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (id, raw) = row?;
+            if crate::settings::device_only_withholds(&self.store, &txn, &device_only, &id)? {
+                continue;
+            }
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             if let Some(scope) = disclosure_scope_for_stored_row(
