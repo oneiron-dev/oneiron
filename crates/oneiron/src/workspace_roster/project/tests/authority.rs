@@ -28,6 +28,7 @@ pub(crate) fn sign_with(
 }
 
 /// Signs as a writer from before v3 did: the challenge leaves the roster out.
+#[cfg(feature = "sync")]
 fn sign_legacy(
     vault: &Vault,
     id: EntityId,
