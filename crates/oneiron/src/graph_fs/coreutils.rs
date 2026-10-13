@@ -304,13 +304,7 @@ impl GraphFsResolver<'_, '_> {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= max_scan_rows {
                 // The last scanned row may be one the walk passed over; the
                 // sealed position resumes after it without naming it.
@@ -385,13 +379,7 @@ impl GraphFsResolver<'_, '_> {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= max_scan_rows {
                 // The last scanned row may be one the walk passed over; the
                 // sealed position resumes after it without naming it.
