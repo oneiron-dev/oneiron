@@ -434,30 +434,37 @@ pub(crate) fn apply_ops_session(
                         view, wtxn, &body,
                     )?;
                 }
+                // The overlay is a write target, not a weaker store. A MESSAGE
+                // keeps the same canonical-body and stable-id rules as base:
+                // exact executor retries are idempotent, while a same-id
+                // divergent retry is refused before any overlay mutation or
+                // journal entry stages.
                 if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
-                    // The overlay is a write target, not a weaker MESSAGE
-                    // store. Keep the same canonical-body and stable-id
-                    // immutability rules as base: exact executor retries are
-                    // idempotent, while a same-id divergent retry is refused
-                    // before any overlay mutation or journal entry stages.
                     crate::gate::validate_canonical_witness_message_body(data)?;
-                    if let Some(raw) =
-                        crate::ports::EntityStoreRead::port_entity_raw(view, &*wtxn, id)?
+                }
+                // Every row keeps its type, as on base (`apply_put`, which
+                // reads the old row wiped too): promote would refuse the
+                // retype, and the revision capture would keep the old row, a
+                // custody body included, as the new one's indexed revision
+                // for a union read to serve.
+                if let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw_wiped(view, &*wtxn, id)?
+                {
+                    let header = EntityMetadataHeader::parse(&raw)
+                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                    if header.entity_type != *entity_type {
+                        return Err(Error::Registry(RegistryError::EntityTypeImmutable {
+                            id: *id,
+                            existing: header.entity_type,
+                            attempted: *entity_type,
+                        }));
+                    }
+                    if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+                        && &raw[ENTITY_METADATA_HEADER_LEN..] != data.as_slice()
                     {
-                        let header = EntityMetadataHeader::parse(&raw)
-                            .ok_or(Error::CorruptedIndex("entity header"))?;
-                        if header.entity_type != *entity_type {
-                            return Err(Error::Registry(RegistryError::EntityTypeImmutable {
-                                id: *id,
-                                existing: header.entity_type,
-                                attempted: *entity_type,
-                            }));
-                        }
-                        if &raw[ENTITY_METADATA_HEADER_LEN..] != data.as_slice() {
-                            return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
-                                "an existing MESSAGE id is bound to its original canonical body",
-                            )));
-                        }
+                        return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
+                            "an existing MESSAGE id is bound to its original canonical body",
+                        )));
                     }
                 }
                 // The ENTRY's stamps, not the op's: they are the witnessing

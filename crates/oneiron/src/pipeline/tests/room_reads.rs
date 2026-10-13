@@ -1838,6 +1838,63 @@ fn a_room_apply_that_writes_one_row_twice_is_refused() -> Result<()> {
     Ok(())
 }
 
+/// A room's put of another type over a base SECRET_CUSTODY row is refused, as
+/// base refuses it, so the custody body never becomes the new row's indexed
+/// revision for a pack in the room to serve.
+#[test]
+fn a_room_put_never_retypes_a_base_custody_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let custody = entity_id(0xE5);
+    let record = crate::secret_custody::SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "roomretypeprobe".to_owned(),
+        class: crate::secret_custody::CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"placeholdervalue".to_vec(),
+        status: crate::secret_custody::SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: Vec::new(),
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
+    };
+    vault.with_write_txn(|wtxn| {
+        crate::secret_custody::put_secret_custody_in_txn(&vault, wtxn, &custody, &record, 1)
+    })?;
+    let session = enter(&vault, "sess-room-custody-retype")?;
+    let refused = stage_in_room(
+        &vault,
+        &session,
+        vec![claim_put(
+            custody,
+            (
+                TimeRange { start: 2, end: 2 },
+                2,
+                owner_claim_body(owner, "retypedvalue")?,
+            ),
+        )],
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::EntityTypeImmutable { .. }
+            ))
+        ),
+        "got {refused:?}"
+    );
+    let view = session.read_view()?;
+    assert!(!view.read().room_holds(&custody)?, "nothing of it staged");
+    drop(view);
+    session.close()?;
+    Ok(())
+}
+
 /// A room embeds a row of its own over base's graph.
 fn embed_in_room(
     vault: &Vault,
