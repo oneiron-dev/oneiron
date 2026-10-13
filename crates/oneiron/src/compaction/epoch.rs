@@ -62,7 +62,7 @@ const KEY_EPOCH_EPOCH: &str = EPOCH_SUMMARY_BODY_KEYS[2];
 const KEY_EPOCH_TURN_START: &str = EPOCH_SUMMARY_BODY_KEYS[3];
 const KEY_EPOCH_TURN_END: &str = EPOCH_SUMMARY_BODY_KEYS[4];
 const KEY_EPOCH_LEVEL: &str = EPOCH_SUMMARY_BODY_KEYS[5];
-const KEY_EPOCH_TEXT: &str = EPOCH_SUMMARY_BODY_KEYS[6];
+pub(super) const KEY_EPOCH_TEXT: &str = EPOCH_SUMMARY_BODY_KEYS[6];
 const KEY_EPOCH_ACTOR: &str = EPOCH_SUMMARY_BODY_KEYS[7];
 
 /// The typed epoch-summary body — the CB-A render contract.

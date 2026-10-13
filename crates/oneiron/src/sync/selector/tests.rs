@@ -5968,30 +5968,8 @@ fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Re
 #[test]
 fn a_summary_of_a_recovered_summary_on_the_text_plane_stays_home() -> crate::Result<()> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open_owned(dir.path(), crate::VaultConfig::device())?;
     let source = entity_id(0x77);
-    let october = WindowKey::new("2026-10");
-    let (world, _) = summaries_of_a_world_fact(&vault, &[(source, &october)])?;
-    move_text_to_document_plane(&vault, &source)?;
-    let snapshot = crate::recovery::capture_canonical_window(
-        &vault,
-        "2026-10",
-        &packed_window(&vault, &october)?,
-    )?;
-
-    let restored_dir = tempfile::tempdir()?;
-    let restored = Vault::open_owned(restored_dir.path(), crate::VaultConfig::device())?;
-    let at = WindowKey::new("2026-09").start_timestamp().unwrap() + 60;
-    let during = TimeRange { start: at, end: at };
-    restored.put_entity(&world, ENTITY_TYPE_WORLD, during, at, b"world")?;
-    crate::recovery::recover_vault_window(
-        &restored,
-        &crate::sync::bridge::Materializer::new(),
-        restored_dir.path().join("manifest"),
-        &snapshot,
-        crate::recovery::RecoveryBudget::default(),
-    )?;
-    assert_eq!(restored.entity_text(&source)?, "the world fact");
+    let (restored, world, _) = recovered_summary_on_the_text_plane(dir.path(), source)?;
     let (nested, november) = (entity_id(0x78), WindowKey::new("2026-11"));
     nested_summary(&restored, source, nested, &november)?;
     let november_doc = packed_window(&restored, &november)?;
@@ -6016,6 +5994,78 @@ fn a_summary_of_a_recovered_summary_on_the_text_plane_stays_home() -> crate::Res
         "the window door, a summary of a pointer no head stands for"
     );
     Ok(())
+}
+
+/// Astra 1384f: a pointer row decides an epoch's shape and its head only
+/// completes it. A second recovery that names another field for the
+/// recovered summary's document leaves the row as it was, and a summary
+/// minted from it afterwards still stays home while W is flagged.
+#[test]
+fn a_recovered_summary_stays_an_epoch_whatever_field_its_head_names() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let source = entity_id(0x79);
+    let (restored, world, snapshot) = recovered_summary_on_the_text_plane(dir.path(), source)?;
+    let mut retitled = snapshot;
+    retitled
+        .entity_documents
+        .iter_mut()
+        .find(|document| document.entity_id == *source.as_bytes())
+        .expect("the summary's document")
+        .field = Some("title".into());
+    crate::recovery::recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        dir.path().join("manifest-retitled"),
+        &retitled,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    let (nested, november) = (entity_id(0x7a), WindowKey::new("2026-11"));
+    nested_summary(&restored, source, nested, &november)?;
+    let november_doc = packed_window(&restored, &november)?;
+    restored.set_world_device_only(world, true)?;
+    assert!(
+        !owner_window_ships(&restored, &november, &november_doc)?,
+        "the window door, a summary of a recovered summary its head names as titled"
+    );
+    let fresh = packed_window(&restored, &november)?;
+    assert!(
+        map_get_bytes(&fresh.get_map("entities"), &nested.to_hex()).is_none(),
+        "packing, a summary of a recovered summary its head names as titled"
+    );
+    Ok(())
+}
+
+/// A vault at `dir` that never held epoch summary `source` of W's CLAIM,
+/// holding W's WORLD row and `source` recovered from a canonical October
+/// window captured after its text moved to the document plane. Returns it,
+/// W and that snapshot.
+fn recovered_summary_on_the_text_plane(
+    dir: &std::path::Path,
+    source: EntityId,
+) -> crate::Result<(Vault, EntityId, crate::recovery::CanonicalSnapshot)> {
+    let origin_dir = tempfile::tempdir()?;
+    let origin = Vault::open_owned(origin_dir.path(), crate::VaultConfig::device())?;
+    let october = WindowKey::new("2026-10");
+    let (world, _) = summaries_of_a_world_fact(&origin, &[(source, &october)])?;
+    move_text_to_document_plane(&origin, &source)?;
+    let snapshot = crate::recovery::capture_canonical_window(
+        &origin,
+        "2026-10",
+        &packed_window(&origin, &october)?,
+    )?;
+    let restored = Vault::open_owned(dir, crate::VaultConfig::device())?;
+    let at = WindowKey::new("2026-09").start_timestamp().unwrap() + 60;
+    let during = TimeRange { start: at, end: at };
+    restored.put_entity(&world, ENTITY_TYPE_WORLD, during, at, b"world")?;
+    crate::recovery::recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        dir.join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(restored.entity_text(&source)?, "the world fact");
+    Ok((restored, world, snapshot))
 }
 
 /// The owner moves the text of `id` to the document plane.
