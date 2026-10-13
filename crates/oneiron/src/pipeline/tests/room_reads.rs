@@ -1835,20 +1835,32 @@ fn a_room_apply_that_writes_one_row_twice_is_refused() -> Result<()> {
     Ok(())
 }
 
-/// A room apply that embeds a row and must drop another row's node from the
-/// room's graph is refused: its view reads the graph as it was before the
-/// call, without the node the embedding inserted, so the drop would leave
-/// the graph's count and entry point wrong for the room's next vector (Sol
-/// R25). Applied one per call, as the witness door does, the same writes
-/// land and the room embeds again.
+/// A room apply that must drop a row's node from the room's graph beside
+/// another write of that graph (an insert, or a second drop) is refused:
+/// its view reads the graph as it was before the call, without what the
+/// other wrote, so the drop would leave the graph's nodes, count and entry
+/// point wrong for the room's next vector (Sol R25, R26). Applied one per
+/// call, as the witness door does, the same writes land and the room embeds
+/// again.
 #[test]
-fn a_room_apply_that_embeds_a_row_and_drops_another_rows_node_is_refused() -> Result<()> {
+fn a_room_apply_that_drops_a_graph_node_beside_another_graph_write_is_refused() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("the vault's owner");
     let claim = entity_id(0xCC);
+    let turn = entity_id(0xCD);
     let other = entity_id(0xDB);
+    let turn_put = |data: &[u8]| BatchOp::Put {
+        id: turn,
+        entity_type: ENTITY_TYPE_TURN,
+        occurred: TimeRange { start: 10, end: 10 },
+        learned_at: 10,
+        data: data.to_vec(),
+        allow_maintenance: false,
+        allow_reserved_predicate: false,
+        hub_sync_imported: false,
+    };
     base_claim_for_the_room(
         &vault,
         owner,
@@ -1856,7 +1868,7 @@ fn a_room_apply_that_embeds_a_row_and_drops_another_rows_node_is_refused() -> Re
         ("dropbasevalue", "dropbaseword"),
         None,
     )?;
-    let session = enter(&vault, "sess-room-embed-and-drop")?;
+    let session = enter(&vault, "sess-room-drop-beside-a-write")?;
     stage_in_room(
         &vault,
         &session,
@@ -1871,6 +1883,9 @@ fn a_room_apply_that_embeds_a_row_and_drops_another_rows_node_is_refused() -> Re
             ),
             room_vector(claim, [1.0, 0.0, 0.0, 0.0]),
             room_text(claim, "droproomword"),
+            turn_put(b"dropturnbody"),
+            room_vector(turn, [0.0, 0.0, 1.0, 0.0]),
+            room_text(turn, "dropturnword"),
             claim_put(
                 claim,
                 (
@@ -1879,6 +1894,7 @@ fn a_room_apply_that_embeds_a_row_and_drops_another_rows_node_is_refused() -> Re
                     owner_claim_body(owner, "dropchangedvalue")?,
                 ),
             ),
+            turn_put(b"dropchangedturnbody"),
             room_put(other),
         ],
     )?;
@@ -1892,28 +1908,32 @@ fn a_room_apply_that_embeds_a_row_and_drops_another_rows_node_is_refused() -> Re
         occurred: TimeRange { start: 10, end: 10 },
         op,
     };
-    let refused = vault.with_write_txn_grouped(|wtxn| {
-        let _segment = overlay.install_txn_segment()?;
-        crate::batch::apply_ops_session(
-            &session.read_view()?,
-            &route,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            vec![
-                entry(room_vector(other, [0.0, 1.0, 0.0, 0.0])),
-                entry(room_text(claim, "dropchangedword")),
-            ],
-        )
-    });
-    assert!(
-        matches!(refused, Err(crate::error::Error::InvariantViolation(_))),
-        "got {refused:?}"
-    );
-    assert!(
-        !vector_hits_in_room(&vault, &session, [0.0, 1.0, 0.0, 0.0])?.contains(&other),
-        "nothing of the refused call staged"
-    );
+    for (beside, drop) in [
+        (
+            room_vector(other, [0.0, 1.0, 0.0, 0.0]),
+            room_text(claim, "dropchangedword"),
+        ),
+        (
+            room_text(turn, "dropchangedturnword"),
+            room_text(claim, "dropchangedword"),
+        ),
+    ] {
+        let refused = vault.with_write_txn_grouped(|wtxn| {
+            let _segment = overlay.install_txn_segment()?;
+            crate::batch::apply_ops_session(
+                &session.read_view()?,
+                &route,
+                &vault.config,
+                &vault.analyzer,
+                wtxn,
+                vec![entry(beside.clone()), entry(drop.clone())],
+            )
+        });
+        assert!(
+            matches!(refused, Err(crate::error::Error::InvariantViolation(_))),
+            "got {refused:?}"
+        );
+    }
 
     stage_in_room(
         &vault,
@@ -1921,9 +1941,14 @@ fn a_room_apply_that_embeds_a_row_and_drops_another_rows_node_is_refused() -> Re
         vec![
             room_vector(other, [0.0, 1.0, 0.0, 0.0]),
             room_text(claim, "dropchangedword"),
+            room_text(turn, "dropchangedturnword"),
         ],
     )?;
     embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD8))?;
+    assert!(
+        !vector_hits_in_room(&vault, &session, [0.0, 0.0, 1.0, 0.0])?.contains(&turn),
+        "the turn's vector of its earlier body does not find it"
+    );
     assert!(
         vector_hits_in_room(&vault, &session, [0.0, 1.0, 0.0, 0.0])?.contains(&other),
         "the room finds the row it embedded in a call of its own"
