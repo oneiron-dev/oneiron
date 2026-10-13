@@ -1,10 +1,9 @@
 //! World privacy races: an edit by a machine that lost the owner's standing,
 //! or one this install does not count, only ever narrows a world, however
 //! many such edits chain and in whatever order they arrive.
+use super::history_transfer::re_root_entry;
 use super::machine_identity::{host, request_for};
-use super::support::{
-    authority_key_from_ed, ed_key, genesis_entry, rotate_entry, sign_ed, unsigned_entry,
-};
+use super::support::{authority_key_from_ed, ed_key, genesis_entry, sign_ed, unsigned_entry};
 use super::world_privacy::{
     edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
 };
@@ -252,16 +251,16 @@ fn one_worlds_later_edit_never_rolls_back_anothers() {
     }
 }
 
-/// A machine marked by a key the owner rotated away by hand is stale on this
-/// install once the stale-roster window passes, and a widening it signed
-/// while it stood then only narrows here (Wonder P1 round 1, W1).
+/// A machine marked by the root before its handoff, and never marked again by
+/// the new root, is stale on this install once the stale-roster window passes,
+/// and a widening it signed while it stood then only narrows here (Wonder P1
+/// round 1, W1).
 #[test]
 fn a_stale_machine_never_widens_a_world() {
     let old = ed_key(110);
-    let rotated = ed_key(111);
+    let next = ed_key(111);
     let genesis = genesis_entry(110, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let id = genesis_vault_id(&genesis).unwrap();
-    let rotation = rotate_entry(id, &genesis, &old, authority_key_from_ed(&old), 111, 1);
     let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
     let (kept, kept_key) = (EntityId::now(), ed_key(112));
     let (stale, stale_key) = (EntityId::now(), ed_key(113));
@@ -288,10 +287,9 @@ fn a_stale_machine_never_widens_a_world() {
             signer,
         )
     };
-    // The rotated key marks one machine; the old key, on a branch that never
-    // saw the rotation, marks the other.
-    let kept_mark = mark(&rotation, &rotated, 1, kept, &kept_key);
-    let stale_mark = mark(&genesis, &old, 2, stale, &stale_key);
+    let stale_mark = mark(&genesis, &old, 1, stale, &stale_key);
+    let handoff = re_root_entry(id, &stale_mark, &old, 2, &next);
+    let kept_mark = mark(&handoff, &next, 1, kept, &kept_key);
     let world = EntityId::now();
     let edit = |mut parents: Vec<AuthorityEntryHash>, machine, key: &SigningKey, read| {
         parents.sort();
@@ -312,20 +310,19 @@ fn a_stale_machine_never_widens_a_world() {
             key,
         )
     };
-    let main_heads = vec![hash(&kept_mark), hash(&stale_mark)];
     let narrow = edit(
-        main_heads.clone(),
+        vec![hash(&kept_mark)],
         kept,
         &kept_key,
         ReadLocation::MyMachines,
     );
     let widen = edit(
-        [main_heads, vec![hash(&narrow)]].concat(),
+        vec![hash(&kept_mark), hash(&narrow)],
         stale,
         &stale_key,
         ReadLocation::Everywhere,
     );
-    let entries = [genesis, rotation, kept_mark, stale_mark, narrow, widen];
+    let entries = [genesis, stale_mark, handoff, kept_mark, narrow, widen];
     let first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
     let within = fold_authority_log_with_seen_times(&entries, &first_seen, 100);
     assert_eq!(within.world_privacy(world).read, EffectiveRead::Everywhere);
