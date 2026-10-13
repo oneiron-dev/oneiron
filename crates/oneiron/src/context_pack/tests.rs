@@ -1102,7 +1102,6 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
         None,
-        None,
     )?;
     assert_eq!(finalized_run_id, Some(run_id));
 
@@ -1219,7 +1218,6 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
         None,
-        None,
     )?;
 
     assert_eq!(
@@ -1295,7 +1293,6 @@ fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
-        None,
         None,
     )
     .expect_err("a room's failed finalize fails the retrieval");

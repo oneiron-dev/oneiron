@@ -177,8 +177,11 @@ fn release_board_replay(
     let admitted = server
         .vault
         .board_documents_admitted(&documents, &read, disclosure.as_ref())
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), "board replay check failed");
+        .map_err(|_| {
+            tracing::error!(
+                reason = "board_replay_check_failed",
+                "board replay check failed"
+            );
             ApiError::internal_server_error("board history failed")
         })?;
     if !admitted {

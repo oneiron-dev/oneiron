@@ -413,7 +413,7 @@ impl PendingEmbeddingReconciler {
                     )?;
                 }
                 Err(e) => {
-                    tracing::warn!(?e, "remote embed failed; falling back to local");
+                    tracing::warn!(kind = ?e.kind(), "remote embed failed; falling back to local");
                     report.remote_failed_fallback_local += remote_work.len();
                     self.embed_and_fill_local(&remote_work, &mut report)?;
                 }

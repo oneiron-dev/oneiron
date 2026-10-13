@@ -113,8 +113,6 @@ mod tripwire_tests;
 // and the crate/std imports the tests relied on. After the directory split
 // the seam re-imports both so the tests resolve exactly as they did before.
 #[cfg(test)]
-use self::diagnostic_codec::*;
-#[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
 use crate::batch::{BatchOp, apply_ops};

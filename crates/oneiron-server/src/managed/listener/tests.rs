@@ -37,7 +37,7 @@ async fn managed_sink_logs_no_ctl_line_text() -> anyhow::Result<()> {
     let sink = CapturedSink::default();
     let _default = tracing::dispatcher::set_default(&sink.production_dispatch());
     for line in [
-        format!(r#"{{"verb":"{SENTINEL}"}}"#),
+        format!(r#"{{"op":"{SENTINEL}"}}"#),
         format!(r#"{{"{SENTINEL}":1}}"#),
         format!("{SENTINEL} is not json\n"),
     ] {

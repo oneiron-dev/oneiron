@@ -243,11 +243,10 @@ pub(crate) fn resolve(
         let (intent_ref, outcome, error) = match scheduled {
             Ok(receipt) => (Some(receipt.intent_ref), Some(receipt.outcome), None),
             Err(error) => {
+                tracing::warn!(claim = %claim.to_hex(), kind = ?error.kind(), "approved commitment wake did not schedule");
                 // The message can quote proposal text, which this endpoint
                 // masks everywhere else.
-                let error = redacted(error.to_string());
-                tracing::warn!(claim = %claim.to_hex(), kind = ?error.kind(), "approved commitment wake did not schedule");
-                (None, None, Some(error))
+                (None, None, Some(redacted(error.to_string())))
             }
         };
         CommitmentWakeScheduled {

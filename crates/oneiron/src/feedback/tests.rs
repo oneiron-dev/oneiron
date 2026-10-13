@@ -57,7 +57,6 @@ fn healer_diagnosis() -> FeedbackHealerDiagnosis {
         FeedbackDagHop::new("memory:alpha", "supersedes", "memory:beta"),
         FeedbackDagHop::new("memory:beta", "contradicts", "claim:gamma"),
     ];
-    diagnosis.mechanism = Some("the later write shadowed the earlier one".to_owned());
     diagnosis
 }
 
