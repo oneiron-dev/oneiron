@@ -199,13 +199,10 @@ impl Vault {
         actor: &EntityId,
         run: &str,
     ) -> Result<HealerRunReceipt> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
         self.with_write_txn_grouped(|txn| {
+            // The proof is checked where the reversal commits: bound to this
+            // vault, its owner live, its credential (when bound) unrevoked.
+            owner.revalidate_in_txn(self, &*txn)?;
             let receipt = RUN
                 .get(&self.store, txn, &(*actor, run_digest(run)))?
                 .ok_or(Error::EntityNotFound)?;
@@ -223,13 +220,8 @@ impl Vault {
         owner: &AuthenticatedOwner,
         check: &ProposalBurstCheck,
     ) -> Result<Vec<HealerRunReceipt>> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
         self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
             let counter = COUNT
                 .get(&self.store, txn, &check.actor)?
                 .ok_or_else(|| Error::InvalidConfig("actor has no burst check".into()))?;
@@ -254,16 +246,11 @@ impl Vault {
         id: &EntityId,
         release: Option<&str>,
     ) -> Result<Option<PatchPullRequest>> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
         if let Some(release) = release {
             super::validate_ref(release)?;
         }
         self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
             let mut record = PROPOSAL
                 .get(&self.store, txn, id)?
                 .ok_or(Error::EntityNotFound)?;

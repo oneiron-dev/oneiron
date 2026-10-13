@@ -13,6 +13,9 @@ use crate::authority::{AuthorityKey, AuthoritySignature, verify_authority_signat
 /// Signature domain, distinct from authority-log and machine-claim signatures.
 pub const CLAIM_HISTORY_HANDOFF_DOMAIN: &[u8] = b"oneiron/claim-history-handoff/v1";
 pub const CLAIM_HISTORY_HANDOFF_VERSION: u8 = 1;
+/// The leading byte of a re-root carry: the handoff layout, so the byte is in
+/// both the transcript and the content hash.
+pub const CLAIM_HISTORY_CARRY_VERSION: u8 = 2;
 const MAX_SCOPE: usize = 4096;
 const MAX_BIRTHS: usize = 1024;
 const MAX_TRANSITIONS: usize = 4096;
@@ -34,11 +37,23 @@ pub struct ClaimTransition {
     pub predecessors: Vec<[u8; 32]>,
 }
 
+/// What a packet's signer vouches for. Every root write (a birth, a lifecycle
+/// transition, an explicit carry-forward) signs a `Handoff`. Only a host
+/// re-root signs a `ReRootCarry`, at its own ReRoot, for each history it
+/// carries across the move. That packet travels in the history's chain, so a
+/// replica can tell a carried history from one the move left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandoffKind {
+    Handoff,
+    ReRootCarry,
+}
+
 /// Signed packet. `scope` is an opaque, host-defined *canonical* byte string:
 /// producer and trusted pin must use the same codec. It is never interpreted,
 /// narrowed or widened by this layer. Equality is byte-exact, not a scope guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimHistoryHandoff {
+    pub kind: HandoffKind,
     pub vault_id: [u8; 32],
     pub genesis_hash: [u8; 32],
     pub scope: Vec<u8>,
@@ -152,7 +167,10 @@ impl ClaimHistoryHandoff {
     fn body(&self) -> CodecResult<Vec<u8>> {
         self.check_shape()?;
         let mut out = Vec::new();
-        out.push(CLAIM_HISTORY_HANDOFF_VERSION);
+        out.push(match self.kind {
+            HandoffKind::Handoff => CLAIM_HISTORY_HANDOFF_VERSION,
+            HandoffKind::ReRootCarry => CLAIM_HISTORY_CARRY_VERSION,
+        });
         out.extend_from_slice(&self.vault_id);
         out.extend_from_slice(&self.genesis_hash);
         put_bytes(&mut out, &self.scope);
@@ -225,15 +243,17 @@ impl ClaimHistoryHandoff {
     }
 
     /// Strict bounded decoder: no omitted fields, trailing bytes or alternate
-    /// ordering; unknown versions fail closed rather than aliasing v1.
+    /// ordering; unknown versions fail closed rather than aliasing a known kind.
     pub fn decode(bytes: &[u8]) -> CodecResult<Self> {
         if bytes.len() > MAX_WIRE {
             return Err(HandoffCodecError::LimitExceeded);
         }
         let mut cursor = Cursor { bytes, at: 0 };
-        if cursor.take::<1>()?[0] != CLAIM_HISTORY_HANDOFF_VERSION {
-            return Err(HandoffCodecError::InvalidEncoding);
-        }
+        let kind = match cursor.take::<1>()?[0] {
+            CLAIM_HISTORY_HANDOFF_VERSION => HandoffKind::Handoff,
+            CLAIM_HISTORY_CARRY_VERSION => HandoffKind::ReRootCarry,
+            _ => return Err(HandoffCodecError::InvalidEncoding),
+        };
         let vault_id = cursor.take()?;
         let genesis_hash = cursor.take()?;
         let scope = cursor.variable(MAX_SCOPE)?;
@@ -281,6 +301,7 @@ impl ClaimHistoryHandoff {
             return Err(HandoffCodecError::InvalidEncoding);
         }
         let result = Self {
+            kind,
             vault_id,
             genesis_hash,
             scope,
@@ -450,6 +471,7 @@ mod tests {
     fn packet(signing: &SigningKey) -> ClaimHistoryHandoff {
         let id = EntityId::from_bytes([1; 16]).expect("claim id");
         ClaimHistoryHandoff {
+            kind: HandoffKind::Handoff,
             vault_id: [2; 32],
             genesis_hash: [3; 32],
             scope: b"canonical-scope-v1".to_vec(),
