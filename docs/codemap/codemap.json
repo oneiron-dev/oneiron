@@ -12526,7 +12526,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -23171,6 +23171,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ContextLink",
       "CorefLink",
       "EncoderGolden",
       "EncoderInput",
@@ -23181,13 +23182,17 @@
       "ExtractionEncoder",
       "NerSpan",
       "ShadowTrace",
+      "SpeakerLink",
+      "SpeakerRole",
+      "SpeakerTarget",
       "WitnessWithShadow"
      ],
      "path": "src/memory/extraction/types.rs",
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
+      "enum": 2,
       "fn": 5,
-      "struct": 10,
+      "struct": 12,
       "trait": 1
      }
     },
@@ -35505,7 +35510,7 @@
      "path": "src/tagging/input.rs",
      "purpose": "The tagger's input for one turn: the turn's MESSAGE rows, and the live register's bounded window of earlier…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -35520,9 +35525,9 @@
      "purpose": "The marker row: its kind, payload, dedupe key, derived id and the in-transaction doors that commit it",
      "surface": {
       "const": 6,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -35533,7 +35538,7 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 8
      }
     },
@@ -35546,7 +35551,7 @@
      "path": "src/tagging/output.rs",
      "purpose": "What a tagger's answer must satisfy before a marker settles on it",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 5,
       "enum": 1
      }
     },
@@ -35605,6 +35610,7 @@
       "DerivationEnvelope",
       "MentionHit",
       "MentionLink",
+      "MentionReference",
       "MergeEvidence",
       "TaggedMention",
       "TurnTags"
@@ -35612,8 +35618,8 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 13,
-      "enum": 1,
+      "crate-vis": 14,
+      "enum": 2,
       "fn": 6,
       "struct": 5
      }
@@ -52562,6 +52568,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/oneironer/tests/golden.rs",
+     "purpose": "The served stack's goldens replayed through the adapter and the save path",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/oneironer/tests/links.rs",
+     "purpose": "Contract v2 through the shipped serve path: a pronoun takes an earlier turn's name through a context link, a…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -52576,7 +52598,7 @@
      "path": "src/oneironer/tests/support.rs",
      "purpose": "A stub tagger server inside the test process, and the vaults and servers the slot's tests share",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 38
      }
     },
     {
@@ -52585,7 +52607,9 @@
      "notable": [],
      "path": "src/oneironer/tests/worker.rs",
      "purpose": "The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 6
+     }
     },
     {
      "bucket": "m",
@@ -53632,7 +53656,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53712,7 +53736,7 @@
    "over_bar": 9,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 328,
-   "test_files": 137
+   "test_files": 139
   },
   "oneiron-uniffi": {
    "files": [
