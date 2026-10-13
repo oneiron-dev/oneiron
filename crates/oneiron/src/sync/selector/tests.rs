@@ -5502,10 +5502,9 @@ fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()>
 /// unknown, never base, so it stays home while any world is device-only. A
 /// replica reaches device B through a base window without the stamp and the
 /// record that placed it on A, and without its edge to W's CLAIM, which lives
-/// in W's window; one minted before stamps carries no stamp either, and a
-/// summary written from it stays home with it. Deleting such a one records
-/// the unknown world on what it withdraws. A stamped base epoch of base
-/// records still leaves by every door.
+/// in W's window. A summary written from an unstamped replica stays home with
+/// it, and deleting the replica records the unknown world on that summary. A
+/// stamped base epoch of base records still leaves by every door.
 #[test]
 fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate::Result<()> {
     use crate::compaction::EpochPlacement;
@@ -5560,7 +5559,9 @@ fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate:
             &epoch_summary_bytes(1, "the world fact")?,
         )
         .edge(&replica, EdgeKind::DerivedFrom, &fact, 1.0)
-        .put(
+        // `inner` arrived through sync ingest's door, unstamped like any
+        // replica; a local write is stamped as it lands.
+        .put_replicated(
             &inner,
             summary,
             sources,
@@ -5585,7 +5586,7 @@ fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate:
         )
         .edge(&settled, EdgeKind::DerivedFrom, &person, 1.0)
         .commit()?;
-    // `inner` was minted before stamps; the others are settled in base.
+    // The local summaries are settled in base.
     vault.with_write_txn_grouped(|txn| {
         for base in [replica, outer, settled] {
             EpochPlacement::default().settle_in(&vault.store, txn, base)?;
