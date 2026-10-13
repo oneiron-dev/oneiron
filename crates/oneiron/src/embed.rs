@@ -569,7 +569,11 @@ impl PendingEmbeddingReconciler {
         // committed before this pass is one it reads; the release reads again.
         let primary_on_device = self.embedder.locality() == EmbedderLocality::OnDevice;
         self.vault.with_write_txn_grouped(|wtxn| {
-            let flagged = crate::settings::device_only_worlds_in(&self.vault.store, wtxn)?;
+            let flagged = crate::settings::device_local_worlds_at(
+                &self.vault.store,
+                wtxn,
+                crate::claim::CallerLocality::OffDevice,
+            )?;
             for job in jobs {
                 if crate::vault::entity_revision::entity_has_pending_revision(
                     &self.vault.store,

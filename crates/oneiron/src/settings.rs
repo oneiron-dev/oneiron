@@ -501,7 +501,8 @@ impl Vault {
     pub fn rows_may_leave_device(&self, rows: &[EntityId]) -> Result<bool> {
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_only_worlds_in(&self.store, &rtxn)?;
+        let flagged =
+            device_local_worlds_at(&self.store, &rtxn, crate::claim::CallerLocality::OffDevice)?;
         for row in rows {
             match device_only_withholds(&self.store, &rtxn, &flagged, row) {
                 Ok(false) => {}
@@ -531,7 +532,8 @@ impl Vault {
     /// one read.
     pub fn off_device_readable(&self, ids: Vec<EntityId>) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_only_worlds_in(&self.store, &rtxn)?;
+        let flagged =
+            device_local_worlds_at(&self.store, &rtxn, crate::claim::CallerLocality::OffDevice)?;
         let mut readable = Vec::with_capacity(ids.len());
         for id in ids {
             if !device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
@@ -676,8 +678,10 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
-/// Every world flagged device-only on this device.
-pub(crate) fn device_only_worlds_in(
+/// Every world flagged device-only on this device. Only
+/// [`device_local_worlds_at`] reads it: every door asks that one function
+/// which worlds a caller's rows are withheld from.
+fn device_only_worlds_in(
     store: &Store,
     txn: &RoTxn<'_>,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
@@ -694,7 +698,8 @@ pub(crate) fn device_local_keeps_in(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    device_local_keeps_among(store, txn, &device_only_worlds_in(store, txn)?, id)
+    let flagged = device_local_worlds_at(store, txn, crate::claim::CallerLocality::OffDevice)?;
+    device_local_keeps_among(store, txn, &flagged, id)
 }
 
 /// The device-local worlds whose rows a caller at `locality` reads nothing

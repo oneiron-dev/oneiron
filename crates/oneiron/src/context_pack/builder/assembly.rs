@@ -422,9 +422,10 @@ impl<'a> ContextPackBuilder<'a> {
                 && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
             .then_some(&stale_worlds);
             let device_local = if self.off_device {
-                Some(crate::settings::device_only_worlds_in(
+                Some(crate::settings::device_local_worlds_at(
                     &self.vault.store,
                     &rtxn,
+                    crate::claim::CallerLocality::OffDevice,
                 )?)
             } else {
                 None

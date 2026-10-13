@@ -63,12 +63,7 @@ impl Vault {
         let storage = ExportManifest::from_json_for_import(artifact.bytes())?;
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         admit(&rtxn)?;
-        let device_only = match locality {
-            CallerLocality::OnDevice => BTreeSet::new(),
-            CallerLocality::OffDevice => {
-                crate::settings::device_only_worlds_in(&self.store, &rtxn)?
-            }
-        };
+        let device_only = crate::settings::device_local_worlds_at(&self.store, &rtxn, locality)?;
         let mut entities = Vec::new();
         let mut included = BTreeSet::new();
         let mut skill_packages = BTreeMap::new();

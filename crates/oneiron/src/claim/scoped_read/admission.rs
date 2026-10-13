@@ -198,7 +198,11 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         let store = &self.vault.store;
-        let flagged = crate::settings::device_only_worlds_in(store, txn)?;
+        let flagged = crate::settings::device_local_worlds_at(
+            store,
+            txn,
+            crate::claim::CallerLocality::OffDevice,
+        )?;
         let withholds = match raw {
             Some(raw) => {
                 crate::settings::device_only_withholds_raw(store, txn, &flagged, id, Some(raw))

@@ -233,7 +233,13 @@ impl<'a> PipelineBuilder<'a> {
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<std::collections::BTreeSet<EntityId>>> {
         self.off_device
-            .then(|| crate::settings::device_only_worlds_in(&self.vault.store, txn))
+            .then(|| {
+                crate::settings::device_local_worlds_at(
+                    &self.vault.store,
+                    txn,
+                    crate::claim::CallerLocality::OffDevice,
+                )
+            })
             .transpose()
     }
 
