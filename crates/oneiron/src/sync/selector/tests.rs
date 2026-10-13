@@ -5899,22 +5899,7 @@ fn a_summary_of_a_summary_rewritten_as_no_epoch_keeps_its_world() -> crate::Resu
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
     let (source, nested) = (entity_id(0x73), entity_id(0x74));
     let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
-    let (world, _) = summaries_of_a_world_fact(&vault, &[(source, &october)])?;
-    let at = november.start_timestamp().unwrap() + 60;
-    vault
-        .batch()
-        .put(
-            &nested,
-            crate::registry::ENTITY_TYPE_SUMMARY,
-            TimeRange { start: at, end: at },
-            at,
-            &epoch_summary_bytes(2, "the world fact, again")?,
-        )
-        .edge(&nested, EdgeKind::DerivedFrom, &source, 1.0)
-        .commit()?;
-    vault.with_write_txn_grouped(|txn| {
-        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, nested)
-    })?;
+    let world = summary_of_a_summary(&vault, source, &october, nested, &november)?;
     let november_doc = packed_window(&vault, &november)?;
     vault.set_world_device_only(world, true)?;
     assert!(!owner_window_ships(&vault, &november, &november_doc)?);
@@ -5943,6 +5928,73 @@ fn a_summary_of_a_summary_rewritten_as_no_epoch_keeps_its_world() -> crate::Resu
         "the selector and the scoped export"
     );
     Ok(())
+}
+
+/// Sol round 23: an owner's move of an epoch summary's text to the document
+/// plane leaves a pointer body, which is no epoch either. The move records
+/// the worlds the old body carried, so a summary written from it stays home
+/// while W is flagged.
+#[test]
+fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Result<()> {
+    use crate::entity_doc::{DocAuthorization, TextField};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), crate::VaultConfig::device())?;
+    let (source, nested) = (entity_id(0x75), entity_id(0x76));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let world = summary_of_a_summary(&vault, source, &october, nested, &november)?;
+    let november_doc = packed_window(&vault, &november)?;
+    vault.set_world_device_only(world, true)?;
+    assert!(!owner_window_ships(&vault, &november, &november_doc)?);
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    let authority = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.migrate_entity_text(
+        &source,
+        &TextField::MapField("text".into()),
+        crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+        &DocAuthorization::Owner(&authority),
+    )?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of a summary moved to the text plane"
+    );
+    Ok(())
+}
+
+/// An epoch summary `source` of W's CLAIM settled in base in `at`, and an
+/// epoch summary `nested` written from it settled in base in `nested_at`;
+/// returns W.
+fn summary_of_a_summary(
+    vault: &Vault,
+    source: EntityId,
+    at: &WindowKey,
+    nested: EntityId,
+    nested_at: &WindowKey,
+) -> crate::Result<EntityId> {
+    let (world, _) = summaries_of_a_world_fact(vault, &[(source, at)])?;
+    let learned = nested_at.start_timestamp().unwrap() + 60;
+    vault
+        .batch()
+        .put(
+            &nested,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: learned,
+                end: learned,
+            },
+            learned,
+            &epoch_summary_bytes(2, "the world fact, again")?,
+        )
+        .edge(&nested, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, nested)
+    })?;
+    Ok(world)
 }
 
 /// Astra #1384d F3: what an epoch summary was withdrawn for lives as long as
