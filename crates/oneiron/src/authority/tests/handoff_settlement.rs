@@ -626,7 +626,7 @@ fn after_a_settled_handoff_an_unsettled_heir_withdraws_no_slip() {
         second.clone(),
         handoff.clone(),
         forged.clone(),
-        control.clone(),
+        control,
     ]);
 
     let fold = fold_authority_log(&entries);
