@@ -19,6 +19,8 @@ use crate::config::{OneironerConfig, OneironerMode, OneironerProvider, SyncServe
 use crate::server::SyncServer;
 
 pub(super) const CHECKPOINT: &str = "0123456789abcdef";
+/// The stack the stub serves unless a test swaps its card.
+pub(super) const STACK: &str = "fedcba9876543210";
 pub(super) const LABEL_COUNT: u32 = 3;
 pub(super) const NOW: u64 = 1_790_000_000;
 const ROOM: &str = "71717171717171717171717171717171";
@@ -38,7 +40,13 @@ pub(super) enum Answer {
     NotTheContract,
     /// A status line no registry names, as a number the stub picked.
     NonstandardStatus,
+    /// Whatever the test's script makes of the request
+    /// ([`StubTagger::set_script`]).
+    Scripted,
 }
+
+/// A test's answer to one extract request body.
+pub(super) type Script = Arc<dyn Fn(&Value) -> Value + Send + Sync>;
 
 /// The unregistered status the stub answers with.
 pub(super) const NONSTANDARD_STATUS: u16 = 447;
@@ -56,6 +64,9 @@ pub(super) struct StubState {
     card_breaks: Mutex<usize>,
     /// How many card answers broke off.
     card_broken: Mutex<usize>,
+    script: Mutex<Option<Script>>,
+    /// The stack every answer names instead of its card's.
+    answer_stack: Mutex<Option<String>>,
 }
 
 pub(super) struct StubTagger {
@@ -73,11 +84,17 @@ impl Drop for StubTagger {
 }
 
 pub(super) fn card(checkpoint: &str) -> Value {
+    stack_card(checkpoint, STACK)
+}
+
+/// The card of a stub serving `stack` on `checkpoint`.
+pub(super) fn stack_card(checkpoint: &str, stack: &str) -> Value {
     json!({
         "checkpoint_sha16": checkpoint,
         "contract_version": crate::oneironer::endpoint::CONTRACT_VERSION,
         "label_count": LABEL_COUNT,
         "returns": {"spans": true, "links": true, "mood": true},
+        "stack_sha16": stack,
         "engine": "stub"
     })
 }
@@ -92,6 +109,8 @@ impl StubTagger {
             card_status: Mutex::new(None),
             card_breaks: Mutex::new(0),
             card_broken: Mutex::new(0),
+            script: Mutex::new(None),
+            answer_stack: Mutex::new(None),
         });
         let app = Router::new()
             .route("/v1/model", get(stub_model))
@@ -122,6 +141,18 @@ impl StubTagger {
 
     pub(super) fn set_card(&self, card: Value) {
         *self.state.card.lock().expect("card lock") = card;
+    }
+
+    /// Answers every extract with what `script` makes of its body, naming
+    /// the card's stack unless the script names one.
+    pub(super) fn set_script(&self, script: impl Fn(&Value) -> Value + Send + Sync + 'static) {
+        *self.state.script.lock().expect("script lock") = Some(Arc::new(script));
+        self.set_answer(Answer::Scripted);
+    }
+
+    /// Every answer names `stack`, whatever the card says.
+    pub(super) fn set_answer_stack(&self, stack: &str) {
+        *self.state.answer_stack.lock().expect("answer stack lock") = Some(stack.to_owned());
     }
 
     /// `GET /v1/model` answers with this status and no card.
@@ -218,14 +249,32 @@ async fn stub_extract(
         .unwrap_or_default()
         .to_owned();
     let word = first.find(' ').unwrap_or(first.len());
+    let stack = state
+        .answer_stack
+        .lock()
+        .expect("answer stack lock")
+        .clone()
+        .map_or_else(
+            || state.card.lock().expect("card lock")["stack_sha16"].clone(),
+            Value::from,
+        );
     let output = |end: usize| {
         json!({
             "spans": [{"message": 0, "start": 0, "end": end, "label": "PERSON", "confidence": 0.9}],
             "links": [],
-            "vad": {"valence": 0.1, "arousal": 0.5, "dominance": 0.5}
+            "vad": {"valence": 0.1, "arousal": 0.5, "dominance": 0.5},
+            "stack_sha16": stack.clone()
         })
     };
     match answer {
+        Answer::Scripted => {
+            let script = state.script.lock().expect("script lock").clone();
+            let mut output = script.map_or_else(|| output(word), |script| script(&body));
+            if output.get("stack_sha16").is_none() {
+                output["stack_sha16"] = stack.clone();
+            }
+            Ok(axum::Json(output).into_response())
+        }
         Answer::Good => Ok(axum::Json(output(word)).into_response()),
         Answer::BadOffsets => Ok(axum::Json(output(first.len() + 7)).into_response()),
         Answer::Slow => {
@@ -283,13 +332,43 @@ pub(super) fn open_vault(path: &std::path::Path, armed: bool, pinned: bool) -> A
 
 /// A vault whose tagger saves its tags, as `serve` arms one in save mode.
 pub(super) fn open_saving_vault(path: &std::path::Path) -> Arc<Vault> {
+    open_vault_for(
+        path,
+        &OneironerConfig {
+            mode: OneironerMode::Save,
+            ..endpoint_config("")
+        },
+    )
+}
+
+/// A vault armed as `serve` arms one for `section`.
+pub(super) fn open_vault_for(path: &std::path::Path, section: &OneironerConfig) -> Arc<Vault> {
+    open_vault_on(path, section, None)
+}
+
+/// [`open_vault_for`] on a store clock the test sets, starting at [`NOW`]. A
+/// worker drains the markers of one store-clock second in no set order, so a
+/// test that needs them drained in the order its writes committed moves the
+/// clock a second between them.
+pub(super) fn open_clocked_vault(
+    path: &std::path::Path,
+    section: &OneironerConfig,
+) -> (Arc<Vault>, Arc<oneiron::store::ports::ManualClock>) {
+    let clock = oneiron::store::ports::ManualClock::new(NOW);
+    (open_vault_on(path, section, Some(&clock)), clock)
+}
+
+fn open_vault_on(
+    path: &std::path::Path,
+    section: &OneironerConfig,
+    clock: Option<&Arc<oneiron::store::ports::ManualClock>>,
+) -> Arc<Vault> {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
-    config.tagging = OneironerConfig {
-        mode: OneironerMode::Save,
-        ..endpoint_config("")
+    config.tagging = section.marker_config();
+    if let Some(clock) = clock {
+        config.store_clock = clock.bundle();
     }
-    .marker_config();
     Arc::new(Vault::open(path, config).expect("open vault"))
 }
 
@@ -341,6 +420,84 @@ pub(super) fn speaker(vault: &Vault) -> EntityId {
             .expect("speaker");
     }
     id
+}
+
+/// A PERSON row named `name`, id `[byte; 16]`.
+pub(super) fn person(vault: &Vault, byte: u8, name: &str) -> EntityId {
+    let id = EntityId::from_bytes([byte; 16]).expect("person id");
+    vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&json!({ "name": name })).expect("person body"),
+        )
+        .expect("person");
+    id
+}
+
+/// A room whose audience is `members`, created by the first of them.
+pub(super) fn make_room(vault: &Vault, byte: u8, members: &[EntityId]) -> EntityId {
+    let id = EntityId::from_bytes([byte; 16]).expect("room id");
+    let kind = if members.len() == 2 {
+        oneiron::conversation::ConversationKind::Direct
+    } else {
+        oneiron::conversation::ConversationKind::Group
+    };
+    vault
+        .create_conversation(
+            id,
+            &oneiron::conversation::ConversationBody {
+                kind,
+                member_ids: members.to_vec(),
+                ..Default::default()
+            },
+            oneiron::WriteActor::new(members[0], EdgeActorClass::Human),
+            1,
+        )
+        .expect("room");
+    id
+}
+
+/// One message as `writer` says it in `room`, with `author`'s bucket:
+/// a fresh turn, or an append to `turn`. Returns the turn id.
+pub(super) fn say(
+    vault: &Vault,
+    writer: EntityId,
+    room: EntityId,
+    turn: Option<EntityId>,
+    message: WitnessMessage,
+    occurred_at: u64,
+) -> EntityId {
+    let receipt = vault
+        .memory(writer, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: turn.map(|turn| turn.to_hex()),
+            messages: vec![message],
+            occurred_at,
+        })
+        .expect("witness");
+    EntityId::from_hex(receipt.receipt_ref.trim_start_matches("witness:")).expect("turn id")
+}
+
+/// A visible text message by `author` at `order`, with a fixed id when given.
+pub(super) fn said(
+    author: WitnessAuthor,
+    content: &str,
+    order: u32,
+    id: Option<&str>,
+) -> WitnessMessage {
+    WitnessMessage {
+        id: id.map(str::to_owned),
+        author,
+        message_type: "text".into(),
+        content: content.into(),
+        metadata: None,
+        is_visible: true,
+        order,
+    }
 }
 
 /// Witnesses one fresh turn through the engine's witness door, the door the

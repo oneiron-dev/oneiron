@@ -130,10 +130,14 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
     };
     match slot.tagger.probe()? {
         endpoint::ProbeOutcome::Ready(card) => {
+            // The card's stack is the tagger's own string: with no pin to
+            // compare it to, it could be anything the tagger has read, so the
+            // log says only whether one was pinned.
             tracing::info!(
                 url = slot.tagger.base(),
                 label_count = card.label_count,
                 links = card.returns.links,
+                stack_pinned = config.stack_sha16.is_some(),
                 "tagger probe succeeded"
             );
             slot.accept_card(card);

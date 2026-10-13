@@ -50,6 +50,9 @@ impl ExtractionEncoder for FirstWord {
             }],
             links: Vec::new(),
             vad: None,
+            context_links: Vec::new(),
+            speaker_links: Vec::new(),
+            stack_sha16: None,
         })
     }
 }

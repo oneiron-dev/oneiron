@@ -6,21 +6,22 @@
 /// How deep a value the walk skips may nest.
 const MAX_DEPTH: usize = 32;
 
-/// The keys of a MESSAGE body the window reads. `content` holds the string's
-/// bytes as stored, not yet read as text.
+/// The keys of a MESSAGE body the window reads. `content` and `author` hold
+/// the strings' bytes as stored, not yet read as text.
 #[derive(Default)]
 pub(super) struct MessageFields<'a> {
     pub(super) content: &'a [u8],
+    pub(super) author: &'a [u8],
     pub(super) is_visible: bool,
     pub(super) stale: bool,
     pub(super) order: u32,
 }
 
-/// The top-level `content`, `is_visible`, `stale` and `order` keys of a
-/// MESSAGE body, each defaulting as the full reader's do; `None` for a body
-/// that is not a well-formed map, or whose `content` is not a string,
+/// The top-level `content`, `author`, `is_visible`, `stale` and `order` keys
+/// of a MESSAGE body, each defaulting as the full reader's do; `None` for a
+/// body that is not a well-formed map, or whose `content` is not a string,
 /// `is_visible` not a boolean or `order` not an integer a `u32` holds. Any
-/// other key, and any non-boolean `stale`, is skipped.
+/// other key, a non-string `author` and a non-boolean `stale` are skipped.
 pub(super) fn message_fields(body: &[u8]) -> Option<MessageFields<'_>> {
     let mut rd = body;
     let entries = match byte(&mut rd)? {
@@ -39,6 +40,7 @@ pub(super) fn message_fields(body: &[u8]) -> Option<MessageFields<'_>> {
         };
         match key {
             Some(b"content") => fields.content = string(&mut rd)?,
+            Some(b"author") if is_string(rd) => fields.author = string(&mut rd)?,
             Some(b"is_visible") => {
                 fields.is_visible = match byte(&mut rd)? {
                     0xc2 => false,

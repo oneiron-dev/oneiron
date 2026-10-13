@@ -4,7 +4,7 @@
 use super::history::record_in_txn;
 use super::input::{TurnInput, turn_text_in_txn};
 use super::marker::{TAGGING_MARKER_KIND, TaggingMode, dedupe_key};
-use super::output::{OutputRefusal, check_output};
+use super::output::{OutputRefusal, check_moved_output, check_output, check_span_order};
 use super::save::{self, Answer};
 use super::trace::{SkipReason, TaggingOutcome, TaggingTrace, attempt_hex};
 use crate::attempt_queue::{
@@ -22,14 +22,15 @@ const HELD_BY: &str = "held";
 #[derive(Debug, Clone, PartialEq)]
 pub enum HeldTagsOutcome {
     /// The marker completed with no tagger call.
-    Completed(TaggingTrace),
+    Completed(Box<TaggingTrace>),
     /// The tags break a contract rule for the turn's current text; nothing
     /// changed and the marker still waits for the tagger.
     Refused(OutputRefusal),
     /// The tags were not read from the text the turn shows; nothing changed
     /// and the marker still waits for the tagger.
     Unread(UnreadText),
-    /// No live marker is owed for the turn under the active checkpoint.
+    /// No live marker is owed for the turn under the active checkpoint and
+    /// stack.
     NoMarker,
     /// The worker holds the marker's lease or has scheduled its retry; its own
     /// pass settles it.
@@ -93,9 +94,8 @@ pub(crate) fn settle_held_tags_in_txn(
     let Some(config) = vault.config.tagging.as_ref() else {
         return Ok(HeldTagsOutcome::NoMarker);
     };
-    let checkpoint = &config.checkpoint;
     let queue = AttemptQueue::from_store(&vault.store);
-    let key = dedupe_key(turn, checkpoint);
+    let key = dedupe_key(turn, config);
     let Some(record) = queue.pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &key)? else {
         return Ok(HeldTagsOutcome::NoMarker);
     };
@@ -119,20 +119,33 @@ pub(crate) fn settle_held_tags_in_txn(
         TurnInput::Ready { input, .. } => Some(input.messages.as_slice()),
     };
     let moved;
-    let tags = match sent.zip(shown) {
-        Some((sent, shown)) => match onto_shown(shown, sent, tags) {
-            Ok(tags) => {
-                moved = tags;
-                &moved
+    let (tags, as_sent) = match sent.zip(shown) {
+        Some((sent, shown)) => {
+            // The spans index the messages as sent: the order rule holds
+            // there, not once they move onto the turn's own message order.
+            if let Err(refusal) = check_span_order(tags) {
+                return Ok(HeldTagsOutcome::Refused(refusal));
             }
-            Err(unread) => return Ok(HeldTagsOutcome::Unread(unread)),
-        },
-        None => tags,
+            match onto_shown(shown, sent, tags) {
+                Ok(tags) => {
+                    moved = tags;
+                    (&moved, true)
+                }
+                Err(unread) => return Ok(HeldTagsOutcome::Unread(unread)),
+            }
+        }
+        None => (tags, false),
     };
-    if let TurnInput::Ready { input, .. } = &read
-        && let Err(refusal) = check_output(input, tags)
-    {
-        return Ok(HeldTagsOutcome::Refused(refusal));
+    if let TurnInput::Ready { input, .. } = &read {
+        let stack = config.stack.as_deref();
+        let checked = if as_sent {
+            check_moved_output(input, tags, stack)
+        } else {
+            check_output(input, tags, stack)
+        };
+        if let Err(refusal) = checked {
+            return Ok(HeldTagsOutcome::Refused(refusal));
+        }
     }
     let claimed = queue.claim_id_storage_in_txn(
         txn,
@@ -171,9 +184,9 @@ pub(crate) fn settle_held_tags_in_txn(
                     turn: *turn,
                     input: &input,
                     output: tags,
-                    envelope: save::envelope(&hash, HELD_BY, config),
+                    envelope: save::envelope(&hash, HELD_BY, config, tags.stack_sha16.as_deref()),
                 };
-                save::save_in_txn(vault, txn, answer, &config.labels, now)?;
+                save::save_in_txn(vault, txn, answer, config, now)?;
             }
             (
                 TaggingOutcome::Imported {
@@ -201,7 +214,8 @@ pub(crate) fn settle_held_tags_in_txn(
     let trace = TaggingTrace {
         attempt: attempt_hex(&leased.id),
         turn: Some(*turn),
-        checkpoint: checkpoint.clone(),
+        checkpoint: config.checkpoint.clone(),
+        stack: config.stack.clone(),
         model: None,
         input_hash,
         try_number,
@@ -212,7 +226,7 @@ pub(crate) fn settle_held_tags_in_txn(
     // the job ledger with every try it retried.
     record_in_txn(vault, txn, &trace, now)?;
     queue.prune_settled_in_txn(txn, leased.id)?;
-    Ok(HeldTagsOutcome::Completed(trace))
+    Ok(HeldTagsOutcome::Completed(Box::new(trace)))
 }
 
 /// Moves tags whose spans index `sent` onto `shown`, the turn's text, by

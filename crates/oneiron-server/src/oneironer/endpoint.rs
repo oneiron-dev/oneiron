@@ -3,7 +3,8 @@
 //!
 //! `GET {url}/v1/model` answers with a model card (identity and what the model
 //! returns); `POST {url}/v1/extract` takes the engine's `EncoderInput` and
-//! answers with an `EncoderOutput`, which a card read after it vouches for.
+//! answers with an `EncoderOutput`, which names the served stack and which a
+//! card read after it vouches for.
 //! The client follows the embedder endpoint's rules: a loopback host is
 //! on-device, one attempt per call, no redirects, a bounded body, and errors
 //! that carry the failure class and never vault text. It takes no proxy.
@@ -19,7 +20,9 @@ use serde::Deserialize;
 use crate::config::OneironerConfig;
 
 /// The slot's wire contract version. A tagger must report exactly this.
-pub(crate) const CONTRACT_VERSION: u32 = 1;
+/// Version 2 carries cross-turn and speaker links, link confidences and the
+/// served stack's identity.
+pub(crate) const CONTRACT_VERSION: u32 = 2;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 /// Tool name on every upstream failure this provider reports.
@@ -27,13 +30,19 @@ const TAGGER_TOOL: &str = "oneironer-endpoint";
 
 /// What a tagger says it is and what it returns. A card may carry more
 /// (which runtime serves the model, say); this server keeps none of it, since
-/// any string the tagger reports could hold text it has read.
+/// any string the tagger reports could hold text it has read. The two
+/// identities it keeps are checked to be 16 lowercase hex digits.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub(crate) struct ModelCard {
     pub(crate) checkpoint_sha16: String,
     pub(crate) contract_version: u32,
     pub(crate) label_count: u32,
     pub(crate) returns: Returns,
+    /// The served stack: the trunk and every head, by hash. Required from
+    /// version 2; read as optional so a card of another version is refused
+    /// for its version.
+    #[serde(default)]
+    pub(crate) stack_sha16: Option<String>,
 }
 
 /// The outputs a model declares.
@@ -72,6 +81,10 @@ pub(crate) enum ProbeError {
     WrongLabelCount { expected: u32 },
     #[error("the tagger declares no spans")]
     NoSpans,
+    #[error("the tagger reports a stack that is not 16 lowercase hex digits")]
+    MalformedStack,
+    #[error("the tagger serves another stack than the configured stack_sha16 {expected}")]
+    WrongStack { expected: String },
     #[error("the tagger did not answer GET /v1/model with a model card")]
     NoModelCard,
 }
@@ -80,6 +93,8 @@ pub(crate) struct HttpTagger {
     base: String,
     model: ModelId,
     expected_checkpoint: String,
+    /// The pinned stack, when the section pins one.
+    expected_stack: Option<String>,
     expected_label_count: u32,
     client: reqwest::blocking::Client,
 }
@@ -142,6 +157,7 @@ impl HttpTagger {
             base,
             model,
             expected_checkpoint,
+            expected_stack: config.stack_sha16.clone(),
             expected_label_count: config.label_count.unwrap_or_default(),
             client,
         })
@@ -153,9 +169,9 @@ impl HttpTagger {
 
     /// Checks the tagger's identity and reads what it returns.
     ///
-    /// A reachable tagger with the wrong checkpoint, contract or label count
-    /// is refused: tags from it would carry another model's name. An
-    /// unreachable one is not; its markers wait.
+    /// A reachable tagger with the wrong checkpoint, contract, label count or
+    /// pinned stack is refused: tags from it would carry another model's
+    /// name. An unreachable one is not; its markers wait.
     pub(crate) fn probe(&self) -> Result<ProbeOutcome, ProbeError> {
         let url = format!("{}/v1/model", self.base);
         let response = match self.client.get(&url).send() {
@@ -209,6 +225,17 @@ impl HttpTagger {
         if !card.returns.spans {
             return Err(ProbeError::NoSpans);
         }
+        let stack = card.stack_sha16.as_deref().unwrap_or_default();
+        if oneiron::tagging::TaggingMarkerConfig::new(stack).is_err() {
+            return Err(ProbeError::MalformedStack);
+        }
+        if let Some(expected) = &self.expected_stack
+            && stack != expected
+        {
+            return Err(ProbeError::WrongStack {
+                expected: expected.clone(),
+            });
+        }
         Ok(ProbeOutcome::Ready(card))
     }
 
@@ -233,8 +260,15 @@ impl HttpTagger {
         })?;
         // A parse error names the failure only: serde's message can quote the
         // body, and the body is derived from vault text.
-        serde_json::from_slice(&bytes)
-            .map_err(|_| failure("tagger extract response is not the contract".to_owned()))
+        let output: EncoderOutput = serde_json::from_slice(&bytes)
+            .map_err(|_| failure("tagger extract response is not the contract".to_owned()))?;
+        // Version 2 gives every link its confidence.
+        if output.links.iter().any(|link| link.confidence.is_none()) {
+            return Err(failure(
+                "tagger extract response is not the contract".to_owned(),
+            ));
+        }
+        Ok(output)
     }
 }
 
@@ -253,9 +287,14 @@ impl ExtractionEncoder for HttpTagger {
         // The answer names no checkpoint, and it settles under the configured
         // one; so the card is read again once the answer is in. A tagger that
         // is no longer the configured one fails the call, and its marker
-        // waits. Only a swap there and back inside one call passes this.
+        // waits. Only a swap there and back inside one call passes this. The
+        // answer names its stack, which must be the card's: an answer of any
+        // other stack fails the call too.
         match self.probe() {
-            Ok(ProbeOutcome::Ready(_)) => Ok(output),
+            Ok(ProbeOutcome::Ready(card)) if output.stack_sha16 == card.stack_sha16 => Ok(output),
+            Ok(ProbeOutcome::Ready(_)) => Err(failure(
+                "tagger answer names another stack than its model card".to_owned(),
+            )),
             Ok(ProbeOutcome::Unreachable(_)) => Err(failure(
                 "tagger model card unreadable after extract".to_owned(),
             )),
