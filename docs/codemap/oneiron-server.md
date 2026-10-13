@@ -38,7 +38,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/public.rs` | src | m | 6 crate-vis | — | Anonymous, published-capability-only booking transport |
 | `src/api/booking/public_availability.rs` | src | s | 5 crate-vis | — | Query-bound slot cache |
 | `src/api/booking/public_availability_tests.rs` | test | s | — | — | — |
-| `src/api/booking/public_fixture.rs` | src | m | 30 crate-vis | — | Shared fixtures for tests that enter the real public router |
+| `src/api/booking/public_fixture.rs` | src | m | 32 crate-vis | — | Shared fixtures for tests that enter the real public router |
 | `src/api/booking/public_lifecycle_tests.rs` | test | m | — | — | — |
 | `src/api/booking/public_tests.rs` | test | m | — | — | — |
 | `src/api/booking/subject.rs` | src | s | 3 crate-vis | — | — |
@@ -117,7 +117,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/llm.rs` | src | s | 1 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/tests.rs` | test | m | — | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 10 crate-vis | — | Tool execution dispatch across actors |
-| `src/api/mcp_gateway/admission.rs` | src | m | 8 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/admission.rs` | src | m | 9 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 4 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | s | 2 crate-vis | — | Code mode's `self.memory.<verb>`: the SDK verb table through the tool door |
@@ -169,11 +169,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/conversation_rooms.rs` | test | s | — | — | Room, membership, addressing, thread and listing routes through the HTTP router |
 | `src/api/tests/core_memory_conversations.rs` | test | XL | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
 | `src/api/tests/depth_quality.rs` | test | s | — | — | — |
+| `src/api/tests/mcp_booking_publication.rs` | test | s | — | — | engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert` |
 | `src/api/tests/mcp_code_check.rs` | test | s | — | — | Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
 | `src/api/tests/mcp_paging_cursors.rs` | test | m | — | — | Setup page budgets/end-markers, one-time bound cursors, mutating-use refusal, concurrent continuations |
 | `src/api/tests/mcp_quickjs.rs` | test | L | 2 crate-vis | — | Production execute_code uses real JS through the vault-owned host and wire |
 | `src/api/tests/mcp_quickjs/call_mode.rs` | test | s | — | — | Call mode through code mode's `self.memory.recall` (retrieval hub #call-mode) |
+| `src/api/tests/mcp_quickjs/run_rows.rs` | test | s | — | — | The rows a code run serves itself (`self.memory.search`, `put_claim`, `supersede_claim`, `put_edge`) meet… |
 | `src/api/tests/mcp_results_carrier.rs` | test | m | — | — | Negotiated result content, board omission/health axes, discover vocabulary, carrier drain, skills-pack onramp |
 | `src/api/tests/mcp_scoping.rs` | test | m | — | — | Legacy catalog retirement, actor-derived effective scopes, world/facet ceilings, board epoch monotonicity |
 | `src/api/tests/mcp_source_gate.rs` | test | s | — | — | — |

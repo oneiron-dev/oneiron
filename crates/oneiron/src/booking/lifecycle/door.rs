@@ -14,8 +14,8 @@ use super::types::{
 };
 use super::{CHECKOUT_LEASE, CheckoutLeaseRow};
 use crate::attempt_queue::{
-    AttemptId, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
-    EnqueueOutcome, FailAttempt,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
+    CompleteAttempt, EnqueueAttempt, EnqueueOutcome, FailAttempt,
 };
 use crate::booking::invite_grant::NoConfirmInviteSink;
 use crate::booking::{BookingError, SlotOracle, SolveRequest, SolveResult};
@@ -25,12 +25,15 @@ use crate::{EntityId, Vault};
 /// Validates, encodes, and enqueues one booking verb.
 ///
 /// This is the whole public surface of a verb: it never solves, never writes an
-/// EVENT, and never touches a hold. The transition happens in
-/// [`run_booking_lifecycle_once`] on the home node.
+/// EVENT, and never touches a hold. The transition happens on the home node,
+/// in [`run_booking_lifecycle_attempt`] or [`run_booking_lifecycle_once`].
 ///
 /// An advisory `idempotency_key` becomes the queue's dedupe string, so a
 /// double-submit coalesces onto one attempt row. That is hygiene: correctness
-/// comes from the writer and from the durable receipt.
+/// comes from the writer and from the durable receipt. The key is the
+/// caller's own choice, so it coalesces only the same request: another
+/// request under a reused key gets its own attempt rather than the first
+/// caller's, whose receipt carries that caller's tokens.
 ///
 /// # Errors
 ///
@@ -63,17 +66,22 @@ pub fn enqueue_booking_verb_with_publication(
         .as_ref()
         .map(encode_row)
         .transpose()?;
+    // Sixteen bytes of digest are plenty to tell two requests apart.
+    let request_hex = blake3::hash(&encode_row(&attempt.request)?).to_hex();
+    let request_digest = &request_hex[..32];
     let dedupe_key = match public_scope {
-        Some(snapshot) => attempt
-            .request
-            .idempotency_key()
-            .map(|key| format!("public:{}:{key}", blake3::hash(&snapshot).to_hex())),
+        Some(snapshot) => attempt.request.idempotency_key().map(|key| {
+            format!(
+                "public:{}:{request_digest}:{key}",
+                blake3::hash(&snapshot).to_hex()
+            )
+        }),
         // Namespace both arms: a caller's literal key may otherwise equal
         // a public key and coalesce onto an unrestricted queued attempt.
         None => attempt
             .request
             .idempotency_key()
-            .map(|key| format!("private:{key}")),
+            .map(|key| format!("private:{request_digest}:{key}")),
     };
     let payload = encode_row(&attempt)?;
 
@@ -174,10 +182,12 @@ pub enum BookingLifecycleTurn {
 
 /// Claims and executes at most one booking lifecycle attempt on the home node.
 ///
-/// This is the ONLY public execution door. It refuses on a node that does not
-/// hold the MACRO home-node designation, claims strictly
-/// [`BOOKING_LIFECYCLE_ATTEMPT_KIND`] so it never steals another consumer's
-/// work, and finalizes the attempt row either way.
+/// This is the queue drain. It refuses on a node that does not hold the MACRO
+/// home-node designation, claims strictly [`BOOKING_LIFECYCLE_ATTEMPT_KIND`]
+/// so it never steals another consumer's work, and finalizes the attempt row
+/// either way. The attempt it claims is the oldest ready one, whoever enqueued
+/// it, so a caller answering one request runs
+/// [`run_booking_lifecycle_attempt`] instead.
 ///
 /// `make_oracle` builds the availability oracle for the claimed attempt. It is
 /// a callback rather than a parameter because the page and the session to
@@ -197,21 +207,9 @@ where
     F: FnOnce(&BookingOracleRequest) -> Result<O, BookingError>,
     O: SlotOracle,
 {
-    // Cross-node serialization, read before anything is claimed: a node that is
-    // not the home node must not even lease the attempt, or the row would sit
-    // leased on a node that may not write.
-    let designation = DreamerRunnerStore::new(vault)
-        .home_node_designation()
-        .map_err(|error| engine_failure("home node designation read", error))?;
-    let Some(designation) = designation else {
-        return Ok(BookingLifecycleTurn::NoHomeNode);
-    };
-    if designation.node_id != input.local_node_id {
-        return Ok(BookingLifecycleTurn::NotHomeNode {
-            home_node_id: designation.node_id,
-        });
+    if let Some(refusal) = home_node_refusal(vault, input)? {
+        return Ok(refusal);
     }
-
     let claimed = vault
         .with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_claim(
@@ -225,10 +223,100 @@ where
             )
         })
         .map_err(|error| engine_failure("lifecycle attempt claim", error))?;
+    run_claimed(vault, make_oracle, claimed, input)
+}
+
+/// Claims and executes exactly the attempt `id` on the home node.
+///
+/// The door for a caller that enqueued `id` and answers for it: the receipt
+/// this returns, and the action tokens inside it, are that attempt's and no
+/// other's. A drain would hand back whichever attempt was oldest, which on a
+/// public page is another visitor's booking.
+///
+/// [`BookingLifecycleTurn::Empty`] when `id` is not claimable here: another
+/// worker leased or settled it (a double submit coalesced onto it), it is not
+/// ready yet, or it is not a booking lifecycle attempt.
+///
+/// # Errors
+///
+/// [`BookingError`] from the transition itself, or [`BookingError::SlotOracle`]
+/// on a queue failure.
+pub fn run_booking_lifecycle_attempt<F, O>(
+    vault: &Vault,
+    id: AttemptId,
+    make_oracle: F,
+    input: &BookingLifecycleConsumerInput,
+) -> Result<BookingLifecycleTurn, BookingError>
+where
+    F: FnOnce(&BookingOracleRequest) -> Result<O, BookingError>,
+    O: SlotOracle,
+{
+    if let Some(refusal) = home_node_refusal(vault, input)? {
+        return Ok(refusal);
+    }
+    let claimed = vault
+        .with_write_txn_grouped(|txn| {
+            // The point claim refuses a row that is not ready with an error,
+            // so a row someone else holds is screened out first and reads as
+            // nothing to run, the same answer a drain gives.
+            let claimable = AttemptQueue::new(vault)
+                .get_in_write_txn(txn, id)?
+                .is_some_and(|row| {
+                    row.kind == BOOKING_LIFECYCLE_ATTEMPT_KIND
+                        && matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+                });
+            if !claimable {
+                return Ok(ClaimOutcome::Empty);
+            }
+            crate::ports::JobQueue::port_job_claim_id(
+                vault,
+                txn,
+                id,
+                ClaimAttempt {
+                    lease_owner: input.lease_owner.clone(),
+                    now: input.now_utc,
+                },
+            )
+        })
+        .map_err(|error| engine_failure("lifecycle attempt claim", error))?;
+    run_claimed(vault, make_oracle, claimed, input)
+}
+
+/// Cross-node serialization, read before anything is claimed: a node that is
+/// not the home node must not even lease the attempt, or the row would sit
+/// leased on a node that may not write.
+fn home_node_refusal(
+    vault: &Vault,
+    input: &BookingLifecycleConsumerInput,
+) -> Result<Option<BookingLifecycleTurn>, BookingError> {
+    let designation = DreamerRunnerStore::new(vault)
+        .home_node_designation()
+        .map_err(|error| engine_failure("home node designation read", error))?;
+    Ok(match designation {
+        None => Some(BookingLifecycleTurn::NoHomeNode),
+        Some(designation) if designation.node_id != input.local_node_id => {
+            Some(BookingLifecycleTurn::NotHomeNode {
+                home_node_id: designation.node_id,
+            })
+        }
+        Some(_) => None,
+    })
+}
+
+/// Runs one claimed attempt to a receipt and finalizes its row.
+fn run_claimed<F, O>(
+    vault: &Vault,
+    make_oracle: F,
+    claimed: ClaimOutcome,
+    input: &BookingLifecycleConsumerInput,
+) -> Result<BookingLifecycleTurn, BookingError>
+where
+    F: FnOnce(&BookingOracleRequest) -> Result<O, BookingError>,
+    O: SlotOracle,
+{
     let ClaimOutcome::Claimed(record) = claimed else {
         return Ok(BookingLifecycleTurn::Empty);
     };
-
     let outcome = execute_claimed_attempt(vault, make_oracle, &record, input.now_utc);
     finalize_attempt(vault, &record, &outcome, input)?;
     outcome.map(BookingLifecycleTurn::Executed)
