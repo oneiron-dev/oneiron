@@ -5962,8 +5962,9 @@ fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Re
 /// Astra 1384e: an epoch summary whose text moved to the document plane
 /// reaches a vault that never held it through canonical recovery, as a
 /// pointer with no birth stamp and no record of what it carried. A summary
-/// minted there from it ships while no world is flagged, and stays home while
-/// W is, also once no head stands for the pointer.
+/// minted there from it ships while no world is flagged. Once W is, the
+/// window door holds it in a window packed before, packing leaves it out,
+/// and the door still holds it once no head stands for the pointer.
 #[test]
 fn a_summary_of_a_recovered_summary_on_the_text_plane_stays_home() -> crate::Result<()> {
     let dir = tempfile::tempdir()?;
@@ -5993,19 +5994,25 @@ fn a_summary_of_a_recovered_summary_on_the_text_plane_stays_home() -> crate::Res
     assert_eq!(restored.entity_text(&source)?, "the world fact");
     let (nested, november) = (entity_id(0x78), WindowKey::new("2026-11"));
     nested_summary(&restored, source, nested, &november)?;
+    let november_doc = packed_window(&restored, &november)?;
     assert!(
-        owner_window_ships(&restored, &november, &packed_window(&restored, &november)?)?,
+        owner_window_ships(&restored, &november, &november_doc)?,
         "no world flagged: a summary of a recovered summary ships"
     );
     restored.set_world_device_only(world, true)?;
     assert!(
-        !owner_window_ships(&restored, &november, &packed_window(&restored, &november)?)?,
+        !owner_window_ships(&restored, &november, &november_doc)?,
         "the window door, a summary of a recovered summary on the text plane"
+    );
+    let fresh = packed_window(&restored, &november)?;
+    assert!(
+        map_get_bytes(&fresh.get_map("entities"), &nested.to_hex()).is_none(),
+        "packing, a summary of a recovered summary on the text plane"
     );
     restored
         .with_write_txn(|txn| crate::entity_doc::erase_in_txn(&restored.store, txn, &source))?;
     assert!(
-        !owner_window_ships(&restored, &november, &packed_window(&restored, &november)?)?,
+        !owner_window_ships(&restored, &november, &november_doc)?,
         "the window door, a summary of a pointer no head stands for"
     );
     Ok(())
