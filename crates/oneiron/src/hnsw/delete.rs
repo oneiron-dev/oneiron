@@ -85,23 +85,15 @@ pub(super) fn hnsw_deindex_probed(
     let entry_point =
         read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
     if entry_point == *id {
-        // The first node left. A room's view reads its graph as it was before
-        // the call, where `id` may still come first.
-        let replacement = {
-            let mut nodes = store.hnsw_neighbors().iter(&*wtxn)?;
-            loop {
-                let (key, _) = nodes
-                    .next()
-                    .transpose()?
-                    .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
-                if key.as_ref() != id.as_bytes() {
-                    break parse_entity_id(&key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
-                        Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
-                        other => other,
-                    })?;
-                }
-            }
-        };
+        let (replacement_key, _) = store
+            .hnsw_neighbors()
+            .first(&*wtxn)?
+            .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
+        let replacement =
+            parse_entity_id(&replacement_key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+                Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
+                other => other,
+            })?;
         store
             .hnsw_meta()
             .put(wtxn, ENTRY_POINT_KEY, replacement.as_bytes())?;

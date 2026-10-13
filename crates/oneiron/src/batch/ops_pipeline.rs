@@ -337,10 +337,7 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// the ones before it. A call that writes one row twice (two of its `Put`,
 /// `Text` and `Vector`) is refused before anything stages: its second write
 /// would build on the row as it was before the first. A put's index, in
-/// particular, could not publish the revision the put staged. So is a call
-/// that must drop a row's node from the room's graph (see below) beside
-/// another write of that graph, an insert or a second drop: the graph it
-/// reads lacks what the other wrote.
+/// particular, could not publish the revision the put staged.
 ///
 /// A room indexes what it stages at once and runs no idle pass. So the apply
 /// that indexes a row the room put publishes the row's revision (its indexed
@@ -348,9 +345,7 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// it did not restage when they describe another body. When neither base's
 /// indexed body nor its live one is the room's, it hides base's vector of
 /// the row even when base has none yet, since base may still embed that
-/// body. A row whose vector the room's walk can then load from neither the
-/// room nor base leaves the room's graph. Base keeps its deferred-index
-/// interval.
+/// body. Base keeps its deferred-index interval.
 ///
 /// # The op list IS the journal
 ///
@@ -543,7 +538,6 @@ pub(crate) fn apply_ops_session(
     // hides an index of another body that it did not restage (see above). A
     // vector the room staged describes the body it indexed last, so it stands
     // until the body changes (Sol R23).
-    let mut graph_written = !vectors.is_empty();
     for id in texts.union(&vectors) {
         if !view.entities.stages_row(id.as_bytes()) {
             continue;
@@ -553,7 +547,7 @@ pub(crate) fn apply_ops_session(
             crate::bm25::deindex_text(view, wtxn, id)?;
         }
         if !vectors.contains(id) && (changed || !view.vectors.stages_row(id.as_bytes())) {
-            hide_vector_of_another_body(view, wtxn, id, &mut graph_written)?;
+            hide_vector_of_another_body(view, wtxn, id)?;
         }
     }
     Ok(())
@@ -567,15 +561,10 @@ pub(crate) fn apply_ops_session(
 /// which can land before the room's segment commits) is embedded from its
 /// live body, so while that body is another too the room hides the row
 /// before base writes one (Sol R19, R21).
-///
-/// `graph_written`: this call has written the room's graph (an insert, or
-/// another row's drop), so the graph its view reads is not the one it would
-/// drop a node from.
 fn hide_vector_of_another_body(
     view: &crate::store::SessionStoreView<'_>,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    graph_written: &mut bool,
 ) -> Result<()> {
     let room = crate::ports::EntityStoreRead::port_entity_raw(view, wtxn, id)?
         .ok_or(Error::CorruptedIndex("staged row without entity"))?;
@@ -587,35 +576,20 @@ fn hide_vector_of_another_body(
         if !vectors.hides(id.as_bytes()) && !vectors.stages_row(id.as_bytes()) {
             return Ok(());
         }
-        if let Some(raw) = base.vectors.get(wtxn, id.as_bytes())? {
-            let raw = raw.into_owned();
-            vectors.put(wtxn, id.as_bytes(), &raw)?;
-            return crate::embed::copy_embedding_device_in_txn(base, view, wtxn, id);
-        }
-        vectors.delete(wtxn, id.as_bytes())?;
-    } else if later {
+        let Some(raw) = base.vectors.get(wtxn, id.as_bytes())? else {
+            vectors.delete(wtxn, id.as_bytes())?;
+            return crate::embed::record_embedding_device_in_txn(view, wtxn, id, None);
+        };
+        let raw = raw.into_owned();
+        vectors.put(wtxn, id.as_bytes(), &raw)?;
+        return crate::embed::copy_embedding_device_in_txn(base, view, wtxn, id);
+    }
+    if later {
         vectors.delete(wtxn, id.as_bytes())?;
     } else {
         vectors.hide_base_row(id.as_bytes())?;
     }
-    crate::embed::record_embedding_device_in_txn(view, wtxn, id, None)?;
-    // The room's walk now reads base's vector of the row, so where base holds
-    // none the row leaves the room's graph, as base drops a node with its
-    // vector: the room's own vector of an earlier body may have been its
-    // graph's entry point (Sol R24). Decided from base: this view reads the
-    // overlay as it was before the call (Sol R25).
-    if base.vectors.get(wtxn, id.as_bytes())?.is_some()
-        || view.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_none()
-    {
-        return Ok(());
-    }
-    if *graph_written {
-        return Err(Error::InvariantViolation(
-            "a session apply drops a graph node only as its one graph write; the other takes an apply of its own",
-        ));
-    }
-    *graph_written = true;
-    crate::hnsw::hnsw_deindex(view, wtxn, id)
+    crate::embed::record_embedding_device_in_txn(view, wtxn, id, None)
 }
 
 pub(super) fn contains_text_op(ops: &[BatchOp]) -> bool {

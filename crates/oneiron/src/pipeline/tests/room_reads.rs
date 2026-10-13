@@ -1338,8 +1338,9 @@ fn base_claim_for_the_room(
 /// then that one back, with new words and no vector, keeps the room's vector
 /// of it. Then the room changes the body and indexes it with its words and no vector:
 /// the vector the room staged describes the earlier body, so it no longer
-/// finds the claim there (Sol R23). The claim was the entry point of the
-/// room's graph, and the room still embeds another row (Sol R24, R25).
+/// finds the claim there (Sol R23). The claim, which the room's graph still
+/// holds as its entry point and first node, has no vector the room's walk
+/// can load, and the room still embeds another row (Sol R24, R25).
 #[test]
 fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1436,8 +1437,9 @@ fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() 
 
 /// A room embeds a base claim's body of its own, then puts base's body
 /// back, of which base holds no vector. The room's vector no longer finds
-/// the claim, and the room, whose graph held only the claim, still embeds
-/// another row (Sol R24).
+/// the claim, whose node, the only one of the room's graph, has no vector
+/// the room's walk can load (Sol R24). Base then embeds a row of its own,
+/// and the room still embeds another row (Astra 1397b).
 #[test]
 fn a_room_that_puts_back_a_body_base_never_embedded_still_embeds() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1480,6 +1482,7 @@ fn a_room_that_puts_back_a_body_base_never_embedded_still_embeds() -> Result<()>
         ),
         "backbaseword",
     )?;
+    put_vector(&vault, entity_id(0xB5), [0.0, 1.0, 0.0, 0.0])?;
     embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD8))?;
     session.close()?;
     Ok(())
@@ -1835,40 +1838,71 @@ fn a_room_apply_that_writes_one_row_twice_is_refused() -> Result<()> {
     Ok(())
 }
 
-/// A room apply that must drop a row's node from the room's graph beside
-/// another write of that graph (an insert, or a second drop) is refused:
-/// its view reads the graph as it was before the call, without what the
-/// other wrote, so the drop would leave the graph's nodes, count and entry
-/// point wrong for the room's next vector (Sol R25, R26). Applied one per
-/// call, as the witness door does, the same writes land and the room embeds
-/// again.
+/// A room embeds a row of its own over base's graph.
+fn embed_in_room(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    id: EntityId,
+    vector: [f32; 4],
+) -> Result<()> {
+    stage_in_room(vault, session, vec![room_put(id), room_vector(id, vector)])
+}
+
+/// Base's graph and vectors, row by row: count, entry point and the rest of
+/// its graph's scalars, its nodes' neighbour lists, and its vectors.
+fn base_graph(vault: &Vault) -> Result<Vec<(u8, Vec<u8>, Vec<u8>)>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for (tag, db) in [
+        (0, &vault.store.hnsw_meta),
+        (1, &vault.store.hnsw_neighbors),
+        (2, &vault.store.vectors),
+    ] {
+        for row in db.iter(&txn)? {
+            let (key, value) = row?;
+            rows.push((tag, key.to_vec(), value.to_vec()));
+        }
+    }
+    Ok(rows)
+}
+
+/// Base's graph and vectors are the same, byte for byte, as a vault's that
+/// ran `base` and no room.
+fn assert_base_as_without_the_room(
+    vault: &Vault,
+    base: impl FnOnce(&Vault) -> Result<()>,
+) -> Result<()> {
+    let (_dir, alone) = open_test_vault();
+    base(&alone)?;
+    assert_eq!(
+        base_graph(vault)?,
+        base_graph(&alone)?,
+        "base's graph is the same with and without the room"
+    );
+    Ok(())
+}
+
+/// A room takes a claim's body back to base's, of which base holds no
+/// vector, so the claim's node in the room's graph, its entry point and
+/// first node, has no vector the room's walk can load. The room then puts a
+/// new body for the claim and embeds it: the insert refreshes that node
+/// from a node it loads, and the room's search finds the claim by its new
+/// vector (Astra 1397b).
 #[test]
-fn a_room_apply_that_drops_a_graph_node_beside_another_graph_write_is_refused() -> Result<()> {
+fn a_room_reembeds_a_claim_whose_node_it_left_without_a_vector() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("the vault's owner");
-    let claim = entity_id(0xCC);
-    let turn = entity_id(0xCD);
-    let other = entity_id(0xDB);
-    let turn_put = |data: &[u8]| BatchOp::Put {
-        id: turn,
-        entity_type: ENTITY_TYPE_TURN,
-        occurred: TimeRange { start: 10, end: 10 },
-        learned_at: 10,
-        data: data.to_vec(),
-        allow_maintenance: false,
-        allow_reserved_predicate: false,
-        hub_sync_imported: false,
-    };
+    let claim = entity_id(0xC0);
     base_claim_for_the_room(
         &vault,
         owner,
         claim,
-        ("dropbasevalue", "dropbaseword"),
+        ("inertbasevalue", "inertbaseword"),
         None,
     )?;
-    let session = enter(&vault, "sess-room-drop-beside-a-write")?;
+    let session = enter(&vault, "sess-room-inert-node")?;
     stage_in_room(
         &vault,
         &session,
@@ -1878,81 +1912,187 @@ fn a_room_apply_that_drops_a_graph_node_beside_another_graph_write_is_refused() 
                 (
                     TimeRange { start: 10, end: 10 },
                     10,
-                    owner_claim_body(owner, "droproomvalue")?,
+                    owner_claim_body(owner, "inertroomvalue")?,
                 ),
             ),
             room_vector(claim, [1.0, 0.0, 0.0, 0.0]),
-            room_text(claim, "droproomword"),
-            turn_put(b"dropturnbody"),
-            room_vector(turn, [0.0, 0.0, 1.0, 0.0]),
-            room_text(turn, "dropturnword"),
-            claim_put(
-                claim,
-                (
-                    TimeRange { start: 11, end: 11 },
-                    11,
-                    owner_claim_body(owner, "dropchangedvalue")?,
-                ),
-            ),
-            turn_put(b"dropchangedturnbody"),
-            room_put(other),
+            room_text(claim, "inertroomword"),
         ],
     )?;
-    let route = session.write_route()?;
-    let overlay = session.overlay();
-    let scope = JournalScope::new(EntityId::now(), EntityId::now());
-    let entry = |op| JournalEntry {
-        scope,
-        role: JournalRole::TurnPut,
-        learned_at: 10,
-        occurred: TimeRange { start: 10, end: 10 },
-        op,
-    };
-    for (beside, drop) in [
+    embed_in_room(&vault, &session, entity_id(0xDB), [0.0, 1.0, 0.0, 0.0])?;
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
         (
-            room_vector(other, [0.0, 1.0, 0.0, 0.0]),
-            room_text(claim, "dropchangedword"),
+            TimeRange { start: 11, end: 11 },
+            11,
+            owner_claim_body(owner, "inertbasevalue")?,
         ),
-        (
-            room_text(turn, "dropchangedturnword"),
-            room_text(claim, "dropchangedword"),
-        ),
-    ] {
-        let refused = vault.with_write_txn_grouped(|wtxn| {
-            let _segment = overlay.install_txn_segment()?;
-            crate::batch::apply_ops_session(
-                &session.read_view()?,
-                &route,
-                &vault.config,
-                &vault.analyzer,
-                wtxn,
-                vec![entry(beside.clone()), entry(drop.clone())],
-            )
-        });
-        assert!(
-            matches!(refused, Err(crate::error::Error::InvariantViolation(_))),
-            "got {refused:?}"
-        );
-    }
-
+        "inertbaseword",
+    )?;
     stage_in_room(
         &vault,
         &session,
         vec![
-            room_vector(other, [0.0, 1.0, 0.0, 0.0]),
-            room_text(claim, "dropchangedword"),
-            room_text(turn, "dropchangedturnword"),
+            claim_put(
+                claim,
+                (
+                    TimeRange { start: 12, end: 12 },
+                    12,
+                    owner_claim_body(owner, "inertnewvalue")?,
+                ),
+            ),
+            room_vector(claim, [0.0, 0.0, 1.0, 0.0]),
+            room_text(claim, "inertnewword"),
         ],
     )?;
-    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD8))?;
     assert!(
-        !vector_hits_in_room(&vault, &session, [0.0, 0.0, 1.0, 0.0])?.contains(&turn),
-        "the turn's vector of its earlier body does not find it"
-    );
-    assert!(
-        vector_hits_in_room(&vault, &session, [0.0, 1.0, 0.0, 0.0])?.contains(&other),
-        "the room finds the row it embedded in a call of its own"
+        vector_hits_in_room(&vault, &session, [0.0, 0.0, 1.0, 0.0])?.contains(&claim),
+        "the room finds the claim by its new vector"
     );
     session.close()?;
     Ok(())
+}
+
+/// Base keeps embedding rows after a room embedded one of its own over
+/// base's graph, so the room's staged count trails the graph it reads. The
+/// room embeds again, and its search finds each row by its vector. Base's
+/// graph is as it would be without the room (Astra 1397b).
+#[test]
+fn a_room_embeds_again_after_base_grew_past_its_count() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let base = |vault: &Vault, later: bool| -> Result<()> {
+        if !later {
+            return put_vector(vault, entity_id(0xB1), [0.0, 1.0, 0.0, 0.0]);
+        }
+        for (byte, vector) in [
+            (0xB2, [0.0, 0.7, 0.7, 0.0]),
+            (0xB3, [0.0, 0.7, 0.0, 0.7]),
+            (0xB4, [0.7, 0.7, 0.0, 0.0]),
+            (0xB5, [0.0, 0.0, 0.7, 0.7]),
+        ] {
+            put_vector(vault, entity_id(byte), vector)?;
+        }
+        Ok(())
+    };
+    base(&vault, false)?;
+    let session = enter(&vault, "sess-room-base-grew")?;
+    let first = entity_id(0xC1);
+    let second = entity_id(0xC2);
+    embed_in_room(&vault, &session, first, [1.0, 0.0, 0.0, 0.0])?;
+    base(&vault, true)?;
+    embed_in_room(&vault, &session, second, [0.0, 0.0, 1.0, 0.0])?;
+
+    for (id, query) in [
+        (first, [1.0, 0.0, 0.0, 0.0]),
+        (second, [0.0, 0.0, 1.0, 0.0]),
+        (entity_id(0xB5), [0.0, 0.0, 0.7, 0.7]),
+    ] {
+        assert!(
+            vector_hits_in_room(&vault, &session, query)?.contains(&id),
+            "the room finds {id:?} by its vector"
+        );
+    }
+    session.close()?;
+    assert_base_as_without_the_room(&vault, |alone| {
+        base(alone, false)?;
+        base(alone, true)
+    })
+}
+
+/// A room embeds a row of its own beside base's only graph node, then base
+/// deletes that node, which leaves base no graph while the room reads its
+/// own count and its copy of the node's neighbour list. The room embeds
+/// again, and its search finds both rows it embedded and not the deleted
+/// one. Base's graph is as it would be without the room (Astra 1397b).
+#[test]
+fn a_room_embeds_again_after_base_deleted_its_last_node() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let gone = entity_id(0xB1);
+    put_vector(&vault, gone, [0.0, 1.0, 0.0, 0.0])?;
+    let session = enter(&vault, "sess-room-base-emptied")?;
+    let first = entity_id(0xC1);
+    let second = entity_id(0xC2);
+    embed_in_room(&vault, &session, first, [1.0, 0.0, 0.0, 0.0])?;
+    vault.batch().delete(&gone).commit()?;
+    embed_in_room(&vault, &session, second, [0.0, 0.0, 1.0, 0.0])?;
+
+    assert!(
+        vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&first),
+        "the room still finds its own first row"
+    );
+    assert!(
+        vector_hits_in_room(&vault, &session, [0.0, 0.0, 1.0, 0.0])?.contains(&second),
+        "the room finds the row it embedded after base emptied"
+    );
+    assert!(
+        !vector_hits_in_room(&vault, &session, [0.0, 1.0, 0.0, 0.0])?.contains(&gone),
+        "the row base deleted is not found"
+    );
+    session.close()?;
+    assert_base_as_without_the_room(&vault, |alone| {
+        put_vector(alone, gone, [0.0, 1.0, 0.0, 0.0])?;
+        alone.batch().delete(&gone).commit()
+    })?;
+
+    // Base's own corruption check still holds: a base whose count says zero
+    // beside a node refuses its next insert.
+    let (_dir, corrupted) = open_test_vault();
+    put_vector(&corrupted, gone, [0.0, 1.0, 0.0, 0.0])?;
+    corrupted.with_write_txn(|wtxn| {
+        corrupted
+            .store
+            .hnsw_meta
+            .put(wtxn, crate::hnsw::COUNT_KEY, &0_u64.to_le_bytes())
+    })?;
+    let refused = put_vector(&corrupted, first, [1.0, 0.0, 0.0, 0.0]);
+    assert!(
+        matches!(refused, Err(crate::error::Error::CorruptedIndex(_))),
+        "got {refused:?}"
+    );
+    Ok(())
+}
+
+/// A room embeds a row of its own linked to base's entry point, then base
+/// deletes that node, which moves base's entry point while the room keeps
+/// its copy of the deleted node's neighbour list. The room embeds again, and
+/// its search finds its rows and base's other row, not the deleted one.
+/// Base's graph is as it would be without the room (Astra 1397b).
+#[test]
+fn a_room_embeds_again_after_base_moved_its_entry_point() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let gone = entity_id(0xB1);
+    let kept = entity_id(0xB2);
+    let base = |vault: &Vault| -> Result<()> {
+        put_vector(vault, gone, [0.0, 1.0, 0.0, 0.0])?;
+        put_vector(vault, kept, [0.0, 0.0, 0.0, 1.0])
+    };
+    base(&vault)?;
+    let session = enter(&vault, "sess-room-base-entry-moved")?;
+    let first = entity_id(0xC1);
+    let second = entity_id(0xC2);
+    embed_in_room(&vault, &session, first, [0.7, 0.7, 0.0, 0.0])?;
+    vault.batch().delete(&gone).commit()?;
+    embed_in_room(&vault, &session, second, [0.0, 0.0, 1.0, 0.0])?;
+
+    for (id, query) in [
+        (first, [0.7, 0.7, 0.0, 0.0]),
+        (second, [0.0, 0.0, 1.0, 0.0]),
+        (kept, [0.0, 0.0, 0.0, 1.0]),
+    ] {
+        assert!(
+            vector_hits_in_room(&vault, &session, query)?.contains(&id),
+            "the room finds {id:?} by its vector"
+        );
+    }
+    assert!(
+        !vector_hits_in_room(&vault, &session, [0.0, 1.0, 0.0, 0.0])?.contains(&gone),
+        "the row base deleted is not found"
+    );
+    session.close()?;
+    assert_base_as_without_the_room(&vault, |alone| {
+        base(alone)?;
+        alone.batch().delete(&gone).commit()
+    })
 }
