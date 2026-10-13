@@ -399,24 +399,15 @@ pub(crate) fn discover_response(
             continue;
         }
 
+        // Off this device a device-local row never counts toward the scan's
+        // cap, so no overflow hints at one.
         let ids = server
             .vault
-            .entities_by_type(entity_type)
+            .entities_by_type_at(entity_type, locality)
             .inspect_err(|e| {
                 tracing::error!(error = %e, entity_type, "discover count scan failed");
             })
             .map_err(|_| ApiError::internal_server_error("discover count scan failed"))?;
-        let ids = if locality == oneiron::claim::CallerLocality::OffDevice {
-            server
-                .vault
-                .off_device_readable(ids)
-                .inspect_err(|e| {
-                    tracing::error!(error = %e, entity_type, "discover locality scan failed");
-                })
-                .map_err(|_| ApiError::internal_server_error("discover count scan failed"))?
-        } else {
-            ids
-        };
 
         if ids.is_empty() {
             continue;
