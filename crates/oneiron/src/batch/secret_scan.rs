@@ -19,6 +19,8 @@ const REASON_OPENAI_KEY: &str = "gate.secret_scan.openai_key";
 const REASON_PRIVATE_KEY: &str = "gate.secret_scan.private_key";
 const REASON_SLACK_TOKEN: &str = "gate.secret_scan.slack_token";
 const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
+const REASON_JSON_TOO_DEEP: &str = "gate.secret_scan.json_depth_over_127";
+const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_over_1024";
 
 /// The vault's `secrets` setting: whether the write door scans what a host
 /// writes into this vault for credential shapes. On by default; only the
@@ -123,7 +125,301 @@ pub(super) fn scan_batch_ops(
 /// use this; none of them follows the owner's ingest switch.
 pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static str> {
     let haystack = String::from_utf8_lossy(bytes);
-    detect(&haystack, Door::Release)
+    detect(&haystack, Door::Release).or_else(|| {
+        let payload = framed_payload(bytes)?;
+        let Some(mut value) = decode_members(payload) else {
+            return nested_past_decoder(payload);
+        };
+        sanitize_messagepack(&mut value, false, Door::Release)
+            .then_some("gate.secret_scan.sensitive_env")
+    })
+}
+
+/// The release reading of a body no decoder took whole: its text, and a
+/// nesting past the decoders ([`nested_past_decoder`]), whose members no
+/// scan read.
+pub(crate) fn scan_undecoded_body(bytes: &[u8]) -> Option<&'static str> {
+    scan_file_content("", bytes).or_else(|| nested_past_decoder(bytes))
+}
+
+/// The body a known framed carrier wraps behind its magic and ids: an inert
+/// refinement receipt's JSON. The raw text scan reads its text, but no
+/// whole-body decode reaches its fields, so every door decodes the wrapped
+/// body as a body too.
+fn framed_payload(data: &[u8]) -> Option<&[u8]> {
+    crate::skill_hub::refinement_carrier_payload(data)
+}
+
+/// A structured body with every member it holds: JSON read into a MessagePack
+/// tree, whose maps keep a repeated key and its value (a JSON map keeps only
+/// the last), or a MessagePack value that is the whole body.
+pub(crate) fn decode_members(data: &[u8]) -> Option<rmpv::Value> {
+    if let Ok(value) = serde_json::from_slice::<rmpv::Value>(data) {
+        return Some(value);
+    }
+    let mut cursor = std::io::Cursor::new(data);
+    rmpv::decode::read_value(&mut cursor)
+        .ok()
+        .filter(|_| cursor.position() == data.len() as u64)
+}
+
+/// [`decode_members`] at the write door, which refuses a body nested past
+/// its decoder: none of its members was read.
+fn read_members(data: &[u8]) -> Result<Option<rmpv::Value>> {
+    match decode_members(data) {
+        Some(value) => Ok(Some(value)),
+        None => nested_past_decoder(data).map_or(Ok(None), |reason| Err(secret_scan_error(reason))),
+    }
+}
+
+/// JSON or MessagePack nested past what its decoder reads (127 open JSON
+/// containers, 1024 MessagePack levels). Its decode fails, so no scan read
+/// its members, and no door takes it as clean. Text that is no JSON before
+/// that depth is text: only the decoder's own depth stop counts.
+pub(crate) fn nested_past_decoder(data: &[u8]) -> Option<&'static str> {
+    let first = data.iter().find(|byte| !byte.is_ascii_whitespace());
+    // The same depth-bound decode [`decode_members`] runs (a skip-only parse
+    // has no depth stop); serde_json names that stop in its message only.
+    let json = matches!(first, Some(b'{' | b'['))
+        && serde_json::from_slice::<rmpv::Value>(data)
+            .is_err_and(|error| error.to_string().starts_with("recursion limit exceeded"));
+    if json {
+        return Some(REASON_JSON_TOO_DEEP);
+    }
+    let container = matches!(data.first(), Some(0x80..=0x9f | 0xdc..=0xdf));
+    let too_deep = container
+        && matches!(
+            rmpv::decode::read_value(&mut std::io::Cursor::new(data)),
+            Err(rmpv::decode::Error::DepthLimitExceeded)
+        );
+    too_deep.then_some(REASON_MESSAGEPACK_TOO_DEEP)
+}
+
+/// The release doors' text rules over strings a reader keeps apart (one
+/// array's items), read one per line: a phrase or key split over the items.
+pub(crate) fn release_joined_strings<S: std::borrow::Borrow<str>>(items: &[S]) -> bool {
+    joined_strings(items, Door::Release)
+}
+
+/// A secret split over an array's strings (a recovery phrase one word per
+/// item, a private key one line per item) is read whole, one item per line,
+/// before each item is read alone.
+fn joined_strings<S: std::borrow::Borrow<str>>(items: &[S], door: Door) -> bool {
+    items.len() > 1 && detect(&items.join("\n"), door).is_some()
+}
+
+/// [`release_joined_strings`] over a MessagePack array's items.
+pub(crate) fn release_joined_messagepack(items: &[rmpv::Value]) -> bool {
+    joined_messagepack(items, Door::Release)
+}
+
+/// [`release_joined_strings`] over a JSON array's items.
+pub(crate) fn release_joined_json(items: &[serde_json::Value]) -> bool {
+    joined_json(items, Door::Release)
+}
+
+/// The text items of a MessagePack array read joined. An item is read as text
+/// as it is read alone: a string, binary or extension bytes, and an array of
+/// byte values, which carry words as well as a string does.
+fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
+    let texts: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            rmpv::Value::String(text) => Some(String::from_utf8_lossy(text.as_bytes())),
+            rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
+                Some(String::from_utf8_lossy(bytes))
+            }
+            rmpv::Value::Array(values) => byte_values(values.iter().map(rmpv::Value::as_u64))
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into()),
+            _ => None,
+        })
+        .collect();
+    joined_strings(&texts, door)
+}
+
+/// [`joined_messagepack`] for JSON items: a string, and an array of byte
+/// values (MessagePack binary projects to one).
+fn joined_json(items: &[serde_json::Value], door: Door) -> bool {
+    let texts: Vec<std::borrow::Cow<'_, str>> = items
+        .iter()
+        .filter_map(|item| match item {
+            serde_json::Value::String(text) => Some(text.as_str().into()),
+            serde_json::Value::Array(values) => {
+                byte_values(values.iter().map(serde_json::Value::as_u64))
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into())
+            }
+            _ => None,
+        })
+        .collect();
+    joined_strings(&texts, door)
+}
+
+/// An array's items as bytes, when every one is a byte value.
+fn byte_values(items: impl Iterator<Item = Option<u64>>) -> Option<Vec<u8>> {
+    items
+        .map(|item| item.and_then(|n| u8::try_from(n).ok()))
+        .collect()
+}
+
+/// The release doors' reading of a whole decoded value once its parts are
+/// judged: every text it carries, one per line in order, at any depth (each
+/// string and map key, binary and extension bytes, each array of byte values).
+/// A walk that judges each part, and each array's items joined, can still
+/// leave a secret spread over parts it keeps apart (a phrase one word per
+/// nested item), as the write door reads it in a body's raw bytes; a value
+/// that reads as one leaves whole-redacted. The value's own encoding is also
+/// read as the write door reads a body: there a number, a length or a header
+/// carries bytes as a string does.
+pub(crate) fn release_reads_whole(value: &rmpv::Value) -> bool {
+    let mut text = String::new();
+    messagepack_leaves(value, &mut text);
+    detect(&text, Door::Release).is_some() || write_door_refuses_encoding(value)
+}
+
+/// [`release_reads_whole`] over a JSON value. A JSON value can be the
+/// projection of a MessagePack body, so it is also read through the
+/// MessagePack it projects from: a float as either width it may have had.
+pub(crate) fn release_reads_whole_json(value: &serde_json::Value) -> bool {
+    if release_reads_json_text(value) {
+        return true;
+    }
+    let mut narrows = false;
+    write_door_refuses_encoding(&messagepack_form(value, false, &mut narrows))
+        || (narrows && write_door_refuses_encoding(&messagepack_form(value, true, &mut narrows)))
+}
+
+/// [`release_reads_whole_json`] over the text alone, for JSON whose stored
+/// encoding was already read as stored.
+fn release_reads_json_text(value: &serde_json::Value) -> bool {
+    let mut text = String::new();
+    json_leaves(value, &mut text);
+    detect(&text, Door::Release).is_some()
+}
+
+/// The parts a release door emits from one body, read before it projects them
+/// (a projection loses a float's width and a byte's type): whether one part,
+/// once its parts are judged, or all of them together, still reads as a
+/// secret as [`release_reads_whole`] reads it.
+pub(crate) fn release_parts_read_whole(parts: &[&rmpv::Value]) -> bool {
+    let mut judged = Vec::with_capacity(parts.len());
+    for part in parts {
+        let mut part = (*part).clone();
+        sanitize_messagepack(&mut part, true, Door::Release);
+        if release_reads_whole(&part) {
+            return true;
+        }
+        judged.push(part);
+    }
+    release_reads_whole(&rmpv::Value::Array(judged))
+}
+
+/// The write door's text rules over bytes a release door returns as they are
+/// stored: an encoding can differ from the value's own (a wider header, a
+/// length that reads as a line break), and the write door reads the bytes.
+pub(crate) fn write_door_refuses_raw(bytes: &[u8]) -> bool {
+    detect_bytes(bytes, Door::Write)
+}
+
+/// The write door's text rules over a value's MessagePack encoding, the raw
+/// bytes it reads in a body. A value that cannot be encoded reads as a secret.
+fn write_door_refuses_encoding(value: &rmpv::Value) -> bool {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value).is_err() || write_door_refuses_raw(&bytes)
+}
+
+/// A JSON value as MessagePack. `narrow` writes a float that a single-width
+/// float holds exactly at that width; `narrows` records whether there is one.
+fn messagepack_form(value: &serde_json::Value, narrow: bool, narrows: &mut bool) -> rmpv::Value {
+    use serde_json::Value;
+    match value {
+        Value::Null => rmpv::Value::Nil,
+        Value::Bool(flag) => rmpv::Value::Boolean(*flag),
+        Value::Number(number) => {
+            if let Some(number) = number.as_u64() {
+                return rmpv::Value::from(number);
+            }
+            if let Some(number) = number.as_i64() {
+                return rmpv::Value::from(number);
+            }
+            let number = number.as_f64().unwrap_or_default();
+            let single = number as f32;
+            if f64::from(single) == number {
+                *narrows = true;
+                if narrow {
+                    return rmpv::Value::F32(single);
+                }
+            }
+            rmpv::Value::F64(number)
+        }
+        Value::String(text) => rmpv::Value::from(text.as_str()),
+        Value::Array(values) => rmpv::Value::Array(
+            values
+                .iter()
+                .map(|value| messagepack_form(value, narrow, narrows))
+                .collect(),
+        ),
+        Value::Object(fields) => rmpv::Value::Map(
+            fields
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        rmpv::Value::from(key.as_str()),
+                        messagepack_form(value, narrow, narrows),
+                    )
+                })
+                .collect(),
+        ),
+    }
+}
+
+fn messagepack_leaves(value: &rmpv::Value, out: &mut String) {
+    use rmpv::Value;
+    match value {
+        Value::String(text) => push_line(out, text.as_bytes()),
+        Value::Binary(bytes) | Value::Ext(_, bytes) => push_line(out, bytes),
+        Value::Array(values) => match byte_values(values.iter().map(Value::as_u64)) {
+            Some(bytes) if !bytes.is_empty() => push_line(out, &bytes),
+            _ => values
+                .iter()
+                .for_each(|value| messagepack_leaves(value, out)),
+        },
+        Value::Map(entries) => entries.iter().for_each(|(key, value)| {
+            messagepack_leaves(key, out);
+            messagepack_leaves(value, out);
+        }),
+        _ => {}
+    }
+}
+
+fn json_leaves(value: &serde_json::Value, out: &mut String) {
+    use serde_json::Value;
+    match value {
+        Value::String(text) => push_line(out, text.as_bytes()),
+        Value::Array(values) => match byte_values(values.iter().map(Value::as_u64)) {
+            Some(bytes) if !bytes.is_empty() => push_line(out, &bytes),
+            _ => values.iter().for_each(|value| json_leaves(value, out)),
+        },
+        Value::Object(fields) => fields.iter().for_each(|(key, value)| {
+            push_line(out, key.as_bytes());
+            json_leaves(value, out);
+        }),
+        _ => {}
+    }
+}
+
+fn push_line(out: &mut String, bytes: &[u8]) {
+    out.push_str(&String::from_utf8_lossy(bytes));
+    out.push('\n');
+}
+
+/// The write door's text rules over text a stream scanner joined across a
+/// chunk edge. Like the batch door, it follows the owner's switch: its caller
+/// reads it.
+pub(crate) fn scan_write_seam(text: &str) -> Result<()> {
+    match detect(text, Door::Write) {
+        Some(reason) => Err(secret_scan_error(reason)),
+        None => Ok(()),
+    }
 }
 
 /// The release doors' field rule, for a reader that finds fields the
@@ -183,18 +479,14 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     if let Some(reason) = detect(&haystack, Door::Write) {
         return Err(secret_scan_error(reason));
     }
-    let mut cursor = std::io::Cursor::new(data);
-    let structured = if let Ok(mut value) = serde_json::from_slice(data) {
-        sanitize_json(&mut value, false, Door::Write)
-    } else if let Ok(mut value) = rmpv::decode::read_value(&mut cursor)
-        && cursor.position() == data.len() as u64
-    {
-        sanitize_messagepack(&mut value, false, Door::Write)
-    } else {
-        false
-    };
-    if structured {
-        return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+    // Every member is read, a repeated JSON key and every map key included,
+    // and a framed carrier's body as a body too.
+    for body in std::iter::once(data).chain(framed_payload(data)) {
+        if read_members(body)?
+            .is_some_and(|mut value| sanitize_messagepack(&mut value, false, Door::Write))
+        {
+            return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+        }
     }
     Ok(secrets_nulled)
 }
@@ -249,7 +541,32 @@ fn detect(haystack: &str, door: Door) -> Option<&'static str> {
 /// Returns whether any bytes were removed. `null` is the export representation;
 /// the serving representation is the fixed, non-authoritative redaction marker.
 pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) -> bool {
-    sanitize_json(value, null, Door::Release)
+    sanitize_json_whole(value, null, release_reads_whole_json)
+}
+
+/// [`sanitize_credentials`] over JSON whose stored encoding was read as stored
+/// (a MessagePack body read at its own widths before its projection, or a body
+/// stored as JSON): its whole read takes its text, not a MessagePack form it
+/// never had, where a wide float read narrowed is other bytes.
+pub(crate) fn sanitize_read_credentials(value: &mut serde_json::Value, null: bool) -> bool {
+    sanitize_json_whole(value, null, release_reads_json_text)
+}
+
+fn sanitize_json_whole(
+    value: &mut serde_json::Value,
+    null: bool,
+    reads_whole: fn(&serde_json::Value) -> bool,
+) -> bool {
+    let changed = sanitize_json(value, null, Door::Release);
+    if reads_whole(value) {
+        *value = if null {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String("[redacted]".into())
+        };
+        return true;
+    }
+    changed
 }
 
 fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool {
@@ -269,31 +586,41 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
         Value::Array(values) => {
             // MessagePack binary values project to JSON byte arrays. They must
             // not become an alternate encoding around recursive redaction.
-            let bytes: Option<Vec<u8>> = values
-                .iter()
-                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
-                .collect();
+            let bytes = byte_values(values.iter().map(Value::as_u64));
             if bytes
                 .as_ref()
                 .is_some_and(|bytes| detect_bytes(bytes, door))
+                || joined_json(values, door)
             {
                 *value = replacement();
-                true
-            } else {
-                values.iter_mut().fold(false, |changed, value| {
-                    sanitize_json(value, null, door) | changed
-                })
+                return true;
             }
-        }
-        Value::Object(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
-            let sensitive = credential_field(key, value.is_null(), value.as_str(), door);
-            if sensitive {
-                *value = replacement();
-                true
-            } else {
+            let changed = values.iter_mut().fold(false, |changed, value| {
                 sanitize_json(value, null, door) | changed
+            });
+            // Read again once items are nulled: the text left is what a second
+            // pass reads joined, so the array is its own fixed point.
+            if changed && joined_json(values, door) {
+                *value = replacement();
             }
-        }),
+            changed
+        }
+        Value::Object(fields) => {
+            // A JSON key is text a reader shows; one shaped like a credential
+            // goes with its member, since a key cannot be nulled.
+            let before = fields.len();
+            fields.retain(|key, _| detect(key, door).is_none());
+            let dropped = fields.len() != before;
+            fields.iter_mut().fold(dropped, |changed, (key, value)| {
+                let sensitive = credential_field(key, value.is_null(), value.as_str(), door);
+                if sensitive {
+                    *value = replacement();
+                    true
+                } else {
+                    sanitize_json(value, null, door) | changed
+                }
+            })
+        }
         _ => false,
     }
 }
@@ -301,7 +628,16 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
 /// Scan MessagePack before any lossy JSON projection. Safe binary and extension
 /// values retain their original type on raw transports.
 pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bool) -> bool {
-    sanitize_messagepack(value, null, Door::Release)
+    let changed = sanitize_messagepack(value, null, Door::Release);
+    if release_reads_whole(value) {
+        *value = if null {
+            rmpv::Value::Nil
+        } else {
+            rmpv::Value::from("[redacted]")
+        };
+        return true;
+    }
+    changed
 }
 
 fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool {
@@ -323,35 +659,42 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
             true
         }
         Value::Array(values) => {
-            let bytes: Option<Vec<u8>> = values
-                .iter()
-                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
-                .collect();
+            let bytes = byte_values(values.iter().map(Value::as_u64));
             if bytes
                 .as_ref()
                 .is_some_and(|bytes| detect_bytes(bytes, door))
+                || joined_messagepack(values, door)
             {
                 *value = replacement();
-                true
-            } else {
-                values.iter_mut().fold(false, |changed, value| {
-                    sanitize_messagepack(value, null, door) | changed
-                })
+                return true;
             }
-        }
-        Value::Map(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
-            let sensitive = key
-                .as_str()
-                .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door));
-            let key_changed = sanitize_messagepack(key, null, door);
-            let value_changed = if sensitive {
+            let changed = values.iter_mut().fold(false, |changed, value| {
+                sanitize_messagepack(value, null, door) | changed
+            });
+            // Read again once items are nulled, as the JSON walk does.
+            if changed && joined_messagepack(values, door) {
                 *value = replacement();
-                true
-            } else {
-                sanitize_messagepack(value, null, door)
-            };
-            changed | key_changed | value_changed
-        }),
+            }
+            changed
+        }
+        Value::Map(fields) => {
+            // A key shaped like a credential goes with its member, as a JSON
+            // object's does: a marker in its place could repeat a real key.
+            let before = fields.len();
+            fields.retain(|(key, _)| !sanitize_messagepack(&mut key.clone(), null, door));
+            let dropped = fields.len() != before;
+            fields.iter_mut().fold(dropped, |changed, (key, value)| {
+                let sensitive = key
+                    .as_str()
+                    .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door));
+                if sensitive {
+                    *value = replacement();
+                    true
+                } else {
+                    sanitize_messagepack(value, null, door) | changed
+                }
+            })
+        }
         _ => false,
     }
 }

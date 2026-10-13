@@ -293,15 +293,26 @@ impl Vault {
     ///
     /// Unlike `get()` which strips the header, this returns the full LMDB
     /// value. SECRET_CUSTODY (byte 77) is denied for the same reason `get()`
-    /// denies it: the body carries the secret value in the clear.
+    /// denies it: the body carries the secret value in the clear. An LFS chunk
+    /// no published object holds yet reads as absent, as `get()` reads it.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
-        let Some(bytes) = self.get_raw_unsealed(id)? else {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(bytes) = self.get_raw_in(&rtxn, id)? else {
             return Ok(None);
         };
-        if EntityMetadataHeader::parse(&bytes)
-            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
-        {
+        let Some(header) = EntityMetadataHeader::parse(&bytes) else {
+            return Ok(Some(bytes));
+        };
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
+        if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+            &self.store,
+            &rtxn,
+            id,
+            header.entity_type,
+        )? {
+            return Ok(None);
         }
         Ok(Some(bytes))
     }
@@ -527,13 +538,17 @@ impl Vault {
     ///
     /// Scans at most `scan_limit` rows from the `temporal_learned` index in
     /// newest-first order and reads matching entity bodies from the same LMDB
-    /// snapshot, returning `(id, learned_at, body)` tuples.
+    /// snapshot, returning `(id, learned_at, body)` tuples. SECRET_CUSTODY is
+    /// refused as [`Vault::get_raw`] refuses it: its body carries the value.
     pub fn latest_entity_bodies_by_type(
         &self,
         entity_type: u8,
         limit: usize,
         scan_limit: usize,
     ) -> Result<Vec<(EntityId, u64, Vec<u8>)>> {
+        if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
         if limit == 0 || scan_limit == 0 {
             return Ok(Vec::new());
         }
@@ -554,7 +569,14 @@ impl Vault {
             let Some(row) = self.store.port_entity_record(&txn, &entry.id)? else {
                 continue;
             };
-            if row.entity_type != entity_type {
+            if row.entity_type != entity_type
+                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                    &self.store,
+                    &txn,
+                    &entry.id,
+                    row.entity_type,
+                )?
+            {
                 continue;
             }
             if row.learned_at != entry.timestamp {

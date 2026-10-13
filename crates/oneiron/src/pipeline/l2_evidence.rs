@@ -102,6 +102,14 @@ impl PipelineBuilder<'_> {
             {
                 continue;
             }
+            // A claim the write door refuses, stored while the owner's scan was
+            // off, is no evidence: the L2 rows project it as JSON, which no
+            // read follows exactly, so none of it is served.
+            if crate::batch::export::write_door_refuses_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            ) {
+                continue;
+            }
             evidence_bytes = evidence_bytes.saturating_add(raw.len());
             if evidence_bytes > 256 * 1024 {
                 return Err(Error::IndexOverflow("L2 evidence bytes"));

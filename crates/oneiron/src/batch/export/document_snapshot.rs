@@ -39,8 +39,9 @@ pub(crate) struct ExportSnapshotEntity {
 
 impl Vault {
     /// Exports all live base entities and their graph, not a retrieval selection.
-    /// Live off-record overlay rows, deleted shells, archive tombstones, and
-    /// credential custody rows are excluded. No caller can disable nulling.
+    /// Live off-record overlay rows, deleted shells, archive tombstones,
+    /// credential custody rows and unpublished LFS chunks are excluded. No
+    /// caller can disable nulling.
     pub fn export_whole_vault(&self, format: PackFormat) -> Result<WholeVaultExport> {
         self.export_whole_vault_with_admission(format, CallerLocality::OnDevice, |_| Ok(()))
     }
@@ -92,6 +93,12 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex("whole-vault entity header"))?;
             // Check the type BEFORE reading or transforming the custody body.
             if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
+                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                    &self.store,
+                    &rtxn,
+                    &id,
+                    header.entity_type,
+                )?
                 || !live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
             {
                 continue;

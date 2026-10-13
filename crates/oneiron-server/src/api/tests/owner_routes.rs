@@ -643,8 +643,10 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
 }
 
 /// Review serves a stored proposal through the release redaction even with
-/// the ingest scan off, and approving the reviewed bundle id still acts on
-/// the stored, unredacted proposal. (`owner::runs::tests` covers the CLI.)
+/// the ingest scan off: a body the write door refuses is withheld whole, and
+/// one it accepts keeps its safe fields. Approving the reviewed bundle id
+/// still acts on the stored, unredacted proposal. (`owner::runs::tests`
+/// covers the CLI.)
 #[tokio::test]
 async fn run_review_redacts_stored_credentials_with_the_scan_off() {
     let (_dir, server) = auth_test_server();
@@ -669,10 +671,17 @@ async fn run_review_redacts_stored_credentials_with_the_scan_off() {
                 rmpv::Value::from("password"),
                 rmpv::Value::from("hunter2-hunter2"),
             ),
-            (rmpv::Value::from("label"), rmpv::Value::from("kept")),
+            (
+                rmpv::Value::from("label"),
+                rmpv::Value::from("refused words"),
+            ),
         ]),
         rmpv::Value::Binary(token.as_bytes().to_vec()),
         rmpv::Value::Ext(7, token.as_bytes().to_vec()),
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("password"), rmpv::Value::from("changeme")),
+            (rmpv::Value::from("label"), rmpv::Value::from("kept")),
+        ]),
     ];
     let ids: Vec<_> = values
         .iter()
@@ -701,6 +710,7 @@ async fn run_review_redacts_stored_credentials_with_the_scan_off() {
             || text.contains("hunter2")
             || text.contains(&hex)
             || text.contains(predicate_token)
+            || text.contains("changeme")
     };
 
     let path = format!("/v1/owner/runs/review?run_id={run}");
@@ -713,7 +723,11 @@ async fn run_review_redacts_stored_credentials_with_the_scan_off() {
     assert!(!leaks(&review), "{review}");
     assert!(
         review.to_string().contains("kept"),
-        "safe fields stay: {review}"
+        "an accepted body's safe fields stay: {review}"
+    );
+    assert!(
+        !review.to_string().contains("refused words"),
+        "a refused body is withheld whole: {review}"
     );
 
     let decide = json!({ "run_id": run, "bundle_id": review["bundle_id"] });

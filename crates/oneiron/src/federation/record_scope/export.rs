@@ -7,7 +7,8 @@ use crate::{
 };
 
 impl Vault {
-    /// Export never has a debug mode and requires the export verb class.
+    /// Export never has a debug mode and requires the export verb class, and
+    /// never carries a SECRET_CUSTODY row or an unpublished LFS chunk.
     /// A row a device-only world keeps on this device is never exported.
     pub fn export_records_in_scope(
         &self,
@@ -29,6 +30,16 @@ impl Vault {
             }
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
+            if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                    &self.store,
+                    &txn,
+                    &id,
+                    h.entity_type,
+                )?
+            {
+                continue;
+            }
             if let Some(scope) = disclosure_scope_for_stored_row(
                 &self.store,
                 &txn,
