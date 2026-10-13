@@ -670,17 +670,42 @@ fn a_replayed_edit_or_a_restore_never_loosens_a_world() {
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 
     // A restore that keeps the live authority keeps the live settings.
-    match Vault::restore_checkpoint_keeping_authority(
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
         &backups.path().join("restored"),
         VaultConfig::default(),
         &host.vault,
         200,
-    ) {
-        Err(_) => {}
-        Ok((restored, _)) => assert_eq!(
-            restored.world_privacy(world).unwrap().read,
-            EffectiveRead::OneMachine(here)
-        ),
-    }
+    )
+    .unwrap();
+    assert_eq!(
+        restored.world_privacy(world).unwrap().read,
+        EffectiveRead::OneMachine(here)
+    );
+    drop(restored);
+
+    // A direct restore folds the image's own era, never looser than it, and
+    // the live log's entries narrow it back on the first sync.
+    let live = stored_entries(&host.vault);
+    let Host { _dir, vault, .. } = host;
+    drop(vault);
+    let (direct, _) = Vault::restore_checkpoint(
+        &image,
+        &backups.path().join("direct"),
+        VaultConfig::default(),
+        crate::recovery::checkpoint::RestoreReason::Restore,
+        300,
+    )
+    .unwrap();
+    assert_eq!(
+        direct.world_privacy(world).unwrap().read,
+        EffectiveRead::MyMachines
+    );
+    let at = TimeRange { start: 2, end: 2 };
+    let rows: Vec<_> = live.into_iter().map(|entry| (entry, at, 2)).collect();
+    direct.put_authority_log_entries(&rows).unwrap();
+    assert_eq!(
+        direct.world_privacy(world).unwrap().read,
+        EffectiveRead::OneMachine(here)
+    );
 }
