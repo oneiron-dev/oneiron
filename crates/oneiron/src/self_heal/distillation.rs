@@ -87,8 +87,9 @@ impl Vault {
         validate_diagnostic_event_admission(id, row.occurred, &row.body)?;
         decode_diagnostic_event_body(&row.body)
     }
-    /// A model cannot label its own findings. Owner identity is reauthenticated
-    /// and the cited event must be a stored T3 telemetry diagnostic.
+    /// A model cannot label its own findings. The owner proof is rechecked in
+    /// the transaction that writes the label, and the cited event must be a
+    /// stored T3 telemetry diagnostic.
     pub fn review_t3_finding(
         &self,
         owner: &AuthenticatedOwner,
@@ -97,12 +98,6 @@ impl Vault {
         positive: bool,
     ) -> Result<ReviewedFinding> {
         validate_token(family, "distillation family is not a token")?;
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
         let event = self.reviewed_diagnostic(&event_id)?;
         if event.source != DiagnosticSourceKind::RetrievalTelemetry
             || !event.detector_id.starts_with("t3.")
@@ -119,6 +114,7 @@ impl Vault {
             positive,
         };
         self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
             let k = key(family, &event_id);
             if let Some(stored) = LABEL
                 .get(&self.store, txn, &k)

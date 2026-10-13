@@ -29,7 +29,8 @@ use crate::claim::history_store::{
 };
 use crate::claim::{
     ClaimBirth, ClaimBody, ClaimHistoryHandoff, ClaimHistoryHandoffPin, ClaimSubject,
-    ClaimTransition, HandoffStanding, HandoffVerification, verify_claim_history_handoff,
+    ClaimTransition, HandoffKind, HandoffStanding, HandoffVerification,
+    verify_claim_history_handoff,
 };
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{ClaimError, Error, Result};
@@ -250,6 +251,7 @@ pub(crate) fn stage_machine_claim_transition(
     let projected = project_machine_claim(&result);
 
     let mut handoff = ClaimHistoryHandoff {
+        kind: HandoffKind::Handoff,
         vault_id,
         genesis_hash: vault_id,
         scope: prior.scope.clone(),

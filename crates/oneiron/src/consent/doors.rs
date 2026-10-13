@@ -130,7 +130,9 @@ impl AuthenticatedOwner {
 }
 
 /// The authentication door's liveness test: the id names a PERSON whose
-/// identity lifecycle is Active (not deleted, merged or split).
+/// identity lifecycle is Active (not merged or split) and that is not deleted.
+/// A plain user delete keeps the PERSON shell and its Active lifecycle; only
+/// the deletion tombstone says the owner is gone.
 pub(crate) fn person_is_live_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -141,7 +143,8 @@ pub(crate) fn person_is_live_in_txn(
         .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON);
     Ok(human
         && vault.entity_lifecycle_state_in_txn(txn, id)?
-            == crate::identity_topology::EntityLifecycleState::Active)
+            == crate::identity_topology::EntityLifecycleState::Active
+        && !crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, id)?.deleted)
 }
 
 /// The pinned Gate `actor_class` for owner-authored consent decisions.
@@ -220,6 +223,12 @@ impl Vault {
                     "actor is registry-inactive (merged/split shell), not an owner",
                 )));
             }
+        }
+        // A deleted PERSON keeps its shell and its Active lifecycle.
+        if !person_is_live_in_txn(self, &self.store.env.read_txn()?, &actor)? {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "actor is deleted, not an owner",
+            )));
         }
         // A hex principal ref is an entity reference: it must decode to THIS
         // actor, or the authenticated principal and the minted grant would
@@ -706,12 +715,18 @@ impl Vault {
             .collect())
     }
 
+    /// Every owner-authored consent act (a grant, an approval, a denial, a
+    /// revocation) lands its receipt here, in the transaction that writes the
+    /// act. The proof is rechecked in that transaction: one from another
+    /// vault, or whose owner or credential has gone, fails the act and the
+    /// transaction commits none of it.
     pub(super) fn append_consent_receipt_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         receipt: &ConsentReceipt,
     ) -> Result<()> {
+        owner.revalidate_in_txn(self, &*wtxn)?;
         self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), receipt, None)
     }
 

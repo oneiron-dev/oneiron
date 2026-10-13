@@ -342,7 +342,7 @@ fn store_re_rooted_confirm(vault: &crate::Vault) -> (AuthorityEntryHash, Authori
     (hash, host_key)
 }
 
-fn advance_observation_floor(vault: &crate::Vault, now: u64) {
+pub(super) fn advance_observation_floor(vault: &crate::Vault, now: u64) {
     vault
         .with_write_txn(|txn| {
             vault.store.sync_state.put(

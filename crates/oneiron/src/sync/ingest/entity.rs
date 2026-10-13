@@ -397,6 +397,7 @@ fn admit(
                 wtxn,
                 &id,
                 data,
+                vault.privacy_posture(),
             )?;
             None
         }

@@ -603,6 +603,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
     rand_core::OsRng.fill_bytes(&mut nonce);
     rand_core::OsRng.fill_bytes(&mut challenge);
     let mut packet = super::ClaimHistoryHandoff {
+        kind: super::HandoffKind::Handoff,
         vault_id,
         genesis_hash: vault_id,
         scope: machine_history_scope_bytes(body)?,

@@ -230,3 +230,66 @@ fn generic_write_doors_refuse_the_reserved_role() {
         assert!(vault.get(&entity).expect("read back").is_none());
     }
 }
+
+/// engine-core-04: a fact is immutable. A put at its id, local or replicated,
+/// can neither re-point the owner nor replace the fact with an ordinary TASK
+/// body; only an exact echo lands.
+#[test]
+fn an_authority_fact_admits_only_an_exact_echo() {
+    let (_dir, vault) = open_vault();
+    let task_ref = id(0xD1);
+    let owner = id(0xD2);
+    let fact_ref = put_fact(&vault, fact(task_ref, TaskAuthorityFactKind::Owner, owner));
+    let raw = {
+        let txn = vault.store.env.read_txn().expect("read txn");
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &fact_ref)
+            .expect("read fact")
+            .expect("stored fact")
+    };
+    let header = EntityMetadataHeader::parse(&raw).expect("fact header");
+    let occurred = TimeRange {
+        start: header.occurred_start,
+        end: header.occurred_end,
+    };
+    let learned_at = header.learned_at;
+    let stored = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let forged = body_with(&stored, BODY_KEY_ACTOR_REF, Value::from(id(0xD3).to_hex()));
+    let ordinary = crate::habit::task_body_for_test(TaskRole::Task);
+
+    for body in [&forged, &ordinary] {
+        assert!(
+            vault
+                .put_entity(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, body)
+                .is_err()
+        );
+        let mut wtxn = vault.store.env.write_txn().expect("write txn");
+        let internal = vault
+            .batch_in()
+            .put_internal(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, body)
+            .apply(&mut wtxn);
+        assert!(matches!(
+            internal,
+            Err(Error::Record(RecordError::InvalidTaskBody(_)))
+        ));
+        drop(wtxn);
+        assert!(
+            vault
+                .batch()
+                .put_replicated(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, body)
+                .commit()
+                .is_err()
+        );
+    }
+    vault
+        .batch()
+        .put_replicated(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, &stored)
+        .commit()
+        .expect("an exact echo lands");
+    assert_eq!(
+        vault
+            .task_authority_state(task_ref)
+            .expect("state")
+            .map(|state| state.owner_ref),
+        Some(owner)
+    );
+}

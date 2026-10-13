@@ -6,8 +6,8 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityOp, authority_log_entity_id, decode_authority_log_entry_body, genesis_vault_id,
-    validate_authority_log_entry_body_bytes,
+    AuthorityOp, authority_entry_hash, authority_log_entity_id, decode_authority_log_entry_body,
+    genesis_vault_id, validate_authority_log_entry_body_bytes,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode};
@@ -425,12 +425,30 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
                 "missing authority vault id",
             )))?,
     };
-    let local_vault_id = vault.authority_fold()?.vault_id.ok_or(Error::Record(
-        RecordError::InvalidAuthorityLogBody("missing local authority root"),
-    ))?;
+    let local = vault.authority_fold()?;
+    let local_vault_id =
+        local
+            .vault_id
+            .ok_or(Error::Record(RecordError::InvalidAuthorityLogBody(
+                "missing local authority root",
+            )))?;
     if entry_vault_id != local_vault_id {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
             "foreign authority log vault id",
+        )));
+    }
+    let rtxn = vault.store.env.read_txn()?;
+    if !crate::authority::authority_row_resident(&vault.store, &rtxn, &entry)?
+        && crate::authority::door_refuses_retired_standing(
+            &vault.store,
+            &local,
+            &authority_entry_hash(&entry)?,
+            &entry,
+            &mut |hash| crate::authority::stored_authority_row(&vault.store, &rtxn, hash),
+        )?
+    {
+        return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+            "authority row signed by a key a handoff retired",
         )));
     }
     Ok(())

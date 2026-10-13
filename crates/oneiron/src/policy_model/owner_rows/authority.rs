@@ -75,14 +75,13 @@ struct LiveMembers {
 }
 
 /// A personal vault's one owner, the embedded owner actor, while it is a live
-/// person. A deleted or corrupted personal owner is not silently replaced.
+/// person. A deleted or corrupted personal owner is not silently replaced: a
+/// plain delete keeps the PERSON shell and its Active lifecycle, so liveness
+/// reads the deletion tombstone too.
 fn personal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
     let owner = crate::vault::embedded_owner_actor_id()?;
     Ok(
-        if vault.get_entity_type_in_txn(txn, &owner)? == Some(crate::registry::ENTITY_TYPE_PERSON)
-            && vault.entity_lifecycle_state_in_txn(txn, &owner)?
-                == crate::identity_topology::EntityLifecycleState::Active
-        {
+        if crate::consent::person_is_live_in_txn(vault, txn, &owner)? {
             vec![owner]
         } else {
             Vec::new()
@@ -132,10 +131,7 @@ fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Op
             && fold
                 .pact_for_grant(&id)
                 .is_none_or(|p| p.status == crate::authority::FederationPactStatus::Active)
-            && vault.get_entity_type_in_txn(txn, &grant.member_ref)?
-                == Some(crate::registry::ENTITY_TYPE_PERSON)
-            && vault.entity_lifecycle_state_in_txn(txn, &grant.member_ref)?
-                == crate::identity_topology::EntityLifecycleState::Active
+            && crate::consent::person_is_live_in_txn(vault, txn, &grant.member_ref)?
             && crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
         {
             grants.push(grant);

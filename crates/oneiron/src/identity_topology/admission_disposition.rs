@@ -1,6 +1,6 @@
 //! Signed append-only admission facts, independent of a decision's erasable author.
 
-use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -114,7 +114,7 @@ impl AdmissionDisposition {
         }
         let key = VerifyingKey::from_bytes(&self.signer_pk)
             .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(BAD)))?;
-        key.verify(
+        key.verify_strict(
             &Self::transcript(&self.target, &self.core_digest, self.verdict, self.reason),
             &Signature::from_bytes(&self.signature),
         )

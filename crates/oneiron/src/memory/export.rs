@@ -79,6 +79,11 @@ impl Memory<'_> {
                 {
                     return Err(export_forbidden());
                 }
+                // A live slip outlives its holder's Owner role: whole-vault
+                // export asks for the role now, in the export's snapshot.
+                if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &self.actor)? {
+                    return Err(export_forbidden());
+                }
             } else {
                 // `memory(actor)` is public. Only a process holding the vault
                 // writer lease and bound to its constructor's seeded owner

@@ -7,7 +7,7 @@
 //! that receipt. All records still enter the log; only the local fold decides
 //! whether a newly observed old sequence can authorize.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
@@ -48,6 +48,23 @@ impl RawValue for SequenceReceipt {
 pub(super) struct AuthorityLocalObservations {
     pub(super) sequence_floors: BTreeMap<AuthorityEntryHash, u64>,
     pub(super) policy: AuthorityObservationPolicy,
+}
+
+impl AuthorityLocalObservations {
+    /// The same observations with no sequence floor on `line`, a handoff's
+    /// line: the handoff vouches for it, so its settlement does not turn on
+    /// which sibling this vault happened to see first.
+    pub(super) fn without_floors_on(&self, line: &BTreeSet<AuthorityEntryHash>) -> Self {
+        Self {
+            sequence_floors: self
+                .sequence_floors
+                .iter()
+                .filter(|(hash, _)| !line.contains(*hash))
+                .map(|(hash, floor)| (*hash, *floor))
+                .collect(),
+            policy: self.policy,
+        }
+    }
 }
 
 /// Stable signer identity, including the suite to separate key encodings.

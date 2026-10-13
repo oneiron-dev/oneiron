@@ -89,8 +89,29 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
+        let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         for (hash, bytes, entry) in &decoded {
-            merged.insert(*hash, (bytes.clone(), entry.clone()));
+            merged
+                .entry(*hash)
+                .or_insert_with(|| (bytes.clone(), entry.clone()));
+        }
+        // A key a handoff here retired signs nothing new into this history,
+        // and nothing new stands on a row one signed.
+        let local = self.authority_fold_readonly_in_txn(&txn)?;
+        for (hash, _, entry) in &decoded {
+            if !resident.contains(hash)
+                && super::door_refuses_retired_standing(
+                    &self.store,
+                    &local,
+                    hash,
+                    entry,
+                    &mut |parent| Ok(merged.get(parent).map(|(_, row)| row.clone())),
+                )?
+            {
+                return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+                    "authority history standing on a key a handoff retired",
+                )));
+            }
         }
         history_root(&merged)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();

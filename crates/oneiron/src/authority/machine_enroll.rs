@@ -1,6 +1,4 @@
 //! Host-landed MACHINE enrollment: one EnrollDevice and its BindActor.
-use ed25519_dalek::VerifyingKey;
-
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_MACHINE;
@@ -61,7 +59,7 @@ impl Vault {
         {
             return Err(denied());
         }
-        VerifyingKey::from_bytes(&public_key).map_err(|_| denied())?;
+        super::strong_ed25519_key(&public_key).map_err(|_| denied())?;
         if transport_key_binding == public_key {
             return Err(denied());
         }

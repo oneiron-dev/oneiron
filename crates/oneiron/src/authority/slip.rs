@@ -138,7 +138,7 @@ impl CapabilitySlip {
         if self.caveats.len() >= MAX_CAVEATS {
             return Err(invalid_authority());
         }
-        VerifyingKey::from_bytes(&next_binding_key).map_err(|_| invalid_authority())?;
+        super::strong_ed25519_key(&next_binding_key)?;
         if self.current_binding_key() != holder.verifying_key().to_bytes() {
             return Err(invalid_authority());
         }

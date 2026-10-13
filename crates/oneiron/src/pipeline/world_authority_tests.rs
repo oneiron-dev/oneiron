@@ -281,3 +281,54 @@ fn default_candidate_admission_binds_envelope_not_candidate_evidence() -> Result
     );
     Ok(())
 }
+
+/// engine-prs-05 and engine-prs-06: the grant fold reads the grant rows
+/// themselves. Dropping one narrowing row's `claim_of` edge does not widen the
+/// fold to its sibling, and a fenced row whose body is still stored confers no
+/// world.
+#[test]
+fn a_dropped_edge_or_a_fenced_grant_never_widens_the_world_fold() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fixture = world_access_fixture(&vault)?;
+    let wide = entity_id(0xB0);
+    let narrow = entity_id(0xB2);
+    WorldAccessRowSpec::owner_grant(wide, fixture.agent, true, &[fixture.world_w]).put(&vault)?;
+    WorldAccessRowSpec::owner_grant(narrow, fixture.agent, false, &[fixture.world_w])
+        .put(&vault)?;
+    let allowed = |vault: &Vault| -> Result<WorldAuthoritySet> {
+        let rtxn = vault.store.env.read_txn()?;
+        Ok(resolve_world_authority(
+            &vault.store,
+            &rtxn,
+            &ActiveWorldSelection {
+                agent_ref: fixture.agent,
+                selected: None,
+            },
+            WORLD_ACCESS_NOW,
+        )?
+        .allowed_set)
+    };
+    let narrowed = WorldAuthoritySet::new(false, [fixture.world_w])?;
+    assert_eq!(allowed(&vault)?, narrowed);
+
+    assert!(vault.delete_edge(&narrow, crate::edge::EdgeKind::ClaimOf, &fixture.agent)?);
+    assert_eq!(allowed(&vault)?, narrowed, "a dropped edge is no widening");
+
+    // An unobserved delete fences each row and leaves its body stored.
+    let mut wtxn = vault.store.env.write_txn()?;
+    for row in [wide, narrow] {
+        crate::deletion::ROW_DELETION_FENCE.put(
+            &vault.store,
+            &mut wtxn,
+            &crate::side_table::HexId(row),
+            &Vec::new(),
+        )?;
+    }
+    wtxn.commit()?;
+    assert_eq!(
+        allowed(&vault)?,
+        WorldAuthoritySet::default(),
+        "fenced grants confer nothing"
+    );
+    Ok(())
+}

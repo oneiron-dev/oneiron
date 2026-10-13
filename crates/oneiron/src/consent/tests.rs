@@ -17,6 +17,7 @@ use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 mod bypass;
 mod owner_reason;
 mod shared_brief;
+mod stale_proofs;
 
 // ---------------------------------------------------------------------------
 // Fixtures

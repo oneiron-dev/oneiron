@@ -60,9 +60,7 @@ impl AuthorityKey {
     /// Public so `oneiron`'s authority code calls it across the crate line.
     pub fn validate(&self) -> Result<()> {
         match self {
-            Self::Ed25519(bytes) => VerifyingKey::from_bytes(bytes)
-                .map(|_| ())
-                .map_err(|_| invalid_authority()),
+            Self::Ed25519(bytes) => strong_ed25519_key(bytes).map(|_| ()),
             Self::P256(bytes) => {
                 if canonical_p256_key_bytes(bytes)? != *bytes {
                     return Err(invalid_authority());
@@ -71,6 +69,18 @@ impl AuthorityKey {
             }
         }
     }
+}
+
+/// An Ed25519 verifying key that can carry authority: it decompresses and is
+/// not of small order. A small-order key verifies signatures anyone can forge
+/// (R = B, S = 1 verifies every message under the identity point), so no
+/// enrolment, binding or signature check may accept one.
+pub fn strong_ed25519_key(bytes: &[u8; 32]) -> Result<VerifyingKey> {
+    let key = VerifyingKey::from_bytes(bytes).map_err(|_| invalid_authority())?;
+    if key.is_weak() {
+        return Err(invalid_authority());
+    }
+    Ok(key)
 }
 
 /// Hardware/software attestation envelope for an enrolled authority key.
@@ -170,14 +180,14 @@ pub fn verify_authority_signature(signature: &AuthoritySignature, transcript: &[
     }
     match (&signature.public_key, signature.suite) {
         (AuthorityKey::Ed25519(public_key), AuthoritySignatureSuite::Ed25519) => {
-            let Ok(key) = VerifyingKey::from_bytes(public_key) else {
+            let Ok(key) = strong_ed25519_key(public_key) else {
                 return false;
             };
             let Ok(signature_bytes) = signature.signature.as_slice().try_into() else {
                 return false;
             };
             let sig = Ed25519Signature::from_bytes(signature_bytes);
-            key.verify(transcript, &sig).is_ok()
+            key.verify_strict(transcript, &sig).is_ok()
         }
         (AuthorityKey::P256(public_key), AuthoritySignatureSuite::P256) => {
             let Ok(key) = P256VerifyingKey::from_sec1_bytes(public_key) else {

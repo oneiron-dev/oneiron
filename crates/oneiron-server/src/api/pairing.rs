@@ -52,7 +52,7 @@ pub(super) async fn oauth_exchange(
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<OAuthExchange>,
 ) -> Result<Json<Paired>, EnvelopedApiError> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use ed25519_dalek::{Signature, VerifyingKey};
     use oneiron::federation::{Scope, ScopeAxis};
 
     let raw = headers
@@ -79,7 +79,7 @@ pub(super) async fn oauth_exchange(
         .map_err(|_| ApiError::unauthorized())?;
     let transcript = crate::oauth_relay::oauth_binding_transcript(raw, &key_bytes, &request.nonce)?;
     verifying_key
-        .verify(&transcript, &signature)
+        .verify_strict(&transcript, &signature)
         .map_err(|_| ApiError::unauthorized())?;
     let wall_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
