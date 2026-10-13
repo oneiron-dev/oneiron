@@ -883,7 +883,8 @@ fn conflict_closes(vault: &Vault, subject: EntityId) -> Result<usize> {
 enum Replay {
     /// The replacement stands and every pinned source holds.
     Stands,
-    /// The owner retracted the replacement.
+    /// The owner retracted the replacement. The replay may refuse before it
+    /// writes: its own output no longer reads (graph-signal admission).
     Retracted,
     /// The cited turn changed after the replay sealed its handoff.
     SourceMoved,
@@ -932,8 +933,11 @@ fn a_replay_closes_no_conflict_for_a_replacement_that_no_longer_stands() -> Resu
             let result = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
             (result, sink.outcome)
         };
-        result
-            .unwrap_or_else(|error| panic!("{replay:?}: the replay refused: {error}; {outcome:?}"));
+        if replay != Replay::Retracted {
+            result.unwrap_or_else(|error| {
+                panic!("{replay:?}: the replay refused: {error}; {outcome:?}")
+            });
+        }
         assert_eq!(
             conflict_closes(&vault, fx.subject)?,
             usize::from(replay == Replay::Stands),
