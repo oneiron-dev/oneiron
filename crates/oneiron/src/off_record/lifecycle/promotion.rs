@@ -1,6 +1,8 @@
 //! Promotion out of the room (ARCH-0052 D4): the one session-overlay-to-base
 //! write, and the doors that save a turn, or a room's talk, through it.
 
+use std::collections::BTreeSet;
+
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::promote::{FloorWrites, PromoteOutcome};
@@ -115,19 +117,21 @@ impl OffRecordSession<'_> {
                 }
                 return Ok(receipt.outcome);
             }
-            // The snapshot is taken under the state lock, so the journal this
-            // plan is cut from is the journal the commit below applies against.
+            // The snapshot is taken under the state lock, so no close or other
+            // save moves the journal under it. A witness can still publish into
+            // the turn before the commit; retirement removes only the entries
+            // this plan was cut from, so what it said stays in the room.
             let snapshot = self.entry.overlay.snapshot()?;
             // A save in a room keeps what the room showed of the turn.
             let plan = match room {
-                Some(_) => super::room::copy_plan(&snapshot, *turn)?.ok_or_else(|| {
+                Some(_) => super::saving::copy_plan(&snapshot, *turn)?.ok_or_else(|| {
                     Error::OffRecord(OffRecordError::OffRecordTurnNotInJournal {
                         turn_ref: turn.to_hex(),
                     })
                 })?,
                 None => snapshot.plan_promotion(*turn)?,
             };
-            let times = super::room::turn_times(&snapshot, *turn);
+            let times = super::saving::turn_times(&snapshot, *turn);
             drop(snapshot);
             // Who hears the save is read in the transaction that keeps it.
             let (mut outcomes, hearing) = self.promote_plans(&mut state, vec![plan], |wtxn| {
@@ -194,39 +198,61 @@ impl OffRecordSession<'_> {
     }
 
     /// Replays `plans` into base in ONE write transaction, after `check`
-    /// passes inside it, then publishes them as promoted and retires them
-    /// from the room, and returns what `check` read there with the outcomes.
-    /// The caller holds the state lock across selection and this commit
-    /// (state -> base writer, the one lock order).
+    /// passes inside it, then publishes what base now holds as kept and
+    /// retires exactly that from the room, and returns what `check` read
+    /// there with the outcomes. A plan that [`appends`] to a turn this
+    /// stretch saved goes through the floor's copy into a saved turn; any
+    /// other through promote. The caller holds the state lock across
+    /// selection and this commit (state -> base writer, the one lock order).
     ///
     /// Nothing observable happens until the commit returns. Only then does
     /// the record publish the turns as promoted and the overlay retire the
     /// committed closures. A crash between the two is safe: the durable
     /// receipts answer a retry, and a crashed process evaporates the overlay.
+    ///
+    /// What is kept and retired is what base holds by this stretch's saves,
+    /// as the floor reports it, never merely what a plan asked for: a
+    /// receipt that answers for a turn keeps only the closure it names, and
+    /// an entry of the plan base does not hold stays in the room.
+    ///
+    /// [`appends`]: crate::session_overlay::PromotePlan::appends
     pub(super) fn promote_plans<T>(
         &self,
         state: &mut super::registry::OffRecordSessionEntryState,
         plans: Vec<crate::session_overlay::PromotePlan>,
         check: impl FnOnce(&heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(Vec<(EntityId, PromoteOutcome)>, T)> {
-        let (outcomes, checked) = self.vault.with_write_txn_grouped(|wtxn| {
+        let (landed, checked) = self.vault.with_write_txn_grouped(|wtxn| {
             let checked = check(wtxn)?;
             let floor = FloorWrites::new(&self.vault.store);
             let promoted_at = self.vault.store.clock.now_recorded_at();
             plans
                 .iter()
                 .map(|plan| {
-                    floor
-                        .promote(self.vault, wtxn, &self.session_ref, plan, promoted_at)
-                        .map(|outcome| (plan.turn(), outcome))
+                    if plan.appends() {
+                        floor
+                            .copy_append(self.vault, wtxn, &self.session_ref, plan, promoted_at)
+                            .map(|appended| (appended.outcome, appended.held))
+                    } else {
+                        floor
+                            .promote(self.vault, wtxn, &self.session_ref, plan, promoted_at)
+                            .map(|outcome| {
+                                let held: BTreeSet<EntityId> =
+                                    outcome.replayed.iter().copied().collect();
+                                (outcome, held)
+                            })
+                    }
                 })
                 .collect::<Result<Vec<_>>>()
-                .map(|outcomes| (outcomes, checked))
+                .map(|landed| (landed, checked))
         })?;
-        // Committed. Publish the RAM state, then drop the promoted rows and
+        // Committed. Publish the RAM state, then drop the kept rows and
         // journal entries from the room — in that order, and never before.
-        for plan in &plans {
-            state.record.promoted_turns.push(*plan.turn().as_bytes());
+        for (plan, (_, held)) in plans.iter().zip(&landed) {
+            let turn = *plan.turn().as_bytes();
+            if !state.record.promoted_turns.contains(&turn) {
+                state.record.promoted_turns.push(turn);
+            }
             let messages: Vec<(EntityId, u64, &[u8])> = plan
                 .ops
                 .iter()
@@ -237,7 +263,9 @@ impl OffRecordSession<'_> {
                         occurred,
                         data,
                         ..
-                    } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE => {
+                    } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+                        && held.contains(id) =>
+                    {
                         Some((*id, occurred.start, data.as_slice()))
                     }
                     _ => None,
@@ -246,13 +274,13 @@ impl OffRecordSession<'_> {
             state.keep_messages(plan.turn(), &messages);
         }
         self.entry.publish_state(state);
-        for plan in &plans {
+        for (plan, (_, held)) in plans.iter().zip(&landed) {
             // Best-effort for the same reason the window refresh is: the
             // subgraph and its receipt are already durable, so a failure to
             // tidy the ROOM must not tell the caller their consented promotion
             // did not happen. The un-retired rows are byte-identical to the
             // base rows the replay just wrote and evaporate at close.
-            if let Err(error) = self.entry.overlay.retire_promoted_closure(plan) {
+            if let Err(error) = self.entry.overlay.retire_promoted_closure(plan, held) {
                 tracing::warn!(
                     turn = %plan.turn().to_hex(),
                     error = %error,
@@ -260,6 +288,14 @@ impl OffRecordSession<'_> {
                 );
             }
         }
+        // A copy into a saved turn that found nothing new to copy saved
+        // nothing, so it names no turn.
+        let outcomes = plans
+            .iter()
+            .zip(landed)
+            .filter(|(plan, (outcome, _))| !plan.appends() || !outcome.replayed.is_empty())
+            .map(|(plan, (outcome, _))| (plan.turn(), outcome))
+            .collect();
         Ok((outcomes, checked))
     }
 

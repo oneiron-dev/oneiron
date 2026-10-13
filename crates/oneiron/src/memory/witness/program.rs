@@ -49,6 +49,8 @@ pub(super) enum WitnessTarget<'a, 'v> {
         session: &'a OffRecordSession<'v>,
         summary: Option<&'a str>,
         admit: Option<Admit<'a>>,
+        /// The room whose roster admits speech into its overlay.
+        rostered: Option<EntityId>,
     },
     /// Durable base, for a turn of an imported transcript (ARCH-0027).
     Imported { stamp: &'a ImportedTurnStamp },
@@ -274,6 +276,7 @@ impl Memory<'_> {
         // A room on record's saver, checked again where the turn lands.
         let mut saver = None;
         let mut admit = None;
+        let mut room_speech = None;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {
                 route,
@@ -315,6 +318,7 @@ impl Memory<'_> {
                 session,
                 summary,
                 admit: session_admit,
+                rostered,
             } => {
                 on_record_session = Some(session);
                 admit = session_admit;
@@ -339,6 +343,7 @@ impl Memory<'_> {
                         held: None,
                     }
                 } else {
+                    room_speech = rostered.map(|room| (session, room));
                     Landing::Overlay {
                         session,
                         route: &session_route,
@@ -363,7 +368,7 @@ impl Memory<'_> {
         };
         before_txn();
 
-        let landed = self.with_witness_write_txn_as(callback, admit, |wtxn| {
+        let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
             let mut mint_conversation = false;
             let mut leader_project = None;
             let admission = match &sink {
@@ -388,13 +393,9 @@ impl Memory<'_> {
                 // overlay segment installs, and a divergent body or parent
                 // leaves no journal or index delta.
                 WitnessSink::Overlay(overlay) => {
-                    let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
-                    super::reject_erased_person_in_txn(
-                        self.vault,
-                        wtxn,
-                        plan.conversation_id,
-                        person_author,
-                    )?;
+                    let rostered = room_speech.is_some();
+                    let person_author =
+                        self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
                     self.admit_witness_in_txn(&plan, &overlay.read_view()?, wtxn, person_author)?
                 }
             };
@@ -430,8 +431,7 @@ impl Memory<'_> {
                                 Some(&sent),
                             )?));
                     }
-                    // Read in this transaction: a body another writer puts
-                    // after it commits is not this witness's to report.
+                    // Read here: a body put after this commit is not its receipt.
                     Landed::Base(self.base_receipt_in_txn(&plan, wtxn)?)
                 }
                 WitnessSink::Overlay(overlay) => {

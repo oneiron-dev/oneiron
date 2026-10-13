@@ -101,6 +101,7 @@ impl Memory<'_> {
                 session,
                 summary,
                 admit: None,
+                rostered: None,
             },
             WitnessDoor::Guest,
             || {},
@@ -161,6 +162,7 @@ impl Memory<'_> {
                 session,
                 summary,
                 admit: Some(&admit),
+                rostered: None,
             },
             WitnessDoor::Guest,
             || {},
@@ -213,6 +215,7 @@ impl Memory<'_> {
                 session,
                 summary,
                 admit: Some(&admit),
+                rostered: Some(room),
             },
             WitnessDoor::Guest,
             || {},
@@ -242,9 +245,22 @@ impl Memory<'_> {
                 session,
                 summary,
                 admit: Some(&admit),
+                rostered: None,
             },
             host_turn_ref.map_or(WitnessDoor::Guest, WitnessDoor::HostTurn),
-            || {},
+            || {
+                #[cfg(test)]
+                if let Some(hook) = self
+                    .vault
+                    .test_hooks()
+                    .before_run_speech_writer
+                    .lock()
+                    .expect("run speech hook poisoned")
+                    .take()
+                {
+                    hook();
+                }
+            },
             |_| Ok(()),
             |_| Ok(()),
         )
@@ -252,21 +268,95 @@ impl Memory<'_> {
 
     /// The writer a witness lands in: a session door's [`Admit`] first, so a
     /// speaker it refuses learns nothing the actor checks would have read,
-    /// then those checks ([`Self::verify_actor_write_in_txn`]) and `write`.
+    /// then those checks and `write`.
+    ///
+    /// Speech by a participant of a stretch's room into its overlay
+    /// (`rostered`) is the room's to admit (ARCH-0052 D5): the actor's
+    /// identity, and in a shared vault their current binding, are checked as
+    /// for any write, then the room's roster. A shared vault's content grant
+    /// does not decide it, because nothing staged in the overlay reaches the
+    /// shared vault; only a save does, through every base check. So a
+    /// rostered Viewer speaks off record and still writes nothing durable.
+    /// Every other witness, in base or in an overlay, runs the full check of
+    /// any actor write ([`Self::verify_actor_write_in_txn`]).
     pub(super) fn with_witness_write_txn_as<T>(
         &self,
         callback: crate::store::Callback,
         admit: Option<Admit<'_>>,
+        rostered: Option<(&OffRecordSession<'_>, EntityId)>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
         self.vault.write_txn_door(callback, |wtxn| {
             admit.map_or(Ok(()), |admit| admit(wtxn))?;
-            self.verify_actor_write_in_txn(wtxn)?;
+            let Some((session, room)) = rostered else {
+                self.verify_actor_write_in_txn(wtxn)?;
+                return write(wtxn);
+            };
+            verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+            if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
+                self.vault.verify_write_actor_in_txn(
+                    wtxn,
+                    &crate::WriteActor::new(self.actor, self.actor_class),
+                )?;
+            }
+            if !session.is_member_in_txn(wtxn, room, self.actor)? {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "the speaker is not in this stretch's room".to_owned(),
+                    &["Join the room before speaking in it."],
+                ));
+            }
             write(wtxn)
         })
     }
 
     // ── the overlay landing ─────────────────────────────────────────────
+
+    /// The overlay landing's guards in its writer, ahead of the shared door,
+    /// and the speaker's PERSON byline, once an erased PERSON is refused.
+    ///
+    /// A participant speaking by the room's roster alone (`rostered`) names
+    /// no message id: the stretch gives each message its own. Any id they
+    /// named would be read by the shared door and the staging, so its kind,
+    /// its body, or whatever holds it would shape the answer (Astra and Sol
+    /// on #1411). The refusal comes before anything reads the id, and is the
+    /// same whatever the vault holds. Nothing is lost: this door mints a
+    /// fresh turn for every call, so a named id never made a retry land.
+    ///
+    /// Any other door's id that the room does not hold must be one base
+    /// never gave out: a hard-deleted id is refused, as the base writer
+    /// refuses it, so a save cannot bring it back.
+    pub(super) fn overlay_guards_in_txn(
+        &self,
+        plan: &WitnessPlan<'_>,
+        sink: &OverlaySink<'_, '_>,
+        rostered: bool,
+        wtxn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<Option<EntityId>> {
+        let named = plan
+            .turn
+            .messages
+            .iter()
+            .any(|message| message.id.is_some());
+        if rostered && named {
+            return Err(MemoryError::bad_request_with(
+                "a participant names no message id in an off-record stretch",
+                &["Leave the message id out, and the stretch gives the message one."],
+            ));
+        }
+        for id in plan.message_ids() {
+            if !sink.overlay.contains_entity(&id)?
+                && self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+            {
+                return Err(hard_deleted_refusal(&id));
+            }
+        }
+        let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
+        super::reject_erased_person_in_txn(self.vault, wtxn, plan.conversation_id, person_author)?;
+        Ok(person_author)
+    }
 
     pub(super) fn overlay_sink<'a, 'v>(
         &self,

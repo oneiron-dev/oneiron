@@ -1,4 +1,5 @@
 //! Promoted-closure retirement reusing Store key builders.
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zeroize::Zeroizing;
@@ -7,7 +8,9 @@ use crate::batch::{BatchOp, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::error::{Error, Result};
 use crate::store::Store;
 
-use super::super::journal::{PromotePlan, journal_entry_in_closure};
+use crate::entity_id::EntityId;
+
+use super::super::journal::{PromotePlan, replayed_subject};
 use super::super::keyspace::{KeyspaceState, OverlayKeyspace, OverlayValue, drop_overlay_row};
 use super::lifecycle::{OverlayLifecycleState, SessionOverlay};
 use crate::error::OffRecordError;
@@ -34,7 +37,21 @@ impl SessionOverlay {
     ///
     /// The journal entries go with them, so a later close counts the promoted
     /// turn as published rather than as transcript that stopped existing.
-    pub(crate) fn retire_promoted_closure(self: &Arc<Self>, plan: &PromotePlan) -> Result<()> {
+    ///
+    /// Only what base now holds retires: the ops of `plan` whose entity is in
+    /// `kept`, and the journal entries they were cut from, by the identity
+    /// each was published under. An entry published after the snapshot the
+    /// plan was cut from, or one the plan left out, stays — a message said
+    /// into the turn while the save waited for the writer is still the room's
+    /// (ARCH-0052 D4: overlay entries for promoted content drop, and only
+    /// those). A witness never restages a row it already staged (it verifies
+    /// an existing TURN or MESSAGE instead), so no entry left in the journal
+    /// owns a row this removes.
+    pub(crate) fn retire_promoted_closure(
+        self: &Arc<Self>,
+        plan: &PromotePlan,
+        kept: &BTreeSet<EntityId>,
+    ) -> Result<()> {
         let lifecycle = self
             .lifecycle
             .lock()
@@ -48,7 +65,12 @@ impl SessionOverlay {
         }
         let mut next = self.state.load_full().as_ref().clone();
 
-        for op in &plan.ops {
+        let mut retired = BTreeSet::new();
+        for (op, seq) in plan.ops.iter().zip(&plan.cut_from) {
+            if !replayed_subject(op).is_some_and(|id| kept.contains(&id)) {
+                continue;
+            }
+            retired.insert(*seq);
             match op {
                 BatchOp::Put {
                     id,
@@ -107,7 +129,7 @@ impl SessionOverlay {
         // The in-room alias pair. The forward key is stored verbatim as the
         // reverse row's VALUE, so the pair retires without re-deriving a
         // content hash that the body may have moved past.
-        for id in &plan.replayed {
+        for id in plan.replayed.iter().filter(|id| kept.contains(id)) {
             let forward_key = match next.keyspaces[OverlayKeyspace::ShortIdsReverse.slot()].as_ref()
             {
                 KeyspaceState::Single { rows, .. } => match rows.get(id.as_bytes().as_slice()) {
@@ -122,10 +144,7 @@ impl SessionOverlay {
             }
         }
 
-        let turn = plan.turn;
-        let conversation = plan.conversation;
-        Arc::make_mut(&mut next.journal)
-            .retain(|entry| !journal_entry_in_closure(entry, turn, conversation));
+        Arc::make_mut(&mut next.journal).retain(|entry| !retired.contains(&entry.seq));
         next.recalculate_bytes();
         self.state.store(Arc::new(next));
         drop(lifecycle);

@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicU64;
 
 use crate::error::{Error, Result};
 
-use super::super::journal::JournalEntry;
+use super::super::journal::{JournalEntry, PublishedEntry};
 use super::super::keyspace::{OverlayMutation, OverlayState, project_mutation};
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::{Lease, OverlayLifecycleState, SessionOverlay};
@@ -217,7 +217,9 @@ impl SessionOverlay {
             next = project_mutation(&next, mutation)?;
         }
         for entry in journal {
-            Arc::make_mut(&mut next.journal).push(entry.clone());
+            let seq = next.next_journal_seq;
+            next.next_journal_seq = seq.wrapping_add(1);
+            Arc::make_mut(&mut next.journal).push(PublishedEntry::new(seq, entry.clone()));
             next.recalculate_bytes();
         }
         Ok(Arc::new(next))

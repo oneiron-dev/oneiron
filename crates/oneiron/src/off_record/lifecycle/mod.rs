@@ -66,6 +66,7 @@ mod participant;
 mod promotion;
 mod registry;
 mod room;
+mod saving;
 mod session;
 mod telemetry;
 mod types;

@@ -5,7 +5,7 @@ use zeroize::Zeroize;
 
 use crate::error::{Error, Result};
 
-use super::journal::JournalEntry;
+use super::journal::PublishedEntry;
 
 /// Manifest slot identifying one of the 28 named databases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,7 +225,10 @@ impl KeyspaceState {
 #[derive(Clone)]
 pub(super) struct OverlayState {
     pub(super) keyspaces: [Arc<KeyspaceState>; OverlayKeyspace::COUNT],
-    pub(super) journal: Arc<Vec<JournalEntry>>,
+    pub(super) journal: Arc<Vec<PublishedEntry>>,
+    /// The identity the next published journal entry takes. It only grows,
+    /// so a retired entry's identity never names a later one.
+    pub(super) next_journal_seq: u64,
     pub(super) bytes_used: usize,
 }
 
@@ -236,6 +239,7 @@ impl OverlayState {
                 Arc::new(KeyspaceState::empty(OverlayKeyspace::from_slot(slot)))
             }),
             journal: Arc::new(Vec::new()),
+            next_journal_seq: 0,
             bytes_used: 0,
         }
     }
@@ -245,7 +249,7 @@ impl OverlayState {
             .keyspaces
             .iter()
             .map(|state| state.byte_size())
-            .chain(self.journal.iter().map(JournalEntry::byte_size))
+            .chain(self.journal.iter().map(|entry| entry.byte_size()))
             .fold(0_usize, usize::saturating_add);
     }
 }

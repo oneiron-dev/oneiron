@@ -345,10 +345,13 @@ already hold.
 - `POST /v1/core/off-record/start` with `{"room": "<conversation id>", "session_ref": "…",
   "backend": "local" | "remote_provider"}`: any person on the room's roster starts one.
 - `POST /v1/core/off-record/witness` with `{"room": "…", "session_ref": "…", "turn": {…}}`: a
-  member speaks into it.
+  member speaks into it. Leave each message's `id` out: the stretch gives every message its own,
+  and a turn that names one is refused (400) while the stretch is off record.
 - `POST /v1/core/off-record/save` with `{"room": "…", "session_ref": "…"}`: a person keeps the
   whole talk in their own vault. Only a live owner of this vault saves here; anyone else is
-  refused, and nothing is written.
+  refused, and nothing is written. If an ordinary write has since put a message at the order of
+  one said into a turn this stretch saved, the save keeps nothing and answers 409 (`conflict`,
+  naming the turn); the talk stays in the room until it closes, and an export still takes it.
 - `POST /v1/core/off-record/export` with `{"room": "…", "session_ref": "…"}` (`core:read`): any
   person in the room takes an export file of the turns their membership lets them see. It writes
   no vault.

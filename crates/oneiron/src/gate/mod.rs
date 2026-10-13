@@ -188,8 +188,8 @@ pub(crate) use self::voice_serving::VoiceServingLimits;
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
     MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
-    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageEnvelope,
-    check_witness_message_ceiling, validate_canonical_witness_message_body,
+    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageBodyAuthor,
+    WitnessMessageEnvelope, check_witness_message_ceiling, validate_canonical_witness_message_body,
     validate_replicated_witness_message_body,
 };
 

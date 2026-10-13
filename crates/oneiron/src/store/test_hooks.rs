@@ -73,6 +73,14 @@ pub(crate) struct TestHooks {
     pub(crate) before_codebase_ingest_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// One vault-scoped pause before correction obtains its write lock.
     before_weave_correction_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot boundary in a run's speech into a stretch, once every check
+    /// it makes outside its write transaction has run and before it asks for
+    /// the writer.
+    pub(crate) before_run_speech_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot boundary in a save of a stretch's talk, once its plans are
+    /// cut and the snapshot dropped, still holding the session state, before
+    /// it asks for the writer.
+    pub(crate) after_save_plan: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {

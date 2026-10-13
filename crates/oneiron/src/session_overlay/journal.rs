@@ -63,6 +63,31 @@ impl Drop for JournalEntry {
     }
 }
 
+/// A journal entry as the overlay published it, with the identity it was
+/// published under: the overlay's own count of the entries it has published,
+/// never reused. A promotion names exactly the entries it was cut from by
+/// these, so retiring it leaves an entry published after its snapshot where
+/// it is (ARCH-0052 D4: only promoted content drops, and only after commit).
+#[derive(Clone)]
+pub(crate) struct PublishedEntry {
+    pub(super) seq: u64,
+    entry: JournalEntry,
+}
+
+impl PublishedEntry {
+    pub(super) const fn new(seq: u64, entry: JournalEntry) -> Self {
+        Self { seq, entry }
+    }
+}
+
+impl std::ops::Deref for PublishedEntry {
+    type Target = JournalEntry;
+
+    fn deref(&self) -> &JournalEntry {
+        &self.entry
+    }
+}
+
 pub(crate) fn zeroize_batch_op_payload(op: &mut BatchOp) {
     match op {
         BatchOp::Put { data, .. } => data.zeroize(),
@@ -139,8 +164,16 @@ pub(crate) struct PromotePlan {
     /// accumulated unconditionally so the plan shape stays feature-independent.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) source_learned_at: Vec<u64>,
+    /// The published identity of the journal entry each op was cut from, in
+    /// the same order as `ops`. Retirement removes these entries and no
+    /// other: never one published after the snapshot this plan was cut from,
+    /// nor one the plan left out.
+    pub(super) cut_from: Vec<u64>,
     pub(super) turn: EntityId,
     pub(super) conversation: EntityId,
+    /// Whether the turn is already in base, saved by this stretch, so the
+    /// plan only adds messages said into it since ([`Self::appends`]).
+    pub(super) appends: bool,
 }
 
 // Replay ops and in-room aliases are private temporary copies of journal
@@ -161,10 +194,39 @@ impl PromotePlan {
     pub(crate) const fn turn(&self) -> EntityId {
         self.turn
     }
+
+    /// The room's conversation the turn belongs to.
+    pub(crate) const fn conversation(&self) -> EntityId {
+        self.conversation
+    }
+
+    /// Whether this plan adds messages to a turn this stretch already saved,
+    /// rather than promoting the turn itself (a later save of a room's talk
+    /// after the run spoke on into a saved turn).
+    pub(crate) const fn appends(&self) -> bool {
+        self.appends
+    }
 }
 
-/// The ONE closure-membership predicate, shared by selection and retirement so
-/// the rows that were promoted are exactly the rows that retire.
+/// The entity a replayed op writes: the row of a put, text or vector, the
+/// source of an edge. Every op a plan carries belongs to the entity it
+/// writes, so a promotion that kept an entity kept each op whose subject it
+/// is.
+pub(crate) fn replayed_subject(op: &BatchOp) -> Option<EntityId> {
+    match op {
+        BatchOp::Put { id, .. } | BatchOp::Text { id, .. } | BatchOp::Vector { id, .. } => {
+            Some(*id)
+        }
+        BatchOp::Edge { src, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { src, .. }
+        | BatchOp::EdgeWithCreatedAt { src, .. } => Some(*src),
+        _ => None,
+    }
+}
+
+/// The ONE closure-membership predicate a plan is cut by. Retirement does not
+/// ask it again: it removes the exact entries a committed plan was cut from,
+/// so an entry the predicate would match now, published after the cut, stays.
 pub(super) fn journal_entry_in_closure(
     entry: &JournalEntry,
     turn: EntityId,

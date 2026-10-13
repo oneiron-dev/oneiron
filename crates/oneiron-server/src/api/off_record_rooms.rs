@@ -444,6 +444,13 @@ fn engine_error(error: oneiron::Error, session_ref: &str) -> ApiError {
         ErrorKind::KillSwitchDisabled => forbidden("off-record stretches are turned off here"),
         ErrorKind::OffRecordTalkOnly => forbidden("an anonymous stretch keeps nothing to save"),
         ErrorKind::OffRecordOverlayFull => ApiError::invalid_state(Some("full")),
+        ErrorKind::OffRecordCopyConflict => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("conflict".to_owned()),
+            },
+            ["Export the talk to keep a copy of what the save could not keep."],
+        ),
         ErrorKind::InvalidConfig => ApiError::bad_request(error.to_string(), Some("session_ref")),
         _ => {
             tracing::error!(error = %error, "off-record participant act failed");
