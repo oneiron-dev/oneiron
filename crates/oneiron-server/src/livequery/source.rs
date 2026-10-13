@@ -414,12 +414,10 @@ impl LiveQuerySource for BoundSource {
         pushes: &[subscriptions::Push],
     ) -> Result<(), AppError> {
         let _server = self.server()?;
-        if channel == Channel::OwnerFeed || self.off_device() {
+        if channel == Channel::OwnerFeed {
             // Owner body history cannot be replayed safely after a later
-            // policy change, nor any body off this device after a row it
-            // serves turns device-local. Keep only the live subscription
-            // ring, which is re-authorized before each delivery, not a
-            // retained payload log.
+            // policy change. Keep only the live subscription ring, which is
+            // re-authorized before each delivery, not a retained payload log.
             return Ok(());
         }
         let mut state = self
@@ -477,22 +475,22 @@ impl LiveQuerySource for BoundSource {
         super::history::History::replay(&state.journal, view, channel, cursor)
     }
 
-    fn off_device(&self) -> bool {
-        self.auth.locality() == oneiron::claim::CallerLocality::OffDevice
-    }
-
-    fn withholds_any(&self, ids: &[oneiron::EntityId]) -> Result<bool, AppError> {
-        if !self.off_device() || ids.is_empty() {
+    fn withholds(&self, pushes: &[subscriptions::Push]) -> Result<bool, AppError> {
+        let locality = self.auth.locality();
+        if locality == oneiron::claim::CallerLocality::OnDevice {
             return Ok(false);
         }
-        let readable = self
-            .server
-            .upgrade()
-            .ok_or_else(AppError::unauthorized)?
-            .vault()
-            .off_device_readable(ids.to_vec())
-            .map_err(|_| AppError::internal_server_error("device-local admission read failed"))?;
-        Ok(readable.len() != ids.len())
+        let bodies: Vec<_> = pushes
+            .iter()
+            .filter_map(|push| push.result.as_ref())
+            .collect();
+        if bodies.is_empty() {
+            return Ok(false);
+        }
+        let bodies = serde_json::to_vec(&bodies)
+            .map_err(|_| AppError::internal_server_error("live-query release check failed"))?;
+        crate::device_local::names_kept_row(self.server()?.vault(), locality, &bodies)
+            .map_err(|_| AppError::internal_server_error("device-local admission read failed"))
     }
 
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError> {

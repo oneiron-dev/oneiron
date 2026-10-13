@@ -1,31 +1,23 @@
 #![allow(clippy::unwrap_used)]
-//! Sol on the device-local reads (F6, R2 F1 and F8): a live view keeps the
-//! pushes it derived for a resume or a redelivery. Off this device none of
-//! them leaves again once a row it serves turns device-local, whether its
-//! world is flagged later or the row moves into a flagged world: the client
-//! gets a gap and a fresh snapshot.
+//! Sol on the device-local reads (F6, R2 F1 and F8, R3 F1): a live
+//! subscription keeps the pushes it derived, for a resume, a redelivery and
+//! a frame already queued for its socket. Each is judged again when it is
+//! released: off this device none naming a row a device-local world keeps
+//! now leaves again, and the client gets a gap and a fresh snapshot. On this
+//! device they all still go out.
 use super::production_tests::{ACTOR, AT, server, token};
 use super::source::BoundSource;
 use super::*;
 use crate::server::SyncServer;
+use oneiron::claim::CallerLocality;
 use oneiron::memory::ClaimInput;
-use oneiron::sync::bridge::LiveQueryTee;
 use oneiron::{EdgeActorClass, EntityId};
 use std::sync::Arc;
 
 const CLAIM: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-/// Two views of `view` for a caller off this device (as every test
-/// credential is), opened while nothing matches them, and the snapshot
-/// cursor the client holds for the first.
-struct Views {
-    queries: Arc<subscriptions::LiveQueries>,
-    view: ScopedView,
-    held: Cursor,
-}
-
-fn put_world(server: &SyncServer, hex: &str) -> EntityId {
-    let world = EntityId::from_hex(hex).unwrap();
+fn put_world(server: &SyncServer) -> EntityId {
+    let world = EntityId::now();
     server
         .vault()
         .put_entity(
@@ -39,83 +31,14 @@ fn put_world(server: &SyncServer, hex: &str) -> EntityId {
     world
 }
 
-impl Views {
-    fn open(server: &Arc<SyncServer>, view: ScopedView) -> Self {
-        let auth = crate::test_credentials::authenticate(server, &token("human"));
-        let source = Arc::new(BoundSource::new(
-            Arc::downgrade(server),
-            auth,
-            "device-local-history".into(),
-        ));
-        let queries = Arc::new(subscriptions::LiveQueries::new(1, source));
-        let tee: Arc<dyn LiveQueryTee> = queries.clone();
-        server
-            .reassert_manager
-            .materializer()
-            .attach_live_query_tee(&tee);
-        let held = queries
-            .open(1, view.clone(), Channel::View, None, None)
-            .unwrap()[0]
-            .cursor
-            .clone();
-        queries
-            .open(2, view.clone(), Channel::View, None, None)
-            .unwrap();
-        Self {
-            queries,
-            view,
-            held,
-        }
-    }
-
-    /// Both views pushed the claim: its short id is in each one's ring.
-    fn pushed(&self, short_id: &str) {
-        for id in [1, 2] {
-            assert!(
-                names(&self.queries.pending(id).unwrap(), short_id),
-                "view {id} pushed it"
-            );
-        }
-    }
-
-    /// A resume from the held cursor, and a redelivery of the second view's
-    /// ring, send nothing pushed while the claim could leave.
-    fn resend_nothing_of(&self, short_id: &str) {
-        let resumed = self
-            .queries
-            .open(1, self.view.clone(), Channel::View, Some(&self.held), None)
-            .unwrap();
-        assert!(!names(&resumed, short_id), "{resumed:?}");
-        assert_eq!(
-            resumed.iter().map(|push| push.kind).collect::<Vec<_>>(),
-            ["gap", "snapshot", "eose"]
-        );
-        let redelivered = self.queries.buffered().unwrap();
-        assert!(!names(&redelivered, short_id), "{redelivered:?}");
-        assert!(
-            redelivered
-                .iter()
-                .any(|push| push.subscription_id == 2 && push.kind == "gap"),
-            "{redelivered:?}"
-        );
-    }
-}
-
-fn names(pushes: &[subscriptions::Push], short_id: &str) -> bool {
-    serde_json::to_string(pushes).unwrap().contains(short_id)
-}
-
-/// The claim, in `world`, matching the views; its short id once both views
-/// pushed it.
-async fn push_claim(server: &SyncServer, views: &Views, world: EntityId) -> String {
-    let window_key = oneiron::sync::WindowKey::from_timestamp(AT);
-    let window = server.get_or_create_window(&window_key).await.unwrap();
-    let claim = EntityId::from_hex(CLAIM).unwrap();
-    let receipt = server
+/// A claim by the test actor in `world`: its gate receipt is a row of the
+/// actor's receipts subscription, naming the claim.
+fn put_claim(server: &SyncServer, world: EntityId) -> String {
+    server
         .vault()
         .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human)
         .claim_upsert(&ClaimInput {
-            id: Some(claim.to_hex()),
+            id: Some(CLAIM.into()),
             predicate: "profile.orchid".into(),
             subject_ref: ACTOR.into(),
             value: json!("kept"),
@@ -131,63 +54,142 @@ async fn push_claim(server: &SyncServer, views: &Views, world: EntityId) -> Stri
             salience: None,
         })
         .unwrap();
-    server
-        .vault()
-        .batch()
-        .text(&claim, &[("body", "orchidneedle kept")])
-        .commit()
-        .unwrap();
-    oneiron::sync::window::reverse_rematerialize(server.vault(), &window, &window_key).unwrap();
-    views.queries.refresh().unwrap();
-    views.pushed(&receipt.claim_short_id);
-    receipt.claim_short_id
+    CLAIM.to_owned()
 }
 
+/// The test actor's subscriptions read from `locality`, and their source.
+fn subscriptions(
+    server: &Arc<SyncServer>,
+    locality: CallerLocality,
+) -> (subscriptions::LiveQueries, Arc<BoundSource>) {
+    let auth = crate::test_credentials::authenticate(server, &token("human")).at(locality);
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(server),
+        auth,
+        "device-local".into(),
+    ));
+    (subscriptions::LiveQueries::new(1, source.clone()), source)
+}
+
+fn names(pushes: &[subscriptions::Push], id: &str) -> bool {
+    serde_json::to_string(pushes).unwrap().contains(id)
+}
+
+/// Whether an encoded frame spells the claim's id.
+fn spells(frame: &[u8]) -> bool {
+    frame.windows(CLAIM.len()).any(|w| w == CLAIM.as_bytes())
+}
+
+fn kinds(pushes: &[subscriptions::Push]) -> Vec<&'static str> {
+    pushes.iter().map(|push| push.kind).collect()
+}
+
+/// A resume replays the pushes its source journaled after the client's
+/// cursor. Off this device it replays none naming a claim whose world turned
+/// device-local since: the client gets a gap and a fresh snapshot.
 #[tokio::test]
-async fn a_view_pushed_while_its_world_was_portable_resends_none_of_it_once_device_local() {
+async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
     let (_dir, server) = server();
-    let world = put_world(&server, "77777777777777777777777777777777");
-    let views = Views::open(
-        &server,
-        ScopedView {
-            query: Some("orchidneedle".into()),
-            world_ref: Some(world.to_hex()),
-            ..Default::default()
-        },
+    let world = put_world(&server);
+    let claim = put_claim(&server, world);
+    let view = ScopedView {
+        query: Some("unmatched".into()),
+        ..Default::default()
+    };
+    for locality in [CallerLocality::OnDevice, CallerLocality::OffDevice] {
+        server.vault().set_world_device_only(world, false).unwrap();
+        let (queries, source) = subscriptions(&server, locality);
+        let anchor = queries
+            .open(7, view.clone(), Channel::Receipts, None, None)
+            .unwrap()[0]
+            .cursor
+            .clone();
+        // A push the journal kept, naming the claim while its world was
+        // portable.
+        let mut next = anchor.clone();
+        next.batch = anchor.batch + 1;
+        source
+            .record(
+                &view,
+                Channel::Receipts,
+                &[subscriptions::Push {
+                    subscription_id: 7,
+                    cursor: next,
+                    kind: "data",
+                    result: Some(json!([{ "claim_ref": claim }])),
+                }],
+            )
+            .unwrap();
+        queries.close(7).unwrap();
+        let resumed = queries
+            .open(7, view.clone(), Channel::Receipts, Some(&anchor), None)
+            .unwrap();
+        assert!(names(&resumed, &claim), "{locality:?}: {resumed:?}");
+        queries.close(7).unwrap();
+
+        server.vault().set_world_device_only(world, true).unwrap();
+        let resumed = queries
+            .open(7, view.clone(), Channel::Receipts, Some(&anchor), None)
+            .unwrap();
+        if locality == CallerLocality::OnDevice {
+            assert!(names(&resumed, &claim), "{resumed:?}");
+        } else {
+            assert!(!names(&resumed, &claim), "{resumed:?}");
+            assert_eq!(kinds(&resumed), ["gap", "snapshot", "eose"]);
+        }
+    }
+}
+
+/// A subscription's ring holds what it has not had acknowledged, and a
+/// socket may hold a frame of it queued. Once the claim they name is
+/// device-local, off this device the queued body is not released and the
+/// redelivery is a gap. On this device both still go out.
+#[tokio::test]
+async fn a_body_queued_off_this_device_is_not_released_once_its_row_is_device_local() {
+    let (_dir, server) = server();
+    let world = put_world(&server);
+    let claim = put_claim(&server, world);
+    let (here, _) = subscriptions(&server, CallerLocality::OnDevice);
+    let opened = here
+        .open(3, ScopedView::default(), Channel::Receipts, None, None)
+        .unwrap();
+    assert!(names(&opened, &claim), "{opened:?}");
+    // Off this device, as every test credential is: the frames a socket
+    // was sent, queued again as a broadcast copy.
+    let hub = connection::Hub::for_server(&server);
+    let mut socket = connection::Connection::new(hub, 9);
+    let auth = crate::test_credentials::authenticate(&server, &token("human"));
+    let queued: Vec<_> = socket
+        .control(
+            &auth,
+            SubRequest::Open {
+                subscription_id: 3,
+                scoped_view: ScopedView::default(),
+                channel: Channel::Receipts,
+                cursor: None,
+                origin: None,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|frame| routing::wrap(9, 3, frame))
+        .collect();
+    assert!(queued.iter().any(|frame| spells(frame.as_slice())));
+    assert!(
+        queued
+            .iter()
+            .all(|frame| socket.receive_broadcast(frame).is_some())
     );
-    let short_id = push_claim(&server, &views, world).await;
 
     server.vault().set_world_device_only(world, true).unwrap();
-    views.resend_nothing_of(&short_id);
-}
-
-#[tokio::test]
-async fn a_view_resends_nothing_of_a_claim_moved_into_a_device_local_world() {
-    let (_dir, server) = server();
-    let kept = put_world(&server, "77777777777777777777777777777777");
-    let open = put_world(&server, "88888888888888888888888888888888");
-    server.vault().set_world_device_only(kept, true).unwrap();
-    let views = Views::open(
-        &server,
-        ScopedView {
-            query: Some("orchidneedle".into()),
-            ..Default::default()
-        },
-    );
-    let short_id = push_claim(&server, &views, open).await;
-
-    // The claim moves into the flagged world: no flag changes.
-    let claim = EntityId::from_hex(CLAIM).unwrap();
-    let mut body = server.vault().get_claim(&claim).unwrap().unwrap();
-    body.world = Some(kept);
-    server
-        .vault()
-        .put_claim(
-            &claim,
-            &body,
-            oneiron::temporal::TimeRange { start: AT, end: AT },
-            AT,
-        )
-        .unwrap();
-    views.resend_nothing_of(&short_id);
+    assert!(here.releases(3).unwrap());
+    assert!(names(&here.buffered().unwrap(), &claim));
+    let released: Vec<_> = queued
+        .iter()
+        .filter_map(|frame| socket.receive_broadcast(frame))
+        .collect();
+    assert!(!released.iter().any(|frame| spells(frame.as_slice())));
+    let redelivered = socket.delivery().unwrap();
+    assert_eq!(redelivered.len(), 1);
+    assert!(!spells(&redelivered[0]));
 }

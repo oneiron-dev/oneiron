@@ -15,11 +15,13 @@ pub(crate) use self::actor_dispatch::{
 };
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{mcp_credential_reads, mcp_scope_covers_entity, mcp_validated_call_args};
+#[cfg(test)]
+pub(crate) use self::board_setup::release_hook;
 pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup};
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
-    mcp_resolve_page, mcp_scoped_tasks_section,
+    mcp_release_continuation, mcp_resolve_page, mcp_scoped_tasks_section,
 };
 use self::envelope::mcp_request_id;
 pub(crate) use self::envelope::{

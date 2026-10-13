@@ -422,8 +422,11 @@ impl PipelineBuilder<'_> {
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
-                    read_suppressed: metadata_cache
-                        .countable_suppressed(&self.vault.store, rtxn)?,
+                    read_suppressed: metadata_cache.countable_suppressed(
+                        &self.vault.store,
+                        rtxn,
+                        filter_config.device_local,
+                    )?,
                     deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
@@ -750,7 +753,11 @@ impl PipelineBuilder<'_> {
                 capabilities,
                 pending_vectors,
                 claim_gate,
-                read_suppressed: metadata_cache.countable_suppressed(&self.vault.store, rtxn)?,
+                read_suppressed: metadata_cache.countable_suppressed(
+                    &self.vault.store,
+                    rtxn,
+                    filter_config.device_local,
+                )?,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
                 total_in_scope,

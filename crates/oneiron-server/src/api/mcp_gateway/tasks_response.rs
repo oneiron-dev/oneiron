@@ -2,8 +2,8 @@
 
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, execute_mcp_board_verb, mcp_current_board,
-    mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page, mcp_request_id,
-    mcp_resolve_page, mcp_scoped_tasks_section,
+    mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page, mcp_release_continuation,
+    mcp_request_id, mcp_resolve_page, mcp_scoped_tasks_section,
 };
 use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
 use crate::mcp::McpActorClass;
@@ -212,14 +212,20 @@ pub(crate) async fn execute_mcp_generated_verb(
             args.payload.cache,
         ),
     });
-    Ok(mcp_endpoint_result(
+    let continued = dispatch.continuation.is_some();
+    let result = mcp_endpoint_result(
         server,
         actor,
         format!("{} completed", args.tool.name),
         structured,
         carrier,
     )
-    .await)
+    .await;
+    if continued {
+        mcp_release_continuation(server, actor, result)
+    } else {
+        Ok(result)
+    }
 }
 
 /// Caps whichever row array this verb result pages over, in place.

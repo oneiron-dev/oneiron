@@ -341,8 +341,18 @@ impl Connection {
     pub(crate) fn receive_broadcast(&self, data: &[u8]) -> Option<Vec<u8>> {
         let (id, frame) = super::routing::addressed(data, self.conn_id)?;
         let session = self.session.as_ref()?;
-        (self.active.contains(&id) && session.attached.load(Ordering::Acquire) == self.conn_id)
-            .then(|| frame.to_vec())
+        if !self.active.contains(&id) || session.attached.load(Ordering::Acquire) != self.conn_id {
+            return None;
+        }
+        // A body queued before a row it names turned device-local stays
+        // unsent: its subscription is retired for a gap (DEC-0005).
+        let body = super::wire::decode::<serde::de::IgnoredAny>(&frame[1..])
+            .ok()
+            .is_none_or(|envelope| matches!(envelope.kind.as_str(), "sub.data" | "sub.snapshot"));
+        if body && !session.queries.releases(id).unwrap_or(false) {
+            return None;
+        }
+        Some(frame.to_vec())
     }
 
     pub(crate) fn replay_after_lag(&mut self) {

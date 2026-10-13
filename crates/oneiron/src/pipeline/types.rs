@@ -301,10 +301,21 @@ pub struct RetrievalWithPendingVectors<T> {
 impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
-    /// scoped caller's final admission gate.
-    pub(super) fn countable_suppressed(&self, store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
+    /// scoped caller's final admission gate. Nor does a row of the
+    /// `device_local` worlds a caller off this device reads nothing of.
+    pub(super) fn countable_suppressed(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        device_local: Option<&std::collections::BTreeSet<EntityId>>,
+    ) -> Result<usize> {
         let mut count = 0;
         for id in &self.read_suppressed {
+            if let Some(flagged) = device_local
+                && crate::settings::device_local_keeps_among(store, txn, flagged, id)?
+            {
+                continue;
+            }
             let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
                 continue;
             };

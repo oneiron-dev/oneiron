@@ -685,6 +685,53 @@ pub(super) fn mcp_page_cursor_error(error: crate::mcp::McpPageCursorError) -> Mc
     McpGatewayError::new(-32602, error.error_code(), error.to_string()).with_field("page.cursor")
 }
 
+/// A device-only flag committed after a continuation passed its cursor
+/// check and before its result is released.
+#[cfg(test)]
+pub(crate) mod release_hook {
+    use std::cell::Cell;
+
+    thread_local! {
+        // Per thread: the call resumes on the test's own current-thread
+        // runtime.
+        static FLAG: Cell<Option<oneiron::EntityId>> = const { Cell::new(None) };
+    }
+
+    pub(crate) fn arm(world: oneiron::EntityId) {
+        FLAG.set(Some(world));
+    }
+
+    pub(super) fn run(server: &crate::server::SyncServer) {
+        if let Some(world) = FLAG.take() {
+            server
+                .vault
+                .set_world_device_only(world, true)
+                .expect("device-only flag");
+        }
+    }
+}
+
+/// A continuation answers from the result its producer retained. It is
+/// judged again once its call has nothing left to wait on: one that names a
+/// row a device-local world keeps now is refused, and the caller starts
+/// over from page one.
+pub(super) fn mcp_release_continuation(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    result: Value,
+) -> Result<Value, McpGatewayError> {
+    let bytes = serde_json::to_vec(&result)
+        .map_err(|_| mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch))?;
+    if crate::device_local::names_kept_row(&server.vault, actor.locality(), &bytes)
+        .map_err(|error| mcp_engine_error("mcp page release check failed", error))?
+    {
+        return Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::SnapshotMismatch,
+        ));
+    }
+    Ok(result)
+}
+
 /// `setup_oneiron`: board keyframe + verb grammar + instructions, in ONE
 /// result.
 pub(crate) async fn execute_mcp_setup(
@@ -807,12 +854,20 @@ pub(crate) async fn execute_mcp_setup(
     if let Some((rider, epoch)) = &rider {
         super::board_observations::delivered(server, actor, rider, true, *epoch).await;
     }
-    Ok(mcp_endpoint_result(
+    #[cfg(test)]
+    release_hook::run(server);
+    let continued = dispatch.continuation.is_some();
+    let result = mcp_endpoint_result(
         server,
         actor,
         "board keyframe, verb grammar, and instructions returned",
         structured,
         carrier_policy,
     )
-    .await)
+    .await;
+    if continued {
+        mcp_release_continuation(server, actor, result)
+    } else {
+        Ok(result)
+    }
 }

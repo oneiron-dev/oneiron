@@ -568,7 +568,7 @@ async fn a_keyed_board_retry_off_this_device_replays_no_device_local_row() {
         .await;
     assert_eq!(status, StatusCode::OK, "{read}");
     assert_eq!(read["items"][0]["id"], claim.to_hex(), "{read}");
-    server.vault.retract_claim(&claim, 3).unwrap();
+    server.vault.retract_claim(&claim, 200).unwrap();
     let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let turn = EntityId::now();
     let author = rmp_serde::to_vec_named(&json!({ "actor": owner.to_hex() })).unwrap();
@@ -617,10 +617,11 @@ async fn a_keyed_board_retry_off_this_device_replays_no_device_local_row() {
     assert_eq!(replayed, first);
 }
 
-/// Sol R2 F3: a setup page is continued from the board it retained, which
-/// told this connector, off this device, how a claim it was served changed.
-/// Once the claim's world is device-local the cursor is refused, never
-/// answered from that board.
+/// Sol R2 F3 and R3 F3: a setup page is continued from the board it
+/// retained, which told its connector, off this device, how a claim it was
+/// served changed. Once the claim's world is device-local the cursor is
+/// refused, never answered from that board: whether the flag was committed
+/// before the continuation, or while it was under way.
 #[tokio::test]
 async fn a_setup_page_off_this_device_continues_no_board_naming_a_device_local_row() {
     let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
@@ -628,7 +629,6 @@ async fn a_setup_page_off_this_device_continues_no_board_naming_a_device_local_r
         ..Default::default()
     });
     let actor = EntityId::now();
-    register_mcp_actor(&server, "kept-pages", actor, oneiron::EdgeActorClass::Human).await;
     let world = put_world(&server.vault);
     let claim = put_orchid_claim(
         &server,
@@ -638,49 +638,71 @@ async fn a_setup_page_off_this_device_continues_no_board_naming_a_device_local_r
         "orchid ledger paged",
     );
     index(&server);
-    let call = |path: &'static str, tool: &'static str, arguments: Value| {
+    let call = |credential: &'static str, path: &'static str, tool: &'static str, arguments| {
         let server = Arc::clone(&server);
         async move {
             let arguments = mcp_merge_args(mcp_endpoint_envelope(actor, "read_board"), arguments);
-            route_json(
+            let (status, body) = route_json(
                 server,
-                mcp_endpoint_call_request(path, "kept-pages", tool, tool, arguments),
+                mcp_endpoint_call_request(path, credential, tool, tool, arguments),
             )
-            .await
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
         }
     };
+    // Two connectors each read the claim, and once it is retracted each
+    // takes the first setup page, which reports it.
+    let mut cursors = Vec::new();
+    for credential in ["kept-before", "kept-during"] {
+        register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+        let read = call(
+            credential,
+            MCP_TOOL_FIRST_PATH,
+            "memory.query",
+            json!({"arguments": {"request": {"query": "orchid", "view": "standard"}}}),
+        )
+        .await;
+        assert_eq!(
+            read["result"]["structuredContent"]["output"]["response"]["items"][0]["id"],
+            claim.to_hex(),
+            "{read}"
+        );
+    }
+    server.vault.retract_claim(&claim, 200).unwrap();
+    for credential in ["kept-before", "kept-during"] {
+        let first = call(
+            credential,
+            "/mcp",
+            "setup_oneiron",
+            json!({"page": {"limit": 1}}),
+        )
+        .await;
+        let first = &first["result"]["structuredContent"];
+        assert!(
+            first
+                .to_string()
+                .contains(&format!("{}: retracted", claim.to_hex())),
+            "{first}"
+        );
+        cursors.push(first["meta"]["page"]["cursor"].as_str().unwrap().to_owned());
+    }
 
-    let (status, read) = call(
-        MCP_TOOL_FIRST_PATH,
-        "memory.query",
-        json!({"arguments": {"request": {"query": "orchid", "view": "standard"}}}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{read}");
-    assert_eq!(
-        read["result"]["structuredContent"]["output"]["response"]["items"][0]["id"],
-        claim.to_hex(),
-        "{read}"
-    );
-    server.vault.retract_claim(&claim, 3).unwrap();
-    let (status, first) = call("/mcp", "setup_oneiron", json!({"page": {"limit": 1}})).await;
-    assert_eq!(status, StatusCode::OK, "{first}");
-    let first = &first["result"]["structuredContent"];
-    assert!(
-        first
-            .to_string()
-            .contains(&format!("{}: retracted", claim.to_hex())),
-        "{first}"
-    );
-    let cursor = first["meta"]["page"]["cursor"].as_str().unwrap().to_owned();
-    server.vault.set_world_device_only(world, true).unwrap();
-    let (status, refused) = call(
-        "/mcp",
-        "setup_oneiron",
-        json!({"page": {"limit": 1, "cursor": cursor}}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{refused}");
-    assert!(refused.get("result").is_none(), "{refused}");
-    assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
+    // Flagged while the second continuation is under way, past its cursor
+    // check; the first continues once the flag is in.
+    crate::api::mcp_gateway::release_hook::arm(world);
+    for (credential, cursor) in ["kept-during", "kept-before"]
+        .into_iter()
+        .zip(cursors.into_iter().rev())
+    {
+        let refused = call(
+            credential,
+            "/mcp",
+            "setup_oneiron",
+            json!({"page": {"limit": 1, "cursor": cursor}}),
+        )
+        .await;
+        assert!(refused.get("result").is_none(), "{credential}: {refused}");
+        assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
+    }
 }
