@@ -213,6 +213,64 @@ fn a_removed_machine_never_comes_back() {
     assert!(!is_mine(&host.vault, request.machine));
 }
 
+/// A machine joins once, with one install key. A later revision that names
+/// another key, signed by the owner's live root and replayed onto the log,
+/// leaves the machine live under neither key, so a proof by either names no
+/// machine (Sol P1 round 3, F2: a socket that proved the first key).
+#[test]
+fn a_machine_never_changes_its_key() {
+    let host = host();
+    let machine = EntityId::now();
+    let (first, second) = (ed_key(89), ed_key(90));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &request_for(host.vault_id, machine, &first),
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let proved = |key: &SigningKey| {
+        let transcript =
+            machine_connection_transcript(&host.vault_id, machine, "token", 7, "nonce");
+        host.vault
+            .verify_machine_connection_proof(
+                machine,
+                &key.sign(&transcript).to_bytes(),
+                "token",
+                7,
+                "nonce",
+            )
+            .unwrap()
+    };
+    assert_eq!(proved(&first), PeerMachine::Proven(machine));
+
+    let fold = host.vault.authority_fold().unwrap();
+    let request = request_for(host.vault_id, machine, &second);
+    let rekey = host
+        .issuer
+        .sign_entry(
+            Some(host.vault_id),
+            fold.append_sequences[&host.issuer.public_key()] + 1,
+            fold.append_heads.iter().copied().collect(),
+            AuthorityOp::MachineProfile(MachineProfile {
+                machine_key: request.machine_key,
+                machine_proof: request.machine_proof,
+                revision: 2,
+                ..fold.machine(machine).unwrap().profile.clone()
+            }),
+            2,
+        )
+        .unwrap();
+    host.vault
+        .put_authority_log_entries(&[(rekey, TimeRange { start: 2, end: 2 }, 2)])
+        .unwrap();
+    assert!(!is_mine(&host.vault, machine));
+    for key in [&first, &second] {
+        assert_eq!(proved(key), PeerMachine::Unknown);
+    }
+}
+
 #[test]
 fn a_forged_mark_never_makes_a_machine_mine() {
     let host = host();
