@@ -133,21 +133,23 @@ pub(crate) fn actor_is_vault_owner_in_txn(
 }
 
 /// Whether a narrower owner credential's relationship exemption holds in
-/// `txn`: its holder still exists as a human and is the vault owner. The
-/// embedded owner needs no owner binding, but its PERSON must still be there,
-/// as the owner key's own reads require (Sol R5-007).
+/// `txn`: its holder is a live PERSON and is the vault owner. The embedded
+/// owner needs no owner binding, but its PERSON must still be live, as the
+/// owner key's own reads require (Sol R5-007). A soft delete keeps the
+/// PERSON header as a shell, so the row's deletion state decides (Astra on
+/// #1413).
 pub(crate) fn owner_exemption_holds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: EntityId,
 ) -> MemoryResult<bool> {
-    let human = EdgeActorClass::Human;
-    match verify_actor_binding_in_txn(vault, txn, owner, human) {
-        Ok(()) => actor_is_vault_owner_in_txn(vault, txn, owner, human),
-        // Gone, or no longer a PERSON: the exemption has no holder.
-        Err(error) if error.code == MEMORY_CODE_FORBIDDEN => Ok(false),
-        Err(error) => Err(error),
+    let row = crate::vault::live_entity_row_in_txn(&vault.store, txn, &owner)?;
+    if row.live_type() != Some(crate::registry::ENTITY_TYPE_PERSON) {
+        // Gone, a deleted shell, or no longer a PERSON: the exemption has no
+        // holder.
+        return Ok(false);
     }
+    actor_is_vault_owner_in_txn(vault, txn, owner, EdgeActorClass::Human)
 }
 
 /// The owner check: `actor` exists as `actor_class`, which is human, and its

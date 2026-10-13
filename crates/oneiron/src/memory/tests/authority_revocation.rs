@@ -556,9 +556,18 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
 /// never read the PERSON, so a lane kept past the embedded owner's hard
 /// delete, and a fresh lane from the same credential, still read a
 /// relationship's words. The exemption needs its holder's PERSON in the
-/// read's snapshot now.
+/// read's snapshot now. Astra on #1413: the plain delete keeps that PERSON
+/// as a shell with its header, and the first fix read only the header's
+/// type, so both deletes are checked; the exemption needs a live PERSON.
 #[test]
 fn a_narrower_embedded_owner_credential_loses_its_exemption_with_its_person() {
+    use crate::deletion::DeleteReason;
+    for reason in [DeleteReason::UserDelete, DeleteReason::UserHardDelete] {
+        narrower_embedded_owner_reads_past(reason);
+    }
+}
+
+fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
     use crate::claim::PointRead;
     use crate::federation::ScopeAxis;
     let (_dir, vault) = open_vault();
@@ -641,17 +650,17 @@ fn a_narrower_embedded_owner_credential_loses_its_exemption_with_its_person() {
     );
 
     vault
-        .delete_entity_with_reason(&embedded, crate::deletion::DeleteReason::UserHardDelete)
-        .expect("hard-delete the embedded owner");
+        .delete_entity_with_reason(&embedded, reason)
+        .expect("delete the embedded owner");
     let fresh = lane_of();
     for (lane, which) in [(&kept, "kept"), (&fresh, "fresh")] {
         assert!(
             !reads(lane, spaced),
-            "the {which} lane, past the hard delete"
+            "the {which} lane, past the {reason:?}"
         );
         assert!(
             reads(lane, unscoped),
-            "the {which} lane keeps unscoped words"
+            "the {which} lane keeps unscoped words past the {reason:?}"
         );
     }
 }
