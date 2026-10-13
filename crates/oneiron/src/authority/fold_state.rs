@@ -21,6 +21,12 @@ pub enum AuthorityFoldIssue {
     SignerBelowTierFloor(AuthorityEntryHash),
     /// Entry references a missing or invalid parent.
     InvalidAncestry(AuthorityEntryHash),
+    /// Entry is signed by a key a handoff retired, outside that handoff's
+    /// own ancestry.
+    RetiredSigner(AuthorityEntryHash),
+    /// A handoff that conflicts with another (a fork, a cycle) or yields to
+    /// one whose fence stands: it installs no successor.
+    UnsettledHandoff(AuthorityEntryHash),
     /// Entry signer was not valid in its own ancestry.
     SignerNotInAncestry(AuthorityEntryHash),
     /// Entry sequence did not exceed its ancestry or persisted first-observation high-water mark.
@@ -95,6 +101,11 @@ pub struct AuthorityFold {
     pub valid_entries: BTreeSet<AuthorityEntryHash>,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
+    /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:
+    /// no entry they sign stands outside the handoff's own ancestry.
+    pub retired_keys: BTreeSet<AuthorityKey>,
+    /// The handoffs whose fences stand: settled, or in conflict.
+    pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// Most-restrictive tier floor.
     pub tier_floor: Option<AuthorityTier>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.

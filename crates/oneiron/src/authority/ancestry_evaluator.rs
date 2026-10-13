@@ -15,7 +15,7 @@ use super::*;
 /// only a signed withdrawal may cross proven-rejected permissive parents: a
 /// RevokeActor, a machine removal, or a slip revoke or consume (the ordinary
 /// fold passes only retired client enrollments; the signed-branch proof
-/// rescues only actor revokes and machine removals).
+/// rescues only these withdrawals).
 pub(super) enum EvaluationPhase<'a> {
     Normal,
     Stalled(&'a BTreeSet<AuthorityEntryHash>),
@@ -64,12 +64,7 @@ fn stalled_actor_revoke(
     rejected: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
 ) -> Option<FoldState> {
-    if !(super::revoke_proof::restrictive_withdrawal(&entry.op)
-        || matches!(
-            entry.op,
-            AuthorityOp::SlipRevoke { .. } | AuthorityOp::SlipConsume { .. }
-        ))
-    {
+    if !super::revoke_proof::restrictive_withdrawal(&entry.op) {
         return None;
     }
     let mut scratch = states.clone();

@@ -1,4 +1,8 @@
 //! Host-visible banked-ref → TTS seam → PCM harness (CPU fixture, not GPU proof).
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 use oneiron::error::Result;
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::speculative::SpeculativeSessionConfig;

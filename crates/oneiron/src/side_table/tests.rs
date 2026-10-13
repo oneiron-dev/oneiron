@@ -458,6 +458,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "NOTE_PIN_REQUEST_SOURCE",
         "NOTE_TITLE_BY_NOTE",
         "NOTE_TITLE_RESERVATION",
+        "OFF_RECORD_COPY_RECEIPT",
         "ORIGIN_LFS_GC_QUEUE",
         "ORIGIN_LFS_UPLOAD_JOURNAL",
         "OUTBOUND_AUTHORIZED_RECOVERY_LEASE",
