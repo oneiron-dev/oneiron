@@ -38271,6 +38271,7 @@
      "notable": [
       "ProjectAnchor",
       "ProjectAuthority",
+      "ProjectProofVersion",
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
@@ -38282,9 +38283,9 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 34,
-      "enum": 1,
-      "fn": 15,
+      "crate-vis": 35,
+      "enum": 2,
+      "fn": 16,
       "re-export": 6,
       "struct": 7
      }
