@@ -15,6 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) struct AssembledCandidates {
     pub(super) candidates: Vec<VerifiedCandidate>,
     pub(super) conflicts: Vec<ConflictSet>,
+    /// Each candidate the extractor bound to a listed head, by claim id: the
+    /// head it corrects.
+    pub(super) corrections: BTreeMap<EntityId, EntityId>,
     pub(super) held: bool,
     pub(super) retry_at_ms: u64,
 }
@@ -62,6 +65,12 @@ pub(super) fn assemble_extracted(
                 slot.insert(extracted);
             }
             std::collections::btree_map::Entry::Occupied(mut slot) => {
+                // Two statements of one candidate stay a correction only when
+                // both name the same head.
+                let corrects = slot
+                    .get()
+                    .corrects()
+                    .filter(|head| extracted.corrects() == Some(*head));
                 let (incoming, refs) = extracted.into_parts();
                 let (mut kept, mut old_refs) = slot.get().clone().into_parts();
                 old_refs.extend(refs);
@@ -76,10 +85,18 @@ pub(super) fn assemble_extracted(
                 kept.evidence_meet =
                     super::provenance::source_meet(kept.evidence_meet, incoming.evidence_meet);
                 kept.learned_at = kept.learned_at.min(incoming.learned_at);
-                *slot.get_mut() = ExtractedCandidate::new(kept, old_refs)?;
+                let merged = ExtractedCandidate::new(kept, old_refs)?;
+                *slot.get_mut() = match corrects {
+                    Some(head) => merged.correcting(head),
+                    None => merged,
+                };
             }
         }
     }
+    let corrections = grouped
+        .values()
+        .filter_map(|extracted| Some((extracted.proposal().claim_id, extracted.corrects()?)))
+        .collect();
     let candidates: Vec<VerifiedCandidate> = grouped
         .into_values()
         .map(|raw| VerifiedCandidate::from_extracted(resources, raw))
@@ -131,6 +148,7 @@ pub(super) fn assemble_extracted(
     Ok(AssembledCandidates {
         candidates: ready,
         conflicts,
+        corrections,
         held: !plan.held.is_empty(),
         retry_at_ms,
     })

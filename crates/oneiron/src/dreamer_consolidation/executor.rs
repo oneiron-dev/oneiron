@@ -246,6 +246,7 @@ impl ConsolidationExecutor<'_> {
             super::assembly::assemble_extracted(ctx.vault, resources, candidates, ctx.now_ms)?;
         let candidates = assembled.candidates;
         let conflicts = assembled.conflicts;
+        let corrections = assembled.corrections;
         let policy = {
             let txn = ctx.vault.store.env.read_txn().map_err(crate::Error::from)?;
             crate::gate::resolve_policy_manifest(&ctx.vault.store, &txn)?
@@ -276,7 +277,16 @@ impl ConsolidationExecutor<'_> {
                 .map(|id| resources.prior(id))
                 .transpose()?;
             let member_data: Vec<_> = members.iter().map(|member| &member.proposal).collect();
-            if super::judge_context::fast_path(&policy, conflict, &member_data, prior) {
+            if super::judge_context::fast_path(&policy, conflict, &member_data, prior)
+                || super::judge_context::bound_correction(
+                    resources,
+                    &corrections,
+                    &candidates,
+                    conflict,
+                    &member_data,
+                    prior,
+                )?
+            {
                 let mut candidate = (*members[0]).clone();
                 candidate.proposal.supersedes = conflict.prior_head;
                 dropped.extend(conflict.candidate_indexes.iter().copied());

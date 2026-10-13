@@ -346,6 +346,19 @@ fn extract(fx: &Fixture, value: &str) -> crate::LlmResponse {
     )
 }
 
+/// The extractor's answer when the listing shows the fixture's head: `value`
+/// corrects it.
+fn correct(fx: &Fixture, value: &str) -> crate::LlmResponse {
+    text_response(
+        serde_json::json!({"candidates": [{
+            "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": value,
+            "corrects": fx.head.to_hex(), "confidence": 0.9,
+            "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+        }]})
+        .to_string(),
+    )
+}
+
 fn names(vault: &Vault, subject: EntityId) -> Result<Vec<EntityId>> {
     vault
         .claims_for_subject(&subject)?
@@ -1080,19 +1093,9 @@ fn a_correction_on_an_unregistered_predicate_lands_with_its_grant() -> Result<()
         DreamerConsolidationScope::Micro,
         Some(&fx.scope),
     )?;
-    let backend = ScriptedBackend::new(vec![
-        Ok(text_response(
-            serde_json::json!({"candidates": [{
-                "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
-                "corrects": fx.head.to_hex(), "confidence": 0.9,
-                "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
-            }]})
-            .to_string(),
-        )),
-        Ok(text_response(
-            "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
-        )),
-    ]);
+    // A bound correction makes no verdict call: a second call would find
+    // the script empty.
+    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     execute_at_pin(
         &vault,
@@ -1138,19 +1141,9 @@ fn a_correction_closes_the_dreamers_own_unvetted_claim() -> Result<()> {
         DreamerConsolidationScope::Micro,
         Some(&fx.scope),
     )?;
-    let backend = ScriptedBackend::new(vec![
-        Ok(text_response(
-            serde_json::json!({"candidates": [{
-                "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
-                "corrects": fx.head.to_hex(), "confidence": 0.9,
-                "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
-            }]})
-            .to_string(),
-        )),
-        Ok(text_response(
-            "{\"resolution\":\"merge\",\"value\":\"Alex\"}".into(),
-        )),
-    ]);
+    // A bound correction makes no verdict call: a second call would find
+    // the script empty.
+    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     let execution = execute_at_pin(
         &vault,
@@ -1184,6 +1177,181 @@ fn a_correction_closes_the_dreamers_own_unvetted_claim() -> Result<()> {
         .map(|edge| edge.target)
         .collect::<Vec<_>>();
     assert_eq!(supersedes, vec![fx.head]);
+    Ok(())
+}
+
+/// Engine ruling 2026-10-14 (the sel real run): the extractor's `corrects`
+/// binding is its own replace decision (ARCH-0040, merge-vs-replace). A lone
+/// candidate bound to the head it names replaces it with no verdict call, and
+/// the grant lands it. Before, the binding was dropped at decode, the pair
+/// went to the verdict call, and a real model, offered no `supersede`,
+/// escalated it: nothing landed.
+#[test]
+fn a_bound_correction_replaces_its_head_with_no_verdict_call() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = provisional_fixture(&vault)?;
+    let pin = PreparedWake::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    let backend = ScriptedBackend::new(vec![
+        Ok(correct(&fx, "Alex")),
+        Ok(text_response("{\"resolution\":\"escalate\"}".into())),
+    ]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    execute_at_pin(
+        &vault,
+        &fx,
+        &backend,
+        &mut sink,
+        fx.scope.clone(),
+        Some(&pin),
+    )?;
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1, "no verdict call");
+    let [new] = sink.outcome.landed.as_slice() else {
+        panic!("one granted replacement: {:?}", sink.outcome);
+    };
+    let replacement = vault.get_claim(new)?.expect("replacement");
+    assert_eq!(replacement.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(replacement.value, Value::from("Alex"));
+    assert_eq!(
+        vault.get_claim(&fx.head)?.expect("closed").lifecycle,
+        crate::ClaimLifecycleStatus::Superseded
+    );
+    Ok(())
+}
+
+/// Engine ruling 2026-10-14: the binding skips the verdict only when its head
+/// is the one head the candidate meets and no other candidate in the pass
+/// stands on it. A marker on an identity a second head shares, and a bound
+/// correction beside a restatement of its head, each take the verdict call.
+#[test]
+fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()> {
+    for second_head in [true, false] {
+        let (_dir, vault) = open_vault();
+        let mut fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+        let extraction = if second_head {
+            let other = EntityId::now();
+            let mut body = vault.get_claim(&fx.head)?.expect("head");
+            body.value = "Olek".into();
+            vault.put_claim(&other, &body, occurred(2), 2)?;
+            let pin = document_version(other, &vault.get(&other)?.expect("second head"));
+            fx.scope.readable.insert(pin.clone());
+            fx.scope.writable.insert(pin);
+            correct(&fx, "Alex")
+        } else {
+            text_response(
+                serde_json::json!({"candidates": [
+                    {
+                        "subject": fx.subject.to_hex(), "predicate": "profile.name",
+                        "value": "Alex", "corrects": fx.head.to_hex(), "confidence": 0.9,
+                        "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+                    },
+                    {
+                        "subject": fx.subject.to_hex(), "predicate": "profile.name",
+                        "value": "Oleksii", "confidence": 0.9,
+                        "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+                    },
+                ]})
+                .to_string(),
+            )
+        };
+        let backend = ScriptedBackend::new(vec![
+            Ok(extraction),
+            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+        ]);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            2,
+            "the verdict was asked (second head: {second_head})"
+        );
+        assert_eq!(
+            vault.get_claim(&fx.head)?.expect("head").lifecycle,
+            crate::ClaimLifecycleStatus::Active
+        );
+    }
+    Ok(())
+}
+
+/// Engine ruling 2026-10-14: a verdict that says `supersede` or `merge` and
+/// names no value writes no claim. It parks as an open conflict. Before, it
+/// wrote a replacement whose value was Null.
+#[test]
+fn a_verdict_that_names_no_value_parks_and_writes_nothing() -> Result<()> {
+    for resolution in ["supersede", "merge"] {
+        let (_dir, vault) = open_vault();
+        let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+        let backend = ScriptedBackend::new(vec![
+            Ok(extract(&fx, "Alex")),
+            Ok(text_response(
+                serde_json::json!({"resolution": resolution}).to_string(),
+            )),
+        ]);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(names(&vault, fx.subject)?, vec![fx.head], "{resolution}");
+        let bodies = vault
+            .claims_for_subject(&fx.subject)?
+            .into_iter()
+            .map(|id| vault.get_claim(&id))
+            .collect::<Result<Vec<_>>>()?;
+        assert!(
+            bodies
+                .iter()
+                .flatten()
+                .any(|body| body.predicate == crate::claim::PREDICATE_CONFLICT_OPEN),
+            "{resolution}: an open conflict is parked"
+        );
+        assert!(
+            !bodies.iter().flatten().any(|body| body.value == Value::Nil),
+            "{resolution}: no Null-valued claim"
+        );
+    }
+    Ok(())
+}
+
+/// Engine ruling 2026-10-14: a bound correction of a user-stated claim is
+/// judged by the source doors. The source check sends it to the verdict
+/// call, and the grant door keeps the replacement Proposed beside the
+/// Active head (Generated never supersedes UserStated).
+#[test]
+fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture_with_head_source(&vault, ClaimSource::UserStated)?;
+    let backend = ScriptedBackend::new(vec![
+        Ok(correct(&fx, "Alex")),
+        Ok(text_response(
+            "{\"resolution\":\"supersede\",\"value\":\"Alex\"}".into(),
+        )),
+    ]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        2,
+        "the verdict was asked"
+    );
+    assert!(sink.outcome.landed.is_empty(), "{:?}", sink.outcome);
+    assert_eq!(
+        vault.get_claim(&fx.head)?.expect("head").lifecycle,
+        crate::ClaimLifecycleStatus::Active
+    );
+    assert!(
+        names(&vault, fx.subject)?
+            .iter()
+            .filter(|id| **id != fx.head)
+            .all(|id| vault
+                .get_claim(id)
+                .ok()
+                .flatten()
+                .is_some_and(|body| body.approval == ClaimApprovalStatus::Proposed)),
+        "{:?}",
+        sink.outcome
+    );
     Ok(())
 }
 

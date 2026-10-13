@@ -19,7 +19,9 @@
 //!
 //! On invented data it witnesses a short conversation and declares its
 //! summary while the server is stopped, so the server queues the work at
-//! start (the kill before the queue). Then it:
+//! start (the kill before the queue). Two of its turns name a cat each, so
+//! one pass meets two values on one claim identity and the verdict role
+//! makes a real call. Then it:
 //! 1. serves with the first model call held at the relay, and kills the
 //!    server while it is held (between queue and apply);
 //! 2. serves until the passes land, and kills the server (after apply);
@@ -590,6 +592,8 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
             conversation,
             "Hi, I'm Mira Okafor. I live in Lisbon and I teach cello at the conservatory.",
         );
+        witness(&vault, person, conversation, "My cat is called Miso.");
+        witness(&vault, person, conversation, "My other cat is called Tofu.");
         vault
             .request_scope_summary(&ScopeSummaryRequest {
                 target: ScopeSummaryTarget::Scope {
@@ -732,4 +736,12 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     {
         assert_eq!(row["served_model"], json!(live.served), "{row}");
     }
+    // The two cats: the verdict role was called and its call settled,
+    // whichever way it ruled.
+    assert!(
+        receipts.iter().any(
+            |row| row["run"] == "dreamer-pass/generative_reasoner" && row["event"] == "settled"
+        ),
+        "the verdict role's call settled"
+    );
 }

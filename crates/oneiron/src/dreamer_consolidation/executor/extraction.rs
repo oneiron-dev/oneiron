@@ -237,7 +237,7 @@ Lines "entity <id> <label>" before the transcript list entities already in memor
                 facts.project,
                 facts.topic.as_deref(),
             )?;
-            candidates.push(super::super::evidence::ExtractedCandidate::new(
+            let extracted = super::super::evidence::ExtractedCandidate::new(
                 PromotionCandidate {
                     claim_id,
                     candidate,
@@ -255,7 +255,11 @@ Lines "entity <id> <label>" before the transcript list entities already in memor
                     learned_at: now_ms,
                 },
                 locators,
-            )?);
+            )?;
+            candidates.push(match corrects {
+                Some(prior) => extracted.correcting(prior.claim_id),
+                None => extracted,
+            });
         }
         Ok(candidates)
     }
