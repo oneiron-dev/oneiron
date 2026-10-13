@@ -445,7 +445,6 @@ PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
 PackFormat
 PackStats
 PackTokenStats
-PassThroughFeedbackRedactor
 PinnedConfigViolation
 PinnedModelConfig
 PipelineBuilder
@@ -553,6 +552,7 @@ TierPrecedence
 TimeRange
 TokenAllocation
 UnprocessedItem
+UnredactedFeedback
 UnsupportedCapability
 UnsupportedOutboundCapability
 VAULT_CLEANUP_POSTURE_KEY

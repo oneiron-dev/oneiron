@@ -101,7 +101,10 @@ pub(crate) async fn get_core_conversation_transcript(
     })
     .await
     .unwrap_or_else(|error| {
-        tracing::warn!(%error, "transcript read failed to join");
+        tracing::warn!(
+            panicked = error.is_panic(),
+            "transcript read failed to join"
+        );
         Err(MemoryError::new(
             MEMORY_CODE_INTERNAL,
             "the transcript read did not finish",
@@ -154,7 +157,7 @@ fn refusal(error: MemoryError) -> EnvelopedApiError {
             error.suggestions,
         ),
         _ => {
-            tracing::error!(code = %error.code, error = %error.message, "transcript read failed");
+            tracing::error!(code = %error.code, "transcript read failed");
             ApiError::internal_server_error("transcript read failed")
         }
     };

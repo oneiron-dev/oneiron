@@ -11,54 +11,19 @@ use super::event::{
     DiagnosticSourceKind, MAX_EVIDENCE_REFS, MAX_REF_LEN, MAX_TOKEN_LEN, invalid_diagnostic,
 };
 use super::invariant_canonical::{canonical_invariant_field, canonical_invariant_value};
-use super::untrusted_text::{
-    canonical_untrusted_detail, is_forbidden_text_scalar, validate_untrusted_detail,
-};
+use super::untrusted_text::is_forbidden_text_scalar;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
-/// Canonicalizes and encodes one DIAGNOSTIC body from a RAW draft.
+/// Canonicalizes and encodes one DIAGNOSTIC body.
 ///
 /// Canonicalization is what makes determinism a property of the DATA rather
 /// than of detector discipline: invariant values are rebuilt into one normal
-/// form, evidence refs are sorted and deduplicated, and the untrusted leaf is
-/// escaped. Two detectors that mean the same thing therefore emit the same
-/// bytes and the same id.
-///
-/// `event.untrusted_detail` is read as RAW author text here, so this door must
-/// only ever see a draft. Re-encoding an event that came back out of
-/// [`decode_diagnostic_event_body`] belongs to the engine-internal stored-body
-/// door instead: its leaf is already the stored canonical one, and escaping it
-/// a second time would change the body.
+/// form and evidence refs are sorted and deduplicated. Two detectors that mean
+/// the same thing therefore emit the same bytes and the same id. Encoding an
+/// event that came back out of [`decode_diagnostic_event_body`] reproduces its
+/// stored bytes.
 pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> {
-    let untrusted_detail = match event.untrusted_detail.as_deref() {
-        Some(raw) => Value::from(canonical_untrusted_detail(raw)?),
-        None => Value::Nil,
-    };
-    encode_body_with_detail(event, untrusted_detail)
-}
-
-/// Re-encodes an event whose untrusted leaf is ALREADY the stored canonical
-/// one, i.e. one that came out of [`decode_diagnostic_event_body`].
-///
-/// The leaf is re-validated rather than re-escaped, which is what makes the
-/// canonical form a fixed point of decode + re-encode even though
-/// [`canonical_untrusted_detail`] is deliberately not idempotent.
-pub(super) fn encode_stored_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> {
-    let untrusted_detail = match event.untrusted_detail.as_deref() {
-        Some(stored) => {
-            validate_untrusted_detail(stored)?;
-            Value::from(stored)
-        }
-        None => Value::Nil,
-    };
-    encode_body_with_detail(event, untrusted_detail)
-}
-
-/// Builds and writes the pinned 17-key body around an already-decided
-/// `untrusted_detail` leaf, so the raw door and the stored door cannot drift
-/// apart in any other field.
-fn encode_body_with_detail(event: &DiagnosticEvent, untrusted_detail: Value) -> Result<Vec<u8>> {
     validate_detector_id(&event.detector_id)?;
     validate_actor_class(&event.actor_class)?;
     validate_validity(event.valid_from, event.valid_to)?;
@@ -91,7 +56,8 @@ fn encode_body_with_detail(event: &DiagnosticEvent, untrusted_detail: Value) -> 
         run_ref,
         checkpoint_ref,
         Value::Array(evidence),
-        untrusted_detail,
+        // The key stays in the pinned body; a diagnostic carries no free text.
+        Value::Nil,
         Value::from(event.valid_from),
         event.valid_to.map_or(Value::Nil, Value::from),
     ];
@@ -113,8 +79,8 @@ fn encode_body_with_detail(event: &DiagnosticEvent, untrusted_detail: Value) -> 
 ///
 /// Fails closed on an unknown, missing or duplicate key, trailing bytes, an
 /// invalid enum string, a malformed ref or content hash, non-monotonic
-/// validity, a non-canonical invariant value or evidence-ref order, and control
-/// data hidden in the untrusted leaf.
+/// validity, a non-canonical or textual invariant value, a non-canonical
+/// evidence-ref order, and any `untrusted_detail` other than nil.
 pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
     let mut cursor = Cursor::new(bytes);
     let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
@@ -152,14 +118,9 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
     };
     validate_validity(valid_from, valid_to)?;
 
-    let untrusted_detail = match required(entries, "untrusted_detail")? {
-        Value::Nil => None,
-        other => {
-            let text = decode_str(other, "untrusted_detail must be a string")?;
-            validate_untrusted_detail(text)?;
-            Some(text.to_owned())
-        }
-    };
+    if !required(entries, "untrusted_detail")?.is_nil() {
+        return Err(invalid_diagnostic("a diagnostic carries no free text"));
+    }
 
     Ok(DiagnosticEvent {
         detector_id: detector_id.to_owned(),
@@ -177,7 +138,6 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
             checkpoint_ref: decode_optional_ref(required(entries, "replay_checkpoint_ref")?)?,
         },
         evidence_refs: decode_evidence_refs(required(entries, "evidence_refs")?)?,
-        untrusted_detail,
         valid_from,
         valid_to,
     })
@@ -199,7 +159,7 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
 /// would not have produced.
 pub(super) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<DiagnosticEvent> {
     let event = decode_diagnostic_event_body(bytes)?;
-    if encode_stored_diagnostic_event_body(&event)?.as_slice() != bytes {
+    if encode_diagnostic_event_body(&event)?.as_slice() != bytes {
         return Err(invalid_diagnostic("body is not canonically encoded"));
     }
     Ok(event)

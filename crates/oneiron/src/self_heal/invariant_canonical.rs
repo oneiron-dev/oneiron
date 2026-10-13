@@ -1,15 +1,10 @@
 //! Canonicalization of invariant field values for stable comparison.
 
-use std::collections::BTreeMap;
-
 use rmpv::{Integer, Value};
 
-use super::diagnostic_codec::decode_str;
 use super::event::{
-    MAX_INVARIANT_DEPTH, MAX_INVARIANT_NODES, MAX_INVARIANT_STRING_LEN, MAX_INVARIANT_WIDTH,
-    invalid_diagnostic,
+    MAX_INVARIANT_DEPTH, MAX_INVARIANT_NODES, MAX_INVARIANT_WIDTH, invalid_diagnostic,
 };
-use super::untrusted_text::is_forbidden_text_scalar;
 use crate::error::Result;
 
 // ── invariant-value canonicalization ────────────────────────────────────────
@@ -36,12 +31,12 @@ pub(super) fn canonical_invariant_field(value: &Value) -> Result<Value> {
 
 /// Rebuilds one invariant input into its single canonical spelling.
 ///
-/// The grammar is deliberately narrow. Floats collapse to `f64` and must be
-/// finite; integers are normalized; map keys must be unique strings and are
-/// sorted; binary and extension leaves are refused outright (a hash belongs
-/// here as hex). Strings must be ENGINE-AUTHORED: control data is refused so
-/// [`DiagnosticEvent::untrusted_detail`] stays the ONLY door untrusted text
-/// enters through, rather than one of four.
+/// The grammar is deliberately narrow: nil, booleans, integers, finite floats
+/// and arrays of those. Floats collapse to `f64`; integers are normalized.
+/// Strings and maps (whose keys are strings) are refused, as are binary and
+/// extension leaves: a diagnostic never carries world text (owner ruling
+/// 2026-10-14), and a grammar with no text in it cannot be talked into
+/// carrying some. A finding names what it is about through its evidence refs.
 pub(super) fn canonical_invariant_value(value: &Value) -> Result<Value> {
     let mut budget = InvariantBudget::default();
     canonical_invariant_node(value, &mut budget)
@@ -61,26 +56,10 @@ fn canonical_invariant_node(value: &Value, budget: &mut InvariantBudget) -> Resu
         Value::Integer(number) => canonical_invariant_integer(*number),
         Value::F32(number) => canonical_invariant_float(f64::from(*number)),
         Value::F64(number) => canonical_invariant_float(*number),
-        Value::String(_) => canonical_invariant_string(value),
         Value::Array(items) => canonical_invariant_array(items, budget),
-        Value::Map(entries) => canonical_invariant_map(entries, budget),
+        Value::String(_) | Value::Map(_) => Err(invalid_diagnostic("invariant value carries text")),
         Value::Binary(_) | Value::Ext(_, _) => Err(invalid_diagnostic("invariant raw byte leaf")),
     }
-}
-
-fn canonical_invariant_string(value: &Value) -> Result<Value> {
-    let text = decode_str(value, "invariant string must be valid UTF-8")?;
-    canonical_invariant_text(text).map(Value::from)
-}
-
-fn canonical_invariant_text(text: &str) -> Result<&str> {
-    if text.len() > MAX_INVARIANT_STRING_LEN {
-        return Err(invalid_diagnostic("invariant string is too long"));
-    }
-    if text.chars().any(is_forbidden_text_scalar) {
-        return Err(invalid_diagnostic("invariant string carries controls"));
-    }
-    Ok(text)
 }
 
 fn canonical_invariant_integer(number: Integer) -> Result<Value> {
@@ -112,34 +91,4 @@ fn canonical_invariant_array(items: &[Value], budget: &mut InvariantBudget) -> R
     }
     budget.depth -= 1;
     Ok(Value::Array(out))
-}
-
-fn canonical_invariant_map(
-    entries: &[(Value, Value)],
-    budget: &mut InvariantBudget,
-) -> Result<Value> {
-    if entries.len() > MAX_INVARIANT_WIDTH {
-        return Err(invalid_diagnostic("invariant map is too wide"));
-    }
-    budget.depth += 1;
-    // A `BTreeMap` IS the canonicalization: it sorts by key and it refuses a
-    // second value for a key that already has one, in one structure.
-    let mut out: BTreeMap<String, Value> = BTreeMap::new();
-    for (key, value) in entries {
-        let key = decode_str(key, "invariant map keys must be strings")?;
-        if key.is_empty() {
-            return Err(invalid_diagnostic("invariant map key is empty"));
-        }
-        canonical_invariant_text(key)?;
-        let value = canonical_invariant_node(value, budget)?;
-        if out.insert(key.to_owned(), value).is_some() {
-            return Err(invalid_diagnostic("duplicate invariant map key"));
-        }
-    }
-    budget.depth -= 1;
-    let mut sorted = Vec::with_capacity(out.len());
-    for (key, value) in out {
-        sorted.push((Value::from(key), value));
-    }
-    Ok(Value::Map(sorted))
 }

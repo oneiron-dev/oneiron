@@ -385,7 +385,7 @@ pub use crate::feedback::{
     FeedbackDagHop, FeedbackError, FeedbackExportOutcome, FeedbackHealerDiagnosis,
     FeedbackHnswSnapshot, FeedbackPlatform, FeedbackPreview, FeedbackRedactionError,
     FeedbackRedactor, FeedbackSendContext, FeedbackSendOutcome, FeedbackSendRoute,
-    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, PassThroughFeedbackRedactor,
+    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, UnredactedFeedback,
     decode_feedback_bundle, encode_feedback_bundle, export_feedback_bundle, feedback_approval_card,
     feedback_approval_component_id, feedback_approval_disclosure, feedback_bundle_digest,
     feedback_content_ref, feedback_dispatch_request, feedback_logical_send_ref,

@@ -293,7 +293,7 @@ pub(crate) async fn run_context_pack_builder(
         .l2_summary_subjects(&subjects)
         .l2_summary_reader(scoped_read);
     let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
-        tracing::error!(error = %error, "core context-pack failed");
+        tracing::error!(kind = ?error.kind(), "core context-pack failed");
         core_engine_error("core context-pack failed", error)
     })?;
     let clamped_out = pack.clamped_out();
@@ -301,7 +301,7 @@ pub(crate) async fn run_context_pack_builder(
         .filter_context_pack_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
-            tracing::error!(error = %error, "core context-pack scoped read failed");
+            tracing::error!(kind = ?error.kind(), "core context-pack scoped read failed");
             core_engine_error("core context-pack scoped read failed", error)
         })?;
     // A MESSAGE carries its current reactions, read through the same scope
@@ -310,7 +310,7 @@ pub(crate) async fn run_context_pack_builder(
         .attach_reactions_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
-            tracing::error!(error = %error, "core context-pack reactions failed");
+            tracing::error!(kind = ?error.kind(), "core context-pack reactions failed");
             core_engine_error("core context-pack reactions failed", error)
         })?;
     apply_context_pack_response_limits(&mut pack.value, response_limits);

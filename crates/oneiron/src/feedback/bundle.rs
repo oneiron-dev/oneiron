@@ -319,7 +319,7 @@ pub struct FeedbackBundle {
     pub config: Option<FeedbackConfigSnapshot>,
     /// Self-healer conclusion, when one exists.
     pub healer_diagnosis: Option<FeedbackHealerDiagnosis>,
-    /// What the person wrote, after redaction.
+    /// What the owner wrote, as they wrote it. The engine never fills this.
     pub user_note: Option<String>,
 }
 
@@ -421,7 +421,7 @@ pub fn decode_feedback_bundle(bytes: &[u8]) -> Result<FeedbackBundle, FeedbackEr
     Ok(bundle)
 }
 
-/// Lowercase hex digest binding the exact post-redaction bundle bytes.
+/// Lowercase hex digest binding the exact bundle bytes a destination receives.
 ///
 /// The preimage is the encoding token, a NUL, the big-endian byte length, and
 /// the bytes. Length-prefixing keeps two different bundles from colliding

@@ -202,10 +202,6 @@ fn weak_evidence_abstains() -> Result<()> {
         row.replay_inputs.is_some(),
         "abstention still records its input"
     );
-    assert!(
-        row.pack_output.is_some(),
-        "abstention still records its pack"
-    );
     let pack = pack.value;
 
     assert!(

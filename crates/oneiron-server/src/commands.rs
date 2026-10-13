@@ -827,8 +827,9 @@ fn print_doctor_report(vault: &oneiron::Vault) -> anyhow::Result<()> {
 }
 
 fn init_tracing(log_level: &str) {
+    use tracing_subscriber::util::SubscriberInitExt as _;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    let _ = crate::logging::subscriber(filter, io::stdout).try_init();
 }
 
 pub fn resolve_dict_search_paths(configured_paths: &[PathBuf]) -> DictSearchResolution {

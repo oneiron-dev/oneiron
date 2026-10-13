@@ -192,7 +192,10 @@ pub(crate) async fn list_core_conversations(
     })
     .await
     .unwrap_or_else(|error| {
-        tracing::warn!(%error, "conversation list failed to join");
+        tracing::warn!(
+            panicked = error.is_panic(),
+            "conversation list failed to join"
+        );
         Err(MemoryError::new(
             MEMORY_CODE_INTERNAL,
             "the conversation list did not finish",
@@ -259,7 +262,7 @@ fn refusal(error: MemoryError) -> EnvelopedApiError {
             error.suggestions,
         ),
         _ => {
-            tracing::error!(code = %error.code, error = %error.message, "conversation list failed");
+            tracing::error!(code = %error.code, "conversation list failed");
             ApiError::internal_server_error("conversation listing failed")
         }
     };
@@ -417,7 +420,7 @@ pub(crate) async fn create_core_conversation_turn(
     )?
     .edge_checked(&id, &conversation, 1.0);
     batch.commit().map_err(|error| {
-        tracing::error!(error = %error, "core turn create failed");
+        tracing::error!(kind = ?error.kind(), "core turn create failed");
         core_engine_error("core turn create failed", error)
     })?;
     server.ai.turn_landed(

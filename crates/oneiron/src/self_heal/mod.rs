@@ -6,10 +6,14 @@
 //! (`DIAGNOSTIC`, Maintenance/System) carrying engine-authored actor / source /
 //! criticality metadata, the invariant inputs the verdict was computed from
 //! (`expected`, `actual`, `delta`), a content-addressed replay coordinate,
-//! evidence refs, bitemporal validity, and exactly ONE explicitly typed escaped
-//! leaf for untrusted detail. That is what makes a failure addressable,
-//! provenance-carrying and re-derivable by the later healer, instead of a
-//! string somebody has to parse back into meaning.
+//! evidence refs and bitemporal validity. That is what makes a failure
+//! addressable, provenance-carrying and re-derivable by the later healer,
+//! instead of a string somebody has to parse back into meaning.
+//!
+//! An event carries no free text. Diagnostics never carry world text (owner
+//! ruling 2026-10-14), and escaping text is not the same as keeping it out, so
+//! the invariant inputs are numbers and the body's `untrusted_detail` key is
+//! always nil. What a finding is about is named by its evidence refs.
 //!
 //! # Determinism is the contract
 //!

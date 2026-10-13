@@ -15,8 +15,8 @@ impl RunReceiptSink for LoggedReceipts {
     fn record(&self, receipt: RunReceipt) {
         match serde_json::to_string(&receipt) {
             Ok(row) => tracing::info!(target: RUN_RECEIPT_TARGET, run = %receipt.run, %row),
-            Err(error) => {
-                tracing::error!(target: RUN_RECEIPT_TARGET, run = %receipt.run, %error, "a run receipt did not serialize");
+            Err(_) => {
+                tracing::error!(target: RUN_RECEIPT_TARGET, run = %receipt.run, reason = "receipt_serialization_failed", "a run receipt did not serialize");
             }
         }
     }

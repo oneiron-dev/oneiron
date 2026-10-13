@@ -120,9 +120,14 @@ fn opt_in_turn_round_trips_replay_inputs_and_exact_pack_with_fork_lookup() -> cr
         inputs.corpus_snapshot_ref.as_deref(),
         Some("eval://corpus/fixture-v1")
     );
-    let pack = row.pack_output.expect("final pack");
-    assert_eq!(pack.bytes, output.value);
-    assert_eq!(pack.format, "Json");
+    assert!(
+        output
+            .value
+            .windows(b"replay marker".len())
+            .any(|w| w == b"replay marker"),
+        "the caller's pack carries the text"
+    );
+    assert_telemetry_rows_free_of(&vault, "replay marker");
     let trace = row.trace.expect("trace");
     assert_eq!(
         vault.retrieval_trace_by_fork_hash(trace.fork_hash)?,
@@ -135,12 +140,31 @@ fn opt_in_turn_round_trips_replay_inputs_and_exact_pack_with_fork_lookup() -> cr
         .run_serialized_with_telemetry()?;
     let row = vault.retrieval_run(untraced.run_id.expect("run"))?.unwrap();
     assert!(row.replay_inputs.is_none());
-    assert!(row.pack_output.is_none());
     Ok(())
 }
 
+/// Owner ruling 2026-10-14 (fix 6): telemetry never carries world text. Every
+/// retrieval-telemetry row (run, provisional marker, trace fork and turn
+/// indexes, outcomes, age ledger) is scanned byte for byte.
+fn assert_telemetry_rows_free_of(vault: &crate::Vault, needle: &str) {
+    let dump = crate::test_util::row_dump::dump_rows(vault);
+    let mut scanned = 0;
+    for (key, value) in &dump["vault_meta"] {
+        if !key.starts_with(b"retr_") {
+            continue;
+        }
+        scanned += 1;
+        assert!(
+            !value.windows(needle.len()).any(|w| w == needle.as_bytes()),
+            "telemetry row {:?} holds {needle:?}",
+            String::from_utf8_lossy(key)
+        );
+    }
+    assert!(scanned > 0, "no telemetry row was written");
+}
+
 #[test]
-fn raw_pack_snapshot_preserves_unprojected_fields_and_resolved_config() -> crate::Result<()> {
+fn retrieval_telemetry_holds_resolved_config_and_no_hydrated_text() -> crate::Result<()> {
     let (_dir, vault) = open_test_vault_with(telemetry_config());
     let id = crate::test_util::entity(0xB6);
     let payload = rmp_serde::to_vec_named(&serde_json::json!({
@@ -174,22 +198,12 @@ fn raw_pack_snapshot_preserves_unprojected_fields_and_resolved_config() -> crate
     );
     assert_eq!(replay.config["authority"]["deny_all"], false);
     assert_eq!(replay.config["candidate_filter_present"], false);
-    let output = row.pack_output.expect("full raw pack");
-    assert_eq!(output.format, "msgpack.context-pack.v1");
-    let restored: serde_json::Value = rmp_serde::from_slice(&output.bytes).unwrap();
     assert_eq!(
-        restored["results"].as_array().unwrap().len(),
-        raw.value.results.len()
+        raw.value.results[0].fields.as_ref().expect("hydrated")["txt"],
+        "raw replay marker",
+        "the caller's pack carries the text"
     );
-    assert_eq!(restored["results"][0]["fields"]["txt"], "raw replay marker");
-    assert_eq!(
-        restored["results"][0]["id"],
-        serde_json::json!(id.as_bytes())
-    );
-    assert_eq!(
-        restored["stats"]["candidates_considered"],
-        raw.value.stats.candidates_considered
-    );
+    assert_telemetry_rows_free_of(&vault, "raw replay marker");
     Ok(())
 }
 
@@ -345,7 +359,6 @@ fn rejected_retention_policy_never_authorizes_deletion_or_blocks_reopen() -> cra
                         claims_suppressed: 0,
                         surfaced_result_ids: &[],
                         empty_reason: None,
-                        pack_output: None,
                         pack_config: None,
                     })
                     .is_err(),
@@ -515,7 +528,6 @@ fn renamed_root_cannot_redirect_the_orphan_sweep_lock() -> crate::Result<()> {
             claims_suppressed: 0,
             surfaced_result_ids: &[],
             empty_reason: None,
-            pack_output: None,
             pack_config: None,
         })?;
     assert!(vault.retrieval_run(run.run_id)?.is_some());

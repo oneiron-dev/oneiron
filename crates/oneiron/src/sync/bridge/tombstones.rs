@@ -74,7 +74,7 @@ pub(super) fn materialize_tombstones_from_delta(
                             tracing::error!(
                                 tombstone = %key,
                                 window = %window_key,
-                                error = %quarantine_err,
+                                kind = ?quarantine_err.kind(),
                                 "observer-b: failed to persist tombstone quarantine record"
                             );
                         }
@@ -170,7 +170,7 @@ pub(super) fn materialize_tombstones_from_delta(
                 ) {
                     tracing::error!(
                         tombstone = %key,
-                        error = %e,
+                        kind = ?e.kind(),
                         "observer-b: failed to persist tombstone-removal quarantine record"
                     );
                 }
@@ -188,7 +188,7 @@ pub(super) fn materialize_tombstones_from_delta(
                     tracing::error!(
                         tombstone = %key,
                         window = %window_key,
-                        error = %marker_err,
+                        kind = ?marker_err.kind(),
                         "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker after tombstone removal"
                     );
                 }
@@ -282,7 +282,7 @@ fn apply_tombstone_batch(
                     tracing::error!(
                         tombstone = %work.crdt_key,
                         window = %window_key,
-                        error = %quarantine_err,
+                        kind = ?quarantine_err.kind(),
                         "observer-b: failed to quarantine rejected protected-record tombstone"
                     );
                 }
@@ -294,7 +294,7 @@ fn apply_tombstone_batch(
                 tracing::error!(
                     tombstone = %work.crdt_key,
                     window = %window_key,
-                    error = %marker_err,
+                    kind = ?marker_err.kind(),
                     "observer-b: CRITICAL — failed to set rm: marker after tombstone item failure"
                 );
             }
@@ -302,7 +302,7 @@ fn apply_tombstone_batch(
                 tracing::error!(
                     tombstone = %work.crdt_key,
                     window = %window_key,
-                    error = %fence_err,
+                    kind = ?fence_err.kind(),
                     "observer-b: CRITICAL — failed to fence the row of an unapplied tombstone"
                 );
             }
@@ -331,7 +331,7 @@ fn apply_tombstone_batch(
                 tracing::error!(
                     tombstone = %work.crdt_key,
                     window = %window_key,
-                    error = %marker_err,
+                    kind = ?marker_err.kind(),
                     "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker for soft-over-hard doc residue"
                 );
             }
@@ -343,7 +343,7 @@ fn apply_tombstone_batch(
         tracing::error!(
             window = %window_key,
             tombstones = staged.len(),
-            error = %e,
+            kind = ?e.kind(),
             "observer-b: tombstone batch transaction FAILED — NO tombstone in this delta was applied; the CRDT tombstones map keeps gating materialization and remains the replay source"
         );
         // The update carrying these deletes is still stored after this
@@ -357,7 +357,7 @@ fn apply_tombstone_batch(
         }) {
             tracing::error!(
                 window = %window_key,
-                error = %error,
+                kind = ?error.kind(),
                 "observer-b: CRITICAL — failed to fence the rows of an unapplied tombstone batch"
             );
         }
@@ -369,7 +369,7 @@ fn apply_tombstone_batch(
             Ok(0) => break,
             Ok(_) => {}
             Err(error) => {
-                tracing::error!(%error, "lfs deletion byte reclamation remains queued");
+                tracing::error!(kind = ?error.kind(), "lfs deletion byte reclamation remains queued");
                 break;
             }
         }
@@ -380,13 +380,13 @@ fn apply_tombstone_batch(
             TombstoneFailureStage::Replay => tracing::error!(
                 tombstone = %work.crdt_key,
                 window = %window_key,
-                error = %err,
+                kind = ?err.kind(),
                 "observer-b: tombstone replay FAILED — hard-deleted content may still be live; flagged entity-scoped rm: marker for durable retry"
             ),
             TombstoneFailureStage::ReceiverScrub => tracing::error!(
                 tombstone = %work.crdt_key,
                 window = %window_key,
-                error = %err,
+                kind = ?err.kind(),
                 "observer-b: receiver outbox scrub FAILED after hard tombstone replay; the item's purge was rolled back and flagged with an entity-scoped rm: marker for durable retry"
             ),
         }

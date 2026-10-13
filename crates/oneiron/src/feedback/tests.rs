@@ -71,7 +71,7 @@ fn full_bundle() -> FeedbackBundle {
 }
 
 fn preview_of(bundle: FeedbackBundle) -> FeedbackPreview {
-    prepare_feedback_preview(bundle, &PassThroughFeedbackRedactor).expect("prepare preview")
+    prepare_feedback_preview(bundle, &UnredactedFeedback).expect("prepare preview")
 }
 
 fn send_route() -> FeedbackSendRoute {

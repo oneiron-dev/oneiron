@@ -875,3 +875,27 @@ async fn a_credential_shaped_run_id_is_never_served_and_its_ref_decides_the_run(
         oneiron::ClaimApprovalStatus::Approved
     );
 }
+
+#[test]
+fn server_sink_logs_a_failed_owner_action_by_kind_never_its_text() {
+    // Owner ruling 2026-10-14 (fix 6): logs never carry world text. A host
+    // failure is an `anyhow` chain whose messages can quote what the owner
+    // asked for; the server sink used to print the whole chain.
+    const SENTINEL: &str = "sentinel-row-text-3e88";
+    let sink = crate::logging::tests::CapturedSink::default();
+    sink.with_production_subscriber(|| {
+        let engine = oneiron::Error::InvalidConfig(format!("no world named {SENTINEL}"));
+        let chained = anyhow::Error::new(engine).context(format!("restore {SENTINEL}"));
+        let _ = crate::api::owner_routes::owner_error(crate::owner::OwnerError::Host(chained));
+        let _ = crate::api::owner_routes::owner_error(crate::owner::OwnerError::Host(
+            anyhow::anyhow!("backup of {SENTINEL} failed"),
+        ));
+    });
+    let written = sink.text();
+    assert!(
+        !written.contains(SENTINEL),
+        "owner action text reached the log: {written}"
+    );
+    assert!(written.contains("Some(InvalidConfig)"), "{written}");
+    assert!(written.contains("owner action failed"), "{written}");
+}

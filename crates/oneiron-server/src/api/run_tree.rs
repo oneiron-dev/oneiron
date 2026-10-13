@@ -439,7 +439,7 @@ pub(crate) async fn core_run_tree_intervene(
         let adapter = oneiron::RunTreeAdapter::new(&server.vault);
         Some(core_run_tree_response(
             adapter.read_run(run_id).map_err(|error| {
-                tracing::error!(error = %error, run_id, "core run tree intervention snapshot failed");
+                tracing::error!(kind = ?error.kind(), run_id, "core run tree intervention snapshot failed");
                 core_engine_error("core run tree intervention snapshot failed", error)
             })?,
         ))

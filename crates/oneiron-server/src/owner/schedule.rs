@@ -158,9 +158,14 @@ impl SyncServer {
                     ),
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
-                        tracing::warn!(error = %format!("{error:#}"), "scheduled backup failed");
+                        tracing::warn!(
+                            kind = ?crate::logging::engine_kind(&error),
+                            "scheduled backup failed"
+                        );
                     }
-                    Err(error) => tracing::warn!(error = %error, "scheduled backup task failed"),
+                    Err(error) => {
+                        tracing::warn!(panicked = error.is_panic(), "scheduled backup task failed")
+                    }
                 }
             }
         }))

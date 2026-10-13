@@ -2116,7 +2116,6 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
         "owner-alone trace capture stays unchanged"
     );
     assert!(record.replay_inputs.is_some());
-    assert!(record.pack_output.is_some());
 
     // Clamped assembly: NO stage trace exists at all, so per_channel, fused,
     // blended, and reranked can never retain ids the clamp removed.
@@ -2134,7 +2133,6 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
         "a clamped assembly persists no retrieval stage trace"
     );
     assert!(record.replay_inputs.is_none());
-    assert!(record.pack_output.is_none());
     // The finalized telemetry record itself carries only post-clamp ids.
     assert!(record.result_ids.contains(party.as_bytes()));
     assert!(

@@ -13,7 +13,7 @@
 //! - The typed local verb family: [`FEEDBACK_SEND_VERB`], [`FEEDBACK_VERBS`],
 //!   [`FeedbackVerb`]. The family is local to this module by design — feedback
 //!   is not an agent-visible board verb and joins no shared verb allowlist.
-//! - In-vault redaction ([`FeedbackRedactor`]) and preview
+//! - A redaction seam ([`FeedbackRedactor`]) and preview
 //!   ([`prepare_feedback_preview`]).
 //! - Per-bundle, per-destination consent over the existing
 //!   [`ConsentAskCard`](crate::genui::ConsentAskCard) surface ([`feedback_approval_card`],
@@ -32,9 +32,11 @@
 //!
 //! The [`FeedbackRedactor`] seam is exposed informationally so a later
 //! entity-recognition redactor can be dropped in behind it. No model, no
-//! weights, and no model runtime ship in this module —
-//! [`PassThroughFeedbackRedactor`] is the only implementation here, and it
-//! redacts nothing.
+//! weights, and no model runtime ship in this module, and no redaction does
+//! either: [`UnredactedFeedback`] is the only implementation, and it leaves
+//! the bundle as built. Telemetry and crash reports never carry world text
+//! (owner ruling 2026-10-14), so the engine attaches none to a bundle; text in
+//! one is a note the owner wrote and approved.
 //!
 //! # Wire stability
 //!
@@ -96,7 +98,7 @@ pub use self::bundle::{
 pub use self::consent::{
     FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_LOGICAL_SEND_PREFIX,
     FeedbackApproval, FeedbackApprovalScope, FeedbackPreview, FeedbackRedactionError,
-    FeedbackRedactor, FeedbackSendRoute, PassThroughFeedbackRedactor, feedback_approval_card,
+    FeedbackRedactor, FeedbackSendRoute, UnredactedFeedback, feedback_approval_card,
     feedback_approval_component_id, feedback_approval_disclosure, feedback_content_ref,
     feedback_logical_send_ref, prepare_feedback_preview, validate_feedback_approval,
 };

@@ -446,7 +446,7 @@ fn engine_error(error: oneiron::Error, session_ref: &str) -> ApiError {
         ErrorKind::OffRecordOverlayFull => ApiError::invalid_state(Some("full")),
         ErrorKind::InvalidConfig => ApiError::bad_request(error.to_string(), Some("session_ref")),
         _ => {
-            tracing::error!(error = %error, "off-record participant act failed");
+            tracing::error!(kind = ?error.kind(), "off-record participant act failed");
             ApiError::internal_server_error("off-record act failed")
         }
     }

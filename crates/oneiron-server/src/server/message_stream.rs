@@ -31,7 +31,7 @@ pub(super) fn spawn_message_stream_producer(
                     hub.remove_outdated();
                     match vault.pump_message_streams() {
                         Ok(report) => for (message, error) in report.refused {
-                            tracing::warn!(?message, %error, "stream idle finalization refused; output retained");
+                            tracing::warn!(?message, kind = ?error.kind(), "stream idle finalization refused; output retained");
                         },
                         Err(error) => tracing::warn!(%error, "stream idle pump refused"),
                     }

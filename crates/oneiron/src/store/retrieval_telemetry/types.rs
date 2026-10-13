@@ -238,8 +238,6 @@ pub struct RetrievalRunRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_inputs: Option<super::state::RetrievalReplayInputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pack_output: Option<super::state::RetrievalPackOutput>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<super::state::RetrievalTurn>,
     pub signals: Vec<RetrievalSignal>,
     pub result_ids: Vec<[u8; 16]>,
@@ -271,7 +269,6 @@ pub(crate) struct RetrievalRunFinalize<'a> {
     pub(crate) claims_suppressed: usize,
     pub(crate) surfaced_result_ids: &'a [[u8; 16]],
     pub(crate) empty_reason: Option<String>,
-    pub(crate) pack_output: Option<super::state::RetrievalPackOutput>,
     pub(crate) pack_config: Option<serde_json::Value>,
 }
 
@@ -302,7 +299,6 @@ impl RetrievalRunRecord {
             result_ids,
             state: super::state::RetrievalState::one_shot(&score_breakdown),
             replay_inputs: None,
-            pack_output: None,
             turn: None,
             score_breakdown,
             total_in_scope,

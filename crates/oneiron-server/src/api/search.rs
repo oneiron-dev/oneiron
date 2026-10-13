@@ -466,7 +466,7 @@ pub(crate) fn search_response_with_revisions(
         .map(|(row, mode)| oneiron::claim::PointRead::id(row.id).at(*mode))
         .collect();
     let read = scoped_read.read(&refs, requested).map_err(|error| {
-        tracing::error!(error = %error, "search projection failed");
+        tracing::error!(kind = ?error.kind(), "search projection failed");
         ApiError::internal_server_error("search projection failed")
     })?;
     let mut receipt = read.receipt;
@@ -496,7 +496,7 @@ pub(crate) fn search_response_with_revisions(
                     matches!(view, View::Full),
                 )
                 .map_err(|error| {
-                    tracing::error!(error = %error, "search observation failed");
+                    tracing::error!(kind = ?error.kind(), "search observation failed");
                     ApiError::internal_server_error("search projection failed")
                 })?
         {

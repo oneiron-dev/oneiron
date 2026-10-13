@@ -376,15 +376,18 @@ async fn dispatch_ctl_line(line: &str, state: &ManagedState) -> CtlResponse {
     }
     let request: CtlRequest = match serde_json::from_str(payload) {
         Ok(request) => request,
-        Err(error) => {
-            tracing::warn!(%error, "ctl line did not parse; rejected");
+        Err(_) => {
+            tracing::warn!(
+                reason = "ctl_json_invalid",
+                "ctl line did not parse; rejected"
+            );
             return CtlResponse::Ok { ok: false };
         }
     };
     match state.handle_request(request).await {
         Ok(response) => response,
-        Err(error) => {
-            tracing::warn!(%error, "ctl request refused");
+        Err(_) => {
+            tracing::warn!(reason = "ctl_request_refused", "ctl request refused");
             CtlResponse::Ok { ok: false }
         }
     }
@@ -394,7 +397,9 @@ async fn dispatch_ctl_line(line: &str, state: &ManagedState) -> CtlResponse {
 /// `EnvFilter::try_from_default_env` would read `RUST_LOG`, and the managed
 /// environment surface is exactly `PATH` and [`HYPNOS_LISTEN_FD`].
 pub(super) fn init_managed_tracing(log_level: &str) {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(log_level))
-        .try_init();
+    use tracing_subscriber::util::SubscriberInitExt as _;
+    let _ = crate::logging::subscriber(EnvFilter::new(log_level), std::io::stdout).try_init();
 }
+
+#[cfg(test)]
+mod tests;

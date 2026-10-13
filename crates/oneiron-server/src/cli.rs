@@ -664,6 +664,7 @@ impl Cli {
 }
 
 pub async fn run() -> anyhow::Result<()> {
+    crate::logging::install_panic_hook();
     run_cli(Cli::parse()).await
 }
 

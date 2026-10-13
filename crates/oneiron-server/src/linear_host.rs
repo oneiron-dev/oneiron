@@ -384,15 +384,21 @@ pub(crate) async fn spawn(
                         "Linear mirror pass"
                     );
                 }
-                Ok(Err(error)) => {
-                    tracing::warn!(error = %error, "Linear mirror pass failed; will retry");
+                Ok(Err(_)) => {
+                    tracing::warn!(
+                        reason = "linear_sync_failed",
+                        "Linear mirror pass failed; will retry"
+                    );
                     // A policy read failure cannot authorize a provider call.
                     // Re-read after the last VALID interval, never a hardcoded
                     // timer or a stale operational policy for the effect.
                     wait = Duration::from_secs(last_valid_interval);
                 }
                 Err(error) => {
-                    tracing::warn!(error = %error, "Linear mirror worker failed; will retry");
+                    tracing::warn!(
+                        panicked = error.is_panic(),
+                        "Linear mirror worker failed; will retry"
+                    );
                     wait = Duration::from_secs(last_valid_interval);
                 }
             }

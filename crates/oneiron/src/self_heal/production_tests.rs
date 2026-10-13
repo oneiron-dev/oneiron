@@ -75,7 +75,6 @@ fn detector_emits_typed_event() -> Result<()> {
         assert_eq!(event.replay.checkpoint_ref, None);
         assert_eq!(event.valid_from, fact.observed_at);
         assert_eq!(event.valid_to, None);
-        assert_eq!(event.untrusted_detail, None);
     }
     assert!(
         vault

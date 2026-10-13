@@ -246,7 +246,7 @@ pub(crate) fn resolve(
                 // The message can quote proposal text, which this endpoint
                 // masks everywhere else.
                 let error = redacted(error.to_string());
-                tracing::warn!(claim = %claim.to_hex(), %error, "approved commitment wake did not schedule");
+                tracing::warn!(claim = %claim.to_hex(), kind = ?error.kind(), "approved commitment wake did not schedule");
                 (None, None, Some(error))
             }
         };

@@ -35,7 +35,6 @@ fn draft(
             checkpoint_ref: None,
         },
         evidence_refs: vec![observation.source_ref],
-        untrusted_detail: None,
         valid_from: observation.observed_at,
         valid_to: None,
     }

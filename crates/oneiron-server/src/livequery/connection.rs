@@ -80,8 +80,11 @@ impl Hub {
         let pending: Vec<_> = sessions.values().cloned().collect();
         drop(sessions);
         for session in pending {
-            if let Err(error) = session.queries.refresh() {
-                tracing::warn!(?error, "live-query refresh refused; resync required");
+            if let Err(_error) = session.queries.refresh() {
+                tracing::warn!(
+                    reason = "live_query_refresh_refused",
+                    "live-query refresh refused; resync required"
+                );
             }
         }
     }

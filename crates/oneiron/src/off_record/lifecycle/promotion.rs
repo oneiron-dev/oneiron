@@ -270,7 +270,7 @@ impl OffRecordSession<'_> {
             if let Err(error) = self.vault.refresh_promoted_turn_in_live_window(turn) {
                 tracing::warn!(
                     turn = %turn.to_hex(),
-                    error = %error,
+                    kind = ?error.kind(),
                     "off-record promotion committed but live-window sync refresh deferred to recovery"
                 );
             }
