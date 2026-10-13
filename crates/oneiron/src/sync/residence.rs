@@ -262,26 +262,89 @@ pub fn admit_promoted_window_update(
 /// otherwise full-window promotion would disclose another principal's data.
 /// A shallow snapshot carries the home frontier but not pre-promotion history.
 /// A window this device withholds as device-only is never promoted.
+///
+/// `readable` names each row the walk admits, and the caller lists those as
+/// the rows the snapshot was derived from (DEC-0005). A local write can land
+/// on the window between the walk and the export, so the bytes leave only
+/// once a walk named every row they carry; a window that keeps changing
+/// under its walks is not promoted.
 pub fn promotion_snapshot(
     vault: &Vault,
     source: &LoroDoc,
     window: &WindowKey,
     scope: FederationGrantScope,
     selector: &SyncSelector,
-    readable: impl FnMut(EntityId) -> Result<bool>,
+    mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Option<Vec<u8>>> {
-    if !promotion_covers_full_window(vault, source, window, scope, selector, readable)?
-        || super::window::window_withheld(vault, window, source)?
+    for _ in 0..PROMOTION_WALKS {
+        let mut named = std::collections::BTreeSet::new();
+        let walk = |id: EntityId| {
+            named.insert(id.to_hex());
+            readable(id)
+        };
+        if !promotion_covers_full_window(vault, source, window, scope, selector, walk)?
+            || super::window::window_withheld(vault, window, source)?
+        {
+            return Ok(None);
+        }
+        #[cfg(test)]
+        promotion_hook::run(source);
+        let bytes = super::window::export_history_free_window_snapshot(source)?;
+        if bytes.len() > MAX_PROMOTION_SNAPSHOT_BYTES {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::PromotionTooLarge,
+            ));
+        }
+        if carries_only(&bytes, &named) {
+            return Ok(Some(bytes));
+        }
+    }
+    Ok(None)
+}
+
+/// Walks a promotion makes before it gives up on a window that keeps
+/// changing under them.
+const PROMOTION_WALKS: usize = 3;
+
+/// Whether every row `snapshot` carries is one of `named`.
+fn carries_only(snapshot: &[u8], named: &std::collections::BTreeSet<String>) -> bool {
+    let carried = LoroDoc::new();
+    if !carried
+        .import(snapshot)
+        .is_ok_and(|status| status.pending.is_none())
     {
-        return Ok(None);
+        return false;
     }
-    let bytes = super::window::export_history_free_window_snapshot(source)?;
-    if bytes.len() > MAX_PROMOTION_SNAPSHOT_BYTES {
-        return Err(Error::sync_protocol(
-            SyncProtocolValidation::PromotionTooLarge,
-        ));
+    let mut only = true;
+    map_for_each_value_bytes(&carried.get_map("entities"), |key, _| {
+        only &= named.contains(key);
+    });
+    only
+}
+
+/// A local write landed on a window between a promotion's walk and its
+/// export.
+#[cfg(test)]
+pub(crate) mod promotion_hook {
+    use loro::LoroDoc;
+    use std::cell::RefCell;
+
+    type Write = Box<dyn FnOnce(&LoroDoc)>;
+
+    thread_local! {
+        static WRITE: RefCell<Option<Write>> = const { RefCell::new(None) };
     }
-    Ok(Some(bytes))
+
+    /// Lands `write` on the window after the next walk on this thread.
+    pub(crate) fn arm(write: impl FnOnce(&LoroDoc) + 'static) {
+        WRITE.with(|hook| *hook.borrow_mut() = Some(Box::new(write)));
+    }
+
+    pub(super) fn run(doc: &LoroDoc) {
+        if let Some(write) = WRITE.with(|hook| hook.borrow_mut().take()) {
+            write(doc);
+        }
+    }
 }
 
 /// Re-check the grant and actor floor before a promoted window receives new

@@ -439,7 +439,8 @@ fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer
     {
         return Err(AppError::not_found("item", None));
     }
-    // The snapshot holds every row of the window this reader was admitted.
+    // Every row of the window a walk admitted this reader: the snapshot
+    // carries no other.
     let mut rows = vec![id];
     let snapshot = promotion_snapshot(
         &server.vault,
