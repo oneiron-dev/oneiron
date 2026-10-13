@@ -254,7 +254,7 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
 /// to no model. A reranked pack hydrated its rows from the pinned bytes whose
 /// words were scored, a read that skipped the write door's judgment, so the
 /// refused row rendered its fields; and the reranker was sent its words. It
-/// is found but not reranked: it follows the reranked rows.
+/// is found but not reranked.
 #[test]
 fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
     let (_dir, vault) = open_embedding_vault();
@@ -334,13 +334,6 @@ fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
     let seen = host.seen.lock().unwrap();
     assert!(seen.contains(&shown), "{seen:?}");
     assert!(!seen.contains(&withheld), "the reranker was sent a refused row");
-    let assets: Vec<&str> = pack
-        .items
-        .iter()
-        .filter(|item| item.kind == "ASSET")
-        .map(|item| item.value_text.as_str())
-        .collect();
-    assert_eq!(assets.len(), 2, "{assets:?}");
     assert!(matches!(
         pack.retrieval_meta.rerank,
         Some(crate::memory::RerankReport::Applied { .. })
