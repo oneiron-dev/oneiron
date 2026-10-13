@@ -155,11 +155,10 @@ fn normalize_window_key(raw_key: &str) -> Option<&str> {
     if parse_window_key_str(key).is_some() {
         Some(key)
     } else {
+        // The rejected key is a peer's string, not a window id: only the
+        // refusal is logged (owner ruling 2026-10-14, fix 6).
         if !key.is_empty() {
-            tracing::warn!(
-                window_key = %key,
-                "sync schema: ignoring invalid root window key"
-            );
+            tracing::warn!("sync schema: ignoring invalid root window key");
         }
         None
     }
@@ -196,6 +195,33 @@ mod tests {
         let windows = read_window_list(&doc);
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].as_str(), "2026-01");
+    }
+
+    /// Owner ruling 2026-10-14 (fix 6): a peer's root can carry any string as
+    /// a window key, and the refusal log must not repeat it.
+    #[test]
+    fn an_invalid_peer_window_key_is_refused_without_its_text() {
+        const SENTINEL: &str = "sentinel-world-text-91c4: my sister's diagnosis";
+        let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
+        let windows = window_list_map(&doc.get_map("meta")).expect("windows map");
+        windows.insert(SENTINEL, WINDOW_PRESENT_MARKER).unwrap();
+        doc.commit();
+        // A callsite registration racing another test can miss one capture;
+        // the refusal line itself proves this capture saw the read.
+        for _ in 0..3 {
+            let capture = crate::test_util::log_capture::LogCapture::default();
+            let keys = capture.with_default(|| read_window_list(&doc));
+            assert_eq!(keys, vec![WindowKey::new("2026-01")]);
+            let lines = capture.lines();
+            if lines
+                .iter()
+                .any(|line| line.contains("ignoring invalid root window key"))
+            {
+                capture.assert_absent("sentinel-world-text-91c4");
+                return;
+            }
+        }
+        panic!("the refusal was never captured");
     }
 
     #[test]
