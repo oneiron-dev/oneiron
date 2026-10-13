@@ -821,3 +821,38 @@ fn a_repeat_is_read_again_when_a_cancelled_continuation_withdraws_what_it_repeat
     assert_eq!(micro_rounds(&vault)?, vec![vec![held], vec![back]]);
     Ok(())
 }
+
+/// Sol R8 (P1): marking a MESSAGE stale through the public retrieval-index
+/// door took its words out of the held turn with no notice, so the repeat
+/// that rode on them stayed consumed. The shared staleness writer runs the
+/// erase hook.
+#[test]
+fn a_repeat_is_read_again_when_what_it_repeated_is_marked_stale() -> Result<()> {
+    use super::witnessed_turns::{allow_system_rows, message};
+    use crate::memory::WitnessAuthor;
+    use crate::ports::RetrievalIndex;
+    let (_dir, vault) = open_vault();
+    let person = EntityId::from_bytes([0x75; 16])?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
+    allow_system_rows(&vault, person)?;
+    let conversation = EntityId::from_bytes([0x76; 16])?;
+    let said = || {
+        vec![
+            message(0, WitnessAuthor::User, "I live in Kyoto.", true),
+            message(1, WitnessAuthor::User, "I moved to Osaka.", true),
+        ]
+    };
+    let first = said();
+    let moved = EntityId::from_hex(first[1].id.as_deref().expect("message id"))?;
+    let held = witness_into(&vault, person, conversation, first);
+    let at = vault.now_recorded_at();
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let back = witness_into(&vault, person, conversation, said());
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+
+    vault.with_write_txn(|txn| vault.port_retrieval_mark_stale(txn, &moved))?;
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 4)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![held], vec![back]]);
+    Ok(())
+}

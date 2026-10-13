@@ -37,7 +37,8 @@ pub use self::types::*;
 
 /// The erase hook, in the erasing transaction before the graph is torn down.
 /// The shared physical tear calls it for every delete door (facade, batch,
-/// cascade), and the soft erase beside its other derived-state hooks. An
+/// cascade), the soft erase beside its other derived-state hooks, and the
+/// shared staleness writer (a tombstone, a stale mark). An
 /// erased TURN leaves the sieve and the projection; a TURN whose MESSAGE is
 /// erased leaves them too and is owed a new read of the words it keeps.
 pub(crate) fn erase_in_txn(

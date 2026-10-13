@@ -85,6 +85,10 @@ pub(crate) fn stale_in_txn(
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
 }
 pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    // A stale TURN or MESSAGE leaves the words its turn says: the Dreamer's
+    // sieve and projector rows of them go as an erasure's do, while the
+    // MESSAGE still names its turn.
+    crate::dreamer_wake::erase_in_txn(store, txn, id)?;
     // A derived claim can retain erased upstream bytes while its own entity
     // body remains. Remove every saved digest that copied it in this txn;
     // clearing the stale bit on regeneration must never revive an old copy.
