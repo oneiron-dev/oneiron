@@ -442,7 +442,11 @@ mod tests {
                 .park_run_proposal_for_test(run, agent, EntityId::now(), value)
                 .unwrap();
         }
-        let shown = |run| review(&vault, &owner, RunName::Id(run)).unwrap().proposals;
+        let shown = |run| {
+            review(&vault, &owner, RunName::Id(run), CallerLocality::OnDevice)
+                .unwrap()
+                .proposals
+        };
         // Withheld whole, as a claim whose parts read as a secret together is:
         // neither its predicate nor its value, whatever the JSON read finds.
         let refused = shown("refused-run");
