@@ -161,6 +161,32 @@ fn core_read_grant_in(
     Value::Map(grant)
 }
 
+/// A `core:read` grant whose canonical Scope reads only `world` and the
+/// entity types in `bands`, with `selectors` if given.
+fn core_read_grant_typed(
+    actor: EntityId,
+    world: EntityId,
+    bands: crate::federation::ScopeAxis<u8>,
+    selectors: Option<Value>,
+) -> Value {
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.worlds = crate::federation::ScopeAxis::Some(
+        [crate::federation::ScopeId(world)].into_iter().collect(),
+    );
+    scope.bands = bands;
+    let mut grant = vec![
+        (Value::from("actor_ref"), Value::from(actor.to_hex())),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(&scope).expect("scope fixture"),
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ];
+    grant.extend(selectors.map(|selectors| (Value::from("selectors"), selectors)));
+    Value::Map(grant)
+}
+
 // Kept local instead of `test_util`: this exercises `BatchOp::Put` through `apply_ops`.
 fn put_policy_manifest(vault: &crate::Vault, id: EntityId, data: Vec<u8>) -> Result<()> {
     let ops = vec![BatchOp::Put {
@@ -558,34 +584,54 @@ fn a_world_listing_answers_to_every_peer_read() -> Result<()> {
 /// Scope named a world, so it listed them and handed out a cursor past
 /// them. A lane whose ordinary reads admit nothing walks no world now and
 /// gets no cursor, while a credential that leaves out base reality still
-/// walks into its own world.
+/// walks into its own world. Sol R11-001: a credential whose bands share no
+/// type with its grant's reads no row either, though no axis sits at bottom,
+/// and a grant opens a world only where its types meet the credential's.
 #[test]
 fn a_credential_that_reads_no_row_walks_no_world() -> Result<()> {
     use crate::federation::{Scope, ScopeAxis, ScopeId, SensitivityCeiling};
     let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
     let (world, second, holder, other) =
         (test_id(0x2D), test_id(0x2E), test_id(0x2F), test_id(0x24));
+    let (single, typed) = (test_id(0x21), test_id(0x22));
     put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
     put_entity(&vault, second, ENTITY_TYPE_WORLD)?;
+    let types = |entity_type: u8| ScopeAxis::Some([entity_type].into_iter().collect());
+    let (claims, tasks) = (
+        crate::registry::ENTITY_TYPE_CLAIM,
+        crate::registry::ENTITY_TYPE_TASK,
+    );
     put_policy_manifest(
         &vault,
         test_id(0x95),
-        encode_policy_manifest(vec![core_read_base_grant(&other.to_hex())]),
+        encode_policy_manifest(vec![
+            core_read_base_grant(&other.to_hex()),
+            core_read_grant_typed(single, world, types(claims), None),
+            core_read_grant_typed(typed, world, types(claims), None),
+            core_read_grant_typed(typed, second, types(tasks), None),
+        ]),
     )?;
     let issuer = crate::test_support::test_host_issuer();
     // One entry a page: a lane that lists anything gets a cursor too.
-    let walk = |label: &str, scope: Scope| -> Result<(Vec<String>, bool, bool)> {
-        let (proof, _) = mint_credential(&vault, &issuer, holder, label, scope)?;
-        let read = vault.scoped_read(vault.credential_read_key(&proof)?.expect("a read key"));
-        let fs = read.graph_fs(GraphFsOptions::default().with_max_entries(1));
-        let page = fs.readdir("/worlds/", None)?;
-        let names = page
-            .entries()
-            .iter()
-            .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
-            .map(|entry| entry.name().to_owned());
-        let visible = fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))?;
-        Ok((names.collect(), page.next_cursor().is_some(), visible))
+    let walk_as =
+        |holder: EntityId, label: &str, scope: Scope| -> Result<(Vec<String>, bool, bool)> {
+            let (proof, _) = mint_credential(&vault, &issuer, holder, label, scope)?;
+            let read = vault.scoped_read(vault.credential_read_key(&proof)?.expect("a read key"));
+            let fs = read.graph_fs(GraphFsOptions::default().with_max_entries(1));
+            let page = fs.readdir("/worlds/", None)?;
+            let names = page
+                .entries()
+                .iter()
+                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+                .map(|entry| entry.name().to_owned());
+            let visible = fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))?;
+            Ok((names.collect(), page.next_cursor().is_some(), visible))
+        };
+    let walk = |label: &str, scope: Scope| walk_as(holder, label, scope);
+    let banded = |entity_type: u8| {
+        let mut scope = crate::federation::scope_codec::read_preset();
+        scope.bands = types(entity_type);
+        scope
     };
 
     let mut own = crate::federation::scope_codec::read_preset();
@@ -611,6 +657,21 @@ fn a_credential_that_reads_no_row_walks_no_world() -> Result<()> {
             "a credential with {label}"
         );
     }
+    assert_eq!(
+        walk_as(single, "claims under a claims grant", banded(claims))?,
+        (vec![world.to_hex()], false, true),
+        "a credential whose bands meet its grant's"
+    );
+    assert_eq!(
+        walk_as(single, "tasks under a claims grant", banded(tasks))?,
+        (Vec::new(), false, false),
+        "a credential whose bands share no type with its grant's"
+    );
+    assert_eq!(
+        walk_as(typed, "tasks under two grants", banded(tasks))?,
+        (vec![second.to_hex()], false, false),
+        "a grant whose types miss the credential's opens no world"
+    );
     Ok(())
 }
 
@@ -622,29 +683,13 @@ fn a_credential_that_reads_no_row_walks_no_world() -> Result<()> {
 /// world it names.
 #[test]
 fn a_grant_that_selects_no_entity_type_reads_no_world() -> Result<()> {
-    use crate::federation::{ScopeAxis, ScopeId};
+    use crate::federation::ScopeAxis;
     let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
     let (empty, kept, tasks) = (test_id(0x26), test_id(0x27), test_id(0x28));
     let (reader, tasker) = (test_id(0x29), test_id(0x25));
     for world in [empty, kept, tasks] {
         put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
     }
-    let grant = |actor: EntityId, world: EntityId, bands, selectors: Option<Value>| {
-        let mut scope = crate::federation::scope_codec::read_preset();
-        scope.worlds = ScopeAxis::Some([ScopeId(world)].into_iter().collect());
-        scope.bands = bands;
-        let mut grant = vec![
-            (Value::from("actor_ref"), Value::from(actor.to_hex())),
-            (Value::from("effector"), Value::from("core:read")),
-            (
-                Value::from("scope"),
-                crate::federation::scope_codec::encode_scope_value(&scope).expect("scope fixture"),
-            ),
-            (Value::from("receipt_required"), Value::Boolean(false)),
-        ];
-        grant.extend(selectors.map(|selectors| (Value::from("selectors"), selectors)));
-        Value::Map(grant)
-    };
     let no_type = Value::Map(vec![(
         Value::from("entity_types"),
         Value::Array(Vec::new()),
@@ -654,9 +699,9 @@ fn a_grant_that_selects_no_entity_type_reads_no_world() -> Result<()> {
         &vault,
         test_id(0x96),
         encode_policy_manifest(vec![
-            grant(reader, empty, ScopeAxis::All, Some(no_type)),
-            grant(reader, kept, ScopeAxis::All, None),
-            grant(tasker, tasks, task_band, None),
+            core_read_grant_typed(reader, empty, ScopeAxis::All, Some(no_type)),
+            core_read_grant_typed(reader, kept, ScopeAxis::All, None),
+            core_read_grant_typed(tasker, tasks, task_band, None),
         ]),
     )?;
     let walk = |actor: EntityId| -> Result<(Vec<String>, [bool; 3])> {

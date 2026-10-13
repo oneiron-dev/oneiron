@@ -148,6 +148,18 @@ impl RetrievalPolicyFloor {
         }
     }
 
+    /// Whether a read under this floor could admit any row: it is not
+    /// deny-all and leaves some entity type. A floor met from types that
+    /// share none (a credential's bands and its grant's) admits no row
+    /// though its flag stays clear.
+    pub(crate) fn reads_some_row(&self) -> bool {
+        !self.deny_all
+            && self
+                .allowed_entity_types
+                .as_ref()
+                .is_none_or(|types| !types.is_empty())
+    }
+
     /// One complete read grant's floor: its retrieval selectors met with its
     /// canonical Scope's bands and sensitivity. `None` when an invalid or
     /// empty selector, or a band or sensitivity at bottom, leaves it no row.
@@ -351,14 +363,19 @@ fn parse_minimum(value: &Value) -> Option<f32> {
     })
 }
 
-/// Whether `grant`, read as retrieval reads it, leaves a row of some entity
-/// type: its selectors and canonical bands share one. A grant reads a world
-/// only then (Sol R7-004).
-pub(crate) fn scoped_read_grant_reads_some_type(grant: &PolicyScopedGrant) -> bool {
-    RetrievalPolicyFloor::from_grant(grant).is_some_and(|row| {
-        row.allowed_entity_types
-            .as_ref()
-            .is_none_or(|types| !types.is_empty())
+/// Whether `grant`, read as retrieval reads it under a credential whose
+/// canonical Scope is `credential` (`None` for a key that holds none), leaves
+/// a row of some entity type: its selectors, its bands and the credential's
+/// share one. A grant reads a world only then (Sol R7-004, R11-001).
+pub(crate) fn scoped_read_grant_reads_some_type(
+    grant: &PolicyScopedGrant,
+    credential: Option<&crate::federation::Scope>,
+) -> bool {
+    RetrievalPolicyFloor::from_grant(grant).is_some_and(|row| match credential {
+        Some(scope) => row
+            .intersect(&RetrievalPolicyFloor::from_authority_scope(scope))
+            .reads_some_row(),
+        None => row.reads_some_row(),
     })
 }
 

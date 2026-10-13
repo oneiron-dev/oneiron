@@ -719,7 +719,7 @@ fn lane_walks_world(
             continue;
         }
         matched = true;
-        if crate::gate::scoped_read_grant_reads_world(grant, world) {
+        if crate::gate::scoped_read_grant_reads_world(grant, world, key.authority_scope()) {
             return Ok(true);
         }
     }
@@ -727,14 +727,16 @@ fn lane_walks_world(
 }
 
 /// Whether `lane`'s ordinary reads could admit any row under `policy`: the
-/// retrieval floor every read applies is not deny-all. A credential without
-/// the read verb, or with its bands, audience, sensitivity or worlds at
-/// bottom, a fail-closed manifest, and grants that read nothing each leave
-/// it none, so it walks no world either (Sol R7-003).
+/// retrieval floor every read applies leaves some row
+/// ([`crate::gate::RetrievalPolicyFloor::reads_some_row`]). A credential
+/// without the read verb, or with its bands, audience, sensitivity or worlds
+/// at bottom, a fail-closed manifest, grants that read nothing, and a
+/// credential whose bands share no type with its grants' each leave it none,
+/// so it walks no world either (Sol R7-003, R11-001).
 fn lane_reads_some_row(lane: &ScopedRead<'_>, policy: &PolicyManifestResolution) -> bool {
-    !policy
+    policy
         .retrieval_floor_for_actor(Some(lane.actor_key()))
-        .deny_all
+        .reads_some_row()
 }
 
 pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {

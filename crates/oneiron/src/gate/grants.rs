@@ -260,14 +260,16 @@ fn scoped_read_scope_matches_claim(
 /// [`scoped_read_claim_allowed`] judges a claim's world: its canonical Scope
 /// admits a read of some record there (the read verb, the world, and no
 /// axis left at bottom, which no record narrows), retrieval's floor for it
-/// leaves some entity type its selectors and bands share (a TASK-only grant
-/// does), and a world selector, if it carries one, names that world. A
+/// under the reader's `credential` leaves some entity type its selectors,
+/// its bands and the credential's share (a TASK-only grant does), and a
+/// world selector, if it carries one, names that world. A
 /// selector on another axis leaves the world readable; one this matcher does
 /// not know admits no claim, so no world. A grant that needs a receipt or a
 /// budget reads none.
 pub(crate) fn scoped_read_grant_reads_world(
     grant: &PolicyScopedGrant,
     world: Option<EntityId>,
+    credential: Option<&crate::federation::Scope>,
 ) -> bool {
     if grant.receipt_required || grant.budget.is_some() {
         return false;
@@ -277,7 +279,7 @@ pub(crate) fn scoped_read_grant_reads_world(
     if !scope.verbs.contains(&"read".to_owned())
         || !scope.worlds.contains(&id)
         || scope.audience.is_bottom()
-        || !super::retrieval_filter::scoped_read_grant_reads_some_type(grant)
+        || !super::retrieval_filter::scoped_read_grant_reads_some_type(grant, credential)
     {
         return false;
     }
