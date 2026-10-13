@@ -29,6 +29,12 @@ impl ProviderKind {
         !matches!(self, Self::Oneironer)
     }
 
+    /// Whether this kind serves the `reranker` role, over `/v1/rerank`.
+    #[must_use]
+    pub fn reranks(self) -> bool {
+        matches!(self, Self::OpenaiCompat | Self::LocalOpenaiCompat)
+    }
+
     fn default_locality(self) -> ModelLocality {
         match self {
             Self::OpenaiCompat | Self::AnthropicCompat => ModelLocality::ThirdParty,

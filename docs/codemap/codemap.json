@@ -23515,11 +23515,31 @@
      "purpose": "Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 11,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RecallRerank",
+      "RecallRerankHost",
+      "RerankDocument",
+      "RerankReport",
+      "RerankScores",
+      "RerankSkip"
+     ],
+     "path": "src/memory/recall/paid.rs",
+     "purpose": "Recall at high, xhigh and max through a host's reranker (ARCH-0004 #rerank: a cross-encoder refines the…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -23856,6 +23876,14 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/pack_scope.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall/paid_rerank.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -26656,7 +26684,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/execution/channels/rerank.rs",
@@ -26664,6 +26692,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/rerank/tests.rs",
+     "purpose": "Done-means (the Engine lane's ruling on Sol round 6, R6-1): a block row whose words no revision pins (a…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -26692,7 +26728,7 @@
      "path": "src/pipeline/execution/channels/turn_fold.rs",
      "purpose": "A MESSAGE hit folds into its TURN, so one result never holds both",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -29746,7 +29782,7 @@
      "path": "src/rerank/crossencoder.rs",
      "purpose": "Local-service and HTTPS crossencoder adapters, with a nonblocking prepared pipeline rung",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -36318,6 +36354,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "RecallDoor"
+     ],
+     "path": "src/task_verb/recall_door.rs",
+     "purpose": "The recall door: when a recall's clock starts, what it answers when its door stops waiting, and how it…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/task_verb/reconciliation.rs",
      "purpose": "Repository conflicts mint one linked reconciliation TASK and realizing attempt",
@@ -36394,7 +36443,6 @@
       "BoardSubscriptionRequest",
       "DescribeRequest",
       "EmptyRequest",
-      "RecallDoor",
       "RecallRequest",
       "ReceiptsRequest",
       "RoomClaimRequest",
@@ -36414,8 +36462,9 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 5,
-      "struct": 19
+      "fn": 2,
+      "re-export": 1,
+      "struct": 18
      }
     },
     {
@@ -37167,7 +37216,7 @@
      "path": "src/vault/entity_revision/turn_text.rs",
      "purpose": "A TURN's text revision: the revision that pins the words a turn serves",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -40213,7 +40262,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 103,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40297,7 +40346,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40647,7 +40696,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40775,8 +40824,8 @@
    },
    "over_bar": 37,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2473,
-   "test_files": 790
+   "source_files": 2476,
+   "test_files": 791
   },
   "oneiron-android": {
    "files": [
@@ -43389,7 +43438,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 9,
+      "const": 11,
       "fn": 6,
       "struct": 4,
       "type": 1
@@ -48809,7 +48858,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
       "crate-vis": 8,
-      "fn": 18,
+      "fn": 19,
       "re-export": 1,
       "struct": 2
      }
@@ -50476,6 +50525,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/api/tests/recall_rerank.rs",
+     "purpose": "Recall at every declared effort through the MCP recall door (dogfood gate 1): high, xhigh and max rerank on…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/api/tests/relay_widen.rs",
      "purpose": "Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it",
      "surface": {}
@@ -51140,6 +51197,7 @@
       "CodeModeSettings",
       "DreamerSettings",
       "ModelsConfig",
+      "RecallModelSettings",
       "WorkflowSettings"
      ],
      "path": "src/config/models/mod.rs",
@@ -51149,7 +51207,7 @@
       "enum": 1,
       "fn": 2,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -51165,7 +51223,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -51493,7 +51551,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 25
      }
     },
     {
@@ -52353,7 +52411,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "McpBoardKeyframe",
@@ -52539,7 +52597,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 10,
       "re-export": 9,
       "struct": 2
@@ -52600,6 +52658,16 @@
       "const": 1,
       "crate-vis": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/rerank.rs",
+     "purpose": "The rerank transport: the `reranker` role's rungs speak `/v1/rerank`, the indexed-scores protocol…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -52797,6 +52865,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/owner/embedder.rs",
+     "purpose": "The embedder section of `doctor` and `GET /v1/owner/status`: what config asks for, what the vault pins and…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/owner/feedback.rs",
      "purpose": "Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that…",
      "surface": {
@@ -52850,7 +52928,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -53095,7 +53173,7 @@
      "path": "src/server/embedding.rs",
      "purpose": "The embedding worker: the one thing that drives the engine's reconciler",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -53158,6 +53236,16 @@
      "notable": [],
      "path": "src/server/recall.rs",
      "purpose": "The recall verb as every server transport runs it",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/recall_rerank.rs",
+     "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
       "crate-vis": 4
      }
@@ -53684,7 +53772,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 180,
+     "files": 181,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53796,7 +53884,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53817,7 +53905,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53845,7 +53933,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53889,8 +53977,8 @@
    },
    "over_bar": 9,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 328,
-   "test_files": 141
+   "source_files": 331,
+   "test_files": 142
   },
   "oneiron-spawn": {
    "files": [

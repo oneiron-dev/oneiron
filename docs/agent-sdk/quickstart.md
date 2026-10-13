@@ -251,7 +251,10 @@ you want to act as instead.
 `"medium"`), `scope` (`{ worldRef?, facet? }`), `limit` (default `10`) and
 `format` (`"json" | "yaml" | "toon" | "md" | "txt"`). `high`, `xhigh` and `max` need
 a budget lease and return `LEASE_REQUIRED` without one; this package neither mints
-nor simulates a lease.
+nor simulates a lease. A running server serves those efforts itself: it admits the
+recall on a line of its own and reranks on the reranker its `[models]` routes
+(`docs/ops/run-with-models.md`, section 8), or runs them unreranked and says so when
+it routes none.
 
 Timestamps are Unix **seconds** everywhere and are never converted. Omitting
 `occurredAt` stamps the current wall clock at the call boundary; supplying one
