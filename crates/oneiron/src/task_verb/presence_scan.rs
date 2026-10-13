@@ -257,8 +257,24 @@ where
     })
 }
 
+#[cfg(test)]
 pub(super) fn task_presence(vault: &Vault) -> Result<TaskPresenceSnapshot> {
-    task_presence_with_limits(vault, TASK_PRESENCE_PAGE_SIZE, TASK_PRESENCE_SCAN_CAP)
+    task_presence_at(vault, crate::claim::CallerLocality::OnDevice)
+}
+
+/// The board's TASK presence for a reader at `locality`. Off this device a TASK a
+/// device-local world keeps is passed over before it takes a place in the
+/// scan, so neither the rows nor the scan cap count it (DEC-0005).
+pub(super) fn task_presence_at(
+    vault: &Vault,
+    locality: crate::claim::CallerLocality,
+) -> Result<TaskPresenceSnapshot> {
+    task_presence_with_limits(
+        vault,
+        TASK_PRESENCE_PAGE_SIZE,
+        TASK_PRESENCE_SCAN_CAP,
+        locality,
+    )
 }
 
 /// Testable body: production uses the constants above; local tests inject small
@@ -267,13 +283,41 @@ pub(super) fn task_presence_with_limits(
     vault: &Vault,
     page_size: usize,
     scan_cap: usize,
+    locality: crate::claim::CallerLocality,
 ) -> Result<TaskPresenceSnapshot> {
     let JobBacklinks {
         mut realizing,
         mut bare,
     } = job_backlinks(vault)?;
+    // Off this device each page holds only TASKs this reader may read: the
+    // index is walked past the others on its own cursor, and a page is short
+    // only where the index ends.
+    let mut index_after: Option<EntityId> = None;
     let scan = scan_task_entity_pages(page_size, scan_cap, |after, limit| {
-        vault.entities_by_type_page(ENTITY_TYPE_TASK, after, limit)
+        if locality == crate::claim::CallerLocality::OnDevice {
+            return vault.entities_by_type_page(ENTITY_TYPE_TASK, after, limit);
+        }
+        let mut page = Vec::new();
+        loop {
+            let rows =
+                vault.entities_by_type_page(ENTITY_TYPE_TASK, index_after.as_ref(), limit)?;
+            let exhausted = rows.len() < limit;
+            let Some(&last) = rows.last() else {
+                return Ok(page);
+            };
+            for id in vault.off_device_readable(rows)? {
+                if page.len() == limit {
+                    // The rest of these rows are read again from here.
+                    return Ok(page);
+                }
+                index_after = Some(id);
+                page.push(id);
+            }
+            index_after = Some(last);
+            if exhausted || page.len() == limit {
+                return Ok(page);
+            }
+        }
     })?;
 
     // Read-time clock: a consult past its deadline surfaces as expired from the

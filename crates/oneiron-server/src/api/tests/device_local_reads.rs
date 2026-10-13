@@ -629,6 +629,9 @@ async fn a_setup_page_off_this_device_continues_no_board_naming_a_device_local_r
         ..Default::default()
     });
     let actor = EntityId::now();
+    for credential in ["kept-before", "kept-during"] {
+        register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    }
     let world = put_world(&server.vault);
     let claim = put_orchid_claim(
         &server,
@@ -655,7 +658,6 @@ async fn a_setup_page_off_this_device_continues_no_board_naming_a_device_local_r
     // takes the first setup page, which reports it.
     let mut cursors = Vec::new();
     for credential in ["kept-before", "kept-during"] {
-        register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
         let read = call(
             credential,
             MCP_TOOL_FIRST_PATH,
@@ -708,8 +710,9 @@ async fn a_setup_page_off_this_device_continues_no_board_naming_a_device_local_r
 }
 
 /// A TASK sits in the world it was born in. Once that world is device-local,
-/// no setup board off this device lists it, and a continuation of a board
-/// that listed it is refused. Clearing the flag lists it again.
+/// no setup board or TASKS section off this device lists it, counts it or
+/// reads less healthy for it (Sol R4 F3), and a continuation of a board that
+/// listed it is refused. Clearing the flag lists it again.
 #[tokio::test]
 async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() {
     let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
@@ -719,6 +722,28 @@ async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() 
     let actor = EntityId::now();
     let world = put_world(&server.vault);
     register_mcp_actor(&server, "errand", actor, oneiron::EdgeActorClass::Human).await;
+    let call = |path: &'static str, tool: &'static str, arguments: Value| {
+        let server = Arc::clone(&server);
+        async move {
+            let arguments = mcp_merge_args(mcp_endpoint_envelope(actor, "read_board"), arguments);
+            let (status, body) = route_json(
+                server,
+                mcp_endpoint_call_request(path, "errand", tool, tool, arguments),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
+        }
+    };
+    let setup = |page: Value| call("/mcp", "setup_oneiron", page);
+    let describe = || call(MCP_TOOL_FIRST_PATH, "describe", json!({"arguments": {}}));
+    // What a reader learns of the TASKS section, beside its rows: its page
+    // and its health.
+    let shape = |reply: &Value| {
+        let meta = &reply["result"]["structuredContent"]["meta"];
+        (meta["page"].clone(), meta["retrieval_health"].clone())
+    };
+    let before = (shape(&setup(json!({})).await), shape(&describe().await));
     let task = server
         .vault
         .memory(actor, oneiron::EdgeActorClass::Human)
@@ -736,17 +761,95 @@ async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() 
         .task_ref
         .unwrap()
         .to_hex();
-    let setup = |page: Value| {
+    let first = setup(json!({"page": {"limit": 1}})).await;
+    assert!(first["result"].to_string().contains(&task), "{first}");
+    assert!(describe().await["result"].to_string().contains(&task));
+    let cursor = first["result"]["structuredContent"]["meta"]["page"]["cursor"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Neither its row nor a count or health of a withheld row is left.
+    server.vault.set_world_device_only(world, true).unwrap();
+    let refused = setup(json!({"page": {"limit": 1, "cursor": cursor}})).await;
+    assert!(refused.get("result").is_none(), "{refused}");
+    assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
+    let (fresh, described) = (setup(json!({})).await, describe().await);
+    for reply in [&fresh, &described] {
+        assert!(!reply.to_string().contains(&task), "{reply}");
+    }
+    assert_eq!((shape(&fresh), shape(&described)), before);
+
+    server.vault.set_world_device_only(world, false).unwrap();
+    let back = setup(json!({})).await;
+    assert!(back["result"].to_string().contains(&task), "{back}");
+}
+
+/// Sol R4 F4 and F7: an ask's calibration pairs are derived from its answer,
+/// the unit that answer binds, and each outcome fact and what the fact is
+/// about. Once one of those rows is device-local, no read off this device
+/// forms the pair, and a continuation of a page that held one is refused,
+/// though no pair spells the row. On this device the pairs still read.
+#[tokio::test]
+async fn outcomes_off_this_device_pair_no_device_local_row() {
+    let (_dir, server) = test_server_with_config(crate::config::SyncServerConfig {
+        auth_secret: Some("device-local".into()),
+        ..Default::default()
+    });
+    let (owner, holder) = (EntityId::now(), EntityId::now());
+    for (credential, actor) in [("outcomes", owner), ("holder", holder)] {
+        register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    }
+    let world = put_world(&server.vault);
+    // The holder's answer binds the holder; the outcomes are about a claim
+    // in W it is linked to.
+    let about = put_orchid_claim(
+        &server,
+        holder,
+        "test.orchid_outcome",
+        Some(world),
+        "orchid",
+    );
+    server
+        .vault
+        .put_edge(&holder, oneiron::EdgeKind::About, &about, 1.0)
+        .unwrap();
+    let (handle, answered) =
+        oneiron::test_support::settle_outcome_ask(&server.vault, owner, holder, Some("about"))
+            .unwrap();
+    for offset in [30, 31] {
+        let at = answered + offset;
+        let body = oneiron::ClaimBody::new(
+            "outcome.earned",
+            oneiron::ClaimSubject::Entity(about),
+            rmpv::Value::from("won"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            oneiron::ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        let occurred = oneiron::TimeRange { start: at, end: at };
+        server
+            .vault
+            .put_claim(&EntityId::now(), &body, occurred, at)
+            .unwrap();
+    }
+    let here = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
+    assert_eq!(here.tasks_ask_outcomes(&handle).unwrap().len(), 2);
+    let outcomes = |page: Value| {
         let server = Arc::clone(&server);
         async move {
-            let arguments = mcp_merge_args(mcp_endpoint_envelope(actor, "read_board"), page);
+            let arguments = mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_board"),
+                json!({"arguments": {"spec": {"group_ref": handle.group_ref.to_hex()}}, "page": page}),
+            );
             let (status, body) = route_json(
                 server,
                 mcp_endpoint_call_request(
-                    "/mcp",
-                    "errand",
-                    "setup_oneiron",
-                    "setup_oneiron",
+                    MCP_TOOL_FIRST_PATH,
+                    "outcomes",
+                    "tasks.outcomes",
+                    "tasks.outcomes",
                     arguments,
                 ),
             )
@@ -755,23 +858,23 @@ async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() 
             body
         }
     };
-    let first = setup(json!({"page": {"limit": 1}})).await;
-    assert!(first["result"].to_string().contains(&task), "{first}");
-    let cursor = first["result"]["structuredContent"]["meta"]["page"]["cursor"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let first = outcomes(json!({"limit": 1})).await;
+    let page = &first["result"]["structuredContent"];
+    assert_eq!(page["output"].as_array().map(Vec::len), Some(1), "{first}");
+    assert!(!page.to_string().contains(&about.to_hex()), "{first}");
+    let cursor = page["meta"]["page"]["cursor"].as_str().unwrap().to_owned();
 
     server.vault.set_world_device_only(world, true).unwrap();
-    let refused = setup(json!({"page": {"limit": 1, "cursor": cursor}})).await;
+    let refused = outcomes(json!({"limit": 1, "cursor": cursor})).await;
     assert!(refused.get("result").is_none(), "{refused}");
     assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
-    let fresh = setup(json!({})).await;
-    assert!(!fresh.to_string().contains(&task), "{fresh}");
-
-    server.vault.set_world_device_only(world, false).unwrap();
-    let back = setup(json!({})).await;
-    assert!(back["result"].to_string().contains(&task), "{back}");
+    let fresh = outcomes(json!({})).await;
+    assert_eq!(
+        fresh["result"]["structuredContent"]["output"],
+        json!([]),
+        "{fresh}"
+    );
+    assert_eq!(here.tasks_ask_outcomes(&handle).unwrap().len(), 2);
 }
 
 /// Sol R3 F5: an agent's standing block is pinned to one world. Once that

@@ -532,6 +532,11 @@ impl Memory<'_> {
         self
     }
 
+    /// Where this surface's caller reads from.
+    pub(crate) const fn locality(&self) -> crate::claim::CallerLocality {
+        self.locality
+    }
+
     /// Binds this surface's claim writes to a host-owned origin: every claim
     /// door then stamps the origin's source, lineage and provenance, and the
     /// caller's declared source is not read. Approval still follows from that

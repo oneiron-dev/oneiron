@@ -1085,6 +1085,11 @@ pub(crate) async fn execute_agent_verb_input(
             served.extend([input.group_ref]);
             let output = oneiron::task_verb::sdk::tasks_outcomes(&memory, input)
                 .map_err(mcp_facade_error)?;
+            served.extend(
+                output
+                    .iter()
+                    .flat_map(|pair| pair.derived_from.iter().copied()),
+            );
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }

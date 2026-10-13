@@ -344,22 +344,34 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             return Ok(builder.finish(None));
         }
 
-        let rows = self.scoped_read.vault().entities_by_type_page(
-            ENTITY_TYPE_WORLD,
-            after_world.as_ref(),
-            GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1),
-        )?;
-        let has_more_rows = rows.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
-        let rows: Vec<_> = rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES).collect();
-        let last_scanned = rows.last().map(EntityId::to_hex);
-        for id in self.worlds_this_reader_may_name(rows)? {
+        // A world this reader may not name takes no place on the page and is
+        // never its cursor: the scan pages past it, and the page says there
+        // is more only when a world it may name follows (DEC-0005).
+        let want = GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1);
+        let mut worlds = Vec::new();
+        let mut scanned = after_world;
+        loop {
+            let rows = self.scoped_read.vault().entities_by_type_page(
+                ENTITY_TYPE_WORLD,
+                scanned.as_ref(),
+                want,
+            )?;
+            let exhausted = rows.len() < want;
+            scanned = rows.last().copied();
+            worlds.extend(self.worlds_this_reader_may_name(rows)?);
+            if exhausted || worlds.len() >= want {
+                break;
+            }
+        }
+        let has_more_rows = worlds.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
+        for id in worlds.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES) {
             if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
                 next_cursor = builder.last_entry_name();
                 break;
             }
         }
         if next_cursor.is_none() && has_more_rows {
-            next_cursor = last_scanned;
+            next_cursor = builder.last_entry_name();
         }
         Ok(builder.finish(next_cursor))
     }

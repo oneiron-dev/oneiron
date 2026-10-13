@@ -586,6 +586,7 @@
       "input": "crate::task_verb::TaskAskHandle",
       "output": "Vec<crate::llm::decision::questions::CalibrationPair>",
       "mcp_served": "[input.group_ref]",
+      "mcp_served_output": "output.iter().flat_map(|pair| pair.derived_from.iter().copied())",
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
       "mcp_fields": {

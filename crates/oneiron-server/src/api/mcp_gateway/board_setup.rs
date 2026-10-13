@@ -87,28 +87,30 @@ pub(super) async fn mcp_endpoint_result(
             }
         }
     };
-    // A queued frame naming a row a device-local world keeps now stays here.
-    let carrier = carrier.filter(|frame| {
-        serde_json::to_vec(frame).is_ok_and(|bytes| {
-            matches!(
-                crate::device_local::names_kept_row(&server.vault, actor.locality(), &bytes),
-                Ok(false)
-            )
-        })
-    });
+    // A queued frame derived from a row a device-local world keeps now
+    // stays here.
+    let carrier = carrier.filter(|frame| mcp_carrier_releases(server, actor, frame, &[]));
     let carrier = carrier.and_then(|frame| mcp_live_task_lines(server, actor, frame));
     // Never turn lifecycle movement into a push. A narrowed connector never
     // reaches the rider and an empty queue remains empty.
-    let carrier = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
-        carrier.and_then(mcp_own_task_lines)
+    let (carrier, rider_rows) = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope()
+    {
+        (carrier.and_then(mcp_own_task_lines), Vec::new())
     } else if carrier.is_some() {
         let original = carrier.clone();
-        super::board_observations::ride(server, actor, carrier, &capabilities)
-            .await
-            .unwrap_or(original)
+        match super::board_observations::ride(server, actor, carrier, &capabilities).await {
+            Ok(Some((frame, rows))) => (Some(frame), rows),
+            Ok(None) => (None, Vec::new()),
+            Err(_) => (original, Vec::new()),
+        }
     } else {
-        None
+        (None, Vec::new())
     };
+    #[cfg(test)]
+    release_hook::run(server);
+    // Judged again once the call has nothing left to wait on, for every
+    // result: the rows it was derived from may all still leave this device.
+    let carrier = carrier.filter(|frame| mcp_carrier_releases(server, actor, frame, &rider_rows));
     let mut result = json!({
         "content": mcp_negotiated_content(message.into(), &structured),
         "structuredContent": structured,
@@ -123,6 +125,32 @@ pub(super) async fn mcp_endpoint_result(
         );
     }
     result
+}
+
+/// Whether a carrier frame may leave for `actor`: none of the rows it was
+/// derived from, the TASKs its delta rows are keyed by and `rider_rows`, nor
+/// any row it names, is one a device-local world keeps from the caller now.
+fn mcp_carrier_releases(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    frame: &oneiron::context_board::BoardStreamFrame,
+    rider_rows: &[oneiron::EntityId],
+) -> bool {
+    let mut rows = rider_rows.to_vec();
+    if let oneiron::context_board::FrameKind::Delta(delta) = &frame.kind {
+        rows.extend(
+            delta
+                .iter()
+                .filter_map(|row| row.key.strip_prefix("tasks:"))
+                .filter_map(|task| oneiron::EntityId::from_hex(task).ok()),
+        );
+    }
+    serde_json::to_vec(frame).is_ok_and(|bytes| {
+        matches!(
+            crate::device_local::withholds_retained(&server.vault, actor.locality(), &rows, &bytes),
+            Ok(false)
+        )
+    })
 }
 
 /// The result data a client reads over the NEGOTIATED protocol.
@@ -666,32 +694,6 @@ pub(super) fn mcp_page_cursor_error(error: crate::mcp::McpPageCursorError) -> Mc
     McpGatewayError::new(-32602, error.error_code(), error.to_string()).with_field("page.cursor")
 }
 
-/// A device-only flag committed after a continuation passed its cursor
-/// check and before its result is released.
-#[cfg(test)]
-pub(crate) mod release_hook {
-    use std::cell::Cell;
-
-    thread_local! {
-        // Per thread: the call resumes on the test's own current-thread
-        // runtime.
-        static FLAG: Cell<Option<oneiron::EntityId>> = const { Cell::new(None) };
-    }
-
-    pub(crate) fn arm(world: oneiron::EntityId) {
-        FLAG.set(Some(world));
-    }
-
-    pub(super) fn run(server: &crate::server::SyncServer) {
-        if let Some(world) = FLAG.take() {
-            server
-                .vault
-                .set_world_device_only(world, true)
-                .expect("device-only flag");
-        }
-    }
-}
-
 /// A continuation answers from the result its producer retained. It is
 /// judged again once its call has nothing left to wait on: one derived from
 /// a row a device-local world keeps now, or naming one, is refused, and the
@@ -852,5 +854,32 @@ pub(crate) async fn execute_mcp_setup(
         mcp_release_continuation(server, actor, &snapshot.rows, result)
     } else {
         Ok(result)
+    }
+}
+
+/// A device-only flag committed while a call waits, after its checks ran
+/// and before its result is released: past a continuation's cursor check,
+/// or on a carrier's rider.
+#[cfg(test)]
+pub(crate) mod release_hook {
+    use std::cell::Cell;
+
+    thread_local! {
+        // Per thread: the call resumes on the test's own current-thread
+        // runtime.
+        static FLAG: Cell<Option<oneiron::EntityId>> = const { Cell::new(None) };
+    }
+
+    pub(crate) fn arm(world: oneiron::EntityId) {
+        FLAG.set(Some(world));
+    }
+
+    pub(super) fn run(server: &crate::server::SyncServer) {
+        if let Some(world) = FLAG.take() {
+            server
+                .vault
+                .set_world_device_only(world, true)
+                .expect("device-only flag");
+        }
     }
 }

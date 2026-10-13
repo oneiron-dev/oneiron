@@ -26,6 +26,8 @@ pub use self::model::{
 };
 
 #[cfg(test)]
+mod device_local_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]

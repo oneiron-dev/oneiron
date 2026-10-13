@@ -261,6 +261,11 @@ pub(super) struct ClaimStatusGateCache {
     pub(super) include_stale: bool,
     /// Authenticated, transaction-local diary admission for this retrieval run.
     pub(super) private_note_ids: Option<std::sync::Arc<crate::claim::ScopedDiaryCandidates>>,
+    /// The device-local worlds a caller off this device reads nothing of. A
+    /// row they keep is no claim-status decision of this run: it is dropped
+    /// before the gate reads it, memoized nowhere and counted nowhere
+    /// (DEC-0005).
+    pub(super) device_local: Option<std::sync::Arc<BTreeSet<EntityId>>>,
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
     #[cfg(test)]
     pub(super) body_loads: usize,
@@ -310,6 +315,32 @@ pub struct RetrievalWithPendingVectors<T> {
     pub pending_vector_ids: Vec<EntityId>,
     pub pending_vectors: Vec<PendingVectorEmbedding>,
     pub run_id: Option<RetrievalRunId>,
+}
+
+impl ClaimStatusGateCache {
+    /// Whether a device-local world keeps `id` from this run.
+    pub(super) fn keeps_device_local(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        match self.device_local.as_deref() {
+            Some(flagged) => crate::settings::device_local_keeps_among(store, txn, flagged, id),
+            None => Ok(false),
+        }
+    }
+
+    /// A gate of its own for a probe or a bounded scan, under this run's
+    /// stale, diary and device-local terms, with no decision carried over.
+    pub(super) fn fresh(&self, include_stale: bool) -> Self {
+        Self {
+            include_stale,
+            private_note_ids: self.private_note_ids.clone(),
+            device_local: self.device_local.clone(),
+            ..Self::default()
+        }
+    }
 }
 
 impl EntityMetadataCache {

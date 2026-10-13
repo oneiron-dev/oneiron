@@ -796,10 +796,16 @@ impl PipelineBuilder<'_> {
             self.result_limit,
             filter.include_stale,
         );
+        let device_local = self.device_local_worlds(rtxn)?.map(std::sync::Arc::new);
         accumulator.trace_claim_gate.private_note_ids = private_note_ids.clone();
+        accumulator
+            .trace_claim_gate
+            .device_local
+            .clone_from(&device_local);
         let new_gate = || ClaimStatusGateCache {
             include_stale: filter.include_stale,
             private_note_ids: private_note_ids.clone(),
+            device_local: device_local.clone(),
             ..ClaimStatusGateCache::default()
         };
         let claim_gate = new_gate();

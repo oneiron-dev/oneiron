@@ -1,5 +1,6 @@
 //! The eight existing WS read verbs call the engine facade, without write aliases.
-use oneiron::memory::{ClaimListFilter, Memory, MemoryError, NeighborOpts};
+use oneiron::EntityId;
+use oneiron::memory::{ClaimListFilter, Memory, NeighborOpts};
 use oneiron::task_verb::sdk::RecallRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -120,27 +121,131 @@ impl Read {
         })
     }
 
+    /// The read's result, and the rows it carries: `None` when one of the
+    /// refs it spells names no row.
     pub(super) fn run(
         self,
         server: &crate::server::SyncServer,
         auth: &crate::auth::CoreAuth,
         memory: &Memory<'_>,
-    ) -> Result<Value, AppError> {
-        match self {
-            Self::Hydrate(refs) => result(memory.hydrate(&refs)),
-            Self::Query(query, limit) => result(memory.query_bm25(&query, limit)),
-            Self::Neighbors(entity_ref, opts) => result(memory.neighbors(&entity_ref, &opts)),
-            Self::PendingWrites(limit) => result(memory.pending_writes(limit)),
-            Self::Receipts(limit) => result(memory.receipts(limit)),
-            Self::ClaimList(filter) => result(memory.claim_list(&filter)),
-            Self::ClaimHistory(claim_ref) => result(memory.claim_history(&claim_ref)),
+    ) -> Result<(Value, Option<Vec<EntityId>>), AppError> {
+        let mut rows = Carried::new(server.vault());
+        let value = match self {
+            Self::Hydrate(refs) => {
+                let read = memory.hydrate(&refs)?;
+                read.value.iter().for_each(|view| rows.name(&view.id_hex));
+                result(read)
+            }
+            Self::Query(query, limit) => {
+                let read = memory.query_bm25(&query, limit)?;
+                read.value.iter().for_each(|hit| rows.name(&hit.short_id));
+                result(read)
+            }
+            Self::Neighbors(entity_ref, opts) => {
+                let read = memory.neighbors(&entity_ref, &opts)?;
+                rows.name(&entity_ref);
+                read.value.iter().for_each(|hit| rows.name(&hit.short_id));
+                result(read)
+            }
+            Self::PendingWrites(limit) => {
+                let read = memory.pending_writes(limit)?;
+                read.iter().for_each(|write| rows.name(&write.claim_ref));
+                result(read)
+            }
+            Self::Receipts(limit) => {
+                let read = memory.receipts(limit)?;
+                for receipt in &read {
+                    receipt.claim_ref.iter().for_each(|id| rows.name(id));
+                    receipt.actor_ref.iter().for_each(|id| rows.name(id));
+                }
+                result(read)
+            }
+            Self::ClaimList(filter) => {
+                let read = memory.claim_list(&filter)?;
+                read.value.iter().for_each(|claim| rows.claim(claim));
+                result(read)
+            }
+            Self::ClaimHistory(claim_ref) => {
+                let read = memory.claim_history(&claim_ref)?;
+                read.value.iter().for_each(|claim| rows.claim(claim));
+                result(read)
+            }
             // Its own reader, so a deadline can leave the read behind.
             Self::Recall(request) => {
                 let (actor, class) = super::bound_reader(auth)?;
                 let proof = auth.verified_slip().cloned();
-                result(server.recall_at_sync_door(actor, class, proof, auth.locality(), request))
+                let pack =
+                    server.recall_at_sync_door(actor, class, proof, auth.locality(), request)?;
+                rows.pack(&pack);
+                result(pack)
             }
+        }?;
+        Ok((value, rows.rows))
+    }
+}
+
+/// The rows a result carries, resolved from the refs it spells as it is
+/// produced: a release judges them again (DEC-0005). A ref that names no
+/// row leaves the result's rows unnamed, and it is refused off this device.
+struct Carried<'a> {
+    vault: &'a oneiron::Vault,
+    rows: Option<Vec<EntityId>>,
+}
+
+impl<'a> Carried<'a> {
+    const fn new(vault: &'a oneiron::Vault) -> Self {
+        Self {
+            vault,
+            rows: Some(Vec::new()),
         }
+    }
+
+    fn name(&mut self, reference: &str) {
+        let Some(rows) = &mut self.rows else {
+            return;
+        };
+        match oneiron::memory::resolve_entity_ref(self.vault, reference) {
+            Ok(id) => rows.push(id),
+            Err(_) => self.rows = None,
+        }
+    }
+
+    fn claim(&mut self, claim: &oneiron::memory::ClaimView) {
+        self.name(&claim.claim_ref);
+        // An edge subject is `edge:<source>:<kind>:<target>`.
+        match claim.subject_ref.strip_prefix("edge:") {
+            Some(edge) => {
+                let mut parts = edge.split(':');
+                for reference in [parts.next(), parts.nth(1)] {
+                    self.name(reference.unwrap_or_default());
+                }
+            }
+            None => self.name(&claim.subject_ref),
+        }
+        claim.world_ref.iter().for_each(|world| self.name(world));
+    }
+
+    fn pack(&mut self, pack: &oneiron::memory::MemoryPack) {
+        for item in &pack.items {
+            self.name(&item.short_id);
+            for id in [&item.world, &item.facet, &item.conversation_id]
+                .into_iter()
+                .flatten()
+            {
+                self.name(id);
+            }
+            item.provenance
+                .evidence_turn_ids
+                .iter()
+                .for_each(|turn| self.name(turn));
+            item.cited_messages
+                .iter()
+                .for_each(|message| self.name(&message.short_id));
+        }
+        pack.scope_honesty
+            .out_of_scope_worlds
+            .iter()
+            .for_each(|world| self.name(world));
     }
 }
 
@@ -148,8 +253,8 @@ fn params<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, AppError> {
     serde_json::from_value(value).map_err(|_| AppError::invalid_params())
 }
 
-fn result<T: Serialize>(value: Result<T, MemoryError>) -> Result<Value, AppError> {
-    serde_json::to_value(value?)
+fn result<T: Serialize>(value: T) -> Result<Value, AppError> {
+    serde_json::to_value(value)
         .map_err(|_| AppError::internal_server_error("facade serialization failed"))
 }
 

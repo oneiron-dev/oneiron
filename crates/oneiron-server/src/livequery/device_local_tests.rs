@@ -140,56 +140,181 @@ async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
     }
 }
 
-/// A subscription's ring holds what it has not had acknowledged, and a
-/// socket may hold a frame of it queued. Once the claim they name is
-/// device-local, off this device the queued body is not released and the
-/// redelivery is a gap. On this device both still go out.
+/// A socket's reply queue holds the frames a subscription's open derived,
+/// each with the rows it was derived from (Sol R4 F2). Once the claim they
+/// name is device-local, off this device the queued body is not released at
+/// the socket's send door, nothing more of the subscription leaves before
+/// its gap, and the gap is what goes out. On this device they all still go
+/// out.
 #[tokio::test]
 async fn a_body_queued_off_this_device_is_not_released_once_its_row_is_device_local() {
     let (_dir, server) = server();
     let world = put_world(&server);
     let claim = put_claim(&server, world);
+    // The receipts of the claims in W.
+    let view = ScopedView {
+        world_ref: Some(world.to_hex()),
+        ..ScopedView::default()
+    };
     let (here, _) = subscriptions(&server, CallerLocality::OnDevice);
     let opened = here
-        .open(3, ScopedView::default(), Channel::Receipts, None, None)
+        .open(3, view.clone(), Channel::Receipts, None, None)
         .unwrap();
     assert!(names(&opened, &claim), "{opened:?}");
-    // Off this device, as every test credential is: the frames a socket
-    // was sent, queued again as a broadcast copy.
-    let hub = connection::Hub::for_server(&server);
-    let mut socket = connection::Connection::new(hub, 9);
-    let auth = crate::test_credentials::authenticate(&server, &token("human"));
-    let queued: Vec<_> = socket
-        .control(
-            &auth,
-            SubRequest::Open {
-                subscription_id: 3,
-                scoped_view: ScopedView::default(),
-                channel: Channel::Receipts,
-                cursor: None,
-                origin: None,
-            },
-        )
-        .unwrap()
-        .into_iter()
-        .map(|frame| routing::wrap(9, 3, frame))
-        .collect();
-    assert!(queued.iter().any(|frame| spells(frame.as_slice())));
+    // Off this device, as every test credential is: the frames the open
+    // queued for the socket.
+    let (mut socket, queued) = open_socket(&server, 3, &view);
+    assert!(queued.iter().any(|frame| spells(frame)));
+    let off = CallerLocality::OffDevice;
     assert!(
         queued
             .iter()
-            .all(|frame| socket.receive_broadcast(frame).is_some())
+            .all(|frame| socket.release(off, frame).is_some())
     );
 
     server.vault().set_world_device_only(world, true).unwrap();
-    assert!(here.releases(3).unwrap());
     assert!(names(&here.buffered().unwrap(), &claim));
+    let on = CallerLocality::OnDevice;
+    assert!(
+        queued
+            .iter()
+            .all(|frame| socket.release(on, frame).is_some())
+    );
     let released: Vec<_> = queued
         .iter()
-        .filter_map(|frame| socket.receive_broadcast(frame))
+        .filter_map(|frame| socket.release(off, frame))
         .collect();
-    assert!(!released.iter().any(|frame| spells(frame.as_slice())));
+    assert!(released.is_empty(), "{released:?}");
     let redelivered = socket.delivery().unwrap();
     assert_eq!(redelivered.len(), 1);
     assert!(!spells(&redelivered[0]));
+    let gap = socket.release(off, &redelivered[0]).unwrap();
+    assert_eq!(test_wire::reply(&[gap])["kind"], "gap");
+}
+
+/// Sol R4 F5: a frame queued for a subscription is released only to the
+/// incarnation it was derived for. Once the caller closes the subscription
+/// and opens the same id again, a frame of the earlier one is dropped, never
+/// judged against the new one, and the reopened subscription gets its own
+/// snapshot.
+#[tokio::test]
+async fn a_frame_queued_for_a_closed_subscription_reaches_no_reopened_one() {
+    let (_dir, server) = server();
+    let world = put_world(&server);
+    put_claim(&server, world);
+    let view = ScopedView {
+        world_ref: Some(world.to_hex()),
+        ..ScopedView::default()
+    };
+    let (mut socket, queued) = open_socket(&server, 3, &view);
+    assert!(queued.iter().any(|frame| spells(frame)));
+
+    server.vault().set_world_device_only(world, true).unwrap();
+    let auth = crate::test_credentials::authenticate(&server, &token("human"));
+    socket
+        .control(&auth, SubRequest::Close { subscription_id: 3 })
+        .unwrap();
+    let reopened = socket
+        .control(&auth, open(3, &ScopedView::default()))
+        .unwrap();
+    assert!(!reopened.iter().any(|frame| spells(frame)));
+    let off = CallerLocality::OffDevice;
+    let released: Vec<_> = queued
+        .iter()
+        .filter_map(|frame| socket.release(off, frame))
+        .collect();
+    assert!(released.is_empty(), "{released:?}");
+    assert!(
+        reopened
+            .iter()
+            .all(|frame| socket.release(off, frame).is_some())
+    );
+}
+
+fn open(id: u64, view: &ScopedView) -> SubRequest {
+    SubRequest::Open {
+        subscription_id: id,
+        scoped_view: view.clone(),
+        channel: Channel::Receipts,
+        cursor: None,
+        origin: None,
+    }
+}
+
+/// A socket off this device with subscription `id` open on `view`, and the
+/// frames the open queued for it.
+fn open_socket(
+    server: &Arc<SyncServer>,
+    id: u64,
+    view: &ScopedView,
+) -> (connection::Connection, Vec<Vec<u8>>) {
+    let hub = connection::Hub::for_server(server);
+    let mut socket = connection::Connection::new(hub, 9);
+    let auth = crate::test_credentials::authenticate(server, &token("human"));
+    let queued = socket.control(&auth, open(id, view)).unwrap();
+    (socket, queued)
+}
+
+/// Sol R4 F2: an open's snapshot waits in its socket's reply queue with the
+/// rows it was derived from. Once one of them is device-local, off this
+/// device the snapshot is not sent at the queue's send door: the subscriber
+/// gets a gap.
+#[tokio::test]
+async fn a_queued_snapshot_off_this_device_names_no_row_turned_device_local() {
+    let f = production_socket_tests::fixture().await;
+    let world = put_world(&f.server);
+    put_claim(&f.server, world);
+    let mut socket = production_socket_tests::connect(&f, "human").await;
+    release_hook::arm(world);
+    production_socket_tests::send(
+        &mut socket,
+        TAG_SUB,
+        json!({"method":"sub.open","subscriptionId":3,
+        "scopedView":{"worldRef":world.to_hex()},"channel":"receipts"}),
+    )
+    .await;
+    let first = production_socket_tests::app(&mut socket, TAG_SUB).await;
+    assert_eq!(first["kind"], "gap", "{first}");
+}
+
+/// Sol R4 F2: a read's result waits in its socket's reply queue with the
+/// rows it carries, though it names a row by short ref alone and the read
+/// named none. Once one of them is device-local, the result is refused at
+/// the send door: off this device the caller reads only that the result
+/// changed, and the read repeated finds nothing.
+#[tokio::test]
+async fn a_queued_read_result_off_this_device_names_no_row_turned_device_local() {
+    let f = production_socket_tests::fixture().await;
+    let world = put_world(&f.server);
+    let claim = put_claim(&f.server, world);
+    f.server
+        .vault()
+        .batch()
+        .text(
+            &EntityId::from_hex(&claim).unwrap(),
+            &[("body", "orchid kept")],
+        )
+        .commit()
+        .unwrap();
+    let mut socket = production_socket_tests::connect(&f, "human").await;
+    let search = json!({"requestId":8,"method":"queryBm25",
+        "params":{"query":"orchid","limit":10}});
+    let mut read = async || {
+        production_socket_tests::send(&mut socket, TAG_RPC, search.clone()).await;
+        production_socket_tests::app(&mut socket, TAG_RPC).await
+    };
+    let portable = read().await;
+    assert_eq!(
+        portable["result"]["value"].as_array().map(Vec::len),
+        Some(1),
+        "{portable}"
+    );
+    assert!(!portable.to_string().contains(&claim), "{portable}");
+
+    release_hook::arm(world);
+    let refused = read().await;
+    assert_eq!(refused["error"]["code"], "RESULT_CHANGED", "{refused}");
+    assert!(refused.get("result").is_none(), "{refused}");
+    let fresh = read().await;
+    assert_eq!(fresh["result"]["value"], json!([]), "{fresh}");
 }

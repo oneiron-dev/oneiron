@@ -191,11 +191,7 @@ impl PipelineBuilder<'_> {
         };
         // As with text prefix probes, rejected probe rows must not inflate pack
         // suppression stats. Import only the candidates that enter fusion.
-        let mut probe_gate = ClaimStatusGateCache {
-            include_stale: filters.authority_filter.include_stale,
-            private_note_ids: claim_gate.private_note_ids.clone(),
-            ..ClaimStatusGateCache::default()
-        };
+        let mut probe_gate = claim_gate.fresh(filters.authority_filter.include_stale);
         // Reuse known decisions from earlier channels in this read transaction,
         // including suppressed claims, without importing probe-only decisions.
         for scored in scores.iter() {

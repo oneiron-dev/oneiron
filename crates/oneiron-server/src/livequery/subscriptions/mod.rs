@@ -740,22 +740,17 @@ impl LiveQueries {
             .collect())
     }
 
-    /// Whether subscription `id` may still send a body it buffered: none of
-    /// its retained pushes names a row a device-local world keeps now. One
-    /// that does is retired for a gap, and its queued bodies stay unsent.
-    pub(crate) fn releases(&self, id: u64) -> Result<bool, AppError> {
+    /// Retires subscription `id` for a gap: its socket's release withheld a
+    /// body it queued (DEC-0005). The client resubscribes for a fresh
+    /// snapshot.
+    pub(crate) fn retire(&self, id: u64) -> Result<(), AppError> {
         let mut state = self.state.lock().map_err(|_| state_error())?;
-        let Some(sub) = state.subs.get_mut(&id) else {
-            return Ok(false);
-        };
-        if sub.needs_resync {
-            return Ok(false);
-        }
-        if self.source.withholds(sub.ring.make_contiguous())? {
+        if let Some(sub) = state.subs.get_mut(&id)
+            && !sub.needs_resync
+        {
             sub.resync(id);
-            return Ok(false);
         }
-        Ok(true)
+        Ok(())
     }
 
     #[cfg(test)]

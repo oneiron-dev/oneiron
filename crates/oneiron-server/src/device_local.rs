@@ -6,17 +6,6 @@
 use oneiron::EntityId;
 use oneiron::claim::CallerLocality;
 
-/// Whether `payload` names a row a device-local world keeps from a caller at
-/// `locality`: an entity id in it, as a whole 32-digit hex token, that a
-/// caller off this device may not read now.
-pub(crate) fn names_kept_row(
-    vault: &oneiron::Vault,
-    locality: CallerLocality,
-    payload: &[u8],
-) -> oneiron::Result<bool> {
-    withholds_retained(vault, locality, &[], payload)
-}
-
 /// Whether a retained payload stays on this device for a caller at
 /// `locality`: one of the `rows` its producer derived it from, listed when it
 /// was produced, is a row a device-local world keeps now. A retained payload

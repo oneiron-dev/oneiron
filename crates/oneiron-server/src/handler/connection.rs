@@ -255,7 +255,8 @@ async fn handle_connection(
                 match broadcast_result {
                     Ok(Some(data)) => {
                         if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
-                            let Some(frame) = app_connection.receive_broadcast(&data) else {
+                            let Some(frame) = app_connection.release(conn_state.locality, &data)
+                            else {
                                 continue;
                             };
                             let Ok(auth) = require_bound_app_auth(&server, &conn_state) else {
@@ -382,6 +383,16 @@ async fn handle_connection(
                     break;
                 };
                 let mut data = data;
+                // A queued app body is judged again at its last door before
+                // the send, by the rows it carries (DEC-0005).
+                if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
+                    #[cfg(test)]
+                    crate::livequery::release_hook::run(&server);
+                    let Some(frame) = app_connection.release(conn_state.locality, &data) else {
+                        continue;
+                    };
+                    data = frame;
+                }
                 let app_frame = matches!(
                     data.first().copied(),
                     Some(

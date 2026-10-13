@@ -60,8 +60,13 @@ impl PipelineBuilder<'_> {
             let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
                 expansion.grounded_query.as_str()
             });
+            // A posting a device-local world keeps is no posting of this
+            // run: it neither fails the gate nor matches the scope.
             let exact_posting_fails_claim_gate = {
                 let mut exact_posting_fails_claim_gate = |id: &EntityId| {
+                    if claim_gate_widening_probe.keeps_device_local(&self.vault.store, rtxn, id)? {
+                        return Ok(false);
+                    }
                     claim_status_gate_allows(
                         &self.vault.store,
                         rtxn,
@@ -84,6 +89,12 @@ impl PipelineBuilder<'_> {
                 true
             } else {
                 let mut classify_prefix_posting = |id: &EntityId| {
+                    if claim_gate_widening_probe.keeps_device_local(&self.vault.store, rtxn, id)? {
+                        return Ok(crate::bm25::PrefixExpansionPostingDecision {
+                            matches_scope: false,
+                            rejected_by_gate: false,
+                        });
+                    }
                     let rejected_by_gate = !claim_status_gate_allows(
                         &self.vault.store,
                         rtxn,
@@ -176,11 +187,8 @@ impl PipelineBuilder<'_> {
                 } else {
                     retry_scoped_text_limit
                 };
-                let mut retry_prefix_probe_claim_gate = ClaimStatusGateCache {
-                    include_stale: inputs.authority_filter.include_stale,
-                    private_note_ids: claim_gate.private_note_ids.clone(),
-                    ..ClaimStatusGateCache::default()
-                };
+                let mut retry_prefix_probe_claim_gate =
+                    claim_gate.fresh(inputs.authority_filter.include_stale);
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.vault.store,
@@ -285,11 +293,8 @@ impl PipelineBuilder<'_> {
         };
         // The bound below admits turns as the fold does, in caches of its
         // own: the scan closure holds the run's.
-        let mut fold_claim_gate = ClaimStatusGateCache {
-            include_stale: inputs.filter_config.authority_filter.include_stale,
-            private_note_ids: prefix_probe_claim_gate.private_note_ids.clone(),
-            ..ClaimStatusGateCache::default()
-        };
+        let mut fold_claim_gate =
+            prefix_probe_claim_gate.fresh(inputs.filter_config.authority_filter.include_stale);
         let mut exact_posting_matches_scope = |id: &EntityId| {
             pipeline_candidate_matches_filters_and_gate(
                 &self.vault.store,
