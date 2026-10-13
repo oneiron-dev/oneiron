@@ -1,6 +1,5 @@
 //! Per-turn world authority, bound to the host's executing principal.
 
-use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use heed::RoTxn;
 
@@ -8,12 +7,10 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable,
     session_claim_producer,
 };
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
-use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::WriteActor;
 
 use super::types::{
@@ -319,9 +316,11 @@ fn world_access_row_in_force(body: &ClaimBody, at: u64) -> bool {
     body.valid_from.is_none_or(|from| from <= at) && body.valid_to.is_none_or(|to| at < to)
 }
 
-/// Reads the agent's in-force world-access rows through its inbound `claim_of`
-/// adjacency — the same edge the claim door writes, so authority rows are
-/// ordinary claims about the agent and nothing else.
+/// Reads the agent's in-force world-access rows from the two grant
+/// predicates' postings, which co-commit with the rows, never from `claim_of`
+/// adjacency: an edge can go while its row stays, and dropping one narrowing
+/// row's edge must not widen the fold. A deleted row grants nothing, even
+/// while an unapplied delete leaves its body stored.
 ///
 /// Rows that are closed (lifecycle, approval, staleness, or valid-time at
 /// `at`), rows about another subject, and rows under any other predicate are
@@ -337,53 +336,48 @@ fn world_access_rows(
     admit: &RowAdmission<'_>,
 ) -> Result<Vec<WorldAccessRow>> {
     let mut rows = Vec::new();
-    for (scanned, entry) in store
-        .port_edges(
+    for predicate in [
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+    ] {
+        for claim_id in crate::claim::claim_ids_for_predicate_bounded_in_txn(
+            store,
             rtxn,
-            agent_ref,
-            crate::ports::EdgeDirection::In,
-            Some(EdgeKind::ClaimOf),
-            None,
-        )?
-        .enumerate()
-    {
-        if scanned >= MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("world access authority claims"));
+            predicate,
+            GRANT_ROW_CEILING,
+        )? {
+            let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
+                continue;
+            };
+            if raw.entity_type != ENTITY_TYPE_CLAIM
+                || !crate::vault::live_entity_row_in_txn(store, rtxn, &claim_id)?.is_live()
+            {
+                continue;
+            }
+            let body = crate::claim::decode_claim_body(&raw.body, true)?;
+            if body.predicate != predicate {
+                continue;
+            }
+            if body.subject != ClaimSubject::Entity(*agent_ref)
+                || !claim_surfaceable(&body)
+                || !world_access_row_in_force(&body, at)
+            {
+                continue;
+            }
+            if body.predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+                && session_claim_producer(&body) != Some(*agent_ref)
+            {
+                continue;
+            }
+            if !admit(&claim_id, &body)? {
+                continue;
+            }
+            rows.push(WorldAccessRow {
+                id: claim_id,
+                body,
+                learned_at: raw.learned_at,
+            });
         }
-        let edge_row = entry?;
-        let claim_id = edge_row.target;
-        let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
-            continue;
-        };
-
-        if raw.entity_type != ENTITY_TYPE_CLAIM {
-            continue;
-        }
-        let body = crate::claim::decode_claim_body(&raw.body, true)?;
-        if body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET
-            && body.predicate != PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
-        {
-            continue;
-        }
-        if body.subject != ClaimSubject::Entity(*agent_ref)
-            || !claim_surfaceable(&body)
-            || !world_access_row_in_force(&body, at)
-        {
-            continue;
-        }
-        if body.predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
-            && session_claim_producer(&body) != Some(*agent_ref)
-        {
-            continue;
-        }
-        if !admit(&claim_id, &body)? {
-            continue;
-        }
-        rows.push(WorldAccessRow {
-            id: claim_id,
-            body,
-            learned_at: raw.learned_at,
-        });
     }
     Ok(rows)
 }

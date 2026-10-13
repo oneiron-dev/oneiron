@@ -4,10 +4,9 @@ use std::collections::BTreeSet;
 
 use heed::RwTxn;
 
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::ppr;
-use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::store::Store;
 
 /// What currently occupies a validated AUTHORITY_LOG row's content-derived store
@@ -165,6 +164,7 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     data: &[u8],
+    posture: crate::HostingPrivacyPosture,
 ) -> Result<()> {
     crate::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = crate::authority::decode_authority_log_entry_body(data)?;
@@ -187,8 +187,10 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
                 "missing authority vault id",
             )))?,
     };
+    // The vault's own fold, under its hosting posture: a Hosted vault's
+    // cloud root is a root here too.
     let local_fold =
-        crate::authority::fold_authority_log(&stored_authority_log_entries(store, wtxn)?);
+        crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, wtxn)?;
     let local_vault_id =
         local_fold
             .vault_id
@@ -200,40 +202,21 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
             "foreign authority log vault id",
         )));
     }
-    Ok(())
-}
-
-pub(super) fn stored_authority_log_entries(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-) -> Result<Vec<crate::authority::AuthorityLogEntry>> {
-    let mut entries = Vec::new();
-    for entry in store
-        .type_index
-        .prefix_iter(wtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+    // Structure, signature and vault are not standing: a key a handoff
+    // retired signs nothing new here, and nothing new stands on a row one
+    // signed, so its fork never reaches the log.
+    if !crate::authority::authority_row_resident(store, wtxn, &entry)?
+        && crate::authority::door_refuses_retired_standing(
+            store,
+            &local_fold,
+            &entry_hash,
+            &entry,
+            &mut |hash| crate::authority::stored_authority_row(store, wtxn, hash),
+        )?
     {
-        let (key, _) = entry?;
-        let id = authority_type_index_entity_id(&key)?;
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
-            .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
-            return Err(Error::CorruptedIndex("type index row kind mismatch"));
-        }
-        entries.push(crate::authority::decode_authority_log_entry_body(
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-        )?);
+        return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+            "authority row signed by a key a handoff retired",
+        )));
     }
-    Ok(entries)
-}
-
-pub(super) fn authority_type_index_entity_id(key: &[u8]) -> Result<EntityId> {
-    if key.len() != 1 + ENTITY_ID_LEN || key[0] != ENTITY_TYPE_AUTHORITY_LOG {
-        return Err(Error::CorruptedIndex("type index key shape"));
-    }
-    let raw: [u8; ENTITY_ID_LEN] = key[1..]
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("type index entity id"))?;
-    EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex("type index entity id"))
+    Ok(())
 }

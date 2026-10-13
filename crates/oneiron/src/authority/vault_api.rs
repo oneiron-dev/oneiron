@@ -14,6 +14,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::temporal::TimeRange;
+use std::collections::BTreeMap;
 
 use super::*;
 
@@ -83,8 +84,36 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
+        // A key a handoff retired signs nothing new here (engine-crates-03).
+        let local = if entries.is_empty() {
+            None
+        } else {
+            Some(self.authority_fold_readonly_in_txn(wtxn)?)
+        };
+        // Rows of this batch, for an ancestry that runs through one.
+        let mut batch = BTreeMap::new();
+        for (entry, _, _) in entries {
+            batch.insert(authority_entry_hash(entry)?, entry.clone());
+        }
         for (entry, occurred, learned_at) in entries {
             if matches!(entry.op, AuthorityOp::RetiredCeiling { .. }) {
+                return Err(invalid_authority());
+            }
+            if let Some(fold) = &local
+                && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
+                && super::door_refuses_retired_standing(
+                    &self.store,
+                    fold,
+                    &authority_entry_hash(entry)?,
+                    entry,
+                    &mut |hash| match batch.get(hash) {
+                        Some(row) => Ok(Some(row.clone())),
+                        None => {
+                            super::retired_signers::stored_authority_row(&self.store, wtxn, hash)
+                        }
+                    },
+                )?
+            {
                 return Err(invalid_authority());
             }
             let data = encode_authority_log_entry_body(entry)?;

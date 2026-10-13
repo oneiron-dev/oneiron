@@ -173,6 +173,11 @@ impl Vault {
         if header.entity_type != crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {
             return Err(invalid_autonomy());
         }
+        // A deleted identity authorizes nothing, even while an unapplied
+        // delete leaves its Active body stored.
+        if !crate::vault::live_entity_row_in_txn(&self.store, txn, &identity)?.is_live() {
+            return Err(invalid_autonomy());
+        }
         let record = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if record.state() != ChannelIdentityState::Active {
             return Err(invalid_autonomy());
