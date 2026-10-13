@@ -617,48 +617,50 @@ async fn a_keyed_board_retry_off_this_device_replays_no_device_local_row() {
     assert_eq!(replayed, first);
 }
 
-/// Sol R5 F3: a keyed write replays its first success to a retry. Once a
-/// row it named is device-local, the replay goes out again on this device
-/// but not off it, and the write is not repeated.
+/// Sol R5 F3: a keyed write replays its first success to a retry. Once the
+/// claim its receipt names by short ref is device-local, the replay goes out
+/// again on this device but not off it, and the write is not repeated.
 #[tokio::test]
 async fn a_keyed_write_retried_off_this_device_replays_no_device_local_row() {
-    let (_dir, server, caller, _) = serve();
+    let (_dir, server, caller, grower) = serve();
     let world = put_world(&server.vault);
-    let note = EntityId::now();
-    let remember = json!({"entity": {
-        "id": note.to_hex(),
-        "entity_type": oneiron::registry::ENTITY_TYPE_NOTE,
-        "learned_at": 300_u64,
-        "occurred_start": 300_u64,
-        "occurred_end": 300_u64,
-        "body": {"content": "orchid note"},
-    }});
+    let claim = json!({
+        "predicate": "test.orchid_keyed",
+        "subject_ref": grower.to_hex(),
+        "value": "orchid",
+        "confidence": 1.0,
+        "source": "user_stated",
+        "world_ref": world.to_hex(),
+    });
     let keyed = |from| {
-        let (caller, remember) = (&caller, remember.clone());
+        let (caller, claim) = (&caller, claim.clone());
         async move {
             caller
                 .call_keyed(
                     from,
                     "POST",
-                    "/v1/core/memory/verbs/remember",
-                    Some(remember),
-                    Some("kept-note"),
+                    "/v1/core/facade/claim_upsert",
+                    Some(claim),
+                    Some("kept-claim"),
                 )
                 .await
         }
     };
     let (status, first) = keyed(HERE).await;
     assert_eq!(status, StatusCode::OK, "{first}");
-    assert_eq!(first["id"], note.to_hex(), "{first}");
+    let reference = first["claim_short_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{first}"))
+        .to_owned();
+    assert!(
+        oneiron::entity_id::parse_short_ref_syntax(&reference).is_ok(),
+        "{first}"
+    );
 
-    server
-        .vault
-        .put_edge(&note, oneiron::EdgeKind::InWorld, &world, 1.0)
-        .unwrap();
     server.vault.set_world_device_only(world, true).unwrap();
     let (status, refused) = keyed(AWAY).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    assert!(!refused.to_string().contains(&note.to_hex()), "{refused}");
+    assert!(!refused.to_string().contains(&reference), "{refused}");
     let (status, replayed) = keyed(HERE).await;
     assert_eq!(status, StatusCode::OK, "{replayed}");
     assert_eq!(replayed, first);
@@ -1094,7 +1096,8 @@ async fn graph_fs_off_this_device_lists_no_device_local_world() {
             listed.to_string()
         }
     };
-    assert!(worlds().await.contains(&world.to_hex()));
+    let listed = worlds().await;
+    assert!(listed.contains(&world.to_hex()), "{listed}");
 
     server.vault.set_world_device_only(world, true).unwrap();
     let listed = worlds().await;
