@@ -35,7 +35,9 @@ fn withdrawal(
             Some(id),
             seq,
             vec![hash(parent)],
-            AuthorityOp::SlipRevoke { slip_id: [slip; 32] },
+            AuthorityOp::SlipRevoke {
+                slip_id: [slip; 32],
+            },
             authority_key_from_ed(signer),
             2,
         ),
@@ -100,10 +102,7 @@ fn assert_no_live_root(vault: &Vault, fork: &Fork) {
 #[test]
 fn an_import_of_both_handoffs_installs_no_successor_in_either_order() {
     let fork = fork(230);
-    for (first, second) in [
-        (&fork.forged, &fork.handoff),
-        (&fork.handoff, &fork.forged),
-    ] {
+    for (first, second) in [(&fork.forged, &fork.handoff), (&fork.handoff, &fork.forged)] {
         let (_dir, replica) = replica_with(vec![body(&fork.genesis), body(first)], second);
         assert_no_live_root(&replica, &fork);
     }
@@ -113,10 +112,7 @@ fn an_import_of_both_handoffs_installs_no_successor_in_either_order() {
 #[test]
 fn one_append_batch_of_both_handoffs_installs_no_successor_in_either_order() {
     let fork = fork(233);
-    for (first, second) in [
-        (&fork.forged, &fork.handoff),
-        (&fork.handoff, &fork.forged),
-    ] {
+    for (first, second) in [(&fork.forged, &fork.handoff), (&fork.handoff, &fork.forged)] {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
         put(&vault, &[&fork.genesis, first, second]).unwrap();
@@ -151,7 +147,11 @@ fn a_handoff_that_arrives_after_its_siblings_floor_still_settles() {
     assert!(fold.valid_entries.contains(&hash(&fork.handoff)));
     assert!(is_live(&fold, &fork.next));
     assert!(!is_live(&fold, &fork.old));
-    assert!(!fold.roster.contains_key(&authority_key_from_ed(&fork.forger_heir)));
+    assert!(
+        !fold
+            .roster
+            .contains_key(&authority_key_from_ed(&fork.forger_heir))
+    );
     assert_eq!(
         vault.authority_handoff_equivocations(),
         vec![AuthorityHandoffEquivocation {
@@ -161,10 +161,7 @@ fn a_handoff_that_arrives_after_its_siblings_floor_still_settles() {
         }]
     );
 
-    for together in [
-        [&fork.handoff, &in_flight],
-        [&in_flight, &fork.handoff],
-    ] {
+    for together in [[&fork.handoff, &in_flight], [&in_flight, &fork.handoff]] {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
         store(&vault, &fork.genesis);
@@ -197,4 +194,38 @@ fn a_row_below_its_floor_outside_any_handoffs_line_stays_refused() {
             .contains(&AuthorityFoldIssue::NonMonotonicSeq(hash(&rollback)))
     );
     assert!(is_live(&fold, &fork.next));
+}
+
+/// Sol review 6: a door records every retired key whose row it refuses, and
+/// only a row whose signatures verify. A roster key the handoff fenced without
+/// signing it is recorded with no handoff of its own. A row that names the
+/// old root as its signer under a signature that does not verify records
+/// nothing, so no one without the key can plant a record.
+#[test]
+fn a_door_records_each_retired_signer_and_only_rows_that_verify() {
+    let old = ed_key(240);
+    let (first, second, next) = (ed_key(241), ed_key(242), ed_key(243));
+    let genesis = genesis_entry(240, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let enroll_first = enroll_entry(id, &genesis, &old, 241, 1, 2);
+    let enroll_second = cosign_ed(enroll_entry(id, &enroll_first, &old, 242, 2, 2), &old, &first);
+    let handoff = cosign_ed(re_root_entry(id, &enroll_second, &old, 3, &next), &old, &first);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    put(&vault, &[&genesis, &enroll_first, &enroll_second, &handoff]).unwrap();
+    assert!(is_live(&vault.authority_fold().unwrap(), &next));
+
+    let fenced_peer_row = withdrawal(id, &enroll_second, &second, 1, 3);
+    assert!(put(&vault, &[&fenced_peer_row]).is_err());
+    let mut forged = withdrawal(id, &enroll_second, &old, 4, 4);
+    forged.seq = 5;
+    assert!(put(&vault, &[&forged]).is_err());
+    assert_eq!(
+        vault.authority_handoff_equivocations(),
+        vec![AuthorityHandoffEquivocation {
+            signer: authority_key_from_ed(&second),
+            handoffs: BTreeSet::new(),
+            refused: hash(&fenced_peer_row),
+        }]
+    );
 }

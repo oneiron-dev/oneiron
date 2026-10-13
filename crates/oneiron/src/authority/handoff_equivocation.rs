@@ -6,8 +6,9 @@
 //! the genuine one from a forgery. A replica that settled a forged handoff
 //! first therefore refuses the real one, and this record is how it says so.
 //! Each refusal of a row signed by such a key names the key, the handoffs this
-//! vault holds that it signed, and the refused row. It is evidence for the
-//! owner, never a reason to admit. Records live with the vault handle and go
+//! vault holds that it signed, and the refused row. Only a row whose
+//! signatures verify is recorded, so no one without the key can plant a
+//! record. It is evidence for the owner, never a reason to admit. Records live with the vault handle and go
 //! when it closes; the persisted alarm the owner acknowledges is OF-166.
 
 use std::collections::BTreeSet;
@@ -26,7 +27,8 @@ use super::*;
 pub struct AuthorityHandoffEquivocation {
     /// The retired key that signed the refused row.
     pub signer: AuthorityKey,
-    /// The handoffs this vault holds that `signer` also signed.
+    /// The handoffs this vault holds that `signer` also signed: none when a
+    /// handoff fenced it as another key of its parents' roster.
     pub handoffs: BTreeSet<AuthorityEntryHash>,
     /// The refused row, a sibling handoff or any other row.
     pub refused: AuthorityEntryHash,
@@ -67,8 +69,9 @@ impl HandoffEquivocations {
 
 /// Whether a door refuses `entry` because it stands on a retired key (see
 /// [`AuthorityFold::stands_on_retired_key`]). A refused row that a retired
-/// key signed is recorded first, against the handoffs `fold` holds that the
-/// same key signed. `row` reads a row by hash, stored or arriving beside it.
+/// key signed, with signatures that verify, is recorded first, with the
+/// handoffs `fold` holds that the same key signed. `row` reads a row by hash,
+/// stored or arriving beside it.
 pub(crate) fn door_refuses_retired_standing(
     store: &Store,
     fold: &AuthorityFold,
@@ -79,23 +82,25 @@ pub(crate) fn door_refuses_retired_standing(
     if !fold.stands_on_retired_key(hash, entry, row)? {
         return Ok(false);
     }
+    if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
+        return Ok(true);
+    }
     for signer in entry_signer_keys(entry).filter(|key| fold.retired_keys.contains(*key)) {
         let mut handoffs = BTreeSet::new();
         for held in &fold.closed_handoffs {
-            if row(held)?.is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
+            if row(held)?
+                .is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
             {
                 handoffs.insert(*held);
             }
         }
-        if !handoffs.is_empty() {
-            store
-                .authority_handoff_equivocations
-                .record(AuthorityHandoffEquivocation {
-                    signer: signer.clone(),
-                    handoffs,
-                    refused: *hash,
-                });
-        }
+        store
+            .authority_handoff_equivocations
+            .record(AuthorityHandoffEquivocation {
+                signer: signer.clone(),
+                handoffs,
+                refused: *hash,
+            });
     }
     Ok(true)
 }
