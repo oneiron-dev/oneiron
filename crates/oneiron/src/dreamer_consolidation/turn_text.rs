@@ -229,10 +229,12 @@ pub(super) fn collect_in(
 }
 
 /// The text a consolidation branch reads of one stored TURN, by the same
-/// projection, with every row read unscoped in the caller's transaction:
-/// the projector's material ([`crate::dreamer_wake`]). A branch reads all of
-/// these words or refuses the turn, so no reader sees fewer. `None` when the
-/// TURN is gone or has no text.
+/// projection, in the caller's transaction: the projector's material
+/// ([`crate::dreamer_wake`]). Its MESSAGE rows are read as the Dreamer reads
+/// them, so a private row or a relationship row without the Dreamer's live
+/// grant fails the turn as it fails a branch. A branch reads all of these
+/// words or refuses the turn, so no reader sees fewer. `None` when the TURN
+/// is gone or has no text.
 pub(crate) fn projected_turn_text_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -246,16 +248,27 @@ pub(crate) fn projected_turn_text_in(
     if row.entity_type != ENTITY_TYPE_TURN {
         return Ok(None);
     }
+    let read = dreamer_read(vault)?;
     let text = collect_with(vault, txn, turn, &row.body, &mut 0, |ids| {
-        ids.iter()
-            .map(|id| {
-                Ok(vault
-                    .port_entity_get(txn, id)?
-                    .map(|row| (row.entity_type, row.learned_at, row.body)))
-            })
-            .collect()
+        message_reader(&read)?.get_entities_parts_in_txn(txn, ids)
     })?;
     Ok(text.into_text())
+}
+
+/// Which of `messages` the Dreamer may read in the caller's transaction,
+/// through the gate a branch reads MESSAGE rows by: a private row, or a
+/// relationship row without the Dreamer's live grant, is withheld.
+pub(crate) fn dreamer_may_read_messages_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    messages: &[EntityId],
+) -> Result<Vec<bool>> {
+    let read = dreamer_read(vault)?;
+    Ok(message_reader(&read)?
+        .get_entities_parts_in_txn(txn, messages)?
+        .iter()
+        .map(Option::is_some)
+        .collect())
 }
 
 /// [`collect_in`] over any reader of the MESSAGE rows: `read_rows` returns

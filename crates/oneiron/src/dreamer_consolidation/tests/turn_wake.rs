@@ -896,3 +896,91 @@ fn a_repeat_is_read_again_when_what_it_repeated_is_regenerated() -> Result<()> {
     assert_eq!(micro_rounds(&vault)?, vec![vec![held], vec![back]]);
     Ok(())
 }
+
+/// Astra-1418 (P1): the assistant saying something was held, so the user
+/// then saying it was consumed as a repeat. A user's words are what they
+/// stated and an assistant's are generated (DESIGN-PIN B1): one never
+/// stands in for the other, in either order.
+#[test]
+fn a_user_saying_what_the_assistant_said_is_new_material() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 25, at);
+    let said = "The deadline is Friday.";
+    let generated = seed_turn(&vault, &session, "assistant", said, at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let stated = seed_turn(&vault, &session, "user", said, at + 3);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    complete(&vault, &claim_micro(&vault, at + 4)?, at + 5)?;
+    let again = seed_turn(&vault, &session, "assistant", said, at + 6);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 6)?);
+    assert_eq!(
+        micro_rounds(&vault)?,
+        vec![vec![generated], vec![stated], vec![again]]
+    );
+    Ok(())
+}
+
+/// Astra-1418 (P2): the formatting trim took a number's leading decimal
+/// point, so a tenfold correction read as the held words. Normalisation
+/// never changes a number: a sign, a percent and a leading point stay; a
+/// sentence's closing point does not.
+#[test]
+fn a_changed_number_is_new_material() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let mut at = vault.now_recorded_at();
+    let session = seed_session(&vault, 26, at);
+    for (said, new) in [
+        ("The dose is 5 mg/ml.", true),
+        ("The dose is .5 mg/ml.", true),
+        ("The dose is .5 mg/ml", false),
+        ("The dose is -.5 mg/ml.", true),
+        ("The dose is -.5% mg/ml.", true),
+    ] {
+        seed_turn(&vault, &session, "user", said, at);
+        assert_eq!(
+            vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?,
+            new,
+            "{said}"
+        );
+        if new {
+            complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+        }
+        at += 3;
+    }
+    Ok(())
+}
+
+/// Astra-1418 (P2): the projector read MESSAGE rows unscoped, so a private
+/// turn's words were held and the same words said openly later were
+/// consumed as a repeat of words no branch may read. The rows are read
+/// through the Dreamer's own gate: a withheld one gives no statements.
+#[test]
+fn words_the_dreamer_may_not_read_are_never_held() -> Result<()> {
+    use super::witnessed_turns::{allow_system_rows, message};
+    use crate::memory::WitnessAuthor;
+    let (_dir, vault) = open_vault();
+    let person = EntityId::from_bytes([0x79; 16])?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
+    allow_system_rows(&vault, person)?;
+    let conversation = EntityId::from_bytes([0x7a; 16])?;
+    let said = "The deadline is Friday.";
+    let private = crate::memory::WitnessMessage {
+        metadata: Some(serde_json::json!({"scope": {"private": true}})),
+        ..message(0, WitnessAuthor::User, said, true)
+    };
+    let hidden = witness_into(&vault, person, conversation, vec![private]);
+    let at = vault.now_recorded_at();
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    let open = witness_into(
+        &vault,
+        person,
+        conversation,
+        vec![message(0, WitnessAuthor::User, said, true)],
+    );
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![hidden], vec![open]]);
+    Ok(())
+}

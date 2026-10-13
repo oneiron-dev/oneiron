@@ -134,6 +134,9 @@ side_tables! {
     DREAMER_SIEVE_QUEUE: VaultMeta b"dreamer:sieve:queue:v1:" Named;
     /// What the sieve last read of one TURN and the queue keys of its spans. Key: id16(turn).
     DREAMER_SIEVE_TURN: VaultMeta b"dreamer:sieve:turn:v1:" Named;
+    /// A TURN the sieve read with a MESSAGE the Dreamer may not read, owed again when a grant is
+    /// written. Key: id16(turn).
+    DREAMER_SIEVE_WITHHELD: VaultMeta b"dreamer:sieve:withheld:v1:" Raw;
     /// Dreamer step index rows, plus the 'i:' sub-index. Key: bytes.
     DREAMER_STEP_INDEX: VaultMeta b"dreamer:step_index:v1:" Raw;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:

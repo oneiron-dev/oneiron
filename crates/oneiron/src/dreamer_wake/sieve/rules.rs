@@ -165,11 +165,11 @@ impl Rules {
         }
     }
 
-    /// Every date and name span of `text`, in text order, none overlapping.
-    pub(super) fn spans(&self, text: &str) -> Vec<RuleSpan> {
-        let code = code_ranges(text);
-        let outside =
-            |start: usize, end: usize| !code.iter().any(|&(from, to)| start < to && from < end);
+    /// Every date and name span of `text`, in text order, none overlapping,
+    /// and none inside `code` (its code ranges, in order). Each list is
+    /// filtered against the next in one ordered sweep, so a flood of spans
+    /// costs its length, not its square.
+    pub(super) fn spans(&self, text: &str, code: &[(usize, usize)]) -> Vec<RuleSpan> {
         let mut dates: Vec<RuleSpan> = self
             .dates
             .iter()
@@ -193,19 +193,13 @@ impl Rules {
                         },
                     }),
             )
-            .filter(|span| outside(span.start, span.end))
             .collect();
-        let mut spans = longest_first(&mut dates);
-        let names: Vec<_> = name_spans(text)
-            .into_iter()
-            .filter(|name| {
-                outside(name.start, name.end)
-                    && !spans
-                        .iter()
-                        .any(|date| name.start < date.end && date.start < name.end)
-            })
-            .collect();
-        spans.extend(names);
+        dates.sort_by_key(|span| (span.start, std::cmp::Reverse(span.end)));
+        let mut spans = longest_first(&mut clear_of(dates, code));
+        let held: Vec<_> = spans.iter().map(|date| (date.start, date.end)).collect();
+        let mut names = name_spans(text);
+        names.sort_by_key(|span| (span.start, span.end));
+        spans.extend(clear_of(clear_of(names, code), &held));
         spans.sort_by_key(|span| (span.start, span.end));
         spans
     }
@@ -224,8 +218,23 @@ fn longest_first(spans: &mut [RuleSpan]) -> Vec<RuleSpan> {
     kept
 }
 
-/// The byte ranges of fenced code blocks and inline code spans.
-fn code_ranges(text: &str) -> Vec<(usize, usize)> {
+/// The spans, sorted by start, that overlap none of `blocks` (sorted and
+/// disjoint), in one pass over both.
+fn clear_of(spans: Vec<RuleSpan>, blocks: &[(usize, usize)]) -> Vec<RuleSpan> {
+    let mut next = 0;
+    spans
+        .into_iter()
+        .filter(|span| {
+            while blocks.get(next).is_some_and(|&(_, end)| end <= span.start) {
+                next += 1;
+            }
+            blocks.get(next).is_none_or(|&(start, _)| span.end <= start)
+        })
+        .collect()
+}
+
+/// The byte ranges of fenced code blocks and inline code spans, in order.
+pub(super) fn code_ranges(text: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut fence: Option<usize> = None;
     let mut offset = 0;

@@ -366,11 +366,15 @@ pub(super) fn apply_ops_with_origin(
                 put_options.decision.preflight = preflight_decision_id;
                 // A TURN or MESSAGE written again may change its words under a
                 // temporal key the sieve has passed: its turn is owed a new
-                // sieve read in this commit. A new row is read where it lands.
-                let rewritten = matches!(
+                // sieve read in this commit. A new TURN is owed its first
+                // read, whatever time it claims; a MESSAGE joins one through
+                // the witness door's re-dirty.
+                let text_row = matches!(
                     entity_type,
                     crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
-                ) && stored_entity_type(store, wtxn, &id)?.is_some();
+                );
+                let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
+                let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
                 let applied = apply_put(
                     store,
                     wtxn,
@@ -399,6 +403,11 @@ pub(super) fn apply_ops_with_origin(
                 consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if rewritten {
                     crate::dreamer_wake::mark_on_publication_in_txn(store, wtxn, &id)?;
+                } else if born_turn {
+                    crate::dreamer_wake::owe_sieve_read_in_txn(store, wtxn, &id)?;
+                } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
+                    // A grant may let the Dreamer read words the sieve left.
+                    crate::dreamer_wake::sieve_grant_written_in_txn(store, wtxn)?;
                 }
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(

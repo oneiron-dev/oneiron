@@ -5,7 +5,11 @@
 //! statements, read from the text a consolidation branch reads of it (the
 //! turn's own author bucket, final words only): each sentence's whitespace
 //! tokens, lowercased, with formatting punctuation trimmed from their edges,
-//! as a BLAKE3 digest. Signs, currency and units stay in their tokens. A
+//! as a BLAKE3 digest. Normalisation never changes a number: signs,
+//! currency, units, percent and a leading decimal point stay in their
+//! tokens. Each digest carries the turn's evidence class (DESIGN-PIN B1: a
+//! user's words are what they stated, an assistant's are generated), so the
+//! assistant saying something never stands in for the user saying it. A
 //! paraphrase is new material here; only the same words are held. A
 //! model-backed comparison against the claims replaces the digest later.
 //!
@@ -49,12 +53,13 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptRecord;
+use crate::claim::ClaimSource;
 use crate::dreamer_consolidation::redirty::requeue_turn_in_txn;
 use crate::dreamer_consolidation::{
     ConsolidationPartitionKey, ConsolidationWatermark, WorkingSetTurn, decode_partition_payload,
-    partition_turns_in_txn, projected_turn_text_in,
+    decode_turn_body, partition_turns_in_txn, projected_turn_text_in, turn_trust_class,
 };
-use crate::dreamer_runner::EnqueueDreamerAttemptOutcome;
+use crate::dreamer_runner::{EnqueueDreamerAttemptOutcome, dreamer_turn_role};
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
@@ -578,18 +583,42 @@ fn turn_key_in_txn(
         .map(|row| (row.learned_at, *turn)))
 }
 
-/// A turn's statements, from the words a branch reads of it. `None` when a
-/// branch would refuse those words (a changed binding, a mixed bucket).
+/// A turn's statements, from the words a branch reads of it, in its
+/// evidence class. `None` when a branch would refuse those words (a changed
+/// binding, a mixed bucket, a MESSAGE the Dreamer may not read).
 fn turn_statements_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<BTreeSet<[u8; 32]>>> {
-    match projected_turn_text_in(vault, txn, turn) {
-        Ok(text) => Ok(Some(text.as_deref().map(statements).unwrap_or_default())),
-        Err(Error::InvalidClaimBody(_)) => Ok(None),
-        Err(error) => Err(error),
-    }
+    let text = match projected_turn_text_in(vault, txn, turn) {
+        Ok(text) => text,
+        Err(Error::InvalidClaimBody(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Some(text) = text else {
+        return Ok(Some(BTreeSet::new()));
+    };
+    let class = turn_class_in_txn(vault, txn, turn)?;
+    Ok(Some(statements(&text, class)))
+}
+
+/// The trust class a turn's words carry as consolidation evidence: the
+/// mapping a branch applies, `None` for a role it never classifies.
+fn turn_class_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<ClaimSource>> {
+    let Some(row) = vault.store.port_entity_record(txn, turn)? else {
+        return Ok(None);
+    };
+    let facts = decode_turn_body(&row.body);
+    let role = dreamer_turn_role(
+        facts.speaker.as_deref(),
+        &vault.config.assistant_display_names,
+    );
+    Ok(turn_trust_class(role, facts.imported))
 }
 
 /// The version of one turn's statements.
@@ -613,7 +642,8 @@ fn round_id(kind: &str, dedupe_key: &str) -> [u8; 32] {
 }
 
 /// Punctuation that only formats a token: trimmed from its edges. A sign,
-/// a currency symbol or a unit is part of what the token says.
+/// a currency symbol, a unit or a percent is part of what the token says,
+/// and so is a number's leading `.` or `,` before a digit.
 const FORMATTING: &[char] = &[
     '"', '\'', '“', '”', '‘', '’', '«', '»', '「', '」', '『', '』', '.', ',', '!', '?', ':', ';',
     '(', ')', '[', ']', '*', '_', '`', '…', '、', '。', '！', '？',
@@ -621,10 +651,11 @@ const FORMATTING: &[char] = &[
 /// Tokens that only mark a list item or a quote where a sentence starts.
 const BULLETS: &[&str] = &["-", "–", "—", "•", "·", ">", "+"];
 
-/// The statement digests of a text: one per sentence with words in it. A
-/// sentence ends at a line break, a CJK full stop, or `.`, `!` or `?`
-/// before whitespace or the end, so a decimal point never splits one.
-fn statements(text: &str) -> BTreeSet<[u8; 32]> {
+/// The statement digests of a text said in `class`: one per sentence with
+/// words in it. A sentence ends at a line break, a CJK full stop, or `.`,
+/// `!` or `?` before whitespace or the end, so a decimal point never splits
+/// one.
+fn statements(text: &str, class: Option<ClaimSource>) -> BTreeSet<[u8; 32]> {
     let mut out = BTreeSet::new();
     let mut start = 0;
     let mut chars = text.char_indices().peekable();
@@ -635,26 +666,49 @@ fn statements(text: &str) -> BTreeSet<[u8; 32]> {
             _ => false,
         };
         if ends {
-            out.extend(statement(&text[start..at]));
+            out.extend(statement(&text[start..at], class));
             start = at + ch.len_utf8();
         }
     }
-    out.extend(statement(&text[start..]));
+    out.extend(statement(&text[start..], class));
     out
 }
 
-fn statement(sentence: &str) -> Option<[u8; 32]> {
+fn statement(sentence: &str, class: Option<ClaimSource>) -> Option<[u8; 32]> {
     let tokens: Vec<String> = sentence
         .split_whitespace()
         .skip_while(|token| BULLETS.contains(token))
-        .map(|token| token.trim_matches(FORMATTING).to_lowercase())
+        .map(|token| trim_token(token).to_lowercase())
         .filter(|token| !token.is_empty())
         .collect();
     if tokens.is_empty() {
         return None;
     }
+    let class = class.map_or("", ClaimSource::as_str);
     let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:dreamer-projector:statement:v2");
+    hash.update(b"oneiron:dreamer-projector:statement:v3");
+    hash.update(&(class.len() as u64).to_be_bytes());
+    hash.update(class.as_bytes());
     hash.update(tokens.join(" ").as_bytes());
     Some(*hash.finalize().as_bytes())
+}
+
+/// A token without its formatting punctuation. A token with a digit keeps
+/// a leading `.` or `,` that opens a number: `.5` is not `5`.
+fn trim_token(token: &str) -> &str {
+    let token = token.trim_end_matches(FORMATTING);
+    if !token.chars().any(|ch| ch.is_ascii_digit()) {
+        return token.trim_start_matches(FORMATTING);
+    }
+    let mut rest = token;
+    while let Some(first) = rest.chars().next() {
+        let after = &rest[first.len_utf8()..];
+        let opens_number =
+            matches!(first, '.' | ',') && after.starts_with(|ch: char| ch.is_ascii_digit());
+        if !FORMATTING.contains(&first) || opens_number {
+            break;
+        }
+        rest = after;
+    }
+    rest
 }

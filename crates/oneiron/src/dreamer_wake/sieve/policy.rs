@@ -26,6 +26,10 @@ pub struct SievePolicy {
     /// Timeline rows one pass's forward scan steps over looking for turns.
     /// The late sweep of the cursor's own second is not capped by it.
     pub max_scan_per_pass: u32,
+    /// Bytes of turn text one pass reads for spans. A turn with more stops
+    /// at a line, sentence or word end and keeps its place; the next pass
+    /// reads on from there, so nothing past the bound is dropped.
+    pub max_text_bytes_per_pass: u32,
     /// Interest of a date span at full confidence.
     pub date_interest: u32,
     /// Interest of a name span at full confidence.
@@ -55,6 +59,7 @@ impl SievePolicy {
             self.uncertain_high,
         ];
         if self.max_turns_per_pass == 0
+            || self.max_text_bytes_per_pass == 0
             || self.max_scan_per_pass < self.max_turns_per_pass
             || confidences.iter().any(|value| *value > 100)
             || self.uncertain_low > self.uncertain_high

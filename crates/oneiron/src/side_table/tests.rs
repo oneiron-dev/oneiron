@@ -405,6 +405,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DREAMER_SIEVE_POLICY",
         "DREAMER_SIEVE_QUEUE",
         "DREAMER_SIEVE_TURN",
+        "DREAMER_SIEVE_WITHHELD",
         "DREAMER_TURN_REDIRTY",
         "DREAMER_WAKE_POLICY",
         "DREAMER_WAKE_PROJECTION",
