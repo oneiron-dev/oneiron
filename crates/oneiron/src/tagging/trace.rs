@@ -24,6 +24,9 @@ pub struct TaggingTrace {
     pub turn: Option<EntityId>,
     /// The checkpoint the marker was committed for.
     pub checkpoint: String,
+    /// The stack pinned beside it, when the marker was committed with one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
     /// The serving model's id, when the tagger was called.
     pub model: Option<String>,
     /// The input digest, when the turn had text to read.
@@ -51,6 +54,18 @@ pub enum TaggingOutcome {
         linked: usize,
         /// Provisional entities the save minted.
         minted: usize,
+        #[serde(default)]
+        context_links: usize,
+        #[serde(default)]
+        speaker_links: usize,
+        /// Context links whose earlier span the vault holds no save of (not
+        /// tagged yet, tagged under another tagger, or erased): each keeps
+        /// no antecedent.
+        #[serde(default)]
+        unresolved_context_links: usize,
+        /// Speaker links that name no one person: each is kept unresolved.
+        #[serde(default)]
+        unresolved_speaker_links: usize,
     },
     /// The answer passed every check and the marker completed. In shadow
     /// nothing else is written.
@@ -60,6 +75,10 @@ pub enum TaggingOutcome {
         mood: bool,
         /// Spans whose label the label table maps to an entity kind.
         mapped_spans: usize,
+        #[serde(default)]
+        context_links: usize,
+        #[serde(default)]
+        speaker_links: usize,
     },
     /// An importer completed the marker with tags it already held.
     Imported {

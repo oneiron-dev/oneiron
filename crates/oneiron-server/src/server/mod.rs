@@ -14,6 +14,7 @@ pub(crate) use self::core::BroadcastPayload;
 pub use self::core::SyncServer;
 pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub use self::oversight::OversightStartError;
+pub(crate) use self::windows::withheld_from_peers;
 
 #[cfg(test)]
 mod slip_transport_tests;

@@ -572,6 +572,44 @@ pub(crate) fn owner_note_admission(
     Ok(())
 }
 
+/// Whether an outgoing document frame carries text a device-only world now
+/// keeps here, judged as it is released: the flags are read and the frame
+/// accepted under the vault's device-only acceptance lock. Every frame that
+/// can carry text is judged, a NOTE's state, update, command and receipt
+/// included: NOTE authority is a further check, never an exemption. Requests
+/// and acks carry version vectors only. A frame that cannot be judged stays.
+pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
+    if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
+        return false;
+    }
+    let Ok(document) = crate::sync::transport::decode_document(&frame[1..]) else {
+        return false;
+    };
+    if matches!(
+        document.kind,
+        document_sub_tags::REQUEST | document_sub_tags::ACK
+    ) {
+        return false;
+    }
+    (|| -> Result<bool> {
+        let _accepting = vault.device_only_acceptance();
+        let rtxn = vault.store.env.read_txn()?;
+        text_withheld(vault, &rtxn, document.entity)
+    })()
+    .unwrap_or(true)
+}
+
+/// Whether a device-only world keeps `id`'s text on this device. Its local
+/// edits stay journaled, unsent, until the flag clears.
+pub(crate) fn text_withheld(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
+    crate::settings::device_only_withholds(
+        &vault.store,
+        txn,
+        &crate::settings::device_only_worlds_in(&vault.store, txn)?,
+        &id,
+    )
+}
+
 fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {
     matches!(
         peer.partial_cmp(floor),
