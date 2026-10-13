@@ -2,6 +2,7 @@
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::export::write_door_refuses_body;
+use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::builder::PipelineBuilder;
@@ -10,12 +11,12 @@ use crate::pipeline::trace::retrieval_trace_top_scores;
 use crate::pipeline::types::{
     ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity, TurnFold,
 };
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankCandidate;
 use crate::store::{RetrievalScoreComponent, RetrievalSignal};
 use crate::vault::entity_revision::TurnText;
 use crate::vault::{ReadMode, RevisionRef};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// The read-only faces the rerank ladder draws on.
 #[derive(Clone, Copy)]
@@ -42,25 +43,32 @@ pub(super) struct RerankApplied {
     /// The run serves those rows at these, so a TURN shows the words its
     /// score is for, not those its messages hold by the time it is read.
     pub(super) words_revisions: HashMap<EntityId, RevisionRef>,
-    /// For a reranker that binds words, each TURN of the block, or that a
-    /// scored MESSAGE folds into, whose messages showed no words to pin: the
-    /// run does not serve it under scores its later words were not given.
-    pub(super) unpinned_turns: HashSet<EntityId>,
 }
 
 /// What a binding reranker's candidate is bound to (see [`RerankCandidate`]).
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct BoundWords {
     revision: Option<RevisionRef>,
     turn: Option<(EntityId, RevisionRef)>,
-    /// The TURN the candidate is served as, when it holds no words to pin.
-    unpinned: Option<EntityId>,
-    /// A MESSAGE whose row does not hold the words it is served with (its
-    /// text moved into its entity document, or the row has no revision to
-    /// read), or a row with words the write door refuses (stored while the
-    /// owner's secret scan was off), which no model is sent. The run does
-    /// not rerank it.
+    /// A CLAIM's body as its pinned row holds it: the bytes the write door
+    /// judged and the run serves, not the gate's live body.
+    claim: Option<ClaimBody>,
+    /// A row with no revision that holds its words: a MESSAGE whose text
+    /// moved into its entity document, a TURN whose messages show none, a
+    /// MESSAGE that folds into such a TURN, or a row with no revision at all;
+    /// or a row with words the write door refuses (stored while the owner's
+    /// secret scan was off). Its words would be read later, at whatever they
+    /// had become, so no model is sent them. The run does not rerank it.
     unscored: bool,
+}
+
+impl BoundWords {
+    const UNSCORED: Self = Self {
+        revision: None,
+        turn: None,
+        claim: None,
+        unscored: true,
+    };
 }
 
 impl PipelineBuilder<'_> {
@@ -95,7 +103,6 @@ impl PipelineBuilder<'_> {
         let mut rerank_merged_components = None;
         let mut reranked_trace_scores = None;
         let mut words_revisions = HashMap::new();
-        let mut unpinned_turns = HashSet::new();
         // Empty block: reranking zero candidates is a semantic no-op —
         // never invoke the host impl, so an otherwise-empty retrieval
         // cannot fail on reranker behavior and no needless work happens
@@ -149,18 +156,26 @@ impl PipelineBuilder<'_> {
             ladder.sort_unstable_by(|left, right| right.total_cmp(left));
             let mut candidates: Vec<RerankCandidate<'_>> = Vec::with_capacity(block_len);
             for (index, scored) in scores[..block_len].iter().enumerate() {
-                let words = bound.get(index).copied().unwrap_or_default();
-                unpinned_turns.extend(words.unpinned);
+                // A binding reranker reads a claim at its pin; any other the
+                // gate's body.
+                let (claim, revision, turn) = match bound.get(index) {
+                    Some(words) => (words.claim.as_ref(), words.revision, words.turn),
+                    None => (
+                        claim_gate
+                            .decisions
+                            .get(&scored.id)
+                            .and_then(|decision| decision.as_ref()),
+                        None,
+                        None,
+                    ),
+                };
                 candidates.push(RerankCandidate {
                     id: scored.id,
                     score: scored.score,
                     rank: (index + 1).min(u32::MAX as usize) as u32,
-                    claim: claim_gate
-                        .decisions
-                        .get(&scored.id)
-                        .and_then(|decision| decision.as_ref()),
-                    revision: words.revision,
-                    turn: words.turn,
+                    claim,
+                    revision,
+                    turn,
                 });
             }
             let rerank_scores = reranker.rerank(query, &candidates)?;
@@ -239,16 +254,15 @@ impl PipelineBuilder<'_> {
             merged_components: rerank_merged_components,
             reranked_trace_scores,
             words_revisions,
-            unpinned_turns,
         })
     }
 
     /// The revision of the words `id` holds in this transaction (see
-    /// [`RerankCandidate::revision`]) and, for a MESSAGE the run folds into a
-    /// TURN it admits, that TURN's (see [`RerankCandidate::turn`]). A TURN
-    /// whose messages show no words has no text revision to pin them by. A
-    /// MESSAGE whose row does not hold its words is not reranked, nor is a
-    /// row with words the write door refuses.
+    /// [`RerankCandidate::revision`]), a claim's body at it, and, for a
+    /// MESSAGE the run folds into a TURN it admits, that TURN's (see
+    /// [`RerankCandidate::turn`]). A row with no revision that holds its
+    /// words is not reranked, nor is a row with words the write door refuses
+    /// (see [`BoundWords::unscored`]).
     fn bound_words(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -262,23 +276,19 @@ impl PipelineBuilder<'_> {
             .map(|meta| meta.entity_type);
         if kind == Some(ENTITY_TYPE_TURN) {
             let text = self.turn_text(rtxn, id)?;
-            // Words the write door refuses are sent to no model.
-            if text.as_ref().is_some_and(|text| {
-                text.messages
+            // Words the write door refuses are sent to no model, nor are
+            // words a TURN with none to pin may hold by the time they are read.
+            let Some(text) = text.filter(|text| {
+                !text
+                    .messages
                     .iter()
                     .any(|(_, words)| write_door_refuses_body(words.as_bytes()))
-            }) {
-                return Ok(BoundWords {
-                    unscored: true,
-                    ..BoundWords::default()
-                });
-            }
-            let revision = text.map(|text| text.revision);
+            }) else {
+                return Ok(BoundWords::UNSCORED);
+            };
             return Ok(BoundWords {
-                revision,
-                turn: None,
-                unpinned: revision.is_none().then_some(*id),
-                unscored: false,
+                revision: Some(text.revision),
+                ..BoundWords::default()
             });
         }
         let revision = match self.vault.indexed_revision_in_txn(rtxn, id) {
@@ -290,27 +300,39 @@ impl PipelineBuilder<'_> {
         // document, which its row revision does not pin; a build without
         // `sync` reads no document, but still sees that it has one. A row the
         // write door refuses is sent to no model.
-        let message_without_words = kind == Some(ENTITY_TYPE_MESSAGE)
-            && (revision.is_none()
-                || crate::vault::entity_revision::message_has_document_in_txn(
-                    self.vault, rtxn, id,
-                )?);
-        if message_without_words
-            || crate::vault::entity_revision::read_entity_revision_in_txn(
-                self.vault,
-                rtxn,
-                id,
-                ReadMode::Indexed,
-            )?
-            .is_some_and(|raw| write_door_refuses_body(&raw[ENTITY_METADATA_HEADER_LEN..]))
+        let Some(revision) = revision else {
+            return Ok(BoundWords::UNSCORED);
+        };
+        if kind == Some(ENTITY_TYPE_MESSAGE)
+            && crate::vault::entity_revision::message_has_document_in_txn(self.vault, rtxn, id)?
         {
-            return Ok(BoundWords {
-                unscored: true,
-                ..BoundWords::default()
-            });
+            return Ok(BoundWords::UNSCORED);
         }
+        let indexed = crate::vault::entity_revision::read_entity_revision_in_txn(
+            self.vault,
+            rtxn,
+            id,
+            ReadMode::Indexed,
+        )?;
+        let body = indexed
+            .as_deref()
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..));
+        if body.is_some_and(write_door_refuses_body) {
+            return Ok(BoundWords::UNSCORED);
+        }
+        // A claim is scored at the body its pin holds (Sol R31 F1); one that
+        // does not decode there is not reranked.
+        let claim = if kind == Some(ENTITY_TYPE_CLAIM) {
+            match body.and_then(|body| crate::claim::decode_claim_body(body, true).ok()) {
+                Some(claim) => Some(claim),
+                None => return Ok(BoundWords::UNSCORED),
+            }
+        } else {
+            None
+        };
         let mut words = BoundWords {
-            revision,
+            revision: Some(revision),
+            claim,
             ..BoundWords::default()
         };
         if kind != Some(ENTITY_TYPE_MESSAGE) || self.turn_fold == TurnFold::Off {
@@ -334,7 +356,7 @@ impl PipelineBuilder<'_> {
         }
         match self.turn_text(rtxn, &turn)?.map(|text| text.revision) {
             Some(revision) => words.turn = Some((turn, revision)),
-            None => words.unpinned = Some(turn),
+            None => return Ok(BoundWords::UNSCORED),
         }
         Ok(words)
     }

@@ -4,8 +4,17 @@
 //! admitted on a one-use permit, sent through the run's gate and settled, an
 //! answer at its usage and a call that went out and failed at its
 //! reservation. Nothing a request carries picks the model, its endpoint or
-//! the lease: the door holds them.
-use std::sync::Arc;
+//! the lease: the door holds them. The words a call sends are known before
+//! it leaves, so it is priced on them first ([`payload_units`]), and a line
+//! that cannot cover them refuses the call unsent.
+//!
+//! A call is driven on its caller's runtime when that runtime is
+//! multi-thread. A synchronous door holds its caller's thread until the
+//! recall answers, and a current-thread runtime has no other thread to drive
+//! the call on (outside a runtime there is none at all), so there the call
+//! runs on the server's own [`CallRuntime`]. Every door of such a host takes
+//! it, so no pooled connection belongs to a thread that is waiting.
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use oneiron::llm::BudgetDenied;
@@ -16,8 +25,8 @@ use oneiron::memory::{
     RecallRerank, RecallRerankHost, RerankDocument, RerankScores,
 };
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetLease, EdgeActorClass, EntityId, LlmError, ModelLocality, Vault,
-    WriteActor,
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EdgeActorClass, EntityId, LlmError,
+    ModelLocality, Vault, WriteActor,
 };
 use rand_core::RngCore;
 
@@ -50,6 +59,8 @@ pub(super) struct ServedRerank {
     vault: Arc<Vault>,
     ai: AiHandle,
     run: RunAdmission,
+    /// The recall's line, which `run` admits and settles every call on.
+    meter: BudgetGuard,
     /// The line's word that it admitted this recall. Every rerank call is
     /// admitted and settled on the same line on its own permit, so this
     /// lease holds no reservation.
@@ -84,8 +95,12 @@ impl SyncServer {
             }
             return Ok(DoorRerank::Unavailable);
         }
-        let runtime = tokio::runtime::Handle::try_current()
-            .map_err(|_| unavailable("this door has no runtime to call the reranker on"))?;
+        let runtime = match tokio::runtime::Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                handle
+            }
+            _ => self.rerank_runtime.handle()?,
+        };
         let run_id = format!("recall-rerank:{:016x}", rand_core::OsRng.next_u64());
         let units = self.ai.rerank_budget_units();
         let meter = self.vault.policy_budget_guard(
@@ -105,7 +120,8 @@ impl SyncServer {
         Ok(DoorRerank::Served(ServedRerank {
             vault: Arc::clone(&self.vault),
             ai: self.ai.clone(),
-            run: self.ai.undeclared_run(run_id, meter),
+            run: self.ai.undeclared_run(run_id, meter.clone()),
+            meter,
             lease,
             runtime,
         }))
@@ -124,6 +140,9 @@ impl RecallRerankHost for ServedRerank {
         answer_at: Option<Instant>,
     ) -> MemoryResult<RerankScores> {
         let texts: Vec<&str> = documents.iter().map(|document| document.text).collect();
+        if payload_units(query, &texts) > self.meter.read().remaining_units {
+            return Err(spent(BudgetDenied::Exhausted));
+        }
         // The vault's model policy places the call: its manifest's binding
         // for the role when it has one, the role's seat otherwise.
         let call = self
@@ -162,6 +181,51 @@ impl RecallRerankHost for ServedRerank {
             model,
             served_model: named("reported_model").map(str::to_owned),
         })
+    }
+}
+
+/// The most a rerank call that sends `query` and `documents` can bill, in
+/// the line's unit (tokens): a token per byte at most, the query counted once
+/// beside each document, as a cross-encoder reads each pair.
+fn payload_units(query: &str, documents: &[&str]) -> u64 {
+    let pairs = documents
+        .iter()
+        .map(|document| query.len().saturating_add(document.len()))
+        .fold(0_usize, usize::saturating_add);
+    u64::try_from(pairs).unwrap_or(u64::MAX)
+}
+
+/// The server's runtime for rerank calls its doors cannot drive on their
+/// caller's (see the module doc): one worker, built on first use, dropped
+/// without waiting for a call still out.
+#[derive(Default)]
+pub(crate) struct CallRuntime(Mutex<Option<tokio::runtime::Runtime>>);
+
+impl CallRuntime {
+    fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
+        let not_started =
+            || unavailable("the server could not start a runtime to call the reranker on");
+        let mut slot = self.0.lock().map_err(|_| not_started())?;
+        if let Some(runtime) = slot.as_ref() {
+            return Ok(runtime.handle().clone());
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .thread_name("oneiron-rerank")
+            .enable_all()
+            .build()
+            .map_err(|_| not_started())?;
+        Ok(slot.insert(runtime).handle().clone())
+    }
+}
+
+impl Drop for CallRuntime {
+    fn drop(&mut self) {
+        // A server may drop on a runtime worker, where a blocking shutdown
+        // would panic.
+        if let Some(runtime) = self.0.get_mut().ok().and_then(Option::take) {
+            runtime.shutdown_background();
+        }
     }
 }
 

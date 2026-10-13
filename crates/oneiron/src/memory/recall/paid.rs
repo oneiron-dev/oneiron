@@ -7,12 +7,15 @@
 //! it would rerank: the admitted top-N candidates with their scores, ranks and
 //! claim bodies, and the revision each was read at, the one its item is
 //! served at (a MESSAGE recall returns as its TURN keeps that TURN's too).
-//! A MESSAGE whose words live in its entity document (a streamed or edited
-//! one) has no row revision that holds them, so it is not reranked: it
-//! follows the reranked rows in its first-stage order.
+//! A row with no revision that holds its words (a MESSAGE whose words live
+//! in its entity document, a TURN whose messages show none) is not
+//! reranked: it follows the reranked rows in its first-stage order.
 //! Each candidate's text is then read at that revision through the
 //! reader's own scoped read, a claim's too, so nothing the reader may no
-//! longer read leaves. The host scores those texts outside every
+//! longer read leaves, and the exact text that would leave is judged by the
+//! write door once more: a TURN's messages can pass one by one and refuse
+//! together. A block none of whose texts holds a word makes no call. The
+//! host scores those texts outside every
 //! transaction, under its own admission and lease. The second pass runs with
 //! the scores as a prepared reranker, which applies them, in its own
 //! transaction and before it serves or records anything, only to the same
@@ -26,6 +29,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use super::{Effort, MemoryPack, RecallScope};
+use crate::batch::export::write_door_refuses_body;
 use crate::claim::{ClaimBody, ClaimReadStatus};
 use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
@@ -41,6 +45,9 @@ use crate::task_verb::sdk::{RecallDoor, RecallRequest};
 /// How many times a door scores a block that changed while it was scored
 /// before it refuses the recall.
 const RERANK_CALLS: u32 = 2;
+
+/// The longest model name a pack repeats from the endpoint that answered.
+const SERVED_MODEL_MAX_LEN: usize = 200;
 
 #[cfg(test)]
 thread_local! {
@@ -317,6 +324,29 @@ impl Memory<'_> {
                 (Err(error), None) => return Err(error),
             };
             let texts = self.rerank_documents(scope, &block)?;
+            if texts.iter().all(String::is_empty) {
+                let mut pack = self.recall_with_execution(
+                    &input.query,
+                    effort,
+                    scope,
+                    limit,
+                    format,
+                    Some(host.lease()),
+                    &RecallExecution {
+                        deadline: deadline.as_ref(),
+                        embedding,
+                        as_of: Some(as_of),
+                        on_cut: cut_first
+                            .as_ref()
+                            .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),
+                        door_fallback: fallback,
+                        rerank_unavailable: true,
+                        ..Default::default()
+                    },
+                )?;
+                pack.retrieval_meta.rerank = Some(unreranked(&pack));
+                return Ok(pack);
+            }
             let documents: Vec<RerankDocument<'_>> = block
                 .iter()
                 .zip(&texts)
@@ -330,7 +360,10 @@ impl Memory<'_> {
                 &documents,
                 deadline.as_ref().map(RetrievalDeadline::answer_at),
             ) {
-                Ok(scored) => scored,
+                Ok(scored) => RerankScores {
+                    served_model: scored.served_model.filter(|name| reported_model(name)),
+                    ..scored
+                },
                 Err(error) => match answered(deadline.as_ref()) {
                     Some(fallback) => return Ok(fallback.clone()),
                     None => return Err(error),
@@ -425,8 +458,9 @@ impl Memory<'_> {
     /// Each block candidate's text as this reader's recall shows it, clipped
     /// as its item is, read now through the reader's own scoped read at the
     /// revision the block holds it at: a claim as its predicate and redacted
-    /// value, any other row as its words. A row that read no longer admits is
-    /// sent empty, and scores last; nothing it holds leaves.
+    /// value, any other row as its words. A row that read no longer admits,
+    /// or with no revision to read it at, is sent empty and scores last, as
+    /// is a text the write door refuses whole; nothing it holds leaves.
     fn rerank_documents(
         &self,
         scope: &RecallScope,
@@ -439,21 +473,37 @@ impl Memory<'_> {
         let mut receipt = lane.read_receipt(None, 0)?;
         let mut texts = Vec::with_capacity(block.len());
         for candidate in block {
-            let mode = candidate.revision.map_or(
-                crate::vault::ReadMode::Indexed,
-                crate::vault::ReadMode::Pinned,
-            );
+            // The block sets a row with no pin aside before it is taken; its
+            // words, read now, would be whatever they had become.
+            let Some(revision) = candidate.revision else {
+                texts.push(String::new());
+                continue;
+            };
+            let mode = crate::vault::ReadMode::Pinned(revision);
             let item =
                 match self.memory_item_for(&lane, &candidate.id, None, mode, &[], &mut receipt) {
                     Ok(item) => item,
                     Err(error) if error.code == MEMORY_CODE_NOT_FOUND => None,
                     Err(error) => return Err(error),
                 };
-            texts.push(item.map_or_else(String::new, |item| match item.predicate {
+            let text = item.map_or_else(String::new, |item| match item.predicate {
                 Some(predicate) => format!("{predicate}: {}", item.value_text),
                 None => item.value_text,
-            }));
+            });
+            texts.push(if write_door_refuses_body(text.as_bytes()) {
+                String::new()
+            } else {
+                text
+            });
         }
         Ok(texts)
     }
+}
+
+/// Whether an endpoint's name for the model that answered is one a pack
+/// repeats: printable ASCII with no spaces, at most [`SERVED_MODEL_MAX_LEN`]
+/// bytes. Anything else is dropped, as though it named none.
+fn reported_model(name: &str) -> bool {
+    (1..=SERVED_MODEL_MAX_LEN).contains(&name.len())
+        && name.bytes().all(|byte| byte.is_ascii_graphic())
 }

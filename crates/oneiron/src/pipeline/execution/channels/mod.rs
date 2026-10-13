@@ -23,7 +23,7 @@ use super::super::blend::{
 use super::super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::super::builder::PipelineBuilder;
 use super::super::capabilities::{memory_candidate_count, partition_capabilities};
-use super::super::channels::execute_phonetic;
+use super::super::channels::{execute_phonetic, fusion_fetch_limit};
 use super::super::corpus_filter::CorpusFilter;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
 use super::super::trace::{
@@ -164,6 +164,7 @@ impl PipelineBuilder<'_> {
             } = self.scoped_channel_admission(rtxn, authority_filter)?;
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
+            let mut phonetic_channel_index = None;
             let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
@@ -216,13 +217,14 @@ impl PipelineBuilder<'_> {
             if let Some((query_vector, limit)) = &self.vector_search
                 && let Some(vector_results) =
                     self.run_stage(RetrievalSignal::Vector, stages.next(), || {
+                        let limit = fusion_fetch_limit(*limit);
                         self.scoped_vector_results(
                             rtxn,
                             query_vector,
                             if overrides.widen_channel_limits {
-                                retry_channel_limit(*limit)
+                                retry_channel_limit(limit)
                             } else {
-                                *limit
+                                limit
                             },
                             filter_config,
                             &mut metadata_cache,
@@ -244,12 +246,13 @@ impl PipelineBuilder<'_> {
             if let Some(expansion) = hyde_expansion.as_ref()
                 && let Some(hyde_results) =
                     self.run_stage(RetrievalSignal::Hyde, stages.next(), || {
-                        let limit = self
-                            .hyde
-                            .as_ref()
-                            .expect("hyde expansion has config")
-                            .2
-                            .channel_limit;
+                        let limit = fusion_fetch_limit(
+                            self.hyde
+                                .as_ref()
+                                .expect("hyde expansion has config")
+                                .2
+                                .channel_limit,
+                        );
                         self.scoped_vector_results(
                             rtxn,
                             &expansion.embedding,
@@ -321,20 +324,21 @@ impl PipelineBuilder<'_> {
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
-                acc.admit_channel(
+                phonetic_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Phonetic,
                     phonetic_results,
                     &self.vault.store,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
-                )?;
+                )?);
             }
 
             if let Some(config) = &self.temporal_search
                 && let Some(temporal_results) =
                     self.run_stage(RetrievalSignal::Temporal, stages.next(), || {
                         let mut config = config.clone();
+                        config.limit = fusion_fetch_limit(config.limit);
                         if overrides.widen_channel_limits {
                             config.limit = retry_channel_limit(config.limit);
                         }
@@ -491,6 +495,7 @@ impl PipelineBuilder<'_> {
                 RetrievalChannelIndexes {
                     vector: vector_channel_index,
                     text: text_channel_index,
+                    phonetic: phonetic_channel_index,
                 },
                 &self.vault.store,
                 rtxn,
@@ -550,6 +555,7 @@ impl PipelineBuilder<'_> {
                         channel_indexes: RetrievalChannelIndexes {
                             vector: vector_channel_index,
                             text: text_channel_index,
+                            phonetic: phonetic_channel_index,
                         },
                         temporal_now,
                         codebase_scope_active,
@@ -602,7 +608,6 @@ impl PipelineBuilder<'_> {
                 merged_components: rerank_merged_components,
                 reranked_trace_scores,
                 words_revisions,
-                unpinned_turns,
             } = self.apply_rerank_ladder(
                 rtxn,
                 &mut scores,
@@ -652,11 +657,6 @@ impl PipelineBuilder<'_> {
                     &mut claim_gate,
                 )?
             };
-            // A turn with no words to pin is not served under scores its
-            // later words were not given.
-            if !unpinned_turns.is_empty() {
-                scores.retain(|hit| !unpinned_turns.contains(&hit.id));
-            }
 
             let capabilities = self.prepare_pack_candidates(
                 rtxn,

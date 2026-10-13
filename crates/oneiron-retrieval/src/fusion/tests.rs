@@ -12,11 +12,14 @@ fn channel_relevance_orders_candidates_the_four_signals_tie() {
     let strong = [7; 16];
     let middle = [1; 16];
     let weak = [3; 16];
-    let inputs = retrieval_candidates_from_ranked_lists(&[vec![
-        scored(strong, 47.3),
-        scored(middle, 6.6),
-        scored(weak, 5.5),
-    ]]);
+    let inputs = retrieval_candidates_from_ranked_lists(
+        &[vec![
+            scored(strong, 47.3),
+            scored(middle, 6.6),
+            scored(weak, 5.5),
+        ]],
+        &[],
+    );
     let ranked = linear_log_blend(&inputs);
     assert_eq!(
         ranked

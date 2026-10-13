@@ -45,6 +45,14 @@ pub const RELEVANCE_LOG_WEIGHT: f64 = 1.0;
 /// above it. Hashed into the trace fork hash.
 pub const BLEND_SCORE_CEILING: f32 = 1.0e18;
 
+/// How many of a ranked channel's best scores set its z-scale (EMBED-PACK):
+/// each list is scored against its own top `FUSION_LIST_LENGTH`, whatever the
+/// pack's limit, so a list's best z does not grow with how many rows a caller
+/// asked for. Rows past it stay candidates, scored on the same scale; the
+/// pipeline fetches at least this many from every ranked channel. Hashed
+/// into the trace fork hash and recorded in the trace.
+pub const FUSION_LIST_LENGTH: usize = 80;
+
 /// One candidate's blend inputs. The pipeline fills the signals after
 /// [`retrieval_candidates_from_ranked_lists`] builds the candidate set.
 #[derive(Debug, Clone, Copy)]
@@ -67,32 +75,16 @@ pub struct RetrievalBlendInput {
 
 /// The union of every channel's candidates, by id, with each one's channel relevance and
 /// neutral signals.
+///
+/// A ranked list is z-scored against its own best [`FUSION_LIST_LENGTH`]
+/// scores. The lists at `sparse` count matches (phonetic codes) and return
+/// only their hits: each is z-scored over the whole union instead, a
+/// candidate it did not return scoring 0, so one matched code lifts a hit
+/// above a candidate with none.
 pub fn retrieval_candidates_from_ranked_lists(
     ranked_lists: &[Vec<ScoredEntity>],
+    sparse: &[usize],
 ) -> Vec<RetrievalBlendInput> {
-    // Each channel's own scores, z-normalized within its list, so channels
-    // on different scales add up. A candidate a channel did not return takes
-    // that list's lowest z: absent ranks below everything the channel saw.
-    let channels: Vec<(HashMap<EntityId, f64>, f64)> = ranked_lists
-        .iter()
-        .filter(|ranked| !ranked.is_empty())
-        .map(|ranked| {
-            let z = z_normalized(
-                ranked
-                    .iter()
-                    .map(|scored| f64::from(scored.score))
-                    .collect(),
-            );
-            let floor = z.iter().copied().fold(f64::INFINITY, f64::min);
-            let mut by_id = HashMap::<EntityId, f64>::new();
-            for (scored, value) in ranked.iter().zip(z) {
-                let slot = by_id.entry(scored.id).or_insert(value);
-                *slot = slot.max(value);
-            }
-            (by_id, floor)
-        })
-        .collect();
-
     let mut candidates = HashSet::<EntityId>::new();
     for ranked in ranked_lists {
         for scored in ranked {
@@ -102,6 +94,56 @@ pub fn retrieval_candidates_from_ranked_lists(
 
     let mut candidates: Vec<EntityId> = candidates.into_iter().collect();
     candidates.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+
+    // Each channel's own scores, z-normalized within its list, so channels
+    // on different scales add up. A candidate a channel did not return takes
+    // that list's lowest z (the owner's rule, EMBED-PACK): it ties the
+    // weakest row the channel returned and never ranks above one.
+    let channels: Vec<(HashMap<EntityId, f64>, f64)> = ranked_lists
+        .iter()
+        .enumerate()
+        .filter(|(_, ranked)| !ranked.is_empty())
+        .map(|(index, ranked)| {
+            let mut by_id = HashMap::<EntityId, f64>::new();
+            for scored in ranked {
+                let score = f64::from(scored.score);
+                let slot = by_id.entry(scored.id).or_insert(score);
+                *slot = slot.max(score);
+            }
+            if sparse.contains(&index) {
+                let values: Vec<f64> = candidates
+                    .iter()
+                    .map(|id| by_id.get(id).copied().unwrap_or(0.0))
+                    .collect();
+                let by_id: HashMap<EntityId, f64> = candidates
+                    .iter()
+                    .copied()
+                    .zip(z_normalized(values))
+                    .collect();
+                let floor = by_id.values().copied().fold(f64::INFINITY, f64::min);
+                return (by_id, floor);
+            }
+            let mut window: Vec<f64> = ranked
+                .iter()
+                .map(|scored| f64::from(scored.score))
+                .collect();
+            window.sort_unstable_by(|left, right| right.total_cmp(left));
+            window.truncate(FUSION_LIST_LENGTH);
+            let scale = spread(&window);
+            let z = |score: f64| match scale {
+                Some((mean, stddev)) => (score - mean) / stddev,
+                None => 0.0,
+            };
+            let floor = ranked
+                .iter()
+                .map(|scored| z(f64::from(scored.score)))
+                .fold(f64::INFINITY, f64::min);
+            for value in by_id.values_mut() {
+                *value = z(*value);
+            }
+            (by_id, floor)
+        })
+        .collect();
 
     candidates
         .into_iter()
@@ -307,8 +349,17 @@ fn compare_blend_inputs(a: &RetrievalBlendInput, b: &RetrievalBlendInput) -> Ord
 }
 
 fn z_normalized(values: Vec<f64>) -> Vec<f64> {
+    match spread(&values) {
+        Some((mean, stddev)) => values.iter().map(|value| (value - mean) / stddev).collect(),
+        None => vec![0.0; values.len()],
+    }
+}
+
+/// The mean and standard deviation of `values`; `None` when they do not
+/// spread (one value, or all equal), where every z is 0.
+fn spread(values: &[f64]) -> Option<(f64, f64)> {
     if values.len() <= 1 {
-        return vec![0.0; values.len()];
+        return None;
     }
 
     let mean = values.iter().sum::<f64>() / values.len() as f64;
@@ -321,11 +372,7 @@ fn z_normalized(values: Vec<f64>) -> Vec<f64> {
         .sum::<f64>()
         / values.len() as f64;
     let stddev = variance.sqrt();
-    if stddev <= f64::EPSILON {
-        return vec![0.0; values.len()];
-    }
-
-    values.iter().map(|value| (value - mean) / stddev).collect()
+    (stddev > f64::EPSILON).then_some((mean, stddev))
 }
 
 /// Reads numeric map field `field` from an entity row's msgpack body (after the metadata

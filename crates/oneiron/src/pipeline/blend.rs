@@ -58,6 +58,9 @@ pub(super) struct RetrievalBlendConfig<'a> {
 pub(super) struct RetrievalChannelIndexes {
     pub(super) vector: Option<usize>,
     pub(super) text: Option<usize>,
+    /// Scored over every candidate, not its hits alone (see
+    /// [`fusion::retrieval_candidates_from_ranked_lists`]).
+    pub(super) phonetic: Option<usize>,
 }
 
 pub(super) struct BlendedRetrievalScores {
@@ -102,7 +105,10 @@ pub(super) fn blended_retrieval_scores(
     access_now_secs: u64,
     weights: RetrievalBlendWeights,
 ) -> Result<BlendedRetrievalScores> {
-    let mut inputs = fusion::retrieval_candidates_from_ranked_lists(ranked_lists);
+    let mut inputs = fusion::retrieval_candidates_from_ranked_lists(
+        ranked_lists,
+        channel_indexes.phonetic.as_slice(),
+    );
     let cosine_ghosts = if config.gravity {
         cosine_ghost_set(ranked_lists, channel_indexes.vector, channel_indexes.text)
     } else {

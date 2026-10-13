@@ -728,6 +728,19 @@ fn compare_temporal_index_rows(
         .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
 }
 
+/// How many rows a ranked channel fetches for a caller that asked for
+/// `requested`: at least the [`FUSION_LIST_LENGTH`] fusion scales each list
+/// by, so the scale does not move with the pack's limit. Zero stays zero.
+///
+/// [`FUSION_LIST_LENGTH`]: crate::fusion::FUSION_LIST_LENGTH
+pub(super) fn fusion_fetch_limit(requested: usize) -> usize {
+    if requested == 0 {
+        0
+    } else {
+        requested.max(crate::fusion::FUSION_LIST_LENGTH)
+    }
+}
+
 pub(super) fn scoped_text_channel_limit(
     store: &Store,
     rtxn: &RoTxn<'_>,
