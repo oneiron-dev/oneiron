@@ -99,6 +99,14 @@ Lines "entity <id> <label>" before the transcript list entities already in memor
 
         let mut candidates = Vec::new();
         for item in items {
+            // A candidate that names no value carries no claim.
+            if item.get("value").is_none_or(serde_json::Value::is_null) {
+                tracing::warn!(
+                    target: "oneiron::dreamer",
+                    "extracted candidate names no value; not written"
+                );
+                continue;
+            }
             // A candidate naming a listed claim corrects it and binds to that
             // head: its subject, predicate, relationship and topic, so it
             // routes to the head through the conflict and grant doors. A
@@ -256,9 +264,13 @@ Lines "entity <id> <label>" before the transcript list entities already in memor
                 },
                 locators,
             )?;
+            // Only a head the listing showed is a correction target; one held
+            // only for a replay's scope binds, but the verdict judges it.
             candidates.push(match corrects {
-                Some(prior) => extracted.correcting(prior.claim_id),
-                None => extracted,
+                Some(prior) if resources.known().shows(prior.claim_id) => {
+                    extracted.correcting(prior.claim_id)
+                }
+                _ => extracted,
             });
         }
         Ok(candidates)

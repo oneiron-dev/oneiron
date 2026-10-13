@@ -8,6 +8,7 @@ use std::future::Future;
 struct Fixture {
     attempt: crate::dreamer_runner::DreamerAdmittedAttempt,
     turn: EntityId,
+    turns: Vec<EntityId>,
     subject: EntityId,
     head: EntityId,
     scope: Scope,
@@ -175,6 +176,7 @@ fn fixture_in_project(
         project,
         nested,
         b"person",
+        &[("user", "my name is Oleksii")],
     )
 }
 
@@ -182,14 +184,29 @@ fn fixture_in_project(
 /// the turn names ("my name is Oleksii"). The scope grants the person too, so
 /// the wake lists both.
 fn provisional_fixture(vault: &Vault) -> Result<Fixture> {
+    named_fixture(
+        vault,
+        (ClaimSource::Generated, ClaimApprovalStatus::Auto),
+        &[("user", "my name is Oleksii")],
+    )
+}
+
+/// A head with `source` and `approval` about a person the turns `texts`
+/// name, both listed by the wake.
+fn named_fixture(
+    vault: &Vault,
+    head: (ClaimSource, ClaimApprovalStatus),
+    texts: &[(&str, &str)],
+) -> Result<Fixture> {
     let named =
         super::super::support::encode_value(&Value::Map(vec![("name".into(), "Oleksii".into())]))?;
     let mut fx = fixture_with(
         vault,
-        (ClaimSource::Generated, ClaimApprovalStatus::Auto),
+        head,
         crate::claim::default_project_id(),
         false,
         &named,
+        texts,
     )?;
     fx.scope
         .readable
@@ -203,12 +220,12 @@ fn fixture_with(
     project: EntityId,
     nested: bool,
     subject_body: &[u8],
+    texts: &[(&str, &str)],
 ) -> Result<Fixture> {
     let actor = vault.dreamer_authority()?;
     policy(vault, actor.entity_ref(), true)?;
     let store = DreamerRunnerStore::new(vault);
-    let (attempt, turns, _) =
-        admitted_attempt_fixture(vault, &store, 0x58, &[("user", "my name is Oleksii")])?;
+    let (attempt, turns, _) = admitted_attempt_fixture(vault, &store, 0x58, texts)?;
     let subject = EntityId::now();
     let owner = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, subject_body)?;
@@ -280,6 +297,7 @@ fn fixture_with(
     Ok(Fixture {
         attempt,
         turn: turns[0],
+        turns,
         subject,
         head,
         scope,
@@ -1224,13 +1242,14 @@ fn a_bound_correction_replaces_its_head_with_no_verdict_call() -> Result<()> {
 
 /// Engine ruling 2026-10-14: the binding skips the verdict only when its head
 /// is the one head the candidate meets and no other candidate in the pass
-/// stands on it. A marker on an identity a second head shares, and a bound
-/// correction beside a restatement of its head, each take the verdict call.
+/// stands on it. A marker on an identity a second listed head shares, and a
+/// bound correction beside a restatement of its head, each take the verdict
+/// call.
 #[test]
 fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()> {
     for second_head in [true, false] {
         let (_dir, vault) = open_vault();
-        let mut fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+        let mut fx = provisional_fixture(&vault)?;
         let extraction = if second_head {
             let other = EntityId::now();
             let mut body = vault.get_claim(&fx.head)?.expect("head");
@@ -1257,12 +1276,24 @@ fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()
                 .to_string(),
             )
         };
+        let pin = PreparedWake::capture_with_grants(
+            &vault,
+            DreamerConsolidationScope::Micro,
+            Some(&fx.scope),
+        )?;
         let backend = ScriptedBackend::new(vec![
             Ok(extraction),
             Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
         ]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
-        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+        execute_at_pin(
+            &vault,
+            &fx,
+            &backend,
+            &mut sink,
+            fx.scope.clone(),
+            Some(&pin),
+        )?;
         assert_eq!(
             backend.calls.load(Ordering::SeqCst),
             2,
@@ -1321,7 +1352,16 @@ fn a_verdict_that_names_no_value_parks_and_writes_nothing() -> Result<()> {
 #[test]
 fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let fx = fixture_with_head_source(&vault, ClaimSource::UserStated)?;
+    let fx = named_fixture(
+        &vault,
+        (ClaimSource::UserStated, ClaimApprovalStatus::Approved),
+        &[("user", "my name is Oleksii")],
+    )?;
+    let pin = PreparedWake::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
     let backend = ScriptedBackend::new(vec![
         Ok(correct(&fx, "Alex")),
         Ok(text_response(
@@ -1329,7 +1369,14 @@ fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> 
         )),
     ]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
-    execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    execute_at_pin(
+        &vault,
+        &fx,
+        &backend,
+        &mut sink,
+        fx.scope.clone(),
+        Some(&pin),
+    )?;
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
         2,
@@ -1351,6 +1398,143 @@ fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> 
                 .is_some_and(|body| body.approval == ClaimApprovalStatus::Proposed)),
         "{:?}",
         sink.outcome
+    );
+    Ok(())
+}
+
+/// Sol r4: a candidate selection holds back still stands on its head. A
+/// correction ready on two turns, beside a restatement of its head held for
+/// want of a second, asks the verdict. Before, the guard saw only the ready
+/// correction and replaced the head with no verdict call.
+#[test]
+fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = named_fixture(
+        &vault,
+        (ClaimSource::Generated, ClaimApprovalStatus::Auto),
+        &[("user", "my name is Oleksii"), ("user", "call me Alex")],
+    )?;
+    let pin = PreparedWake::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 2,
+        ..Default::default()
+    })?;
+    let refs = |turns: &[EntityId]| {
+        turns
+            .iter()
+            .map(|turn| serde_json::json!({"source_id": turn.to_hex(), "byte_range": [0, 1]}))
+            .collect::<Vec<_>>()
+    };
+    let backend = ScriptedBackend::new(vec![
+        Ok(text_response(
+            serde_json::json!({"candidates": [
+                {
+                    "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
+                    "corrects": fx.head.to_hex(), "confidence": 0.9,
+                    "evidence_refs": refs(&fx.turns),
+                },
+                {
+                    "subject": fx.subject.to_hex(), "predicate": "profile.name",
+                    "value": "Oleksii", "confidence": 0.9, "evidence_refs": refs(&fx.turns[..1]),
+                },
+            ]})
+            .to_string(),
+        )),
+        Ok(text_response("{\"resolution\":\"escalate\"}".into())),
+    ]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    execute_at_pin(
+        &vault,
+        &fx,
+        &backend,
+        &mut sink,
+        fx.scope.clone(),
+        Some(&pin),
+    )?;
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        2,
+        "the verdict was asked"
+    );
+    assert_eq!(
+        vault.get_claim(&fx.head)?.expect("head").lifecycle,
+        crate::ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+/// Sol r4: a correction that names no value, or a null one, carries no
+/// claim. It is not written, and its head stays. Before, the bound
+/// correction replaced the head with a Null-valued claim.
+#[test]
+fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
+    for value in [None, Some(serde_json::Value::Null)] {
+        let (_dir, vault) = open_vault();
+        let fx = provisional_fixture(&vault)?;
+        let pin = PreparedWake::capture_with_grants(
+            &vault,
+            DreamerConsolidationScope::Micro,
+            Some(&fx.scope),
+        )?;
+        let mut item = serde_json::json!({
+            "subject": fx.subject.to_hex(), "predicate": "profile.name",
+            "corrects": fx.head.to_hex(), "confidence": 0.9,
+            "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+        });
+        if let Some(value) = &value {
+            item["value"] = value.clone();
+        }
+        let backend = ScriptedBackend::new(vec![
+            Ok(text_response(
+                serde_json::json!({"candidates": [item]}).to_string(),
+            )),
+            Ok(text_response("{\"resolution\":\"escalate\"}".into())),
+        ]);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        execute_at_pin(
+            &vault,
+            &fx,
+            &backend,
+            &mut sink,
+            fx.scope.clone(),
+            Some(&pin),
+        )?;
+        assert!(sink.outcome.landed.is_empty(), "{value:?}: {:?}", sink.outcome);
+        assert_eq!(names(&vault, fx.subject)?, vec![fx.head], "{value:?}");
+        assert_eq!(
+            vault.get_claim(&fx.head)?.expect("head").lifecycle,
+            crate::ClaimLifecycleStatus::Active
+        );
+    }
+    Ok(())
+}
+
+/// Sol r4: only a head the listing showed is a correction target. A head the
+/// branch holds without the listing showing it (here by its scope pin alone)
+/// still binds the candidate, but the verdict judges it.
+#[test]
+fn a_correction_of_a_head_the_listing_did_not_show_asks_the_verdict() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture_with_head_source(&vault, ClaimSource::Generated)?;
+    let backend = ScriptedBackend::new(vec![
+        Ok(correct(&fx, "Alex")),
+        Ok(text_response("{\"resolution\":\"escalate\"}".into())),
+    ]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        2,
+        "the verdict was asked"
+    );
+    assert_eq!(
+        vault.get_claim(&fx.head)?.expect("head").lifecycle,
+        crate::ClaimLifecycleStatus::Active
     );
     Ok(())
 }

@@ -279,13 +279,11 @@ impl ConsolidationExecutor<'_> {
             let member_data: Vec<_> = members.iter().map(|member| &member.proposal).collect();
             if super::judge_context::fast_path(&policy, conflict, &member_data, prior)
                 || super::judge_context::bound_correction(
-                    resources,
                     &corrections,
-                    &candidates,
                     conflict,
                     &member_data,
                     prior,
-                )?
+                )
             {
                 let mut candidate = (*members[0]).clone();
                 candidate.proposal.supersedes = conflict.prior_head;

@@ -93,7 +93,7 @@ pub(super) fn assemble_extracted(
             }
         }
     }
-    let corrections = grouped
+    let marked: Vec<_> = grouped
         .values()
         .filter_map(|extracted| Some((extracted.proposal().claim_id, extracted.corrects()?)))
         .collect();
@@ -104,6 +104,21 @@ pub(super) fn assemble_extracted(
     for candidate in &candidates {
         resources
             .validate_candidates(resources.scope(), std::slice::from_ref(&candidate.proposal))?;
+    }
+    // A correction skips the verdict only while no other candidate in the
+    // pass, ready or held back by selection, stands on the head it names.
+    let mut corrections = BTreeMap::new();
+    for (claim, head) in marked {
+        let mut shared = false;
+        for other in candidates.iter().filter(|other| other.claim_id != claim) {
+            shared |= resources
+                .matching_priors(other, rules)?
+                .iter()
+                .any(|(id, _)| *id == head);
+        }
+        if !shared {
+            corrections.insert(claim, head);
+        }
     }
     let mut inputs = Vec::new();
     let mut embeddings = BTreeMap::new();

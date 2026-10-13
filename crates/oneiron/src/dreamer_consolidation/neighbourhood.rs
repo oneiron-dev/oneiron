@@ -142,6 +142,15 @@ impl Neighbourhood {
         self.claim_versions().any(|(id, _)| id == claim)
     }
 
+    /// Whether the listing shows `claim`. A head the branch holds only for a
+    /// replay's scope (`unlisted`) is not shown.
+    pub(super) fn shows(&self, claim: EntityId) -> bool {
+        self.entities
+            .iter()
+            .flat_map(|entity| &entity.claims)
+            .any(|known| known.id == claim)
+    }
+
     fn pins(&self) -> Pins {
         self.entities
             .iter()

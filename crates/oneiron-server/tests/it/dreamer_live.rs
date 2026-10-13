@@ -19,15 +19,15 @@
 //!
 //! On invented data it witnesses a short conversation and declares its
 //! summary while the server is stopped, so the server queues the work at
-//! start (the kill before the queue). Two of its turns name a cat each, so
-//! one pass meets two values on one claim identity and the verdict role
-//! makes a real call. Then it:
+//! start (the kill before the queue). Then it:
 //! 1. serves with the first model call held at the relay, and kills the
 //!    server while it is held (between queue and apply);
 //! 2. serves until the passes land, and kills the server (after apply);
 //! 3. serves again: a finished pass makes no call;
 //! 4. witnesses a user correction in a later conversation and serves until
-//!    it is consolidated;
+//!    it is consolidated. Beside it, the owner has stated an instrument, and
+//!    a third conversation changes it: a Dreamer correction of the owner's
+//!    claim always goes to the verdict role, so that role makes a real call;
 //! 5. serves again: the correction holds once.
 //!
 //! Every model call goes through a relay that forwards it unchanged and keeps
@@ -544,14 +544,8 @@ fn corrected_once(vault: &Vault, person: EntityId) -> Result<(), String> {
     Ok(())
 }
 
-/// The receipts in the server logs under `out`, one JSON row each.
-fn receipts(out: &Path) -> Vec<Value> {
-    let mut logs: Vec<_> = std::fs::read_dir(out)
-        .unwrap()
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().is_some_and(|ext| ext == "log"))
-        .collect();
-    logs.sort();
+/// The receipts in this run's server `logs`, one JSON row each.
+fn receipts(logs: &[PathBuf]) -> Vec<Value> {
     logs.iter()
         .flat_map(|log| {
             std::fs::read_to_string(log)
@@ -592,8 +586,6 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
             conversation,
             "Hi, I'm Mira Okafor. I live in Lisbon and I teach cello at the conservatory.",
         );
-        witness(&vault, person, conversation, "My cat is called Miso.");
-        witness(&vault, person, conversation, "My other cat is called Tofu.");
         vault
             .request_scope_summary(&ScopeSummaryRequest {
                 target: ScopeSummaryTarget::Scope {
@@ -628,7 +620,10 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     // 1. Between queue and apply: the first call is held and never sent.
     relay.enter("held");
     relay.hold.store(true, Ordering::SeqCst);
-    let child = serve(&config, &live, &live.out.join("serve-1.log"));
+    let logs: Vec<_> = (1..=5)
+        .map(|n| live.out.join(format!("serve-{n}.log")))
+        .collect();
+    let child = serve(&config, &live, &logs[0]);
     tokio::time::timeout(PHASE, relay.holding.notified())
         .await
         .expect("the server's first pass reached its model call");
@@ -636,14 +631,14 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
 
     // 2. After apply: the passes run on the real model and land.
     relay.enter("consolidate");
-    let child = serve(&config, &live, &live.out.join("serve-2.log"));
+    let child = serve(&config, &live, &logs[1]);
     relay.settle(1).await;
     kill(child);
     let consolidated = relay.calls().len();
 
     // 3. Nothing finished runs again.
     relay.enter("restart");
-    let child = serve(&config, &live, &live.out.join("serve-3.log"));
+    let child = serve(&config, &live, &logs[2]);
     tokio::time::sleep(QUIET).await;
     stop(child);
     let after_restart = relay.calls().len();
@@ -660,17 +655,39 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     // 4. A user correction in a later conversation, heard by a later pass.
     // The first conversation's summary moved it onto the record DAG, which
     // the witness door no longer appends to.
-    let second_turn = {
+    // Beside it, the owner states an instrument and a third conversation
+    // changes it. A Dreamer correction of the owner's claim never skips the
+    // verdict (the source check), so the verdict role makes a real call.
+    let (second_turn, third_turn) = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
-        witness(
-            &vault,
-            person,
-            EntityId::now(),
-            "A correction: I moved last month. I live in Porto now, not Lisbon.",
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .claim_upsert(
+                &serde_json::from_value(json!({
+                    "predicate": "music.instrument", "subject_ref": person.to_hex(),
+                    "value": "violin", "confidence": 1.0, "source": "observed",
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        (
+            witness(
+                &vault,
+                person,
+                EntityId::now(),
+                "A correction: I moved last month. I live in Porto now, not Lisbon.",
+            ),
+            witness(
+                &vault,
+                person,
+                EntityId::now(),
+                "I switched instruments: I play the viola now, not the violin.",
+            ),
         )
     };
     relay.enter("correct");
-    let child = serve(&config, &live, &live.out.join("serve-4.log"));
+    let child = serve(&config, &live, &logs[3]);
     relay.settle(after_restart + 1).await;
     stop(child);
     let corrected = {
@@ -681,7 +698,7 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     // 5. The correction holds once.
     relay.enter("hold-once");
     let before_last = relay.calls().len();
-    let child = serve(&config, &live, &live.out.join("serve-5.log"));
+    let child = serve(&config, &live, &logs[4]);
     tokio::time::sleep(QUIET).await;
     stop(child);
     let last = {
@@ -690,13 +707,13 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     };
 
     let calls = relay.calls();
-    let receipts = receipts(&live.out);
+    let receipts = receipts(&logs);
     let report = json!({
         "model_asked": live.model,
         "model_expected": live.served,
         "probe_model": probe["model"],
         "person": person.to_hex(),
-        "turns": [first_turn.to_hex(), second_turn.to_hex()],
+        "turns": [first_turn.to_hex(), second_turn.to_hex(), third_turn.to_hex()],
         "calls": calls,
         "claims_after_consolidation": first.0,
         "summaries_after_consolidation": first.1,
@@ -736,12 +753,24 @@ async fn dreamer_live_consolidates_corrects_and_survives_restarts_on_a_real_mode
     {
         assert_eq!(row["served_model"], json!(live.served), "{row}");
     }
-    // The two cats: the verdict role was called and its call settled,
-    // whichever way it ruled.
+    // The instrument: the verdict role's call was answered by the expected
+    // model and settled, whichever way it ruled.
+    let verdict: Vec<&Value> = receipts
+        .iter()
+        .filter(|row| row["run"] == "dreamer-pass/generative_reasoner")
+        .collect();
     assert!(
-        receipts.iter().any(
-            |row| row["run"] == "dreamer-pass/generative_reasoner" && row["event"] == "settled"
-        ),
-        "the verdict role's call settled"
+        verdict.iter().any(|dispatched| {
+            dispatched["event"] == "dispatched"
+                && dispatched["answered"] == true
+                && dispatched["served_model"] == json!(live.served)
+                && verdict.iter().any(|settled| {
+                    settled["event"] == "settled"
+                        && settled["lease"] == dispatched["lease"]
+                        && settled["error"].is_null()
+                        && settled["allocation_error"].is_null()
+                })
+        }),
+        "the verdict role's answered call settled: {verdict:?}"
     );
 }
