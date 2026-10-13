@@ -1338,7 +1338,8 @@ fn base_claim_for_the_room(
 /// again with new words and no vector keeps the room's vector of it. Then
 /// the room changes the body and indexes it with its words and no vector:
 /// the vector the room staged describes the earlier body, so it no longer
-/// finds the claim there (Sol R23).
+/// finds the claim there (Sol R23), and the room, whose graph held only the
+/// claim, still embeds another row (Sol R24).
 #[test]
 fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1404,6 +1405,59 @@ fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() 
         !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
         "the room's vector of its earlier body does not find the new one"
     );
+    // The claim was the only node of the room's graph (Sol R24).
+    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD7))?;
+    session.close()?;
+    Ok(())
+}
+
+/// A room embeds a base claim's body of its own, then puts base's body
+/// back, of which base holds no vector. The room's vector no longer finds
+/// the claim, and the room, whose graph held only the claim, still embeds
+/// another row (Sol R24).
+#[test]
+fn a_room_that_puts_back_a_body_base_never_embedded_still_embeds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xC0);
+    base_claim_for_the_room(
+        &vault,
+        owner,
+        claim,
+        ("backbasevalue", "backbaseword"),
+        None,
+    )?;
+    let session = enter(&vault, "sess-room-back-unembedded")?;
+    stage_in_room(
+        &vault,
+        &session,
+        vec![
+            claim_put(
+                claim,
+                (
+                    TimeRange { start: 10, end: 10 },
+                    10,
+                    owner_claim_body(owner, "backroomvalue")?,
+                ),
+            ),
+            room_vector(claim, [1.0, 0.0, 0.0, 0.0]),
+            room_text(claim, "backroomword"),
+        ],
+    )?;
+    replace_in_room(
+        &vault,
+        &session,
+        claim,
+        (
+            TimeRange { start: 11, end: 11 },
+            11,
+            owner_claim_body(owner, "backbasevalue")?,
+        ),
+        "backbaseword",
+    )?;
+    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD7))?;
     session.close()?;
     Ok(())
 }

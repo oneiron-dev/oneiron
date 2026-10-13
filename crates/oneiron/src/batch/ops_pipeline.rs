@@ -576,20 +576,26 @@ fn hide_vector_of_another_body(
         if !vectors.hides(id.as_bytes()) && !vectors.stages_row(id.as_bytes()) {
             return Ok(());
         }
-        let Some(raw) = base.vectors.get(wtxn, id.as_bytes())? else {
-            vectors.delete(wtxn, id.as_bytes())?;
-            return crate::embed::record_embedding_device_in_txn(view, wtxn, id, None);
-        };
-        let raw = raw.into_owned();
-        vectors.put(wtxn, id.as_bytes(), &raw)?;
-        return crate::embed::copy_embedding_device_in_txn(base, view, wtxn, id);
-    }
-    if later {
+        if let Some(raw) = base.vectors.get(wtxn, id.as_bytes())? {
+            let raw = raw.into_owned();
+            vectors.put(wtxn, id.as_bytes(), &raw)?;
+            return crate::embed::copy_embedding_device_in_txn(base, view, wtxn, id);
+        }
+        vectors.delete(wtxn, id.as_bytes())?;
+    } else if later {
         vectors.delete(wtxn, id.as_bytes())?;
     } else {
         vectors.hide_base_row(id.as_bytes())?;
     }
-    crate::embed::record_embedding_device_in_txn(view, wtxn, id, None)
+    crate::embed::record_embedding_device_in_txn(view, wtxn, id, None)?;
+    // A node the room's walk can load no vector for leaves the room's graph,
+    // as base drops a node with its vector: the room's own vector of an
+    // earlier body, where base holds none, may be its graph's entry point
+    // (Sol R24).
+    if vectors.get_unhidden(wtxn, id.as_bytes())?.is_none() {
+        crate::hnsw::hnsw_deindex(view, wtxn, id)?;
+    }
+    Ok(())
 }
 
 pub(super) fn contains_text_op(ops: &[BatchOp]) -> bool {
