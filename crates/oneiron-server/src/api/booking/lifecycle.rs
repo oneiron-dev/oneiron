@@ -3,7 +3,7 @@ use std::sync::Arc;
 use oneiron::booking::{
     BookingError, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     BookingSolver, BookingVerbReceipt, BookingVerbRequest, SessionKey, SlotOracle, SolveRequest,
-    SolveResult, VaultActiveHoldSource, run_booking_lifecycle_once,
+    SolveResult, VaultActiveHoldSource, run_booking_lifecycle_attempt,
 };
 use oneiron::dreamer_runner::DreamerHomeNodeClass;
 use oneiron::{CalendarSel, DreamerRunnerStore, EntityId, Vault};
@@ -18,12 +18,14 @@ use crate::server::SyncServer;
 // Lifecycle drive
 // -------------------------------------------------------------------------
 
-/// Enqueues one verb and drains exactly one home-node consumer turn.
+/// Enqueues one verb and runs that same attempt on the home node.
 ///
 /// The verb door and the writer door are the merged lifecycle's, not a second
 /// implementation: this function only enqueues, builds the per-attempt oracle,
 /// and reports the receipt. Correctness — slot revalidation, mutual exclusion,
-/// receipt identity — belongs to the writer.
+/// receipt identity — belongs to the writer. The turn claims the attempt this
+/// call enqueued, never the oldest one queued, because a receipt carries its
+/// visitor's hold or action tokens and must go back to that visitor only.
 pub(super) async fn run_booking_verb(
     server: &Arc<SyncServer>,
     request: BookingVerbRequest,
@@ -33,14 +35,15 @@ pub(super) async fn run_booking_verb(
 ) -> Result<BookingVerbReceipt, ApiError> {
     let vault: &Vault = &server.vault;
     let local_node_id = local_booking_node_id(server)?;
-    oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(
+    let attempt = oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(
         vault,
         request,
         now,
         public_authority,
     )?;
-    let turn = run_booking_lifecycle_once(
+    let turn = run_booking_lifecycle_attempt(
         vault,
+        attempt,
         |oracle_request: &BookingOracleRequest| {
             let page_ref = oracle_request.page_ref.ok_or_else(|| {
                 BookingError::SlotOracle(
@@ -69,9 +72,9 @@ pub(super) async fn run_booking_verb(
         BookingLifecycleTurn::NotHomeNode { .. } => Err(ApiError::invalid_state(Some(
             "booking_writer_is_another_node",
         ))),
-        // The attempt this call enqueued was drained by another worker before
-        // this turn claimed it. The write may still land; the caller retries
-        // with the same idempotency key and coalesces onto the same attempt.
+        // The attempt this call enqueued is held or settled by another call
+        // that coalesced onto it with the same idempotency key. That call
+        // answers with its receipt; this one has none of its own to give.
         BookingLifecycleTurn::Empty => Err(ApiError::invalid_state(Some(
             "booking_attempt_claimed_elsewhere",
         ))),
@@ -121,11 +124,25 @@ pub(super) struct ServerBookingOracle<'a> {
 
 impl SlotOracle for ServerBookingOracle<'_> {
     fn solve(&self, request: &SolveRequest) -> Result<SolveResult, BookingError> {
+        self.with_solver(|solver| solver.solve(request))
+    }
+
+    fn solve_moving(
+        &self,
+        request: &SolveRequest,
+        moving: EntityId,
+    ) -> Result<SolveResult, BookingError> {
+        self.with_solver(|solver| solver.solve_moving(request, moving))
+    }
+}
+
+impl ServerBookingOracle<'_> {
+    fn with_solver<T>(&self, run: impl FnOnce(&BookingSolver<'_>) -> T) -> T {
         let holds = match self.exclude_session_key {
             Some(key) => VaultActiveHoldSource::excluding(self.vault, key),
             None => VaultActiveHoldSource::new(self.vault),
         };
-        BookingSolver {
+        run(&BookingSolver {
             vault: self.vault,
             page_ref: self.page_ref,
             calendars_by_host: &self.calendars,
@@ -135,8 +152,7 @@ impl SlotOracle for ServerBookingOracle<'_> {
             // this page". The synthetic arm belongs to page-less companion
             // presets, and a booking page is never page-less.
             synthetic_config: None,
-        }
-        .solve(request)
+        })
     }
 }
 

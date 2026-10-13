@@ -368,12 +368,25 @@ pub struct SlotMask {
 pub trait SlotOracle: Send + Sync {
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError>;
 
+    /// [`Self::solve`] for moving an existing booking, whose own place must
+    /// not count against its move, as a confirm's own hold never blocks that
+    /// confirm. An oracle that counts no bookings just solves.
+    fn solve_moving(
+        &self,
+        req: &SolveRequest,
+        _moving: crate::EntityId,
+    ) -> Result<SolveResult, BookingError> {
+        self.solve(req)
+    }
+
+    /// Re-solves for the existing booking `moving`, kept on `hosts`.
     fn solve_bound(
         &self,
         req: &SolveRequest,
         hosts: &[String],
+        moving: crate::EntityId,
     ) -> Result<SolveResult, BookingError> {
-        let mut result = self.solve(req)?;
+        let mut result = self.solve_moving(req, moving)?;
         result
             .host_bindings
             .retain(|binding| binding.host_refs == hosts);

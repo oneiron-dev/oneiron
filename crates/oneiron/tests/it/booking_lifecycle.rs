@@ -48,6 +48,8 @@ use oneiron::{
 use rmpv::Value;
 
 mod busy_event;
+mod caps;
+mod proposals;
 use busy_event::store_busy_event;
 
 /// `2026-03-02T00:00:00Z`, a Monday well clear of any northern DST transition.

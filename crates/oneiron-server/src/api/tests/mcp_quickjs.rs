@@ -1201,3 +1201,6 @@ async fn failed_rungs_spend_code_modes_meter() {
 
 /// Call mode through code mode.
 mod call_mode;
+
+/// The rows a run serves itself, under the connector's door.
+mod run_rows;
