@@ -37,7 +37,7 @@ pub(crate) use self::insert::hnsw_insert;
 #[cfg(test)]
 pub(crate) use self::keys::DROPPED_REBUILDABLE_KEY;
 #[cfg(test)]
-use self::keys::SYMMETRIC_LINKS_KEY;
+pub(crate) use self::keys::SYMMETRIC_LINKS_KEY;
 
 #[cfg(test)]
 mod tests;

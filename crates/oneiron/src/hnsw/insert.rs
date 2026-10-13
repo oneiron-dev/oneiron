@@ -277,7 +277,7 @@ fn start_graph(
 /// point may name a node base has dropped since, or one whose vector the
 /// room hid (Astra 1397b). The insert enters at a node other than `id` that
 /// the walk loads a vector for ([`room_entry`]); with none, `id` is the
-/// graph's sole node.
+/// graph's sole node. It never asks for a rebuild, which runs on base alone.
 fn room_insert(
     store: &impl ManifestDbs,
     config: &VaultConfig,
@@ -286,24 +286,20 @@ fn room_insert(
     discipline: LinkDiscipline,
     ops: &mut u64,
 ) -> Result<InsertOutcome> {
-    let entry = room_entry(store, &*wtxn, config.dimensions, id)?;
-    let count = read_count(store, &*wtxn)?;
-    if store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some() {
-        if discipline == LinkDiscipline::Legacy {
-            return Ok(InsertOutcome::NeedsLegacyRebuild);
-        }
-        // The refresh re-anchors at `id` on a count of 1 and otherwise
-        // enters at `entry`, so the room's graph decides, not its count.
-        let (count, entry) = match entry {
-            Some(entry) => (count.max(2), entry),
-            None => (1, *id),
-        };
-        hnsw_refresh_localized(store, config, wtxn, id, vector, count, entry, ops)?;
-        return Ok(InsertOutcome::Applied);
-    }
-    let Some(entry) = entry else {
+    let Some(entry) = room_entry(store, &*wtxn, config.dimensions, id)? else {
         return start_graph(store, wtxn, id);
     };
+    let count = read_count(store, &*wtxn)?;
+    let existing = store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some();
+    if existing && discipline == LinkDiscipline::Symmetric {
+        // Another node to enter at: not a sole-node re-anchor, whatever the
+        // count says.
+        hnsw_refresh_localized(store, config, wtxn, id, vector, count.max(2), entry, ops)?;
+        return Ok(InsertOutcome::Applied);
+    }
+    // A Legacy graph's links into a node may be one-way, so base rebuilds it
+    // whole to move one; a room links an existing node anew instead, and the
+    // links into it stay.
     let selected = nearest_neighbors(store, config, &*wtxn, id, vector, entry, ops)?;
     write_neighbors(store, wtxn, id, &selected)?;
     match discipline {
@@ -313,6 +309,9 @@ fn room_insert(
         LinkDiscipline::Legacy => {
             attach_backlinks_legacy(store, config, wtxn, id, &selected, ops)?;
         }
+    }
+    if existing {
+        return Ok(InsertOutcome::Applied);
     }
     let count = count
         .checked_add(1)

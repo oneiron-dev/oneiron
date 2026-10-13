@@ -2117,3 +2117,85 @@ fn a_room_embeds_again_after_base_moved_its_entry_point() -> Result<()> {
         alone.batch().delete(&gone).commit()
     })
 }
+
+/// Over a graph base built before its links were symmetric (no symmetric
+/// marker: Legacy discipline), a room embeds a claim body of its own and then
+/// takes the claim back to base's body, of which base holds no vector, so
+/// the claim's node is inert. The room embeds a new body for the claim, linked
+/// anew from base's node, since a room cannot run base's Legacy rebuild. Base
+/// then deletes its node and the room takes the claim back again: with no
+/// node it loads besides the claim, the room embeds the claim's next body as
+/// its graph's sole node (Sol R29). Each time, the room finds the claim by
+/// its new vector.
+#[test]
+fn a_room_reembeds_a_claim_over_a_legacy_graph() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let claim = entity_id(0xC0);
+    let node = entity_id(0xB1);
+    base_claim_for_the_room(
+        &vault,
+        owner,
+        claim,
+        ("legacybasevalue", "legacybaseword"),
+        None,
+    )?;
+    put_vector(&vault, node, [0.0, 1.0, 0.0, 0.0])?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .hnsw_meta
+            .delete(wtxn, crate::hnsw::SYMMETRIC_LINKS_KEY)
+            .map(|_| ())
+    })?;
+    let session = enter(&vault, "sess-room-legacy-graph")?;
+    let embed_claim = |at: u64, value: &str, vector: [f32; 4]| -> Result<()> {
+        stage_in_room(
+            &vault,
+            &session,
+            vec![
+                claim_put(
+                    claim,
+                    (
+                        TimeRange { start: at, end: at },
+                        at,
+                        owner_claim_body(owner, value)?,
+                    ),
+                ),
+                room_vector(claim, vector),
+                room_text(claim, value),
+            ],
+        )
+    };
+    let take_back = |at: u64| -> Result<()> {
+        replace_in_room(
+            &vault,
+            &session,
+            claim,
+            (
+                TimeRange { start: at, end: at },
+                at,
+                owner_claim_body(owner, "legacybasevalue")?,
+            ),
+            "legacybaseword",
+        )
+    };
+    embed_claim(10, "legacyroomvalue", [1.0, 0.0, 0.0, 0.0])?;
+    take_back(11)?;
+    embed_claim(12, "legacynewvalue", [0.0, 0.0, 1.0, 0.0])?;
+    assert!(
+        vector_hits_in_room(&vault, &session, [0.0, 0.0, 1.0, 0.0])?.contains(&claim),
+        "the room finds the claim by the vector it linked anew"
+    );
+    take_back(13)?;
+    vault.batch().delete(&node).commit()?;
+    embed_claim(14, "legacylastvalue", [0.0, 0.0, 0.0, 1.0])?;
+    assert!(
+        vector_hits_in_room(&vault, &session, [0.0, 0.0, 0.0, 1.0])?.contains(&claim),
+        "the room finds the claim by the vector it embedded as its sole node"
+    );
+    session.close()?;
+    Ok(())
+}
