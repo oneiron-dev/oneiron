@@ -245,21 +245,20 @@ fn native_client_export_projects_the_shared_five_format_verb() {
 const PANIC_CHILD_ENV: &str = "ONEIRON_TEST_NAPI_PANIC_CHILD";
 
 /// The child half of `a_panic_after_the_binding_opens_a_vault_prints_no_payload`:
-/// opens a vault the way every door of this binding does, then panics with
+/// opens a vault through the binding's embedded client door, then panics with
 /// row text. A no-op unless that check started it.
 #[test]
 fn binding_panic_child() {
     if std::env::var_os(PANIC_CHILD_ENV).is_none() {
         return;
     }
-    before_vault_open();
     let dir = unique_vault_dir("panic-hook");
-    let vault =
-        Vault::open(dir.to_str().expect("utf8 path"), VaultConfig::device()).expect("open vault");
+    let client = super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None)
+        .expect("embedded native client");
     let caught =
         std::panic::catch_unwind(|| panic!("could not parse row: sentinel-world-text-2b7d"));
     assert!(caught.is_err());
-    drop(vault);
+    drop(client);
     std::fs::remove_dir_all(dir).expect("remove temp vault");
     eprintln!("napi panic child: done");
 }
