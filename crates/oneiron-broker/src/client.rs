@@ -1,10 +1,12 @@
 //! The daemon's side of the socket.
 //!
-//! The daemon checks the call, connects and checks the peer, and only then
-//! reads the key at the custody door and writes the frame. So a refused call,
-//! or a broker that is not there, never costs a key read.
+//! The daemon checks the call, connects and checks the peer (or, for its
+//! same-user child, hands the child its end of a fresh socket pair), and only
+//! then reads the key at the custody door and writes the frame. So a refused
+//! call, or a broker that is not there, never costs a key read.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UnixStream;
@@ -12,15 +14,22 @@ use zeroize::Zeroizing;
 
 use crate::frame::{read_reply, write_call};
 use crate::peer::own_uid;
-use crate::{BrokerError, CallHeader, Isolation, Outcome, PROTOCOL_VERSION};
+use crate::{BrokerError, CallHeader, ChildBroker, Isolation, Outcome, PROTOCOL_VERSION};
 
-/// Where the daemon's broker listens, and who it must be.
+/// How the daemon reaches its broker, and who the broker must be.
 #[derive(Debug, Clone)]
 pub struct BrokerClient {
-    socket: PathBuf,
-    broker_uid: u32,
+    peer: Peer,
     isolation: Isolation,
     reply_timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+enum Peer {
+    /// A broker the host runs, at a socket, as `uid`.
+    User { socket: PathBuf, uid: u32 },
+    /// The daemon's own child, reached over the channel it inherited.
+    Child(Arc<ChildBroker>),
 }
 
 impl BrokerClient {
@@ -39,17 +48,45 @@ impl BrokerClient {
             return Err(BrokerError::Peer);
         }
         Ok(Self {
-            socket,
-            broker_uid,
+            peer: Peer::User {
+                socket,
+                uid: broker_uid,
+            },
             isolation,
             reply_timeout,
         })
     }
 
-    /// The broker's socket path.
+    /// The same-user `child` (`#broker-same-user-open`), which takes each
+    /// call's socket over the channel it inherited, so nothing but that child
+    /// can be the peer.
     #[must_use]
-    pub fn socket(&self) -> &std::path::Path {
-        &self.socket
+    pub fn child(child: Arc<ChildBroker>, reply_timeout: Duration) -> Self {
+        Self {
+            peer: Peer::Child(child),
+            isolation: Isolation::SameUser,
+            reply_timeout,
+        }
+    }
+
+    /// Whether a call could reach the broker now, checked before the call's
+    /// permit starts: a host's broker has a socket at its path, and the
+    /// child is running, or starts now.
+    pub fn ready(&self) -> std::io::Result<()> {
+        match &self.peer {
+            Peer::User { socket, .. } => {
+                let meta = std::fs::metadata(socket)?;
+                if std::os::unix::fs::FileTypeExt::is_socket(&meta.file_type()) {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "{} is not a socket",
+                        socket.display()
+                    )))
+                }
+            }
+            Peer::Child(child) => child.ensure(),
+        }
     }
 
     /// How this broker is isolated, for the call's receipt.
@@ -58,15 +95,29 @@ impl BrokerClient {
         self.isolation
     }
 
-    /// Connects and checks the peer's uid. Nothing is written yet.
+    /// Connects: to a host's broker at its socket, whose peer must run as
+    /// the broker's uid, or to the child, through a socket pair whose other
+    /// end the child alone receives. Nothing is written yet.
     pub async fn connect(&self) -> Result<BrokerConnection, BrokerError> {
-        let stream = UnixStream::connect(&self.socket)
-            .await
-            .map_err(|_| BrokerError::Unreachable)?;
-        let uid = stream.peer_cred().map_err(|_| BrokerError::Peer)?.uid();
-        if uid != self.broker_uid {
-            return Err(BrokerError::Peer);
-        }
+        let stream = match &self.peer {
+            Peer::User { socket, uid } => {
+                let stream = UnixStream::connect(socket)
+                    .await
+                    .map_err(|_| BrokerError::Unreachable)?;
+                let cred = stream.peer_cred().map_err(|_| BrokerError::Peer)?;
+                if cred.uid() != *uid {
+                    return Err(BrokerError::Peer);
+                }
+                stream
+            }
+            Peer::Child(child) => {
+                let stream = child.connect().map_err(|_| BrokerError::Unreachable)?;
+                stream
+                    .set_nonblocking(true)
+                    .and_then(|()| UnixStream::from_std(stream))
+                    .map_err(|_| BrokerError::Unreachable)?
+            }
+        };
         Ok(BrokerConnection {
             stream,
             reply_timeout: self.reply_timeout,
@@ -74,7 +125,8 @@ impl BrokerClient {
     }
 }
 
-/// A peer-checked connection, good for one call.
+/// A connection to the broker, good for one call: peer-checked, or the
+/// child's over its channel.
 #[derive(Debug)]
 pub struct BrokerConnection {
     stream: UnixStream,
