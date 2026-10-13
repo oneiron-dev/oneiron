@@ -8443,6 +8443,7 @@ dependencies = [
  "oneiron-broker",
  "oneiron-code-check",
  "oneiron-driver",
+ "oneiron-keystore",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",
  "oneiron-remote",
