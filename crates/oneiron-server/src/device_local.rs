@@ -32,6 +32,60 @@ pub(crate) fn withholds_retained(
     Ok(vault.off_device_readable(named)?.len() != count)
 }
 
+/// Whether a cached response replayed to a caller at `locality` stays on
+/// this device: one of the `rows` its handler listed, or a row its body
+/// names, is one a device-local world keeps now. A short ref in the body
+/// that names no row keeps it too.
+pub(crate) fn replay_withheld(
+    vault: &oneiron::Vault,
+    locality: CallerLocality,
+    body: &[u8],
+    rows: &[EntityId],
+) -> bool {
+    if locality == CallerLocality::OnDevice {
+        return false;
+    }
+    let Some(mut named) = short_refs_in(vault, body) else {
+        return true;
+    };
+    named.extend_from_slice(rows);
+    withholds_retained(vault, locality, &named, body).unwrap_or(true)
+}
+
+/// The rows a JSON body names by short ref, keys included; `None` when one
+/// names no row. Whole ids are left to the payload scan.
+fn short_refs_in(vault: &oneiron::Vault, body: &[u8]) -> Option<Vec<EntityId>> {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return Some(Vec::new());
+    };
+    let mut rows = Vec::new();
+    let mut name = |text: &str| {
+        let reference = text
+            .split_once('@')
+            .map_or(text, |(reference, _)| reference);
+        if oneiron::entity_id::parse_short_ref_syntax(reference).is_err() {
+            return Some(());
+        }
+        rows.push(oneiron::memory::resolve_entity_ref(vault, reference).ok()?);
+        Some(())
+    };
+    let mut pending = vec![&value];
+    while let Some(value) = pending.pop() {
+        match value {
+            serde_json::Value::String(text) => name(text)?,
+            serde_json::Value::Array(items) => pending.extend(items),
+            serde_json::Value::Object(map) => {
+                for (key, item) in map {
+                    name(key)?;
+                    pending.push(item);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(rows)
+}
+
 /// The rows a changed line names: its lifecycle rows, install receipts and
 /// own proposal outcomes, by the id each one is keyed by.
 pub(crate) fn changed_line_rows(

@@ -2,7 +2,7 @@
 
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, execute_mcp_board_verb, mcp_current_board,
-    mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page, mcp_release_continuation,
+    mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page, mcp_release_result,
     mcp_request_id, mcp_resolve_page, mcp_scoped_tasks_section,
 };
 use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
@@ -225,11 +225,7 @@ pub(crate) async fn execute_mcp_generated_verb(
         carrier,
     )
     .await;
-    if continued {
-        mcp_release_continuation(server, actor, &snapshot.rows, result)
-    } else {
-        Ok(result)
-    }
+    mcp_release_result(server, actor, &snapshot.rows, continued, result)
 }
 
 /// Caps whichever row array this verb result pages over, in place.

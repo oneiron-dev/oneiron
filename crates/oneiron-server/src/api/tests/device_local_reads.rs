@@ -617,6 +617,53 @@ async fn a_keyed_board_retry_off_this_device_replays_no_device_local_row() {
     assert_eq!(replayed, first);
 }
 
+/// Sol R5 F3: a keyed write replays its first success to a retry. Once a
+/// row it named is device-local, the replay goes out again on this device
+/// but not off it, and the write is not repeated.
+#[tokio::test]
+async fn a_keyed_write_retried_off_this_device_replays_no_device_local_row() {
+    let (_dir, server, caller, _) = serve();
+    let world = put_world(&server.vault);
+    let note = EntityId::now();
+    let remember = json!({"entity": {
+        "id": note.to_hex(),
+        "entity_type": oneiron::registry::ENTITY_TYPE_NOTE,
+        "learned_at": 300_u64,
+        "occurred_start": 300_u64,
+        "occurred_end": 300_u64,
+        "body": {"content": "orchid note"},
+    }});
+    let keyed = |from| {
+        let (caller, remember) = (&caller, remember.clone());
+        async move {
+            caller
+                .call_keyed(
+                    from,
+                    "POST",
+                    "/v1/core/memory/verbs/remember",
+                    Some(remember),
+                    Some("kept-note"),
+                )
+                .await
+        }
+    };
+    let (status, first) = keyed(HERE).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["id"], note.to_hex(), "{first}");
+
+    server
+        .vault
+        .put_edge(&note, oneiron::EdgeKind::InWorld, &world, 1.0)
+        .unwrap();
+    server.vault.set_world_device_only(world, true).unwrap();
+    let (status, refused) = keyed(AWAY).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(!refused.to_string().contains(&note.to_hex()), "{refused}");
+    let (status, replayed) = keyed(HERE).await;
+    assert_eq!(status, StatusCode::OK, "{replayed}");
+    assert_eq!(replayed, first);
+}
+
 /// Sol R2 F3 and R3 F3: a setup page is continued from the board it
 /// retained, which told its connector, off this device, how a claim it was
 /// served changed. Once the claim's world is device-local the cursor is
@@ -785,7 +832,7 @@ async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() 
     assert!(back["result"].to_string().contains(&task), "{back}");
 }
 
-/// Sol R4 F4 and F7: an ask's calibration pairs are derived from its answer,
+/// Sol R4 F4 and F7, R5 F1: an ask's calibration pairs are derived from its answer,
 /// the unit that answer binds, and each outcome fact and what the fact is
 /// about. Once one of those rows is device-local, no read off this device
 /// forms the pair, and a continuation of a page that held one is refused,
@@ -864,6 +911,11 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
     assert!(!page.to_string().contains(&about.to_hex()), "{first}");
     let cursor = page["meta"]["page"]["cursor"].as_str().unwrap().to_owned();
 
+    // Flagged while a fresh read waits after deriving its pairs (Sol R5 F1).
+    crate::api::mcp_gateway::release_hook::arm(world);
+    let changed = outcomes(json!({})).await;
+    assert!(changed.get("result").is_none(), "{changed}");
+    assert_mcp_structured_error(&changed, "mcp_result_changed");
     server.vault.set_world_device_only(world, true).unwrap();
     let refused = outcomes(json!({"limit": 1, "cursor": cursor})).await;
     assert!(refused.get("result").is_none(), "{refused}");

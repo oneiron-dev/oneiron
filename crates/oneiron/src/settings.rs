@@ -513,10 +513,14 @@ impl Vault {
         Ok(true)
     }
 
-    /// Whether `world` is flagged device-only on this device.
+    /// Whether `world` is flagged device-only on this device: one whose rows
+    /// a caller off it never reads.
     pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        DEVICE_ONLY_WORLD.contains(&self.store, &rtxn, &HexId(world))
+        Ok(
+            device_local_worlds_at(&self.store, &rtxn, crate::claim::CallerLocality::OffDevice)?
+                .contains(&world),
+        )
     }
 
     /// Whether a device-local world keeps `id` on this device, so no caller

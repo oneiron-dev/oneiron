@@ -694,24 +694,34 @@ pub(super) fn mcp_page_cursor_error(error: crate::mcp::McpPageCursorError) -> Mc
     McpGatewayError::new(-32602, error.error_code(), error.to_string()).with_field("page.cursor")
 }
 
-/// A continuation answers from the result its producer retained. It is
-/// judged again once its call has nothing left to wait on: one derived from
-/// a row a device-local world keeps now, or naming one, is refused, and the
-/// caller starts over from page one.
-pub(super) fn mcp_release_continuation(
+/// Every result, fresh or a continuation of one its producer retained, is
+/// judged again once its call has nothing left to wait on (DEC-0005). One
+/// derived from a row a device-local world keeps now, or naming one, is
+/// refused: a continuation's caller starts over from page one, and a fresh
+/// call is told its result changed and to call again.
+pub(super) fn mcp_release_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     rows: &[oneiron::EntityId],
+    continued: bool,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
-    let bytes = serde_json::to_vec(&result)
-        .map_err(|_| mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch))?;
+    let refused = || {
+        if continued {
+            mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
+        } else {
+            McpGatewayError::new(
+                -32603,
+                "mcp_result_changed",
+                "the result changed before it was released; call again",
+            )
+        }
+    };
+    let bytes = serde_json::to_vec(&result).map_err(|_| refused())?;
     if crate::device_local::withholds_retained(&server.vault, actor.locality(), rows, &bytes)
         .map_err(|error| mcp_engine_error("mcp page release check failed", error))?
     {
-        return Err(mcp_page_cursor_error(
-            crate::mcp::McpPageCursorError::SnapshotMismatch,
-        ));
+        return Err(refused());
     }
     Ok(result)
 }
@@ -850,11 +860,7 @@ pub(crate) async fn execute_mcp_setup(
         carrier_policy,
     )
     .await;
-    if continued {
-        mcp_release_continuation(server, actor, &snapshot.rows, result)
-    } else {
-        Ok(result)
-    }
+    mcp_release_result(server, actor, &snapshot.rows, continued, result)
 }
 
 /// A device-only flag committed while a call waits, after its checks ran

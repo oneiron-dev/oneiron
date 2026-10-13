@@ -48,3 +48,51 @@ fn a_worlds_page_off_this_device_never_names_a_device_local_world() -> Result<()
     );
     Ok(())
 }
+
+/// Sol R5 F4: `/claims/by-id` reads the claim index in bounded runs. Off this
+/// device a claim a device-local flag keeps never fills a run, so a page of
+/// nothing but such claims reads as the end of the listing; on this device
+/// the full run still says there may be more.
+#[test]
+fn a_claim_run_off_this_device_hints_at_no_device_local_claim() -> Result<()> {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::config::VaultConfig::default());
+    let at = TimeRange { start: 1, end: 1 };
+    let (world, subject) = (EntityId::now(), EntityId::now());
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, at, 1, b"world")?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        1,
+        b"person",
+    )?;
+    for _ in 0..2 {
+        let mut body = crate::claim::ClaimBody::new(
+            "profile.orchid",
+            crate::claim::ClaimSubject::Entity(subject),
+            rmpv::Value::from("kept"),
+            1.0,
+            crate::claim::ClaimApprovalStatus::Approved,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )?;
+        body.world = Some(world);
+        vault.put_claim(&EntityId::now(), &body, at, 1)?;
+    }
+    vault.set_world_device_only(world, true)?;
+
+    let next_cursor = |locality| -> Result<bool> {
+        let reader = vault.scoped_read(
+            ScopedReadActorKey::new("reader")
+                .expect("actor key")
+                .at(locality),
+        );
+        let page = reader
+            .graph_fs(GraphFsOptions::default())
+            .listdir_claims_by_id_with_fetch("/claims/by-id", None, 2)?;
+        Ok(page.next_cursor().is_some())
+    };
+    assert!(next_cursor(CallerLocality::OnDevice)?);
+    assert!(!next_cursor(CallerLocality::OffDevice)?);
+    Ok(())
+}

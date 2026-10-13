@@ -360,6 +360,7 @@ async fn idempotent(
 ) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_auth_route = is_core_auth_route(request_path(&request));
+    let locality = crate::auth::caller_locality(request.headers(), request.extensions());
     let revoked = state.server.vault().as_ref();
     let core_auth = is_core_auth_route.then(|| {
         CoreAuth::for_server(request.headers(), &state.server).map(|auth| {
@@ -409,6 +410,20 @@ async fn idempotent(
             let auth = core_auth.as_ref().and_then(|auth| auth.as_ref().ok());
             if let Some(refused) = release(&state.server, auth, &response.body, &response.rows) {
                 return refused;
+            }
+            // Whatever the route, a replay off this device names no row a
+            // device-local world keeps now (DEC-0005). Its write is not
+            // repeated.
+            if crate::device_local::replay_withheld(
+                state.server.vault(),
+                locality,
+                &response.body,
+                &response.rows,
+            ) {
+                return api_error_response(
+                    ApiError::invalid_state(Some("idempotent_replay_unreadable")),
+                    is_core_auth_route,
+                );
             }
             return response.into_response();
         }
