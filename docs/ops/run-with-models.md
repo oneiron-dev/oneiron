@@ -37,11 +37,11 @@ key_env = "CPA_API_KEY"                 # the variable's NAME; never the key its
 ```toml
 # MID: a local stack and a cloud, local first. `local` also fills local_reasoner.
 [models]
-local = "llama:qwen3:8b"
+local = "exl3:qwen3.8-27b"
 cloud = "router:anthropic/claude-sonnet-4.5"
 prefer_local = true                     # false puts the cloud rung first
 
-[models.providers.llama]                # llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
+[models.providers.exl3]                 # any local OpenAI-compatible server: exllamav3, llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
 kind = "local-openai-compat"
 base_url = "http://127.0.0.1:8080"
 
@@ -56,15 +56,29 @@ key_env = "OPENROUTER_API_KEY"
 # to the next; each rung may carry its own prompt.
 [models.roles.dreamer_current]
 rungs = [
-  { model = "llama:qwen3:8b", prompt_file = "prompts/dreamer-local.md" },
+  { model = "exl3:qwen3.8-27b", prompt_file = "prompts/dreamer-local.md" },
+  { model = "llama:qwen3.8-27b-q4" },   # the fallback recipe, below
   { model = "claude:claude-sonnet-4-5" },
 ]
+
+[models.providers.llama]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"
 
 [models.providers.claude]               # any Anthropic-compatible /v1/messages server
 kind = "anthropic-compat"
 base_url = "https://api.anthropic.com"
 key_env = "ANTHROPIC_API_KEY"
 ```
+
+The local Dreamer model the examples name is the measured recipe for the
+Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
+the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, 7 draft
+tokens), served by an exllamav3 OpenAI-compatible server, with no JSON
+schema. The fallback is llama.cpp `llama-server` on
+`Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
+(`--spec-type draft-simple --spec-draft-n-max 8`) and the extraction JSON
+schema. Typed decisions stay on `vllm-sr/d3-flash`.
 
 Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
 saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
@@ -158,10 +172,16 @@ can name the claim a later turn corrects. A correction the Dreamer stages (a
 new value for a claim it already holds) takes its grant in the same pass when
 the vault's policy allows it: the replacement lands Auto, the prior closes
 with a `Supersedes` edge, and an open `core.conflict.open` that named the
-prior closes with a `core.conflict.resolved` claim. One the policy protects (a critical
-predicate, or attributed truth such as a user-stated claim) stays Proposed
-and is listed in the owner's run review (`GET /v1/owner/runs`, `oneiron runs
-pending`).
+prior closes with a `core.conflict.resolved` claim. One the policy protects (a class a
+manifest rule declares critical, or attributed truth such as a user-stated
+claim) stays Proposed and is listed in the owner's run review (`GET
+/v1/owner/runs`, `oneiron runs pending`). The seeded manifest declares
+`health.`, `safety.`, `legal.` and `boundary.` critical, and `decision.settled`
+exactly; a predicate no rule names defaults critical for legibility only and
+does not hold a correction. A vault whose policy manifest is still the
+untouched seeded one takes a newer build's seeded manifest when it opens, and
+what waited on the old policy is re-gated, never applied; a manifest the owner
+wrote is never touched.
 
 ```bash
 # once, with the server stopped; ONEIRON_AUTH_SECRET set as for serve
