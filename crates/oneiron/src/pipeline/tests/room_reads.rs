@@ -1338,8 +1338,8 @@ fn base_claim_for_the_room(
 /// then that one back, with new words and no vector, keeps the room's vector
 /// of it. Then the room changes the body and indexes it with its words and no vector:
 /// the vector the room staged describes the earlier body, so it no longer
-/// finds the claim there (Sol R23), and the room, whose graph held only the
-/// claim, still embeds another row (Sol R24).
+/// finds the claim there (Sol R23). The claim was the entry point of the
+/// room's graph, and the room still embeds another row (Sol R24, R25).
 #[test]
 fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1369,6 +1369,16 @@ fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() 
         vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
         "the room's vector of its body finds the claim"
     );
+    // A second node, after the claim in key order: the claim stays the
+    // graph's entry point and its first node.
+    stage_in_room(
+        &vault,
+        &session,
+        vec![
+            room_put(entity_id(0xDB)),
+            room_vector(entity_id(0xDB), [0.0, 1.0, 0.0, 0.0]),
+        ],
+    )?;
     // Another body first: a put of the same body alone is metadata only and
     // leaves the room nothing to publish.
     stage_in_room(
@@ -1419,8 +1429,7 @@ fn a_room_that_changes_a_rows_body_again_hides_its_own_vector_of_the_last_one() 
         !vector_hits_in_room(&vault, &session, [1.0, 0.0, 0.0, 0.0])?.contains(&claim),
         "the room's vector of its earlier body does not find the new one"
     );
-    // The claim was the only node of the room's graph (Sol R24).
-    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD7))?;
+    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD8))?;
     session.close()?;
     Ok(())
 }
@@ -1471,7 +1480,7 @@ fn a_room_that_puts_back_a_body_base_never_embedded_still_embeds() -> Result<()>
         ),
         "backbaseword",
     )?;
-    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD7))?;
+    embed_past_a_hidden_entry(&vault, &session, claim, entity_id(0xD8))?;
     session.close()?;
     Ok(())
 }
