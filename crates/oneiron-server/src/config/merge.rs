@@ -13,6 +13,7 @@ use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::import::ImportConfigOverride;
+use super::keystore::{KeystoreConfigOverride, lookup_keystore_override};
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
@@ -113,6 +114,7 @@ impl EnvConfig {
         values.backup = lookup_backup_override(&mut lookup)?;
         values.feedback = lookup_feedback_override(&mut lookup)?;
         values.recall = lookup_recall_override(&mut lookup)?;
+        values.keystore = lookup_keystore_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
         values.failure_signal_training =
@@ -277,6 +279,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.backup.validate()?;
     config.feedback.validate()?;
     config.recall.validate()?;
+    config.keystore.validate()?;
     config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
@@ -476,6 +479,7 @@ struct FileServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    keystore: Option<KeystoreConfigOverride>,
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -522,6 +526,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             backup: value.backup,
             feedback: value.feedback,
             recall: value.recall,
+            keystore: value.keystore,
             import: value.import,
             models: None,
             privacy_posture: value.privacy_posture,
@@ -569,6 +574,7 @@ struct PartialServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    keystore: Option<KeystoreConfigOverride>,
     import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
     models: Option<ModelsConfig>,
@@ -628,6 +634,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("keystore", &self.keystore)
             .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
@@ -752,6 +759,9 @@ impl PartialServeConfig {
         if let Some(value) = self.feedback {
             resolved.feedback.apply_override(value);
         }
+        if let Some(value) = self.keystore {
+            resolved.keystore.apply_override(value);
+        }
         if let Some(value) = self.recall {
             resolved.recall.apply_override(value);
         }
@@ -821,6 +831,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             recall: None,
+            keystore: None,
             import: None,
             models: None,
             privacy_posture: value.privacy_posture,

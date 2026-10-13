@@ -168,7 +168,6 @@ impl Store {
             machine_history_issuer: Mutex::new(None),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             device_keystore: Mutex::new(None),
-            world_key_ring: Mutex::new(std::collections::HashMap::new()),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             group_commit: crate::store::GroupCommit::default(),

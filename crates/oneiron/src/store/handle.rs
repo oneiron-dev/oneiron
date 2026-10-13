@@ -251,10 +251,6 @@ pub struct StoreCore {
     /// This install's this-device-only keystore (world privacy P6b). The host installs
     /// it after open; it is never persisted and never shared across vaults.
     pub(crate) device_keystore: Mutex<Option<Arc<dyn oneiron_keystore::DeviceKeystore>>>,
-    /// World keys opened on this install this session. Memory only, never persisted,
-    /// dropped with the handle.
-    pub(crate) world_key_ring:
-        Mutex<HashMap<crate::world_keys::WorldKeyId, Arc<crate::world_keys::WorldKey>>>,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.
