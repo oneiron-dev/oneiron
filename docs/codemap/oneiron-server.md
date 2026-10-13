@@ -117,7 +117,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/llm.rs` | src | s | 1 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/tests.rs` | test | m | — | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 10 crate-vis | — | Tool execution dispatch across actors |
-| `src/api/mcp_gateway/admission.rs` | src | m | 8 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/admission.rs` | src | m | 9 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 4 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | s | 2 crate-vis | — | Code mode's `self.memory.<verb>`: the SDK verb table through the tool door |
@@ -174,6 +174,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mcp_paging_cursors.rs` | test | m | — | — | Setup page budgets/end-markers, one-time bound cursors, mutating-use refusal, concurrent continuations |
 | `src/api/tests/mcp_quickjs.rs` | test | L | 2 crate-vis | — | Production execute_code uses real JS through the vault-owned host and wire |
 | `src/api/tests/mcp_quickjs/call_mode.rs` | test | s | — | — | Call mode through code mode's `self.memory.recall` (retrieval hub #call-mode) |
+| `src/api/tests/mcp_quickjs/run_rows.rs` | test | s | — | — | The rows a code run serves itself (`self.memory.search`, `put_claim`, `supersede_claim`, `put_edge`) meet… |
 | `src/api/tests/mcp_results_carrier.rs` | test | m | — | — | Negotiated result content, board omission/health axes, discover vocabulary, carrier drain, skills-pack onramp |
 | `src/api/tests/mcp_scoping.rs` | test | m | — | — | Legacy catalog retirement, actor-derived effective scopes, world/facet ceilings, board epoch monotonicity |
 | `src/api/tests/mcp_source_gate.rs` | test | s | — | — | — |
