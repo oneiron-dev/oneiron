@@ -18,7 +18,7 @@ pub(super) fn apply_op(
     match op {
         AuthorityOp::Genesis { .. } => {}
         AuthorityOp::EnrollDevice { device } => {
-            upsert_device(state, device);
+            upsert_device(state, device, Some(signer));
             if state
                 .roster
                 .values()
@@ -62,7 +62,10 @@ pub(super) fn apply_op(
             new_device,
         } => {
             revoke_key(state, old_key);
-            upsert_device(state, new_device);
+            if state.host_custody_keys.contains(old_key) {
+                state.host_custody_keys.insert(new_device.key.clone());
+            }
+            upsert_device(state, new_device, Some(signer));
         }
         AuthorityOp::SetTierFloor { tier_floor } => {
             record_tier_floor(state, entry_hash, *tier_floor);
@@ -71,7 +74,7 @@ pub(super) fn apply_op(
             for device in state.roster.values_mut() {
                 device.revoked = true;
             }
-            upsert_device(state, new_device);
+            upsert_device(state, new_device, Some(signer));
         }
         // Legacy wire op: `fold_entry_state` rejects it before reaching here.
         AuthorityOp::VetoPendingWiden { .. } => {}
@@ -583,9 +586,17 @@ pub(super) fn merge_pact_states(
     merged
 }
 
-pub(super) fn upsert_device(state: &mut FoldState, device: &DeviceAuthority) {
-    if device.attestation.kind == super::slip_vault::HOST_ROOT_ATTESTATION {
-        state.host_root_keys.insert(device.key.clone());
+/// `admitted_by` is the roster key that signed the device in; `None` for a
+/// genesis root.
+pub(super) fn upsert_device(
+    state: &mut FoldState,
+    device: &DeviceAuthority,
+    admitted_by: Option<&AuthorityKey>,
+) {
+    if device.attestation.kind == super::slip_vault::HOST_ROOT_ATTESTATION
+        || admitted_by.is_some_and(|key| state.host_custody_keys.contains(key))
+    {
+        state.host_custody_keys.insert(device.key.clone());
     }
     let folded = FoldedDevice {
         key: device.key.clone(),

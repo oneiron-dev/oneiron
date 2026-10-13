@@ -383,7 +383,7 @@ pub(super) fn single_owner_state(
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
-        host_root_keys: BTreeSet::new(),
+        host_custody_keys: BTreeSet::new(),
         actor_rows: BTreeSet::new(),
     };
     (owner, owner_key, parent, state)

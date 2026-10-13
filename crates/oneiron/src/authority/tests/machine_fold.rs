@@ -133,6 +133,64 @@ fn a_hosted_host_root_never_vouches_for_a_machine() {
     assert!(hosted.machine(yours.machine).is_none());
 }
 
+/// A key the host's root re-roots to stays in the host's custody whatever
+/// labels it carries: a provider never launders its root into an owner-held
+/// key that answers "yours".
+#[test]
+fn a_hosted_roots_successor_never_vouches_for_a_machine() {
+    let host = host();
+    let successor = ed_key(89);
+    let fold = host.vault.authority_fold().unwrap();
+    let re_root = host_entry(
+        &host,
+        fold.append_sequences[&host.issuer.public_key()] + 1,
+        &fold.append_heads,
+        AuthorityOp::ReRoot {
+            new_device: device(
+                authority_key_from_ed(&successor),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        None,
+    );
+    let re_root_hash = authority_entry_hash(&re_root).unwrap();
+    let machine = EntityId::now();
+    let yours = sign_ed(
+        unsigned_entry(
+            Some(host.vault_id),
+            1,
+            vec![re_root_hash],
+            profile_op(&host, machine, &ed_key(90)),
+            authority_key_from_ed(&successor),
+            3,
+        ),
+        &successor,
+    );
+    let mut entries: Vec<_> = {
+        let txn = host.vault.store.env.read_txn().unwrap();
+        authority_log_rows_in_txn(&host.vault.store, &txn)
+            .unwrap()
+            .into_iter()
+            .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
+            .collect()
+    };
+    entries.extend([re_root, yours]);
+    let fold = |posture| {
+        fold_authority_log_for_posture(&entries, &BTreeMap::new(), 10, &BTreeMap::new(), posture)
+    };
+    let self_hosted = fold(crate::HostingPrivacyPosture::SelfHostLocal);
+    assert!(self_hosted.valid_entries.contains(&re_root_hash));
+    assert!(
+        self_hosted
+            .machine(machine)
+            .is_some_and(FoldedMachine::is_mine)
+    );
+    let hosted = fold(crate::HostingPrivacyPosture::Hosted);
+    assert!(hosted.valid_entries.contains(&re_root_hash));
+    assert!(hosted.machine(machine).is_none());
+}
+
 /// An issuer-signed entry on `parents`, cosigned by `cosigner` when given.
 fn host_entry(
     host: &Host,

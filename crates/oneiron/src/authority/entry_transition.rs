@@ -105,13 +105,13 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
-            host_root_keys: BTreeSet::new(),
+            host_custody_keys: BTreeSet::new(),
             actor_rows: BTreeSet::new(),
         };
         if !tier_meets_floor(device.tier, *tier_floor) {
             return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
         }
-        upsert_device(&mut state, device);
+        upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
         return EntryFold::Ready(state);
     }
