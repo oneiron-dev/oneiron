@@ -62,9 +62,11 @@ pub(super) fn apply_op(
             new_device,
         } => {
             revoke_key(state, old_key);
-            if state.host_custody_keys.contains(old_key) {
-                state.host_custody_keys.insert(new_device.key.clone());
-            }
+            state
+                .key_admitters
+                .entry(new_device.key.clone())
+                .or_default()
+                .insert(old_key.clone());
             upsert_device(state, new_device, Some(signer));
         }
         AuthorityOp::SetTierFloor { tier_floor } => {
@@ -587,9 +589,10 @@ pub(super) fn merge_pact_states(
 }
 
 /// `admitted_by` is the roster key that signed the device in; `None` for a
-/// genesis root. Custody is sticky: a key the host attests as its root, a key
-/// marked for the cloud, and every key a custodial key admits stay custodial,
-/// whatever the successor's own labels say.
+/// genesis root. Custody is sticky: a key the host attests as its root and a
+/// key marked for the cloud are the host's, and so is every key such a key
+/// admitted, directly or through others (`key_admitters`), whatever the
+/// successor's own labels say.
 pub(super) fn upsert_device(
     state: &mut FoldState,
     device: &DeviceAuthority,
@@ -598,9 +601,15 @@ pub(super) fn upsert_device(
     if device.attestation.kind == super::slip_vault::HOST_ROOT_ATTESTATION
         || device.roles & ROLE_CLOUD != 0
         || device.tier == AuthorityTier::CloudCustodial
-        || admitted_by.is_some_and(|key| state.host_custody_keys.contains(key))
     {
         state.host_custody_keys.insert(device.key.clone());
+    }
+    if let Some(admitter) = admitted_by {
+        state
+            .key_admitters
+            .entry(device.key.clone())
+            .or_default()
+            .insert(admitter.clone());
     }
     let folded = FoldedDevice {
         key: device.key.clone(),

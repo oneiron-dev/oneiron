@@ -188,7 +188,22 @@ pub(super) fn apply_machine_profile(
 /// directly or through another custodial key. Judged from provenance and the
 /// vault's posture, so a key labelled owner-held still counts.
 fn custodial_host_root(state: &FoldState, signer: &AuthorityKey, context: FoldContext<'_>) -> bool {
-    context.hosted && state.host_custody_keys.contains(signer)
+    context.hosted && in_host_custody(state, signer)
+}
+
+/// Whether `key`, or any key up its admitters, is marked as the host's.
+fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![key];
+    while let Some(next) = pending.pop() {
+        if state.host_custody_keys.contains(next) {
+            return true;
+        }
+        if seen.insert(next) {
+            pending.extend(state.key_admitters.get(next).into_iter().flatten());
+        }
+    }
+    false
 }
 
 fn roster_chain(state: &FoldState, machine: EntityId) -> Option<&MachineChain> {

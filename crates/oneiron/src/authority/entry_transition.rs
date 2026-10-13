@@ -106,6 +106,7 @@ pub(super) fn fold_entry_state(
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
             host_custody_keys: BTreeSet::new(),
+            key_admitters: BTreeMap::new(),
             actor_rows: BTreeSet::new(),
         };
         if !tier_meets_floor(device.tier, *tier_floor) {
