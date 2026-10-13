@@ -223,8 +223,23 @@ impl Vault {
     /// through the owner's door.
     #[doc(hidden)]
     pub fn keep_world_on_this_machine_for_test(&self, world: EntityId, keep: bool) -> Result<()> {
-        let issuer = crate::test_support::test_host_issuer();
-        self.ensure_host_root_slip(&issuer)?;
+        self.keep_world_on_this_machine_under_for_test(
+            &crate::test_support::test_host_issuer(),
+            world,
+            keep,
+        )
+    }
+
+    /// [`Self::keep_world_on_this_machine_for_test`] on a vault rooted under
+    /// `issuer`.
+    #[doc(hidden)]
+    pub fn keep_world_on_this_machine_under_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        world: EntityId,
+        keep: bool,
+    ) -> Result<()> {
+        self.ensure_host_root_slip(issuer)?;
         let person = self
             .ensure_embedded_owner_actor()
             .map_err(|_| Error::InvariantViolation("embedded owner"))?;
@@ -234,7 +249,7 @@ impl Vault {
             .get(&issuer.public_key())
             .is_some_and(|binding| binding.actor_ref == person);
         if !bound {
-            self.bind_host_owner_for_test(&issuer, person)?;
+            self.bind_host_owner_for_test(issuer, person)?;
         }
         let owner = self.authenticate_owner(
             person,
@@ -260,7 +275,7 @@ impl Vault {
                     },
                 )?;
                 self.enroll_machine(
-                    &issuer,
+                    issuer,
                     &owner,
                     &request,
                     MachineRole::Owned(MachineOwnership::Yours),

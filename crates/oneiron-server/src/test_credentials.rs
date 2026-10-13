@@ -10,18 +10,23 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RECIPE_PREFIX: &str = "OneironTestCredential ";
 
+/// The host root the server's vault is rooted under.
+pub(crate) fn host_issuer(server: &SyncServer) -> HostSlipIssuer {
+    let secret = server
+        .config
+        .auth_secret
+        .as_deref()
+        .expect("authenticated fixture needs a configured host root");
+    HostSlipIssuer::from_secret(secret.as_bytes()).unwrap()
+}
+
 pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, SigningKey) {
     let fields: BTreeMap<_, _> = recipe
         .split(';')
         .filter(|part| !part.is_empty())
         .map(|part| part.split_once('=').expect("credential recipe key/value"))
         .collect();
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .expect("authenticated fixture needs a configured host root");
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
+    let issuer = host_issuer(server);
     let identity = fields.get("jti").copied().unwrap_or(recipe);
     let id = *blake3::hash(format!("oneiron/test-slip/id/{identity}").as_bytes()).as_bytes();
     let key = SigningKey::from_bytes(

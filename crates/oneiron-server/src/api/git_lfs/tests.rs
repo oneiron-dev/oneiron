@@ -641,7 +641,11 @@ async fn lfs_download_withholds_an_object_only_a_device_only_world_owns() {
     assert_eq!((status, body), (StatusCode::OK, bytes));
 
     vault
-        .keep_world_on_this_machine_for_test(world, true)
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
         .unwrap();
     let (status, _, _) = route(&server, get()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
