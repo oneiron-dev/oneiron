@@ -271,6 +271,10 @@ fn no_door_removes_a_fact_or_its_link() {
             vault.delete_entity(fact_ref).is_err(),
             "a fact is permanent"
         );
+        assert!(
+            vault.batch().delete(fact_ref).commit().is_err(),
+            "a batch delete removes no fact"
+        );
     }
     assert_eq!(
         facts_of(&vault, task_ref, TaskAuthorityFactKind::ConsentRequired),

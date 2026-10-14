@@ -45,6 +45,32 @@ impl BindingGeneration {
         (generation.len > 0).then_some(generation)
     }
 
+    /// [`Self::from_bindings`] for bindings of several classes: at the cap,
+    /// the lowest binding of each class is kept first, so no class the party
+    /// holds is left out, and the rest fill in lowest first.
+    pub(crate) fn from_classed_bindings<'a>(
+        bindings: impl IntoIterator<Item = (&'a str, BindingId)>,
+    ) -> Option<Self> {
+        let mut held: Vec<(&str, BindingId)> = bindings.into_iter().collect();
+        held.sort_by(|left, right| left.1.cmp(&right.1));
+        let mut kept: Vec<BindingId> = Vec::new();
+        let mut classes: BTreeSet<&str> = BTreeSet::new();
+        for (class, binding) in &held {
+            if classes.insert(*class) {
+                kept.push(*binding);
+            }
+        }
+        for (_, binding) in &held {
+            if kept.len() >= MAX_GENERATION_BINDINGS {
+                break;
+            }
+            if !kept.contains(binding) {
+                kept.push(*binding);
+            }
+        }
+        Self::from_bindings(kept)
+    }
+
     fn push(&mut self, binding: BindingId) {
         self.bindings[usize::from(self.len)] = binding;
         self.len += 1;

@@ -45,61 +45,73 @@ impl Vault {
         Ok(writer)
     }
 
-    /// The binding generation `actor` holds now: every live binding it has,
-    /// of any class, or `None` when it holds none (an unrooted vault
-    /// included).
+    /// The binding generation `actor` holds now: its live bindings, of any
+    /// class, or `None` when it holds none (an unrooted vault included). At
+    /// the cap the lowest binding of each class is kept first, so no class
+    /// the actor holds is left out.
     pub(crate) fn actor_binding_generation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
     ) -> Result<Option<BindingGeneration>> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
-        Ok(BindingGeneration::from_bindings(
+        Ok(BindingGeneration::from_classed_bindings(
             fold.actor_bindings
                 .iter()
                 .filter(|(_, binding)| {
                     binding.actor_ref == actor
                         && binding.status == super::ActorBindingStatus::Active
                 })
-                .map(|(key, binding)| actor_binding_id(key, binding)),
+                .map(|(key, binding)| {
+                    (binding.actor_class.as_str(), actor_binding_id(key, binding))
+                }),
         ))
     }
 
     /// [`Self::verify_write_actor_in_txn`] at this host's observed frontier,
     /// for a writer that must still hold one of the bindings `generation`
     /// records. A writer rebound or revoked and regranted since holds a new
-    /// binding, not one of those; with none recorded it must have no
-    /// revocation in its history.
+    /// binding, not one of those. With none recorded, it must hold its key's
+    /// first binding (epoch 1; every rebind or regrant is a later epoch) and
+    /// have no revocation in its history. A generation that names no binding
+    /// (replicas that recorded none in common) admits nobody, rooted or not.
     pub(crate) fn verify_write_actor_generation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         writer: WriteActor,
         generation: Option<BindingGeneration>,
     ) -> Result<()> {
+        let refused = || {
+            Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                reason: "writer's binding is not one the consult recorded",
+            }))
+        };
         let writer = self.observed_write_actor_in_txn(txn, writer)?;
+        if generation.is_some_and(|generation| generation.bindings().is_empty()) {
+            return refused();
+        }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         if fold.vault_id.is_none() {
             return Ok(());
         }
         let class = writer.actor_class().gate_actor_class();
+        let mut live = fold.actor_bindings.iter().filter(|(_, binding)| {
+            binding.actor_ref == writer.entity_ref()
+                && binding.actor_class == class
+                && binding.status == super::ActorBindingStatus::Active
+        });
         let held = match generation {
-            Some(generation) => fold.actor_bindings.iter().any(|(key, binding)| {
-                binding.actor_ref == writer.entity_ref()
-                    && binding.actor_class == class
-                    && binding.status == super::ActorBindingStatus::Active
-                    && generation.names(&actor_binding_id(key, binding))
-            }),
-            None => !fold
-                .actor_revocation_affected_writers
-                .contains(&(writer.entity_ref(), class.to_owned())),
+            Some(generation) => {
+                live.any(|(key, binding)| generation.names(&actor_binding_id(key, binding)))
+            }
+            None => {
+                !fold
+                    .actor_revocation_affected_writers
+                    .contains(&(writer.entity_ref(), class.to_owned()))
+                    && live.any(|(_, binding)| binding.epoch == 1)
+            }
         };
-        if held {
-            Ok(())
-        } else {
-            Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
-                reason: "writer's binding is not one the consult recorded",
-            }))
-        }
+        if held { Ok(()) } else { refused() }
     }
 
     /// Resolve the asserted class and current binding in the mutation snapshot.

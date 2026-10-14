@@ -339,3 +339,21 @@ fn an_authority_fact_admits_only_an_exact_echo() {
         Some(owner)
     );
 }
+
+/// F24 round 5 (H219): at the cap of eight bindings, every class a party
+/// holds keeps one, so a consult its creator minted as an agent is one it
+/// still moves as that agent.
+#[test]
+fn a_generation_at_the_cap_keeps_every_class() {
+    let held = (0..8)
+        .map(|byte| ("human", [byte; 32]))
+        .chain([("agent", [0xF0; 32]), ("system", [0xF1; 32])]);
+    let generation = BindingGeneration::from_classed_bindings(held).expect("a generation");
+    assert_eq!(generation.bindings().len(), MAX_GENERATION_BINDINGS);
+    assert!(generation.names(&[0xF0; 32]), "the agent binding is kept");
+    assert!(generation.names(&[0xF1; 32]), "the system binding is kept");
+    assert!(
+        generation.names(&[0; 32]),
+        "the lowest human binding is kept"
+    );
+}

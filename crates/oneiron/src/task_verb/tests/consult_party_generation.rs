@@ -272,3 +272,87 @@ fn a_party_bound_under_two_classes_moves_its_consult() {
         .compare_and_set_consult_ladder(task_ref, &working(), approve(0xC4))
         .expect("the person moves its consult as the agent it asked as");
 }
+
+/// F24 round 5 (H219): a party with no generation recorded (its consult was
+/// minted before its first binding) holds its key's first binding, not a
+/// later one: rebound away and back, it no longer moves the consult.
+#[test]
+fn a_party_with_no_recorded_generation_loses_it_to_a_rebind() {
+    let (_dir, vault) = open_vault();
+    let asker = own_agent(&vault);
+    let peer = consult_peer(&vault, 0xE2);
+    let unrooted = new_consult(&vault, asker, peer, 0x82);
+    let control = new_consult(&vault, asker, peer, 0x83);
+    let writer = crate::WriteActor::new(asker, EdgeActorClass::Agent);
+    let revoke = root_owner(&vault, writer, 0xEC).expect("root the vault with the asker bound");
+    let facade = vault.memory(asker, EdgeActorClass::Agent);
+    facade
+        .compare_and_set_consult_ladder(control, &working(), approve(0xC5))
+        .expect("positive control: the first binding moves an unrooted consult");
+    let rebind = |parent: AuthorityEntryHash, seq, actor_ref, epoch| {
+        sign_child(
+            revoke.vault_id,
+            parent,
+            seq,
+            AuthorityOp::RebindActor {
+                authority_key: key(0xEC),
+                actor_ref,
+                actor_class: writer.actor_class().gate_actor_class().to_owned(),
+                epoch,
+            },
+            0xEC,
+            &[],
+        )
+        .expect("sign the rebind")
+    };
+    let away = rebind(revoke.parent_hashes[0], 2, peer, 2);
+    let back = rebind(authority_entry_hash(&away).expect("hash"), 3, asker, 3);
+    put_entries(&vault, &[&away, &back]);
+
+    assert!(
+        facade
+            .compare_and_set_consult_ladder(unrooted, &working(), approve(0xC6))
+            .is_err(),
+        "a rebound party is not the first binding the consult admitted"
+    );
+}
+
+/// F24 round 5 (H219): two facts for one consult's parties whose
+/// generations share no binding admit nobody, even in an unrooted vault.
+#[test]
+fn generations_with_no_binding_in_common_admit_nobody_unrooted() {
+    let (_dir, vault) = open_vault();
+    let asker = own_agent(&vault);
+    let peer = consult_peer(&vault, 0xE2);
+    let task_ref = new_consult(&vault, asker, peer, 0x84);
+    let control = new_consult(&vault, asker, peer, 0x85);
+    let recorded = crate::task_authority::BindingGeneration::from_bindings([[0xAB; 32]]);
+    vault
+        .with_write_txn(|wtxn| {
+            put_task_authority_fact_in_txn(
+                &vault,
+                wtxn,
+                TaskAuthorityFact {
+                    task_ref,
+                    kind: TaskAuthorityFactKind::ConsultAssignee,
+                    actor_ref: asker,
+                    assigned_ref: Some(peer),
+                    actor_generation: recorded,
+                    assigned_generation: None,
+                    occurred_at: LADDER_NOW,
+                },
+            )
+        })
+        .expect("a replica's fact recording a binding");
+    let facade = vault.memory(asker, EdgeActorClass::Agent);
+
+    assert!(
+        facade
+            .compare_and_set_consult_ladder(task_ref, &working(), approve(0xC7))
+            .is_err(),
+        "no binding in common admits nobody"
+    );
+    facade
+        .compare_and_set_consult_ladder(control, &working(), approve(0xC8))
+        .expect("positive control: an unrooted consult's own fact admits its asker");
+}
