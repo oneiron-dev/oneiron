@@ -252,7 +252,7 @@ fn serve_request(
     // Between the coordinator and the child, so on every way out the child
     // is reaped first, then what a killed backend left in quarantine is
     // swept, and only then is the coordinator let go.
-    let quarantines = match coordinator {
+    let mut quarantines = match coordinator {
         Some(_) => Some(IncomingQuarantines::note(
             repo_common_dir(&repo_dir)?.join("objects"),
         )),
@@ -302,6 +302,9 @@ fn serve_request(
         }
     };
     let succeeded = child.wait()?;
+    if let Some(quarantines) = quarantines.as_mut() {
+        quarantines.exited();
+    }
     if !succeeded {
         return Err(serve_failed(format!(
             "git http-backend exited with a failure: {}",

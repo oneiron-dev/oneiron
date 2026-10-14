@@ -126,10 +126,11 @@ impl ServeCommand {
     /// carries it to every git child the backend spawns, so no repository-local
     /// `hooksPath` and no repository-supplied hook can displace the door's.
     ///
-    /// Automatic maintenance is pinned off the same way, as GitWire pins it
-    /// for its own commands: a push would otherwise start a repack that
-    /// detaches and outlives the exchange that started it, and with it the
-    /// exchange's permit.
+    /// Automatic maintenance, the fsmonitor daemon and the signature
+    /// verifiers are pinned off the same way, as GitWire pins them for its
+    /// own commands: a push would otherwise start a repack, a daemon or a
+    /// signer's agent that detaches and outlives the exchange that started
+    /// it, and with it the exchange's permit.
     pub fn http_backend(
         repo_dir: &Path,
         project_root: &Path,
@@ -148,6 +149,10 @@ impl ServeCommand {
             "receive.autogc=false",
             "gc.auto=0",
             "maintenance.auto=false",
+            "core.fsmonitor=false",
+            "gpg.program=false",
+            "gpg.ssh.program=false",
+            "gpg.x509.program=false",
         ] {
             argv.extend(["-c".to_owned(), pinned.to_owned()]);
         }
@@ -327,18 +332,30 @@ impl Drop for ServeChild {
 
 /// The quarantines a receive-pack's backend makes in the repository's objects
 /// directory. Git removes its own as it exits, but not when it is killed:
-/// dropping this removes every one that appeared since [`Self::note`]. Drop
-/// it once the backend is reaped and before the repository coordinator is
-/// let go, so none of them can belong to another push.
+/// dropping this removes every one that appeared since [`Self::note`], unless
+/// the backend exited by itself. Drop it once the backend is reaped and before
+/// the repository coordinator is let go, so none of them can belong to
+/// another push this process admitted.
 pub(super) struct IncomingQuarantines {
     objects: PathBuf,
     before: BTreeSet<OsString>,
+    sweep: bool,
 }
 
 impl IncomingQuarantines {
     pub(super) fn note(objects: PathBuf) -> Self {
         let before = Self::present(&objects);
-        Self { objects, before }
+        Self {
+            objects,
+            before,
+            sweep: true,
+        }
+    }
+
+    /// The backend exited by itself, so git removed its own quarantine:
+    /// anything new beside it is not this exchange's to remove.
+    pub(super) fn exited(&mut self) {
+        self.sweep = false;
     }
 
     fn present(objects: &Path) -> BTreeSet<OsString> {
@@ -357,6 +374,9 @@ impl IncomingQuarantines {
 
 impl Drop for IncomingQuarantines {
     fn drop(&mut self) {
+        if !self.sweep {
+            return;
+        }
         for name in Self::present(&self.objects) {
             if self.before.contains(&name) {
                 continue;

@@ -282,3 +282,69 @@ fn a_push_killed_mid_pack_leaves_no_quarantine_behind() {
     assert!(left.is_empty(), "a killed push left {left:?}");
     assert_eq!(git(&repo, &["rev-parse", "refs/heads/main"]), head.as_str());
 }
+
+/// A push body that, as it is first read, makes a quarantine the way another
+/// receive-pack on the same object store would, outside this process.
+struct BodyBesideAnotherPush {
+    bytes: io::Cursor<Vec<u8>>,
+    other: Option<PathBuf>,
+}
+
+impl Read for BodyBesideAnotherPush {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if let Some(other) = self.other.take() {
+            fs::create_dir_all(&other)?;
+            fs::write(other.join("incoming.pack"), b"another push's objects")?;
+        }
+        self.bytes.read(out)
+    }
+}
+
+/// Round 3 (Sol, Astra): only a backend this exchange killed has its
+/// quarantine swept. One that exited by itself removed its own, so a
+/// quarantine that appeared beside it belongs to someone else.
+#[test]
+fn a_push_that_ends_by_itself_leaves_another_quarantine_alone() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo, _, head) = served_repo(&vault);
+    let tip = commit_file(source.path(), "notes.txt", "plain notes\n");
+    let command = format!(
+        "{} {} refs/heads/main\0report-status\n",
+        head.as_str(),
+        tip.as_str()
+    );
+    let mut bytes = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
+    bytes.extend(pack_between(source.path(), &head, &tip));
+    let request = ServeRequest {
+        method: "POST".into(),
+        path_info: "/demo.git/git-receive-pack".into(),
+        query_string: String::new(),
+        content_type: Some("application/x-git-receive-pack-request".into()),
+        content_length: Some(bytes.len() as u64),
+        content_encoding: None,
+        git_protocol: None,
+        remote_user: Some(EntityId::now().to_hex()),
+        remote_addr: Some("127.0.0.1".into()),
+    };
+    let other = repo.join("objects").join("tmp_objdir-incoming-another");
+    let mut body = BodyBesideAnotherPush {
+        bytes: io::Cursor::new(bytes),
+        other: Some(other.clone()),
+    };
+
+    let report = serve_bounded(
+        &vault,
+        "demo",
+        &request,
+        DoorSeam::Landed,
+        Duration::from_secs(5),
+        &mut body,
+        &mut CapturingSink::default(),
+    )
+    .expect("the push is served");
+    assert!(report.landing.is_some(), "the push lands");
+    assert_eq!(
+        fs::read(other.join("incoming.pack")).expect("the other quarantine is still there"),
+        b"another push's objects"
+    );
+}
