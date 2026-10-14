@@ -39,7 +39,7 @@ impl Memory<'_> {
                 // empty one too, which may show text after its next change.
                 let mut members = Vec::new();
                 for (message, ..) in
-                    crate::tagging::turn_members_in_txn(self.vault, &content, txn, id)?
+                    crate::tagging::turn_members_in_txn(self.vault, &content, txn, id, false)?
                         .unwrap_or_default()
                 {
                     if readable(&message)? {
@@ -47,7 +47,7 @@ impl Memory<'_> {
                     }
                 }
                 match crate::vault::entity_revision::served_turn_text_in_txn(
-                    self.vault, &content, txn, id, mode,
+                    self.vault, &content, txn, id, mode, true,
                 )? {
                     Some(text) => {
                         let revision = text.revision;

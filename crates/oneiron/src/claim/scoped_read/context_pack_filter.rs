@@ -311,7 +311,7 @@ impl ScopedRead<'_> {
             });
         let store = self.store_read();
         let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
-            self.vault, &store, rtxn, &entity.id, mode,
+            self.vault, &store, rtxn, &entity.id, mode, true,
         )?
         else {
             return Ok(true);

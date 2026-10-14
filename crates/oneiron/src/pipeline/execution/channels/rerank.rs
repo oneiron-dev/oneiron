@@ -352,6 +352,7 @@ impl PipelineBuilder<'_> {
             rtxn,
             turn,
             ReadMode::Indexed,
+            false,
         )?
         .filter(|text| !text.messages.is_empty()))
     }

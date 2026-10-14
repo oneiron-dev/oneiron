@@ -494,6 +494,7 @@ impl Memory<'_> {
                         txn,
                         turn,
                         mode,
+                        true,
                     )?
                     else {
                         return Ok(None);

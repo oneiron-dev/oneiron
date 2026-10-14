@@ -62,18 +62,19 @@ pub(crate) struct TurnText {
     /// text, which its row revision pins whole.
     pub(crate) revision: RevisionRef,
     /// Each source message the revision joins, with its text there and the
-    /// body that text is read from, in message order. Every reader is given
-    /// only those it may read.
+    /// body that text is read from (empty unless the read was for release),
+    /// in message order. Every reader is given only those it may read.
     pub(crate) messages: Vec<(EntityId, String, Vec<u8>)>,
 }
 
 impl TurnText {
     /// The messages a door that releases the words gives the reader
-    /// `readable` admits. A turn's text is its messages' words without the
-    /// rest of their bodies, so a message whose body the write door refuses
-    /// gives none: the body its words are read from, its document's text in
-    /// it, at the state the revision read, as a lossy door withholds a
-    /// refused body whole. Words the write door's text rules refuse are given
+    /// `readable` admits, from a read for release. A turn's text is its
+    /// messages' words without the rest of their bodies, so a message whose
+    /// body the write door refuses gives none: the body its words are read
+    /// from, its document's text in it, at the state the revision read, as a
+    /// lossy door withholds a refused body whole. A message with no body kept
+    /// gives none either. Words the write door's text rules refuse are given
     /// by none.
     pub(crate) fn released(
         self,
@@ -82,6 +83,7 @@ impl TurnText {
         let mut messages = Vec::with_capacity(self.messages.len());
         for (id, words, body) in self.messages {
             if readable(&id)?
+                && !body.is_empty()
                 && !crate::batch::export::write_door_refuses_body(&body)
                 && !crate::batch::secret_scan::write_door_refuses_raw(words.as_bytes())
             {
@@ -97,18 +99,21 @@ impl TurnText {
 /// words; a pin at a text revision reads the words it was served with, or
 /// nothing once they can no longer be found. `None` also for a turn that is
 /// gone or archived. `store` is the content read: the vault's own, or a
-/// room's view, whose turns and messages compose with base.
+/// room's view, whose turns and messages compose with base. A read for a
+/// door that releases the words (`release`) keeps each message's body for
+/// [`TurnText::released`]; any other read keeps none.
 pub(crate) fn served_turn_text_in_txn(
     vault: &Vault,
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &EntityId,
     mode: ReadMode,
+    release: bool,
 ) -> Result<Option<TurnText>> {
     let row = match mode {
         ReadMode::Pinned(revision) => {
             if !entity_owns_revision_in_txn(store, txn, turn, revision)? {
-                return Ok(resolve_in_txn(vault, store, txn, turn, revision)?
+                return Ok(resolve_in_txn(vault, store, txn, turn, revision, release)?
                     .map(|(_, messages)| TurnText { revision, messages }));
             }
             revision
@@ -127,7 +132,7 @@ pub(crate) fn served_turn_text_in_txn(
             )
         }
     };
-    let Some(sources) = current_sources_in_txn(vault, store, txn, turn)? else {
+    let Some(sources) = current_sources_in_txn(vault, store, txn, turn, release)? else {
         return Ok(None);
     };
     let revision = if sources.is_empty() {
@@ -158,7 +163,7 @@ pub(crate) fn turn_row_for_text_revision_in_txn(
     turn: &EntityId,
     revision: RevisionRef,
 ) -> Result<Option<RevisionRef>> {
-    Ok(resolve_in_txn(vault, store, txn, turn, revision)?.map(|(row, _)| row))
+    Ok(resolve_in_txn(vault, store, txn, turn, revision, false)?.map(|(row, _)| row))
 }
 
 /// One state of a source message: what a text revision commits to for it,
@@ -177,6 +182,7 @@ fn resolve_in_txn(
     txn: &RoTxn<'_>,
     turn: &EntityId,
     revision: RevisionRef,
+    release: bool,
 ) -> Result<Option<Served>> {
     if revision.0[..2] != turn_hint(turn) {
         return Ok(None);
@@ -185,7 +191,8 @@ fn resolve_in_txn(
     if rows.is_empty() {
         return Ok(None);
     }
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn, release)?
+    else {
         return Ok(None);
     };
     let target = Target {
@@ -212,7 +219,7 @@ fn resolve_in_txn(
     HISTORY_SEARCHES.with(|count| count.set(count.get() + 1));
     let mut sources = Vec::with_capacity(current.len());
     for (id, state) in current {
-        sources.push(source_in_txn(vault, store, txn, id, state)?);
+        sources.push(source_in_txn(vault, store, txn, id, state, release)?);
     }
     Ok(target.search(&sources))
 }
@@ -320,8 +327,10 @@ fn current_sources_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &EntityId,
+    release: bool,
 ) -> Result<Option<Vec<(EntityId, SourceState)>>> {
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn, release)?
+    else {
         return Ok(None);
     };
     let mut sources = Vec::with_capacity(members.len());
@@ -384,13 +393,14 @@ pub(crate) fn message_has_document_in_txn(
 /// which it shows text, `current` first. A row-backed message's are its
 /// row at each retained revision; a document-backed one's are its
 /// document's retained states alone, which a build without `sync` does not
-/// read ([`MAX_SOURCE_STATES`] of each).
+/// read ([`MAX_SOURCE_STATES`] of each). Each keeps its body for `release`.
 fn source_in_txn(
     vault: &Vault,
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     message: EntityId,
     current: Option<SourceState>,
+    release: bool,
 ) -> Result<Source> {
     let mut source = Source {
         id: message,
@@ -408,7 +418,7 @@ fn source_in_txn(
                     source.states.push(SourceState {
                         commitment,
                         text,
-                        body,
+                        body: if release { body } else { Vec::new() },
                     });
                 }
             }

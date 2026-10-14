@@ -334,6 +334,7 @@ fn pins_indexed_frontier(
         rtxn,
         id,
         crate::vault::ReadMode::Indexed,
+        false,
     )?
     .is_some_and(|text| text.revision == revision))
 }
