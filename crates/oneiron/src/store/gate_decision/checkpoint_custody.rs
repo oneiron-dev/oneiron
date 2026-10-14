@@ -135,6 +135,16 @@ impl LiveCustody {
 /// vault another process serves reads beside it, and one this process holds,
 /// under any name, is refused. A missing or unreadable vault refuses.
 pub(crate) fn read_live_custody(vault_dir: &Path) -> Result<LiveCustody> {
+    // A side restore's source is admitted like its destination before the
+    // read opens anything: the read-only door still opens `lock.mdb` by name.
+    // A missing one is the read's own refusal, once no one else could put
+    // one there.
+    #[cfg(unix)]
+    if std::fs::symlink_metadata(vault_dir).is_ok() {
+        refuse_shared_vault_root(vault_dir)?;
+    } else {
+        refuse_shared_path(parent_or_here(vault_dir.parent().unwrap_or(vault_dir)))?;
+    }
     let read = read_existing_vault_meta(vault_dir, &live_custody_prefixes())?;
     LiveCustody::from_rows(&read.root, read.rows)
 }

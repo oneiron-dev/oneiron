@@ -1178,6 +1178,14 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
         restore(&inner).is_err(),
         "a shared directory above refuses too"
     );
+    // Review r5 (Astra F1): a side restore's source there is refused before
+    // its read opens anything.
+    drop(Vault::open(shared.join("source"), VaultConfig::device()).unwrap());
+    let source = SideRestoreSource::read(&shared.join("source")).map(|_| ());
+    assert!(
+        matches!(&source, Err(Error::InvalidConfig(reason)) if reason.contains("another user")),
+        "{source:?}"
+    );
     // Review r4 (Sol F1): a link of this user's whose target passes through
     // the shared directory is resolved name by name, and refused there.
     let private = directory("private", 0o700);
