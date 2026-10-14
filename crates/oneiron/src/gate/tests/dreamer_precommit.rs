@@ -59,6 +59,14 @@ pub(super) fn seed_precommit_evidence_entity(vault: &crate::Vault, id: &EntityId
     vault.put_entity(id, ENTITY_TYPE_TURN, test_time(1), 1, b"evidence ref")
 }
 
+/// Evidence citing one fresh TURN: a Dreamer write cites what was said, never
+/// the PERSON it is about.
+pub(super) fn said_evidence(vault: &crate::Vault) -> Result<Value> {
+    let turn = EntityId::now();
+    seed_precommit_evidence_entity(vault, &turn)?;
+    Ok(precommit_evidence(vec![turn]))
+}
+
 fn attempt_precommit_write(
     vault: &crate::Vault,
     claim_id: &EntityId,

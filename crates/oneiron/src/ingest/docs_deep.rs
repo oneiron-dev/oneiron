@@ -372,7 +372,8 @@ impl Vault {
         // saw what the extractor would say, so it approves no derived claim.
         // A claim the Gate pends waits in the owner's tray for its own review.
         // One the Gate admits with no tray row is written again as `Auto`
-        // through the same Gate, so only a policy that allows `Auto` lands it.
+        // through the same Gate only when the policy trusts its source for
+        // `Auto`; otherwise it stays `Proposed`.
         let mut writes = Vec::new();
         for claim in &claims {
             let admission = super::ImportedEvidenceAdmission::proposed(
@@ -429,10 +430,15 @@ impl Vault {
             );
         }
         builder.apply(&mut txn)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
         let mut admitted = self.batch_in();
         let mut any_admitted = false;
         for (id, candidate, envelope, admission) in &writes {
-            if self.store.pending_gate_consent_in_txn(&txn, id)?.is_none() {
+            if self.store.pending_gate_consent_in_txn(&txn, id)?.is_none()
+                && self.get_claim_in_txn(&txn, id)?.is_some_and(|landed| {
+                    crate::gate::claim_source_trust_admits_auto(&landed, envelope, &policy)
+                })
+            {
                 any_admitted = true;
                 admitted = admitted.claim_candidate(
                     id,

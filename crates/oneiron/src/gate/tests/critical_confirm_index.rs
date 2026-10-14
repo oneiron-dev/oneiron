@@ -179,11 +179,10 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
     // `evidence` is still THAT write's envelope stamp — a map carrying no
     // `candidate_evidence` key at all. Re-signing it as Dreamer-authored puts
     // it under the GATE-12 evidence floor, which every Dreamer candidate must
-    // clear on its own, so cite a real consolidation envelope naming the actor
-    // entity `dreamer_claim_candidate_write_parts` seeds just below. The
-    // semantic hash asserted further down is unchanged by this: the claim
+    // clear on its own, so cite a real consolidation envelope naming a TURN.
+    // The semantic hash asserted further down is unchanged by this: the claim
     // inbox hash normalizes `evidence` and `source` away before hashing.
-    ordinary_body.evidence = Some(precommit_evidence(vec![dreamer_actor]));
+    ordinary_body.evidence = Some(said_evidence(&vault)?);
     let run_id = "dreamer-c3-index-run";
     let (candidate, envelope) =
         dreamer_claim_candidate_write_parts(&vault, &ordinary_body, dreamer_actor, run_id)?;

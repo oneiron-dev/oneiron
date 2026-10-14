@@ -514,6 +514,25 @@ pub(super) fn other_actor(vault: &Vault) -> EntityId {
     actor
 }
 
+/// One TURN for a Dreamer-surface write to cite: GATE-12 counts what was
+/// said, never the PERSON a claim is about.
+pub(super) fn said_turn(vault: &Vault) -> EntityId {
+    let turn = EntityId::now();
+    vault
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: LADDER_NOW,
+                end: LADDER_NOW,
+            },
+            LADDER_NOW,
+            b"what was said",
+        )
+        .expect("seed the cited turn");
+    turn
+}
+
 /// Writes one CLAIM through the normal envelope-stamped door so its
 /// authoring actor and run surface are recoverable exactly as production
 /// writes them.
