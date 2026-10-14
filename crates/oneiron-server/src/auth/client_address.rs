@@ -18,10 +18,11 @@ use crate::server::SyncServer;
 /// The client address of one request.
 ///
 /// The connection's own peer, unless that peer is a configured trusted proxy.
-/// Then `X-Forwarded-For` is read right to left: each entry was appended by
-/// the hop to its right, so the walk continues only while that hop is
-/// trusted, and the first address no trusted proxy vouches for is the client.
-/// An entry that does not parse ends the walk at the last trusted hop.
+/// Then `X-Forwarded-For` is read right to left, across repeated fields: each
+/// entry was appended by the hop to its right, so the walk continues only
+/// while that hop is trusted, and the first address no trusted proxy vouches
+/// for is the client. An entry that is not text or not an address ends the
+/// walk at the last trusted hop; nothing left of it is read.
 ///
 /// A kernel-verified peer on the managed socket is the supervisor. It is
 /// charged as loopback and its forwarding headers are not read: the managed
@@ -46,7 +47,12 @@ pub(crate) fn client_address(
     if !trusts(client) {
         return Some(client);
     }
-    for entry in forwarded_for(headers).iter().rev() {
+    let entries = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .rev()
+        .flat_map(|field| field.as_bytes().rsplit(|byte| *byte == b','));
+    for entry in entries {
         let Some(hop) = forwarded_address(entry) else {
             break;
         };
@@ -58,21 +64,9 @@ pub(crate) fn client_address(
     Some(client)
 }
 
-/// Every `X-Forwarded-For` entry, oldest first, across repeated headers. A
-/// header that is not text makes the whole chain unreadable.
-fn forwarded_for(headers: &HeaderMap) -> Vec<&str> {
-    let mut entries = Vec::new();
-    for value in headers.get_all("x-forwarded-for") {
-        let Ok(value) = value.to_str() else {
-            return Vec::new();
-        };
-        entries.extend(value.split(',').map(str::trim));
-    }
-    entries
-}
-
 /// One entry as an address, with or without a port.
-fn forwarded_address(entry: &str) -> Option<IpAddr> {
+fn forwarded_address(entry: &[u8]) -> Option<IpAddr> {
+    let entry = std::str::from_utf8(entry).ok()?.trim();
     entry
         .parse::<IpAddr>()
         .or_else(|_| entry.parse::<SocketAddr>().map(|address| address.ip()))

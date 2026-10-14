@@ -7,7 +7,9 @@ use std::str::FromStr;
 
 /// One trusted proxy address block: `ip/prefix`, or a bare address for one
 /// host. Parsed at startup, so an entry the server cannot read stops serve
-/// instead of quietly trusting nothing or everything.
+/// instead of quietly trusting nothing or everything. A `/0` block, which
+/// would believe every caller, and an address with bits set past its prefix,
+/// which would trust a whole network where one host was meant, are refused.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TrustedProxy {
     network: IpAddr,
@@ -19,20 +21,29 @@ impl TrustedProxy {
     /// judged as the IPv4 address it carries.
     #[must_use]
     pub fn contains(&self, ip: IpAddr) -> bool {
-        match (self.network, ip.to_canonical()) {
-            (IpAddr::V4(network), IpAddr::V4(ip)) => {
+        let ip = ip.to_canonical();
+        let block_of_ip = Self {
+            network: ip,
+            prefix: self.prefix,
+        };
+        ip.is_ipv4() == self.network.is_ipv4() && block_of_ip.masked() == self.network
+    }
+
+    /// The block's address with every bit past its prefix cleared.
+    fn masked(&self) -> IpAddr {
+        match self.network {
+            IpAddr::V4(network) => {
                 let mask = u32::MAX
                     .checked_shl(32 - u32::from(self.prefix))
                     .unwrap_or(0);
-                u32::from(network) & mask == u32::from(ip) & mask
+                IpAddr::V4((u32::from(network) & mask).into())
             }
-            (IpAddr::V6(network), IpAddr::V6(ip)) => {
+            IpAddr::V6(network) => {
                 let mask = u128::MAX
                     .checked_shl(128 - u32::from(self.prefix))
                     .unwrap_or(0);
-                u128::from(network) & mask == u128::from(ip) & mask
+                IpAddr::V6((u128::from(network) & mask).into())
             }
-            _ => false,
         }
     }
 }
@@ -55,11 +66,18 @@ impl FromStr for TrustedProxy {
             Some(prefix) => prefix
                 .parse::<u8>()
                 .ok()
-                .filter(|prefix| *prefix <= width)
+                .filter(|prefix| (1..=width).contains(prefix))
                 .ok_or_else(unreadable)?,
             None => width,
         };
-        Ok(Self { network, prefix })
+        let block = Self { network, prefix };
+        let masked = block.masked();
+        if masked != network {
+            return Err(format!(
+                "trusted proxy {value:?} has host bits set; write {masked}/{prefix} for the network or the address alone for one host"
+            ));
+        }
+        Ok(block)
     }
 }
 

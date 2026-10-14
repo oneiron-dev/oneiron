@@ -88,8 +88,10 @@ names count as assistant turns during consolidation, beside the generic
 comma-separated `ip` or `ip/prefix`) names the reverse proxies whose
 `X-Forwarded-For` the server believes when it keys per-address booking quotas.
 Behind such a proxy each client is charged as itself; from any other peer the
-header is ignored. An entry that does not parse stops startup. The default is
-empty: every caller is keyed by its own connection.
+header is ignored. Every address in a listed block is believed when it names a
+client, so list proxy hosts only, never a client network. An entry that does
+not parse, a `/0` block, or an address with bits set past its prefix stops
+startup. The default is empty: every caller is keyed by its own connection.
 
 ## CJK Dictionaries
 

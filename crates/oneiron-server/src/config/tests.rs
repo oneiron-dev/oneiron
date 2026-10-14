@@ -78,7 +78,16 @@ fn serve_config_debug_redacts_hosted_kms_key_ref() {
 
 #[test]
 fn an_unreadable_trusted_proxy_stops_startup() {
-    for entry in ["10.0.0.0/33", "proxy.internal", "10.0.0.0/8/1"] {
+    // A block that would believe everyone, or a whole network where one host
+    // was written, is refused with the rest (C7 review r1).
+    for entry in [
+        "10.0.0.0/33",
+        "proxy.internal",
+        "10.0.0.0/8/1",
+        "0.0.0.0/0",
+        "::/0",
+        "10.0.0.5/8",
+    ] {
         let env = EnvConfig::from_pairs([("ONEIRON_TRUSTED_PROXIES", entry)]).expect("env");
         assert!(
             resolve_serve_config_with_sources(&ServeArgs::default(), env, None).is_err(),
@@ -88,5 +97,11 @@ fn an_unreadable_trusted_proxy_stops_startup() {
     let env = EnvConfig::from_pairs([("ONEIRON_TRUSTED_PROXIES", "10.0.0.0/8, ::1")]).expect("env");
     let config =
         resolve_serve_config_with_sources(&ServeArgs::default(), env, None).expect("readable");
-    assert_eq!(config.trusted_proxies.len(), 2);
+    let [block, host] = config.trusted_proxies.as_slice() else {
+        panic!("two entries: {:?}", config.trusted_proxies);
+    };
+    let ip = |text: &str| text.parse::<std::net::IpAddr>().expect("address");
+    assert!(block.contains(ip("10.255.0.1")) && block.contains(ip("::ffff:10.0.0.9")));
+    assert!(!block.contains(ip("11.0.0.1")) && !block.contains(ip("::a00:1")));
+    assert!(host.contains(ip("::1")) && !host.contains(ip("::2")));
 }
