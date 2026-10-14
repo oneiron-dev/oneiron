@@ -60,7 +60,7 @@ pub(super) fn party_facts(vault: &Vault, task_ref: EntityId) -> Vec<EntityId> {
         .map(|edge| edge.expect("edge row").target)
         .filter(|fact_ref| {
             vault
-                .get_raw(fact_ref)
+                .get_raw_in(&txn, fact_ref)
                 .expect("read fact")
                 .and_then(|raw| {
                     decode_task_authority_fact_body(
