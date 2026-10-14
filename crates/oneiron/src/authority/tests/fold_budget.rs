@@ -1252,12 +1252,13 @@ fn a_binding_held_by_both_edges_imports_before_its_signers_later_rows() {
         epoch: 1,
     };
     let enroll_first = signed(&owner, 1, hash(&genesis), enroll(&first, ROLE_AGENT), None);
+    // Two live devices need a quorum: the first agent cosigns.
     let enroll_second = signed(
         &owner,
         2,
         hash(&enroll_first),
         enroll(&second, ROLE_AGENT),
-        None,
+        Some(&first),
     );
     let base = hash(&enroll_second);
     let other = signed(&second, 4, base, revoke(160), Some(&owner));
@@ -1297,15 +1298,8 @@ fn a_binding_held_by_both_edges_imports_before_its_signers_later_rows() {
     let expected = source.authority_fold().unwrap();
     assert!(
         expected.valid_entries.contains(&hash(&bind)),
-        "bind {:?} other {:?} enroll_first {:?}: {:?}",
-        &hash(&bind)[..3],
-        &hash(&other)[..3],
-        &hash(&enroll_first)[..3],
-        expected
-            .issues
-            .iter()
-            .map(|issue| format!("{issue:?}").chars().take(60).collect::<String>())
-            .collect::<Vec<_>>()
+        "{:?}",
+        expected.issues
     );
 
     let history = source.export_signed_authority_history().unwrap();
