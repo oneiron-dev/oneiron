@@ -538,7 +538,9 @@ fn an_own_create_burst_lands_and_leaves_a_typed_check() {
         assert!(receipt.effected);
     }
     assert_eq!(task_entity_census(&vault), 2);
-    let check = vault.task_create_rate_check(own).expect("check reads");
+    let check = vault
+        .own_rate_check(own, crate::own_rate::OwnRateKind::TaskCreate)
+        .expect("check reads");
     assert_eq!(
         check.map(|check| (check.actor, check.count, check.threshold)),
         Some((own.to_hex(), 2, 1)),

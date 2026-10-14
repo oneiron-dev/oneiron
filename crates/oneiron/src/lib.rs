@@ -159,6 +159,7 @@ pub mod dreamer_consolidation;
 pub mod dreamer_plugin_suggest;
 pub mod dreamer_prefilter;
 pub mod dreamer_promotion;
+pub mod own_rate;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod dreamer_wake;

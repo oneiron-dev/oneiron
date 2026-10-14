@@ -203,6 +203,10 @@ side_tables! {
     /// Receipt of one owner change to the secret-scan switch, in revision order. Key: u64be
     /// revision.
     OWNER_POLICY_SECRET_SCAN_RECEIPT: VaultMeta b"owner_policy:secret_scan:receipt:v1:" Named;
+    /// An own actor's latest advisory rate crossing per kind. Key: id16 + kind token.
+    OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named;
+    /// An own actor's act count in its current window per kind. Key: id16 + kind token.
+    OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.

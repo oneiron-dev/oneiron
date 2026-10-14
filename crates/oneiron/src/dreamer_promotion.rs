@@ -382,6 +382,8 @@ fn promote_one(
     // 4. ONE wtxn: the proposed claim and its deferred closure binding
     // commit or roll back together; the prior stays active until later grant.
     // GATE-007 (Generated over UserStated) is rechecked on closure.
+    // Read on the calling thread: a grouped commit may run the closure elsewhere.
+    let auto_write_rate = crate::own_rate::auto_write_rate();
     let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
         if let Some(fence) = fence {
             fence.validate_in_txn(vault, wtxn)?;
@@ -422,6 +424,18 @@ fn promote_one(
             return Err(Error::InvalidClaimBody(
                 "consolidation write was not granted Auto; no approval queue is created",
             ));
+        }
+        // An Auto write counts on the agent's own-rate window. Its first
+        // crossing leaves a typed check; the write itself stays Auto.
+        if landed.approval == ClaimApprovalStatus::Auto {
+            crate::own_rate::count_in_txn(
+                &vault.store,
+                wtxn,
+                crate::own_rate::OwnRateKind::AutoWrite,
+                run.agent_actor.entity_ref(),
+                vault.store.clock.now_recorded_at(),
+                auto_write_rate,
+            )?;
         }
         // The MESSAGE words the evidence names become this claim's
         // dependencies in the claim's own transaction.

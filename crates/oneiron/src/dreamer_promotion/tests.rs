@@ -353,6 +353,33 @@ fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
     Ok(())
 }
 
+// H327: past the auto-write threshold the Dreamer's writes stay Auto (ARCH-0067
+// section 7, OF-520) and the first crossing leaves a typed check.
+#[test]
+fn an_auto_write_burst_stays_auto_and_leaves_a_typed_check() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let first = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let second = candidate(&fixture, "profile.tone", "warm", vec![fixture.turn]);
+    let ids = vec![first.claim_id, second.claim_id];
+    crate::own_rate::set_auto_write_threshold_for_test(Some(1));
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![first, second]);
+    crate::own_rate::set_auto_write_threshold_for_test(None);
+    let outcome = outcome?;
+    assert_eq!(outcome.landed, ids, "both writes stay Auto");
+    assert!(outcome.pended.is_empty() && outcome.rejected.is_empty());
+    let check = vault.own_rate_check(
+        fixture.run.agent_actor.entity_ref(),
+        crate::own_rate::OwnRateKind::AutoWrite,
+    )?;
+    assert_eq!(
+        check.map(|check| (check.count, check.threshold)),
+        Some((2, 1)),
+        "H327: an auto-write burst left no typed check"
+    );
+    Ok(())
+}
+
 #[test]
 fn promotion_rejects_rather_than_pends_without_an_auto_permit() -> Result<()> {
     // No policy manifest at all: the gate cannot grant Auto. ONE-1710 turns

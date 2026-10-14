@@ -9,7 +9,6 @@ use crate::memory::MemoryResult;
 use crate::side_table::{self, RawValue, SideTable};
 use crate::task_verb::sdk::AgentVerb;
 use crate::write_envelope::WriteActor;
-use serde::{Deserialize, Serialize};
 
 use super::create_spec::TaskCreateRateLimit;
 
@@ -18,27 +17,6 @@ use super::create_spec::TaskCreateRateLimit;
 /// `vault_meta` and does not replicate.
 pub(super) const TASK_CREATE_RATE_WINDOWS: SideTable<(EntityId, u64), RateWindow, side_table::Raw> =
     SideTable::new(&side_table::TASK_CREATE_RATE_WINDOW);
-
-/// An actor's latest window in which its task creates crossed the limit,
-/// node-local like the window it observes.
-const TASK_CREATE_RATE_CHECKS: SideTable<EntityId, TaskCreateRateCheck, side_table::Named> =
-    SideTable::new(&side_table::TASK_CREATE_RATE_CHECK);
-
-/// OF-520 question at an actor's first crossing of the task-create limit in
-/// one window. It never refuses the create or ask that crossed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskCreateRateCheck {
-    pub actor: String,
-    pub window_started_at: u64,
-    pub window_seconds: u64,
-    pub count: u64,
-    pub threshold: u64,
-}
-
-impl TaskCreateRateCheck {
-    pub const KIND: &'static str = "task_create_burst";
-}
 
 /// One rate window's bytes: little-endian window index then little-endian
 /// count, matching the layout this row has always written.
@@ -117,21 +95,18 @@ pub(super) fn record_task_create(
             count: next,
         },
     )?;
-    let threshold = rate_limit.limit as u64;
-    if next == threshold.saturating_add(1) {
-        TASK_CREATE_RATE_CHECKS.put(
-            &vault.store,
-            wtxn,
-            &actor,
-            &TaskCreateRateCheck {
-                actor: actor.to_hex(),
-                window_started_at: window.saturating_mul(window_seconds),
-                window_seconds,
-                count: next,
-                threshold,
-            },
-        )?;
-    }
+    crate::own_rate::observe_in_txn(
+        &vault.store,
+        wtxn,
+        crate::own_rate::OwnRateKind::TaskCreate,
+        actor,
+        window,
+        next,
+        crate::own_rate::OwnRate {
+            threshold: rate_limit.limit as u64,
+            window_seconds,
+        },
+    )?;
     Ok(next)
 }
 
@@ -205,13 +180,6 @@ pub(super) fn task_create_owner_in(
 }
 
 impl Vault {
-    /// The latest window in which this actor's task creates crossed the
-    /// advisory limit, if any. A check never refuses a create.
-    pub fn task_create_rate_check(&self, actor: EntityId) -> Result<Option<TaskCreateRateCheck>> {
-        let txn = self.store.env.read_txn()?;
-        TASK_CREATE_RATE_CHECKS.get(&self.store, &txn, &actor)
-    }
-
     /// Current engine-clock window count. This is accounting, never admission.
     pub fn task_create_count(&self, actor: EntityId, window_seconds: u64) -> Result<u64> {
         let window_seconds = window_seconds.max(1);
