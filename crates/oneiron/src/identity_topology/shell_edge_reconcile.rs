@@ -10,7 +10,7 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -298,6 +298,30 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
         return Ok(());
     }
     let events = identity_topology_events_for_store_in_txn(store, &*wtxn)?;
+    if events.is_empty() {
+        return Ok(());
+    }
+    // An authority write can enrol or remove a machine, which decides again
+    // whose seals count (H161), whichever door wrote it.
+    let mut authority_written = false;
+    for id in materialized {
+        let mut type_key = vec![ENTITY_TYPE_AUTHORITY_LOG];
+        type_key.extend_from_slice(id.as_bytes());
+        if store.type_index.get(&*wtxn, &type_key)?.is_some() {
+            authority_written = true;
+            break;
+        }
+    }
+    if authority_written && super::admission_disposition::mine_signers_changed_in_txn(store, wtxn)?
+    {
+        return reconcile_identity_topology_edges_for_store_in_txn(
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+            wtxn,
+        );
+    }
     for event in events {
         let action_relevant = match &event.action {
             // The trigger set is WIDER than the participants: a claim the
@@ -432,5 +456,32 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             wtxn,
         )
+    }
+
+    /// Re-decides the stored shell edges when seal standing moved with no
+    /// authority write, before any caller observes this vault: a reopen
+    /// under another privacy posture, or a restore whose image edges sit
+    /// beside the authority it carried in (H161). A vault with no topology
+    /// event, or whose mine signers are the ones its edges were drawn under,
+    /// pays only the check.
+    pub(crate) fn reconcile_identity_topology_on_open(&self) -> Result<()> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if self
+                .store
+                .type_index
+                .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+                .next()
+                .is_none()
+            {
+                return Ok(());
+            }
+        }
+        self.with_write_txn_grouped(|wtxn| {
+            if super::admission_disposition::mine_signers_changed_in_txn(&self.store, wtxn)? {
+                self.reconcile_identity_topology_edges_in_txn(wtxn)?;
+            }
+            Ok(())
+        })
     }
 }

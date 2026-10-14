@@ -7,7 +7,7 @@ use super::{
     ReadMode, RevisionRef,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
@@ -241,9 +241,13 @@ impl Vault {
                 false,
                 false,
             ) {
+                // Text staged before the per-document ceiling fails on its own and
+                // does not hold every publication after it.
                 if matches!(
                     error,
-                    Error::DimensionMismatch { .. } | Error::InvalidVector { .. }
+                    Error::DimensionMismatch { .. }
+                        | Error::InvalidVector { .. }
+                        | Error::Store(StoreError::IndexedTextTooLarge { .. })
                 ) {
                     report
                         .failed

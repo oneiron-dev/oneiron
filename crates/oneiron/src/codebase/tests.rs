@@ -1407,10 +1407,30 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
         .text(&id_a, &[("body", "needle needle needle needle")])
         .text(&id_b, &[("body", "needle")])
         .vector(&id_a, &[1.0, 0.0, 0.0, 0.0])
-        .vector(&id_b, &[0.0, 1.0, 0.0, 0.0])
+        .vector(&id_b, &[0.97, 0.243, 0.0, 0.0])
         .commit()?;
+    // EMBED-PACK: a channel fetches its fusion list length whatever it is
+    // asked for. More rows than that, in no project, outrank id_b on both
+    // channels and not id_a, so id_b is in a channel's top only when the
+    // filter runs first; the pack's limit caps the results. Their vectors
+    // ring the query at 0.98, each apart from the next. id_b sits just
+    // outside the ring at 0.97: a vector far from every other one loses its
+    // last link once each neighbour list fills, and no walk reaches it.
+    let mut outside = vault.batch();
+    for index in 0..=crate::fusion::FUSION_LIST_LENGTH {
+        let index = u8::try_from(index).expect("a small index");
+        let mut bytes = [0x5A; 16];
+        bytes[15] = index;
+        let id = EntityId::from_bytes(bytes)?;
+        let angle = std::f32::consts::TAU * f32::from(index) / 81.0;
+        outside = outside
+            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&id, &[("body", "needle needle")])
+            .vector(&id, &[0.98, 0.199 * angle.cos(), 0.199 * angle.sin(), 0.0]);
+    }
+    outside.commit()?;
 
-    let unscoped_text_top = vault.query().search_text("needle", 1).run()?;
+    let unscoped_text_top = vault.query().search_text("needle", 1).limit(1).run()?;
     assert_eq!(unscoped_text_top.len(), 1);
     assert_eq!(unscoped_text_top[0].id, id_a);
 
@@ -1434,6 +1454,7 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
     let unscoped_vector_top = vault
         .query()
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .limit(1)
         .run()?;
     assert_eq!(unscoped_vector_top.len(), 1);
     assert_eq!(unscoped_vector_top[0].id, id_a);
