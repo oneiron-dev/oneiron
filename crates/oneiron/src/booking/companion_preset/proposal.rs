@@ -4,13 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::EntityId;
 use crate::booking::constraint::validate_visitor_tz;
 use crate::booking::lifecycle::{booking_writer, digest_with, mint_raw_token};
 use crate::booking::{
     BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotOracle, SolveRequest,
 };
 use crate::temporal::TimeRange;
-use crate::EntityId;
 
 use super::CompanionPresetRow;
 use super::storage::{PROPOSAL, companion_token_hash, participant_token_hash, refused, surface};
@@ -196,8 +196,9 @@ pub fn companion_solve_request(
 /// participant and one for the creating companion.
 ///
 /// The creating companion is `companion`'s actor, rechecked in the write
-/// transaction, never an id the caller names: the confirmation it later
-/// stamps is attributed to whoever created the proposal.
+/// transaction (a live actor and, once the vault is rooted, a live authority
+/// binding), never an id the caller names: the confirmation it later stamps
+/// is attributed to whoever created the proposal.
 ///
 /// No booking page is read: the configuration travelled in on `preset`, which
 /// is what ONE-1823's synthetic-configuration arm exists for.
@@ -275,13 +276,28 @@ pub fn create_companion_proposal(
         }),
     };
     booking_writer(vault, |wtxn| {
-        crate::memory::verify_actor_binding_in_txn(
-            vault,
+        // A live row of an actor-capable type, and in a rooted vault a live
+        // authority binding: a deleted shell or a revoked companion mints no
+        // fresh confirmation token.
+        let live_type = surface(crate::vault::live_entity_row_in_txn(
+            &vault.store,
             wtxn,
-            companion_ref,
-            companion.actor_class(),
-        )
-        .map_err(|_| refused("the creating companion is not a live actor of this vault"))?;
+            &companion_ref,
+        ))?
+        .live_type();
+        if !live_type.is_some_and(|entity_type| {
+            crate::provenance::validate_actor_class(entity_type, companion.actor_class()).is_ok()
+        }) {
+            return Err(refused(
+                "the creating companion is not a live actor of this vault",
+            ));
+        }
+        vault
+            .verify_write_actor_in_txn(
+                wtxn,
+                &crate::WriteActor::new(companion_ref, companion.actor_class()),
+            )
+            .map_err(|_| refused("the creating companion holds no live authority in this vault"))?;
         surface(PROPOSAL.put(&vault.store, wtxn, &id.0, &row))
     })?;
 

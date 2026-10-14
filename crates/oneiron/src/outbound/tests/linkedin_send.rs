@@ -602,3 +602,111 @@ fn only_an_id_absent_before_the_send_is_the_new_message()
     );
     Ok(())
 }
+
+/// F24 review (H130): absence from one read proves novelty only when that read
+/// was the whole recent thread. A precheck with an id-less message, a page
+/// that later no longer holds the precheck's last message, and an own message
+/// that is not the thread's last all leave the send unproven.
+#[test]
+fn an_incomplete_precheck_is_never_a_delivery_baseline()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let jane = "linkedin:member:jane-doe";
+    let yura = "linkedin:member:yura";
+    let thread = "2-jane-doe-abc";
+    let idless_precheck = serde_json::json!({
+        "url": format!("https://www.linkedin.com/messaging/thread/{thread}/"),
+        "messages": [
+            {"id": "m1", "sender": jane, "text": "Thanks for reaching out."},
+            {"sender": yura, "text": message},
+        ],
+    });
+    let cases = [
+        // The precheck's id-less own message comes back with its id.
+        (
+            idless_precheck,
+            attributed_conversation(
+                thread,
+                &[
+                    ("m1", jane, "Thanks for reaching out."),
+                    ("m9", yura, message),
+                ],
+            ),
+        ),
+        // The precheck read one page; the next read is an older page.
+        (
+            attributed_conversation(thread, &[("m2", jane, "Thanks for reaching out.")]),
+            attributed_conversation(thread, &[("m1", yura, message)]),
+        ),
+        // An older own message the precheck's page missed, not the last one.
+        (
+            attributed_conversation(thread, &[("m2", jane, "Thanks for reaching out.")]),
+            attributed_conversation(
+                thread,
+                &[
+                    ("m1", yura, message),
+                    ("m2", jane, "Thanks for reaching out."),
+                ],
+            ),
+        ),
+    ];
+    for (seed, (precheck, after)) in (0xC0..).zip(cases) {
+        let (_tmp, vault) = temp_vault();
+        let result = send_attributed(
+            &vault,
+            linkedin_sender(&vault, seed)?,
+            vec![precheck, after],
+            &format!("intent:linkedin-partial-{seed}"),
+        )?;
+        assert_ne!(
+            result.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel,
+            "case {seed:#x}"
+        );
+    }
+    Ok(())
+}
+
+/// F24 review (H130): the retry guard stops a second send when this seat's
+/// own message with the text is already the thread's last, but nothing binds
+/// that message to this intent (an earlier attempt may have failed before it
+/// sent), so the outcome is ambiguous, never a delivery.
+#[test]
+fn a_retry_guard_never_claims_an_older_own_message_as_this_send()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let (_tmp, vault) = temp_vault();
+    let plan =
+        LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
+            .retry_guarded();
+    let mut sink = LinkedInMcpVerifiedSendSink::new(
+        linkedin_adapter()?,
+        ScriptedLinkedInTransport::new(vec![attributed_conversation(
+            "2-jane-doe-abc",
+            &[
+                ("m1", "linkedin:member:jane-doe", "Thanks for reaching out."),
+                ("m2", "linkedin:member:yura", message),
+            ],
+        )]),
+    )
+    .with_plan("intent:linkedin-own-guard", plan)?;
+    let guarded = vault.dispatch_outbound_intent(
+        linkedin_send_request(
+            linkedin_sender(&vault, 0xC4)?,
+            "outbound:intent:linkedin-own-guard",
+            "intent:linkedin-own-guard",
+        ),
+        &mut sink,
+    )?;
+    assert_eq!(guarded.outcome, OutboundDispatchOutcome::Ambiguous);
+    assert!(sink.transport().send_calls.is_empty());
+    assert_eq!(
+        guarded
+            .receipt
+            .fields
+            .get("duplicate_send_guard")
+            .map(String::as_str),
+        Some("observed_existing")
+    );
+    Ok(())
+}

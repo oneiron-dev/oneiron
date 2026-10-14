@@ -417,7 +417,11 @@ fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
         InitialSharedMember, Scope, ScopeAxis, ScopeId, SharedVaultWrite,
         encode_federation_grant_body,
     };
-    let (_dir, vault) = open_vault();
+    // Sharing resolves the default policy manifest, which `open_vault`'s
+    // legacy opener clears.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("open vault");
     let owner = owner(&vault);
     vault
         .initialize_shared_vault(

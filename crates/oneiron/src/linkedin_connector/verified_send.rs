@@ -1,6 +1,6 @@
 //! Verify-after-send plan, sink, observation, and receipt helpers.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -226,9 +226,10 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         let (pre_send_match_count, pre_send_ids) =
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
-                    // Every id the thread held before the send, whatever its
-                    // sender or text: a message that was already there, even
-                    // one edited to the text since, is never the new send.
+                    // Every id the thread held before the send, in order,
+                    // whatever its sender or text: a message that was already
+                    // there, even one edited to the text since, is never the
+                    // new send, and the new send follows the last of them.
                     let pre_send_ids = transcript_message_ids(&output, &plan.thread_id);
                     match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
                     {
@@ -246,37 +247,35 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                                     RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
                                     "1".to_owned(),
                                 );
-                                // The tail is ours only when the transcript says who
-                                // sent it. Matching text alone may be the recipient's
-                                // echo: the retry still does not send twice, but it
-                                // cannot claim a delivery either.
-                                if !observation.own_tail {
-                                    fields.insert(
-                                        RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                                        "observed_existing_unattributed".to_owned(),
-                                    );
-                                    fields.insert(
-                                        RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
-                                        "content_observed_unattributed".to_owned(),
-                                    );
-                                    return OutboundExecutionOutcome::failed(
+                                // A matching tail stops a second send, but it is
+                                // never this intent's delivery: text alone may be
+                                // the recipient's echo, and even this seat's own
+                                // message may be an older one that no earlier
+                                // attempt of this intent can be shown to have sent.
+                                let (guard, state, reason) = if observation.own_tail_id.is_some() {
+                                    (
+                                        "observed_existing",
+                                        "content_observed_unbound",
+                                        "verify_after_send_existing_unbound",
+                                    )
+                                } else {
+                                    (
+                                        "observed_existing_unattributed",
+                                        "content_observed_unattributed",
                                         "verify_after_send_unattributed_existing",
                                     )
-                                    .with_possible_delivery()
-                                    .with_receipt_fields(fields);
-                                }
+                                };
                                 fields.insert(
                                     RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                                    "observed_existing".to_owned(),
+                                    guard.to_owned(),
                                 );
                                 fields.insert(
                                     RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
-                                    "content_observed".to_owned(),
+                                    state.to_owned(),
                                 );
-                                return OutboundExecutionOutcome::delivered_to_channel(
-                                    observation.message_ref,
-                                )
-                                .with_receipt_fields(fields);
+                                return OutboundExecutionOutcome::failed(reason)
+                                    .with_possible_delivery()
+                                    .with_receipt_fields(fields);
                             }
                             if plan.guard_retry {
                                 fields.insert(
@@ -381,19 +380,24 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         for attempt in 1..=plan.max_observation_attempts {
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
+                    let post_send_ids = transcript_message_ids(&output, &plan.thread_id);
                     match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
                     {
-                        // Delivered means a message this seat sent, with the
-                        // text, under an id the thread did not hold before the
-                        // send. Text the transcript does not attribute proves
-                        // nothing (the recipient can write the same words), and
-                        // without a pre-send id list no id can be shown new.
+                        // Delivered means the thread now ends with a message
+                        // this seat sent, with the text, under an id the thread
+                        // did not hold before the send, after the last message
+                        // the precheck saw. Text the transcript does not
+                        // attribute proves nothing (the recipient can write the
+                        // same words); without a complete pre-send id list no id
+                        // can be shown new; and a page that no longer holds the
+                        // precheck's last message may be another page of older
+                        // messages.
                         Ok(Some(observation))
-                            if observation
-                                .own_ids
-                                .as_ref()
-                                .zip(pre_send_ids.as_ref())
-                                .is_some_and(|(ids, before)| !ids.is_subset(before)) =>
+                            if is_the_new_send(
+                                observation.own_tail_id.as_deref(),
+                                pre_send_ids.as_deref(),
+                                post_send_ids.as_deref(),
+                            ) =>
                         {
                             fields.insert(
                                 RECEIPT_FIELD_POST_SEND_MATCH_COUNT.to_owned(),
@@ -413,7 +417,7 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                             .with_receipt_fields(fields);
                         }
                         Ok(Some(observation)) => {
-                            if (observation.own_ids.is_none() || pre_send_ids.is_none())
+                            if (!observation.attributed || pre_send_ids.is_none())
                                 && observation.tail_matches
                                 && observation.occurrence_count > pre_send_match_count
                             {
@@ -486,12 +490,11 @@ struct LinkedInObservedMessage {
     message_ref: String,
     occurrence_count: usize,
     tail_matches: bool,
-    /// Provider ids of the matching messages the transcript says this seat
-    /// sent. `None` when the transcript names no senders (page text only).
-    own_ids: Option<BTreeSet<String>>,
-    /// The last message matches, the transcript says this seat sent it, and
-    /// it carries an id.
-    own_tail: bool,
+    /// The transcript names who sent each message. `false` for page text.
+    attributed: bool,
+    /// The provider id of the last message, when it matches, the transcript
+    /// says this seat sent it, and it carries an id.
+    own_tail_id: Option<String>,
 }
 
 fn observed_message(
@@ -531,15 +534,17 @@ fn observed_message(
         message_ref,
         occurrence_count,
         tail_matches: conversation_ends_with_message(conversation_text, message_text),
-        own_ids: None,
-        own_tail: false,
+        attributed: false,
+        own_tail_id: None,
     }))
 }
 
 /// The id of every message in a structured transcript of `expected_thread_id`,
-/// whatever its sender or text. `None` when the transport supplies page text
-/// only, or a transcript of another thread: then no later id can be shown new.
-fn transcript_message_ids(output: &Value, expected_thread_id: &str) -> Option<BTreeSet<String>> {
+/// in transcript order, whatever its sender or text. `None` when no later id
+/// can be shown new against it: the transport supplies page text only, a
+/// transcript of another thread, an empty page, or a message with no id (that
+/// message may come back with one on a later read).
+fn transcript_message_ids(output: &Value, expected_thread_id: &str) -> Option<Vec<String>> {
     let payload = mcp_payload(output).ok()?;
     let observed_thread_id = match thread_id_from_payload_url(&payload).ok()? {
         Some(thread_id) => thread_id,
@@ -551,7 +556,31 @@ fn transcript_message_ids(output: &Value, expected_thread_id: &str) -> Option<BT
         return None;
     }
     let messages = payload.get("messages").and_then(Value::as_array)?;
-    Some(messages.iter().filter_map(message_id).collect())
+    let ids = messages
+        .iter()
+        .map(message_id)
+        .collect::<Option<Vec<_>>>()?;
+    (!ids.is_empty()).then_some(ids)
+}
+
+/// `tail` is the new send: the post-send transcript `after` ends with it, the
+/// precheck `before` did not hold it, and `after` still holds the precheck's
+/// last message, so the page is the same thread read later, not another page
+/// of older messages. Any of the three unknown proves nothing.
+fn is_the_new_send(
+    tail: Option<&str>,
+    before: Option<&[String]>,
+    after: Option<&[String]>,
+) -> bool {
+    let (Some(tail), Some(before), Some(after)) = (tail, before, after) else {
+        return false;
+    };
+    let Some(high_water) = before.last() else {
+        return false;
+    };
+    after.last().is_some_and(|last| last == tail)
+        && !before.iter().any(|id| id == tail)
+        && after.iter().any(|id| id == high_water)
 }
 
 /// A message's provider id: the first non-blank id field, trimmed.
@@ -576,8 +605,7 @@ fn attributed_observation(
 ) -> Option<LinkedInObservedMessage> {
     let wanted = normalize_whitespace(message_text);
     let mut occurrence_count = 0;
-    let mut own_ids = BTreeSet::new();
-    let mut tail = (false, false);
+    let mut tail = (false, None);
     for message in messages {
         let object = message.as_object();
         let field = |keys: &[&str]| {
@@ -585,26 +613,22 @@ fn attributed_observation(
         };
         let matches = field(&["text", "body", "content", "message"])
             .is_some_and(|text| normalize_whitespace(text) == wanted);
-        let own_id = if field(&["sender"]) == Some(self_key) {
+        let own_id = if matches && field(&["sender"]) == Some(self_key) {
             message_id(message)
         } else {
             None
         };
-        tail = (matches, matches && own_id.is_some());
-        if !matches {
-            continue;
-        }
-        occurrence_count += 1;
-        if let Some(id) = own_id {
-            own_ids.insert(id);
+        tail = (matches, own_id);
+        if matches {
+            occurrence_count += 1;
         }
     }
     (occurrence_count > 0).then(|| LinkedInObservedMessage {
         message_ref: String::new(),
         occurrence_count,
         tail_matches: tail.0,
-        own_ids: Some(own_ids),
-        own_tail: tail.1,
+        attributed: true,
+        own_tail_id: tail.1,
     })
 }
 

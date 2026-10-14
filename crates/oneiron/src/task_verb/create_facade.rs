@@ -322,6 +322,25 @@ impl Memory<'_> {
                 occurred_at: now,
             },
         )?;
+        // The party a consult is addressed to bears its authority (it may move
+        // the ladder and counter), so that party is fixed here, beside the
+        // Owner fact. A later rewrite of the body's `assignee` changes what
+        // the board shows, never who may act.
+        if validated.kind == TaskKind::Consult
+            && let Some(assignee) = validated.assignee.and_then(TaskAssignee::entity_ref)
+        {
+            put_task_authority_fact_in_txn(
+                self.vault(),
+                wtxn,
+                TaskAuthorityFact {
+                    task_ref,
+                    kind: TaskAuthorityFactKind::ConsultAssignee,
+                    actor_ref: assignee,
+                    assigned_ref: None,
+                    occurred_at: now,
+                },
+            )?;
+        }
         Ok(task_ref)
     }
 

@@ -466,3 +466,61 @@ fn only_a_live_companion_actor_creates_a_proposal() {
     let answer = confirm(&vault, &oracle, &created).expect("an answer");
     assert_eq!(answer.confirmed_by_companion, id(COMPANION));
 }
+
+/// F24 review (H216): a companion row that still exists is not a companion
+/// that may act. Once the vault is rooted, a companion whose binding was
+/// revoked mints no fresh confirmation token, and neither does a deleted one.
+#[test]
+fn a_revoked_or_deleted_companion_creates_no_proposal() {
+    let (_dir, vault) = open_vault();
+    let oracle = ScriptedOracle::new(scripted_slots());
+    let companion_ref = companion(&vault).actor();
+    let revoke = crate::subject_model::tests::authorization::root_owner(
+        &vault,
+        crate::WriteActor::new(companion_ref, crate::edge::EdgeActorClass::Agent),
+        0xE9,
+    )
+    .expect("root the vault with the companion bound");
+    propose(&vault, &oracle, 1);
+    vault
+        .put_authority_log_entries(&[(
+            revoke,
+            TimeRange {
+                start: 102,
+                end: 102,
+            },
+            102,
+        )])
+        .expect("revoke the companion's binding");
+    let create = |companion: &crate::memory::Memory<'_>| {
+        create_companion_proposal(
+            companion,
+            &oracle,
+            id(OWNER),
+            &preset(),
+            monday(),
+            None,
+            "UTC".to_owned(),
+            1,
+            NOW + HOUR,
+        )
+    };
+    assert!(
+        create(&companion(&vault)).is_err(),
+        "a revoked companion creates no proposal"
+    );
+
+    let (_deleted_dir, deleted) = open_vault();
+    let facade = companion(&deleted);
+    assert!(
+        create(&facade).is_ok(),
+        "positive control: a live companion"
+    );
+    deleted
+        .delete_entity(&companion_ref)
+        .expect("delete the companion");
+    assert!(
+        create(&facade).is_err(),
+        "a deleted companion creates no proposal"
+    );
+}

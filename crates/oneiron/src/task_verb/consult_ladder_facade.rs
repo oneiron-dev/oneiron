@@ -22,9 +22,7 @@ use super::create_validation::{
 };
 use super::entity_delta_facade::counter_lineage_artifact_value;
 use super::follow_up::PEER_HANDLES;
-use super::rate_limit::{
-    record_task_create, task_actor_ceiling, task_create_owner_in, task_verb_contract,
-};
+use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::TaskCreateReceipt;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
@@ -67,8 +65,10 @@ impl Memory<'_> {
     /// alone cannot tell a settled ladder from a resumable interruption.
     ///
     /// Only the consult's parties move its ladder: the actor the task's Owner
-    /// authority fact names, or the actor the consult is addressed to. That is
-    /// decided in the same transaction as the write.
+    /// authority fact names, or the actor its ConsultAssignee fact names (the
+    /// party it was addressed to when minted). That is decided in the same
+    /// transaction as the write, which also rechecks that the caller's own
+    /// authority binding is live.
     pub fn compare_and_set_consult_ladder(
         &self,
         task_ref: EntityId,
@@ -79,7 +79,7 @@ impl Memory<'_> {
         let expected_state = project_consult_ladder_state(expected);
         let (ladder_state, task_state) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-            self.require_consult_party_in_txn(&*wtxn, task_ref, &body)?;
+            self.require_consult_party_in_txn(&*wtxn, task_ref)?;
             if body.settled_ladder_disposition().is_some() {
                 return Err(ladder_refusal(LadderTransitionError::TerminalImmutable));
             }
@@ -104,18 +104,21 @@ impl Memory<'_> {
         })
     }
 
-    /// The asker (the replicated Owner authority fact, never the body's
-    /// mutable `owner_ref`) or the addressed assignee.
+    /// The asker or the addressed assignee, each read from the consult's
+    /// replicated authority facts (never the body's mutable `owner_ref` or
+    /// `assignee`), and a caller whose authority binding is live: a revoked
+    /// party settles nothing.
     fn require_consult_party_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         task_ref: EntityId,
-        body: &TaskVerbBody,
     ) -> MemoryResult<()> {
         let actor = self.actor();
-        if body.assignee.and_then(TaskAssignee::entity_ref) == Some(actor)
-            || task_create_owner_in(self.vault(), txn, task_ref)? == Some(actor)
-        {
+        let facts = self.vault().task_authority_facts_in(txn, task_ref)?;
+        if facts.owner_ref == Some(actor) || facts.consult_assignee == Some(actor) {
+            self.vault()
+                .verify_write_actor_in_txn(txn, &crate::WriteActor::new(actor, self.actor_class()))
+                .map_err(MemoryError::from)?;
             return Ok(());
         }
         Err(consult_refusal(
@@ -164,7 +167,7 @@ impl Memory<'_> {
             let parent = consult_body_in_txn(self.vault(), &*wtxn, parent_task_ref)?;
             // A counter settles its open parent, so only the parent's parties
             // may mint one, as only they may move its ladder.
-            self.require_consult_party_in_txn(&*wtxn, parent_task_ref, &parent)?;
+            self.require_consult_party_in_txn(&*wtxn, parent_task_ref)?;
             self.require_auto_ceiling_in_txn(&*wtxn)?;
             record_task_create(
                 self.vault(),
@@ -278,6 +281,10 @@ pub struct LadderTransitionReceipt {
 
 /// Projects the pure ladder state onto the fields ONE-1699 already persists.
 ///
+/// An interruption keeps its `consent_required` flag, so the compare-and-set
+/// door compares a caller's `expected` interruption against the stored flag
+/// and a party cannot expect consent away.
+///
 /// `Escalated` is deliberately NOT a terminal record: the case is waiting on
 /// the follow-on assignee named in its escalation receipt, so it persists as
 /// `Interrupted`. `Approved`/`Overridden` both persist as `Completed` and
@@ -289,7 +296,10 @@ pub fn project_consult_ladder_state(state: &ConsultLadderState) -> TaskExecution
         ConsultLadderState::Working(working) => TaskExecutionState::Working {
             started_at: working.started_at,
         },
-        ConsultLadderState::Interrupted(_) => TaskExecutionState::Interrupted { ladder: None },
+        ConsultLadderState::Interrupted(interrupted) => TaskExecutionState::Interrupted {
+            ladder: None,
+            consent_required: interrupted.consent_required,
+        },
         ConsultLadderState::Terminal(terminal) => {
             if terminal.disposition.defers_to_follow_on() {
                 // The deferring terminal rides INSIDE the interrupted register
@@ -298,6 +308,7 @@ pub fn project_consult_ladder_state(state: &ConsultLadderState) -> TaskExecution
                 // an ordinary interruption that may still move.
                 return TaskExecutionState::Interrupted {
                     ladder: Some(*terminal),
+                    consent_required: false,
                 };
             }
             TaskExecutionState::Terminal(TaskTerminalRecord {

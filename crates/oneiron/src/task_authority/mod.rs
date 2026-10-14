@@ -68,7 +68,9 @@ const SCOPED_TO_DEFAULT_WEIGHT: f32 = match EdgeKind::ScopedTo.default_weight() 
 ///
 /// Owner proves who may act directly; cancellation and acknowledgement are
 /// events. HumanAssigned records a separate authenticated assignment door,
-/// never inferred from a caller-selected Owner id.
+/// never inferred from a caller-selected Owner id. ConsultAssignee records
+/// the party a consult was addressed to when it was minted, so the body's
+/// mutable `assignee` field is display and never admission.
 /// None of them is ever rewritten or deleted, so the set only grows.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -77,6 +79,7 @@ pub enum TaskAuthorityFactKind {
     Cancelled = 2,
     Acked = 3,
     HumanAssigned = 4,
+    ConsultAssignee = 5,
 }
 
 impl TaskAuthorityFactKind {
@@ -87,6 +90,7 @@ impl TaskAuthorityFactKind {
             Self::Cancelled => 2,
             Self::Acked => 3,
             Self::HumanAssigned => 4,
+            Self::ConsultAssignee => 5,
         }
     }
 
@@ -97,6 +101,7 @@ impl TaskAuthorityFactKind {
             2 => Some(Self::Cancelled),
             3 => Some(Self::Acked),
             4 => Some(Self::HumanAssigned),
+            5 => Some(Self::ConsultAssignee),
             _ => None,
         }
     }
@@ -109,7 +114,8 @@ pub struct TaskAuthorityFact {
     /// read through, or the fact is refused.
     pub task_ref: EntityId,
     pub kind: TaskAuthorityFactKind,
-    /// Owner facts name the owner; Cancelled/Acked facts name who acted.
+    /// Owner facts name the owner; Cancelled/Acked facts name who acted;
+    /// ConsultAssignee facts name the party the consult is addressed to.
     pub actor_ref: EntityId,
     /// Present only for HumanAssigned: the immutable agent H assigned.
     pub assigned_ref: Option<EntityId>,
@@ -140,6 +146,7 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) cancelled: bool,
     pub(crate) acked: bool,
     pub(crate) human_assigner: Option<(EntityId, EntityId)>,
+    pub(crate) consult_assignee: Option<EntityId>,
 }
 
 impl TaskAuthorityFacts {
@@ -178,6 +185,12 @@ impl TaskAuthorityFacts {
                     _ => self.human_assigner = Some((fact.actor_ref, assigned)),
                 }
             }
+            TaskAuthorityFactKind::ConsultAssignee => match self.consult_assignee {
+                Some(assignee) if assignee != fact.actor_ref => {
+                    return Err(Error::InvariantViolation("task consult assignee fork"));
+                }
+                _ => self.consult_assignee = Some(fact.actor_ref),
+            },
         }
         Ok(())
     }
