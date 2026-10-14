@@ -10,6 +10,7 @@ mod commit_claims;
 mod delete_tombstone;
 mod diary_admission_matrix;
 mod export;
+mod seeded_upgrade;
 mod self_grant;
 mod session_recall;
 mod session_union_reads;

@@ -356,6 +356,7 @@ fn build_provider(
                 openai::OpenAiHttp {
                     http,
                     cap: output_cap(provider),
+                    response_format: provider.response_format,
                 },
             ))
         }

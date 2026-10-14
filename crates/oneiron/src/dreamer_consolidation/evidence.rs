@@ -89,6 +89,8 @@ impl EvidenceLocator {
 pub(super) struct ExtractedCandidate {
     proposal: PromotionCandidate,
     refs: Vec<EvidenceLocator>,
+    /// The listed head the extractor named in `corrects`.
+    corrects: Option<EntityId>,
 }
 impl ExtractedCandidate {
     pub(super) fn new(
@@ -102,7 +104,19 @@ impl ExtractedCandidate {
         ids.sort_unstable();
         ids.dedup();
         proposal.evidence_turn_refs = ids;
-        Ok(Self { proposal, refs })
+        Ok(Self {
+            proposal,
+            refs,
+            corrects: None,
+        })
+    }
+    /// Marks the candidate as the extractor's correction of `head`.
+    pub(super) fn correcting(mut self, head: EntityId) -> Self {
+        self.corrects = Some(head);
+        self
+    }
+    pub(super) fn corrects(&self) -> Option<EntityId> {
+        self.corrects
     }
     pub(super) fn proposal(&self) -> &PromotionCandidate {
         &self.proposal

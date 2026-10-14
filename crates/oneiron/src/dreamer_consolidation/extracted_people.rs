@@ -27,7 +27,7 @@ pub(super) fn extraction_response_schema() -> serde_json::Value {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "properties": {"topic_key": {}}
+                    "properties": {"topic_key": {}, "corrects": {}}
                 }
             },
             "persons": {
