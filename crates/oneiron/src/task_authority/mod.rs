@@ -173,6 +173,10 @@ pub(crate) struct TaskAuthorityFacts {
 
 /// The parties a consult's ConsultAssignee facts name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a fold value read once per consult; boxing would cost the fold its Copy"
+)]
 pub(crate) enum ConsultParties {
     /// No fact: nobody holds party standing. Only the consult's minting door
     /// writes one.

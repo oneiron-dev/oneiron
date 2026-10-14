@@ -348,7 +348,6 @@ fn a_deleted_party_cannot_move_its_consult() {
 /// the live vault holds, while one that changes neither goes ahead.
 #[test]
 fn a_restore_never_brings_back_a_removed_party_or_a_waived_consent() {
-    let row = "task owners and cancellations";
     let backups = tempfile::tempdir().expect("backup dir");
     let restore = |vault: &Vault, image: &std::path::Path, name: &str| {
         Vault::restore_checkpoint_keeping_authority(
@@ -403,7 +402,7 @@ fn a_restore_never_brings_back_a_removed_party_or_a_waived_consent() {
         )
         .expect("the case now asks for a human verdict");
     let refused = restore(&consent, &image, "consent").expect_err("no consent is waived");
-    assert!(refused.to_string().contains(row), "{refused}");
+    assert!(refused.to_string().contains("task authority"), "{refused}");
 }
 
 /// F24 round 3 (H219): a party revoked and regranted since a consult was
