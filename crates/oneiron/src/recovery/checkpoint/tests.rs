@@ -1261,7 +1261,7 @@ fn a_source_missing_at_its_admission_is_never_read() {
     let link = root.path().join("link");
     std::os::unix::fs::symlink(&source, &link).unwrap();
     crate::store::arm_before_live_custody_read({
-        let (prepared, source) = (prepared.clone(), source.clone());
+        let prepared = prepared.clone();
         move || std::fs::rename(prepared, source).unwrap()
     });
     assert!(refused_as_no_vault(SideRestoreSource::read(&link)));
