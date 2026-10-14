@@ -456,6 +456,10 @@ fn read_command_section(body: &mut (dyn Read + Send)) -> Result<Vec<u8>> {
     let mut section = Vec::new();
     loop {
         let start = section.len();
+        // The bound counts every byte read, each header and the flush too.
+        if start + 4 > ORIGIN_MAX_COMMAND_SECTION_BYTES {
+            return Err(push_refused("the push's command section is too large"));
+        }
         // A body that ends before its flush goes on as it is: receive-pack's
         // reader dies at that end before any command runs or any certificate
         // is written, and no certificate line here was whole.
