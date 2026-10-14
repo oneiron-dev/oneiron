@@ -247,6 +247,7 @@ pub struct RestoredKitSecret {
     kind: KitSecretKind,
     bytes: Zeroizing<[u8; 32]>,
     reissue_advised: bool,
+    stored_pieces: u8,
 }
 
 impl std::fmt::Debug for RestoredKitSecret {
@@ -273,6 +274,14 @@ impl RestoredKitSecret {
     /// The kit's passphrase cost is below today's default: clients offer a reissue.
     pub fn reissue_advised(&self) -> bool {
         self.reissue_advised
+    }
+    /// The distinct stored pieces the secret was rebuilt from. With two or more, a forged
+    /// piece beside a genuine one would have to match the genuine tag: 2^72 work. With one,
+    /// the passphrase supplied the other point and the tag checked is that piece's own, so
+    /// anyone who knows the passphrase could have written the piece for a secret they chose.
+    /// Match such a secret against the vault's signed record before trusting it.
+    pub fn stored_pieces(&self) -> u8 {
+        self.stored_pieces
     }
 }
 
@@ -489,6 +498,7 @@ pub fn restore_kit(
             None => points.push((point.x, &point.y)),
         }
     }
+    let stored_pieces = points.len() as u8;
     if let Some(passphrase) = passphrase {
         // Only pieces that all agree the kit has no passphrase piece say so.
         let Some(cost) = first.cost else {
@@ -540,6 +550,7 @@ pub fn restore_kit(
         reissue_advised: first
             .cost
             .is_some_and(|cost| cost.below(&PassphraseCost::DEFAULT)),
+        stored_pieces,
     })
 }
 
