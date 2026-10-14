@@ -271,8 +271,37 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
 
     // A binding that names another key cannot seal this one.
     assert!(seal_world_key(&other_world, to, machine.public_key(), &key).is_err());
-    // Base reality never gets a key.
+    // Base reality never gets a key: none is minted, and no wrap naming it is sealed
+    // or opened, even one sealed by hand around a base-world payload (Wonder W1-F4).
     assert!(WorldKey::mint(oneiron_contracts::claim::base_world_id(), 1).is_err());
+    let base_key = WorldKey {
+        id: WorldKeyId {
+            world: oneiron_contracts::claim::base_world_id(),
+            ..key.id
+        },
+        bytes: zeroize::Zeroizing::new(*key.expose()),
+    };
+    let base = binding(&base_key);
+    assert!(seal_world_key(&base, to, machine.public_key(), &base_key).is_err());
+    let base_key_id = base.key.envelope_key_id();
+    let by_hand = seal(
+        &SealParams {
+            suite: SuiteId::XCHACHA20POLY1305_V1,
+            purpose: Purpose::WorldDek,
+            epoch: WORLD_KEY_EPOCH,
+            key_id: &base_key_id,
+            recipient: &recipient,
+            vault_id: &VAULT,
+        },
+        SealKey::Hybrid {
+            recipient: machine.public_key(),
+            kem_suite: SuiteId::KEM_X25519_MLKEM1024_V1,
+        },
+        &super::wrap::world_key_payload(&base, &base_key),
+        &mut getrandom::SysRng,
+    )
+    .unwrap();
+    assert!(open_world_key(&base, to, &machine, &by_hand).is_err());
 }
 
 /// Done means (contract F2): one key id names one key. A wrap sealed by a machine that
