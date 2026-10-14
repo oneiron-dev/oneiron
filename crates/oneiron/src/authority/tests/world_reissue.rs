@@ -272,15 +272,15 @@ fn re_assertion_keeps_a_widening() {
 }
 
 /// 7c, the narrowed report at scale (Sol R1c-F4; the Engine's scaled
-/// oracle, 2026-10-15): under R1, A holds 48 worlds, each set to
+/// oracle, 2026-10-15): under R1, A holds 24 worlds, each set to
 /// `OneMachine(A)` and widened to `MyMachines`; the re-issue carries A. A's
 /// re-pin lists every one as narrowed, and re-asserting each restores
 /// `MyMachines` on R2 installs. Nothing on the report path caps it (the
-/// carry list's 4096 cap is gone); 48 stands in for "more than 4096", which
-/// a lib-test fold cannot reach in time.
+/// carry list's 4096 cap is gone); 24 stands in for "more than 4096", which
+/// a lib-test fold cannot reach in time (48 took 26 minutes in debug).
 #[test]
 fn the_narrowed_report_lists_every_world_at_scale() {
-    const WORLDS: usize = 48;
+    const WORLDS: usize = 24;
     let host = host();
     let worlds: BTreeSet<_> = (0..WORLDS).map(|_| world_row(&host)).collect();
     let issuer = fresh_install(&host);
