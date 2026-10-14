@@ -404,10 +404,10 @@ fn a_write_accepted_body_of_wide_numbers_hydrates_its_numbers() -> Result<()> {
         measurements.push(rmpv::Value::F64(f64::from(f32::from_bits(bits))));
         measurements.extend(rest.iter().copied().map(rmpv::Value::from));
     }
-    // The phrase's letters after a string, each stored after a one-byte
-    // header: only their narrowest re-encoding spells it. Stored at that
-    // width, the write door refuses them.
-    let letters: Vec<u8> = std::iter::once(b' ').chain(PHRASE.bytes()).collect();
+    // The phrase's letters after a string and a line break, each stored
+    // after a one-byte header: only their narrowest re-encoding spells it.
+    // Stored at that width, the write door refuses them.
+    let letters: Vec<u8> = std::iter::once(b'\n').chain(PHRASE.bytes()).collect();
     let body = |header: &[u8]| {
         let mut body = vec![0x82];
         body.extend(encode(&"measurements".into()));

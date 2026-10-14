@@ -956,6 +956,15 @@ fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
         .unwrap()
         .value;
     let history = memory.claim_history(&secret.claim_short_id).unwrap().value;
+    // Recall finds a claim through the text its host indexes for it.
+    for view in &listed {
+        let id = EntityId::from_hex(&view.claim_ref).unwrap();
+        vault
+            .batch()
+            .text(&id, &[("body", "lantern")])
+            .commit()
+            .unwrap();
+    }
     let recalled = memory
         .recall(
             "lantern",
@@ -1022,11 +1031,11 @@ fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
 
 #[test]
 fn a_write_accepted_body_of_wide_integers_serves_its_numbers() {
-    // The phrase's letters after a string, each a byte-sized integer stored
-    // after a one-byte header: no run of stored bytes spells the phrase, and
-    // only a re-encoding at the narrowest width would. Stored at that width,
-    // it is a body the write door refuses.
-    let letters: Vec<u8> = std::iter::once(b' ').chain(PHRASE.bytes()).collect();
+    // The phrase's letters after a string and a line break, each a
+    // byte-sized integer stored after a one-byte header: no run of stored
+    // bytes spells the phrase, and only a re-encoding at the narrowest width
+    // would. Stored at that width, it is a body the write door refuses.
+    let letters: Vec<u8> = std::iter::once(b'\n').chain(PHRASE.bytes()).collect();
     let body = |header: &[u8]| {
         let mut body = vec![0xdc];
         body.extend(u16::try_from(letters.len() + 1).unwrap().to_be_bytes());
