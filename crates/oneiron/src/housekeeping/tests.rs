@@ -8,10 +8,13 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use super::{HousekeepingBudget, HousekeepingReport, HousekeepingSweep, SweepOutcome};
-use crate::Vault;
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::ports::ManualClock;
+use crate::{
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
+    TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
+};
 
 /// What the pass does at one sweep, in place of running it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,4 +237,96 @@ fn the_owners_run_now_left_over_by_its_budget_runs_on_the_next_pass() {
             "{sweep:?} was asked for and dropped: {report:#?}"
         );
     }
+}
+
+const ACTOR: [u8; 16] = [0x20; 16];
+const SUBJECT: [u8; 16] = [0x21; 16];
+
+/// The writer and the subject of [`critical_writes`].
+fn seed_people(vault: &Vault) {
+    for id in [ACTOR, SUBJECT] {
+        let id = EntityId::from_bytes(id).expect("id");
+        let when = TimeRange { start: T0, end: T0 };
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                when,
+                T0,
+                b"person",
+            )
+            .expect("seed");
+    }
+}
+
+/// `count` critical writes learned at `at`, each awaiting its confirm for
+/// the engine's 300 s.
+fn critical_writes(vault: &Vault, at: u64, count: usize) -> Vec<EntityId> {
+    let actor = EntityId::from_bytes(ACTOR).expect("id");
+    let subject = EntityId::from_bytes(SUBJECT).expect("id");
+    let when = TimeRange { start: at, end: at };
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        WriteProvenance::new(rmpv::Value::from("housekeeping test")).expect("provenance"),
+        ClaimApprovalStatus::Auto,
+    );
+    (0..count)
+        .map(|n| {
+            let claim = EntityId::now();
+            let candidate = ClaimCandidate::new(
+                "health.allergy",
+                ClaimSubject::Entity(subject),
+                rmpv::Value::from(format!("allergen {at} {n}")),
+                1.0,
+            )
+            .with_scope(rmpv::Value::Map(vec![(
+                rmpv::Value::from("sensitivity"),
+                rmpv::Value::from("public"),
+            )]));
+            vault
+                .batch()
+                .claim_candidate(&claim, candidate, &envelope, when, at)
+                .commit()
+                .expect("critical write");
+            claim
+        })
+        .collect()
+}
+
+/// Sol R3 F5: a confirm walk that outlasts a bounded pass goes on in the
+/// next from where it was, rather than starting over, so it ends; once it
+/// has, the deadline it covered no longer wakes the vault.
+#[test]
+fn a_confirm_walk_that_spans_passes_ends_and_retires_the_deadline_it_covered() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let clock = ManualClock::new(T0);
+    let vault = open(dir.path(), &clock);
+    seed_people(&vault);
+    // One confirm whose window closes at T0 + 300, ahead of pages of
+    // confirms still open past it.
+    let overdue = critical_writes(&vault, T0, 1)[0];
+    clock.set(T0 + 200);
+    critical_writes(&vault, T0 + 200, 600);
+    clock.set(T0 + 301);
+
+    // A pass with no time to spare runs one sweep, and a walk one page.
+    let mut passes = 0;
+    while vault.housekeeping_wake_at().expect("wake") < Some(T0 + 500) {
+        assert!(passes < 60, "the covered deadline still wakes the vault");
+        vault
+            .housekeeping(HousekeepingBudget::within(std::time::Duration::ZERO))
+            .expect("the schedule reads");
+        passes += 1;
+    }
+    let approval = vault
+        .get_claim(&overdue)
+        .expect("read")
+        .expect("claim")
+        .approval;
+    assert_eq!(
+        approval,
+        ClaimApprovalStatus::Proposed,
+        "the overdue write was demoted"
+    );
 }

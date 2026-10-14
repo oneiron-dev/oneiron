@@ -14,7 +14,7 @@ use super::cache_store::{
     CACHE_DEP_KEY_LEN, SEED_HASH_LEN, decode_dep_key, parse_cache_header, seed_is_live_for_ppr,
 };
 use crate::error::{Error, Result};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 /// The cursor's first byte: which table the walk is in. The rest is the last
 /// key the walk read.

@@ -88,7 +88,9 @@ struct GitWireRepoLockCell {
     released: Condvar,
 }
 
-/// Who holds one repository in this process.
+/// Who holds one repository in this process. Maintenance gives way to a
+/// writer in this process; a writer in another process waits on the
+/// cross-process lock, as it always has.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Hold {
     Free,

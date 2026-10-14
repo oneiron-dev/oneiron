@@ -666,8 +666,13 @@ impl Vault {
             Ok(Ok(run)) => {
                 let items_failed = run.work.items_failed() > 0;
                 if run.complete && !items_failed {
-                    // A row the clear leaves behind costs one run that finds
-                    // nothing.
+                    // A walk that began before this run covers the rows due
+                    // by when it began. A row the clear leaves behind costs
+                    // one run that finds nothing.
+                    let mut covered = covered;
+                    if let Some(until) = run.covered_until {
+                        covered.retain(|&(_, at, _)| at <= until);
+                    }
                     let _ = wake::clear(self, &covered);
                 }
                 let finished = running.ran(end, every, run.cursor, run.complete, items_failed);

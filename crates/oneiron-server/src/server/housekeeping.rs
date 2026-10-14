@@ -211,12 +211,13 @@ impl SyncServer {
         })
         .await;
         match run {
-            Ok(Ok(run)) if run.maintained + run.deferred + run.failed > 0 => {
+            Ok(Ok(run)) if run.maintained + run.deferred + run.failed + run.refused > 0 => {
                 tracing::info!(
                     repositories = run.repositories,
                     maintained = run.maintained,
                     deferred = run.deferred,
                     failed = run.failed,
+                    refused = run.refused,
                     "served repository maintenance ran"
                 );
             }

@@ -1,10 +1,13 @@
 //! Done-means for served repository maintenance: a repository past git's own
 //! threshold is maintained; one a push holds, or that no exchange permit is
-//! free for, is left for the next run untouched; and a push that comes while
-//! maintenance runs lands, the maintenance giving the repository up to it.
+//! free for, is left for the next run untouched; a push that comes while
+//! maintenance runs lands, the maintenance giving the repository up to it and
+//! leaving no lock of git's behind; and a command a repository's own
+//! configuration names for gc never runs.
 
-use std::io;
-use std::path::Path;
+use std::cell::Cell;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -60,6 +63,7 @@ fn maintenance_packs_a_served_repository_past_its_threshold() {
             maintained: 1,
             deferred: 0,
             failed: 0,
+            refused: 0,
         }
     );
     assert_eq!(packs(&repo), 1, "gc --auto consolidated the packs");
@@ -181,7 +185,104 @@ fn a_push_during_maintenance_lands_and_the_maintenance_gives_way() {
             maintained: 0,
             deferred: 1,
             failed: 0,
+            refused: 0,
         },
         "the maintenance gave the repository up and left it for the next run"
     );
+}
+
+/// Runs git in `repo` with `input` on its standard input.
+fn git_with_input(repo: &Path, args: &[&str], input: &str) {
+    let mut child = std::process::Command::new("git")
+        .current_dir(repo)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("git");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write");
+    assert!(child.wait().expect("git").success(), "git {args:?}");
+}
+
+/// Every lock file in `dir` and below.
+fn locks_in(dir: &Path) -> Vec<PathBuf> {
+    let mut locks = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("read dir") {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            locks.extend(locks_in(&path));
+        } else if path.extension().is_some_and(|ext| ext == "lock") {
+            locks.push(path);
+        }
+    }
+    locks
+}
+
+/// Sol R3 F1: a gc ended while git holds a ref lock leaves the lock to no
+/// one. It is terminated, git removes its own lock files, and the
+/// repository is given up only once every git it started is gone, so the
+/// writer it gave way to finds no stale lock.
+#[test]
+fn maintenance_that_gives_way_while_git_holds_a_lock_leaves_none_behind() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source_dir, repo, _, _) = served_repo(&vault);
+    past_its_threshold(&source_dir.path().canonicalize().expect("source"), &repo);
+    // gc packs the refs under packed-refs.lock; enough of them that it
+    // holds the lock across several of the maintenance's polls.
+    git(&repo, &["config", "gc.packRefs", "true"]);
+    let head = git(&repo, &["rev-parse", "refs/heads/main"]);
+    let refs: String = (0..50_000)
+        .map(|n| format!("create refs/heads/load/{n} {head}\n"))
+        .collect();
+    git_with_input(&repo, &["update-ref", "--stdin"], &refs);
+    let lock = repo.join("packed-refs.lock");
+    let gave_way = Cell::new(false);
+
+    let run = maintain_served_repositories(&vault, permit, || {
+        if lock.exists() {
+            gave_way.set(true);
+        }
+        gave_way.get()
+    })
+    .expect("maintain");
+
+    assert!(gave_way.get(), "the run was ended while git held the lock");
+    assert_eq!((run.deferred, run.maintained), (1, 0));
+    assert_eq!(locks_in(&repo), Vec::<PathBuf>::new(), "no lock is left");
+}
+
+/// Sol R3 F2: `gc.recentObjectsHook` is a list of shell commands gc runs
+/// while it prunes, and no later setting clears it. A repository whose own
+/// configuration names one is left unmaintained, and the command never runs.
+#[test]
+fn maintenance_runs_no_command_a_repository_configuration_names() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source_dir, repo, _, _) = served_repo(&vault);
+    past_its_threshold(&source_dir.path().canonicalize().expect("source"), &repo);
+    // An object nothing reaches, which gc's prune asks the command about.
+    git_with_input(&repo, &["hash-object", "-w", "--stdin"], "unreachable\n");
+    let marker_dir = tempfile::tempdir().expect("marker dir");
+    let marker = marker_dir.path().join("ran");
+    let command = format!("touch {}", marker.to_str().expect("utf-8 marker"));
+    git(&repo, &["config", "gc.recentObjectsHook", command.as_str()]);
+
+    let run = maintain_served_repositories(&vault, permit, || false).expect("maintain");
+
+    assert!(!marker.exists(), "the configured command ran");
+    assert_eq!(
+        run,
+        ServedRepositoryMaintenance {
+            repositories: 1,
+            maintained: 0,
+            deferred: 0,
+            failed: 0,
+            refused: 1,
+        }
+    );
+    assert_eq!(packs(&repo), 2, "the repository is left as it was");
 }

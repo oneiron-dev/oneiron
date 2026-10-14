@@ -216,7 +216,15 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
     }
 
     // ── 3. Compact the historical carriers ──────────────────────────────
-    let window_state = compact_all_windows(vault, &erased, &mut run, now)?;
+    // Only for a due obligation. A shallow snapshot drops history, which is
+    // an erase, so no scheduled run spends it without one (ARCH-0038
+    // carrier-1, ARCH-0073). A late re-put of an erased id never
+    // materializes; its bytes go with the next obligation's compaction.
+    let window_state = if due.is_empty() {
+        WindowSweepState::NoObligation
+    } else {
+        compact_all_windows(vault, &erased, &mut run, now)?
+    };
 
     #[cfg(test)]
     {
@@ -281,6 +289,7 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
                 run.jobs_failed += 1;
             }
         }
+        WindowSweepState::NoObligation => {}
     }
 
     // ── 5. x: quarantine retention (hygiene — rows are hash-only) ───────
@@ -309,4 +318,6 @@ pub(super) enum WindowSweepState {
     /// `ErrorKind` name for the jobs' `last_error_code`.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     Failed(String),
+    /// No obligation was due, so no window was touched.
+    NoObligation,
 }

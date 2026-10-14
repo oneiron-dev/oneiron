@@ -114,6 +114,49 @@ fn sync_rows_contain(vault: &Vault, needle: &[u8]) -> bool {
     false
 }
 
+/// Engine ruling on #1456 (ARCH-0038 carrier-1, ARCH-0073): a shallow
+/// snapshot drops history, which is an erase, so a run with no due
+/// obligation leaves every window as it was, its frontier, its root and the
+/// history it rests on byte for byte, even with an earlier erasure's marker
+/// standing.
+#[cfg(feature = "sync")]
+#[test]
+fn a_run_with_no_due_obligation_leaves_every_window_as_it_was() {
+    let (_dir, vault) = open_vault();
+    let erased = EntityId::now();
+    put_entity(&vault, &erased, 1_771_027_200, b"erased-window-body");
+    vault
+        .delete_entity_with_reason(&erased, DeleteReason::GdprDelete)
+        .unwrap();
+    assert_eq!(run_hard_erase_sweep(&vault).unwrap().jobs_processed, 1);
+    // History the window gains after the erasure.
+    put_entity(
+        &vault,
+        &EntityId::now(),
+        1_771_027_200,
+        b"later-window-body",
+    );
+    let sync_rows = |vault: &Vault| -> Vec<(String, Vec<u8>)> {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        vault
+            .store
+            .sync_state
+            .iter(&rtxn)
+            .unwrap()
+            .map(|entry| {
+                let (key, value) = entry.unwrap();
+                (key.to_owned(), value.to_vec())
+            })
+            .collect()
+    };
+    let before = sync_rows(&vault);
+
+    let run = run_hard_erase_sweep(&vault).unwrap();
+
+    assert_eq!(run.windows_compacted, 0);
+    assert_eq!(sync_rows(&vault), before, "no window was rewritten");
+}
+
 /// Per-job independence (ONE-1087 retry semantics): a job whose
 /// `next_attempt_at` is in the future is skipped — byte-identical row,
 /// no retry_state consumption — while a due job in the same run

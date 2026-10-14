@@ -8,9 +8,10 @@
 //! document at a time, so one document that fails cannot hold the others. The
 //! rest scan their own table in one call: the lease and print sweeps when a
 //! deadline a door noted comes due and hourly besides, symbol holds every five
-//! minutes, and the erasure sweep daily, hourly while an obligation waits. The
-//! lease sweep also retries a bounded number of files a revoke or an expiry
-//! could not remove then.
+//! minutes, and the erasure sweep daily, hourly while an obligation waits; it
+//! rewrites windows only for a due obligation, since dropping history is an
+//! erase. The lease sweep also retries a bounded number of files a revoke or
+//! an expiry could not remove then.
 
 use super::{Deadline, HardEraseWork, HousekeepingSweep, SweepWork};
 use crate::error::{Error, Result};
@@ -38,6 +39,9 @@ pub(super) struct Run {
     pub(super) complete: bool,
     /// Where an unfinished paged walk goes on from.
     pub(super) cursor: Option<Vec<u8>>,
+    /// The latest deadline a complete run has covered, when it is not the
+    /// run's own start.
+    pub(super) covered_until: Option<u64>,
 }
 
 impl Run {
@@ -46,6 +50,7 @@ impl Run {
             work,
             complete: true,
             cursor: None,
+            covered_until: None,
         }
     }
 }
@@ -70,7 +75,9 @@ pub(super) fn run(
                 files_kept,
             }
         }
-        HousekeepingSweep::CriticalConfirmExpiry => return critical_confirms(vault, deadline),
+        HousekeepingSweep::CriticalConfirmExpiry => {
+            return critical_confirms(vault, now, deadline, cursor);
+        }
         HousekeepingSweep::SymbolLeaseExpiry => SweepWork::SymbolLeases {
             released: count(vault.expire_symbol_leases(now)?.len()),
         },
@@ -134,11 +141,19 @@ fn count(n: usize) -> u64 {
 }
 
 /// Pages through the pending critical confirms until a whole walk that began
-/// after this run started has ended, or the deadline passes. The expiry cursor
-/// is durable and shared with the confirm listing, so a run that finds a walk
-/// already in progress finishes it and then walks again from the head: only a
-/// walk that began after the run started has seen every confirm due by then.
-fn critical_confirms(vault: &Vault, deadline: &Deadline) -> Result<Run> {
+/// at a known time has ended, or the deadline passes. The expiry cursor is
+/// durable and shared with the confirm listing, so a run that finds a walk
+/// already in progress finishes it and then walks again from the head: only
+/// a walk that began at a time has seen every confirm due by then. A walk
+/// that outlasts one run goes on in the next, from the coverage `cursor`
+/// keeps: the walk ends still owed and the time the covering walk began. A
+/// complete run covers the deadlines due by that time.
+fn critical_confirms(
+    vault: &Vault,
+    now: u64,
+    deadline: &Deadline,
+    cursor: Option<&[u8]>,
+) -> Result<Run> {
     let expiry_cursor = || -> Result<Option<u64>> {
         let txn = vault.store.env.read_txn()?;
         Ok(vault
@@ -146,7 +161,11 @@ fn critical_confirms(vault: &Vault, deadline: &Deadline) -> Result<Run> {
             .critical_confirm_expiry_sweep_state_in_txn(&txn)?
             .0)
     };
-    let mut walks_to_end = if expiry_cursor()?.is_none() { 1 } else { 2 };
+    let (mut walks_to_end, mut covers_from) = match cursor.and_then(confirm_coverage) {
+        Some(coverage) => coverage,
+        None if expiry_cursor()?.is_none() => (1, now),
+        None => (2, now),
+    };
     let mut demoted = 0;
     let mut pages = 0;
     loop {
@@ -154,16 +173,33 @@ fn critical_confirms(vault: &Vault, deadline: &Deadline) -> Result<Run> {
         pages += 1;
         if expiry_cursor()?.is_none() {
             walks_to_end -= 1;
+            if walks_to_end == 1 {
+                // The walk in progress has ended; the covering one begins.
+                covers_from = vault.now_recorded_at();
+            }
         }
         let complete = walks_to_end == 0;
         if complete || deadline.passed() {
+            let mut coverage = vec![walks_to_end];
+            coverage.extend_from_slice(&covers_from.to_be_bytes());
             return Ok(Run {
                 work: SweepWork::CriticalConfirms { demoted, pages },
                 complete,
-                cursor: None,
+                cursor: (!complete).then_some(coverage),
+                covered_until: Some(covers_from),
             });
         }
     }
+}
+
+/// A coverage an unfinished confirm walk kept: the walk ends still owed and
+/// the time the covering walk began. One that does not decode starts over.
+fn confirm_coverage(bytes: &[u8]) -> Option<(u8, u64)> {
+    let (&walks_to_end, began) = bytes.split_first()?;
+    let began = u64::from_be_bytes(began.try_into().ok()?);
+    (1..=2)
+        .contains(&walks_to_end)
+        .then_some((walks_to_end, began))
 }
 
 /// Finishes staged key retirements, then ages out decisions past the owner's
@@ -190,6 +226,7 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
         work: SweepWork::GateDecisions { removed },
         complete,
         cursor: None,
+        covered_until: None,
     })
 }
 
@@ -218,6 +255,7 @@ fn ppr_cache(vault: &Vault, now: u64, deadline: &Deadline, cursor: Option<&[u8]>
                 },
                 complete: cursor.is_none(),
                 cursor,
+                covered_until: None,
             });
         }
     }
@@ -290,6 +328,7 @@ impl EsignWalk {
             work: work(self.documents, self.done, self.failed),
             complete: cursor.is_none(),
             cursor,
+            covered_until: None,
         }
     }
 }

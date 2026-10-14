@@ -8,6 +8,14 @@
 //! and gives the coordinator up, ending its git, as soon as a writer asks for
 //! it. `--auto` does work only past git's own thresholds (loose objects, pack
 //! count), so a run over a quiet repository costs a directory read.
+//!
+//! Git reads no system or global configuration here, and runs no hook, signer
+//! or daemon. The one command a repository's own configuration can name for
+//! gc, `gc.recentObjectsHook`, is a list no later setting clears, so a
+//! repository that names one is left unmaintained. A run asked to end is
+//! terminated first, which git answers by removing its own lock and temporary
+//! files, and the repository is given up only once every git it started is
+//! gone.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,6 +34,13 @@ pub const SERVED_REPOSITORY_GC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// How often a running maintenance checks whether it must stop.
 const POLL: Duration = Duration::from_millis(50);
+
+/// How long git has to clean up after a terminate before it is killed, and
+/// after a kill before the repository is given up all the same.
+const END_GRACE: Duration = Duration::from_secs(5);
+
+/// gc's command named by configuration: a list, run through a shell.
+const GC_COMMAND_KEY: &str = "gc.recentObjectsHook";
 
 /// Settings pinned on the maintenance command: nothing detaches or outlives
 /// it, no daemon starts, no signer runs, and no hook runs.
@@ -54,6 +69,9 @@ pub struct ServedRepositoryMaintenance {
     pub deferred: u64,
     /// Repositories whose maintenance failed or ran past its time.
     pub failed: u64,
+    /// Repositories left unmaintained because their own configuration names
+    /// a command gc would run.
+    pub refused: u64,
 }
 
 /// Runs `git gc --auto` on every served repository. `admit` takes the host's
@@ -91,6 +109,7 @@ pub fn maintain_served_repositories(
         match collect_garbage(&repo_dir, || stop() || coordinator.asked_to_give_way()) {
             Ok(Gc::Done) => report.maintained += 1,
             Ok(Gc::Stopped) => report.deferred += 1,
+            Ok(Gc::Refused) => report.refused += 1,
             Ok(Gc::Failed) | Err(_) => report.failed += 1,
         }
     }
@@ -122,27 +141,65 @@ fn served_repositories(vault: &Vault) -> Result<Vec<PathBuf>> {
 enum Gc {
     Done,
     Stopped,
+    Refused,
     Failed,
 }
 
-/// Runs `git gc --auto --quiet` in `repo_dir` with a closed environment, as the
-/// leader of its own process group, so a kill ends every git it started. Once
-/// `give_way` says so, the run ends at once, finished or not.
+/// How one git run ended.
+enum Run {
+    Exited(std::process::ExitStatus),
+    /// `give_way` asked it to end.
+    Stopped,
+    TimedOut,
+}
+
+/// Runs `git gc --auto --quiet` in `repo_dir`, unless the repository's own
+/// configuration names a command gc would run. Once `give_way` says so, the
+/// run ends, finished or not.
 fn collect_garbage(repo_dir: &Path, give_way: impl Fn() -> bool) -> Result<Gc> {
     let process_env = GitWireProcessEnv::capture()?;
+    let mut check = git(&process_env, repo_dir)?;
+    check.args(["config", "--get-all", GC_COMMAND_KEY]);
+    match run(check, &give_way)? {
+        // `git config` exits 1 when the key is not set.
+        Run::Exited(status) if status.code() == Some(1) => {}
+        Run::Exited(status) if status.success() => return Ok(Gc::Refused),
+        Run::Exited(_) | Run::TimedOut => return Ok(Gc::Failed),
+        Run::Stopped => return Ok(Gc::Stopped),
+    }
+    let mut gc = git(&process_env, repo_dir)?;
+    gc.args(["gc", "--auto", "--quiet"]);
+    Ok(match run(gc, &give_way)? {
+        Run::Exited(status) if status.success() => Gc::Done,
+        Run::Exited(_) | Run::TimedOut => Gc::Failed,
+        Run::Stopped => Gc::Stopped,
+    })
+}
+
+/// A git command on `repo_dir` with a closed environment: no system or
+/// global configuration, the pinned settings, nothing on its standard
+/// streams.
+fn git(process_env: &GitWireProcessEnv, repo_dir: &Path) -> Result<std::process::Command> {
     let mut command = oneiron_spawn::command(process_env.git_binary().as_os_str());
     for pinned in PINNED {
         command.arg("-c").arg(pinned);
     }
     command
-        .args(["gc", "--auto", "--quiet"])
         .env_clear()
         .env("GIT_DIR", path_arg(repo_dir)?)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    Ok(command)
+}
+
+/// Runs `command` as the leader of its own process group, so ending it ends
+/// every git it started, for at most [`SERVED_REPOSITORY_GC_TIMEOUT`].
+fn run(mut command: std::process::Command, give_way: &impl Fn() -> bool) -> Result<Run> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -153,33 +210,58 @@ fn collect_garbage(repo_dir: &Path, give_way: impl Fn() -> bool) -> Result<Gc> {
     loop {
         if give_way() {
             end(&mut child);
-            return Ok(Gc::Stopped);
+            return Ok(Run::Stopped);
         }
         if let Some(status) = child.try_wait()? {
-            return Ok(if status.success() {
-                Gc::Done
-            } else {
-                Gc::Failed
-            });
+            return Ok(Run::Exited(status));
         }
         if Instant::now() >= deadline {
             end(&mut child);
-            return Ok(Gc::Failed);
+            return Ok(Run::TimedOut);
         }
         std::thread::sleep(POLL);
     }
 }
 
-/// Kills the maintenance and every git it started, and reaps it.
+/// Ends the run and every git it started: a terminate first, on which git
+/// removes its own lock and temporary files, then a kill for whatever is
+/// still there after [`END_GRACE`]. Returns once the leader is reaped and no
+/// process of its group is left, or a kill's grace has passed too.
 fn end(child: &mut Child) {
     #[cfg(unix)]
     if let Ok(group) = libc::pid_t::try_from(child.id()) {
-        // SAFETY: the child was spawned as leader of its own process group
-        // and is not reaped yet, so the group id is still its.
-        unsafe {
-            libc::kill(-group, libc::SIGKILL);
+        for signal in [libc::SIGTERM, libc::SIGKILL] {
+            // SAFETY: the group is the child's own, and it is not gone: the
+            // leader is unreaped or a member is left, so its id is not reused.
+            unsafe {
+                libc::kill(-group, signal);
+            }
+            if group_ended(child, group) {
+                return;
+            }
         }
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Waits up to [`END_GRACE`] for the leader to be reaped and its process
+/// group to be empty.
+#[cfg(unix)]
+fn group_ended(child: &mut Child, group: libc::pid_t) -> bool {
+    let until = Instant::now() + END_GRACE;
+    loop {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            // SAFETY: signal 0 delivers nothing; it only asks whether any
+            // process of the group is left.
+            let probe = unsafe { libc::kill(-group, 0) };
+            if probe == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return true;
+            }
+        }
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

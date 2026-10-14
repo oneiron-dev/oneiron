@@ -236,13 +236,18 @@ where they stopped on the next pass. A sweep that fails, or that could not finis
 records, is logged by kind and retried within the hour; it never stops the others. The vault
 keeps each sweep's schedule, so a restart neither repeats a sweep early nor drops one. Before an
 erasure runs, the server writes down and closes the sync windows no client is using, so their
-history can be compacted; a window in use waits for the next run.
+history can be compacted; a window in use waits for the next run. Compaction drops history, which is
+itself an erase, so it runs only for a due erasure obligation: a run with none leaves every window as
+it was. Quarantine retention and the dropped-obligation audit still run daily.
 
 Every hour the server also runs `git gc --auto` on each repository it serves, one at a time, under
 a git exchange permit it waits for and the repository's lock. Maintenance never turns a push away:
 a repository a push holds waits for the next hour, and a push that comes while maintenance runs
-asks for the repository, the maintenance ends its git at once, and the push goes ahead. A push
-itself starts no maintenance.
+asks for the repository, the maintenance ends its git at once, and the push goes ahead. Git is
+terminated rather than killed, so it removes its own lock files first. A push itself starts no
+maintenance. Git reads no system or global configuration here and runs no hook; a repository whose
+own configuration sets `gc.recentObjectsHook` (a command gc would run) is left unmaintained and
+counted as refused.
 
 A managed vault that is stopped between uses tells its supervisor when to wake it: a
 `housekeeping` entry in its wake ledger carries the next secret-lease expiry, voice-print
