@@ -367,7 +367,7 @@ fn a_restore_never_brings_back_a_removed_party_or_a_waived_consent() {
     let third = other_actor(&vault);
     replicate_party_fact(&vault, task_ref, third);
     let refused = restore(&vault, &image, "party").expect_err("no forked party comes back");
-    assert!(refused.to_string().contains(row), "{refused}");
+    assert!(refused.to_string().contains("task authority"), "{refused}");
 
     let (_consent_dir, consent) = open_vault();
     let (consult, _peer, _question) = open_consult(&consent);

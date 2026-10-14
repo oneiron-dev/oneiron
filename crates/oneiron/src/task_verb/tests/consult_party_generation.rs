@@ -92,6 +92,7 @@ fn a_party_rebound_away_and_back_moves_only_consults_minted_since() {
                 epoch,
             },
             0xED,
+            &[],
         )
         .expect("sign the rebind")
     };
@@ -134,18 +135,61 @@ fn replicas_observing_one_binding_record_one_generation() {
     };
     let recorded = generation(asker);
 
-    // Entries that change no binding, as another replica also observed.
-    let (mut parent, mut seq) = (authority_entry_hash(&regrant).expect("hash"), 4);
-    for seed in 0x40..0x60 {
-        let entry = sign_child(regrant.vault_id, parent, seq, enroll_agent(seed), 0xEE)
-            .expect("sign the enrollment");
+    // Entries that change none of the parties' bindings, as another replica
+    // also observed: an engine agent key, then that key bound and rebound to
+    // writers of its own (a two-key roster cosigns every entry).
+    let enroll = sign_child(
+        regrant.vault_id,
+        authority_entry_hash(&regrant).expect("hash"),
+        4,
+        enroll_agent(0x40),
+        0xEE,
+        &[],
+    )
+    .expect("sign the enrollment");
+    put_entries(&vault, &[&enroll]);
+    let mut parent = authority_entry_hash(&enroll).expect("hash");
+    for epoch in 1..32_u8 {
+        let (authority_key, actor_class) = (
+            key(0x40),
+            EdgeActorClass::Agent.gate_actor_class().to_owned(),
+        );
+        let actor_ref = EntityId::from_bytes([0x40 + epoch; 16]).expect("writer id");
+        let epoch = u64::from(epoch);
+        let op = if epoch == 1 {
+            AuthorityOp::BindActor {
+                authority_key,
+                actor_ref,
+                actor_class,
+                epoch,
+            }
+        } else {
+            AuthorityOp::RebindActor {
+                authority_key,
+                actor_ref,
+                actor_class,
+                epoch,
+            }
+        };
+        let entry = sign_child(regrant.vault_id, parent, 4 + epoch, op, 0xEE, &[0x40])
+            .expect("sign the agent binding");
         parent = authority_entry_hash(&entry).expect("hash");
-        seq += 1;
         put_entries(&vault, &[&entry]);
         if generation(asker) != recorded {
             break;
         }
     }
+    let txn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        vault
+            .authority_fold_readonly_in_txn(&txn)
+            .expect("fold")
+            .actor_bindings
+            .get(&key(0x40))
+            .is_some_and(|binding| binding.status == crate::authority::ActorBindingStatus::Active),
+        "precondition: the agent key's entries landed"
+    );
+    drop(txn);
     let (actor_generation, assigned_generation) = (generation(asker), generation(peer));
     vault
         .with_write_txn(|wtxn| {
@@ -187,8 +231,15 @@ fn a_party_bound_under_two_classes_moves_its_consult() {
     let agent_seed = (0x50..=0xFF)
         .find(|seed| key(*seed) > key(0xEF))
         .expect("an agent key sorting after the human key");
-    let enroll = sign_child(revoke.vault_id, bind, 2, enroll_agent(agent_seed), 0xEF)
-        .expect("sign the enrollment");
+    let enroll = sign_child(
+        revoke.vault_id,
+        bind,
+        2,
+        enroll_agent(agent_seed),
+        0xEF,
+        &[],
+    )
+    .expect("sign the enrollment");
     let enrolled = authority_entry_hash(&enroll).expect("hash");
     // An agent binding entry (any fresh epoch will do) hashing below one
     // the human binding was already observed at, so the frontier the human
@@ -206,6 +257,7 @@ fn a_party_bound_under_two_classes_moves_its_consult() {
                     epoch,
                 },
                 0xEF,
+                &[agent_seed],
             )
             .expect("sign the agent binding")
         })

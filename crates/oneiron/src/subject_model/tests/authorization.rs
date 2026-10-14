@@ -128,16 +128,34 @@ pub(crate) fn regrant_after(
 }
 
 /// `op` signed by the [`root_owner`] key `seed`, as entry `seq` after
-/// `parent` in the vault `vault_id`.
+/// `parent` in the vault `vault_id`, cosigned by each enrolled device key in
+/// `cosigners` (a roster of two keys or more needs a peer cosign).
 pub(crate) fn sign_child(
     vault_id: Option<crate::authority::AuthorityVaultId>,
     parent: crate::authority::AuthorityEntryHash,
     seq: u64,
     op: AuthorityOp,
     seed: u8,
+    cosigners: &[u8],
 ) -> Result<AuthorityLogEntry> {
     let signing = SigningKey::from_bytes(&[seed; 32]);
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let cosigning: Vec<SigningKey> = cosigners
+        .iter()
+        .map(|cosigner| SigningKey::from_bytes(&[*cosigner; 32]))
+        .collect();
+    let mut cosigns: Vec<AuthoritySignature> = cosigning
+        .iter()
+        .map(|cosigner| {
+            let key = AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes());
+            AuthoritySignature {
+                suite: key.suite(),
+                public_key: key,
+                signature: vec![0; 64],
+            }
+        })
+        .collect();
+    cosigns.sort_by(|left, right| left.public_key.cmp(&right.public_key));
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -149,13 +167,20 @@ pub(crate) fn sign_child(
             public_key: key,
             signature: Vec::new(),
         },
-        cosigns: Vec::new(),
+        cosigns,
         ts: 100 + seq,
     };
-    entry.signer.signature = signing
-        .sign(&authority_transcript(&entry)?)
-        .to_bytes()
-        .to_vec();
+    let transcript = authority_transcript(&entry)?;
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    for cosign in &mut entry.cosigns {
+        let cosigner = cosigning
+            .iter()
+            .find(|cosigner| {
+                AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes()) == cosign.public_key
+            })
+            .expect("each cosign has its key");
+        cosign.signature = cosigner.sign(&transcript).to_bytes().to_vec();
+    }
     Ok(entry)
 }
 
