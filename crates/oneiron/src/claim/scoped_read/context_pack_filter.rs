@@ -309,19 +309,17 @@ impl ScopedRead<'_> {
             .map_or(crate::vault::ReadMode::Live, |revision| {
                 crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
             });
+        let store = self.store_read();
         let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
-            self.vault,
-            &self.store_read(),
-            rtxn,
-            &entity.id,
-            mode,
+            self.vault, &store, rtxn, &entity.id, mode,
         )?
         else {
             return Ok(true);
         };
         let revision = served.revision;
-        let messages = served
-            .readable(|message| self.is_entity_readable_with_policy_in(rtxn, policy, message))?;
+        let messages = served.released(&store, rtxn, |message| {
+            self.is_entity_readable_with_policy_in(rtxn, policy, message)
+        })?;
         if let Some(text) = crate::embed::joined_turn_text(&messages) {
             fields.insert("txt".to_owned(), serde_json::Value::String(text));
             if entity.source_revision_ref.is_some() {

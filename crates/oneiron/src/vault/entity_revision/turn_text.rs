@@ -80,6 +80,32 @@ impl TurnText {
         }
         Ok(messages)
     }
+
+    /// [`Self::readable`] for a door that releases the words. A turn's text
+    /// is its messages' words without the rest of their bodies, so a message
+    /// whose stored body the write door refuses gives none, read in this
+    /// snapshot, as a lossy door withholds a refused body whole; and words the
+    /// write door's text rules refuse are given by none, which judges the
+    /// words of a pinned state a message no longer holds as they are served.
+    pub(crate) fn released(
+        self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        mut readable: impl FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<Vec<(EntityId, String)>> {
+        let mut messages = self.readable(|message| {
+            Ok(readable(message)?
+                && !crate::ports::EntityStoreRead::port_entity_raw(store, txn, message)?
+                    .is_some_and(|raw| {
+                        raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                            .is_some_and(crate::batch::export::write_door_refuses_body)
+                    }))
+        })?;
+        messages.retain(|(_, words)| {
+            !crate::batch::secret_scan::write_door_refuses_raw(words.as_bytes())
+        });
+        Ok(messages)
+    }
 }
 
 /// The words a read of `turn` at `mode` serves and the text revision that

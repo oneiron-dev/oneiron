@@ -498,8 +498,9 @@ impl Memory<'_> {
                     else {
                         return Ok(None);
                     };
-                    let messages =
-                        served.readable(|message| lane.is_entity_readable_in(txn, message))?;
+                    let messages = served.released(&self.vault.store, txn, |message| {
+                        lane.is_entity_readable_in(txn, message)
+                    })?;
                     Ok(crate::embed::joined_turn_text(&messages))
                 })
                 .collect::<crate::error::Result<Vec<_>>>()

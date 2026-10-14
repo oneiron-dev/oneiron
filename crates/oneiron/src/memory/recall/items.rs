@@ -51,7 +51,7 @@ impl Memory<'_> {
                 )? {
                     Some(text) => {
                         let revision = text.revision;
-                        let messages = text.readable(readable)?;
+                        let messages = text.released(&content, txn, readable)?;
                         Some((messages, Some(revision), members))
                     }
                     None => Some((Vec::new(), None, members)),
