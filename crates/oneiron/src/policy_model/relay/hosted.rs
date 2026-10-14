@@ -244,6 +244,18 @@ impl Vault {
 }
 
 impl Vault {
+    /// The trust check at the binding in force now.
+    #[cfg(test)]
+    pub(in super::super) fn cloud_vault_verified_trust(
+        &self,
+        request: &PolicyClassifyRequest,
+        hosted: Option<&HostedLegalPolicy>,
+        config: &PolicyModelConfig,
+        verdicts: &dyn VaultSideVerdictSource,
+    ) -> Result<RelayBoundaryPass> {
+        self.cloud_vault_verified_trust_at(request, hosted, config, verdicts, None)
+    }
+
     /// Verifies a CloudVault receipt produced by our vault-side runner. The
     /// receipt lookup and every comparison are over locally derived values.
     ///
@@ -266,18 +278,9 @@ impl Vault {
     /// verdict is returned verbatim, and `Warn` does not halt — so trusting an
     /// unattested `Warn` would relay the content with the hosted plane never
     /// consulted, which is the same hole in a milder coat.
-    pub(in super::super) fn cloud_vault_verified_trust(
-        &self,
-        request: &PolicyClassifyRequest,
-        hosted: Option<&HostedLegalPolicy>,
-        config: &PolicyModelConfig,
-        verdicts: &dyn VaultSideVerdictSource,
-    ) -> Result<RelayBoundaryPass> {
-        self.cloud_vault_verified_trust_at(request, hosted, config, verdicts, None)
-    }
-
-    /// [`Self::cloud_vault_verified_trust`] at `verify_at`, the binding a
-    /// caller pinned, or at the binding in force when it pinned none.
+    ///
+    /// It verifies at `verify_at`, the binding a caller pinned, or at the
+    /// binding in force when it pinned none.
     fn cloud_vault_verified_trust_at(
         &self,
         request: &PolicyClassifyRequest,

@@ -495,6 +495,7 @@ impl Vault {
     /// behaviour disagree: `must_halt_relay` would be false on a pass whose
     /// receipt says the relay stopped. A record nobody honours is worse than
     /// no record, because it reads as authoritative.
+    #[expect(clippy::too_many_arguments)]
     pub(in super::super) fn append_relay_receipt_binding_checked_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
