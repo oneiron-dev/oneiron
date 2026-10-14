@@ -266,8 +266,14 @@ fn commit_terminal(
             storage::finish(vault, txn, seed, &receipt)?;
             // Readers see only final words: a finalize that adds some, or
             // makes a non-final MESSAGE final again, re-dirties its TURN.
-            if finality == StreamFinality::Final && (!state.pending.is_empty() || !was_final) {
+            // One that ends a final MESSAGE as non-final takes its words out
+            // of the transcript: no new words for a branch, but the sieve and
+            // the projector read what the turn says now.
+            let now_final = finality == StreamFinality::Final;
+            if now_final && (!state.pending.is_empty() || !was_final) {
                 storage::redirty_turn(vault, txn, seed)?;
+            } else if was_final && !now_final {
+                crate::dreamer_wake::words_changed_in_txn(&vault.store, txn, &seed.turn)?;
             }
             Ok(())
         })
