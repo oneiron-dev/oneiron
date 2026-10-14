@@ -591,7 +591,7 @@ async fn failing_reranker() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandl
 async fn a_fallback_rung_goes_out_only_while_the_line_covers_its_payload() {
     let (down_url, taken, down) = failing_reranker().await;
     let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
-    // A block of 16 to 30 clipped memories (about 530 units each) costs more
+    // A block of 16 to 30 clipped memories (about 545 units each) costs more
     // than the flat reservation (8000) and less than this line, which the
     // flat reservation covers twice and the payload's price once.
     let models = models_toml(&format!(

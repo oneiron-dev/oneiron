@@ -203,13 +203,25 @@ impl RecallRerankHost for ServedRerank {
     }
 }
 
+/// The tokens a cross-encoder adds to each query and document pair beside
+/// their words: its start, separator and end marks (three for a BERT-style
+/// pair), with room to spare.
+const PAIR_FRAMING_UNITS: usize = 16;
+
 /// The most a rerank call that sends `query` and `documents` can bill, in
 /// the line's unit (tokens): a token per byte at most, the query counted once
-/// beside each document, as a cross-encoder reads each pair.
+/// beside each document, as a cross-encoder reads each pair, and each pair's
+/// framing ([`PAIR_FRAMING_UNITS`]). A model whose template wraps each pair
+/// in a longer prompt bills more than this.
 fn payload_units(query: &str, documents: &[&str]) -> u64 {
     let pairs = documents
         .iter()
-        .map(|document| query.len().saturating_add(document.len()))
+        .map(|document| {
+            query
+                .len()
+                .saturating_add(document.len())
+                .saturating_add(PAIR_FRAMING_UNITS)
+        })
         .fold(0_usize, usize::saturating_add);
     u64::try_from(pairs).unwrap_or(u64::MAX)
 }

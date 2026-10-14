@@ -381,10 +381,12 @@ rerank_budget_units = 32000   # each recall's own line; the default
 
 Each paid recall runs on a line of its own under the vault's budget policy,
 as a chat turn does. Before a call leaves it is priced on its words, a unit
-per byte of each document plus the query once per document, and a line that
-cannot cover that refuses the call unsent with `BUDGET_SPENT`. The default
-line covers 50 documents of 500 ASCII characters beside a query of about
-140; longer documents, or text outside ASCII (several bytes a character),
+per byte of each document plus the query once per document, and 16 more
+per document for the marks a cross-encoder puts around each pair. A line
+that cannot cover that refuses the call unsent with `BUDGET_SPENT`. The
+default line covers 50 documents of 500 ASCII characters beside a query of
+about 120; longer documents, text outside ASCII (several bytes a
+character), or a model whose template wraps each pair in a longer prompt
 need a larger `rerank_budget_units`. Each rung of the `reranker` route the
 call reaches is admitted on its own permit, reserving that price (at least
 one call's 8000 units, or the whole line if smaller), sent through the run's
