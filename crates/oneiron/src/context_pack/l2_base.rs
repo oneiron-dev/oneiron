@@ -284,7 +284,7 @@ fn admitted_l2_evidence(
         }
         bodies.insert(id, body.clone());
         super::validation::validate_pack_entity_reference(
-            &vault.store,
+            &pipeline.store_read(),
             txn,
             &id,
             &mut bodies,

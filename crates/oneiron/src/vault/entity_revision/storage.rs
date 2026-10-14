@@ -273,6 +273,61 @@ pub(crate) fn capture_entity_revision(
     put_state(store, txn, id, &current)
 }
 
+/// Publishes the revision a room holds pending for `id`. A room indexes what
+/// it stages at once and runs no idle pass, so once it indexes a row it put,
+/// the row's indexed revision is its live one; base keeps its deferred
+/// interval. True when the body is not the one indexed before, so an index
+/// of the row that the room did not restage describes another body.
+pub(crate) fn publish_room_revision(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(mut current) = state(store, txn, id)? else {
+        return Ok(false);
+    };
+    if current.live == current.indexed {
+        return Ok(false);
+    }
+    let live = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        .ok_or(Error::CorruptedIndex("revision without entity"))?;
+    // Without a document the indexed body cannot be read back: it counts as
+    // another, and the room hides what it did not restage.
+    let changed = !current.has_doc
+        || doc_raw(&fork_revision(store, txn, id, current.indexed)?)?
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            != live.get(ENTITY_METADATA_HEADER_LEN..);
+    current.indexed = current.live;
+    put_state(store, txn, id, &current)?;
+    Ok(changed)
+}
+
+/// Whether the vectors `store` holds and writes for `id` are embedded from
+/// `body`: `(held, later)`. A vector it holds was embedded from the indexed
+/// body, and one it writes later (an embedding, or its idle pass) from the
+/// live body. A body that cannot be read back is another.
+pub(crate) fn vectors_embed_body(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<(bool, bool)> {
+    let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok((false, false));
+    };
+    let later = live.get(ENTITY_METADATA_HEADER_LEN..) == Some(body);
+    let held = match state(store, txn, id)? {
+        Some(current) if current.live != current.indexed => {
+            current.has_doc
+                && doc_raw(&fork_revision(store, txn, id, current.indexed)?)?
+                    .get(ENTITY_METADATA_HEADER_LEN..)
+                    == Some(body)
+        }
+        _ => later,
+    };
+    Ok((held, later))
+}
+
 pub(crate) fn storage_manages_text(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -427,7 +482,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     if header.entity_type == crate::registry::ENTITY_TYPE_TURN
         && !entity_owns_revision_in_txn(store, txn, id, target)?
         && let Some(row) =
-            super::turn_text::turn_row_for_text_revision_in_txn(vault, txn, id, target)?
+            super::turn_text::turn_row_for_text_revision_in_txn(vault, store, txn, id, target)?
     {
         return read_entity_revision_from_store_in_txn(
             vault,

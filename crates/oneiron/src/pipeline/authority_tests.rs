@@ -707,9 +707,9 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
         )
         .text(&turn_id, &[("body", "authorityneedle")])
         .commit()?;
-    let candidate = |_store: &crate::store::Store, _txn: &heed::RoTxn<'_>, id: &EntityId| {
-        Ok(*id != excluded_id)
-    };
+    let candidate = |_store: &crate::store::StoreRead<'_>,
+                     _txn: &heed::RoTxn<'_>,
+                     id: &EntityId| { Ok(*id != excluded_id) };
     let fresh = RetrievalFilter {
         include_stale: Some(false),
         ..RetrievalFilter::default()
@@ -747,7 +747,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
             for (id, allowed) in [(stale_id, expected), (excluded_id, false), (turn_id, false)] {
                 assert_eq!(
                     pipeline_candidate_matches_filters_and_gate(
-                        &vault.store,
+                        &vault.store.read(),
                         &txn,
                         &id,
                         config,

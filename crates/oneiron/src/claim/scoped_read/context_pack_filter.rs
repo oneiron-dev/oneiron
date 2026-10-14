@@ -56,7 +56,7 @@ impl ScopedRead<'_> {
                     {
                         return Ok(None);
                     }
-                    crate::pipeline::capability_hit(&self.vault.store, &rtxn, hit.id)
+                    crate::pipeline::capability_hit(&self.store_read(), &rtxn, hit.id)
                 })?;
                 auxiliary_suppressed += item.suppression();
                 if let Some(current) = item.into_option() {
@@ -310,7 +310,11 @@ impl ScopedRead<'_> {
                 crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
             });
         let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
-            self.vault, rtxn, &entity.id, mode,
+            self.vault,
+            &self.store_read(),
+            rtxn,
+            &entity.id,
+            mode,
         )?
         else {
             return Ok(true);

@@ -411,15 +411,24 @@ pub(crate) fn deindex_text(
         }
     }
 
+    // A room stages these totals as it read base when it wrote them, and base
+    // keeps indexing on record, so in a union they may not count a document
+    // base added since: there they floor at zero, as union scoring reads them
+    // (`scoring.rs`). Base keeps every check.
+    let union = store.is_union();
     // Decrement per-field stats using the per-doc lengths we recorded.
     for (&fid, &len) in &lengths {
         let (doc_count, total_length) = read_field_stats(store, wtxn, fid)?;
-        let doc_count = doc_count
-            .checked_sub(1)
-            .ok_or_else(|| corrupted("field doc_count underflow during deindex"))?;
-        let total_length = total_length
-            .checked_sub(u64::from(len))
-            .ok_or_else(|| corrupted("field total_length underflow during deindex"))?;
+        let doc_count = match doc_count.checked_sub(1) {
+            Some(count) => count,
+            None if union => 0,
+            None => return Err(corrupted("field doc_count underflow during deindex")),
+        };
+        let total_length = match total_length.checked_sub(u64::from(len)) {
+            Some(length) => length,
+            None if union => 0,
+            None => return Err(corrupted("field total_length underflow during deindex")),
+        };
         if doc_count == 0 && total_length == 0 {
             store
                 .text_bm25_field_stats()
@@ -429,10 +438,11 @@ pub(crate) fn deindex_text(
         }
     }
 
-    let total_docs = read_total_docs(store, wtxn)?;
-    let total_docs = total_docs
-        .checked_sub(1)
-        .ok_or_else(|| corrupted("total_docs underflow during deindex"))?;
+    let total_docs = match read_total_docs(store, wtxn)?.checked_sub(1) {
+        Some(total) => total,
+        None if union => 0,
+        None => return Err(corrupted("total_docs underflow during deindex")),
+    };
     write_total_docs(store, wtxn, total_docs)?;
 
     store.text_meta().delete(wtxn, id.as_bytes())?;

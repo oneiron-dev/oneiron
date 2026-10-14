@@ -8,7 +8,7 @@ use crate::error::Result;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
-use crate::store::{RetrievalScoreComponent, RetrievalSignal, Store};
+use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 
 use super::types::{
     CONTEXT_PACK_ANOMALOUS_REPEAT_RUN, CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO,
@@ -85,7 +85,7 @@ impl ContextPackBudgetCounts {
 
 pub(super) fn apply_context_pack_retrieval_budget(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     budget: ContextPackRetrievalBudget,

@@ -752,10 +752,7 @@ impl Memory<'_> {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> MemoryResult<Option<String>> {
-        Ok(
-            crate::ports::ShortIdStoreRead::port_short_id_reference(&self.vault.store, rtxn, id)?
-                .map(|(name, hash)| format!("{name}:{hash:02x}")),
-        )
+        short_ref_in_txn(&self.vault.store, rtxn, id)
     }
 
     pub(super) fn short_ref_or_hex(&self, id: &EntityId) -> MemoryResult<String> {
@@ -797,4 +794,17 @@ pub(super) fn hex_string(bytes: &[u8]) -> String {
         out.push_str(&format!("{byte:02x}"));
     }
     out
+}
+
+/// The short ref `store` holds for `id`: the vault's own, or a room's view,
+/// whose staged rows carry their own.
+pub(super) fn short_ref_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> MemoryResult<Option<String>> {
+    Ok(
+        crate::ports::ShortIdStoreRead::port_short_id_reference(store, rtxn, id)?
+            .map(|(name, hash)| format!("{name}:{hash:02x}")),
+    )
 }

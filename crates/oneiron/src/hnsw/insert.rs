@@ -252,6 +252,108 @@ fn select_neighbors(
 
 /// The `m_max_0` nearest nodes to `vector`, found by the `ef_construction`
 /// beam from `entry_point`.
+/// A graph of `id` alone.
+fn start_graph(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<InsertOutcome> {
+    store
+        .hnsw_meta()
+        .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
+    store
+        .hnsw_meta()
+        .put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
+    store.hnsw_neighbors().put(wtxn, id.as_bytes(), &[])?;
+    // A graph created from empty is symmetric by construction and every
+    // subsequent write in this module preserves the invariant.
+    mark_symmetric_links(store, wtxn)?;
+    Ok(InsertOutcome::Applied)
+}
+
+/// [`hnsw_insert_inner`] on a room's view. A room stages its graph's count
+/// and entry point over base's, and base keeps changing its graph after the
+/// room's segment commits, so the count is only advisory here and the entry
+/// point may name a node base has dropped since, or one whose vector the
+/// room hid (Astra 1397b). The insert enters at a node other than `id` that
+/// the walk loads a vector for ([`room_entry`]); with none, `id` is the
+/// graph's sole node. It never asks for a rebuild, which runs on base alone.
+fn room_insert(
+    store: &impl ManifestDbs,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    (id, vector): (&EntityId, &[f32]),
+    discipline: LinkDiscipline,
+    ops: &mut u64,
+) -> Result<InsertOutcome> {
+    let Some(entry) = room_entry(store, &*wtxn, config.dimensions, id)? else {
+        return start_graph(store, wtxn, id);
+    };
+    let count = read_count(store, &*wtxn)?;
+    let existing = store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some();
+    if existing && discipline == LinkDiscipline::Symmetric {
+        // Another node to enter at: not a sole-node re-anchor, whatever the
+        // count says.
+        hnsw_refresh_localized(store, config, wtxn, id, vector, count.max(2), entry, ops)?;
+        return Ok(InsertOutcome::Applied);
+    }
+    // A Legacy graph's links into a node may be one-way, so base rebuilds it
+    // whole to move one; a room links an existing node anew instead, and the
+    // links into it stay.
+    let selected = nearest_neighbors(store, config, &*wtxn, id, vector, entry, ops)?;
+    write_neighbors(store, wtxn, id, &selected)?;
+    match discipline {
+        LinkDiscipline::Symmetric => {
+            attach_backlinks_symmetric(store, config, wtxn, id, &selected, ops)?;
+        }
+        LinkDiscipline::Legacy => {
+            attach_backlinks_legacy(store, config, wtxn, id, &selected, ops)?;
+        }
+    }
+    if existing {
+        return Ok(InsertOutcome::Applied);
+    }
+    let count = count
+        .checked_add(1)
+        .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
+    store
+        .hnsw_meta()
+        .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+    Ok(InsertOutcome::Applied)
+}
+
+/// The node other than `id` that a room's insert enters its graph at: the
+/// entry point when the walk loads its vector, else the first node it loads
+/// one for; `None` when it loads none.
+fn room_entry(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dimensions: usize,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    let loads = |node: &EntityId| -> Result<bool> {
+        Ok(node != id
+            && store.hnsw_neighbors().get(txn, node.as_bytes())?.is_some()
+            && load_vector(store, txn, node, dimensions)?.is_some())
+    };
+    if let Some(entry) = read_entry_point(store, txn)?
+        && loads(&entry)?
+    {
+        return Ok(Some(entry));
+    }
+    for row in store.hnsw_neighbors().iter(txn)? {
+        let (key, _) = row?;
+        let node = parse_entity_id(&key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+            Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
+            other => other,
+        })?;
+        if loads(&node)? {
+            return Ok(Some(node));
+        }
+    }
+    Ok(None)
+}
+
 fn nearest_neighbors(
     store: &impl ManifestDbs,
     config: &VaultConfig,
@@ -296,6 +398,9 @@ fn hnsw_insert_inner(
         return Ok(InsertOutcome::Applied);
     }
     *ops += 1;
+    if store.is_union() {
+        return room_insert(store, config, wtxn, (id, vector), discipline, ops);
+    }
     if store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some() {
         *ops += 1;
         let count = read_count(store, &*wtxn)?;
@@ -321,17 +426,7 @@ fn hnsw_insert_inner(
         {
             return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
         }
-        store
-            .hnsw_meta()
-            .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
-        store
-            .hnsw_meta()
-            .put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
-        store.hnsw_neighbors().put(wtxn, id.as_bytes(), &[])?;
-        // A graph created from empty is symmetric by construction and every
-        // subsequent write in this module preserves the invariant.
-        mark_symmetric_links(store, wtxn)?;
-        return Ok(InsertOutcome::Applied);
+        return start_graph(store, wtxn, id);
     }
 
     let entry_point =

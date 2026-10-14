@@ -377,7 +377,7 @@ impl Memory<'_> {
             .as_deref()
             .map(|reference| self.resolve_ref(reference))
             .transpose()?;
-        let filter = |store: &crate::store::Store,
+        let filter = |store: &crate::store::StoreRead<'_>,
                       txn: &heed::RoTxn<'_>,
                       id: &EntityId|
          -> crate::Result<bool> {
@@ -478,9 +478,10 @@ impl Memory<'_> {
         )
     }
 
-    /// Recalls inside a session. Retrieval and scope are unchanged; every
-    /// telemetry write (including the seed search and pack finalization) rides
-    /// the one session route captured for this call. Off-record rows therefore
+    /// Recalls inside a session. Retrieval reads the room's overlay ∪ base
+    /// under the same scope and gates (ARCH-0052 §2); every telemetry write
+    /// (including the seed search and pack finalization) rides the one
+    /// session route captured for this call. Off-record rows therefore
     /// evaporate with the room, never leaking into the base retrieval ledger.
     #[expect(
         clippy::too_many_arguments,
@@ -643,33 +644,34 @@ impl Memory<'_> {
             crate::pipeline::TurnFold::Fold
         };
         // Admission runs in each candidate's retrieval transaction before ranking.
-        let admitted = |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &EntityId| {
-            // Reject irrelevant kind/predicate rows before the actor gate.
-            if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
-                return Ok(false);
-            }
-            // A caller's own filter already chose its kinds; otherwise the
-            // scope's kinds, or the default kinds, decide.
-            if kinds.is_some() || candidate_filter.is_none() {
-                let Some(kind) = store
-                    .port_entity_record(txn, id)?
-                    .map(|row| row.entity_type)
-                else {
-                    return Ok(false);
-                };
-                let wanted = match &kinds {
-                    Some(kinds) => {
-                        kinds.contains(&kind)
-                            || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
-                    }
-                    None => !CONTAINER_KINDS.contains(&kind),
-                };
-                if !wanted {
+        let admitted =
+            |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
+                // Reject irrelevant kind/predicate rows before the actor gate.
+                if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
                     return Ok(false);
                 }
-            }
-            lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
-        };
+                // A caller's own filter already chose its kinds; otherwise the
+                // scope's kinds, or the default kinds, decide.
+                if kinds.is_some() || candidate_filter.is_none() {
+                    let Some(kind) = store
+                        .port_entity_record(txn, id)?
+                        .map(|row| row.entity_type)
+                    else {
+                        return Ok(false);
+                    };
+                    let wanted = match &kinds {
+                        Some(kinds) => {
+                            kinds.contains(&kind)
+                                || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
+                        }
+                        None => !CONTAINER_KINDS.contains(&kind),
+                    };
+                    if !wanted {
+                        return Ok(false);
+                    }
+                }
+                lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
+            };
 
         // A door that stops waiting at the deadline answers then with the
         // last pack this recall published and drops what the recall returns
@@ -692,7 +694,13 @@ impl Memory<'_> {
             let hits = match (session, route.as_ref()) {
                 (Some(session), Some(route)) => {
                     let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
-                    let raw = session.search_text_routed(route, query, limit)?;
+                    // Seeds come from what the lane reads: a reader that
+                    // reads base alone in the room seeds from base alone.
+                    let raw = if lane.reads_room() {
+                        session.search_text_routed(route, query, limit)?
+                    } else {
+                        session.search_base_text_routed(route, query, limit)?
+                    };
                     let scored = lane.filter_scored_entities(raw)?;
                     receipt.restrict_with(&scored.receipt);
                     scored.value
@@ -750,6 +758,11 @@ impl Memory<'_> {
                 pipeline = pipeline.filter_candidates(&admitted);
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
+                }
+                // The lane decides what the room reads: a credential it cannot
+                // place the room's rows for reads base alone.
+                if session_view.is_some() {
+                    pipeline = pipeline.reading(lane.store_read());
                 }
 
                 if let Some(deadline) = execution.deadline {
@@ -834,6 +847,9 @@ impl Memory<'_> {
 
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     builder = builder.in_session(telemetry);
+                }
+                if session_view.is_some() {
+                    builder = builder.reading(lane.store_read());
                 }
                 if let Some(deadline) = execution.deadline {
                     builder = builder.deadline(deadline);

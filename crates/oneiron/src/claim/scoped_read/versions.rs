@@ -31,12 +31,16 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, false, true)?;
+        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
+            &self.store_read(),
+            limit,
+            false,
+            true,
+        )?;
         let results = self
             .vault
             .query()
+            .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search_vector(query, fetch_limit)
@@ -85,12 +89,16 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, true, false)?;
+        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
+            &self.store_read(),
+            limit,
+            true,
+            false,
+        )?;
         let mut pipeline = self
             .vault
             .query()
+            .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search_text(query, fetch_limit)
@@ -222,6 +230,7 @@ impl ScopedRead<'_> {
         };
         crate::context_pack::context_entity_matches_read_snapshot(
             self.vault,
+            &self.store_read(),
             txn,
             entity,
             &revision.raw,

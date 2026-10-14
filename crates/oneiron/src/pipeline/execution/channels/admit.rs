@@ -8,7 +8,9 @@ use crate::pipeline::trace::{
 use crate::pipeline::types::{
     ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity,
 };
-use crate::store::{RetrievalScoreComponent, RetrievalSignal, RetrievalTraceChannelRecord, Store};
+use crate::store::{
+    RetrievalScoreComponent, RetrievalSignal, RetrievalTraceChannelRecord, StoreRead,
+};
 use heed::RoTxn;
 use std::collections::HashMap;
 
@@ -66,7 +68,7 @@ impl ChannelAccumulator {
         &mut self,
         signal: impl Into<AdmitSignal>,
         results: Vec<ScoredEntity>,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         filter_config: PipelineFilterConfig<'_>,
         metadata_cache: &mut EntityMetadataCache,

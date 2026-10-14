@@ -11,7 +11,14 @@ pub(super) fn score_query_terms(
 ) -> Result<Vec<(EntityId, f64)>> {
     let diagnostics = &store.diagnostics().bm25;
     let total_docs = read_total_docs(store, rtxn)?;
-    if total_docs == 0 {
+    // A room stages its index rows as it read base when it indexed, and
+    // base keeps indexing on record. So a union may hold more postings than
+    // the room's count, or a row whose lengths or field stats the room hid.
+    // None of that is corruption there: a term's postings floor the count, a
+    // row the union cannot measure is not scored, and a field with no stats
+    // takes no length normalization.
+    let union = store.is_union();
+    if total_docs == 0 && !union {
         return Ok(Vec::new());
     }
     let n = f64::from(total_docs);
@@ -53,13 +60,14 @@ pub(super) fn score_query_terms(
             continue;
         }
         let df = count as f64;
-        if df > n {
+        if df > n && !union {
             return Err(corrupted_with_diagnostic(
                 diagnostics,
                 "posting list length exceeds total_docs",
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
         }
+        let n = n.max(df);
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
         let Some(dups) = store
             .text_postings()
@@ -67,7 +75,7 @@ pub(super) fn score_query_terms(
         else {
             continue;
         };
-        for item in dups {
+        'entries: for item in dups {
             let (_, dup) = item?;
             let entry = decode_posting_entry(diagnostics, &dup)?;
             let id = entry.id;
@@ -81,6 +89,9 @@ pub(super) fn score_query_terms(
             if let Entry::Vacant(v) = field_length_cache.entry(id) {
                 let raw = store.text_doc_field_lengths().get(rtxn, id.as_bytes())?;
                 let Some(bytes) = raw else {
+                    if union {
+                        continue 'entries;
+                    }
                     return Err(corrupted_with_diagnostic(
                         diagnostics,
                         "missing field lengths for scored doc",
@@ -113,6 +124,7 @@ pub(super) fn score_query_terms(
                 // defaulting would yield `norm = 1 - b = 0.25` for the
                 // default `b=0.75` — a 4× artificial boost.
                 let stored_len = match lens.get(fid).copied() {
+                    None if union => continue 'entries,
                     None => {
                         return Err(corrupted_with_diagnostic(
                             diagnostics,
@@ -126,6 +138,9 @@ pub(super) fn score_query_terms(
                     FieldLengthPolicy::NoNorm => 0.0,
                     FieldLengthPolicy::CountLengthIncrement => {
                         if stored_len == 0 {
+                            if union {
+                                continue 'entries;
+                            }
                             return Err(corrupted_with_diagnostic(
                                 diagnostics,
                                 "zero length for scored CountLengthIncrement field",
@@ -155,9 +170,13 @@ pub(super) fn score_query_terms(
                         // avgdl must be positive for any field that has
                         // postings — absence means stats corruption.
                         if avgdl <= 0.0 {
-                            return Err(corrupted("field stats missing for scored field"));
+                            if !union {
+                                return Err(corrupted("field stats missing for scored field"));
+                            }
+                            1.0
+                        } else {
+                            1.0 - cfg.b + cfg.b * (len_f / avgdl)
                         }
-                        1.0 - cfg.b + cfg.b * (len_f / avgdl)
                     }
                 };
 

@@ -173,6 +173,27 @@ pub(crate) fn hnsw_search(
         .collect())
 }
 
+/// The score [`hnsw_search`] gives `vector` for `query_vector`, computed
+/// exactly: on the full row when the search rescores, on the scoring prefix
+/// otherwise.
+pub(crate) fn exact_score(
+    config: &VaultConfig,
+    query_vector: &[f32],
+    vector: &[f32],
+    skip_rescore: bool,
+) -> Result<f32> {
+    let rescore_active =
+        config.fast_dims.is_some() && query_vector.len() == config.dimensions && !skip_rescore;
+    let dims = if rescore_active {
+        query_vector.len()
+    } else {
+        score_dims_for(config)
+    };
+    let distance = PreparedCosine::new(score_prefix(query_vector, dims)?)
+        .distance(score_prefix(vector, dims)?);
+    Ok((1.0 - distance).clamp(-1.0, 1.0))
+}
+
 /// The scoring prefix length for one vault: `fast_dims` when the MRL funnel
 /// is configured, full `dimensions` otherwise.
 pub(super) fn score_dims_for(config: &VaultConfig) -> usize {
@@ -297,7 +318,7 @@ fn beam_search_graph(
         || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &entry_point)?.is_some()
     {
         results.push(entry);
-        if check_existence && !crate::vault_cleanup::is_archived_in_txn(store, txn, &entry_point)? {
+        if check_existence && is_match(store, txn, &entry_point)? {
             visible.push(entry);
         }
     }
@@ -358,7 +379,7 @@ fn beam_search_graph(
             if check_existence
                 && (visible.len() < ef
                     || distance < visible.peek().map_or(f32::INFINITY, |entry| entry.distance))
-                && !crate::vault_cleanup::is_archived_in_txn(store, txn, &neighbor_id)?
+                && is_match(store, txn, &neighbor_id)?
             {
                 visible.push(candidate);
                 if visible.len() > ef {
@@ -385,6 +406,14 @@ fn beam_search_graph(
     };
     found.sort_unstable();
     Ok(found)
+}
+
+/// Whether a node the walk scored can be a match: not archived, and not a
+/// row the reading room hides (the walk passes through it, see
+/// [`load_vector_into`]).
+fn is_match(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(!store.vectors().hides(id.as_bytes())
+        && !crate::vault_cleanup::is_archived_in_txn(store, txn, id)?)
 }
 
 #[allow(clippy::too_many_arguments)]

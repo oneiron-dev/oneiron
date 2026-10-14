@@ -248,7 +248,14 @@ fn turn_of_text_revision(
     let is_turn = crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, &id)?
         .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_TURN);
     if !is_turn
-        || super::turn_text::turn_row_for_text_revision_in_txn(vault, txn, &id, revision)?.is_none()
+        || super::turn_text::turn_row_for_text_revision_in_txn(
+            vault,
+            &vault.store,
+            txn,
+            &id,
+            revision,
+        )?
+        .is_none()
     {
         return Ok(None);
     }

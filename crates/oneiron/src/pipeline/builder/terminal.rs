@@ -85,21 +85,33 @@ impl PipelineBuilder<'_> {
         // Absence of an overlay is not permission to persist: anonymous
         // routes discard all writes. Only an explicit Base route enqueues,
         // and in a room on record only while its saver holds.
+        // A run that read a room staging anything of its own may have chosen
+        // its base rows by the room's postings or vectors, so base keeps no
+        // job of it, as it keeps no run row (`run_for_pack`).
         #[cfg(feature = "sync")]
         let session = self.session;
         #[cfg(feature = "sync")]
-        let enqueue =
+        let to_base =
             session.is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base);
+        #[cfg(feature = "sync")]
+        let withheld = to_base && self.read.holds_room_rows();
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
         #[cfg(feature = "sync")]
-        if enqueue {
-            crate::embed::enqueue_pending_embedding_jobs(
-                vault,
-                &pending_vector_ids,
-                crate::embed::EMBED_PRIORITY_SURFACED_HOT,
-                &|txn| session.map_or(Ok(()), |door| door.admit_base_write(txn)),
-            )?;
+        if to_base && !pending_vector_ids.is_empty() {
+            if withheld {
+                // The saver those jobs would have landed under must still hold.
+                if let Some(door) = session {
+                    door.admit_withheld_write()?;
+                }
+            } else {
+                crate::embed::enqueue_pending_embedding_jobs(
+                    vault,
+                    &pending_vector_ids,
+                    crate::embed::EMBED_PRIORITY_SURFACED_HOT,
+                    &|txn| session.map_or(Ok(()), |door| door.admit_base_write(txn)),
+                )?;
+            }
         }
         Ok(RetrievalWithPendingVectors {
             retrieval_quality: output.retrieval_quality,

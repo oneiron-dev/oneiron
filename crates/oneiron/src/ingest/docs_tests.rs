@@ -839,8 +839,9 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .copied()
         .chain([default_claim])
         .collect();
-    let fixture =
-        |_: &crate::store::Store, _: &heed::RoTxn<'_>, id: &EntityId| Ok(fixture_ids.contains(id));
+    let fixture = |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, id: &EntityId| {
+        Ok(fixture_ids.contains(id))
+    };
     let query = |scope| -> Result<BTreeSet<EntityId>> {
         Ok(vault
             .query()

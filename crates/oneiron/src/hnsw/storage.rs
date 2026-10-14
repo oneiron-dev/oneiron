@@ -189,13 +189,16 @@ pub(super) fn write_neighbors(
     Ok(())
 }
 
+/// `id`'s vector as the graph walk reads it. A room's graph is base's with
+/// the room's nodes added, so a node whose vector the room hides keeps
+/// base's vector here (`OverlayDb::get_unhidden`); search never returns it.
 pub(super) fn load_vector(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     dimensions: usize,
 ) -> Result<Option<Vec<f32>>> {
-    let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
+    let Some(raw) = store.vectors().get_unhidden(txn, id.as_bytes())? else {
         return Ok(None);
     };
 
@@ -204,6 +207,7 @@ pub(super) fn load_vector(
     Ok(Some(vector))
 }
 
+/// [`load_vector`] into `scratch`.
 pub(super) fn load_vector_into<'a>(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -211,7 +215,7 @@ pub(super) fn load_vector_into<'a>(
     dimensions: usize,
     scratch: &'a mut Vec<f32>,
 ) -> Result<Option<&'a [f32]>> {
-    let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
+    let Some(raw) = store.vectors().get_unhidden(txn, id.as_bytes())? else {
         return Ok(None);
     };
 

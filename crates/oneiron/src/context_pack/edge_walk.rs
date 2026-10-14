@@ -14,7 +14,7 @@ use crate::disclosure::DisclosureContext;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::validation::disclosure_admits_target;
 use super::world_partition::record_world_by_id;
@@ -36,7 +36,7 @@ pub(super) struct EdgeWalkResult {
 }
 
 pub(super) fn load_entity_edges(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     edge_cache: Option<&HashMap<EntityId, Vec<EdgeInfo>>>,
@@ -75,7 +75,7 @@ pub(super) fn load_entity_edges(
 /// per ARCH-0034) returns `Error::CorruptedIndex("edge record")` — never a
 /// silent skip (ONE-1101 / pinned decision D9).
 pub(super) fn scan_edges_for_entity(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<EdgeInfo>> {
@@ -116,7 +116,7 @@ pub(super) struct EdgeWalkOptions<'a> {
 
 /// Expands the seed set along its edges under `options`.
 pub(super) fn walk_edges(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     seed_ids: &[EntityId],
     options: EdgeWalkOptions<'_>,

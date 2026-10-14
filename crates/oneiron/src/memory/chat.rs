@@ -486,7 +486,11 @@ impl Memory<'_> {
                     let mode =
                         pin.map_or(crate::vault::ReadMode::Live, crate::vault::ReadMode::Pinned);
                     let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
-                        self.vault, txn, turn, mode,
+                        self.vault,
+                        &self.vault.store,
+                        txn,
+                        turn,
+                        mode,
                     )?
                     else {
                         return Ok(None);

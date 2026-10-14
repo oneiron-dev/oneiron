@@ -6,7 +6,7 @@ use rmpv::Value;
 use crate::actor_claims::{actor_archive_references, is_actor_claim_predicate};
 use crate::dreamer_consolidation::decode_consolidation_evidence;
 use crate::error::Result;
-use crate::store::Store;
+use crate::store::ManifestDbs;
 use crate::write_envelope::envelope_carried_evidence;
 
 use super::ClaimBody;
@@ -16,9 +16,10 @@ use super::ClaimBody;
 /// after the deletion that erased its source. Ordinary claims have no such
 /// evidence obligation, and claim history remains available through get_claim.
 /// A stamped successor of a raw claim keeps that claim's obligation: the
-/// evidence it carries is read as the raw claim's own.
+/// evidence it carries is read as the raw claim's own. `store` is the content
+/// read: a room's view finds a turn the room holds.
 pub(crate) fn has_live_support_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     body: &ClaimBody,
 ) -> Result<bool> {

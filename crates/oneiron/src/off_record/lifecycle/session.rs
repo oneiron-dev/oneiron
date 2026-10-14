@@ -346,20 +346,56 @@ impl OffRecordSession<'_> {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
+        self.search_text_routed_over(route, query, limit, true)
+    }
+
+    /// [`Self::search_text_routed`] over base's postings alone, for a reader
+    /// that reads base alone in this room (a credential that cannot place
+    /// the room's rows): the room's words choose nothing it reads. Its run
+    /// still goes through the room's door.
+    pub(crate) fn search_base_text_routed(
+        &self,
+        route: &SessionWriteRoute,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        self.search_text_routed_over(route, query, limit, false)
+    }
+
+    fn search_text_routed_over(
+        &self,
+        route: &SessionWriteRoute,
+        query: &str,
+        limit: usize,
+        room: bool,
+    ) -> Result<Vec<ScoredEntity>> {
         route.revalidate()?;
-        let view = self.read_view()?;
-        let search = self.vault.search_text_scored(
-            &view,
-            query,
-            limit,
-            &crate::config::Bm25RankProfile::default(),
-            |txn| self.participant_in_txn(txn),
-        )?;
-        drop(view);
+        let profile = crate::config::Bm25RankProfile::default();
+        let admit = |txn: &heed::RoTxn<'_>| self.participant_in_txn(txn);
+        let (search, holds_room_rows) = if room {
+            let view = self.read_view()?;
+            let search = self
+                .vault
+                .search_text_scored(&view, query, limit, &profile, admit)?;
+            (search, view.read().holds_room_rows())
+        } else {
+            let search =
+                self.vault
+                    .search_text_scored(&self.vault.store, query, limit, &profile, admit)?;
+            (search, false)
+        };
 
         let telemetry = self.retrieval_telemetry(route)?;
+        // A search that read the room may name its rows while it holds any,
+        // and base holds no reference to a live overlay row (the taint guard
+        // covers references): on record, such a run keeps no row in base,
+        // though its saver must still hold.
         if !self.vault.store.retrieval_telemetry_capture_enabled() {
             telemetry.revalidate_without_capture()?;
+            return Ok(search.scores);
+        }
+        if telemetry.writes_to_base() && holds_room_rows {
+            telemetry.admit_withheld_write()?;
             return Ok(search.scores);
         }
         let record = Vault::vault_search_retrieval_run_record(
@@ -373,9 +409,9 @@ impl OffRecordSession<'_> {
         // Both targets go through the room's one registration door, so the
         // in-room BM25 path and the assembled paths cannot drift: the overlay
         // arm stages under the route, and the base arm — post-flip the room is
-        // on record and telemetry routes to base ordinarily (K10) — publishes
-        // under the same route rather than through the routeless canonical
-        // door.
+        // on record and, once it holds no row of its own, telemetry routes to
+        // base ordinarily (K10) — publishes under the same route rather than
+        // through the routeless canonical door.
         telemetry.register_run(&record, false)?;
 
         Ok(search.scores)

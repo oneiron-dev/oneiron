@@ -607,6 +607,22 @@ impl MachineHistoryScope for crate::store::SessionStoreView<'_> {
     }
 }
 
+/// A read target answers as the store it reads: a room's union as its view
+/// does, base as the vault does.
+impl MachineHistoryScope for crate::store::StoreRead<'_> {
+    fn machine_history_scope(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        body: &ClaimBody,
+    ) -> Result<Option<Option<Scope>>> {
+        if self.is_union() {
+            Ok(crate::claim::history_store::machine_history_kind(&body.predicate).map(|_| None))
+        } else {
+            machine_history_disclosure_scope(self.base(), txn, body)
+        }
+    }
+}
+
 fn machine_history_disclosure_scope(
     store: &Store,
     txn: &heed::RoTxn<'_>,

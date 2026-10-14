@@ -26,15 +26,16 @@ impl PipelineBuilder<'_> {
         };
         for &lane in lanes {
             let original = self.candidate_filter;
-            let predicate =
-                |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &crate::EntityId| {
-                    if let Some(filter) = original
-                        && !filter(store, txn, id)?
-                    {
-                        return Ok(false);
-                    }
-                    lane.admits(store, txn, id)
-                };
+            let predicate = |store: &crate::store::StoreRead<'_>,
+                             txn: &heed::RoTxn<'_>,
+                             id: &crate::EntityId| {
+                if let Some(filter) = original
+                    && !filter(store, txn, id)?
+                {
+                    return Ok(false);
+                }
+                lane.admits(store, txn, id)
+            };
             let mut query = self.clone();
             if lane == CapabilityLane::Memory {
                 // Do not turn an ordinary memory query into an authority-scoped

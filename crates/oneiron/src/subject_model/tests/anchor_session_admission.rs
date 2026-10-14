@@ -359,39 +359,46 @@ fn anchor_session_admission_honors_overlay_masks_over_base_dependencies() -> Res
                 100,
             )?;
             let claim = put_entry(scope, id, ENTITY_TYPE_CLAIM, encode_claim_body(&body)?);
+            let route = session.write_route()?;
+            let overlay = session.overlay();
+            let view = session.read_view()?;
+            let mut txn = vault.store.env.write_txn()?;
+            let segment = overlay.install_txn_segment()?;
             if tombstone {
-                let route = session.write_route()?;
-                let overlay = session.overlay();
-                let view = session.read_view()?;
-                let mut txn = vault.store.env.write_txn()?;
-                let segment = overlay.install_txn_segment()?;
                 overlay.delete(OverlayKeyspace::Entities, masked.as_bytes())?;
-                assert!(view.entities.get(&txn, masked.as_bytes())?.is_some());
-                let result = crate::batch::apply_ops_session(
-                    &view,
-                    &route,
-                    &vault.config,
-                    &vault.analyzer,
-                    &mut txn,
-                    vec![claim],
-                );
-                assert!(matches!(result, Err(Error::InvalidClaimBody(_))));
-                assert_session_rows(&overlay, &[], false)?;
-                drop(view);
-                drop(segment);
-                drop(txn);
-                assert_session_rows(&overlay, &[], true)?;
             } else {
                 // A known wrong overlay type must not borrow the valid base
                 // header visible through the caller's older logical read view.
-                let kind = if mask_actor {
+                // A room's apply refuses a retype, so the row is staged as is.
+                let mut raw = view
+                    .entities
+                    .get(&txn, masked.as_bytes())?
+                    .expect("base row")
+                    .into_owned();
+                raw[0] = if mask_actor {
                     ENTITY_TYPE_ORG
                 } else {
                     ENTITY_TYPE_PLACE
                 };
-                let dependency = put_entry(scope, masked, kind, b"wrong type".to_vec());
-                check_session_program(&vault, &session, vec![dependency, claim], 1, false)?;
+                overlay.put(OverlayKeyspace::Entities, masked.as_bytes(), &raw)?;
             }
+            assert!(view.entities.get(&txn, masked.as_bytes())?.is_some());
+            let result = crate::batch::apply_ops_session(
+                &view,
+                &route,
+                &vault.config,
+                &vault.analyzer,
+                &mut txn,
+                vec![claim],
+            );
+            assert!(matches!(result, Err(Error::InvalidClaimBody(_))));
+            if tombstone {
+                assert_session_rows(&overlay, &[], false)?;
+            }
+            drop(view);
+            drop(segment);
+            drop(txn);
+            assert_session_rows(&overlay, &[], true)?;
             assert_eq!(vault.get(&masked)?, base_row);
             assert!(vault.get(&id)?.is_none());
             session.close()?;

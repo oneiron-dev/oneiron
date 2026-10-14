@@ -4,7 +4,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::types::{EntityMetadataCache, ScoredEntity};
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
-use crate::store::{RetrievalScoreComponent, RetrievalSignal, Store};
+use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 use heed::RoTxn;
 use std::collections::HashMap;
 
@@ -22,7 +22,7 @@ use std::collections::HashMap;
 pub(super) fn rank_unmatched_entities_below_matches(
     scores: &mut Vec<ScoredEntity>,
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
 ) -> Result<()> {

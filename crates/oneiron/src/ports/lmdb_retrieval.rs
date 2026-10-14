@@ -61,13 +61,25 @@ impl<T: ManifestDbs> RetrievalIndexExecution for TextIndexView<'_, T> {
         Ok(visible)
     }
 }
+impl crate::Vault {
+    /// [`RetrievalIndexExecution::port_retrieval_text_scoped`] over `target`,
+    /// a room's view included, under this vault's analyzer and index trust.
+    pub(crate) fn text_scoped_in_txn(
+        &self,
+        target: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        query: TextQuery<'_>,
+    ) -> Result<Vec<ScoredEntity>> {
+        self.ensure_text_index_trusted()?;
+        text_index(target, &self.analyzer).port_retrieval_text_scoped(txn, query)
+    }
+}
 impl RetrievalIndexExecution for crate::Vault {
     fn port_retrieval_text_scoped(
         &self,
         txn: &RoTxn<'_>,
         query: TextQuery<'_>,
     ) -> Result<Vec<ScoredEntity>> {
-        self.ensure_text_index_trusted()?;
-        text_index(&self.store, &self.analyzer).port_retrieval_text_scoped(txn, query)
+        self.text_scoped_in_txn(&self.store, txn, query)
     }
 }

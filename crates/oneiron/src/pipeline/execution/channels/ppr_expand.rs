@@ -99,10 +99,13 @@ impl PipelineBuilder<'_> {
 
             // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
             // specificity weighting is search_ppr-only.
-            let ppr = if self.vault.config.ppr_community.beta == 0.0 {
+            // A room's run takes the plain walk over its union: communities
+            // are computed over base and cached by base graph versions, so the
+            // room's run keeps no community prior.
+            let ppr = if self.vault.config.ppr_community.beta == 0.0 || self.read.is_union() {
                 // Exact legacy path: no evidence/cache reads or new key namespace.
                 crate::ppr::ppr_query_in_txn_with_diagnostics(
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &seeds,
                     *depth,
@@ -159,7 +162,7 @@ impl PipelineBuilder<'_> {
             // result surface is gated.
             apply_claim_status_gate(
                 &mut ppr_results,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 metadata_cache,
                 claim_gate,
@@ -170,7 +173,7 @@ impl PipelineBuilder<'_> {
             state.acc.admit_channel(
                 RetrievalSignal::Ppr,
                 ppr_results,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 inputs.filter_config,
                 metadata_cache,
@@ -187,7 +190,7 @@ impl PipelineBuilder<'_> {
             let mut expanded_blend = blended_retrieval_scores(
                 &state.acc.ranked_lists,
                 inputs.channel_indexes,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 metadata_cache,
                 claim_gate,
@@ -220,7 +223,7 @@ impl PipelineBuilder<'_> {
             let mut applied_blend = blended_retrieval_scores(
                 &state.acc.ranked_lists,
                 inputs.channel_indexes,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 metadata_cache,
                 claim_gate,

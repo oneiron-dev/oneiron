@@ -44,7 +44,7 @@ impl PipelineBuilder<'_> {
         // Fetch the indexed population, not a fixed overfetch factor: arbitrarily
         // many excluded top hits must not hide an eligible lower hit.
         let channel_limit = scoped_vector_channel_limit(
-            &self.vault.store,
+            &self.read,
             rtxn,
             requested,
             codebase_scope_active
@@ -53,6 +53,7 @@ impl PipelineBuilder<'_> {
                 || self.memory_category,
         )?;
         let mut scores = self.vault.scoped_vector_search_quality_in_txn(
+            &self.read,
             rtxn,
             query,
             channel_limit,
@@ -81,7 +82,7 @@ impl PipelineBuilder<'_> {
     ) -> Result<Vec<ScoredEntity>> {
         let mut scoped_config = config.clone();
         scoped_config.widened = Some(scoped_temporal_channel_limit(
-            &self.vault.store,
+            &self.read,
             rtxn,
             config.limit,
             self.has_codebase_scope_filter()
@@ -94,7 +95,7 @@ impl PipelineBuilder<'_> {
         // the request sigma settles on.
         let Some(predicate) = filters.candidate_filter else {
             let mut scores = execute_temporal(
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &scoped_config,
                 now,
@@ -117,7 +118,7 @@ impl PipelineBuilder<'_> {
         // predicate, so no row past the cut is read for them.
         let reader = ReadableRows::new(predicate, filters.deadline);
         let (mut scores, cut) = execute_temporal_for_reader(
-            &self.vault.store,
+            &self.read,
             rtxn,
             &scoped_config,
             now,
@@ -126,11 +127,13 @@ impl PipelineBuilder<'_> {
             &reader,
         )?;
         let memory = self.memory_category;
-        let kept =
-            |store: &crate::store::Store, txn: &RoTxn<'_>, id: &crate::EntityId| -> Result<bool> {
-                Ok(cut.keeps(store, txn, id)?
-                    && (!memory || CapabilityLane::Memory.admits(store, txn, id)?))
-            };
+        let kept = |store: &crate::store::StoreRead<'_>,
+                    txn: &RoTxn<'_>,
+                    id: &crate::EntityId|
+         -> Result<bool> {
+            Ok(cut.keeps(store, txn, id)?
+                && (!memory || CapabilityLane::Memory.admits(store, txn, id)?))
+        };
         let filters = PipelineFilterConfig {
             candidate_filter: Some(&kept),
             ..filters
@@ -156,7 +159,7 @@ impl PipelineBuilder<'_> {
         caches: (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
     ) -> Result<()> {
         if self.memory_category {
-            super::capabilities::retain_memory_candidates(scores, &self.vault.store, rtxn)?;
+            super::capabilities::retain_memory_candidates(scores, &self.read, rtxn)?;
         }
         self.truncate_to_scope(scores, rtxn, requested, filters, strict_scope, caches)
     }
@@ -205,7 +208,7 @@ impl PipelineBuilder<'_> {
         }
         truncate_widened_channel_results_to_scope(
             scores,
-            &self.vault.store,
+            &self.read,
             rtxn,
             retained_limit,
             filters,

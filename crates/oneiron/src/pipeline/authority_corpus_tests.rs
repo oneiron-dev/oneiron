@@ -83,7 +83,8 @@ fn authority_and_corpus_conjoin_before_channel_limits_and_trace() -> Result<()> 
     )?;
     let eligible = put_authority_corpus_claims(&vault, selected)?;
     let authority = resolve_reader_filter(&vault, None)?;
-    let candidate = |_store: &crate::store::Store, _txn: &heed::RoTxn<'_>, _id: &EntityId| Ok(true);
+    let candidate =
+        |_store: &crate::store::StoreRead<'_>, _txn: &heed::RoTxn<'_>, _id: &EntityId| Ok(true);
     for (query, signal) in [
         (
             vault.query().search_vector(&[1.0, 0.0, 0.0, 0.0], 1),

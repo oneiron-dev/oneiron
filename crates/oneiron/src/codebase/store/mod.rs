@@ -136,7 +136,7 @@ impl IndexRowId for HashIndexKey {
 }
 
 pub(crate) fn codebase_candidate_matches_filters(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     repo_ref: Option<&RepoRef>,
@@ -165,7 +165,7 @@ pub(crate) fn codebase_candidate_matches_filters(
 }
 
 pub(crate) fn codebase_candidate_matches_scope_key(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     scope_key: &CodebaseScopeKey,
