@@ -4,6 +4,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
+use crate::error::Error;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, open_test_vault_with};
@@ -13,17 +14,21 @@ fn at(t: u64) -> TimeRange {
     TimeRange { start: t, end: t }
 }
 
-/// Both keyings of the projection: by content hash, and by artifact.
-type Rows = (
-    Vec<((ContentHash, EntityId), EntityId)>,
-    Vec<(EntityId, ContentHash, EntityId)>,
-);
+/// The stored keys of both keyings: by content hash, and by artifact.
+type Rows = (Vec<Vec<u8>>, Vec<Vec<u8>>);
 
 fn projection(vault: &Vault) -> Result<Rows> {
     let txn = vault.store.env.read_txn()?;
+    let keys = |prefix: &[u8]| -> Result<Vec<Vec<u8>>> {
+        let mut keys = Vec::new();
+        for row in vault.store.vault_meta().prefix_iter(&txn, prefix)? {
+            keys.push(row?.0.into_owned());
+        }
+        Ok(keys)
+    };
     Ok((
-        VERSION_CLAIM.scan(&vault.store, &txn)?,
-        CLAIMED_HASH.scan_keys(&vault.store, &txn, &[])?,
+        keys(VERSION_CLAIM.decl().prefix)?,
+        keys(CLAIMED_HASH.decl().prefix)?,
     ))
 }
 
@@ -56,6 +61,43 @@ fn asset_of(bytes: &[u8]) -> Result<EntityId> {
 
 fn stored(vault: &Vault, id: &EntityId) -> Result<bool> {
     Ok(vault.get_raw(id)?.is_some())
+}
+
+/// A `blob.version` claim body naming `subject` as the holder of `bytes`.
+fn version_claim(subject: EntityId, bytes: &[u8]) -> ClaimBody {
+    ClaimBody::new(
+        BLOB_VERSION_CLAIM_PREDICATE,
+        ClaimSubject::Entity(subject),
+        Value::Map(vec![(
+            Value::from(KEY_CONTENT_HASH),
+            Value::Binary(blake3::hash(bytes).as_bytes().to_vec()),
+        )]),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )
+}
+
+fn put_claim(vault: &Vault, id: &EntityId, body: &ClaimBody, learned: u64) -> Result<()> {
+    vault
+        .batch()
+        .put_replicated(
+            id,
+            ENTITY_TYPE_CLAIM,
+            at(learned),
+            learned,
+            &crate::claim::encode_claim_body(body)?,
+        )
+        .commit()?;
+    Ok(())
+}
+
+/// A v2 hard tombstone value: `[reason:1][deleted_at:8 LE][request_id:16]`.
+fn hard_tombstone() -> Vec<u8> {
+    let mut value = vec![crate::deletion::TombstoneReason::UserHardDelete.wire_byte()];
+    value.extend_from_slice(&60_u64.to_le_bytes());
+    value.extend_from_slice(&[0xAE; 16]);
+    value
 }
 
 fn fenced(vault: &Vault, id: &EntityId) -> Result<bool> {
@@ -110,19 +152,18 @@ impl Origin {
     }
 }
 
-/// Substrate invariant (H125): the version-claim projection is a function of the claim rows
+/// Substrate invariant (H125): which artifacts hold which bytes is a function of the claim rows
 /// alone. A vault that receives the origin's version claims through the replicated put door, as
-/// a replica or a rebuild from claims does, projects exactly the origin's rows, so the two agree
-/// on which artifacts hold which bytes.
+/// a replica or a rebuild from claims does, records exactly the origin's pairs, so the two agree.
 #[test]
 fn the_version_claim_projection_rebuilds_from_the_claim_rows() -> Result<()> {
     let origin = Origin::open()?;
     let (artifact, claims) = origin.artifact(&VERSION_BYTES, 10)?;
     let rows = projection(&origin.vault)?;
-    assert_eq!(rows.0.len(), 2, "one row per version claim");
-    assert_eq!(rows.1.len(), 2, "one row per version claim");
-    assert!(rows.0.iter().all(|(_, named)| *named == artifact));
-    assert!(rows.1.iter().all(|(named, _, _)| *named == artifact));
+    assert_eq!(rows.0.len(), 2, "one row per version");
+    assert_eq!(rows.1.len(), 2, "one row per version");
+    let by_artifact = [CLAIMED_HASH.decl().prefix, artifact.as_bytes()].concat();
+    assert!(rows.1.iter().all(|key| key.starts_with(&by_artifact)));
 
     let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
     replicate(&origin.vault, &replica, &[origin.person, artifact])?;
@@ -234,30 +275,101 @@ fn a_version_claim_naming_its_own_asset_does_not_recurse_on_delete() -> Result<(
     let asset = asset_of(VERSION_BYTES[0])?;
     let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
     replicate(&origin.vault, &replica, &[origin.person, artifact, asset])?;
-    let body = ClaimBody::new(
-        BLOB_VERSION_CLAIM_PREDICATE,
-        ClaimSubject::Entity(asset),
-        Value::Map(vec![(
-            Value::from(KEY_CONTENT_HASH),
-            Value::Binary(blake3::hash(VERSION_BYTES[0]).as_bytes().to_vec()),
-        )]),
-        1.0,
-        crate::claim::ClaimApprovalStatus::Approved,
-        crate::claim::ClaimLifecycleStatus::Active,
-    );
-    let claim = EntityId::now();
-    replica
-        .batch()
-        .put_replicated(
-            &claim,
-            ENTITY_TYPE_CLAIM,
-            at(12),
-            12,
-            &crate::claim::encode_claim_body(&body)?,
-        )
-        .commit()?;
+    put_claim(
+        &replica,
+        &EntityId::now(),
+        &version_claim(asset, VERSION_BYTES[0]),
+        12,
+    )?;
 
     replica.delete_entity_with_reason(&asset, DeleteReason::UserHardDelete)?;
     assert!(!stored(&replica, &asset)?);
+    Ok(())
+}
+
+/// Bug repro (SOL-R2-001, ASTRA-R2-001, H125): a version claim deleted before its artifact ever
+/// arrives here still takes its bytes off when that artifact's delete does arrive.
+#[test]
+fn a_claim_deleted_before_its_artifact_arrives_still_takes_the_bytes() -> Result<()> {
+    let origin = Origin::open()?;
+    let (artifact, claims) = origin.artifact(&VERSION_BYTES[..1], 10)?;
+    let asset = asset_of(VERSION_BYTES[0])?;
+    let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
+    replicate(&origin.vault, &replica, &[origin.person, asset])?;
+    replicate(&origin.vault, &replica, &claims)?;
+    replica.delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)?;
+    assert!(stored(&replica, &asset)?);
+
+    replica.with_write_txn_grouped(|txn| {
+        replica
+            .apply_replayed_tombstone_in_txn(txn, &artifact, &hard_tombstone())
+            .map(|_| ())
+    })?;
+    assert!(
+        !stored(&replica, &asset)?,
+        "the bytes of an artifact deleted before it arrived stayed on the replica"
+    );
+    assert!(fenced(&replica, &asset)?);
+    assert_eq!(projection(&replica)?, (Vec::new(), Vec::new()));
+    Ok(())
+}
+
+/// Bug repro (SOL-R2-002, H125): a claim rewritten to name another artifact for the same bytes
+/// leaves both artifacts holding them, so deleting the first keeps the bytes the second holds.
+#[test]
+fn a_claim_rewritten_to_another_artifact_keeps_both_holders() -> Result<()> {
+    let origin = Origin::open()?;
+    let (first, _) = origin.artifact(&VERSION_BYTES[..1], 10)?;
+    let (second, _) = origin.artifact(&VERSION_BYTES[..1], 20)?;
+    let asset = asset_of(VERSION_BYTES[0])?;
+    let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
+    replicate(
+        &origin.vault,
+        &replica,
+        &[origin.person, first, second, asset],
+    )?;
+    let claim = EntityId::now();
+    put_claim(
+        &replica,
+        &claim,
+        &version_claim(first, VERSION_BYTES[0]),
+        30,
+    )?;
+    put_claim(
+        &replica,
+        &claim,
+        &version_claim(second, VERSION_BYTES[0]),
+        31,
+    )?;
+
+    replica.delete_entity_with_reason(&first, DeleteReason::UserHardDelete)?;
+    assert!(
+        stored(&replica, &asset)?,
+        "deleting one holder took the bytes another live artifact holds"
+    );
+    replica.delete_entity_with_reason(&second, DeleteReason::UserHardDelete)?;
+    assert!(!stored(&replica, &asset)?);
+    Ok(())
+}
+
+/// Bug repro (SOL-R2-003, H125): a late claim lifts only the fence a release planted. An ASSET
+/// whose own delete was accepted here but has not been applied yet stays fenced.
+#[test]
+fn a_late_claim_leaves_an_explicit_asset_delete_fenced() -> Result<()> {
+    let origin = Origin::open()?;
+    let (artifact, claims) = origin.artifact(&VERSION_BYTES[..1], 10)?;
+    let asset = asset_of(VERSION_BYTES[0])?;
+    let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
+    replicate(&origin.vault, &replica, &[origin.person, artifact, asset])?;
+    replica.with_write_txn_grouped(|txn| {
+        replica.fence_unapplied_delete_in_txn(txn, &asset, &hard_tombstone())
+    })?;
+    assert!(fenced(&replica, &asset)?);
+
+    replicate(&origin.vault, &replica, &claims)?;
+    assert!(
+        fenced(&replica, &asset)?,
+        "a version claim withdrew an accepted delete of its ASSET"
+    );
     Ok(())
 }

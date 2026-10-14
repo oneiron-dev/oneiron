@@ -75,8 +75,6 @@ pub(crate) fn remove_claim_projection_index(
             }
             PENDING_PRODUCER.delete(store, txn, &(producer, tail_id))?;
             None
-        } else if crate::blob_artifact::remove_version_claim_projection(store, txn, id, &key)? {
-            None
         } else {
             return Err(Error::CorruptedIndex("claim projection reverse key"));
         };
@@ -104,9 +102,7 @@ pub(crate) fn maintain_claim_projection_index(
     let hash = predicate_hash(&body.predicate);
     let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
     PREDICATE_INDEX.put(store, txn, &(hash, id), &body.predicate)?;
-    reverse_keys.extend(crate::blob_artifact::project_version_claim(
-        store, txn, id, body,
-    )?);
+    crate::blob_artifact::record_version_claim(store, txn, body)?;
     if body.approval == ClaimApprovalStatus::Proposed
         && body.lifecycle == ClaimLifecycleStatus::Active
         && body.source == Some(ClaimSource::Generated)

@@ -41,9 +41,7 @@ pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
 #[cfg(feature = "sync")]
 pub(crate) use self::references::readmit_held_asset_in_txn;
-pub(crate) use self::references::{
-    claimed_hash_rows_exist, project_version_claim, remove_version_claim_projection,
-};
+pub(crate) use self::references::{claimed_hash_rows_exist, record_version_claim};
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;

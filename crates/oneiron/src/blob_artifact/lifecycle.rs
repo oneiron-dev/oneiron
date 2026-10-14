@@ -70,8 +70,8 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
                 hashes.push(content_hash);
             }
         }
-        forget_claimed_hashes(store, wtxn, id)?;
     }
+    forget_claimed_hashes(store, wtxn, id)?;
     HEAD.delete(store, wtxn, id)?;
     for key in keys {
         VERSIONS.delete(store, wtxn, &key)?;

@@ -1,15 +1,15 @@
 //! Which artifacts hold which version bytes, on every vault (H125).
 //!
 //! The version chain and [`ASSET_REF`](super::store_keys::ASSET_REF) are local rows: a replica
-//! holds neither for an artifact it received. The `blob.version` claims do replicate, so their
-//! projection here is each vault's own view of which artifacts hold which bytes. Artifact delete
-//! reads it to find a replicated artifact's bytes and to keep bytes another live artifact still
-//! holds, and replicated ingest reads it to take back bytes a live artifact holds again.
+//! holds neither for an artifact it received. The `blob.version` claims do replicate, so each
+//! vault records here which artifacts hold which bytes, as their claims named them. Artifact
+//! delete reads it to find a replicated artifact's bytes and to keep bytes another live artifact
+//! still holds, and replicated ingest reads it to take back bytes a live artifact holds again.
 //!
-//! A row lives from its claim's put until its artifact's delete, like the `asset_ref` row it
-//! stands in for: a claim deleted while its artifact lives leaves its rows, so the artifact's
-//! later delete still finds the bytes, and the artifact's delete takes every row it names. A
-//! claim naming an artifact already deleted here leaves no row and settles its bytes at once.
+//! A pair lives from the first claim naming it until its artifact's delete, like the `asset_ref`
+//! row it stands in for: deleting or rewriting a claim leaves it, so the artifact's later delete
+//! still finds the bytes, even when the artifact has not arrived yet. A claim naming an artifact
+//! already deleted here records nothing and settles its bytes at once.
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
@@ -17,9 +17,9 @@ use rmpv::Value;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
@@ -28,16 +28,19 @@ use super::versions::KEY_CONTENT_HASH;
 
 type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 
-/// The artifact each `blob.version` claim names, under the claim's content hash. Key: bytes32 +
-/// id16 (claim); value: id16 (artifact). Kept at the claim put chokepoint for local and
-/// replicated claims alike, and removed with the claim.
-const VERSION_CLAIM: SideTable<(ContentHash, EntityId), EntityId, Raw> =
+/// Which artifacts hold the bytes under each content hash: one row per pair a `blob.version`
+/// claim named here. Key: bytes32 + id16 (artifact).
+const VERSION_CLAIM: SideTable<(ContentHash, EntityId), (), Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_VERSION_CLAIM);
 
-/// The same rows keyed by artifact, so an artifact's delete reads its own bytes without a scan.
-/// Key: id16 (artifact) + bytes32 + id16 (claim).
-const CLAIMED_HASH: SideTable<(EntityId, ContentHash, EntityId), (), Raw> =
+/// The same pairs keyed by artifact, so an artifact's delete reads its own bytes without a scan.
+/// Key: id16 (artifact) + bytes32.
+const CLAIMED_HASH: SideTable<(EntityId, ContentHash), (), Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_CLAIMED_HASH);
+
+/// The value of a fence a release planted. A fence an explicit delete planted is empty, and only
+/// a release fence is ever lifted.
+const RELEASE_FENCE: &[u8] = b"blob_artifact:release";
 
 /// The artifact and content hash `body` names, when it is a `blob.version` claim.
 fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> {
@@ -60,82 +63,41 @@ fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> 
         })
 }
 
-/// Projects one claim put. Returns the keys written, for the claim's projection reverse index.
+/// Records the pair one claim put names, at the claim put chokepoint for local and replicated
+/// claims alike.
 ///
-/// A claim naming an artifact this vault already deleted writes nothing: the delete ran without
+/// A claim naming an artifact this vault already deleted records nothing: the delete ran without
 /// its hash, so the bytes are released now unless something live holds them. A claim naming a
 /// live artifact lifts a fence an earlier release left on its bytes, so the export door keeps
 /// their carrier and the next rematerialization takes them back.
-pub(crate) fn project_version_claim(
+pub(crate) fn record_version_claim(
     store: &Store,
     txn: &mut RwTxn<'_>,
-    claim: EntityId,
     body: &ClaimBody,
-) -> Result<Vec<Vec<u8>>> {
+) -> Result<()> {
     let Some((artifact, hash)) = version_claim_reference(body) else {
-        return Ok(Vec::new());
+        return Ok(());
     };
     let deleted_here = {
         let raw = store.entities.get(txn, artifact.as_bytes())?;
         crate::deletion::row_deletion_marked(store, txn, &artifact, raw.as_deref())?
     };
     if deleted_here {
-        super::lifecycle::release_bytes_of_deleted_artifact(store, txn, &artifact, &hash)?;
-        return Ok(Vec::new());
+        return super::lifecycle::release_bytes_of_deleted_artifact(store, txn, &artifact, &hash);
     }
-    VERSION_CLAIM.put(store, txn, &(hash, claim), &artifact)?;
-    CLAIMED_HASH.put(store, txn, &(artifact, hash, claim), &())?;
+    VERSION_CLAIM.put(store, txn, &(hash, artifact), &())?;
+    CLAIMED_HASH.put(store, txn, &(artifact, hash), &())?;
     if artifact_is_live(store, txn, &artifact)? {
-        lift_fence(
+        lift_release_fence(
             store,
             txn,
             &super::versions::blob_artifact_asset_entity_id(&hash)?,
         )?;
     }
-    Ok(vec![
-        VERSION_CLAIM.key_bytes(&(hash, claim)),
-        CLAIMED_HASH.key_bytes(&(artifact, hash, claim)),
-    ])
+    Ok(())
 }
 
-/// Removes the row at `key` from a claim's projection reverse index, unless the artifact it
-/// names is live here: that row stays until the artifact's delete. `false` when the key belongs
-/// to another projection.
-pub(crate) fn remove_version_claim_projection(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    claim: EntityId,
-    key: &[u8],
-) -> Result<bool> {
-    let corrupt = || Error::CorruptedIndex("claim projection reverse key");
-    if let Some(tail) = key.strip_prefix(VERSION_CLAIM.decl().prefix) {
-        let (hash, named) = <(ContentHash, EntityId)>::decode_key(tail).ok_or_else(corrupt)?;
-        if named != claim {
-            return Err(corrupt());
-        }
-        if let Some(artifact) = VERSION_CLAIM.get(store, txn, &(hash, claim))?
-            && artifact_is_live(store, txn, &artifact)?
-        {
-            return Ok(true);
-        }
-        VERSION_CLAIM.delete(store, txn, &(hash, claim))?;
-        return Ok(true);
-    }
-    if let Some(tail) = key.strip_prefix(CLAIMED_HASH.decl().prefix) {
-        let (artifact, hash, named) =
-            <(EntityId, ContentHash, EntityId)>::decode_key(tail).ok_or_else(corrupt)?;
-        if named != claim {
-            return Err(corrupt());
-        }
-        if !artifact_is_live(store, txn, &artifact)? {
-            CLAIMED_HASH.delete(store, txn, &(artifact, hash, claim))?;
-        }
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-/// The content hashes the `blob.version` claims here name for `artifact`.
+/// The content hashes the `blob.version` claims here named for `artifact`.
 pub(super) fn claimed_hashes(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -143,33 +105,26 @@ pub(super) fn claimed_hashes(
 ) -> Result<Vec<ContentHash>> {
     let mut hashes = Vec::new();
     for row in CLAIMED_HASH.iter_from(store, txn, artifact.as_bytes())? {
-        let ((_, hash, _), ()) = row?;
-        if !hashes.contains(&hash) {
-            hashes.push(hash);
-        }
+        let ((_, hash), ()) = row?;
+        hashes.push(hash);
     }
     Ok(hashes)
 }
 
-/// Drops every row naming `artifact`, at its delete.
+/// Drops every pair naming `artifact`, at its delete.
 pub(super) fn forget_claimed_hashes(
     store: &Store,
     txn: &mut RwTxn<'_>,
     artifact: &EntityId,
 ) -> Result<()> {
-    let mut rows = Vec::new();
-    for row in CLAIMED_HASH.iter_from(store, txn, artifact.as_bytes())? {
-        let ((_, hash, claim), ()) = row?;
-        rows.push((hash, claim));
-    }
-    for (hash, claim) in rows {
-        CLAIMED_HASH.delete(store, txn, &(*artifact, hash, claim))?;
-        VERSION_CLAIM.delete(store, txn, &(hash, claim))?;
+    for hash in claimed_hashes(store, txn, artifact)? {
+        CLAIMED_HASH.delete(store, txn, &(*artifact, hash))?;
+        VERSION_CLAIM.delete(store, txn, &(hash, *artifact))?;
     }
     Ok(())
 }
 
-/// Whether a `blob.version` claim here names `artifact`: its delete has bytes to settle even
+/// Whether a `blob.version` claim here named `artifact`: its delete has bytes to settle even
 /// when its row never arrived.
 pub(crate) fn claimed_hash_rows_exist(
     store: &Store,
@@ -191,7 +146,7 @@ pub(super) fn held_by_live_artifact(
     except: Option<&EntityId>,
 ) -> Result<bool> {
     for row in VERSION_CLAIM.iter_from(store, txn, hash)? {
-        let (_, artifact) = row?;
+        let ((_, artifact), ()) = row?;
         if Some(&artifact) != except && artifact_is_live(store, txn, &artifact)? {
             return Ok(true);
         }
@@ -216,18 +171,23 @@ fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<boo
 }
 
 /// Fences an ASSET whose last artifact went: replicated ingest refuses its carrier, and the
-/// export door scrubs that carrier from the live window and pins the window history-free.
+/// export door scrubs that carrier from the live window and pins the window history-free. A
+/// fence already there stays as it is: an explicit delete's fence never becomes liftable.
 pub(super) fn fence_released_asset(
     store: &Store,
     txn: &mut RwTxn<'_>,
     asset: &EntityId,
 ) -> Result<()> {
-    crate::deletion::ROW_DELETION_FENCE.put(store, txn, &HexId(*asset), &Vec::new())
+    let key = HexId(*asset);
+    if crate::deletion::ROW_DELETION_FENCE.contains(store, txn, &key)? {
+        return Ok(());
+    }
+    crate::deletion::ROW_DELETION_FENCE.put(store, txn, &key, &RELEASE_FENCE.to_vec())
 }
 
-/// Lifts the fence on a replicated artifact ASSET as its carrier comes in, when an artifact live
-/// here holds its bytes again: the same bytes uploaded anew. The caller has checked that no
-/// tombstone names the ASSET. A hard-delete marker stays final.
+/// Lifts the release fence on a replicated artifact ASSET as its carrier comes in, when an
+/// artifact live here holds its bytes again: the same bytes uploaded anew. The caller has
+/// checked that no tombstone names the ASSET.
 #[cfg(feature = "sync")]
 pub(crate) fn readmit_held_asset_in_txn(
     store: &Store,
@@ -244,13 +204,16 @@ pub(crate) fn readmit_held_asset_in_txn(
     {
         return Ok(());
     }
-    lift_fence(store, txn, asset)
+    lift_release_fence(store, txn, asset)
 }
 
-/// Drops the fence a release left on `asset`. A hard-delete marker stays final.
-fn lift_fence(store: &Store, txn: &mut RwTxn<'_>, asset: &EntityId) -> Result<()> {
+/// Drops the fence a release left on `asset`. A fence an explicit delete left, and a hard-delete
+/// marker, stay.
+fn lift_release_fence(store: &Store, txn: &mut RwTxn<'_>, asset: &EntityId) -> Result<()> {
     let key = HexId(*asset);
-    if crate::deletion::ROW_DELETION_FENCE.contains(store, txn, &key)?
+    if crate::deletion::ROW_DELETION_FENCE
+        .get(store, txn, &key)?
+        .is_some_and(|value| value == RELEASE_FENCE)
         && !crate::deletion::HARD_DELETE_MARKER.contains(store, txn, &key)?
     {
         crate::deletion::ROW_DELETION_FENCE.delete(store, txn, &key)?;
