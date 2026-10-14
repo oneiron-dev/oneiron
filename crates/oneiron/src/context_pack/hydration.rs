@@ -13,7 +13,7 @@ use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::builder::HydrateOptions;
 use super::edge_walk::load_entity_edges;
@@ -24,6 +24,7 @@ use super::types::ContextEntity;
 /// when it is still a prefix of the currently authorized value.
 pub(crate) fn context_entity_matches_read_snapshot(
     vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     entity: &ContextEntity,
     raw: &[u8],
@@ -67,12 +68,18 @@ pub(crate) fn context_entity_matches_read_snapshot(
     }
     if let Some(vector) = &entity.vector {
         if let Some(revision) = entity.source_revision_ref
-            && vault.indexed_revision_in_txn(txn, &entity.id)?
-                != Some(crate::vault::RevisionRef(revision))
+            && !pins_indexed_frontier(
+                vault,
+                store,
+                txn,
+                &entity.id,
+                header.entity_type,
+                crate::vault::RevisionRef(revision),
+            )?
         {
             return Ok(false);
         }
-        if read_vector(vault, txn, &entity.id)?.as_ref() != Some(vector) {
+        if read_vector(vault, store, txn, &entity.id)?.as_ref() != Some(vector) {
             return Ok(false);
         }
     }
@@ -93,13 +100,15 @@ pub(crate) fn context_entity_matches_read_snapshot(
 /// one the write door refuses hydrates no field.
 pub(super) fn hydrate_entity(
     vault: &Vault,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: EntityId,
     score: f32,
     options: HydrateOptions<'_>,
     claims_suppressed: &mut usize,
 ) -> Result<Option<ContextEntity>> {
-    let Some(live_raw) = crate::ports::EntityStore::port_entity_get(vault, rtxn, &id)
+    let Some(live_raw) = vault
+        .live_entity_in_txn(store, rtxn, &id)
         .map_err(|error| match error {
             Error::CorruptedIndex("entity header") => {
                 Error::CorruptedIndex("entity metadata header")
@@ -113,21 +122,17 @@ pub(super) fn hydrate_entity(
     // A TURN's pin may be the text revision a recall served it under, which
     // its row does not own.
     if let crate::vault::ReadMode::Pinned(revision) = options.read_mode
-        && !crate::vault::entity_revision::entity_owns_revision_in_txn(
-            &vault.store,
-            rtxn,
-            &id,
-            revision,
-        )?
+        && !crate::vault::entity_revision::entity_owns_revision_in_txn(store, rtxn, &id, revision)?
         && crate::vault::entity_revision::turn_row_for_text_revision_in_txn(
-            vault, rtxn, &id, revision,
+            vault, store, rtxn, &id, revision,
         )?
         .is_none()
     {
         return Ok(None);
     }
-    let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+    let Some(raw) = crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
         vault,
+        store,
         rtxn,
         &id,
         options.read_mode,
@@ -151,12 +156,7 @@ pub(super) fn hydrate_entity(
     };
 
     if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-        && !crate::note::note_body_readable(
-            &vault.store,
-            rtxn,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-            None,
-        )?
+        && !crate::note::note_body_readable(store, rtxn, &raw[ENTITY_METADATA_HEADER_LEN..], None)?
     {
         return Ok(None);
     }
@@ -210,6 +210,17 @@ pub(super) fn hydrate_entity(
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
+            // A NOTE's live prose is in its document, which its row pin does
+            // not hold: words a reranker scored are the pinned row's. A row
+            // the write door refuses hydrates no field, as below.
+            None if options.words_pinned => {
+                let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+                if crate::batch::export::write_door_refuses_body(body) {
+                    HashMap::new()
+                } else {
+                    decode_entity_fields(body, header.entity_type).unwrap_or_default()
+                }
+            }
             None => {
                 let body = crate::note::live_body_in_txn(
                     &vault.store,
@@ -245,13 +256,13 @@ pub(super) fn hydrate_entity(
         None
     };
 
-    let (short_id, _) = read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (id.to_hex(), 0));
+    let (short_id, _) = read_short_id(store, rtxn, &id)?.unwrap_or_else(|| (id.to_hex(), 0));
     let content_hash =
         (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8;
 
     let edges = if options.include_edges {
         Some(load_entity_edges(
-            &vault.store,
+            store,
             rtxn,
             &id,
             options.edge_cache,
@@ -263,19 +274,19 @@ pub(super) fn hydrate_entity(
 
     let source_revision = match options.read_mode {
         crate::vault::ReadMode::Pinned(revision) => Some(revision),
-        mode => {
-            crate::vault::entity_revision::revision_for_mode_in_txn(&vault.store, rtxn, &id, mode)?
-        }
+        mode => crate::vault::entity_revision::revision_for_mode_in_txn(store, rtxn, &id, mode)?,
     };
     // The single vector row belongs to the indexed frontier, not necessarily
     // the live body or a historical pin. No revision state means an unversioned
     // current row; explicit pins always carry a source revision here.
     let vector = if options.include_vectors
         && match source_revision {
-            Some(revision) => vault.indexed_revision_in_txn(rtxn, &id)? == Some(revision),
+            Some(revision) => {
+                pins_indexed_frontier(vault, store, rtxn, &id, header.entity_type, revision)?
+            }
             None => true,
         } {
-        read_vector(vault, rtxn, &id)?
+        read_vector(vault, store, rtxn, &id)?
     } else {
         None
     };
@@ -292,6 +303,39 @@ pub(super) fn hydrate_entity(
         edges,
         vector,
     }))
+}
+
+/// Whether `revision` pins the indexed frontier the vector row belongs to:
+/// the indexed revision itself or, for a TURN, the text revision of the
+/// words it holds there, which a reranked turn is served at. Another of the
+/// TURN's own row revisions is history, and reads none of its words.
+fn pins_indexed_frontier(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    revision: crate::vault::RevisionRef,
+) -> Result<bool> {
+    let Some(indexed) = vault.indexed_revision_from_in_txn(store, rtxn, id)? else {
+        return Ok(false);
+    };
+    if indexed == revision {
+        return Ok(true);
+    }
+    if entity_type != crate::registry::ENTITY_TYPE_TURN
+        || crate::vault::entity_revision::entity_owns_revision_in_txn(store, rtxn, id, revision)?
+    {
+        return Ok(false);
+    }
+    Ok(crate::vault::entity_revision::served_turn_text_in_txn(
+        vault,
+        store,
+        rtxn,
+        id,
+        crate::vault::ReadMode::Indexed,
+    )?
+    .is_some_and(|text| text.revision == revision))
 }
 
 /// Projects an already-decoded CLAIM body into the hydrated-fields map —
@@ -457,7 +501,11 @@ pub(super) fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
     }
 }
 
-fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<(String, u8)>> {
+fn read_short_id(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(String, u8)>> {
     match crate::ports::ShortIdStoreRead::port_short_id_reference(store, rtxn, id) {
         Err(Error::CorruptedIndex(_)) => Ok(None),
         result => result,
@@ -466,13 +514,14 @@ fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Optio
 
 pub(super) fn read_vector(
     vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<Vec<f32>>> {
-    crate::ports::RetrievalIndex::port_retrieval_vector_get(vault, rtxn, id).map_err(|error| {
-        match error {
+    vault
+        .vector_in_txn(store, rtxn, id)
+        .map_err(|error| match error {
             Error::CorruptedIndex(_) => Error::CorruptedIndex("entity vector"),
             other => other,
-        }
-    })
+        })
 }

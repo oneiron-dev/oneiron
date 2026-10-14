@@ -232,17 +232,52 @@ impl Vault {
         endpoint_key: [u8; 32],
         alpn: &[u8],
     ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.mesh_grant_permits_in_txn(&txn, machine, endpoint_key, alpn)
+    }
+    /// The physical machine behind an authenticated mesh endpoint, in one
+    /// snapshot: the endpoint names the MACHINE, the host-signed binding and
+    /// grant admit it, and the owner's live profile names the very key that
+    /// paired. The profile lives in the authority log, so the address bind
+    /// that rewrote the row keeps it.
+    pub fn mesh_peer_machine(
+        &self,
+        endpoint_key: [u8; 32],
+        alpn: &[u8],
+    ) -> Result<super::PeerMachine> {
+        let txn = self.store.env.read_txn()?;
+        let Some((machine, _)) = self.mesh_machine_by_endpoint_in_txn(&txn, endpoint_key)? else {
+            return Ok(super::PeerMachine::Unknown);
+        };
+        let paired = self
+            .mesh_authority_in_txn(&txn, machine)?
+            .map(|claims| claims.device_key);
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let profile = fold.machine(machine).filter(|folded| folded.is_live());
+        if !self.mesh_grant_permits_in_txn(&txn, machine, endpoint_key, alpn)?
+            || profile.is_none_or(|folded| paired != Some(folded.profile.machine_key))
+        {
+            return Ok(super::PeerMachine::Unknown);
+        }
+        Ok(super::PeerMachine::Proven(machine))
+    }
+    fn mesh_grant_permits_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        machine: EntityId,
+        endpoint_key: [u8; 32],
+        alpn: &[u8],
+    ) -> Result<bool> {
         if !valid_alpn(alpn) {
             return Ok(false);
         }
-        let txn = self.store.env.read_txn()?;
-        let Some(row) = self.mesh_machine_in_txn(&txn, machine)? else {
+        let Some(row) = self.mesh_machine_in_txn(txn, machine)? else {
             return Ok(false);
         };
         if row.endpoint_key != endpoint_key {
             return Ok(false);
         }
-        let Some(claims) = self.mesh_authority_in_txn(&txn, machine)? else {
+        let Some(claims) = self.mesh_authority_in_txn(txn, machine)? else {
             return Ok(false);
         };
         if claims.revoked || claims.endpoint_key != endpoint_key {
@@ -251,12 +286,12 @@ impl Vault {
         let Some(grant_id) = claims.alpns.get(alpn) else {
             return Ok(false);
         };
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         let Some(mint) = fold.slips.mints.get(grant_id) else {
             return Ok(false);
         };
         let grant = &mint.action.claims;
-        let now = self.instant_in_txn(&txn)?.secs();
+        let now = self.instant_in_txn(txn)?.secs();
         Ok(fold.slip_is_live(grant_id)
             && now >= grant.issued_at
             && now < grant.expires_at

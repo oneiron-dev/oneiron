@@ -645,6 +645,19 @@ impl PolicyManifestResolution {
             && self.axes_for_predicate(predicate).criticality == Some(PolicyCriticality::Critical)
     }
 
+    /// Whether a manifest rule declares `predicate`'s class critical, by
+    /// prefix or exact match, or the manifest fails closed. A pack's default
+    /// for predicates no rule names never counts: that default sets the
+    /// legibility floors and does not stop a write (ARCH-0003 §Criticality).
+    #[must_use]
+    pub(crate) fn declares_predicate_critical(&self, predicate: &str) -> bool {
+        self.is_fail_closed()
+            || self.packs.iter().any(|pack| {
+                pack.declared_axes(predicate)
+                    .is_some_and(|axes| axes.criticality == Some(PolicyCriticality::Critical))
+            })
+    }
+
     #[must_use]
     pub(crate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
         if self.is_fail_closed() {

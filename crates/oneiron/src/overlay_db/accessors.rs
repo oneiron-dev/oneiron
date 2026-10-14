@@ -71,6 +71,66 @@ impl OverlayDb {
         Ok(Self::composed(self.base, overlay, snapshot, keyspace))
     }
 
+    /// What this accessor's room stages over base, from the snapshot its
+    /// reads compose; `None` for the vault's own accessor.
+    pub(crate) fn staged_rows(&self) -> Option<crate::session_overlay::StagedRows> {
+        let overlay = self.overlay.as_ref()?;
+        Some(overlay.snapshot.staged_rows(overlay.keyspace))
+    }
+
+    /// Whether this accessor's room stages a row of its own at `key` (not a
+    /// deletion), in the snapshot its reads compose: an active segment's
+    /// writes included.
+    pub(crate) fn stages_row(&self, key: &[u8]) -> bool {
+        self.overlay.as_ref().is_some_and(|overlay| {
+            matches!(
+                overlay.snapshot.lookup_single(overlay.keyspace, key),
+                SnapshotLookup::Present(_)
+            )
+        })
+    }
+
+    /// Whether this accessor's room hides base's row at `key` (see
+    /// [`Self::hide_base_row`]), in the snapshot its reads compose.
+    pub(crate) fn hides(&self, key: &[u8]) -> bool {
+        self.overlay.as_ref().is_some_and(|overlay| {
+            matches!(
+                overlay.snapshot.lookup_single(overlay.keyspace, key),
+                SnapshotLookup::Tombstone
+            )
+        })
+    }
+
+    /// The keys of base's rows this accessor's room hides; none for the
+    /// vault's own accessor, or for a room that cleared base.
+    pub(crate) fn hidden_keys(&self, txn: &RoTxn<'_>) -> Result<Vec<Vec<u8>>> {
+        let Some(staged) = self.staged_rows().filter(|staged| !staged.clear_base) else {
+            return Ok(Vec::new());
+        };
+        let mut keys = Vec::new();
+        for (key, value) in staged.rows {
+            if value.is_none() && self.base.get(txn, &key)?.is_some() {
+                keys.push(key);
+            }
+        }
+        Ok(keys)
+    }
+
+    /// [`Self::get`], with base's row where this accessor's room hides it. A
+    /// walk over a graph the room inherits from base reads this way: a row
+    /// the room hides is still a node of that graph, and the walk passes
+    /// through it, but it is never a result.
+    pub(crate) fn get_unhidden<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        key: &[u8],
+    ) -> Result<Option<Cow<'txn, [u8]>>> {
+        if self.hides(key) {
+            return Ok(self.base.get(txn, key)?.map(Cow::Borrowed));
+        }
+        self.get(txn, key)
+    }
+
     pub(crate) fn get<'txn>(
         &self,
         txn: &'txn RoTxn<'_>,
@@ -114,6 +174,19 @@ impl OverlayDb {
                 .delete_with_base_backing(overlay.keyspace, key, base_backed)?;
         }
         Ok(existed)
+    }
+
+    /// Hides base's row at `key` from this accessor's room: the row base
+    /// holds now and any it writes there later, before the room's segment
+    /// commits included. Base itself is not written. The vault's own
+    /// accessor has no room to hide a row from.
+    pub(crate) fn hide_base_row(&self, key: &[u8]) -> Result<()> {
+        let overlay = self.overlay.as_ref().ok_or(Error::InvariantViolation(
+            "only a room's accessor hides a base row",
+        ))?;
+        overlay
+            .live
+            .delete_with_base_backing(overlay.keyspace, key, true)
     }
 
     pub(crate) fn delete_one_duplicate(
