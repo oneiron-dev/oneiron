@@ -49,7 +49,7 @@ use std::sync::Arc;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::machine_profile::{acknowledged_world_edits, derived_chains, derived_machine};
+use super::machine_profile::{acknowledges, derived_chains, derived_machine};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
@@ -409,7 +409,7 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
     derived_machine(state, machine).is_some_and(|folded| folded.is_mine())
 }
 
-/// Full strength while the edit's machine is the owner's, or when the
+/// Full strength while the edit's machine is the owner's, or when every
 /// revision that took "yours" away had seen the edit, and this install
 /// counted the machine when the edit was made. A revision that still says
 /// "yours" took nothing away: when it stops standing for another reason (its
@@ -429,8 +429,7 @@ fn full_strength(
             folded.is_mine()
                 || (!folded.conflicted
                     && !folded.profile.says_mine()
-                    && acknowledged_world_edits(state, edit.machine)
-                        .is_some_and(|seen| seen.contains(hash))
+                    && acknowledges(state, edit.machine, hash)
                     && (!folded.removed || folded.profile.role == MachineRole::Removed))
         })
 }

@@ -112,7 +112,7 @@ impl Vault {
             ));
         }
         let signer = AuthorityKey::Ed25519(public_key);
-        let mut seq = match fold.append_sequences.get(&signer) {
+        let seq = match fold.append_sequences.get(&signer) {
             None => 1,
             Some(seq) => seq.checked_add(1).ok_or_else(invalid_authority)?,
         };
@@ -149,19 +149,18 @@ impl Vault {
         // whether its contenders or named machines still stand may rest on
         // any main-log row (a shared key, custody), and an edit stuck on a
         // replica leaves the world unreadable there (Sol P2 round 5, F2, F3).
+        // A holder tries its own rows in a savepoint first and names the
+        // main-log heads when the fold does not keep the edit on them alone: a
+        // hold may rest on a row they do not carry, such as another machine's
+        // acknowledged edit (Sol P2 round 6, F5).
         let target = match settings.read {
             ReadLocation::OneMachine(target) => Some(target),
             ReadLocation::MyMachines | ReadLocation::Everywhere => None,
         };
-        let standing_rows: BTreeSet<AuthorityEntryHash> = match standing {
-            WorldEditStanding::Holds => std::iter::once(machine)
-                .chain(target)
-                .filter_map(|id| fold.machine(id).map(|folded| folded.entry))
-                .collect(),
-            WorldEditStanding::Contends | WorldEditStanding::RepicksOrphan => {
-                fold.append_heads.clone()
-            }
-        };
+        let holder_rows: BTreeSet<AuthorityEntryHash> = std::iter::once(machine)
+            .chain(target)
+            .filter_map(|id| fold.machine(id).map(|folded| folded.entry))
+            .collect();
         // The edit replaces the live edits it names; a refused edit replaces
         // nothing and is never named. More than one entry may name are
         // replaced a share at a time, each share's edit picking this machine
@@ -188,36 +187,45 @@ impl Vault {
             live.push((!picks_this, *hash));
         }
         live.sort_unstable();
-        let mut live = live.into_iter().map(|(_, hash)| hash);
-        let mut entries = Vec::new();
-        let mut parents = standing_rows.clone();
-        while parents.len() + live.len() > MAX_PARENTS {
-            if standing != WorldEditStanding::Holds && !picks_this_machine {
-                return Err(refused(
-                    "a world with this many concurrent edits moves to this machine first",
-                ));
+        let author = |standing_rows: &BTreeSet<AuthorityEntryHash>| {
+            let mut live = live.iter().map(|(_, hash)| *hash);
+            let mut seq = seq;
+            let mut entries = Vec::new();
+            let mut parents = standing_rows.clone();
+            while parents.len() + live.len() > MAX_PARENTS {
+                if standing != WorldEditStanding::Holds && !picks_this_machine {
+                    return Err(refused(
+                        "a world with this many concurrent edits moves to this machine first",
+                    ));
+                }
+                let room = MAX_PARENTS
+                    .checked_sub(parents.len())
+                    .filter(|room| *room > 0)
+                    .ok_or_else(invalid_authority)?;
+                parents.extend(live.by_ref().take(room));
+                let share = sign(
+                    seq,
+                    std::mem::replace(&mut parents, standing_rows.clone()),
+                    WorldPrivacy {
+                        read: ReadLocation::OneMachine(machine),
+                        ..settings.clone()
+                    },
+                )?;
+                parents.insert(authority_entry_hash(&share)?);
+                seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
+                entries.push(share);
             }
-            let room = MAX_PARENTS
-                .checked_sub(parents.len())
-                .filter(|room| *room > 0)
-                .ok_or_else(invalid_authority)?;
-            parents.extend(live.by_ref().take(room));
-            let share = sign(
-                seq,
-                std::mem::replace(&mut parents, standing_rows.clone()),
-                WorldPrivacy {
-                    read: ReadLocation::OneMachine(machine),
-                    ..settings.clone()
-                },
-            )?;
-            parents.insert(authority_entry_hash(&share)?);
-            seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
-            entries.push(share);
-        }
-        parents.extend(live);
-        let entry = sign(seq, parents, settings)?;
-        let entry_hash = authority_entry_hash(&entry)?;
-        entries.push(entry);
+            parents.extend(live);
+            let entry = sign(seq, parents, settings.clone())?;
+            let entry_hash = authority_entry_hash(&entry)?;
+            entries.push(entry);
+            let at = TimeRange {
+                start: now,
+                end: now,
+            };
+            let rows: Vec<_> = entries.into_iter().map(|entry| (entry, at, now)).collect();
+            Ok((rows, entry_hash))
+        };
         let previous = fold.world_privacy(world);
         let orphaned_from = if standing == WorldEditStanding::RepicksOrphan {
             super::world_privacy::orphaned_from(&fold.world_roster_read(world), |id| {
@@ -227,20 +235,27 @@ impl Vault {
         } else {
             BTreeSet::new()
         };
-        let at = TimeRange {
-            start: now,
-            end: now,
+        let held = if standing == WorldEditStanding::Holds {
+            let (rows, entry_hash) = author(&holder_rows)?;
+            let mut savepoint = self.store.env.nested_write_txn(txn)?;
+            let after = self.land_world_edit_in_txn(&mut savepoint, &rows, world, &entry_hash)?;
+            if after.is_some() {
+                savepoint.commit()?;
+            }
+            after.map(|after| (entry_hash, after))
+        } else {
+            None
         };
-        let rows: Vec<_> = entries.into_iter().map(|entry| (entry, at, now)).collect();
-        self.put_authority_log_entries_in_txn(txn, &rows)?;
-        let after = self.authority_view_readonly_in_txn(txn)?;
-        if !after
-            .worlds
-            .get(&world)
-            .is_some_and(|folded| folded.live.contains_key(&entry_hash))
-        {
-            return Err(invalid_authority());
-        }
+        let (entry_hash, after) = match held {
+            Some(held) => held,
+            None => {
+                let (rows, entry_hash) = author(&fold.append_heads)?;
+                let after = self
+                    .land_world_edit_in_txn(txn, &rows, world, &entry_hash)?
+                    .ok_or_else(invalid_authority)?;
+                (entry_hash, after)
+            }
+        };
         Ok(WorldPrivacyChange {
             machine,
             entry_hash,
@@ -248,6 +263,24 @@ impl Vault {
             next: after.world_privacy(world),
             orphaned_from,
         })
+    }
+
+    /// Lands a world edit and reads the fold back: `None` unless the edit is
+    /// live.
+    fn land_world_edit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        rows: &[(AuthorityLogEntry, TimeRange, u64)],
+        world: EntityId,
+        entry_hash: &AuthorityEntryHash,
+    ) -> Result<Option<AuthorityView>> {
+        self.put_authority_log_entries_in_txn(txn, rows)?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        let live = after
+            .worlds
+            .get(&world)
+            .is_some_and(|folded| folded.live.contains_key(entry_hash));
+        Ok(live.then_some(after))
     }
 }
 

@@ -52,7 +52,7 @@ impl FoldContext<'_> {
 #[derive(Default, Clone, Copy)]
 pub(super) struct FoldLocalInputs<'a> {
     pub(super) observations: Option<&'a AuthorityLocalObservations>,
-    retire_device_ops: bool,
+    pub(super) retire_device_ops: bool,
     pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
     pub(super) hosted: bool,
     pub(super) machine_standing: Option<super::world_privacy::MachineStanding<'a>>,

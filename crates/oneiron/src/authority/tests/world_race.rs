@@ -1044,7 +1044,8 @@ fn a_custodial_mark_acknowledges_no_widening() {
 
     // A removal on the marking branch, before that branch meets the custody,
     // took away a mark that did not stand: once the custody is found it
-    // acknowledges nothing (Wonder P2 round 2, W2).
+    // acknowledges nothing (Wonder P2 round 2, W2). The handoff that joins
+    // the branches takes the removal into its line (Sol P2 round 6, F1).
     let removal = entry(
         3,
         &[&entries[7]],
@@ -1059,8 +1060,17 @@ fn a_custodial_mark_acknowledges_no_widening() {
         &admitted,
         None,
     );
+    let joined = entry(
+        4,
+        &[&entries[2], &removal],
+        AuthorityOp::ReRoot {
+            new_device: ordinary(&successor),
+        },
+        &admitted,
+        Some(&root),
+    );
     let mut removed = entries[..8].to_vec();
-    removed.push(removal.clone());
+    removed.extend([removal.clone(), joined.clone()]);
     let fold = fold_authority_log_for_posture(
         &removed,
         &BTreeMap::new(),
@@ -1068,7 +1078,9 @@ fn a_custodial_mark_acknowledges_no_widening() {
         &BTreeMap::new(),
         crate::HostingPrivacyPosture::Hosted,
     );
-    assert!(fold.valid_entries.contains(&hash(&removal)));
+    for accepted in [&removal, &joined, &widen] {
+        assert!(fold.valid_entries.contains(&hash(accepted)));
+    }
     assert_eq!(
         fold.machine(machine).unwrap().profile.role,
         MachineRole::Removed
@@ -1157,4 +1169,78 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
         assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
         assert!(!fold.world_readable_on(world, Destination::Unknown));
     }
+}
+
+/// A removal keeps a widening it never saw narrow, though a branch that never
+/// saw the removal marked the machine "yours" again and removed it having
+/// seen the widening: takings on branches that never saw each other compete,
+/// whatever their revisions (Sol P2 round 6, F3).
+#[test]
+fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
+    let host = host();
+    let world = world_row(&host);
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let (laptop, laptop_key) = other_machine(&host, 89, yours);
+    land(
+        &host,
+        &[edit_by(
+            &host,
+            laptop,
+            &laptop_key,
+            world,
+            settings(ReadLocation::MyMachines),
+        )],
+    );
+    let before = host.vault.authority_fold().unwrap();
+    let widen = edit_by(
+        &host,
+        laptop,
+        &laptop_key,
+        world,
+        settings(ReadLocation::Everywhere),
+    );
+    host.vault
+        .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+        .unwrap();
+    land(&host, std::slice::from_ref(&widen));
+    assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
+
+    // The other branch, from before the removal.
+    let mut seq = host.vault.authority_fold().unwrap().append_sequences[&host.issuer.public_key()];
+    let mut parents: Vec<_> = before.append_heads.iter().copied().collect();
+    let current = before.machine(laptop).unwrap().profile.clone();
+    let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
+    let mut branch = Vec::new();
+    for (revision, role) in [(2, yours), (3, yours), (4, MachineRole::Removed)] {
+        seq += 1;
+        let profile = MachineProfile {
+            role,
+            revision,
+            seen_world_edits: seen.clone(),
+            ..current.clone()
+        };
+        let entry = host
+            .issuer
+            .sign_entry(
+                before.vault_id,
+                seq,
+                parents,
+                AuthorityOp::MachineProfile(profile),
+                3,
+            )
+            .unwrap();
+        parents = vec![authority_entry_hash(&entry).unwrap()];
+        branch.push(entry);
+    }
+    land(&host, &branch);
+    let fold = host.vault.authority_fold().unwrap();
+    for entry in &branch {
+        assert!(
+            fold.valid_entries
+                .contains(&authority_entry_hash(entry).unwrap())
+        );
+    }
+    assert_eq!(fold.machine(laptop).unwrap().profile.revision, 4);
+    assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
+    assert!(!fold.world_readable_on(world, Destination::Unknown));
 }

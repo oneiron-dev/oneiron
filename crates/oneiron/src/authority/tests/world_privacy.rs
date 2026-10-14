@@ -594,6 +594,104 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(mine));
 }
 
+/// A holder's edit stands though its hold rests on a row its own head
+/// revision does not carry: this machine's mark sits on a demotion that never
+/// saw another machine's widening, and only a later "yours" for that machine
+/// makes the widening count (Sol P2 round 6, F5).
+#[test]
+fn a_hold_resting_on_a_later_mark_still_edits() {
+    let host = host();
+    let world = world_row(&host);
+    let here = enrol_here(&host);
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let (laptop, laptop_key) = other_machine(&host, 87, yours);
+    let (desk, desk_key) = other_machine(&host, 88, yours);
+    let picks = [
+        edit_by(
+            &host,
+            laptop,
+            &laptop_key,
+            world,
+            settings(ReadLocation::OneMachine(laptop)),
+        ),
+        edit_by(
+            &host,
+            desk,
+            &desk_key,
+            world,
+            settings(ReadLocation::OneMachine(desk)),
+        ),
+    ];
+    land(&host, &picks);
+    land(
+        &host,
+        &[edit_by(
+            &host,
+            laptop,
+            &laptop_key,
+            world,
+            settings(ReadLocation::Everywhere),
+        )],
+    );
+    assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
+
+    // A branch that never saw the widening demotes the laptop, and this
+    // machine is marked again on top of it.
+    let fold = host.vault.authority_fold().unwrap();
+    let mut seq = fold.append_sequences[&host.issuer.public_key()];
+    let mut parents: Vec<_> = fold.append_heads.iter().copied().collect();
+    let laptop_profile = fold.machine(laptop).unwrap().profile.clone();
+    let here_profile = fold.machine(here).unwrap().profile.clone();
+    let demotion = MachineProfile {
+        role: MachineRole::Owned(MachineOwnership::WorkSchool),
+        revision: laptop_profile.revision + 1,
+        seen_world_edits: BTreeSet::new(),
+        ..laptop_profile
+    };
+    let mark = MachineProfile {
+        revision: here_profile.revision + 1,
+        ..here_profile
+    };
+    let mut branch = Vec::new();
+    for profile in [demotion, mark] {
+        seq += 1;
+        let entry = host
+            .issuer
+            .sign_entry(
+                fold.vault_id,
+                seq,
+                parents,
+                AuthorityOp::MachineProfile(profile),
+                3,
+            )
+            .unwrap();
+        parents = vec![authority_entry_hash(&entry).unwrap()];
+        branch.push(entry);
+    }
+    land(&host, &branch);
+    assert!(matches!(
+        read_of(&host, world),
+        EffectiveRead::Conflicted { .. }
+    ));
+
+    // The owner marks the laptop "yours" again: the widening counts, and
+    // this machine holds the world on a head its own mark does not carry.
+    host.vault
+        .set_machine_role(&host.issuer, &host.owner, laptop, yours)
+        .unwrap();
+    assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
+    let fold = host.vault.authority_fold().unwrap();
+    assert_eq!(fold.machine(here).unwrap().entry, parents[0]);
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::MyMachines,
+    )
+    .unwrap();
+    assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
+}
+
 #[test]
 fn concurrent_edits_fold_stricter_in_both_orders() {
     let host = host();
