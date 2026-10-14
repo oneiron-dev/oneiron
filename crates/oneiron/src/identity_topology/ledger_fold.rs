@@ -237,6 +237,7 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
 ) -> Result<Vec<IdentityTopologyEvent>> {
     let events = identity_topology_events_for_store_in_txn(store, rtxn)?;
     let mut effective = Vec::with_capacity(events.len());
+    let mut trust = super::admission_disposition::SealTrust::default();
     for event in events {
         let record = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
             store,
@@ -259,6 +260,7 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
             rtxn,
             &event.event_id,
             &record,
+            &mut trust,
         )?;
         if verdict.is_some_and(|v| v != super::AdmissionVerdict::Validated) {
             continue;
