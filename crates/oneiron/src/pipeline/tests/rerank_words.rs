@@ -250,7 +250,8 @@ fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
 /// held to `claim_surfaceable` alone. Pinned words citing a source that is
 /// not live, put back during the rerank stage, were served, though
 /// retrieval would now suppress the claim. They are held to its live
-/// support too.
+/// support too. Since R22 a binding reranker is not handed those pinned
+/// words at all, so another row keeps the stage, and the restore, running.
 #[test]
 fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
     // Bound, the pin; unbound (Sol R13), the live row, which the restore
@@ -258,6 +259,19 @@ fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
     for unbound in [false, true] {
         let (_dir, vault) = open_test_vault();
         let id = entity_id(0x6D);
+        let seed = entity_id(0x6F);
+        vault
+            .batch()
+            .put(
+                &seed,
+                ENTITY_TYPE_ASSET_TEXT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &rmp_serde::to_vec_named(&serde_json::json!({"content": "a lantern shelf"}))
+                    .expect("body"),
+            )
+            .text(&seed, &[("body", "the lantern shelf")])
+            .commit()?;
 
         let pack = restored_pack(
             &vault,
@@ -268,7 +282,8 @@ fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
         )?;
 
         assert!(
-            pack.results.iter().all(|row| row.id != id),
+            pack.results.iter().any(|row| row.id == seed)
+                && pack.results.iter().all(|row| row.id != id),
             "unbound {unbound}: {:?}",
             pack.results
         );
