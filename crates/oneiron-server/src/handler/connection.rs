@@ -176,8 +176,12 @@ async fn handle_connection(
                 return;
             }
         }
-        Err(e) => {
-            tracing::error!(conn_id, error = %e, "failed to export root snapshot");
+        Err(_) => {
+            tracing::error!(
+                conn_id,
+                reason = "root_snapshot_export_failed",
+                "failed to export root snapshot"
+            );
             return;
         }
     }
@@ -486,8 +490,8 @@ async fn handle_connection(
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
-            Err(e) => {
-                tracing::warn!(conn_id, error = %e, "WebSocket error");
+            Err(_) => {
+                tracing::warn!(conn_id, reason = "websocket_read_failed", "WebSocket error");
                 break;
             }
         };
@@ -585,16 +589,24 @@ async fn handle_connection(
                             tracing::warn!(conn_id, size, max, "frame too large — closing");
                             break;
                         }
-                        ProtocolError::LoroImport(msg) => {
-                            tracing::warn!(conn_id, error = %msg, "loro import error — closing");
+                        ProtocolError::LoroImport(_) => {
+                            tracing::warn!(
+                                conn_id,
+                                reason = "loro_import_failed",
+                                "loro import error — closing"
+                            );
                             break;
                         }
-                        ProtocolError::Persistence(msg) => {
+                        ProtocolError::Persistence(_) => {
                             // Fail-closed: the server could not durably
                             // persist sync state — do not keep relaying on a
                             // connection whose updates would vanish on
                             // restart.
-                            tracing::error!(conn_id, error = %msg, "sync persistence failure — closing");
+                            tracing::error!(
+                                conn_id,
+                                reason = "sync_persistence_failed",
+                                "sync persistence failure — closing"
+                            );
                             break;
                         }
                     }

@@ -211,6 +211,7 @@ pub mod context_board;
 pub mod genui;
 pub mod lens;
 pub mod memory;
+pub mod panic_report;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
@@ -384,7 +385,7 @@ pub use crate::feedback::{
     FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING,
     FEEDBACK_BUNDLE_KEYS, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_DAG_MAX_HOPS,
     FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
-    FEEDBACK_LOGICAL_SEND_PREFIX, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_MECHANISM_MAX_BYTES,
+    FEEDBACK_LOGICAL_SEND_PREFIX, FEEDBACK_MAX_SUBJECT_REFS,
     FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,
     FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING, FEEDBACK_RECEIPT_FIELD_VERB, FEEDBACK_REF_MAX_BYTES,
     FEEDBACK_SEND_VERB, FEEDBACK_USER_NOTE_MAX_BYTES, FEEDBACK_VERBS, FeedbackApproval,
@@ -392,7 +393,7 @@ pub use crate::feedback::{
     FeedbackDagHop, FeedbackError, FeedbackExportOutcome, FeedbackHealerDiagnosis,
     FeedbackHnswSnapshot, FeedbackPlatform, FeedbackPreview, FeedbackRedactionError,
     FeedbackRedactor, FeedbackSendContext, FeedbackSendOutcome, FeedbackSendRoute,
-    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, PassThroughFeedbackRedactor,
+    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, UnredactedFeedback,
     decode_feedback_bundle, encode_feedback_bundle, export_feedback_bundle, feedback_approval_card,
     feedback_approval_component_id, feedback_approval_disclosure, feedback_bundle_digest,
     feedback_content_ref, feedback_dispatch_request, feedback_logical_send_ref,

@@ -313,9 +313,10 @@ async fn build_bridge(
     token: Option<String>,
     timeout_secs: u64,
 ) -> anyhow::Result<Option<LinearBridge>> {
-    tokio::task::spawn_blocking(move || LinearBridge::configured(base, token, timeout_secs))
-        .await
-        .map_err(|error| anyhow::anyhow!("Linear bridge setup failed: {error}"))?
+    crate::logging::off_runtime("Linear bridge setup", move || {
+        LinearBridge::configured(base, token, timeout_secs)
+    })
+    .await?
 }
 
 /// Start a scheduled mirror when the host configured its authenticated bridge.
@@ -384,15 +385,21 @@ pub(crate) async fn spawn(
                         "Linear mirror pass"
                     );
                 }
-                Ok(Err(error)) => {
-                    tracing::warn!(error = %error, "Linear mirror pass failed; will retry");
+                Ok(Err(_)) => {
+                    tracing::warn!(
+                        reason = "linear_sync_failed",
+                        "Linear mirror pass failed; will retry"
+                    );
                     // A policy read failure cannot authorize a provider call.
                     // Re-read after the last VALID interval, never a hardcoded
                     // timer or a stale operational policy for the effect.
                     wait = Duration::from_secs(last_valid_interval);
                 }
                 Err(error) => {
-                    tracing::warn!(error = %error, "Linear mirror worker failed; will retry");
+                    tracing::warn!(
+                        panicked = error.is_panic(),
+                        "Linear mirror worker failed; will retry"
+                    );
                     wait = Duration::from_secs(last_valid_interval);
                 }
             }

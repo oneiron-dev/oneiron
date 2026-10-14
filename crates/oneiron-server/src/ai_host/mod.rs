@@ -558,7 +558,12 @@ async fn start_dreamer(
             });
         }
         Err((role, refusal)) => {
-            tracing::error!(%refusal, role = ?role, "a dreamer role's route could not be resolved");
+            // An engine refusal logs by kind: its text can quote the vault.
+            let kind = match &refusal {
+                RoleRefusal::Refused(error) => Some(error.kind()),
+                RoleRefusal::NoSeat | RoleRefusal::RouteNotServed { .. } => None,
+            };
+            tracing::error!(?kind, role = ?role, "a dreamer role's route could not be resolved");
             return Err(IdleReason::StartFailed);
         }
     };
