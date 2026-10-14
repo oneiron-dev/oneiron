@@ -160,7 +160,8 @@ fn a_run_with_no_due_obligation_leaves_every_window_as_it_was() {
 /// Astra F4 (#1456): a window opened while the sweep compacts it cannot
 /// register the history the sweep is dropping, only to keep it resident and
 /// servable after the obligation is finalized. The open waits for the
-/// compaction, then reads the compacted window.
+/// compaction, then reads the compacted window; an open of another window
+/// meanwhile goes through.
 #[cfg(feature = "sync")]
 #[test]
 fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
@@ -168,6 +169,7 @@ fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
     use crate::sync::manager::WindowManager;
     use crate::sync::types::WindowKey;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     let dir = tempfile::tempdir().unwrap();
@@ -188,23 +190,39 @@ fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
         .unwrap();
 
     // Between the sweep's read of the window and its compaction write, a
-    // peer asks for the window.
+    // peer asks for the window, and another for a window of another month.
     let (opened, shallow) = std::sync::mpsc::channel();
+    let other_went_through = Arc::new(AtomicBool::new(false));
+    let went_through = Arc::clone(&other_went_through);
     let opener = Arc::clone(&manager);
     let open_key = key.clone();
     BEFORE_COMPACT_WRITE.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(move || {
+            let other_opener = Arc::clone(&opener);
             std::thread::spawn(move || {
                 let window = opener.open_window(&open_key).unwrap();
                 let _ = opened.send(window.doc.is_shallow());
             });
-            // Every chance for the open to land before the write.
+            let (other_opened, other_open) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let other = WindowKey::from_timestamp(learned_at + 40 * 86_400);
+                let _ = other_opened.send(other_opener.open_window(&other).is_ok());
+            });
+            went_through.store(
+                other_open.recv_timeout(Duration::from_secs(20)) == Ok(true),
+                Ordering::Release,
+            );
+            // Every chance for the first open to land before the write.
             std::thread::sleep(Duration::from_millis(300));
         }));
     });
     let run = run_hard_erase_sweep(&vault).unwrap();
 
     assert!(run.windows_compacted >= 1);
+    assert!(
+        other_went_through.load(Ordering::Acquire),
+        "an open of another window waited on this window's compaction"
+    );
     assert!(
         shallow
             .recv_timeout(Duration::from_secs(30))

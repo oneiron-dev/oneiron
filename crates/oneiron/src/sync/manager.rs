@@ -79,6 +79,8 @@ pub struct WindowManager {
     /// sweep can still observe an orphaned external `Arc<LoadedWindow>` that
     /// could persist a full-history snapshot later.
     issued_handles: Mutex<HashMap<WindowKey, Vec<Weak<LoadedWindow>>>>,
+    /// Windows a sweep holds closed while it compacts them.
+    sweep_fence: super::sweep_fence::SweepFence,
     /// Shared Observer A outbound sink: every window this manager opens
     /// routes its persisted local updates here (connection channel when
     /// attached, durable `SyncQueue` otherwise).
@@ -128,6 +130,7 @@ impl WindowManager {
             config,
             windows: Mutex::new(HashMap::new()),
             issued_handles: Mutex::new(HashMap::new()),
+            sweep_fence: super::sweep_fence::SweepFence::default(),
             outbound: Arc::new(OutboundSink::new()),
             promotions: tokio::sync::broadcast::channel(64).0,
             #[cfg(test)]
@@ -212,6 +215,12 @@ impl WindowManager {
         // attach mutex, never the registry lock.
         self.attach_to_vault();
         let mut registry = self.lock_registry();
+        // A window a sweep holds closed opens once the sweep is done.
+        while self.sweep_fence.holds(key) {
+            drop(registry);
+            self.sweep_fence.wait_until_open(key);
+            registry = self.lock_registry();
+        }
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
             // A resident SKILL may have arrived before its actor. Observer B
@@ -334,9 +343,10 @@ impl WindowManager {
     /// `Arc<LoadedWindow>` clones keep the doc and observers alive. Those
     /// retained handles can still call `persist_state`, so the sweep must
     /// treat them exactly like a registered live window and defer compaction.
-    /// The registry lock is held across `f`, so an open of the window waits
-    /// for it and then reads what `f` wrote, rather than registering the
-    /// history `f` drops (lock order registry → LMDB, as in `open_window`).
+    /// The window is marked closed under the registry lock, so no open of it
+    /// is under way, and an open that comes during `f` waits and then reads
+    /// what `f` wrote, rather than registering the history `f` drops. Opens
+    /// of other windows go through.
     pub(crate) fn while_window_closed<T>(
         &self,
         key: &WindowKey,
@@ -353,8 +363,10 @@ impl WindowManager {
         if retained {
             return None;
         }
-        let result = f();
+        let closed = self.sweep_fence.close(key);
         drop(registry);
+        let result = f();
+        drop(closed);
         Some(result)
     }
 
