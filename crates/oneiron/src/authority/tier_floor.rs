@@ -30,15 +30,16 @@ pub(super) fn record_tier_floor(
     state.tier_floor = effective_tier_floor(&state.tier_floor_events).unwrap_or(tier);
 }
 
-/// The rows `present` keeps whose signer falls below a floor a concurrent
-/// row among them set, with why.
-pub(super) fn below_concurrent_tier_floors(
+/// One floor a present row set: the row, its vault and the tier it requires.
+pub(super) type ConcurrentFloor = (AuthorityEntryHash, AuthorityVaultId, AuthorityTier);
+
+/// The floors the rows `present` keeps set and still hold.
+pub(super) fn concurrent_tier_floors(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     present: &dyn Fn(&AuthorityEntryHash) -> bool,
-) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue> {
-    let floors: Vec<_> = states
+) -> Vec<ConcurrentFloor> {
+    states
         .iter()
         .filter(|(hash, _)| present(hash))
         .filter_map(|(hash, state)| {
@@ -49,23 +50,44 @@ pub(super) fn below_concurrent_tier_floors(
             };
             (state.tier_floor == requested).then_some((*hash, state.vault_id, requested))
         })
-        .collect();
+        .collect()
+}
+
+/// Whether the row `hash`, folded to `state`, has a signer below one of
+/// `floors` that it neither precedes nor saw softened.
+pub(super) fn below_a_concurrent_floor(
+    hash: &AuthorityEntryHash,
+    state: &FoldState,
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    floors: &[ConcurrentFloor],
+) -> bool {
+    let Some(signer) = state.roster.get(entries[hash].signer_key()) else {
+        return false;
+    };
+    floors.iter().any(|(floor_hash, vault, floor)| {
+        state.vault_id == *vault && hash != floor_hash
+            // A tightening is not retroactive over its causal past.
+            && !ancestors.get(floor_hash).is_some_and(|past| past.contains(hash))
+            // A softening clears only floors in its causal past.
+            && !state.tier_floor_events.values().any(|(_, seen)| seen.contains(floor_hash))
+            && !tier_meets_floor(signer.tier, *floor)
+    })
+}
+
+/// The rows `present` keeps whose signer falls below a floor a concurrent
+/// row among them set, with why.
+pub(super) fn below_concurrent_tier_floors(
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    present: &dyn Fn(&AuthorityEntryHash) -> bool,
+) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue> {
+    let floors = concurrent_tier_floors(states, entries, present);
     states
         .iter()
         .filter(|(hash, _)| present(hash))
-        .filter_map(|(hash, state)| {
-            let signer = state.roster.get(entries[hash].signer_key())?;
-            floors
-                .iter()
-                .any(|(floor_hash, vault, floor)| {
-                    state.vault_id == *vault && hash != floor_hash
-                // A tightening is not retroactive over its causal past.
-                && !ancestors.get(floor_hash).is_some_and(|past| past.contains(hash))
-                // A softening clears only floors in its causal past.
-                && !state.tier_floor_events.values().any(|(_, seen)| seen.contains(floor_hash))
-                && !tier_meets_floor(signer.tier, *floor)
-                })
-                .then_some((*hash, AuthorityFoldIssue::SignerBelowTierFloor(*hash)))
-        })
+        .filter(|(hash, state)| below_a_concurrent_floor(hash, state, entries, ancestors, &floors))
+        .map(|(hash, _)| (*hash, AuthorityFoldIssue::SignerBelowTierFloor(*hash)))
         .collect()
 }
