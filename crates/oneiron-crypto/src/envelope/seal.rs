@@ -32,7 +32,7 @@ const KEY_LABEL: &[u8] = b"oneiron-crypto/v1/aead-key";
 /// (`seal::tests`, x86_64 Linux, rustc 1.96, 2026-10-09): the schedule reached 1,480 bytes
 /// below its caller in a release build and 3,992 in a dev build (this crate at opt-level
 /// 0), so about 11x and 4x that.
-pub(crate) const AEAD_KEY_STACK_WIPE: usize = 16 * 1024;
+const AEAD_KEY_STACK_WIPE: usize = 16 * 1024;
 
 /// What the writer states about a new envelope.
 #[derive(Clone, Copy, Debug)]

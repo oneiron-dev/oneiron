@@ -4,7 +4,6 @@
 mod hybrid;
 mod seal;
 
-pub(crate) use self::seal::AEAD_KEY_STACK_WIPE;
 pub use self::seal::{OpenKey, OpenPolicy, SealKey, SealParams, seal};
 
 use crate::codec::{Reader, check_len, put_lp8};

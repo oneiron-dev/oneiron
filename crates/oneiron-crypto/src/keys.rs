@@ -279,12 +279,9 @@ impl HybridSecretKey {
         if seed == &[0u8; 32] {
             return Err(Error::Primitive("zero seed"));
         }
-        let mut mlkem_seed = Zeroizing::new([0u8; 64]);
-        let mut x25519 = Zeroizing::new([0u8; 32]);
-        let expanded = expand_seed(seed, label, &mut mlkem_seed, &mut x25519);
-        zeroize::zeroize_stack::<{ crate::envelope::AEAD_KEY_STACK_WIPE }>();
-        expanded?;
-        Ok(Self::from_seeds(&mlkem_seed, &x25519))
+        let key = from_seed_inner(seed, label);
+        zeroize::zeroize_stack::<SEED_KEY_STACK_WIPE>();
+        key
     }
 
     /// The matching public key.
@@ -301,8 +298,25 @@ impl HybridSecretKey {
     }
 }
 
-/// Out of line, so the stack wipe in [`HybridSecretKey::from_seed`] covers its frames.
+/// Stack bytes wiped after a key is built from its seed. Sized from stack painting
+/// (`keys::tests`), one per build, as `record::sign` sizes its signers' wipes.
+const SEED_KEY_STACK_WIPE: usize = if cfg!(debug_assertions) {
+    512 * 1024
+} else {
+    256 * 1024
+};
+
+/// Out of line, so the stack wipe in [`HybridSecretKey::from_seed`] covers its frames:
+/// the expanded seeds, and the copies the ML-KEM and X25519 constructors take by value
+/// (Wonder code-R3 W3-F2).
 #[inline(never)]
+fn from_seed_inner(seed: &[u8; 32], label: &[u8]) -> Result<HybridSecretKey> {
+    let mut mlkem_seed = Zeroizing::new([0u8; 64]);
+    let mut x25519 = Zeroizing::new([0u8; 32]);
+    expand_seed(seed, label, &mut mlkem_seed, &mut x25519)?;
+    Ok(HybridSecretKey::from_seeds(&mlkem_seed, &x25519))
+}
+
 fn expand_seed(
     seed: &[u8; 32],
     label: &[u8],
@@ -314,3 +328,6 @@ fn expand_seed(
         .and_then(|()| hkdf.expand_multi_info(&[label, b"/x25519"], x25519))
         .map_err(|_| Error::Primitive("hkdf"))
 }
+
+#[cfg(test)]
+mod tests;
