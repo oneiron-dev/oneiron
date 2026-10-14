@@ -5,7 +5,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::ManifestDbs;
 
@@ -147,12 +147,29 @@ pub(crate) fn analyze_text(
     })
 }
 
-fn analyze(analyzer: &MultilingualAnalyzer, fields: &[(String, String)]) -> Result<Analysis> {
-    let mut tokens: Vec<Token> = Vec::new();
-    let ctx = AnalyzerContext::for_index();
-    for (_, value) in fields {
-        analyzer.analyze(value, &ctx, &mut tokens);
+/// The most text one document may put through the analyzer: its field names and values, in
+/// bytes. Twice the 1 MiB a native NOTE body or a MESSAGE stream may hold, so those always
+/// index. A docs segment, an entity document or a raw `batch().text()` over it is refused.
+pub(super) const MAX_INDEXED_TEXT_BYTES: usize = 2 * 1024 * 1024;
+
+/// Refuses a field set over [`MAX_INDEXED_TEXT_BYTES`] before anything is tokenized, so the
+/// document's index stays as it was.
+pub(crate) fn check_indexed_text_bytes(fields: &[(String, String)]) -> Result<()> {
+    let bytes = fields.iter().fold(0_usize, |sum, (name, value)| {
+        sum.saturating_add(name.len()).saturating_add(value.len())
+    });
+    if bytes > MAX_INDEXED_TEXT_BYTES {
+        return Err(Error::Store(StoreError::IndexedTextTooLarge {
+            bytes,
+            limit: MAX_INDEXED_TEXT_BYTES,
+        }));
     }
+    Ok(())
+}
+
+fn analyze(analyzer: &MultilingualAnalyzer, fields: &[(String, String)]) -> Result<Analysis> {
+    check_indexed_text_bytes(fields)?;
+    let ctx = AnalyzerContext::for_index();
 
     // Aggregate tokens by (channel, term) → tf, and by channel → length.
     // Terms within the same channel collide on identical folded text, so
@@ -161,18 +178,24 @@ fn analyze(analyzer: &MultilingualAnalyzer, fields: &[(String, String)]) -> Resu
     let mut per_field_len: HashMap<u16, u32> = HashMap::new();
     let mut doc_len_total: u32 = 0;
 
-    for tok in &tokens {
-        let fid = tok.channel.field_id();
-        let entry = per_field.entry(fid).or_default();
-        *entry.entry(tok.term.as_ref().to_owned()).or_insert(0) += 1;
-        let inc = u32::from(tok.length_increment);
-        let slot = per_field_len.entry(fid).or_insert(0);
-        *slot = slot
-            .checked_add(inc)
-            .ok_or(Error::ArithmeticOverflow("bm25 per-field length"))?;
-        doc_len_total = doc_len_total
-            .checked_add(inc)
-            .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
+    // One field's tokens at a time: the buffer peaks at the largest field,
+    // not at the whole document.
+    let mut tokens: Vec<Token> = Vec::new();
+    for (_, value) in fields {
+        analyzer.analyze(value, &ctx, &mut tokens);
+        for tok in tokens.drain(..) {
+            let fid = tok.channel.field_id();
+            let inc = u32::from(tok.length_increment);
+            let entry = per_field.entry(fid).or_default();
+            *entry.entry(tok.term.into_string()).or_insert(0) += 1;
+            let slot = per_field_len.entry(fid).or_insert(0);
+            *slot = slot
+                .checked_add(inc)
+                .ok_or(Error::ArithmeticOverflow("bm25 per-field length"))?;
+            doc_len_total = doc_len_total
+                .checked_add(inc)
+                .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
+        }
     }
 
     // Build the flat (term, field, tf) list, sorted lexicographically by

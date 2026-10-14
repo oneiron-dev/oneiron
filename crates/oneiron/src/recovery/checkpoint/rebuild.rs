@@ -163,12 +163,26 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
         }
         let sources = INDEX_SOURCE_TEXT.scan(&vault.store, txn)?;
         let mut texts = 0;
+        let mut oversized = 0_usize;
         for (id, fields) in sources {
             if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?.is_none() {
                 continue;
             }
-            crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields)?;
-            texts += 1;
+            match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields) {
+                Ok(()) => texts += 1,
+                // Text indexed before the per-document ceiling stays unindexed
+                // rather than holding the whole restore: its write door refuses it now.
+                Err(Error::Store(crate::error::StoreError::IndexedTextTooLarge { .. })) => {
+                    oversized += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if oversized > 0 {
+            tracing::warn!(
+                oversized,
+                "checkpoint restore left documents past the text ceiling out of search"
+            );
         }
         let phonetic = INDEX_SOURCE_PHONETIC.scan(&vault.store, txn)?;
         for (id, codes) in phonetic {

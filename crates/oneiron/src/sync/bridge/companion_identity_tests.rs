@@ -122,7 +122,7 @@ fn merge_locally(install: &Vault, loser: EntityId, survivor: EntityId) {
 /// One peer row through the shared ingest ladder, as Observer B delivers it.
 fn deliver_blob(vault: &Vault, id: &EntityId, blob: &[u8]) -> Result<()> {
     let doc = LoroDoc::new();
-    let tombstones = doc.get_map("tombstones");
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     vault.with_write_txn(|wtxn| {
         let ctx = IngestCtx::new(
             vault,
