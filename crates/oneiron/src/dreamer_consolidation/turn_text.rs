@@ -230,11 +230,12 @@ pub(super) fn collect_in(
 
 /// The text a consolidation branch reads of one stored TURN, by the same
 /// projection, in the caller's transaction: the projector's material
-/// ([`crate::dreamer_wake`]). Its MESSAGE rows are read as the Dreamer reads
-/// them, so a private row or a relationship row without the Dreamer's live
-/// grant fails the turn as it fails a branch. A branch reads all of these
-/// words or refuses the turn, so no reader sees fewer. `None` when the TURN
-/// is gone or has no text.
+/// ([`crate::dreamer_wake`]). The TURN and its MESSAGE rows are read as the
+/// Dreamer reads them, whatever the caller checked: a TURN the Dreamer may
+/// not read, a private row, or a relationship row without the Dreamer's
+/// live grant fails the turn as it fails a branch. A branch reads all of
+/// these words or refuses the turn, so no reader sees fewer. `None` when the
+/// TURN is gone or has no text.
 pub(crate) fn projected_turn_text_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -249,6 +250,9 @@ pub(crate) fn projected_turn_text_in(
         return Ok(None);
     }
     let read = dreamer_read(vault)?;
+    if read.entities_readable_in_txn(txn, std::slice::from_ref(turn))? != [true] {
+        return Err(invalid_consolidation("turn is not readable"));
+    }
     let text = collect_with(vault, txn, turn, &row.body, &mut 0, |ids| {
         message_reader(&read)?.get_entities_parts_in_txn(txn, ids)
     })?;

@@ -987,3 +987,25 @@ fn words_the_dreamer_may_not_read_are_never_held() -> Result<()> {
     assert_eq!(micro_rounds(&vault)?, vec![vec![hidden], vec![open]]);
     Ok(())
 }
+
+/// Bugbot (#1418): the projector read a TURN that carries its own words
+/// without asking the Dreamer's gate, so a TURN the owner's policy kept from
+/// the Dreamer was held, and the same words said later, readable, were
+/// consumed as a repeat of words no branch may read. A TURN the Dreamer may
+/// not read gives no material, as it gives the sieve no span.
+#[test]
+fn a_turn_the_dreamer_may_not_read_is_never_held() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 27, at);
+    let said = "The deadline is Friday.";
+    crate::test_util::withhold_dreamer_read(&vault)?;
+    let hidden = seed_turn(&vault, &session, "user", said, at);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
+    complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
+    install_shipped_policy(&vault)?;
+    let open = seed_turn(&vault, &session, "user", said, at + 3);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
+    assert_eq!(micro_rounds(&vault)?, vec![vec![hidden], vec![open]]);
+    Ok(())
+}

@@ -585,7 +585,7 @@ fn turn_key_in_txn(
 
 /// A turn's statements, from the words a branch reads of it, in its
 /// evidence class. `None` when a branch would refuse those words (a changed
-/// binding, a mixed bucket, a MESSAGE the Dreamer may not read).
+/// binding, a mixed bucket, a TURN or MESSAGE the Dreamer may not read).
 fn turn_statements_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
