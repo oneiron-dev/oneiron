@@ -85,6 +85,11 @@ pub const ORIGIN_MAX_REF_UPDATES: usize = 64;
 /// bytes nobody is landing.
 pub const ORIGIN_REFUSED_REF_PREFIX: &str = "refs/replace/";
 
+/// Bound on a receive-pack's command section, read ahead of the backend to
+/// refuse a push certificate. [`ORIGIN_MAX_REF_UPDATES`] commands with their
+/// capabilities fit many times over.
+pub(super) const ORIGIN_MAX_COMMAND_SECTION_BYTES: usize = 1024 * 1024;
+
 /// Bound on the CGI header block. This bounds a protocol preamble, not a body:
 /// request and response bodies stream unbounded and unbuffered.
 pub(super) const SERVE_MAX_CGI_HEADER_BYTES: usize = 64 * 1024;
@@ -118,6 +123,13 @@ pub(super) fn now_secs() -> u64 {
 pub(super) fn serve_failed(reason: impl Into<String>) -> Error {
     Error::Code(CodeError::GitHttpServeFailed {
         reason: reason.into(),
+    })
+}
+
+/// A push the door refuses before the backend reads any of it.
+pub(super) fn push_refused(reason: &str) -> Error {
+    Error::Code(CodeError::ReceivePackDoorRejected {
+        reason: reason.to_owned(),
     })
 }
 
