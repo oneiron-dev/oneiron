@@ -12,6 +12,9 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
 mod integration;
+mod log;
+
+use super::gate::{CompactionCheck, CompactionRefusal};
 
 use super::epoch::{
     mint_epoch_summary_with, prior_epoch_in_txn, validate_epoch_boundary, validate_window_span,
@@ -42,11 +45,23 @@ pub trait CompactionBackend: Send + Sync {
     fn backend_key(&self) -> &str;
     /// The tier class this implementation declares at registration.
     fn tier_class(&self) -> CompactionTierClass;
-    /// Compacts one window span into summary text.
+    /// Compacts one window span into a reply the pre-swap gate judges.
     ///
     /// Pure with respect to the vault: the backend sees rendered message
-    /// content and a token ceiling, never storage.
-    fn compact(&self, request: &CompactionRequest) -> Result<CompactionProduct>;
+    /// content and a token ceiling, never storage. `retry` names the gate
+    /// check the previous try failed. A refusal is typed, never a bare
+    /// "did not run".
+    fn compact(
+        &self,
+        request: &CompactionRequest,
+        retry: Option<CompactionCheck>,
+    ) -> std::result::Result<CompactionProduct, CompactionRefusal>;
+    /// The most window tokens (the messages' `tokens`) one call takes whole
+    /// beside a reply of `summary_token_budget`, or `None` when nothing
+    /// bounds it. A host that numbers its own log seals no larger window.
+    fn window_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
+        None
+    }
 }
 
 /// One message-log row the host hands the backend.
@@ -77,11 +92,17 @@ pub struct CompactionWatermark {
     /// The Dreamer's `last_turn_id`: `None` is the end-of-second boundary,
     /// `Some` the exact temporal-index key.
     pub turn_id: Option<EntityId>,
+    /// The last turn the snapshot covers, for a host that numbers its own
+    /// log (an executor run's steps). `None` for the Dreamer position.
+    pub turn: Option<u64>,
 }
 
 impl CompactionWatermark {
     /// `None` is after every exact key in its second, not Option's ordering.
     fn is_after(self, prior: Self) -> bool {
+        if let (Some(current), Some(previous)) = (self.turn, prior.turn) {
+            return current > previous;
+        }
         if self.learned_at != prior.learned_at {
             return self.learned_at > prior.learned_at;
         }
@@ -116,12 +137,35 @@ pub struct CompactionRequest {
     pub turn_start: u64,
     /// The recorded snapshot point.
     pub watermark: CompactionWatermark,
+    /// Text that must survive the swap word for word: a failure, a note the
+    /// agent asked to keep. Each occurs verbatim in some window message.
+    pub pins: Vec<String>,
+    /// Every record the window's text was read from: the summary's
+    /// `DerivedFrom` set, so erasing one retires the summary and a reader
+    /// who may not read one reads no summary.
+    pub sources: Vec<EntityId>,
+    /// Whose log the window is cut from.
+    pub(crate) log: WindowLog,
+}
+
+/// Whose message log a window is cut from: a conversation, whose board turns
+/// the mint folds and whose lineage is its durable epoch summaries; or a log
+/// the host numbers itself (an executor run), whose lineage is the host's
+/// own coverage rows, so erasing a summary never moves the run's position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowLog {
+    Conversation,
+    Host { prior: Option<super::PriorEpoch> },
 }
 
 /// What a backend produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactionProduct {
+    /// The backend's whole reply. The pre-swap gate parses it and hands the
+    /// mint only the summary prose.
     pub summary_text: String,
+    /// Why the model stopped; only a natural stop passes the gate.
+    pub finish: crate::FinishReason,
     /// Measured wall time of THIS compact call — the latency half of the
     /// margin law.
     pub latency: Duration,
@@ -493,6 +537,13 @@ impl CompactionDriver {
         self.directive(vault, used_tokens)
     }
 
+    /// The window budget the profile gives this session: the headroom band
+    /// ends here.
+    #[must_use]
+    pub const fn window_token_budget(&self) -> u64 {
+        self.profile.window_token_budget
+    }
+
     /// Explicit driver-callable evaluation (host sweep, turn boundary, test
     /// driver). Same threshold, same watermark read, same state machine.
     pub fn evaluate_now(&mut self, vault: &Vault, used_tokens: u64) -> Result<CompactionDirective> {
@@ -549,6 +600,34 @@ impl CompactionDriver {
         session_ref: &EntityId,
         window: Vec<CompactionWindowMessage>,
     ) -> Result<CompactionRequest> {
+        let mut sources: Vec<EntityId> = Vec::new();
+        for message in &window {
+            if sources.len() >= super::EPOCH_SUMMARY_MAX_DERIVED_EDGES {
+                break;
+            }
+            if !sources.contains(&message.turn_id) {
+                sources.push(message.turn_id);
+            }
+        }
+        self.seal_request(
+            vault,
+            session_ref,
+            window,
+            Vec::new(),
+            sources,
+            WindowLog::Conversation,
+        )
+    }
+
+    pub(super) fn seal_request(
+        &mut self,
+        vault: &Vault,
+        session_ref: &EntityId,
+        window: Vec<CompactionWindowMessage>,
+        pins: Vec<String>,
+        sources: Vec<EntityId>,
+        log: WindowLog,
+    ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, request } = &self.state else {
             return Err(Error::InvariantViolation(
                 "request_for is legal only while compacting",
@@ -562,10 +641,14 @@ impl CompactionDriver {
         let watermark = *watermark;
         let (turn_start, _) = validate_window_span(&window)?;
 
-        let rtxn = vault.store.env.read_txn()?;
-        let prior = prior_epoch_in_txn(&vault.store, &rtxn, session_ref)?;
+        let prior = match log {
+            WindowLog::Conversation => {
+                let rtxn = vault.store.env.read_txn()?;
+                prior_epoch_in_txn(&vault.store, &rtxn, session_ref)?
+            }
+            WindowLog::Host { prior } => prior,
+        };
         validate_epoch_boundary(prior, turn_start)?;
-        drop(rtxn);
 
         let request = CompactionRequest {
             request_id: vault.store.clock.entity_id()?,
@@ -574,6 +657,9 @@ impl CompactionDriver {
             window,
             turn_start,
             watermark,
+            pins,
+            sources,
+            log,
         };
         self.state = CompactionState::Compacting {
             watermark,
@@ -590,7 +676,7 @@ impl CompactionDriver {
     /// Half-up rounding, not `ceil`: a stored `f32` fraction of `0.4` widens
     /// to `0.4000000059…` in `f64`, and ceiling that would answer 401 tokens
     /// for a 40% share of 1000 — an arithmetic artifact, not a budget.
-    fn summary_token_budget(&self) -> u64 {
+    pub(crate) fn summary_token_budget(&self) -> u64 {
         let fraction = self
             .profile
             .budget_split
@@ -672,5 +758,6 @@ fn snapshot_watermark(vault: &Vault) -> Result<CompactionWatermark> {
     Ok(CompactionWatermark {
         learned_at: watermark.last_learned_at,
         turn_id: watermark.last_turn_id,
+        turn: None,
     })
 }

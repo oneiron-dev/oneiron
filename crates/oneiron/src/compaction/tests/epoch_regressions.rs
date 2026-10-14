@@ -15,12 +15,22 @@ fn bootstrap_epoch_mint_preserves_zero_temporal_metadata_and_learned_index() -> 
             watermark: CompactionWatermark {
                 learned_at: 0,
                 turn_id: None,
+                turn: None,
             },
         }
     );
     let request = driver.request_for(&vault, &session, vec![window_row(turn, 1)])?;
-    let product = driver.backend().compact(&request)?;
-    let plan = driver.integrate(&vault, &session, actor, &request, product, &[])?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
+    let plan = driver.integrate(
+        &vault,
+        &session,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+        &[],
+    )?;
 
     let header = {
         let rtxn = vault.store.env.read_txn()?;
@@ -113,8 +123,17 @@ fn hex_ref_casing_preserves_codec_and_native_epoch_lineage() -> Result<()> {
         );
         let window = host_window(&vault, 0x90, body.turn_end + 1, 2);
         let request = driver.request_for(&vault, &session, window)?;
-        let product = driver.backend().compact(&request)?;
-        let plan = driver.integrate(&vault, &session, actor, &request, product, &[])?;
+        let product = driver
+            .backend()
+            .compact(&request, None)
+            .expect("the fixture backend answers");
+        let plan = driver.integrate(
+            &vault,
+            &session,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+            &[],
+        )?;
         assert_eq!(plan.epoch, body.epoch + 1);
         let next = stored_summary_body(&vault, &plan.summary_id);
         assert_eq!(
@@ -206,9 +225,18 @@ fn a_conflict_arriving_after_request_issuance_refuses_the_mint_atomically() -> R
     let before = stored_row_count(&vault);
     let markers = pending_embedding_marker_count(&vault);
     let margin = *driver.margin();
-    let product = driver.backend().compact(&request)?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
     let error = driver
-        .integrate(&vault, &session, actor, &request, product, &[])
+        .integrate(
+            &vault,
+            &session,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+            &[],
+        )
         .expect_err("mint must rescan the durable maximum inside its transaction");
     assert_eq!(
         invariant(error),
@@ -280,9 +308,18 @@ fn another_native_mint_cannot_make_an_inflight_request_overlap_the_lineage() -> 
 
     let before = stored_row_count(&vault);
     let markers = pending_embedding_marker_count(&vault);
-    let product = slow.backend().compact(&stale)?;
+    let product = slow
+        .backend()
+        .compact(&stale, None)
+        .expect("the fixture backend answers");
     let error = slow
-        .integrate(&vault, &session, actor, &stale, product, &[])
+        .integrate(
+            &vault,
+            &session,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(&stale, product),
+            &[],
+        )
         .expect_err("durable boundary changed while the backend ran");
     assert_eq!(
         invariant(error),
@@ -473,9 +510,18 @@ fn identifiable_malformed_epochs_refuse_request_and_mint_without_writes() -> Res
             let margin = *driver.margin();
             let expected = invariant(decode_epoch_summary_body(&bytes).expect_err("malformed"));
             let error = if let Some(request) = &request {
-                let product = driver.backend().compact(request)?;
+                let product = driver
+                    .backend()
+                    .compact(request, None)
+                    .expect("the fixture backend answers");
                 driver
-                    .integrate(&vault, &session, actor, request, product, &[])
+                    .integrate(
+                        &vault,
+                        &session,
+                        actor,
+                        crate::compaction::GatedCompaction::ungated_for_test(request, product),
+                        &[],
+                    )
                     .expect_err("mint")
             } else {
                 driver

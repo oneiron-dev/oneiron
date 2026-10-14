@@ -521,7 +521,7 @@ impl ScopedRead<'_> {
     /// the read's verified credential grants: a claim at the position the
     /// read door selects it; any other record where `record_world_in` places
     /// it. A claim with no such position is judged by the other axes; a TASK
-    /// that cannot prove its world is outside.
+    /// or epoch SUMMARY that cannot prove its world is outside.
     fn outside_credential_worlds_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -534,8 +534,9 @@ impl ScopedRead<'_> {
         if matches!(granted.worlds, crate::federation::ScopeAxis::All) {
             return Ok(false);
         }
-        // A TASK and its authority facts sit at their birth. Every other
-        // record that is not a claim is base reality, stamped or not: a row
+        // A TASK and its authority facts, and an epoch SUMMARY, sit at their
+        // birth. Every other record that is not a claim is base reality,
+        // stamped or not: a row
         // replayed with no stamp is no less outside a credential that cannot
         // read base (Astra #1388b P2).
         if row.entity_type != ENTITY_TYPE_CLAIM {

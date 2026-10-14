@@ -1,7 +1,9 @@
 //! Where the words of one stored revision came from.
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
@@ -16,9 +18,9 @@ pub(crate) enum WordSources {
     Unresolved,
 }
 
-/// The word sources of the stored revision `raw` of `id`: a scope summary,
-/// a TURN that copies one, a claim whose merge header names one, or a
-/// `conversation.summary` claim's typed coverage.
+/// The word sources of the stored revision `raw` of `id`: an epoch summary,
+/// a scope summary, a TURN that copies one, a claim whose merge header names
+/// one, or a `conversation.summary` claim's typed coverage.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -28,7 +30,37 @@ pub(crate) fn word_sources_in(
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+    let epoch = match header.entity_type {
+        ENTITY_TYPE_SUMMARY => crate::compaction::stored_epoch_in(&vault.store, txn, id, body)?,
+        _ => crate::compaction::StoredEpoch::No,
+    };
     let sources = match header.entity_type {
+        // A pointer no head stands for may be an epoch summary's, whose
+        // sources this read cannot name (Astra 1384e).
+        ENTITY_TYPE_SUMMARY if epoch == crate::compaction::StoredEpoch::Unresolved => {
+            return Ok(WordSources::Unresolved);
+        }
+        // An epoch summary's words are those of every record it was written
+        // from, its `DerivedFrom` targets (agent-runtime-v1 §d7); a nested
+        // epoch among them carries its own. A run that had read and said
+        // nothing yet wrote one from its own steps alone.
+        ENTITY_TYPE_SUMMARY if epoch == crate::compaction::StoredEpoch::Yes => {
+            let sources = vault
+                .store
+                .port_edges(
+                    txn,
+                    id,
+                    EdgeDirection::Out,
+                    Some(EdgeKind::DerivedFrom),
+                    None,
+                )?
+                .map(|edge| edge.map(|edge| edge.target))
+                .collect::<Result<Vec<_>>>()?;
+            if sources.is_empty() {
+                return Ok(WordSources::Own);
+            }
+            Ok(Some(sources))
+        }
         ENTITY_TYPE_SUMMARY => super::body_covers_in_txn(vault, txn, id, header.entity_type, body),
         // A reply carries its summary under the `summary` key, in any
         // string encoding; the decoder below decides. Its words are the

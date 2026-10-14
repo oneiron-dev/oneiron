@@ -13,8 +13,10 @@ use crate::{EntityId, Error, Result, Vault};
 /// [`encode`] spells.
 const COVERAGE: SideTable<(EntityId, EntityId), CodeRunCompactionCoverage, Raw> =
     SideTable::new(&side_table::CODE_RUN_COMPACTION);
-const VERSION: u8 = 1;
-const BODY_LEN: usize = 1 + 16 * 3 + 8 * 3;
+/// Version 2 adds the accepted body's digest. No shipped server wrote a
+/// version 1 row: before it, no host ran a compaction backend.
+const VERSION: u8 = 2;
+const BODY_LEN: usize = 1 + 16 * 3 + 8 * 3 + 32;
 
 /// A run-local span derived from the durable replay and the sealed compaction
 /// request, not from model-supplied bytes or an assembled context-vector length.
@@ -84,6 +86,9 @@ pub(crate) struct CodeRunCompactionCoverage {
     epoch: u64,
     first: u64,
     last: u64,
+    /// BLAKE3 of the SUMMARY body the gate accepted: a generic write that
+    /// replaces it later never renders as the run's summary.
+    digest: [u8; 32],
 }
 
 impl CodeRunCompactionCoverage {
@@ -91,13 +96,17 @@ impl CodeRunCompactionCoverage {
         self.run_id == run_id && (self.first..=self.last).contains(&step)
     }
 
-    #[cfg(test)]
     pub(crate) fn summary_id(&self) -> EntityId {
         self.summary_id
     }
-    #[cfg(test)]
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
+    }
+    pub(crate) fn first(&self) -> u64 {
+        self.first
+    }
+    pub(crate) fn last(&self) -> u64 {
+        self.last
     }
 }
 
@@ -120,6 +129,7 @@ fn encode(row: &CodeRunCompactionCoverage) -> Vec<u8> {
     raw.extend_from_slice(&row.epoch.to_be_bytes());
     raw.extend_from_slice(&row.first.to_be_bytes());
     raw.extend_from_slice(&row.last.to_be_bytes());
+    raw.extend_from_slice(&row.digest);
     raw
 }
 
@@ -143,6 +153,7 @@ fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
         epoch: number(49)?,
         first: number(57)?,
         last: number(65)?,
+        digest: raw[73..].try_into().map_err(|_| corrupt())?,
     };
     if row.epoch == 0 || row.first > row.last {
         return Err(corrupt());
@@ -150,16 +161,27 @@ fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
     Ok(row)
 }
 
+/// The bound SUMMARY's prose, or `None` once it is withdrawn: erased, stale
+/// because a record it was written from was erased, or replaced by a write
+/// the gate never judged. A withdrawn summary leaves its steps covered (as
+/// references) and renders no words.
 fn verify_summary(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &CodeRunCompactionCoverage,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let corrupt = || Error::CorruptedIndex("code-run compaction summary binding");
-    let summary = vault
-        .store
-        .port_entity_record(txn, &row.summary_id)?
-        .ok_or_else(corrupt)?;
+    let Some(summary) = vault.store.port_entity_record(txn, &row.summary_id)? else {
+        return Ok(None);
+    };
+    let state =
+        crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &row.summary_id)?;
+    if state.deleted || state.stale || summary.body.is_empty() {
+        return Ok(None);
+    }
+    if *blake3::hash(&summary.body).as_bytes() != row.digest {
+        return Ok(None);
+    }
     if summary.entity_type != ENTITY_TYPE_SUMMARY {
         return Err(corrupt());
     }
@@ -171,7 +193,7 @@ fn verify_summary(
     {
         return Err(corrupt());
     }
-    Ok(())
+    Ok(Some(body.text))
 }
 
 impl Vault {
@@ -201,6 +223,12 @@ impl Vault {
                 "executor coverage exceeds durable replay",
             ));
         }
+        let minted = self
+            .store
+            .port_entity_record(&*txn, &mint.summary_id())?
+            .ok_or(Error::InvariantViolation(
+                "executor coverage names no live summary",
+            ))?;
         let row = CodeRunCompactionCoverage {
             run_id: span.run_id,
             session_ref: span.session_ref,
@@ -208,8 +236,29 @@ impl Vault {
             epoch: mint.epoch(),
             first: span.first,
             last: span.last,
+            digest: *blake3::hash(&minted.body).as_bytes(),
         };
-        verify_summary(self, &*txn, &row)?;
+        verify_summary(self, &*txn, &row)?.ok_or(Error::InvariantViolation(
+            "executor coverage names no live summary",
+        ))?;
+        // The mint took its epoch and boundary from the run's rows; they
+        // must still be the run's last ones in this transaction.
+        let mut last = None;
+        for item in COVERAGE.iter_from(&self.store, &*txn, span.run_id.as_bytes())? {
+            let (_, prior) = item?;
+            last = last.max(Some((prior.epoch, prior.last)));
+        }
+        let continues = match last {
+            None => row.epoch == 1,
+            Some((epoch, end)) => {
+                epoch.checked_add(1) == Some(row.epoch) && end.checked_add(1) == Some(row.first)
+            }
+        };
+        if !continues {
+            return Err(Error::InvariantViolation(
+                "executor coverage does not continue the run's last epoch",
+            ));
+        }
         let key = (row.run_id, row.summary_id);
         if COVERAGE.contains(&self.store, txn, &key)? {
             return Err(Error::InvariantViolation(
@@ -232,6 +281,19 @@ impl Vault {
         &self,
         run_id: EntityId,
     ) -> Result<Vec<CodeRunCompactionCoverage>> {
+        Ok(self
+            .code_run_compaction_epochs(run_id)?
+            .into_iter()
+            .map(|(row, _)| row)
+            .collect())
+    }
+
+    /// Every coverage row of `run_id` with its summary's prose, `None` when
+    /// the summary is withdrawn.
+    pub(crate) fn code_run_compaction_epochs(
+        &self,
+        run_id: EntityId,
+    ) -> Result<Vec<(CodeRunCompactionCoverage, Option<String>)>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
         for item in COVERAGE.iter_from(&self.store, &txn, run_id.as_bytes())? {
@@ -239,8 +301,8 @@ impl Vault {
             if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
                 return Err(Error::CorruptedIndex("code-run compaction coverage key"));
             }
-            verify_summary(self, &txn, &row)?;
-            rows.push(row);
+            let text = verify_summary(self, &txn, &row)?;
+            rows.push((row, text));
         }
         Ok(rows)
     }

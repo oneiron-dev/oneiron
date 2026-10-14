@@ -62,7 +62,9 @@ impl StoredTerminalStatus {
             EngineExecutorStatus::Waiting(wait) => Ok(Self::Waiting {
                 wait: StoredDurableWait::from_wait(wait),
             }),
-            EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::HardStepLimitReached => {
+            EngineExecutorStatus::Yielded { .. }
+            | EngineExecutorStatus::HardStepLimitReached
+            | EngineExecutorStatus::WindowFull { .. } => {
                 Err(Error::InvariantViolation("non-terminal executor status marker").into())
             }
         }

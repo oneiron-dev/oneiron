@@ -13,6 +13,7 @@ mod booking_agent_api;
 #[cfg(target_os = "linux")]
 mod broker_paid_leg;
 mod campaign_surface_oracle;
+mod code_mode_compaction;
 mod core_discover;
 mod dreamer_binding;
 mod dreamer_live;

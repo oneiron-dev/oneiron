@@ -419,6 +419,20 @@ pub(crate) fn has_record_head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId)
     ENTITY_DOC_HEAD.contains(store, txn, &HexId(*entity))
 }
 
+/// The field a document pointer row of `entity` keeps on the document plane,
+/// by its head in this transaction (the head [`resolve_record_body`] reads);
+/// `None` where no head of `entity` stands.
+pub(crate) fn pointer_field_in(
+    dbs: &impl side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<TextField>> {
+    Ok(ENTITY_DOC_HEAD
+        .get(dbs, txn, &HexId(*entity))?
+        .filter(|h| h.entity == entity.to_hex())
+        .map(|h| h.field))
+}
+
 /// Read the exact durable document head after the live body was admitted.
 pub(crate) fn record_head_bytes(
     store: &Store,

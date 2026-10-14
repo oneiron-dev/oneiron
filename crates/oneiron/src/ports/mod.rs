@@ -48,7 +48,9 @@ pub(crate) mod row_copies;
 mod tests;
 pub use contracts::*;
 pub(crate) use integrity::{
-    invalidate_source_in_txn, record_dependency_in_txn, record_derived_edge_in_txn, stale_in_txn,
+    invalidate_source_in_txn, keep_deleted_worlds_in_txn, keep_worlds_of_unmade_epoch_in_txn,
+    record_dependency_in_txn, record_derived_edge_in_txn, record_withdrawn_in_txn,
+    retire_withdrawn_in_txn, stale_in_txn, withdraw_from_lost_source_in_txn, withdrawn_worlds_in,
 };
 pub use records::*;
 pub(crate) use regeneration::dependency_sources_in;

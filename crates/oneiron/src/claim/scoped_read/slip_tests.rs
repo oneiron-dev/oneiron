@@ -220,3 +220,163 @@ fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
     assert_eq!(counted(&narrowed)?, 0, "a base-only slip counts it nowhere");
     Ok(())
 }
+
+/// Astra #1384c: an epoch summary sits in the world its birth stamp proves.
+/// A replica arrives unstamped, so a slip narrowed to base reality cannot
+/// place it and counts it nowhere: its receipt is an absent id's, and its
+/// retrieval neither finds nor counts it. A summary born here in base
+/// reality, and one that is no epoch, read as base; one born in world W reads
+/// in W and not in base, even once a later put leaves it no epoch body.
+#[test]
+fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochPlacement, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    use crate::registry::ENTITY_TYPE_SUMMARY;
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let epoch = |n: u64| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: EntityId::now().to_hex(),
+            epoch: n,
+            turn_start: n * 3,
+            turn_end: n * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: "the run read the harbor ledger".into(),
+            actor: EntityId::now().to_hex(),
+        })
+    };
+    let at = crate::TimeRange { start: 1, end: 1 };
+    let (replica, base_born, world_born, plain) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    vault
+        .batch()
+        .put_replicated(&replica, ENTITY_TYPE_SUMMARY, at, 1, &epoch(1)?)
+        .put(&base_born, ENTITY_TYPE_SUMMARY, at, 1, &epoch(2)?)
+        .put(&world_born, ENTITY_TYPE_SUMMARY, at, 1, &epoch(3)?)
+        .put(
+            &plain,
+            ENTITY_TYPE_SUMMARY,
+            at,
+            1,
+            b"a summary written by hand",
+        )
+        .text(&replica, &[("body", "harbor ledger")])
+        .text(&base_born, &[("body", "harbor ledger")])
+        .text(&world_born, &[("body", "harbor ledger")])
+        .text(&plain, &[("body", "harbor ledger")])
+        .commit()?;
+    assert!(
+        vault.record_scope(&replica)?.is_none(),
+        "a replica is unstamped"
+    );
+    let world = EntityId::from_bytes([0x3b; 16])?;
+    let placement = EpochPlacement {
+        world: Some(world),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, world_born))?;
+
+    let issuer = HostSlipIssuer::from_secret(b"epoch world host root")?;
+    let root_slip = vault.ensure_host_root_slip(&issuer)?;
+    let root = vault.verified_host_root_slip(&issuer)?;
+    let narrowed = |only: EntityId, context: &[u8]| -> Result<crate::authority::VerifiedSlip> {
+        let mut slip = root_slip.clone();
+        let mut scope = Scope::top();
+        scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(only)]));
+        issuer.attenuate(
+            &mut slip,
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+        )?;
+        vault.verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            context,
+            &issuer.binding_proof(&slip, context)?,
+        )
+    };
+    let base_only = narrowed(crate::claim::base_world_id(), b"base only")?;
+    let in_world = narrowed(world, b"world only")?;
+    let read = |proof: &crate::authority::VerifiedSlip, id: EntityId| {
+        vault
+            .scoped_read(ScopedReadActorKey::from_verified_slip(proof).expect("read proof"))
+            .read(&[crate::claim::PointRead::id(id)], None)
+    };
+
+    assert_eq!(
+        read(&root, replica)?.receipt.suppressed_count,
+        1,
+        "the root slip is denied the unstamped replica and counts it"
+    );
+    let unplaced = read(&base_only, replica)?;
+    assert_eq!(
+        unplaced.receipt,
+        read(&base_only, EntityId::now())?.receipt,
+        "a base-only slip cannot place the replica, so it reads as absent"
+    );
+    assert!(unplaced.single().is_none());
+    let found = |proof: &crate::authority::VerifiedSlip| -> Result<(Vec<EntityId>, usize)> {
+        let hits = vault
+            .scoped_read(ScopedReadActorKey::from_verified_slip(proof).expect("read proof"))
+            .search_text("harbor", 10, None)?;
+        Ok((
+            hits.iter().map(|hit| hit.id).collect(),
+            hits.receipt.suppressed_count,
+        ))
+    };
+    let (in_base, counted) = found(&base_only)?;
+    assert!(
+        in_base.contains(&base_born) && in_base.contains(&plain),
+        "a base-only retrieval finds the base summaries"
+    );
+    assert!(
+        !in_base.contains(&replica) && !in_base.contains(&world_born),
+        "a base-only retrieval returns neither the replica nor the W-born epoch"
+    );
+    assert_eq!(
+        counted, 0,
+        "a base-only retrieval counts the replica nowhere"
+    );
+    assert!(
+        found(&in_world)?.0.contains(&world_born),
+        "a W-only retrieval finds the W-born epoch"
+    );
+    for (id, what) in [
+        (base_born, "a base-born epoch"),
+        (plain, "a summary that is no epoch"),
+    ] {
+        assert!(
+            read(&base_only, id)?.single().is_some(),
+            "{what} reads as base"
+        );
+    }
+    assert!(
+        read(&in_world, world_born)?.single().is_some(),
+        "a W-born epoch reads in W"
+    );
+    assert!(
+        read(&base_only, world_born)?.single().is_none(),
+        "a W-born epoch is not base"
+    );
+    // Sol round 15: a later put that keeps the summary's words but not its
+    // epoch body (one trailing byte) does not move it; its stamp still
+    // places it in W.
+    let mut rewritten = epoch(3)?;
+    rewritten.push(0xc0);
+    vault.put_entity(&world_born, ENTITY_TYPE_SUMMARY, at, 1, &rewritten)?;
+    assert_eq!(
+        read(&base_only, world_born)?.receipt,
+        read(&base_only, EntityId::now())?.receipt,
+        "a W-born summary rewritten off its epoch body is still not base"
+    );
+    Ok(())
+}

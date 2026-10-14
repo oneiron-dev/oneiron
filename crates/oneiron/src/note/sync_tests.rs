@@ -1163,7 +1163,7 @@ mod program {
             let doc = LoroDoc::new();
             reverse_rematerialize(&source, &doc, &key).unwrap();
             let excluded = LoroDoc::new();
-            sync::copy_selected(&source, &doc, &excluded).unwrap();
+            sync::copy_judged(&source, &doc, &excluded).unwrap();
             assert_eq!(excluded.get_map("documents").len(), 1);
             receive(&peer, &send(&source, &doc, &key), &key);
             peer_manager.documents().subscribe_owner(note).unwrap();
@@ -1225,7 +1225,7 @@ mod program {
                 &source.get_raw(&other).unwrap().unwrap(),
             )
             .unwrap();
-            assert!(sync::copy_selected(&source, &doc, &partial).is_err());
+            assert!(sync::copy_judged(&source, &doc, &partial).is_err());
             source
                 .delete_entity_with_reason(&note, DeleteReason::UserDelete)
                 .unwrap();

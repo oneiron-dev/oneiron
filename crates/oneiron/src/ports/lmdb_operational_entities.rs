@@ -70,12 +70,15 @@ impl EntityStoreMaintenance for Store {
         id: &EntityId,
         body: &[u8],
     ) -> Result<()> {
-        let (stored, _) = stored_record(self, txn, id)?;
+        let (stored, entity_type) = stored_record(self, txn, id)?;
         if !carries_one_document_pointer(body) {
             return Err(Error::InvariantViolation(
                 "a document pointer body carries exactly one entity_doc_ref",
             ));
         }
+        // A pointer body is no epoch: what an epoch summary's words carried
+        // stays on its record (Sol round 23).
+        super::keep_worlds_of_unmade_epoch_in_txn(self, txn, id, entity_type, body)?;
         let mut payload = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
         payload.extend_from_slice(body);
         self.entities.put(txn, id.as_bytes(), &payload)

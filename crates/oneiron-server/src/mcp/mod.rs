@@ -14,6 +14,7 @@ mod endpoint_schema;
 mod exec_host;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod quickjs_provider;
+mod run_seats;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub use self::quickjs_provider::{McpQuickJsProvider, checked_in_quickjs_runtime};
 pub mod oauth_client;
@@ -53,8 +54,8 @@ pub use self::endpoint_schema::{
 };
 pub use self::exec_host::{
     McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider,
-    McpEngineNativeCodeHost, bind_mcp_code_execution_host, mcp_code_execution_host,
-    mcp_code_run_id, mcp_scoped_identity_id,
+    McpEngineNativeCodeHost, RunCompactionSeat, bind_mcp_code_execution_host,
+    mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub use self::paging::{
     MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpPageCursorError, McpPageSource, McpResultEnd,

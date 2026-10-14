@@ -19,11 +19,13 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron_code_check::{BackendKind, CheckMode};
 use serde::Deserialize;
 
+mod compaction;
 mod levels;
 mod provider;
 #[cfg(test)]
 mod tests;
 
+pub use compaction::CompactionSettings;
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
 
@@ -108,6 +110,8 @@ struct WorkflowFile {
 struct CodeModeFile {
     prompt_package: Option<PathBuf>,
     budget_units: Option<u64>,
+    #[serde(default)]
+    compaction: compaction::CompactionFile,
     #[serde(default)]
     check: CodeCheckFile,
 }
@@ -223,6 +227,7 @@ pub struct CodeModeSettings {
     pub prompt_package: Option<PathBuf>,
     /// Process-lifetime meter for code mode's model calls.
     pub budget_units: u64,
+    pub compaction: CompactionSettings,
     pub check: CodeCheckSettings,
 }
 
@@ -327,6 +332,7 @@ impl ModelsFile {
                 .code_mode
                 .budget_units
                 .unwrap_or(DEFAULT_CODE_MODE_BUDGET_UNITS),
+            compaction: self.code_mode.compaction.resolve()?,
             check: self.code_mode.check.resolve(base)?,
         };
         let recall = RecallModelSettings {

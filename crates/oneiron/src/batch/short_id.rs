@@ -190,14 +190,21 @@ pub(super) fn delete_related_edges(
         .port_edges(wtxn, id, EdgeDirection::Out, None, None)?
         .map(|row| row.map(|edge| (edge.kind, edge.target)))
         .collect::<Result<_>>()?;
-    for (kind, target) in &outbound {
-        store.port_remove_edge_rows(wtxn, id, *kind, target)?;
-    }
-
     let inbound: Vec<_> = store
         .port_edges(wtxn, id, EdgeDirection::In, None, None)?
         .map(|row| row.map(|edge| (edge.kind, edge.target)))
         .collect::<Result<_>>()?;
+    // An epoch summary written from `id` loses its edge to it here, as at the
+    // batch door: withdrawn for where its words sat, read before any of
+    // `id`'s edges go. A deletion that already captured them adds nothing.
+    for (kind, source) in &inbound {
+        if *kind == crate::edge::EdgeKind::DerivedFrom && source != id {
+            crate::ports::withdraw_from_lost_source_in_txn(store, wtxn, source, id)?;
+        }
+    }
+    for (kind, target) in &outbound {
+        store.port_remove_edge_rows(wtxn, id, *kind, target)?;
+    }
     for (kind, source) in &inbound {
         store.port_remove_edge_rows(wtxn, source, *kind, id)?;
     }

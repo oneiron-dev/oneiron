@@ -111,6 +111,12 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             let deleted = apply_delete_edge(store, wtxn, src, kind, tgt)?;
             if deleted {
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+                // An epoch summary keeps the words of a source whose edge
+                // goes: losing it withdraws the summary, at this door and at
+                // the sync bridge's, which applies a peer's removal here.
+                if kind == crate::edge::EdgeKind::DerivedFrom {
+                    crate::ports::withdraw_from_lost_source_in_txn(store, wtxn, &src, &tgt)?;
+                }
             }
             Ok(deleted)
         }

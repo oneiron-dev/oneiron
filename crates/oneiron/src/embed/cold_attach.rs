@@ -73,7 +73,11 @@ fn remark_pending_in_txn(
     let mut retired = Vec::new();
     for row in vault.store.port_entity_records(wtxn)? {
         let (id, row) = row?;
-        if row.entity_type == crate::registry::ENTITY_TYPE_TURN {
+        // A stale record's words are withdrawn (an erased source's, an
+        // epoch summary's): never queued again until it is written anew.
+        if crate::ports::stale_in_txn(&vault.store, wtxn, &id)? {
+            retired.push(id);
+        } else if row.entity_type == crate::registry::ENTITY_TYPE_TURN {
             match super::turn_text_in_txn(vault, wtxn, &id)? {
                 Some(text) => embeddable.push((id, text.into_bytes())),
                 None => retired.push(id),

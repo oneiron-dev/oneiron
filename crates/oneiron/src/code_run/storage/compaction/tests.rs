@@ -14,10 +14,11 @@ fn malformed_or_misbound_coverage_never_becomes_a_view_decision() -> Result<()> 
         epoch: 1,
         first: 1,
         last: 2,
+        digest: [0; 32],
     };
     let key = (run, summary);
     let mut raw = encode(&bogus);
-    for invalid in [vec![], vec![2_u8; BODY_LEN]] {
+    for invalid in [vec![], vec![VERSION + 1; BODY_LEN]] {
         vault.with_write_txn(|txn| COVERAGE.put_undecodable(&vault.store, txn, &key, &invalid))?;
         assert!(vault.code_run_compaction_coverage(run).is_err());
     }
@@ -25,8 +26,11 @@ fn malformed_or_misbound_coverage_never_becomes_a_view_decision() -> Result<()> 
     vault.with_write_txn(|txn| COVERAGE.put_undecodable(&vault.store, txn, &key, &raw))?;
     assert!(vault.code_run_compaction_coverage(run).is_err());
     vault.with_write_txn(|txn| COVERAGE.put(&vault.store, txn, &key, &bogus))?;
-    assert!(
-        vault.code_run_compaction_coverage(run).is_err(),
+    // A summary gone from the vault is withdrawn: its steps stay covered and
+    // render no words, so an erasure never bricks the run.
+    assert_eq!(
+        vault.code_run_compaction_epochs(run)?,
+        vec![(bogus, None)],
         "no minted SUMMARY exists"
     );
     Ok(())
@@ -68,6 +72,7 @@ fn coverage_row_must_match_the_exact_minted_summary_body() -> Result<()> {
         epoch: 1,
         first: 1,
         last: 2,
+        digest: *blake3::hash(&body).as_bytes(),
     };
     let key = (run, summary);
     let put = |row: &CodeRunCompactionCoverage| -> Result<()> {
@@ -90,5 +95,26 @@ fn coverage_row_must_match_the_exact_minted_summary_body() -> Result<()> {
         put(&mismatch)?;
         assert!(vault.code_run_compaction_coverage(run).is_err());
     }
+    // A generic write that replaces the accepted prose in place, range
+    // intact, withdraws the summary instead of rendering the new words.
+    put(&row)?;
+    let replaced = encode_epoch_summary_body(&EpochSummaryBody {
+        v: EPOCH_SUMMARY_BODY_VERSION,
+        session: session.to_hex(),
+        epoch: 1,
+        turn_start: 1,
+        turn_end: 2,
+        level: EPOCH_SUMMARY_LEVEL,
+        text: "words no gate judged".into(),
+        actor: actor.to_hex(),
+    })?;
+    vault.put_entity(
+        &summary,
+        ENTITY_TYPE_SUMMARY,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &replaced,
+    )?;
+    assert_eq!(vault.code_run_compaction_epochs(run)?, vec![(row, None)]);
     Ok(())
 }

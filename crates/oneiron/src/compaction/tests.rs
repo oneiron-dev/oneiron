@@ -543,9 +543,14 @@ impl CompactionBackend for CheapBackend {
         CompactionTierClass::Cheap
     }
 
-    fn compact(&self, request: &CompactionRequest) -> Result<CompactionProduct> {
+    fn compact(
+        &self,
+        request: &CompactionRequest,
+        _retry: Option<crate::compaction::CompactionCheck>,
+    ) -> std::result::Result<CompactionProduct, crate::compaction::CompactionRefusal> {
         Ok(CompactionProduct {
             summary_text: format!("epoch text over {} rows", request.window.len()),
+            finish: crate::FinishReason::Stop,
             latency: Duration::from_millis(500),
         })
     }
@@ -626,8 +631,17 @@ fn compact_once(
     let directive = driver.evaluate_now(vault, u64::MAX)?;
     assert!(matches!(directive, CompactionDirective::Begin { .. }));
     let request = driver.request_for(vault, &session, window)?;
-    let product = driver.backend().compact(&request)?;
-    driver.integrate(vault, &session, actor, &request, product, &[])
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
+    driver.integrate(
+        vault,
+        &session,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+        &[],
+    )
 }
 
 /// Drives one crossing → request → integrate cycle with a HOST-supplied
@@ -647,11 +661,14 @@ fn integrate_product(
         vault,
         &session,
         actor,
-        &request,
-        CompactionProduct {
-            summary_text: summary_text.to_owned(),
-            latency: Duration::from_millis(500),
-        },
+        crate::compaction::GatedCompaction::ungated_for_test(
+            &request,
+            CompactionProduct {
+                summary_text: summary_text.to_owned(),
+                finish: crate::FinishReason::Stop,
+                latency: Duration::from_millis(500),
+            },
+        ),
         &[],
     )
 }
@@ -1021,9 +1038,18 @@ fn a_room_turn_beyond_the_edge_cap_still_refuses_the_mint() -> Result<()> {
 
     driver.evaluate_now(&vault, u64::MAX)?;
     let request = driver.request_for(&vault, &session, window)?;
-    let product = driver.backend().compact(&request)?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
     let refused = driver
-        .integrate(&vault, &session, actor, &request, product, &[])
+        .integrate(
+            &vault,
+            &session,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+            &[],
+        )
         .expect_err("a base keyframe derived from room content is refused at creation");
     assert_eq!(refused.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     Ok(())

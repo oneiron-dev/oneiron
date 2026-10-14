@@ -56,6 +56,34 @@ pub(super) fn complete(
             return Ok(false);
         }
     }
+    // Every export door judges an epoch summary by the sources its
+    // `DerivedFrom` edges name, and a deletion withdraws it through its
+    // dependency rows. It is fresh again only once the two agree: the edges
+    // name exactly the sources it was regenerated from. A dependency row
+    // alone certifies nothing a door reads, and an edge to an undeclared
+    // source would lose the row that withdraws it on that source's erase; an
+    // obsolete edge goes through the batch door first, which withdraws.
+    if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        && crate::compaction::stored_epoch_in(store, txn, dependent, &row.body)?.may_be()
+    {
+        let named = super::EdgeStoreRead::port_edges(
+            store,
+            txn,
+            dependent,
+            super::EdgeDirection::Out,
+            Some(crate::edge::EdgeKind::DerivedFrom),
+            None,
+        )?
+        .map(|edge| edge.map(|edge| edge.target))
+        .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let declared = sources
+            .iter()
+            .map(|source| source.document)
+            .collect::<std::collections::BTreeSet<_>>();
+        if named != declared {
+            return Ok(false);
+        }
+    }
     // Replace only this dependent's reverse-indexed rows. Never scan all sources.
     for (key, source) in reverse_rows(store, txn, dependent)? {
         store.vault_meta().delete(txn, &key)?;
@@ -69,6 +97,9 @@ pub(super) fn complete(
     for source in sources {
         super::integrity::record_dependency_in_txn(store, txn, *source, dependent)?;
     }
+    // What an epoch summary was withdrawn for stays: its old words still sit
+    // in window history and in snapshots already packed, which a door judges
+    // by this row (Sol round 20). It retires with the body.
     store
         .vault_meta()
         .delete(txn, &super::integrity::stale_key(dependent))?;

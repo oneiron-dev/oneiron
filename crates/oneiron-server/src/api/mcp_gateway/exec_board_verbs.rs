@@ -104,6 +104,9 @@ pub(crate) async fn execute_mcp_execute_code(
     if let Some(receipt) = &outcome.seat_receipt {
         structured["model_choice"] = json!(receipt);
     }
+    if let Some(report) = &outcome.compaction {
+        structured["compaction"] = mcp_compaction_value(report);
+    }
     let result = mcp_endpoint_result(
         server,
         actor,
@@ -136,7 +139,8 @@ fn mcp_code_run_health(
     match status {
         oneiron::engine_executor::EngineExecutorStatus::Complete => McpRetrievalHealth::Healthy,
         oneiron::engine_executor::EngineExecutorStatus::Waiting(_)
-        | oneiron::engine_executor::EngineExecutorStatus::Yielded { .. } => {
+        | oneiron::engine_executor::EngineExecutorStatus::Yielded { .. }
+        | oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => {
             McpRetrievalHealth::Partial
         }
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
@@ -163,6 +167,10 @@ fn mcp_code_run_help(status: &oneiron::engine_executor::EngineExecutorStatus) ->
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
             vec!["this run reached its hard step limit and will not continue".to_owned()]
         }
+        oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => vec![
+            "this run's context window is full and no compacted summary has landed yet".to_owned(),
+            "the same run_ref continues it once compaction lands".to_owned(),
+        ],
     }
 }
 
@@ -202,6 +210,14 @@ fn mcp_executor_status_value(status: &oneiron::engine_executor::EngineExecutorSt
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
             json!({ "status": "hard_step_limit_reached" })
         }
+        oneiron::engine_executor::EngineExecutorStatus::WindowFull {
+            next_step_seq,
+            reason,
+        } => json!({
+            "status": "window_full",
+            "next_step_seq": next_step_seq,
+            "reason": mcp_window_full_reason(*reason),
+        }),
     }
 }
 
@@ -486,3 +502,50 @@ pub(crate) fn mcp_board_verb_page_source(
 
 /// The board section the TASKS producer's omissions belong to.
 pub(crate) const MCP_BOARD_TASKS_SECTION: &str = "TASKS";
+
+/// Why a run parked at its window budget, as typed wire data.
+fn mcp_window_full_reason(reason: oneiron::engine_executor::WindowFullReason) -> Value {
+    match reason {
+        oneiron::engine_executor::WindowFullReason::InFlight => json!({"kind": "in_flight"}),
+        oneiron::engine_executor::WindowFullReason::NothingToCompact => {
+            json!({"kind": "nothing_to_compact"})
+        }
+        oneiron::engine_executor::WindowFullReason::Suppressed(suppression) => {
+            let mut value = mcp_suppression_value(suppression);
+            value["kind"] = json!("suppressed");
+            value
+        }
+    }
+}
+
+/// Why compaction did not run, typed: never a bare "did not run".
+fn mcp_suppression_value(suppression: oneiron::compaction::CompactionSuppression) -> Value {
+    use oneiron::compaction::CompactionSuppression;
+    let mut value = json!({"suppression": suppression.as_str()});
+    match suppression {
+        CompactionSuppression::TurnScoped { check: Some(check) } => {
+            value["check"] = json!(check.as_str());
+        }
+        CompactionSuppression::Sticky { why } => value["why"] = json!(why.as_str()),
+        _ => {}
+    }
+    value
+}
+
+/// A run's compaction after this call (agent-runtime-v1 §d7): its window,
+/// a pass in flight, the last swap, and why it did not run.
+fn mcp_compaction_value(report: &oneiron::engine_executor::CompactionReport) -> Value {
+    let mut value = json!({
+        "used_tokens": report.used_tokens,
+        "compact_at": report.compact_at,
+        "window_tokens": report.window_tokens,
+        "in_flight": report.in_flight,
+    });
+    if let Some((epoch, first, last)) = report.last_swap {
+        value["last_swap"] = json!({"epoch": epoch, "first_step": first, "last_step": last});
+    }
+    if let Some(suppression) = report.suppressed {
+        value["suppressed"] = mcp_suppression_value(suppression);
+    }
+    value
+}

@@ -10,7 +10,7 @@ mod scrub;
 pub(crate) use scrub::deleted;
 
 pub(crate) use materialize::apply;
-pub(crate) use mirror::{copy_selected, refresh};
+pub(crate) use mirror::{copy_judged, copy_selected, dropped_in, refresh};
 
 use crate::note::documents::{doc_key, invalid};
 use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
@@ -111,7 +111,14 @@ fn held(
 ) -> Result<bool> {
     crate::settings::device_only_withholds(&vault.store, txn, flagged, note)
 }
-fn blocked(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &LoroDoc, note: &EntityId) -> Result<bool> {
+/// Whether no export of `doc` carries `note`: it is tombstoned there, deleted
+/// here, off the record, or an erased shell.
+pub(crate) fn blocked(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    note: &EntityId,
+) -> Result<bool> {
     if crate::sync::loro_support::tombstone_map_contains_id(&doc.get_map("tombstones"), note)
         || vault.local_hard_delete_marker_exists_in_txn(txn, note)?
         || vault.store.off_record_sessions.contains_entity(note)?

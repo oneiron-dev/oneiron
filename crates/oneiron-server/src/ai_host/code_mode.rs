@@ -21,6 +21,8 @@ use oneiron_code_check::{
 };
 
 use super::CHAT_ROLE;
+use super::compaction::CodeModeCompaction;
+use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
 use crate::mcp::McpQuickJsProvider;
 use crate::models::ModelRuntime;
@@ -33,6 +35,7 @@ pub(super) async fn bind(
     server: SyncServer,
     runtime: &Arc<ModelRuntime>,
     models: Option<&ModelsConfig>,
+    status: &StatusCell,
 ) -> SyncServer {
     let Some(models) = models else {
         return server;
@@ -82,6 +85,13 @@ pub(super) async fn bind(
             return server;
         }
     };
+    let compaction = CodeModeCompaction::resolve(
+        server.vault(),
+        runtime,
+        models,
+        &prompt_package,
+        guard.clone(),
+    );
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
@@ -110,7 +120,7 @@ pub(super) async fn bind(
         Some(shadow) => provider.with_code_check(shadow),
         None => provider,
     };
-    server.with_mcp_quickjs_provider(provider)
+    server.with_mcp_quickjs_provider(compaction.attach(provider, status))
 }
 
 /// Shadow mode's checker, per `[models.code_mode.check]`; none when the mode
