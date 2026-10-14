@@ -163,17 +163,28 @@ fn validate_window_update(
         }
         // A shallow snapshot also carries the state at its root, where a
         // carrier deleted after the root survives outside the retained ops.
+        // Loro keeps that root as encoded, apart from the latest-state
+        // section a sender may also ship, and a later export of the doc
+        // reuses it. So read the root from such an export, where a latest
+        // section cannot mask it, rather than from the imported state.
         if candidate.is_shallow() {
-            candidate
-                .checkout(&candidate.shallow_since_frontiers())
-                .map_err(decode_error)?;
+            let root = candidate.shallow_since_frontiers();
+            let encoded = candidate
+                .export(loro::ExportMode::shallow_snapshot(&root))
+                .map_err(|e| {
+                    Error::sync_engine(
+                        crate::error::SyncEngineContext::LoroExportShallowSnapshot,
+                        e,
+                    )
+                })?;
+            let rooted = LoroDoc::from_snapshot(&encoded).map_err(decode_error)?;
+            rooted.checkout(&root).map_err(decode_error)?;
             let mut at_root = None;
-            map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
+            map_for_each_value_bytes(&rooted.get_map("entities"), |_, blob| {
                 if at_root.is_none() {
                     at_root = blob.and_then(local_only);
                 }
             });
-            candidate.checkout_to_latest();
             if let Some(error) = at_root {
                 return Err(error);
             }

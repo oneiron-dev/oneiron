@@ -3846,6 +3846,47 @@ fn diagnostic_carriers_never_leave_window_in_live_state_or_history() -> Result<(
     Ok(())
 }
 
+/// A shallow snapshot whose encoded root holds `carrier` under `masked`, with
+/// a latest-state section spliced in from a twin whose root holds a clean
+/// value there. Both share one peer and counters, so the retained op agrees.
+fn masked_shallow_root(carrier: &[u8]) -> Result<Vec<u8>> {
+    let shallow = |value: &[u8]| -> Result<Vec<u8>> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(7).unwrap();
+        map_insert_bytes(&doc.get_map("entities"), "masked", value)?;
+        doc.commit();
+        map_insert_bytes(&doc.get_map("entities"), "ordinary", b"ordinary")?;
+        doc.commit();
+        Ok(doc
+            .export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
+            .unwrap())
+    };
+    // A fast snapshot is a 22-byte header (magic, checksum, mode) and three
+    // length-prefixed sections: oplog, latest state, root state.
+    fn sections(blob: &[u8]) -> Vec<&[u8]> {
+        let mut rest = &blob[22..];
+        (0..3)
+            .map(|_| {
+                let (len, tail) = rest.split_at(4);
+                let len = usize::try_from(u32::from_le_bytes(len.try_into().unwrap())).unwrap();
+                let (section, tail) = tail.split_at(len);
+                rest = tail;
+                section
+            })
+            .collect()
+    }
+    let (with_carrier, clean) = (shallow(carrier)?, shallow(b"clean")?);
+    let (target, mask) = (sections(&with_carrier), sections(&clean));
+    let mut out = with_carrier[..22].to_vec();
+    for section in [target[0], mask[2], target[2]] {
+        out.extend_from_slice(&u32::try_from(section.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(section);
+    }
+    let checksum = xxhash_rust::xxh32::xxh32(&out[20..], u32::from_le_bytes(*b"LORO"));
+    out[16..20].copy_from_slice(&checksum.to_le_bytes());
+    Ok(out)
+}
+
 #[test]
 fn local_only_update_admission_is_side_effect_free_and_checks_hidden_history() -> Result<()> {
     // C1: a peer's custody carrier is refused like a diagnostic one, before
@@ -3905,6 +3946,23 @@ fn local_only_update_admission_is_side_effect_free_and_checks_hidden_history() -
         assert!(refused(validate_window_update_locality(&doc, &full)));
         assert_eq!(doc.oplog_vv(), before);
         assert!(map_get_bytes(&doc.get_map("entities"), raw_key).is_none());
+    }
+    // A sender can also ship a latest-state section that masks a carrier
+    // left in the snapshot's encoded root, which a later export reuses.
+    for carrier in [&diagnostic, &custody] {
+        let masked = masked_shallow_root(carrier)?;
+        let shown = LoroDoc::from_snapshot(&masked).unwrap();
+        let entities = shown.get_map("entities");
+        assert_eq!(map_get_bytes(&entities, "masked"), Some(b"clean".to_vec()));
+        let persisted = shown
+            .export(loro::ExportMode::shallow_snapshot(&shown.oplog_frontiers()))
+            .unwrap();
+        let reloaded = LoroDoc::from_snapshot(&persisted).unwrap();
+        assert_eq!(
+            map_get_bytes(&reloaded.get_map("entities"), "masked").as_ref(),
+            Some(carrier)
+        );
+        assert!(refused(validate_window_update_locality(&doc, &masked)));
     }
     let ordinary = doc.fork();
     map_insert_bytes(&ordinary.get_map("entities"), "second", b"ordinary")?;
