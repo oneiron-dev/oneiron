@@ -104,7 +104,11 @@ pub(super) mod release_hook {
         if let Some(world) = FLAG.take() {
             server
                 .vault
-                .set_world_device_only(world, true)
+                .keep_world_on_this_machine_under_for_test(
+                    &crate::test_credentials::host_issuer(server),
+                    world,
+                    true,
+                )
                 .expect("device-only flag");
         }
     }

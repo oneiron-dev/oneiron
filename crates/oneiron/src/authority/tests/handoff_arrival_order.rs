@@ -6,6 +6,7 @@
 //! one first refuses the other and records the refusal.
 use super::history_transfer::{re_root_entry, replica_with, store};
 use super::support::*;
+use super::world_floor::assert_no_vouch_widens;
 use super::*;
 use crate::authority::handoff_equivocation::RECORD_LIMIT;
 use crate::{TimeRange, Vault, VaultConfig};
@@ -96,6 +97,7 @@ fn assert_no_live_root(vault: &Vault, fork: &Fork) {
     let id = genesis_vault_id(&fork.genesis).unwrap();
     let heir_row = withdrawal(id, &fork.forged, &fork.forger_heir, 1, 1);
     assert!(put(vault, &[&heir_row]).is_err());
+    assert_no_vouch_widens(vault);
 }
 
 /// Check 1: one atomic import of the complete history, in either blob order.
@@ -149,6 +151,7 @@ fn a_handoff_that_arrives_after_its_siblings_floor_still_settles() {
     assert!(fold.valid_entries.contains(&hash(&fork.handoff)));
     assert!(is_live(&fold, &fork.next));
     assert!(!is_live(&fold, &fork.old));
+    assert_no_vouch_widens(&vault);
     assert!(
         !fold
             .roster
@@ -196,6 +199,7 @@ fn a_row_below_its_floor_outside_any_handoffs_line_stays_refused() {
             .contains(&AuthorityFoldIssue::NonMonotonicSeq(hash(&rollback)))
     );
     assert!(is_live(&fold, &fork.next));
+    assert_no_vouch_widens(&vault);
 }
 
 /// Sol review 6: a door records every retired key whose row it refuses, and
