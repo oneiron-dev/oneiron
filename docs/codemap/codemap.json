@@ -51780,6 +51780,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/commands/unauthenticated_bind_tests.rs",
+     "purpose": "Unauthenticated mode (`--insecure-allow-unauthenticated` with no `auth_secret`) admits a request with no…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/commands/writer_lease_tests.rs",
      "purpose": "—",
      "surface": {}
@@ -54650,7 +54658,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -54842,7 +54850,7 @@
    "over_bar": 11,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 339,
-   "test_files": 152
+   "test_files": 153
   },
   "oneiron-spawn": {
    "files": [
