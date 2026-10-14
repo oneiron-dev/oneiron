@@ -78,22 +78,16 @@ pub(in crate::sync) fn watches(vault: &Vault, id: &EntityId) -> bool {
     })
 }
 
-/// Records the rows a door wrote into `vault` where none was stored, each
-/// with the bytes it wrote, once the transaction that wrote them committed.
-/// Only a watched row written with its sender's bytes is a birth.
-pub(in crate::sync) fn note_born<'a>(
-    vault: &Vault,
-    written: impl IntoIterator<Item = (EntityId, &'a [u8])>,
-) {
+/// Records a row a door wrote into `vault` where none was stored, with the
+/// bytes it wrote, once the transaction that wrote it committed. Only a
+/// watched row written with its sender's bytes is a birth.
+pub(in crate::sync) fn note_born(vault: &Vault, id: EntityId, bytes: &[u8]) {
     WATCH.with(|slot| {
         if let Some(watch) = slot.borrow_mut().as_mut()
             && watch.of(vault)
+            && watch.rows.get(&id).is_some_and(|sent| sent[..] == *bytes)
         {
-            for (id, bytes) in written {
-                if watch.rows.get(&id).is_some_and(|sent| sent[..] == *bytes) {
-                    watch.born.insert(id);
-                }
-            }
+            watch.born.insert(id);
         }
     });
 }

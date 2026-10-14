@@ -612,12 +612,9 @@ pub(super) fn materialize_edges_from_delta(
     if result.is_ok() {
         // A hydrated endpoint was written where no row was stored: a birth a
         // federated import may be watching (Sol R11 F1 on #1432).
-        crate::sync::ingest::note_born(
-            vault,
-            hydrated_endpoints
-                .iter()
-                .map(|(id, blob)| (*id, blob.as_slice())),
-        );
+        for (id, blob) in &hydrated_endpoints {
+            crate::sync::ingest::note_born(vault, *id, blob);
+        }
     }
     if result.is_ok()
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)

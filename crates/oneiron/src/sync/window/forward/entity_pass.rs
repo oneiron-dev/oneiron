@@ -56,7 +56,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         }) {
             Ok((step, unborn)) => {
                 if unborn && let (Some(id), Some(blob)) = (step.written(), value) {
-                    note_born(vault, [(id, blob)]);
+                    note_born(vault, id, blob);
                 }
                 step
             }

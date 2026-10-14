@@ -160,7 +160,9 @@ pub(super) fn materialize_entities_with_changes(
     });
 
     if result.is_ok() {
-        note_born(vault, born.iter().map(|(id, blob)| (*id, blob.as_slice())));
+        for (id, blob) in &born {
+            note_born(vault, *id, blob);
+        }
     }
     if result.is_ok()
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)

@@ -285,7 +285,8 @@ impl SyncClient {
         )
         .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(&durable.window_key)?;
-        let born = watch_births(&self.vault, births.births(), || {
+        let vault = std::sync::Arc::clone(&self.vault);
+        let born = watch_births(&vault, births.births(), || {
             self.import_accepted_window_update(
                 &durable.window_key,
                 &window,
@@ -345,7 +346,8 @@ impl SyncClient {
             .hold_from_peer(&self.vault, key, grant)
             .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(window_key)?;
-        let born = watch_births(&self.vault, admitted.births(), || {
+        let vault = std::sync::Arc::clone(&self.vault);
+        let born = watch_births(&vault, admitted.births(), || {
             self.import_accepted_window_update(window_key, &window, admitted.bytes())
         })?;
         let released = admitted
