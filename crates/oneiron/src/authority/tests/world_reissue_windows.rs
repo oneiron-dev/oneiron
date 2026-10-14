@@ -203,7 +203,7 @@ fn old_root_writes_after_a_re_issue_change_nothing() {
                 role: MachineRole::Removed,
                 revision: held.revision + 2,
                 seen_world_edits: old_edits.iter().chain(&widening).copied().collect(),
-                ..held.clone()
+                ..held
             },
         ],
     );
@@ -229,11 +229,13 @@ fn old_root_writes_after_a_re_issue_change_nothing() {
 /// A and B. A holds W and sets it to `OneMachine(B)`; while another install
 /// re-issues R2 carrying B, R1 removes B and A re-picks W to `MyMachines`.
 /// Before A moves, the holder of R1's seed removes A under R1, listing only
-/// the first edit. A anchors its own request with R2's seed, but it has
-/// standing neither in its earlier read nor in R2's, so a re-assertion is
-/// refused, and installs pinned to R2 read `OneMachine(B)`, never wider. B
-/// holds no rows of W: the owner removes B under R2, and A re-picks W
-/// through the ordinary door.
+/// the first edit. A anchors its own request with R2's seed. Its earlier
+/// read already equals R2's (`OneMachine(B)`: under R1 the removal leaves the
+/// re-pick restriction only), so the narrowed report does not list W (the
+/// Engine's ruling, 2026-10-15). A has standing neither in its earlier read
+/// nor in R2's, so a re-assertion is refused, and installs pinned to R2 read
+/// `OneMachine(B)`, never wider. B holds no rows of W: the owner removes B
+/// under R2, and A re-picks W through the ordinary door.
 #[test]
 fn a_compromised_old_seed_only_narrows_and_the_owner_recovers() {
     let host = super::machine_identity::host();
@@ -254,9 +256,18 @@ fn a_compromised_old_seed_only_narrows_and_the_owner_recovers() {
     sync(&issuer.vault, &a.vault);
 
     let own = own_request(&a.vault);
-    a.vault
+    let report = a
+        .vault
         .anchor_machine(&a.owner, HERE, &second.seed, &own, None, None)
         .unwrap();
+    assert!(
+        report
+            .repin
+            .unwrap()
+            .narrowed
+            .iter()
+            .all(|narrowed| narrowed.world != world)
+    );
     assert!(
         a.vault
             .reassert_world_privacy(

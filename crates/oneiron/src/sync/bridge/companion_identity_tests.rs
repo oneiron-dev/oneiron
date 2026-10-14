@@ -6,8 +6,8 @@ use ed25519_dalek::SigningKey;
 use loro::LoroDoc;
 
 use crate::authority::{
-    EditOrigin, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MachineEncryptionKey, MachineOwnership, MachineRole,
+    EditOrigin, HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineRole,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
@@ -63,17 +63,19 @@ fn install() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+/// `install`'s request to join `vault_id`, with its own encryption key from a
+/// keystore of its own (world privacy P6b).
+fn own_request(vault_id: [u8; 32], install: &Vault) -> MachineEnrolmentRequest {
+    install.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let own = install.machine_encryption_key(vault_id).unwrap();
+    install.machine_enrolment_request(vault_id, own).unwrap()
+}
+
 /// The owner pairs `install` into `host` with `role`; the machine it joins as.
 fn enroll(host: &Host, install: &Vault, role: MachineRole) -> EntityId {
-    let request = install
-        .machine_enrolment_request(
-            host.vault_id,
-            MachineEncryptionKey {
-                suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-                key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
-            },
-        )
-        .unwrap();
+    let request = own_request(host.vault_id, install);
     host.vault
         .enroll_machine(&host.issuer, &host.owner, &request, role)
         .unwrap();
@@ -454,15 +456,7 @@ fn anchor_root(host: &Host, seed: &RecoveryRootSeed, install: Option<&Vault>) ->
         anchor_key: root.anchor_key,
     })];
     if let Some(install) = install {
-        let request = install
-            .machine_enrolment_request(
-                host.vault_id,
-                MachineEncryptionKey {
-                    suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-                    key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
-                },
-            )
-            .unwrap();
+        let request = own_request(host.vault_id, install);
         ops.push(AuthorityOp::MachineProfile(MachineProfile {
             machine: request.machine,
             owner: host.owner.actor(),

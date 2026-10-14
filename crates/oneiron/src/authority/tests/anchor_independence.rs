@@ -79,10 +79,11 @@ fn vault_with(log: &RetiredAnchor) -> (tempfile::TempDir, Vault) {
 
 /// The anchor marks M, then removes it; a later anchor row on a sibling
 /// branch arrives first, so the removal falls under this vault's sequence
-/// floor and stands only through its own proof. M stays removed in the
-/// anchor's chain, retired roster key or not (S2-F2). Fails before: the
-/// fence forgot the proved removal, since only rows the ordinary fold kept
-/// counted as the anchor's.
+/// floor. It still lands, restriction only (P2's rule, Astra #1430b B-F1),
+/// and stands through its own proof as well. M stays removed in the anchor's
+/// chain, retired roster key or not (S2-F2). Fails before: the fence forgot
+/// the proved removal, since only rows the ordinary fold kept counted as the
+/// anchor's.
 #[test]
 fn a_proved_anchor_removal_outlives_the_anchors_retired_roster_key() {
     let log = retired_anchor(160);
@@ -108,11 +109,10 @@ fn a_proved_anchor_removal_outlives_the_anchors_retired_roster_key() {
         put(&vault, &[entry]).unwrap();
     }
     let fold = vault.authority_fold().unwrap();
+    let removal = authority_entry_hash(&removal).unwrap();
     assert!(
-        !fold
-            .valid_entries
-            .contains(&authority_entry_hash(&removal).unwrap()),
-        "the floor refuses the removal in the ordinary fold"
+        fold.valid_entries.contains(&removal) && fold.install.held_back.contains(&removal),
+        "the removal lands past the floor, restriction only"
     );
     let folded = fold.machine(request.machine).unwrap();
     assert!(folded.anchored[&log.root.anchor_key].removed);

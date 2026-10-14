@@ -158,7 +158,7 @@ impl Fresh {
             ..
         } = self;
         drop(vault);
-        let vault = Vault::open(&_backups.path().join("fresh"), config.clone()).unwrap();
+        let vault = Vault::open(_backups.path().join("fresh"), config.clone()).unwrap();
         Self::on(_backups, vault, keys, config)
     }
 
@@ -485,7 +485,7 @@ fn a_second_key_under_one_id_conflicts_and_the_next_door_mints_afresh() {
             )
             .unwrap(),
         )],
-        ..genuine.clone()
+        ..genuine
     };
     host.vault
         .put_authority_log_entry(&record_by(&host, &b, other_bytes), at, 2)

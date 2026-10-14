@@ -224,9 +224,10 @@ impl AuthorityFold {
         })
     }
 
-    /// `read_X(world)` for this install's own trust ([`Self::local_admitter`]),
-    /// which decides who may edit it here. A conflicted vault root fails
-    /// closed, as for the settings.
+    /// `read_X(world)` for this install's own trust (its pinned anchor while
+    /// the fold holds the pinned root, else the roster), which decides who
+    /// may edit it here. A conflicted vault root fails closed, as for the
+    /// settings.
     #[must_use]
     pub fn world_local_read(&self, world: EntityId) -> EffectiveRead {
         if self.vault_root_is_conflicted() {

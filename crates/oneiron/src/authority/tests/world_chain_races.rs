@@ -229,7 +229,7 @@ fn a_held_roster_removal_never_lifts_a_widening_beside_a_live_anchor() {
     );
     let entries = vec![
         vault.genesis.clone(),
-        vault.published.clone(),
+        vault.published,
         roster_mark,
         anchor_mark,
         held,

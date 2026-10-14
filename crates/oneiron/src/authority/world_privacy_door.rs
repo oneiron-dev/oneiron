@@ -423,13 +423,29 @@ impl Vault {
                     .authority_fold()?
                     .vault_id
                     .ok_or_else(invalid_authority)?;
-                let request = self.machine_enrolment_request(
-                    vault_id,
-                    MachineEncryptionKey {
-                        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-                        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
-                    },
-                )?;
+                // A request carries this install's own encryption key (world
+                // privacy P6b). With no keystore on the handle, a process-memory
+                // one lends it the key for the request alone, so the settings
+                // door below still runs with none, as before.
+                let keystore = &self.device_keystore;
+                let lent = keystore
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_none();
+                if lent {
+                    self.install_device_keystore(std::sync::Arc::new(
+                        oneiron_keystore::MemoryKeystore::default(),
+                    ));
+                }
+                let request = self
+                    .machine_encryption_key(vault_id)
+                    .and_then(|own| self.machine_enrolment_request(vault_id, own));
+                if lent {
+                    *keystore
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                }
+                let request = request?;
                 self.enroll_machine(
                     issuer,
                     &owner,

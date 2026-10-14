@@ -3,7 +3,7 @@
 //! Concurrent edits fold stricter in every order, and no forged entry, generic
 //! write, replayed edit, restore or machine that lost "yours" widens a world.
 use super::super::slip_vault::next_entry;
-use super::machine_identity::{Host, encryption_key, host, own_encryption_key, request_for};
+use super::machine_identity::{Host, host, own_encryption_key, request_for};
 use super::support::RosterHead;
 use super::support::{
     authority_key_from_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,

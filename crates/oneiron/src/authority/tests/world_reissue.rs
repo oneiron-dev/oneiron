@@ -271,6 +271,56 @@ fn re_assertion_keeps_a_widening() {
     }
 }
 
+/// 7c, the narrowed report at scale (Sol R1c-F4; the Engine's scaled
+/// oracle, 2026-10-15): under R1, A holds 48 worlds, each set to
+/// `OneMachine(A)` and widened to `MyMachines`; the re-issue carries A. A's
+/// re-pin lists every one as narrowed, and re-asserting each restores
+/// `MyMachines` on R2 installs. Nothing on the report path caps it (the
+/// carry list's 4096 cap is gone); 48 stands in for "more than 4096", which
+/// a lib-test fold cannot reach in time.
+#[test]
+fn the_narrowed_report_lists_every_world_at_scale() {
+    const WORLDS: usize = 48;
+    let host = host();
+    let worlds: BTreeSet<_> = (0..WORLDS).map(|_| world_row(&host)).collect();
+    let issuer = fresh_install(&host);
+    let a = fresh_install(&host);
+    let first = issue(&issuer, &[]);
+    admit(&issuer, &first, &a);
+    for world in &worlds {
+        set_on(&a, *world, ReadLocation::OneMachine(a.machine()));
+        set_on(&a, *world, ReadLocation::MyMachines);
+    }
+    sync(&a.vault, &issuer.vault);
+    let second = issue(&issuer, &[a.machine()]);
+    sync(&issuer.vault, &a.vault);
+
+    let report = a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+    let narrowed: BTreeSet<_> = report
+        .narrowed
+        .iter()
+        .map(|narrowed| narrowed.world)
+        .collect();
+    assert_eq!(narrowed, worlds);
+    for world in &worlds {
+        a.vault
+            .reassert_world_privacy(
+                &a.owner,
+                HERE,
+                *world,
+                settings(ReadLocation::MyMachines),
+                revision(&a.vault, *world),
+            )
+            .unwrap();
+    }
+    sync(&a.vault, &issuer.vault);
+    for world in &worlds {
+        for install in [&a, &issuer] {
+            assert_eq!(read_on(install, *world), EffectiveRead::MyMachines);
+        }
+    }
+}
+
 /// 7c, a compromised old root's late widening is never promoted (Sol
 /// R1h-F1): R2 carries A while A still pins R1. A holder of R1's seed then
 /// admits its own machine H under R1, and H widens W from `MyMachines` to

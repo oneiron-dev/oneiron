@@ -1,7 +1,7 @@
 //! World privacy orphan re-pick: a world whose read names no machine still
 //! the owner's is re-picked from another of the owner's machines, and never
 //! while a machine it names is still the owner's.
-use super::machine_identity::{encryption_key, host, own_encryption_key, request_for};
+use super::machine_identity::{host, own_encryption_key, request_for};
 use super::support::RosterHead;
 use super::support::ed_key;
 use super::world_floor::assert_no_vouch_widens;
