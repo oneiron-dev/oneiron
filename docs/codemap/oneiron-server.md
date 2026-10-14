@@ -143,7 +143,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openapi_registry.rs` | src | m | 1 crate-vis | — | OpenAPI ApiDoc registration for the HTTP API |
 | `src/api/org_admin.rs` | src | s | 2 crate-vis | — | Owner-only setup and the Console's closed organization action list |
 | `src/api/owner_routes.rs` | src | m | 3 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
-| `src/api/pairing.rs` | src | s | 11 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
+| `src/api/pairing.rs` | src | m | 12 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
 | `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
 | `src/api/run_tree.rs` | src | m | 28 crate-vis | — | — |
@@ -169,6 +169,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/conversation_rooms.rs` | test | s | — | — | Room, membership, addressing, thread and listing routes through the HTTP router |
 | `src/api/tests/core_memory_conversations.rs` | test | XL | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
 | `src/api/tests/depth_quality.rs` | test | s | — | — | — |
+| `src/api/tests/machine_identity.rs` | test | s | — | — | World privacy P1 through the server: the owner's answer at the pairing ceremony decides whether a machine is… |
 | `src/api/tests/mcp_booking_publication.rs` | test | s | — | — | engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert` |
 | `src/api/tests/mcp_code_check.rs` | test | s | — | — | Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
@@ -206,6 +207,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/vad.rs` | src | m | 9 crate-vis | — | — |
 | `src/auth.rs` | src | m | 30 crate-vis | — | HTTP authentication for log-backed version-two capability slips |
 | `src/auth/binding_admission.rs` | src | s | 1 crate-vis | — | Consume holder proofs at the network door, once per request or upgrade |
+| `src/auth/machine_proof.rs` | src | s | 1 crate-vis | — | The machine a request names |
 | `src/auth/slips.rs` | src | s | 12 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
 | `src/auth/tests.rs` | test | m | — | — | Authentication tests use real logged mints and holder signatures |
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
@@ -293,7 +295,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/handler/app_tier.rs` | src | s | 4 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
-| `src/handler/conn_state.rs` | src | s | 7 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
+| `src/handler/conn_state.rs` | src | s | 9 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
 | `src/handler/connection.rs` | src | m | 3 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
 | `src/handler/documents.rs` | src | m | 2 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 4 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
