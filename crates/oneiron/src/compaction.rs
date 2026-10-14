@@ -83,7 +83,9 @@ pub use gate::{
     CompactionSuppression, GatedCompaction, compaction_reply_schema, compaction_request_input,
     gate_compaction,
 };
-pub(crate) use gate::{compaction_input_tokens, compaction_step_input_tokens};
+pub(crate) use gate::{
+    compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
+};
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 
 use crate::entity_id::EntityId;

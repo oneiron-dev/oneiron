@@ -147,13 +147,12 @@ impl EngineNativeExecutor<'_> {
         };
         let mut window = Vec::new();
         let mut pins: Vec<String> = Vec::new();
-        // The input so far, counted by parts: the envelope (span, budget,
-        // pins, retry), counted again only when a pin joins, and each step's
-        // frame alone. Parts run a token or so over the joined whole, so a
-        // step they turn away is counted whole before the window stops, and
-        // the count restarts from the whole.
-        let mut envelope = None;
-        let mut frames = 0_u64;
+        // Two counts kept by parts, each part counted once: the pins as the
+        // summary holds them, a line each, and the rendered input. Parts run
+        // a token or so over their joined whole, so a count past its bound is
+        // counted whole before it turns a step away, and goes on from there.
+        let mut pin_lines = 0_u64;
+        let mut input = None;
         for seq in start..=watermark {
             let message = super::compaction::window_message(
                 super::compaction::step_message_id(run_id, seq),
@@ -165,26 +164,29 @@ impl EngineNativeExecutor<'_> {
             // A line several steps fail with is one pin, kept once.
             let pin =
                 super::compaction::failure_pin(&message.content).filter(|pin| !pins.contains(pin));
+            let mut added = crate::compaction::compaction_step_input_tokens(&message);
+            if let Some(pin) = &pin {
+                pin_lines = pin_lines.saturating_add(count_context_pack_tokens(pin) as u64 + 1);
+                added = added.saturating_add(crate::compaction::compaction_pin_input_tokens(pin));
+            }
             let pinned = pin.is_some();
             pins.extend(pin);
-            frames =
-                frames.saturating_add(crate::compaction::compaction_step_input_tokens(&message));
             window.push(message);
             // The summary holds every pin whole, inside its budget.
-            let unpinnable = pinned && count_context_pack_tokens(&pins.join("\n")) as u64 > budget;
+            if pinned && pin_lines > budget {
+                pin_lines = count_context_pack_tokens(&pins.join("\n")) as u64;
+            }
+            let unpinnable = pinned && pin_lines > budget;
             let mut fits = !unpinnable;
             if fits && let Some(room) = room {
-                let around = match envelope {
-                    Some(around) if !pinned => around,
-                    _ => crate::compaction::compaction_input_tokens(start, &[], &pins, budget),
+                let whole =
+                    || crate::compaction::compaction_input_tokens(start, &window, &pins, budget);
+                let counted = match input.map(|counted: u64| counted.saturating_add(added)) {
+                    Some(counted) if counted <= room => counted,
+                    _ => whole(),
                 };
-                envelope = Some(around);
-                if around.saturating_add(frames) > room {
-                    let whole =
-                        crate::compaction::compaction_input_tokens(start, &window, &pins, budget);
-                    fits = whole <= room;
-                    frames = whole.saturating_sub(around);
-                }
+                fits = counted <= room;
+                input = Some(counted);
             }
             if !fits {
                 window.pop();

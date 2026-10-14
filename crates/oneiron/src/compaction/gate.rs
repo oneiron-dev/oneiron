@@ -102,6 +102,12 @@ pub(crate) fn compaction_input_tokens(
     render(window, pins, retry)
 }
 
+/// The tokens one more pin adds to [`compaction_request_input`]: the pin as
+/// a JSON string, escapes included, and the comma that joins it.
+pub(crate) fn compaction_pin_input_tokens(pin: &str) -> u64 {
+    count_context_pack_tokens(&Value::from(pin).to_string()) as u64 + 1
+}
+
 /// The tokens one step adds to [`compaction_request_input`]: its JSON frame,
 /// escapes included, and the comma that joins it to the step before.
 pub(crate) fn compaction_step_input_tokens(message: &CompactionWindowMessage) -> u64 {
