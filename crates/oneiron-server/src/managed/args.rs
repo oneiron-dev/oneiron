@@ -52,6 +52,11 @@ pub enum ManagedError {
     InvalidListenFd { env: &'static str, value: String },
 
     #[error(
+        "{env} names file descriptor {fd}, which is not a unix socket: managed mode serves only the supervisor's unix listener"
+    )]
+    ListenFdNotUnix { env: &'static str, fd: RawFd },
+
+    #[error(
         "{first} and {second} both name file descriptor {fd}: managed mode adopts each delivered descriptor with unique ownership, so an alias would close one owner's descriptor under the other or write the ready byte into a reused number"
     )]
     AliasedFd {
