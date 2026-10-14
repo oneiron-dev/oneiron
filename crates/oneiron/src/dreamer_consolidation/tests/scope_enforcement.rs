@@ -551,7 +551,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             vault.put_vector(&output.claim_id, &vec![1.0; vault.config.dimensions])?;
             items.push(
                 serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
-            "value": "same text", "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]}),
+            "value": "same text", "confidence": 0.5, "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]}),
             );
         }
         let judge = text_response(match resolution {
@@ -1183,7 +1183,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             text_response(
                 serde_json::json!({"candidates":[{
                     "subject":subject.to_hex(),"predicate":"profile.name","value":"supported",
-                    "evidence_refs":ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
+                    "confidence": 0.5, "evidence_refs":ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
                 }]})
                 .to_string(),
             )

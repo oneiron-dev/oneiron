@@ -137,13 +137,14 @@ impl ConsolidationExecutor<'_> {
         // The level is for the model and route the call goes out on.
         super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
         let step_hash = request.canonical_hash()?;
-        let check = |response: &LlmResponse| {
-            extraction::extraction_reply(response)
-                .map(drop)
-                .map_err(|error| error.to_string())
-        };
-        let outcome =
-            call_as_step_checked(&step_ctx, call.backend, self.guard, request, &check).await;
+        let outcome = call_as_step_checked(
+            &step_ctx,
+            call.backend,
+            self.guard,
+            request,
+            &extraction::check_extraction_reply,
+        )
+        .await;
         let (response, failure_policy) = match outcome {
             Ok(StepOutcome::Finished {
                 response,
@@ -194,7 +195,7 @@ impl ConsolidationExecutor<'_> {
             )?)?;
         }
         let candidates = if accepted {
-            self.decode_candidates(
+            Self::decode_candidates(
                 &partition,
                 &response,
                 resources,

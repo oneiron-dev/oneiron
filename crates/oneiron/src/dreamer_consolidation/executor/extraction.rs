@@ -61,8 +61,12 @@ impl ConsolidationExecutor<'_> {
         })
     }
 
+    /// The candidates the branch takes from `response`. Decode never fails
+    /// the partition over one candidate: one it cannot take (a candidate
+    /// breaking a rule such as the predicate grammar, or one in a reply
+    /// stored before the step checked candidates) is not written, and is
+    /// counted.
     pub(super) fn decode_candidates(
-        &self,
         partition: &ConsolidationPartitionKey,
         response: &LlmResponse,
         resources: &BranchResources<'_>,
@@ -85,191 +89,207 @@ impl ConsolidationExecutor<'_> {
         }
 
         let mut candidates = Vec::new();
+        let mut skipped = 0_usize;
         for item in items {
-            // A candidate that names no value carries no claim.
-            if item.get("value").is_none_or(serde_json::Value::is_null) {
-                tracing::warn!(
-                    target: "oneiron::dreamer",
-                    "extracted candidate names no value; not written"
-                );
-                continue;
-            }
-            // A candidate naming a listed claim corrects it and binds to that
-            // head: its subject, predicate, relationship and topic, so it
-            // routes to the head through the conflict and grant doors. A
-            // claim the branch does not hold is not one it may name.
-            let corrects = match item.get("corrects") {
-                None | Some(serde_json::Value::Null) => None,
-                Some(named) => match named
-                    .as_str()
-                    .and_then(entity_id_from_hex)
-                    .map(|id| resources.prior(id))
-                {
-                    Some(Ok(prior)) => Some(prior),
-                    _ => {
-                        tracing::warn!(
-                            target: "oneiron::dreamer",
-                            "extracted correction names a claim the branch does not hold; not written"
-                        );
-                        continue;
-                    }
-                },
-            };
-            let named = item
-                .get("subject")
-                .and_then(|value| value.as_str())
-                .and_then(entity_id_from_hex);
-            let (subject, predicate) = match corrects {
-                Some(prior) => {
-                    let ClaimSubject::Entity(subject) = prior.body.subject else {
-                        continue;
-                    };
-                    if named.is_some_and(|named| named != subject) {
-                        tracing::warn!(
-                            target: "oneiron::dreamer",
-                            "extracted correction names a claim about another subject; not written"
-                        );
-                        continue;
-                    }
-                    (subject, prior.body.predicate.as_str())
+            match decode_candidate(item, partition, resources, scope, attempt_id, now_ms) {
+                Ok(candidate) => candidates.push(candidate),
+                Err(reason) => {
+                    skipped += 1;
+                    tracing::warn!(
+                        target: "oneiron::dreamer",
+                        %reason,
+                        "extracted candidate not written"
+                    );
                 }
-                None => {
-                    let Some(subject) = named else {
-                        continue;
-                    };
-                    let Some(predicate) = item.get("predicate").and_then(|value| value.as_str())
-                    else {
-                        continue;
-                    };
-                    // The contract's predicate rule is the claim grammar's.
-                    if crate::claim::validate_predicate(predicate, false).is_err() {
-                        tracing::warn!(
-                            target: "oneiron::dreamer",
-                            "extracted candidate's predicate breaks the claim grammar; not written"
-                        );
-                        continue;
-                    }
-                    (subject, predicate)
-                }
-            };
-            let confidence = item
-                .get("confidence")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or(0.5) as f32;
-            let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
-            let rel = match (corrects, item.get("rel")) {
-                (Some(prior), _) => prior.body.rel,
-                (None, None | Some(serde_json::Value::Null)) => scope.relationship,
-                (None, Some(value)) => Some(
-                    value
-                        .as_str()
-                        .and_then(entity_id_from_hex)
-                        .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
-                ),
-            };
-            if scope.relationship.is_some_and(|bound| rel != Some(bound)) {
-                return Err(invalid_consolidation(
-                    "extraction relationship crossed branch scope",
-                ));
             }
-            let refs = item
-                .get("evidence_refs")
-                .and_then(serde_json::Value::as_array)
-                .ok_or_else(|| invalid_consolidation("candidate evidence_refs must be an array"))?;
-            let locators: Vec<_> = refs
-                .iter()
-                .map(decode_model_locator)
-                .collect::<Result<_>>()?;
-            let mut evidence_turn_refs: Vec<_> =
-                locators.iter().map(|entry| entry.source_id()).collect();
-            evidence_turn_refs.sort_unstable();
-            evidence_turn_refs.dedup();
-            // A claim drawn from two projects' turns has no one audience, and
-            // a project-bound branch writes only its own project's.
-            let Some(project) = resources.evidence_project(&evidence_turn_refs)? else {
-                tracing::warn!(
-                    target: "oneiron::dreamer",
-                    "extracted candidate's sources share no one branch project; not written"
-                );
-                continue;
-            };
-
-            let mut candidate =
-                ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence);
-            if let Some(rel) = rel {
-                candidate = candidate.with_relationship(rel);
-            }
-            if let Some(world) = partition.world_ref {
-                candidate = candidate.with_world(world);
-            }
-            let mut fields = Vec::new();
-            if let Some(facet) = partition.facet_ref {
-                fields.push((
-                    Value::from(TURN_BODY_FACET_REF_KEY),
-                    Value::Binary(facet.as_bytes().to_vec()),
-                ));
-            }
-            let topic = match corrects {
-                Some(prior) => prior_topic(prior.body.scope.as_ref()),
-                None => item
-                    .get("topic_key")
-                    .filter(|value| !value.is_null())
-                    .map(json_to_rmpv),
-            };
-            if let Some(topic) = topic {
-                fields.push((Value::from("topic_key"), topic));
-            }
-            if project != crate::claim::default_project_id() {
-                fields.push((
-                    Value::from(SCOPE_PROJECT_KEY),
-                    Value::Binary(project.as_bytes().to_vec()),
-                ));
-            }
-            if !fields.is_empty() {
-                candidate = candidate.with_scope(Value::Map(fields));
-            }
-            let facts = candidate_facts(&candidate)?;
-            let claim_id = deterministic_claim_id(
-                attempt_id,
-                subject,
-                predicate,
-                &facts.value,
-                partition.world_ref,
-                partition.facet_ref,
-                rel,
-                facts.project,
-                facts.topic.as_deref(),
-            )?;
-            let extracted = super::super::evidence::ExtractedCandidate::new(
-                PromotionCandidate {
-                    claim_id,
-                    candidate,
-                    evidence_turn_refs,
-                    // Extraction output from the working set carries no external
-                    // chain; a peer-derived candidate gets its hops from
-                    // `peer_answer_provenance_chain` at the landing seam.
-                    provenance_chain: Vec::new(),
-                    supersedes: None,
-                    evidence_meet: ClaimSource::Generated,
-                    occurred: TimeRange {
-                        start: now_ms,
-                        end: now_ms,
-                    },
-                    learned_at: now_ms,
-                },
-                locators,
-            )?;
-            // Only a head the listing showed is a correction target; one held
-            // only for a replay's scope binds, but the verdict judges it.
-            candidates.push(match corrects {
-                Some(prior) if resources.known().shows(prior.claim_id) => {
-                    extracted.correcting(prior.claim_id)
-                }
-                _ => extracted,
-            });
+        }
+        if skipped > 0 {
+            tracing::warn!(
+                target: "oneiron::dreamer",
+                skipped,
+                taken = candidates.len(),
+                "extraction reply had candidates the branch could not take"
+            );
         }
         Ok(candidates)
     }
+}
+
+/// One candidate as the branch takes it, or why it is not written. Every
+/// read here is of the reply or of the branch's pinned resources, so an
+/// error is this candidate's alone.
+fn decode_candidate(
+    item: &serde_json::Value,
+    partition: &ConsolidationPartitionKey,
+    resources: &BranchResources<'_>,
+    scope: &crate::llm::Scope,
+    attempt_id: crate::attempt_queue::AttemptId,
+    now_ms: u64,
+) -> Result<super::super::evidence::ExtractedCandidate> {
+    // A candidate that names no value carries no claim.
+    if item.get("value").is_none_or(serde_json::Value::is_null) {
+        return Err(invalid_consolidation("extracted candidate names no value"));
+    }
+    // A candidate naming a listed claim corrects it and binds to that head:
+    // its subject, predicate, relationship and topic, so it routes to the
+    // head through the conflict and grant doors. A claim the branch does
+    // not hold is not one it may name.
+    let corrects = match item.get("corrects") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(named) => {
+            let held = named
+                .as_str()
+                .and_then(entity_id_from_hex)
+                .and_then(|id| resources.prior(id).ok());
+            Some(held.ok_or_else(|| {
+                invalid_consolidation("extracted correction names a claim the branch does not hold")
+            })?)
+        }
+    };
+    let named = item
+        .get("subject")
+        .and_then(|value| value.as_str())
+        .and_then(entity_id_from_hex);
+    let (subject, predicate) = match corrects {
+        Some(prior) => {
+            let ClaimSubject::Entity(subject) = prior.body.subject else {
+                return Err(invalid_consolidation(
+                    "extracted correction names a claim with no entity subject",
+                ));
+            };
+            if named.is_some_and(|named| named != subject) {
+                return Err(invalid_consolidation(
+                    "extracted correction names a claim about another subject",
+                ));
+            }
+            (subject, prior.body.predicate.as_str())
+        }
+        None => {
+            let subject = named
+                .ok_or_else(|| invalid_consolidation("extracted candidate names no subject"))?;
+            let predicate = item
+                .get("predicate")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| invalid_consolidation("extracted candidate names no predicate"))?;
+            // The contract's predicate rule is the claim grammar's.
+            crate::claim::validate_predicate(predicate, false).map_err(|_| {
+                invalid_consolidation("extracted candidate's predicate breaks the claim grammar")
+            })?;
+            (subject, predicate)
+        }
+    };
+    let confidence = item
+        .get("confidence")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.5) as f32;
+    let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
+    let rel = match (corrects, item.get("rel")) {
+        (Some(prior), _) => prior.body.rel,
+        (None, None | Some(serde_json::Value::Null)) => scope.relationship,
+        (None, Some(value)) => Some(
+            value
+                .as_str()
+                .and_then(entity_id_from_hex)
+                .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
+        ),
+    };
+    if scope.relationship.is_some_and(|bound| rel != Some(bound)) {
+        return Err(invalid_consolidation(
+            "extraction relationship crossed branch scope",
+        ));
+    }
+    let refs = item
+        .get("evidence_refs")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| invalid_consolidation("candidate evidence_refs must be an array"))?;
+    let locators: Vec<_> = refs
+        .iter()
+        .map(decode_model_locator)
+        .collect::<Result<_>>()?;
+    let mut evidence_turn_refs: Vec<_> = locators.iter().map(|entry| entry.source_id()).collect();
+    evidence_turn_refs.sort_unstable();
+    evidence_turn_refs.dedup();
+    // A claim drawn from two projects' turns has no one audience, and a
+    // project-bound branch writes only its own project's.
+    let project = resources
+        .evidence_project(&evidence_turn_refs)?
+        .ok_or_else(|| {
+            invalid_consolidation("extracted candidate's sources share no one branch project")
+        })?;
+
+    let mut candidate =
+        ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence);
+    if let Some(rel) = rel {
+        candidate = candidate.with_relationship(rel);
+    }
+    if let Some(world) = partition.world_ref {
+        candidate = candidate.with_world(world);
+    }
+    let mut fields = Vec::new();
+    if let Some(facet) = partition.facet_ref {
+        fields.push((
+            Value::from(TURN_BODY_FACET_REF_KEY),
+            Value::Binary(facet.as_bytes().to_vec()),
+        ));
+    }
+    let topic = match corrects {
+        Some(prior) => prior_topic(prior.body.scope.as_ref()),
+        None => item
+            .get("topic_key")
+            .filter(|value| !value.is_null())
+            .map(json_to_rmpv),
+    };
+    if let Some(topic) = topic {
+        fields.push((Value::from("topic_key"), topic));
+    }
+    if project != crate::claim::default_project_id() {
+        fields.push((
+            Value::from(SCOPE_PROJECT_KEY),
+            Value::Binary(project.as_bytes().to_vec()),
+        ));
+    }
+    if !fields.is_empty() {
+        candidate = candidate.with_scope(Value::Map(fields));
+    }
+    let facts = candidate_facts(&candidate)?;
+    let claim_id = deterministic_claim_id(
+        attempt_id,
+        subject,
+        predicate,
+        &facts.value,
+        partition.world_ref,
+        partition.facet_ref,
+        rel,
+        facts.project,
+        facts.topic.as_deref(),
+    )?;
+    let extracted = super::super::evidence::ExtractedCandidate::new(
+        PromotionCandidate {
+            claim_id,
+            candidate,
+            evidence_turn_refs,
+            // Extraction output from the working set carries no external
+            // chain; a peer-derived candidate gets its hops from
+            // `peer_answer_provenance_chain` at the landing seam.
+            provenance_chain: Vec::new(),
+            supersedes: None,
+            evidence_meet: ClaimSource::Generated,
+            occurred: TimeRange {
+                start: now_ms,
+                end: now_ms,
+            },
+            learned_at: now_ms,
+        },
+        locators,
+    )?;
+    // Only a head the listing showed is a correction target; one held only
+    // for a replay's scope binds, but the verdict judges it.
+    Ok(match corrects {
+        Some(prior) if resources.known().shows(prior.claim_id) => {
+            extracted.correcting(prior.claim_id)
+        }
+        _ => extracted,
+    })
 }
 
 /// The shipped extraction prompt, as data: the system text and the worked
@@ -288,7 +308,7 @@ struct WorkedExample {
     assistant: String,
 }
 
-/// An extraction reply that meets its contract: an object whose
+/// An extraction reply in its contract's shape: an object whose
 /// `candidates`, when present, are objects, and whose `persons`, when
 /// present, each name a 32-hex id, a name and at least one 32-hex turn.
 /// Other keys are outside the contract and read by no one.
@@ -315,7 +335,9 @@ fn objects<'de, D: serde::Deserializer<'de>>(
     Ok(items.into_iter().map(serde_json::Value::Object).collect())
 }
 
-/// `response`'s extraction reply, refused unless it meets the contract.
+/// `response`'s extraction reply, refused unless it has the contract's
+/// shape. Its candidates' fields are [`check_extraction_reply`]'s, so a
+/// reply stored before that check still reads here.
 ///
 /// One narrow repair runs first: a reply that stopped one `}` short (it
 /// parses to the end and ends on the candidates' `]`) gets exactly one `}`
@@ -373,6 +395,76 @@ pub(in crate::dreamer_consolidation) fn extraction_reply(
         ));
     }
     Ok(reply)
+}
+
+/// The extraction step's check: the reply meets the contract, each of its
+/// candidates included, or it is refused and never memoized, so the next
+/// run asks again. A candidate names a 32-hex `subject`, a string
+/// `predicate`, a `value` that is not null, a `confidence` from 0 to 1, one
+/// or more evidence refs as decode reads them, and a 32-hex `corrects` when
+/// it names one. A candidate that meets them but breaks a rule (the
+/// predicate grammar, or a head, source or project the branch must hold)
+/// is decode's to skip, never a refusal.
+pub(in crate::dreamer_consolidation) fn check_extraction_reply(
+    response: &LlmResponse,
+) -> std::result::Result<(), String> {
+    let reply = extraction_reply(response).map_err(|error| error.to_string())?;
+    for (index, candidate) in reply.candidates.iter().enumerate() {
+        if let Some(field) = contract_fault(candidate) {
+            return Err(format!(
+                "extraction candidate {index} breaks its contract at {field}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The first contract field `candidate` gets wrong, if any.
+fn contract_fault(candidate: &serde_json::Value) -> Option<&'static str> {
+    let id = |field: &str| {
+        candidate
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .and_then(entity_id_from_hex)
+            .is_some()
+    };
+    let confidence = candidate
+        .get("confidence")
+        .and_then(serde_json::Value::as_f64);
+    let refs = candidate
+        .get("evidence_refs")
+        .and_then(serde_json::Value::as_array);
+    [
+        ("subject", id("subject")),
+        (
+            "predicate",
+            candidate
+                .get("predicate")
+                .is_some_and(serde_json::Value::is_string),
+        ),
+        (
+            "value",
+            candidate.get("value").is_some_and(|value| !value.is_null()),
+        ),
+        (
+            "confidence",
+            confidence.is_some_and(|confidence| (0.0..=1.0).contains(&confidence)),
+        ),
+        (
+            "evidence_refs",
+            refs.is_some_and(|refs| {
+                !refs.is_empty() && refs.iter().all(|cited| decode_model_locator(cited).is_ok())
+            }),
+        ),
+        (
+            "corrects",
+            candidate
+                .get("corrects")
+                .is_none_or(|named| named.is_null() || id("corrects")),
+        ),
+    ]
+    .into_iter()
+    .find_map(|(field, met)| (!met).then_some(field))
 }
 
 /// The question key a stored head was filed under, as its scope map holds it.

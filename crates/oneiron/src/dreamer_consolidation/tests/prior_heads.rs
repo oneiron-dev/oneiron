@@ -1562,7 +1562,8 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
 
 /// Sol r4: a correction that names no value, or a null one, carries no
 /// claim. It is not written, and its head stays. Before, the bound
-/// correction replaced the head with a Null-valued claim.
+/// correction replaced the head with a Null-valued claim. Since Bugbot on
+/// #1427 the step refuses such a reply as off its contract.
 #[test]
 fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
     for value in [None, Some(serde_json::Value::Null)] {
@@ -1588,7 +1589,7 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
             Ok(text_response("{\"resolution\":\"escalate\"}".into())),
         ]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
-        execute_at_pin(
+        let refused = execute_at_pin(
             &vault,
             &fx,
             &backend,
@@ -1596,6 +1597,11 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
             fx.scope.clone(),
             Some(&pin),
         )?;
+        assert!(
+            matches!(&refused, DreamerAttemptExecution::ParkWithSpend { reason, .. }
+                if reason.ends_with("breaks its contract at value")),
+            "{value:?}: {refused:?}"
+        );
         assert!(
             sink.outcome.landed.is_empty(),
             "{value:?}: {:?}",
@@ -2014,7 +2020,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
     let response = text_response(
         serde_json::json!({"candidates":[{
             "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
-            "evidence_refs":[
+            "confidence": 0.5, "evidence_refs":[
                 {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
                 {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
             ]
@@ -2154,7 +2160,7 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
     let backend = ScriptedBackend::new(vec![Ok(text_response(
         serde_json::json!({"candidates":[{
             "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
-            "evidence_refs":[
+            "confidence": 0.5, "evidence_refs":[
                 {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
                 {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
             ]
@@ -2519,9 +2525,9 @@ fn claim_cited_conflict_meets_taint_and_preserves_gap_and_survivor() -> Result<(
         let extraction = text_response(
             serde_json::json!({"candidates":[
                 {"subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Alex",
-                 "evidence_refs":[{"source_id":cited.to_hex(), "claim_id":cited.to_hex()}]},
+                 "confidence": 0.5, "evidence_refs":[{"source_id":cited.to_hex(), "claim_id":cited.to_hex()}]},
                 {"subject":fx.subject.to_hex(), "predicate":"profile.tone", "value":"warm",
-                 "evidence_refs":[{"source_id":fx.turn.to_hex(), "byte_range":[0,1]}]}
+                 "confidence": 0.5, "evidence_refs":[{"source_id":fx.turn.to_hex(), "byte_range":[0,1]}]}
             ]})
             .to_string(),
         );
@@ -3241,9 +3247,11 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
             let lines: Vec<_> = answer.lines().collect();
             assert_eq!(lines.first(), Some(&"{\"candidates\": ["));
             assert_eq!(lines.last(), Some(&"]}"));
-            let reply = crate::dreamer_consolidation::executor::extraction::extraction_reply(
-                &text_response(answer.clone()),
-            )?;
+            let example = text_response(answer.clone());
+            crate::dreamer_consolidation::executor::extraction::check_extraction_reply(&example)
+                .expect("the example meets the contract");
+            let reply =
+                crate::dreamer_consolidation::executor::extraction::extraction_reply(&example)?;
             let added: Vec<_> = reply.persons.iter().map(|person| &person.id).collect();
             assert_eq!(
                 reply.candidates.len() + reply.persons.len() + usize::from(!added.is_empty()),
@@ -3323,6 +3331,104 @@ fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_agai
     assert!(
         verdict.contains("\"Alex\""),
         "the mended reply's candidate reaches the verdict: {verdict}"
+    );
+    Ok(())
+}
+
+/// Bugbot on #1427 (Engine ruling FIX, 2026-10-14): a reply whose candidate
+/// lacks a field decode needs, here a mended one with no `evidence_refs`, is
+/// refused at the step and never memoized, so the next run asks again.
+/// Before, the step stored it, decode failed the whole partition, and every
+/// resume replayed the stored reply instead of asking.
+#[test]
+fn a_mended_reply_whose_candidate_lacks_a_field_is_refused_and_asked_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let mut lacking = serde_json::json!({"candidates": [{
+        "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
+        "confidence": 0.8,
+    }]})
+    .to_string();
+    // One `}` short, so the step mends it before the check reads it.
+    assert_eq!(lacking.pop(), Some('}'));
+    let backend = ReasoningBackend {
+        inner: ScriptedBackend::new(vec![
+            Ok(text_response(lacking)),
+            Ok(extract(&fx, "Alex")),
+            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+        ]),
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let refused = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    assert!(
+        matches!(&refused, DreamerAttemptExecution::ParkWithSpend { reason, .. }
+            if reason.ends_with("breaks its contract at evidence_refs")),
+        "{refused:?}"
+    );
+    assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let done = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    assert!(
+        matches!(done, DreamerAttemptExecution::Completed { .. }),
+        "{done:?}"
+    );
+    assert_eq!(
+        backend.requests.lock().unwrap().len(),
+        3,
+        "the refused reply was asked again"
+    );
+    assert_eq!(names(&vault, fx.subject)?.len(), 2);
+    Ok(())
+}
+
+/// Bugbot on #1427 (Engine ruling FIX, 2026-10-14): a stored reply decode
+/// cannot wholly take never wedges a resume. One candidate cites a turn the
+/// branch never admitted and one names no relationship id; each is skipped
+/// and counted, and the rest of the reply lands, on the first run and on a
+/// replay of the stored reply. Before, decode failed the whole partition on
+/// the first such candidate, and every resume replayed the same reply.
+#[test]
+fn a_stored_reply_decode_cannot_wholly_take_never_wedges_a_resume() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let candidate = |value: &str, source: EntityId| {
+        serde_json::json!({
+            "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": value,
+            "confidence": 0.8,
+            "evidence_refs": [{"source_id": source.to_hex(), "byte_range": [0, 1]}],
+        })
+    };
+    let mut unrelated = candidate("Kit", fx.turn);
+    unrelated["rel"] = "no relationship id".into();
+    let reply = serde_json::json!({"candidates": [
+        candidate("Alex", fx.turn),
+        candidate("Sam", EntityId::now()),
+        unrelated,
+    ]});
+    let backend = ReasoningBackend {
+        inner: ScriptedBackend::new(vec![
+            Ok(text_response(reply.to_string())),
+            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+        ]),
+        requests: Mutex::new(Vec::new()),
+    };
+    for run in ["first run", "replay"] {
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        let done = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+        assert!(
+            matches!(done, DreamerAttemptExecution::Completed { .. }),
+            "{run}: {done:?}"
+        );
+        assert_eq!(names(&vault, fx.subject)?.len(), 2, "{run}");
+    }
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2, "the replay asked no model");
+    let verdict: String = requests[1].messages.iter().map(message_text).collect();
+    assert!(verdict.contains("\"Alex\""), "{verdict}");
+    assert!(
+        !verdict.contains("\"Sam\"") && !verdict.contains("\"Kit\""),
+        "{verdict}"
     );
     Ok(())
 }

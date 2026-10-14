@@ -336,7 +336,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
     let response = |ids: &[EntityId]| {
         text_response(serde_json::json!({"candidates":[{
         "subject": conversation.to_hex(), "predicate":"profile.name", "value":"supported",
-        "evidence_refs": ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
+        "confidence": 0.5, "evidence_refs": ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
     }]}).to_string())
     };
     let backend = ScriptedBackend::new(vec![Ok(response(&[first]))]);
@@ -486,7 +486,7 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
     let response = text_response(
         serde_json::json!({"candidates":[{
             "subject":good_parent.to_hex(), "predicate":"profile.name", "value":"healthy",
-            "evidence_refs":[{"source_id":good_turn.to_hex(), "byte_range":[0,1]}]
+            "confidence": 0.5, "evidence_refs":[{"source_id":good_turn.to_hex(), "byte_range":[0,1]}]
         }]})
         .to_string(),
     );
