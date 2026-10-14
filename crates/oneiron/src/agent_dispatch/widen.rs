@@ -207,6 +207,7 @@ impl AgentDispatcher<'_> {
         now: u64,
     ) -> Result<AgentDispatchOutcome> {
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let actor = owner.revalidate_in_txn(&self.vault, &wtxn)?;
         // Proposal ids are content hashes, not bearer authority. Find the exact
         // saved intent by its stable index, rejecting forged or edited objects.
         let (key_hash, mut record) = self.stored_widen_proposal(&wtxn, &proposal.proposal_id)?;
@@ -217,7 +218,7 @@ impl AgentDispatcher<'_> {
             .request
             .board
             .ok_or_else(|| invalid("widen has no provable board above"))?;
-        self.require_board_owner(&wtxn, board, owner.actor())?;
+        self.require_board_owner(&wtxn, board, actor)?;
         if self.recorded_parent(record.request.intent.parent)? != Some(board) {
             return Err(invalid("widen board is not the immediate board above"));
         }
@@ -310,7 +311,7 @@ impl AgentDispatcher<'_> {
             &SliceOverride {
                 proposal_id: proposal.proposal_id.clone(),
                 board,
-                owner: owner.actor().to_hex(),
+                owner: actor.to_hex(),
                 spec: record.request.widened_spec.clone(),
             },
         )?;

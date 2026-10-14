@@ -22,7 +22,7 @@ use super::types::{
 };
 
 impl Vault {
-    pub(super) fn autonomy_owner(&self, owner: &AuthenticatedOwner) -> Result<()> {
+    pub(super) fn autonomy_owner(&self, owner: &AuthenticatedOwner) -> Result<EntityId> {
         owner.revalidate(self)
     }
 
@@ -62,15 +62,16 @@ impl Vault {
         owner: &AuthenticatedOwner,
         at: u64,
     ) -> Result<EntityId> {
+        let owner_actor = owner.revalidate_in_txn(self, txn)?;
         let reference = address(kind, &value)?;
         let key = key(kind, &reference.to_hex());
         if AUTONOMY.contains(&self.store, txn, &key)? {
             let (actor, _, old) = self.autonomy_row(txn, &key)?;
-            if actor != owner.actor() || old != value {
+            if actor != owner_actor || old != value {
                 return Err(invalid_autonomy());
             }
         } else {
-            self.write_autonomy_row(txn, &key, owner.actor(), at, value)?;
+            self.write_autonomy_row(txn, &key, owner_actor, at, value)?;
         }
         Ok(reference)
     }

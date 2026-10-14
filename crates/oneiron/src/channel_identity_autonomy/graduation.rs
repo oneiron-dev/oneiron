@@ -59,8 +59,8 @@ impl Vault {
         evidence: GraduationEvidence,
         owner: &AuthenticatedOwner,
     ) -> Result<EntityId> {
-        self.autonomy_owner(owner)?;
-        self.record_graduation_evidence_by(evidence, owner.actor(), true)
+        let actor = self.autonomy_owner(owner)?;
+        self.record_graduation_evidence_by(evidence, actor, true)
     }
 
     fn record_graduation_evidence_by(
