@@ -380,7 +380,10 @@ fn ffi_context_pack_serves_at_most_its_limit() {
     let query = "lantern";
     let rows = |limit: u32| {
         let mut pack = OneironBuffer::empty();
-        assert_eq!(
+        // SAFETY: `vault` is live, the query pointer and length describe
+        // `query`, the null pointers carry zero lengths, and `pack` is a
+        // writable out-slot.
+        let status = unsafe {
             oneiron_vault_context_pack(
                 vault,
                 query.as_ptr(),
@@ -392,13 +395,14 @@ fn ffi_context_pack_serves_at_most_its_limit() {
                 ptr::null(),
                 0,
                 &mut pack,
-            ),
-            OneironStatus::Ok
-        );
+            )
+        };
+        assert_eq!(status, OneironStatus::Ok);
         // SAFETY: `pack` was returned by this crate and is live until freed.
         let bytes = unsafe { slice::from_raw_parts(pack.ptr, pack.len) };
         let json: serde_json::Value = serde_json::from_slice(bytes).expect("a JSON pack");
-        assert_eq!(oneiron_buffer_free(pack), OneironStatus::Ok);
+        // SAFETY: `pack` came from `oneiron_vault_context_pack` and is freed once.
+        assert_eq!(unsafe { oneiron_buffer_free(pack) }, OneironStatus::Ok);
         (count_rows(&json), json)
     };
 
@@ -407,5 +411,6 @@ fn ffi_context_pack_serves_at_most_its_limit() {
     let (one, pack) = rows(1);
     assert_eq!(one, 1, "{pack}");
 
-    assert_eq!(oneiron_vault_free(vault), OneironStatus::Ok);
+    // SAFETY: `vault` came from `open_test_vault` and is freed once.
+    assert_eq!(unsafe { oneiron_vault_free(vault) }, OneironStatus::Ok);
 }
