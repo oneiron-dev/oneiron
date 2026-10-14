@@ -397,8 +397,8 @@ fn a_restore_keeps_history_learned_since_its_checkpoint() -> Result<()> {
 /// Bug repro (Astra #1434 F2): a retained window still carries a PROJECT
 /// row after its next revision was learned in a later month, and shipped it
 /// without that revision, so a peer seated the removed member again. The
-/// rematerialized window carries it, and so do a resident window's export
-/// and a promoted device's.
+/// rematerialized window carries it, and so do a resident window's export,
+/// a promoted device's and a persisted snapshot.
 #[cfg(feature = "sync")]
 #[test]
 fn a_retained_window_carries_the_history_learned_after_it() -> Result<()> {
@@ -414,7 +414,11 @@ fn a_retained_window_carries_the_history_learned_after_it() -> Result<()> {
     let id = project.id;
     let key = WindowKey::new("1970-01");
     let january = exported(&vault, &key)?;
-    let (resident, promoted) = (exported(&vault, &key)?, exported(&vault, &key)?);
+    let (resident, promoted, persisted) = (
+        exported(&vault, &key)?,
+        exported(&vault, &key)?,
+        exported(&vault, &key)?,
+    );
     let s1 = signed_over(&vault, id, &project.s0, project.board, without(x))?;
     vault.put_project(id, &s1, next_month)?;
     let s1_row = revision_entity_id(head_of(id, &s1)?)?.to_hex();
@@ -430,6 +434,10 @@ fn a_retained_window_carries_the_history_learned_after_it() -> Result<()> {
             crate::sync::window::export_promoted_window_updates_since(
                 &vault, &key, &promoted, &none,
             )?,
+        ),
+        (
+            "persisted",
+            crate::sync::server_state::persist_window_snapshot(&vault, &key, &persisted)?,
         ),
     ] {
         let shipped = loro::LoroDoc::new();

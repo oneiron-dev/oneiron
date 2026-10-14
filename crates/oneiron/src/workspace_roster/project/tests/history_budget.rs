@@ -10,7 +10,7 @@ use super::authority::{
 use super::history::{
     board_signed_s0, copy_of, head_of, ids, open, seats_of, signed_over, without,
 };
-use super::history_resolution::{envelope, put_companion, resolution};
+use super::history_resolution::{envelope, off_board, put_companion, resolution, sorted};
 use crate::authority::{CapabilitySlip, HostSlipIssuer};
 use crate::error::ErrorKind;
 use ed25519_dalek::Signer;
@@ -448,5 +448,63 @@ fn a_frozen_removal_waits_on_the_parent_project_its_ancestor_failed() -> Result<
     let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
     vault.revoke_capability_slip(&issuer, slip_id(&narrow_q)?)?;
     assert_eq!(seats_of(&vault, id), ids(&[project.leader]));
+    Ok(())
+}
+
+/// Bug repro (Astra #1434 r9 F4, Sol r9 F2): below S0, B1 narrows (A) and L
+/// narrows (C); over C, B2 drops B1 (D) and B3 drops B2 (E); over D, B4
+/// removes X and drops B3 (F) or keeps X (G), and B4's resolution settles D
+/// for G. E then excludes D, and the tie at S0 keeps X. Past the budget the
+/// frozen view rests on that resolution too, though it sits off the served
+/// path: revoking its slip serves no authority.
+#[cfg(feature = "sync")]
+#[test]
+fn revoking_a_settlement_a_frozen_view_rested_on_serves_no_authority() -> Result<()> {
+    let (b1, b2, b3, b4, x, y) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    let dir = tempfile::tempdir()?;
+    let vault = open(&dir)?;
+    let project = board_signed_s0(&vault, &[x, y], &[b1, b2, b3, b4], |_| {})?;
+    let (id, s0) = (project.id, &project.s0);
+    let a = signed_over(&vault, id, s0, b1, without(y))?;
+    let c = signed_over(&vault, id, s0, project.leader, without(y))?;
+    let d = signed_over(&vault, id, &c, b2, off_board(b1))?;
+    let e = signed_over(&vault, id, &c, b3, off_board(b2))?;
+    let f = signed_over(&vault, id, &d, b4, |row| {
+        off_board(b3)(row);
+        without(x)(row);
+    })?;
+    let g = signed_over(&vault, id, &d, b4, |row| row.depth_remaining -= 1)?;
+    for (at, row) in (3..).zip([&a, &c, &d, &e, &f, &g]) {
+        replay_project(&vault, id, row, at)?;
+    }
+    let (hf, hg) = (head_of(id, &f)?, head_of(id, &g)?);
+    let settle = resolution(
+        &vault,
+        id,
+        b4,
+        head_of(id, &d)?,
+        vec![],
+        sorted(vec![hf, hg]),
+        hg,
+    )?;
+    let settle_slip = CapabilitySlip::from_token(&settle.slip_wire)?
+        .claims
+        .slip_id;
+    put_companion(&vault, &envelope(id, settle), 10)?;
+    assert!(seats_of(&vault, id).contains(&x));
+    vault.set_project_history_policy(&owner(&vault)?, ProjectHistoryPolicy { max_revisions: 1 })?;
+    assert!(over(&vault, id)?.is_some());
+    assert!(seats_of(&vault, id).contains(&x));
+    let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
+    vault.revoke_capability_slip(&issuer, settle_slip)?;
+    assert!(vault.project(id)?.is_none());
+    assert_eq!(frozen_head(&vault, id)?, None);
     Ok(())
 }

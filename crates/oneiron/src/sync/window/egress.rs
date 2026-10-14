@@ -489,6 +489,11 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
     scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    // A persisted or returned snapshot carries the same project history as
+    // a delta does (Astra #1434 r9 F5).
+    if super::project_history::carry_project_history(vault, doc)? {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
     if history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {

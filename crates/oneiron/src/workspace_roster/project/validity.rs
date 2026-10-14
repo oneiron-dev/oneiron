@@ -1,6 +1,6 @@
 //! Whether one held revision is valid on its own lineage, and the board's
 //! resolutions at one node (decisions 5, 6); `branch.rs` folds a fork.
-use super::branch::{Excluded, Fork};
+use super::branch::{Exclusion, Fork};
 use super::fold::{ProjectEffective, ProjectRank, authority_fits, rank_at, reason};
 use super::read::{Holder, ProjectReader, ProjectVerdict};
 use super::resolution::{ProjectResolution, ProjectSeal};
@@ -34,7 +34,9 @@ pub(super) struct FoldCx<'r, 'a, 't> {
     pub(super) held: &'r HeldRevisions,
     verdicts: RefCell<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
     signers: RefCell<BTreeMap<ProjectRevisionHash, String>>,
-    pub(super) forks: RefCell<BTreeMap<(ProjectRevisionHash, Excluded), Rc<Fork>>>,
+    /// Per tree root: its exclusions, and each node's fork.
+    pub(super) exclusions: RefCell<BTreeMap<ProjectRevisionHash, Rc<Exclusion>>>,
+    pub(super) forks: RefCell<BTreeMap<(ProjectRevisionHash, ProjectRevisionHash), Rc<Fork>>>,
     depth: Cell<usize>,
     /// How often the depth guard refused. A verdict that consumed a refusal
     /// depends on where the walk entered the chain, so it is not memoized.
@@ -53,6 +55,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             held,
             verdicts: RefCell::new(BTreeMap::new()),
             signers: RefCell::new(BTreeMap::new()),
+            exclusions: RefCell::new(BTreeMap::new()),
             forks: RefCell::new(BTreeMap::new()),
             depth: Cell::new(0),
             refusals: Cell::new(0),
@@ -100,7 +103,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         self.refusals.get()
     }
 
-    /// The verified signer of a valid signed revision.
+    /// The verified signer of a valid signed revision or resolution.
     pub(super) fn signer(&self, hash: &ProjectRevisionHash) -> Option<String> {
         self.signers.borrow().get(hash).cloned()
     }
@@ -127,7 +130,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 parent,
                 ..
             } => self.signed(hash, authority, proof, *parent),
-            ProjectRevision::Resolution { resolution, .. } => self.resolution(resolution),
+            ProjectRevision::Resolution { resolution, .. } => self.resolution(hash, resolution),
             ProjectRevision::Seal { seal, .. } => self.seal(seal),
         }
     }
@@ -275,7 +278,11 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         parent_view(self.reader, parent)
     }
 
-    fn resolution(&self, resolution: &ProjectResolution) -> Result<ProjectVerdict> {
+    fn resolution(
+        &self,
+        hash: ProjectRevisionHash,
+        resolution: &ProjectResolution,
+    ) -> Result<ProjectVerdict> {
         let anchor = self.verdict(resolution.anchor)?;
         if anchor != ProjectVerdict::Visible {
             return Ok(anchor);
@@ -312,6 +319,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             Ok(holder) => holder,
             Err(verdict) => return Ok(verdict),
         };
+        self.signers.borrow_mut().insert(hash, holder.actor.clone());
         if !(holder.actor == "host" || anchor_authority.board.contains(&holder.actor)) {
             return Ok(ProjectVerdict::Quarantined(reason::RESOLUTION_SIGNER));
         }
@@ -419,11 +427,17 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         Ok(valid)
     }
 
-    /// The single resolution tip at `node` and what its prior closure settles.
-    pub(super) fn settlement(&self, node: ProjectRevisionHash) -> Result<Settlement> {
+    /// The single resolution tip at `node` and what its prior closure
+    /// settles, counting no resolution in `void`.
+    pub(super) fn settlement(
+        &self,
+        node: ProjectRevisionHash,
+        void: &BTreeSet<ProjectRevisionHash>,
+    ) -> Result<Settlement> {
         let mut valid = BTreeMap::new();
         for hash in self.held.resolutions_at(&node) {
             if let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(hash)
+                && !void.contains(hash)
                 && self.verdict(*hash)? == ProjectVerdict::Visible
             {
                 valid.insert(*hash, resolution);

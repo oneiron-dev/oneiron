@@ -88,7 +88,7 @@ pub(super) fn envelope(project: EntityId, resolution: ProjectResolution) -> Proj
     }
 }
 
-fn sorted(mut hashes: Vec<ProjectRevisionHash>) -> Vec<ProjectRevisionHash> {
+pub(super) fn sorted(mut hashes: Vec<ProjectRevisionHash>) -> Vec<ProjectRevisionHash> {
     hashes.sort();
     hashes
 }
@@ -320,5 +320,201 @@ fn a_board_resolution_settles_a_board_fork_and_conflicting_resolutions_settle_no
     replay_authority(&vault, &crossed)?;
     put_companion(&crossed, &envelope(id, r3), 22)?;
     assert_eq!(leader_of(&crossed, id)?, Some(l1.to_hex()));
+    Ok(())
+}
+
+/// Engine ruling on F1's cycle (Astra #1434): B1 removes B2 from the board
+/// and X from the room (C1) while B2, over the same S0, removes B1 and Y
+/// (C2). Each deposes the other's signer, so neither is excluded: they tie
+/// at board rank, both removals hold, the anchor's leader and board stay,
+/// and a board resolution settles it. Two replicas converge in both
+/// arrival orders.
+#[cfg(feature = "sync")]
+#[test]
+fn mutual_board_removals_tie_keep_both_narrowings_and_a_resolution_settles_them() -> Result<()> {
+    let (b1, b2, x, y, ln) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    let origin = tempfile::tempdir()?;
+    let project = board_signed_s0(&open(&origin)?, &[x, y], &[b1, b2], |_| {})?;
+    let id = project.id;
+    let copies = [copy_of(&origin)?, copy_of(&origin)?];
+    let vault = open(&origin)?;
+    let s0 = &project.s0;
+    let anchor = head_of(id, s0)?;
+    let removes = |holder: EntityId, member: EntityId| {
+        move |row: &mut ProjectRecord| {
+            row.board.retain(|seat| *seat != holder.to_hex());
+            row.roster.retain(|seat| *seat != member.to_hex());
+        }
+    };
+    let c1 = signed_over(&vault, id, s0, b1, removes(b2, x))?;
+    vault.put_project(id, &c1, 3)?;
+    let c2 = signed_over(&vault, id, s0, b2, removes(b1, y))?;
+    replay_project(&vault, id, &c2, 4)?;
+    let tied = |vault: &Vault| -> Result<()> {
+        assert!(matches!(
+            vault.project_frontier(id)?.map(|frontier| frontier.disposition),
+            Some(ProjectDisposition::Fork { anchor: at, rank: ProjectRank::Board, .. }) if at == anchor
+        ));
+        let view = vault
+            .project_frontier(id)?
+            .and_then(|frontier| frontier.effective)
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(view.leader, project.leader.to_hex());
+        assert_eq!(view.board, s0.board);
+        assert_eq!(seats_of(vault, id), ids(&[project.leader]));
+        Ok(())
+    };
+    tied(&vault)?;
+    let n = signed_over(&vault, id, s0, b1, |row| {
+        row.leader = ln.to_hex();
+        row.roster = vec![ln.to_hex()];
+    })?;
+    let (h1, h2, hn) = (head_of(id, &c1)?, head_of(id, &c2)?, head_of(id, &n)?);
+    let settle = resolution(&vault, id, b1, anchor, vec![], sorted(vec![h1, h2]), hn)?;
+    let env = envelope(id, settle.clone());
+    vault.resolve_project_fork(id, n, settle)?;
+    assert_eq!(leader_of(&vault, id)?, Some(ln.to_hex()));
+    let served = |vault: &Vault| -> Result<Option<ProjectEffective>> {
+        Ok(vault
+            .project_frontier(id)?
+            .and_then(|frontier| frontier.effective))
+    };
+    let row_of = |hash| revision_entity_id(hash);
+    let (rc1, rc2, rn, renv) = (row_of(h1)?, row_of(h2)?, row_of(hn)?, row_of(env.hash()?)?);
+    for ((_dir, replica), (tie, settles)) in copies
+        .into_iter()
+        .zip([([rc1, rc2], [rn, renv]), ([rc2, rc1], [renv, rn])])
+    {
+        replay_authority(&vault, &replica)?;
+        replay_rows(&vault, &replica, &tie)?;
+        tied(&replica)?;
+        replay_rows(&vault, &replica, &settles)?;
+        assert_eq!(leader_of(&replica, id)?, Some(ln.to_hex()));
+        assert_eq!(served(&replica)?, served(&vault)?);
+    }
+    Ok(())
+}
+
+/// `row` without `holder` on its board.
+pub(super) fn off_board(holder: EntityId) -> impl FnOnce(&mut ProjectRecord) {
+    move |row| row.board.retain(|seat| *seat != holder.to_hex())
+}
+
+/// The board-rank tie at S0 of checks 15 and 16, with X out.
+fn board_tie_keeps_x_out(
+    vault: &Vault,
+    project: &super::history::Project,
+    x: EntityId,
+    anchor: ProjectRevisionHash,
+) -> Result<()> {
+    assert!(matches!(
+        vault.project_frontier(project.id)?.map(|frontier| frontier.disposition),
+        Some(ProjectDisposition::Fork { anchor: at, rank: ProjectRank::Board, .. }) if at == anchor
+    ));
+    assert_eq!(leader_of(vault, project.id)?, Some(project.leader.to_hex()));
+    assert_eq!(seats_of(vault, project.id), ids(&[project.leader]));
+    let room = home_room_id(project.id)?;
+    assert!(
+        vault.bind_room_handle(room, "@removed", x).is_err(),
+        "a member a tied branch removed binds a handle"
+    );
+    Ok(())
+}
+
+/// Bug repro (Astra #1434 r9 F3, Sol r9 F1): B1 removes X (A) and L
+/// removes Y (C) over S0; over C, B3 drops B2 from the board (E) while B2
+/// drops B1 (D). E excludes D at C, so D's deposition of B1 must not exclude
+/// A at S0: the board tie at S0 keeps X out, in both arrival orders.
+#[cfg(feature = "sync")]
+#[test]
+fn an_act_a_nested_fork_excludes_never_excludes_an_older_sibling_in_either_order() -> Result<()> {
+    let (b1, b2, b3, x, y) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    let origin = tempfile::tempdir()?;
+    let project = board_signed_s0(&open(&origin)?, &[x, y], &[b1, b2, b3], |_| {})?;
+    let (id, s0) = (project.id, &project.s0);
+    let copies = [copy_of(&origin)?, copy_of(&origin)?];
+    let vault = open(&origin)?;
+    let a = signed_over(&vault, id, s0, b1, without(x))?;
+    let c = signed_over(&vault, id, s0, project.leader, without(y))?;
+    let e = signed_over(&vault, id, &c, b3, off_board(b2))?;
+    let d = signed_over(&vault, id, &c, b2, off_board(b1))?;
+    let anchor = head_of(id, s0)?;
+    for ((_dir, replica), order) in copies.into_iter().zip([[&a, &c, &e, &d], [&d, &e, &c, &a]]) {
+        replay_authority(&vault, &replica)?;
+        for (at, row) in (10..).zip(order) {
+            replay_project(&replica, id, row, at)?;
+        }
+        board_tie_keeps_x_out(&replica, &project, x, anchor)?;
+    }
+    Ok(())
+}
+
+/// Bug repro (Astra #1434 r9 F2): B1 drops B2 from the board (A) and, over
+/// the same S0, removes Y (C); over C, B1 removes X (D1) and signs a sibling
+/// that keeps X (D2). B2, deposed by A, resolves C's tie for D2: its
+/// resolution settles nothing, so C's tie still meets D1 and X stays out,
+/// in both arrival orders.
+#[cfg(feature = "sync")]
+#[test]
+fn a_deposed_board_holders_resolution_settles_nothing_in_either_order() -> Result<()> {
+    let (b1, b2, x, y) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    let origin = tempfile::tempdir()?;
+    let project = board_signed_s0(&open(&origin)?, &[x, y], &[b1, b2], |_| {})?;
+    let (id, s0) = (project.id, &project.s0);
+    let copies = [copy_of(&origin)?, copy_of(&origin)?];
+    let vault = open(&origin)?;
+    let a = signed_over(&vault, id, s0, b1, off_board(b2))?;
+    let c = signed_over(&vault, id, s0, b1, without(y))?;
+    let d1 = signed_over(&vault, id, &c, b1, without(x))?;
+    let d2 = signed_over(&vault, id, &c, b1, |row| row.depth_remaining -= 1)?;
+    let (h1, h2) = (head_of(id, &d1)?, head_of(id, &d2)?);
+    let settle = envelope(
+        id,
+        resolution(
+            &vault,
+            id,
+            b2,
+            head_of(id, &c)?,
+            vec![],
+            sorted(vec![h1, h2]),
+            h2,
+        )?,
+    );
+    let anchor = head_of(id, s0)?;
+    for ((_dir, replica), settle_first) in copies.into_iter().zip([false, true]) {
+        replay_authority(&vault, &replica)?;
+        if settle_first {
+            put_companion(&replica, &settle, 9)?;
+        }
+        let order = if settle_first {
+            [&d2, &d1, &c, &a]
+        } else {
+            [&a, &c, &d1, &d2]
+        };
+        for (at, row) in (10..).zip(order) {
+            replay_project(&replica, id, row, at)?;
+        }
+        if !settle_first {
+            put_companion(&replica, &settle, 20)?;
+        }
+        board_tie_keeps_x_out(&replica, &project, x, anchor)?;
+    }
     Ok(())
 }

@@ -4,7 +4,7 @@
 //! Rank decides between sibling branches (`branch.rs`), the board settles its
 //! own ties with a signed resolution, the owner's seal re-roots the history,
 //! and a tie that stays open seats only the members every frontier keeps.
-use super::branch::{Excluded, Fork, Step};
+use super::branch::{Fork, Step};
 use super::fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
 use super::history_policy::{
     ProjectDependencies, ProjectEvidenceSet, ProjectHistoryOverBudget, counted_set,
@@ -404,13 +404,15 @@ pub(crate) fn fold_project(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> R
             .is_some_and(|signer| signer != "host"),
         ..view.clone()
     };
-    // Beside the path: each tie branch to its frontier, and the
-    // settlements and depositions that decided a fork.
+    // Beside the path: each tie branch to its frontier, the settlements on
+    // the way, and what the tree's exclusions rest on (section 5a).
     let listed: BTreeSet<&ProjectRevisionHash> =
         walk.path.iter().chain(&walk.resolutions).collect();
+    let exclusion = cx.exclusion(walk.root)?;
     fold.dependencies = ProjectDependencies {
         path: walk.path.clone(),
         contenders: (walk.served.nodes.iter())
+            .chain(&exclusion.relied)
             .filter(|node| !listed.contains(node))
             .copied()
             .collect(),
@@ -578,11 +580,11 @@ fn root_and_walk(
         path: vec![root],
         resolutions: BTreeSet::new(),
         end: None,
-        served: cx.fork(root, &Excluded::new())?,
+        served: cx.fork(root, root)?,
     };
-    let (mut node, mut excluded) = (root, Excluded::new());
+    let mut node = root;
     loop {
-        let fork = cx.fork(node, &excluded)?;
+        let fork = cx.fork(root, node)?;
         // A settlement that excluded a valid child shapes what is served,
         // whether one winner or a tie's meet follows: the frozen reader
         // re-verifies it with the path.
@@ -593,7 +595,6 @@ fn root_and_walk(
         match &fork.step {
             Step::Head => break,
             Step::Advance { winner, .. } => {
-                excluded = fork.below.get(winner).cloned().unwrap_or_default();
                 walk.path.push(*winner);
                 node = *winner;
             }
@@ -673,21 +674,15 @@ fn finish(cx: &FoldCx<'_, '_, '_>, fold: &mut ProjectFold, walk: Option<&Walk>) 
             .collect(),
     };
     let mut seen = BTreeSet::new();
-    // Each node folds under the exclusions its parent's fork hands it, as
-    // the walk saw it on the path.
-    let mut todo: Vec<(ProjectRevisionHash, Excluded)> = roots
-        .into_iter()
-        .map(|root| (root, Excluded::new()))
-        .collect();
-    while let Some((node, excluded)) = todo.pop() {
+    // Each node folds within the tree of its root, as the walk saw it.
+    let mut todo: Vec<(ProjectRevisionHash, ProjectRevisionHash)> =
+        roots.into_iter().map(|root| (root, root)).collect();
+    while let Some((root, node)) = todo.pop() {
         if !seen.insert(node) {
             continue;
         }
-        let fork = cx.fork(node, &excluded)?;
-        todo.extend(fork.valid.iter().map(|child| {
-            let below = fork.below.get(child).unwrap_or(&excluded);
-            (*child, below.clone())
-        }));
+        let fork = cx.fork(root, node)?;
+        todo.extend(fork.valid.iter().map(|child| (root, *child)));
         if fork.valid.len() < 2 {
             continue;
         }
