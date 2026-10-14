@@ -1317,15 +1317,23 @@ fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<
         actor,
         crate::federation::ScopeAxis::All,
     )?)));
-    for tgt in [held, absent] {
+    // An off-table source (a FACET stamps nothing) onto a stored facet is
+    // refused as onto a missing id, so the refusal never tells a FACET apart
+    // (Astra R12 F1).
+    for (src, tgt) in [
+        (shared, held),
+        (shared, absent),
+        (work, home),
+        (work, absent),
+    ] {
         let refused = wide
             .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
-                shared,
+                src,
                 EdgeKind::FacetOf,
                 tgt,
                 1.0,
             )))
-            .expect_err("a stamp onto a row that is no facet is refused");
+            .expect_err("an unplaceable stamp is refused");
         assert!(
             matches!(
                 refused,

@@ -365,21 +365,33 @@ impl HostSelfDispatcher<'_> {
         let gate_id =
             edge_operation_gate_id(SelfEffect::MemoryPutEdge, call.src, call.kind, call.tgt)?;
         match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault.put_edge_for_code_run_trap(
-                &call.src,
-                call.kind,
-                &call.tgt,
-                call.weight,
-                &envelope,
-                gate_id,
-                &gate_body,
-                |txn| match &placement {
-                    Some(reader) => {
-                        require_facet_placement_in(vault, reader, txn, call.src, call.tgt)
-                    }
-                    None => Ok(()),
-                },
-            )?,
+            ExecutorStorage::Canonical(vault) => {
+                vault
+                    .put_edge_for_code_run_trap(
+                        &call.src,
+                        call.kind,
+                        &call.tgt,
+                        call.weight,
+                        &envelope,
+                        gate_id,
+                        &gate_body,
+                        |txn| match &placement {
+                            Some(reader) => {
+                                require_facet_placement_in(vault, reader, txn, call.src, call.tgt)
+                            }
+                            None => Ok(()),
+                        },
+                    )
+                    .map_err(|refused| match refused {
+                        // A door's credential learns no endpoint type from the type
+                        // table either: its every FacetOf refusal reads alike (Astra
+                        // R12 F1 on #1432).
+                        Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
+                            ..
+                        }) if placement.is_some() => unplaceable(call.src, call.tgt),
+                        other => other,
+                    })?
+            }
             ExecutorStorage::Session(binding) => binding.session.executor_put_edge(
                 &binding.route,
                 &call.src,
