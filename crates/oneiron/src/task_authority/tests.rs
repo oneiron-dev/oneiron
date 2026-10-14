@@ -80,7 +80,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         (BODY_KEY_ROLE, Value::from(TaskRole::Task.role_byte())),
         (BODY_KEY_SCHEMA_VERSION, Value::from(2_u8)),
         (BODY_KEY_SUBKIND, Value::from("typed")),
-        (BODY_KEY_KIND, Value::from(5_u8)),
+        (BODY_KEY_KIND, Value::from(6_u8)),
         (BODY_KEY_TASK_REF, Value::from("not-a-hex-id")),
         (BODY_KEY_OCCURRED_AT, Value::from("not-a-number")),
     ] {
