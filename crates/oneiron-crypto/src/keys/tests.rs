@@ -1,9 +1,11 @@
 //! The seed expansion's stack wipe (RustCrypto/meta#38): building a key from its seed
 //! reaches below its caller with the expanded seeds and the constructors' by-value copies
 //! of them, and `from_seed` wipes that reach. The key `from_seed` returns is moved out by
-//! value, so copies of its own halves sit above the wipe, in the frames that hold the key:
-//! only the reach is checked, as for the Ed25519 signer. Run in a release build, this is
-//! also the check that `from_seed_inner` stays out of line.
+//! value, so copies of its own halves sit above the wipe, in the frames that hold the key.
+//! The check is the wipe's own: it ran below `from_seed` as deep as its constant, which
+//! covers the build's reach, and no secret is left below the frames that hold the key.
+//! Run in a release build, this is also the check that `from_seed_inner` stays out of
+//! line.
 
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -57,4 +59,17 @@ fn building_a_key_from_its_seed_stays_within_the_wipe() {
             .any(|(_, bytes)| bare.depth_of(bytes).is_some()),
         "the probe must see what the bare build leaves"
     );
+    // Without the wipe, or with the expansion's alone, nothing reaches this deep but
+    // the build, which stays above the constant (Sol code-R4 S4-F2).
+    assert!(
+        wiped.depth() >= SEED_KEY_STACK_WIPE,
+        "the wipe must run below from_seed"
+    );
+    let above = wiped.depth() - SEED_KEY_STACK_WIPE;
+    for (name, bytes) in &secrets {
+        assert!(
+            wiped.depth_of(bytes).is_none_or(|depth| depth <= above),
+            "{name} left below the frames that hold the key"
+        );
+    }
 }

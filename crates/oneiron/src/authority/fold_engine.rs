@@ -545,7 +545,7 @@ fn fold_authority_log_once(
     });
 
     let accepted_roster_marks = merged.as_ref().map_or_else(BTreeSet::new, |state| {
-        super::stale_roster::accepted_roster_marks(state, &by_hash, &valid_entries)
+        super::stale_roster::accepted_roster_marks(state, &by_hash, &states, &valid_entries)
     });
     AuthorityFold {
         append_heads: BTreeSet::new(),

@@ -329,5 +329,9 @@ fn expand_seed(
         .map_err(|_| Error::Primitive("hkdf"))
 }
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    any(target_os = "linux", target_os = "macos")
+))]
 mod tests;

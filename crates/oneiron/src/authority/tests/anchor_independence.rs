@@ -9,7 +9,7 @@ use super::history_transfer::re_root_entry;
 use super::machine_identity::request_for;
 use super::owner_anchor::{
     YOURS, agent, enrol_anchor, fold_seen_at, hosted_fold, hosted_genesis, pin, profile, publish,
-    root_record, signed,
+    rekeyed, root_record, signed,
 };
 use super::support::{
     EnrollSpec, authority_key_from_ed, cosign_ed, device, ed_key, enroll_device_entry,
@@ -304,21 +304,7 @@ fn a_stale_roster_mark_never_vetoes_the_anchors_keys() {
     let mark = signed(id, &[&genesis], &owner, 1, profile(&request, YOURS, 1));
     let handoff = re_root_entry(id, &mark, &owner, 2, &next);
     let (root, anchor, published) = publish(id, &handoff);
-    let encryption_key = MachineEncryptionKey {
-        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-        key: vec![8; MACHINE_ENCRYPTION_KEY_LEN],
-    };
-    let transcript = machine_profile_proof_transcript(
-        &id,
-        request.machine,
-        &request.machine_key,
-        &encryption_key,
-    );
-    let rekeyed = MachineEnrolmentRequest {
-        machine_proof: machine.sign(&transcript).to_bytes(),
-        encryption_key,
-        ..request.clone()
-    };
+    let rekeyed = rekeyed(id, &request, &machine);
     let anchored = signed(id, &[&published], &anchor, 2, profile(&rekeyed, YOURS, 1));
     let entries = [genesis, mark, handoff, published, anchored];
     let mine_at = |now| {

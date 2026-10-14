@@ -640,142 +640,26 @@ fn custody_reaching_a_later_signer_keeps_an_accepted_removal() {
     assert!(!folded.is_mine(None));
 }
 
-/// Owner-held keys A and B mark machine M with one profile on sibling
-/// branches; one of them (the winner) speaks for the trusted roster revision,
-/// and the other's (the loser's) copy is first seen later. A sibling branch
-/// enrols the loser again as `again` says, and a handoff joins them, so it
-/// retires both. Folds at first sight and past the winner's stale-roster
-/// deadline, before the loser's: M, the winner's copy and the two folds.
-fn copies_past_the_winners_deadline(
-    again: impl Fn(AuthorityKey) -> DeviceAuthority,
-    posture: crate::HostingPrivacyPosture,
-) -> (EntityId, AuthorityEntryHash, [AuthorityFold; 2]) {
-    let (root_key, next) = (ed_key(180), ed_key(183));
-    let genesis = genesis_entry(180, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let id = genesis_vault_id(&genesis).unwrap();
-    let ordinary = |key: &SigningKey| {
-        device(
-            authority_key_from_ed(key),
-            ROLE_OWNER | ROLE_ADMIN,
-            AuthorityTier::Software,
-        )
+/// `request` again with a fresh encryption key, proved by the machine's own
+/// signing key `machine`.
+pub(super) fn rekeyed(
+    id: AuthorityVaultId,
+    request: &MachineEnrolmentRequest,
+    machine: &SigningKey,
+) -> MachineEnrolmentRequest {
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![8; MACHINE_ENCRYPTION_KEY_LEN],
     };
-    let (a, b) = (ed_key(181), ed_key(182));
-    let enrol_a = signed(
-        id,
-        &[&genesis],
-        &root_key,
-        1,
-        AuthorityOp::EnrollDevice {
-            device: ordinary(&a),
-        },
+    let transcript = machine_profile_proof_transcript(
+        &id,
+        request.machine,
+        &request.machine_key,
+        &encryption_key,
     );
-    let enrol_b = cosign_ed(
-        signed(
-            id,
-            &[&enrol_a],
-            &root_key,
-            2,
-            AuthorityOp::EnrollDevice {
-                device: ordinary(&b),
-            },
-        ),
-        &root_key,
-        &a,
-    );
-    let request = request_for(id, EntityId::now(), &ed_key(184));
-    let op = profile(&request, YOURS, 1);
-    let copy_a = signed(id, &[&enrol_b], &a, 1, op.clone());
-    let copy_b = signed(id, &[&enrol_b], &b, 1, op);
-    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
-    let ((winner, winner_copy), (loser, loser_copy)) = if hash(&copy_a) < hash(&copy_b) {
-        ((&a, &copy_a), (&b, &copy_b))
-    } else {
-        ((&b, &copy_b), (&a, &copy_a))
-    };
-    let sibling = signed(
-        id,
-        &[&genesis],
-        &root_key,
-        3,
-        AuthorityOp::EnrollDevice {
-            device: again(authority_key_from_ed(loser)),
-        },
-    );
-    let handoff = cosign_ed(
-        signed(
-            id,
-            &[winner_copy, loser_copy, &sibling],
-            &root_key,
-            4,
-            AuthorityOp::ReRoot {
-                new_device: ordinary(&next),
-            },
-        ),
-        &root_key,
-        winner,
-    );
-    let entries = [
-        genesis,
-        enrol_a,
-        enrol_b,
-        copy_a.clone(),
-        copy_b.clone(),
-        sibling,
-        handoff.clone(),
-    ];
-    let mut first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
-    first_seen.insert(hash(loser_copy), 150);
-    first_seen.insert(hash(&handoff), 200);
-    let fold_at =
-        |now| fold_authority_log_for_posture(&entries, &first_seen, now, &BTreeMap::new(), posture);
-    let fold = fold_at(100);
-    assert!(fold.valid_entries.contains(&hash(&handoff)));
-    let past = fold_at(120 + DEFAULT_STALE_ROSTER_WINDOW_SECS);
-    (request.machine, hash(winner_copy), [fold, past])
-}
-
-/// On a hosted log the sibling branch enrols the loser for the cloud, so
-/// custody reaches it on the merged history. Past the winner's deadline the
-/// loser's copy renews nothing in the trusted chain: an unpinned install no
-/// longer counts M mine (Sol code-R2 S2-F1). Fails before: any valid roster
-/// copy renewed it.
-#[test]
-fn a_copy_custody_reached_never_renews_a_trusted_mark() {
-    let (machine, winner, [fold, past]) = copies_past_the_winners_deadline(
-        |key| {
-            device(
-                key,
-                ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
-                AuthorityTier::CloudCustodial,
-            )
-        },
-        crate::HostingPrivacyPosture::Hosted,
-    );
-    let folded = fold.machine(machine).unwrap();
-    assert_eq!(folded.roster_trusted.as_ref().unwrap().entry, winner);
-    assert!(folded.is_mine(None));
-    let folded = past.machine(machine).unwrap();
-    assert!(folded.roster_trusted.as_ref().unwrap().stale);
-    assert!(!folded.roster_chain().stale);
-    assert!(!folded.is_mine(None));
-}
-
-/// On a self-host log the sibling branch enrols the loser as an agent
-/// instead. The merged roster strips its consent, but no custody reaches it,
-/// so the trusted chain still accepts its copy, and that copy renews the
-/// trusted revision past the winner's deadline (Sol code-R3 S3-F2). Fails
-/// before: the renewal judged the signer's merged roles.
-#[test]
-fn a_copy_the_trusted_chain_accepts_renews_its_mark() {
-    let (machine, winner, [fold, past]) = copies_past_the_winners_deadline(
-        |key| device(key, ROLE_AGENT, AuthorityTier::Software),
-        crate::HostingPrivacyPosture::SelfHostLocal,
-    );
-    assert!(fold.machine(machine).unwrap().is_mine(None));
-    let folded = past.machine(machine).unwrap();
-    let trusted = folded.roster_trusted.as_ref().unwrap();
-    assert_eq!(trusted.entry, winner);
-    assert!(!trusted.stale);
-    assert!(folded.is_mine(None));
+    MachineEnrolmentRequest {
+        machine_proof: machine.sign(&transcript).to_bytes(),
+        encryption_key,
+        ..request.clone()
+    }
 }

@@ -51,3 +51,4 @@ mod owner_anchor;
 mod pinned_root;
 mod recovery_ceremony;
 mod retired_ceiling;
+mod trusted_renewal;

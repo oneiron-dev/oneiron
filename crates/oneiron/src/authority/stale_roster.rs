@@ -207,31 +207,37 @@ pub(super) fn apply_stale_roster_window(
     fold
 }
 
-/// The valid roster marks a key P1 accepts for an owned mark signed, judged
-/// as the trusted chain judges them (`ClaimIndex::accepted`). An owned mark
-/// folds only when its signer is owner-held in the mark's own parent state, so
-/// each valid one was; on a hosted fold its signer must also stay outside the
-/// host's custody on the merged history. Only these renew a stale trusted
-/// roster revision (Sol code-R2 S2-F1, code-R3 S3-F2).
+/// The valid roster marks a key P1 accepts signed, judged as the trusted chain
+/// judges them (`ClaimIndex::accepted_roster`): each heads its machine's roster
+/// chain in its own fold state, signed by a key owner-held there, and on a
+/// hosted fold that key stays outside the host's custody on the merged history.
+/// Owned marks and node profiles alike; an anchor's mark heads no roster chain.
+/// Only these renew a stale trusted roster revision (Sol code-R2 S2-F1,
+/// code-R3 S3-F2, code-R4 S4-F1).
 pub(super) fn accepted_roster_marks(
-    state: &FoldState,
+    merged: &FoldState,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
     valid: &BTreeSet<AuthorityEntryHash>,
 ) -> BTreeSet<AuthorityEntryHash> {
     valid
         .iter()
-        .filter(|hash| !state.anchor_entries.contains(*hash))
         .filter(|hash| {
-            entries.get(*hash).is_some_and(|entry| {
-                matches!(
-                    &entry.op,
-                    AuthorityOp::MachineProfile(MachineProfile {
-                        role: MachineRole::Owned(_),
-                        ..
-                    })
-                ) && !(state.hosted
-                    && super::machine_profile::in_host_custody(state, entry.signer_key()))
-            })
+            let Some(AuthorityOp::MachineProfile(profile)) =
+                entries.get(*hash).map(|entry| &entry.op)
+            else {
+                return false;
+            };
+            states
+                .get(*hash)
+                .and_then(|own| own.machines.get(&profile.machine))
+                .and_then(|chains| chains.get(&MachineAdmitter::Roster))
+                .is_some_and(|chain| {
+                    chain.head.entry == **hash
+                        && chain.head.signer_class == SignerClass::OwnerHeld
+                        && !(merged.hosted
+                            && super::machine_profile::in_host_custody(merged, &chain.head.signer))
+                })
         })
         .copied()
         .collect()
