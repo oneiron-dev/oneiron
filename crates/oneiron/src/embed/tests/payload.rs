@@ -16,9 +16,14 @@ impl crate::compaction::CompactionBackend for SummaryBackend {
     fn compact(
         &self,
         _request: &crate::compaction::CompactionRequest,
-    ) -> Result<crate::compaction::CompactionProduct> {
+        _retry: Option<crate::compaction::CompactionCheck>,
+    ) -> std::result::Result<
+        crate::compaction::CompactionProduct,
+        crate::compaction::CompactionRefusal,
+    > {
         Ok(crate::compaction::CompactionProduct {
             summary_text: "the native epoch prose".to_owned(),
+            finish: crate::FinishReason::Stop,
             latency: std::time::Duration::from_millis(1),
         })
     }
@@ -61,13 +66,15 @@ fn mint_pending_summary(vault: &Vault) -> Result<EntityId> {
             tokens: 3,
         }],
     )?;
-    let product = driver.backend().compact(&request)?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
     let plan = driver.integrate(
         vault,
         &session,
         crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent),
-        &request,
-        product,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
         &[],
     )?;
     Ok(plan.summary_id)
@@ -242,5 +249,28 @@ fn real_claim_and_minted_summary_reconcile_through_typed_embedder_and_egress() -
         );
         assert_eq!(reconciler.reconcile_once_at(20)?.leased, 0);
     }
+    Ok(())
+}
+
+/// agent-runtime-v1 §d7: an epoch summary withdrawn by an erasure stays out
+/// of the embedder, through a refill of the embedding space too.
+#[test]
+fn a_withdrawn_epoch_summary_is_never_queued_again() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let summary = mint_pending_summary(&vault)?;
+    assert!(pending_token(&vault, &summary)?.is_some());
+    // The TURN the summary was written from.
+    assert!(vault.delete_entity(&entity_id(0x72))?);
+    assert!(pending_token(&vault, &summary)?.is_none(), "withdrawn");
+    let model = vault.config.embedding_model.clone().expect("model");
+    vault.with_write_txn(|wtxn| {
+        vault
+            .swap_embedding_space_in_txn(wtxn, &model, None, true)
+            .map(drop)
+    })?;
+    assert!(
+        pending_token(&vault, &summary)?.is_none(),
+        "a refill does not queue it again"
+    );
     Ok(())
 }

@@ -449,10 +449,28 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<super::RevisionRef>> {
-        let Some(raw) = read_entity_revision_in_txn(self, txn, id, ReadMode::Indexed)? else {
+        self.indexed_revision_from_in_txn(&self.store, txn, id)
+    }
+
+    /// [`Self::indexed_revision_in_txn`] read through `store`: a room's view
+    /// pins its overlay rows as base pins its own.
+    pub(crate) fn indexed_revision_from_in_txn(
+        &self,
+        store: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<super::RevisionRef>> {
+        let Some(raw) = super::storage::read_entity_revision_from_store_in_txn(
+            self,
+            store,
+            txn,
+            id,
+            ReadMode::Indexed,
+        )?
+        else {
             return Ok(None);
         };
-        Ok(Some(state(&self.store, txn, id)?.map_or_else(
+        Ok(Some(state(store, txn, id)?.map_or_else(
             || super::storage::reference(id, &raw),
             |value| value.indexed,
         )))

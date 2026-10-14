@@ -76,7 +76,7 @@ pub(crate) fn turn_chunks_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<TurnChunks>> {
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, &vault.store, txn, turn)? else {
         return Ok(None);
     };
     let LiveEntityRow::Live { entity_type, .. } = live_entity_row_in_txn(&vault.store, txn, turn)?

@@ -126,6 +126,19 @@ impl<'v> ScopedRead<'v> {
         if self.actor_key.vault_owner_ref().is_some() {
             return Ok(true);
         }
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+            && let Some(admitted) = self.epoch_sources_readable_in(
+                rtxn,
+                policy,
+                id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                authority,
+            )?
+        {
+            return Ok(admitted);
+        }
         let sources = match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
             crate::scope_summary::WordSources::Own => return Ok(true),
             crate::scope_summary::WordSources::Unresolved => return Ok(false),
@@ -141,6 +154,53 @@ impl<'v> ScopedRead<'v> {
             }
         }
         Ok(true)
+    }
+
+    /// An epoch summary's sources are its `DerivedFrom` targets, through any
+    /// nested epoch summary (agent-runtime-v1 §d7); `None` for any other
+    /// SUMMARY body. A source that carries words of its own sources (a scope
+    /// summary, a reply copying one, a merge header) keeps that conjunct.
+    fn epoch_sources_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        body: &[u8],
+        authority: &HeldAuthority<'v>,
+    ) -> Result<Option<bool>> {
+        let floor = self.actor_retrieval_floor(policy)?;
+        let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
+            let raw = row.encode();
+            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor, authority)? {
+                return Ok(false);
+            }
+            // The walk itself expands a nested epoch summary, in any form.
+            if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+                && match self.session_view {
+                    Some(view) => crate::compaction::stored_epoch_in(view, rtxn, source, &row.body),
+                    None => crate::compaction::stored_epoch_in(
+                        &self.vault.store,
+                        rtxn,
+                        source,
+                        &row.body,
+                    ),
+                }?
+                .may_be()
+            {
+                return Ok(true);
+            }
+            self.derived_sources_readable_in(rtxn, policy, source, &raw, authority)
+        };
+        match self.session_view {
+            Some(view) => crate::compaction::epoch_sources_admitted_in(view, rtxn, id, body, admit),
+            None => crate::compaction::epoch_sources_admitted_in(
+                &self.vault.store,
+                rtxn,
+                id,
+                body,
+                admit,
+            ),
+        }
     }
 
     /// The row's own admission, before what it was written from.

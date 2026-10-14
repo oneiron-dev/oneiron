@@ -39,6 +39,9 @@ struct Fence {
     keys: BTreeSet<AuthorityKey>,
     /// The handoff and its own ancestry.
     line: BTreeSet<AuthorityEntryHash>,
+    /// The handoff is one of a conflict: its fence closed, but it installed
+    /// no successor.
+    conflict: bool,
 }
 
 impl Fence {
@@ -70,6 +73,7 @@ impl Fence {
             vault_id: entry.vault_id,
             keys,
             line,
+            conflict: false,
         }
     }
 
@@ -116,6 +120,12 @@ impl Retirements {
     /// The handoffs whose fences are closed, settled or in conflict.
     pub(super) fn handoffs(&self) -> BTreeSet<AuthorityEntryHash> {
         self.fences.iter().map(|fence| fence.handoff).collect()
+    }
+
+    /// Whether a conflict retired a root and installed no successor, so the
+    /// roster has no settled root.
+    pub(super) fn unsettled(&self) -> bool {
+        self.fences.iter().any(|fence| fence.conflict)
     }
 
     /// Whether `hash` stands on a retired key: it, or an entry in its
@@ -295,7 +305,13 @@ fn close_fences(
         fences: fences
             .into_iter()
             .zip(closed)
-            .filter_map(|(fence, closed)| (closed == Some(true)).then_some(fence))
+            .zip(&members)
+            .filter_map(|((fence, closed), members)| {
+                (closed == Some(true)).then_some(Fence {
+                    conflict: members.len() > 1,
+                    ..fence
+                })
+            })
             .collect(),
     };
     for hash in states.keys().filter(|hash| !gone.contains(*hash)) {
