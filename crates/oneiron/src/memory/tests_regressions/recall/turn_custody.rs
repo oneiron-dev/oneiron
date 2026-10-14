@@ -1,6 +1,10 @@
 // A TURN's words are its MESSAGEs' without the rest of their bodies: each
 // door that joins them withholds a message whose stored body the write door
-// refuses, as a lossy door withholds a refused body whole.
+// refuses, as a lossy door withholds a refused body whole, and words the
+// write door's text rules refuse.
+
+const CUSTODY_PHRASE: &str =
+    "legal winner thank year wave sausage worth useful legal winner thank yellow";
 
 /// Wonder R1 on the chat document pack, ruled for every door that joins a
 /// turn's words (Engine, 2026-10-14): recall's TURN item, the scoped context
@@ -10,10 +14,82 @@
 #[test]
 fn a_turn_gives_no_words_of_a_message_the_write_door_refuses() {
     const MEANING: [f32; 4] = [0.0, 0.0, 1.0, 0.0];
-    const PHRASE: &str =
-        "legal winner thank year wave sausage worth useful legal winner thank yellow";
-    const KEPT: &str = "the kettle whistles twice";
-    let (_dir, vault) = open_embedding_vault();
+    let (_dir, vault, owner) = scan_off_embedding_vault();
+    let facade = facade_for(&vault, owner);
+    let kept = "the kettle whistles twice";
+    let turn = witness_turn(&facade, 0xD9, &[CUSTODY_PHRASE, kept], 1_900);
+    fill_turn(&vault, &turn, &MEANING);
+    assert_eq!(refused_message_bodies(&vault, &turn), [true, false]);
+    turn_doors_serve(&vault, &facade, &turn, "kettle", &MEANING, kept, "sausage");
+}
+
+/// The words leg alone (Wonder R2): a message whose text lives in its entity
+/// document has a body the write door accepts, and its words are read as
+/// they are served.
+#[cfg(feature = "sync")]
+#[test]
+fn a_turn_gives_no_words_the_write_door_refuses_from_a_document() {
+    use crate::entity_doc::{DocAuthorization, TextField};
+    const MEANING: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
+    let (_dir, vault, owner) = scan_off_embedding_vault();
+    let facade = facade_for(&vault, owner);
+    let kept = "the clock chimes at noon";
+    let turn = witness_turn(&facade, 0xDA, &[CUSTODY_PHRASE, kept], 1_900);
+    fill_turn(&vault, &turn, &MEANING);
+    let authenticated = vault
+        .authenticate_owner(
+            owner,
+            "principal:turn-custody-test",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    vault
+        .migrate_entity_text(
+            &first_message(&vault, &turn),
+            &TextField::MapField("content".into()),
+            crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+            &DocAuthorization::Owner(&authenticated),
+        )
+        .expect("move the message's text into its document");
+    assert_eq!(refused_message_bodies(&vault, &turn), [false, false]);
+    turn_doors_serve(&vault, &facade, &turn, "clock", &MEANING, kept, "sausage");
+}
+
+/// The body leg alone: a message whose row holds a credential beside words
+/// the write door accepts gives none of them.
+#[test]
+fn a_turn_gives_no_words_of_a_message_whose_body_holds_a_secret() {
+    const MEANING: [f32; 4] = [1.0, 0.0, 1.0, 0.0];
+    let (_dir, vault, owner) = scan_off_embedding_vault();
+    let facade = facade_for(&vault, owner);
+    let kept = "the porch light flickers";
+    let turn = witness_turn(&facade, 0xDC, &["the stove ticks softly", kept], 1_900);
+    fill_turn(&vault, &turn, &MEANING);
+    let message = first_message(&vault, &turn);
+    let raw = vault.get_raw(&message).expect("raw read").expect("stored");
+    let (header, body) = raw.split_at(crate::batch::ENTITY_METADATA_HEADER_LEN);
+    let rmpv::Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut std::io::Cursor::new(body)).expect("message body")
+    else {
+        panic!("a message body is a map");
+    };
+    fields.push((
+        rmpv::Value::from("password"),
+        rmpv::Value::from("t7Rk2pLq9WzX"),
+    ));
+    let mut row = header.to_vec();
+    rmpv::encode::write_value(&mut row, &rmpv::Value::Map(fields)).expect("encode");
+    vault
+        .with_write_txn(|wtxn| vault.store.entities.put(wtxn, message.as_bytes(), &row))
+        .expect("store a body the write door refuses, as a replica with its scan off may");
+    assert_eq!(refused_message_bodies(&vault, &turn), [true, false]);
+    turn_doors_serve(&vault, &facade, &turn, "porch", &MEANING, kept, "stove");
+}
+
+/// A vault whose turns embed, with the owner's write scan off.
+fn scan_off_embedding_vault() -> (tempfile::TempDir, crate::Vault, EntityId) {
+    let (dir, vault) = open_embedding_vault();
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let authenticated = vault
         .authenticate_owner(
@@ -30,16 +106,18 @@ fn a_turn_gives_no_words_of_a_message_the_write_door_refuses() {
             10,
         )
         .expect("scan off");
-    let facade = facade_for(&vault, owner);
-    let turn = witness_turn(&facade, 0xD9, &[PHRASE, KEPT], 1_900);
-    fill_turn(&vault, &turn, &MEANING);
+    (dir, vault, owner)
+}
+
+/// Whether the write door refuses each of `turn`'s message bodies, in order.
+fn refused_message_bodies(vault: &crate::Vault, turn: &EntityId) -> Vec<bool> {
     let messages = {
         let rtxn = vault.store.env.read_txn().expect("read txn");
-        crate::tagging::turn_messages_in_txn(&vault, &rtxn, &turn)
+        crate::tagging::turn_messages_in_txn(vault, &rtxn, turn)
             .expect("turn messages")
             .expect("a live turn")
     };
-    let refused: Vec<bool> = messages
+    messages
         .iter()
         .map(|message| {
             let id = EntityId::from_hex(&message.id).expect("message id");
@@ -48,19 +126,30 @@ fn a_turn_gives_no_words_of_a_message_the_write_door_refuses() {
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
         })
-        .collect();
-    assert_eq!(refused, [true, false]);
-    let served = |text: &str| text.contains(KEPT) && !text.contains("sausage");
+        .collect()
+}
 
-    let item = recalled_turn(&facade, "kettle", &MEANING);
-    assert!(served(&item.value_text), "recall: {}", item.value_text);
-
+/// Asserts that each door that joins `turn`'s words serves `kept` and no
+/// `withheld`: recall's item for `query`, the scoped context pack's `txt`
+/// live and pinned at that item, and a document chat naming it, its items
+/// and its answer, with no format, Markdown and plain text. A rendered
+/// answer need not quote the words, so it is held only to `withheld`.
+fn turn_doors_serve(
+    vault: &crate::Vault,
+    facade: &Memory<'_>,
+    turn: &EntityId,
+    query: &str,
+    meaning: &[f32],
+    kept: &str,
+    withheld: &str,
+) {
+    let item = recalled_turn(facade, query, meaning);
     let lane = facade
         .read_lane(crate::claim::ClaimReadStatus::Recorded)
         .expect("owner read lane");
     let mut pack = vault
         .context_pack()
-        .search_vector(&MEANING, 10)
+        .search_vector(meaning, 10)
         .hydrate(true)
         .run_unfinalized_with_telemetry()
         .expect("assemble")
@@ -70,7 +159,7 @@ fn a_turn_gives_no_words_of_a_message_the_write_door_refuses() {
     let live = pack
         .results
         .iter()
-        .find(|entity| entity.id == turn)
+        .find(|entity| entity.id == *turn)
         .and_then(|entity| {
             entity
                 .fields
@@ -79,12 +168,14 @@ fn a_turn_gives_no_words_of_a_message_the_write_door_refuses() {
                 .as_str()
                 .map(str::to_owned)
         });
-    let pinned = pinned_pack_text(&vault, &lane, &turn, &MEANING, &item);
-    for (read, text) in [("live", live), ("pinned", pinned)] {
-        let text = text.unwrap_or_default();
-        assert!(served(&text), "context pack {read}: {text}");
-    }
-
+    let mut served = vec![
+        ("recall".to_owned(), item.value_text.clone()),
+        ("pack live".to_owned(), live.unwrap_or_default()),
+        (
+            "pack pinned".to_owned(),
+            pinned_pack_text(vault, &lane, turn, meaning, &item).unwrap_or_default(),
+        ),
+    ];
     for format in [None, Some("md"), Some("txt")] {
         let crate::memory::ChatResponse::Answered {
             answer, retrieval, ..
@@ -106,8 +197,23 @@ fn a_turn_gives_no_words_of_a_message_the_write_door_refuses() {
         else {
             panic!("{format:?}: the named turn answers");
         };
-        let items = format!("{:?}", retrieval.items);
-        assert!(!answer.contains("sausage"), "{format:?}: {answer}");
-        assert!(served(&items), "{format:?}: {items}");
+        served.push((
+            format!("chat {format:?} items"),
+            format!("{:?}", retrieval.items),
+        ));
+        if format.is_none() {
+            served.push(("chat answer".to_owned(), answer));
+        } else {
+            assert!(
+                !answer.contains(withheld),
+                "chat {format:?} answer: {answer}"
+            );
+        }
+    }
+    for (door, text) in served {
+        assert!(
+            text.contains(kept) && !text.contains(withheld),
+            "{door}: {text}"
+        );
     }
 }
