@@ -12,7 +12,7 @@ use super::trap::{open_trap_in_txn, trap_park_owner};
 use super::trap_binding::TrapBindingScope;
 use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
-    DurableStepResult, StepOutcome, StepProgression,
+    DurableStepResult, ReplyCheck, StepOutcome, StepProgression,
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, current_legibility};
 use crate::error::Error;
@@ -100,6 +100,38 @@ pub async fn call_as_step(
     .await
 }
 
+/// Durable step whose request asks for its reply without a schema and
+/// checks it here instead: a reply `check` refuses is paid and refused as a
+/// schema miss is, and never memoized, so a replay asks again. Only a reply
+/// the check passed is ever stored, so a memo or a recovered payload needs
+/// no second check. A request with a schema keeps the schema's own door.
+pub async fn call_as_step_checked(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    check: &ReplyCheck,
+) -> DurableStepResult<StepOutcome> {
+    if matches!(
+        request.envelope.response_format,
+        super::super::ResponseFormat::Json { .. }
+    ) {
+        return Err(Error::InvalidConfig(
+            "a checked step asks for its reply without a schema".into(),
+        )
+        .into());
+    }
+    durable_step(
+        ctx,
+        backend,
+        guard,
+        request,
+        &super::super::FallbackRegistry::standard(),
+        Some(check),
+    )
+    .await
+}
+
 /// Durable step with an explicitly owned deterministic runner registry.
 pub async fn call_as_step_with_fallbacks(
     ctx: &DurableStepContext<'_>,
@@ -107,6 +139,17 @@ pub async fn call_as_step_with_fallbacks(
     guard: &BudgetGuard,
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
+) -> DurableStepResult<StepOutcome> {
+    durable_step(ctx, backend, guard, request, fallbacks, None).await
+}
+
+async fn durable_step(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    fallbacks: &super::super::FallbackRegistry,
+    check: Option<&ReplyCheck>,
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
 
@@ -183,8 +226,15 @@ pub async fn call_as_step_with_fallbacks(
 
     // The deadline only gates admission. Once admitted, the provider (and any
     // retries) runs to a terminal response so its lease can settle real usage.
-    let generated =
-        super::schema::generate(backend, &request, &admission.lease, guard, ctx.deadline).await;
+    let generated = super::schema::generate(
+        backend,
+        &request,
+        &admission.lease,
+        guard,
+        ctx.deadline,
+        check,
+    )
+    .await;
     // A corrective call failed: an earlier response was already answered and
     // paid, whatever usage it reported.
     let answered = matches!(generated, Err(DurableStepError::SpentLlm { .. }));
@@ -204,7 +254,8 @@ pub async fn call_as_step_with_fallbacks(
             };
             match fallbacks.run(fallback, &request, &error) {
                 Ok(mut response) => {
-                    if let Err(error) = super::schema::validate_fallback(&request, &response) {
+                    if let Err(error) = super::schema::validate_fallback(&request, &response, check)
+                    {
                         settle_failed_usage(guard, &admission.lease, &failed_usage);
                         return Err(error);
                     }

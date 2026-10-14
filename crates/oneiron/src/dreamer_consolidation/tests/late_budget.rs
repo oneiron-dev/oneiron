@@ -39,7 +39,6 @@ enum LateCall {
     Merge,
     InvalidJson,
     NativeInvalidJson,
-    FinalInvalidCorrection,
     MergeFinalInvalidCorrection,
     FinalizeInvalidJson,
     FinalizeMergeInvalidJson,
@@ -88,19 +87,16 @@ fn run_case(case: LateCall) -> Result<()> {
         | LateCall::FinalizeMergeInvalidJson => {
             two_candidate_extraction(&subject, &turns[0], &turns[1])
         }
-        LateCall::InvalidJson
-        | LateCall::NativeInvalidJson
-        | LateCall::FinalInvalidCorrection
-        | LateCall::FinalizeInvalidJson => text_response("not json".to_owned()),
+        LateCall::InvalidJson | LateCall::NativeInvalidJson | LateCall::FinalizeInvalidJson => {
+            text_response("not json".to_owned())
+        }
     };
     let expire_on_call = match case {
         LateCall::Merge | LateCall::FinalizeMergeInvalidJson => 2,
-        LateCall::FinalInvalidCorrection => 3,
         LateCall::MergeFinalInvalidCorrection => 4,
         _ => 1,
     };
     let rest = match case {
-        LateCall::FinalInvalidCorrection => vec![Ok(text_response("not json".to_owned())); 2],
         LateCall::MergeFinalInvalidCorrection => {
             vec![Ok(text_response("not json".to_owned())); 3]
         }
@@ -174,7 +170,6 @@ fn run_case(case: LateCall) -> Result<()> {
         | LateCall::NativeInvalidJson
         | LateCall::FinalizeInvalidJson => 50,
         LateCall::Merge | LateCall::FinalizeMergeInvalidJson => 100,
-        LateCall::FinalInvalidCorrection => 150,
         LateCall::MergeFinalInvalidCorrection => 200,
     };
     assert_eq!(backend.calls.load(Ordering::SeqCst), expire_on_call);
@@ -189,10 +184,7 @@ fn run_case(case: LateCall) -> Result<()> {
     );
     if matches!(
         case,
-        LateCall::InvalidJson
-            | LateCall::NativeInvalidJson
-            | LateCall::FinalInvalidCorrection
-            | LateCall::MergeFinalInvalidCorrection
+        LateCall::InvalidJson | LateCall::NativeInvalidJson | LateCall::MergeFinalInvalidCorrection
     ) {
         return Ok(()); // failed response(s) are paid, never memoized
     }
@@ -248,7 +240,6 @@ fn run_case(case: LateCall) -> Result<()> {
         LateCall::FinalizeMergeInvalidJson => 150,
         LateCall::InvalidJson
         | LateCall::NativeInvalidJson
-        | LateCall::FinalInvalidCorrection
         | LateCall::MergeFinalInvalidCorrection => unreachable!(),
     };
     let new_calls = usize::from(matches!(
@@ -310,7 +301,7 @@ fn late_native_terminal_schema_failure_charges_the_wake_ledger() -> Result<()> {
 
 #[test]
 fn late_final_correction_failure_charges_all_paid_calls() -> Result<()> {
-    run_case(LateCall::FinalInvalidCorrection)?;
+    // The extraction asks without a schema, so only the verdict corrects.
     run_case(LateCall::MergeFinalInvalidCorrection)
 }
 
@@ -345,7 +336,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
     let response = |ids: &[EntityId]| {
         text_response(serde_json::json!({"candidates":[{
         "subject": conversation.to_hex(), "predicate":"profile.name", "value":"supported",
-        "evidence_refs": ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
+        "confidence": 0.5, "evidence_refs": ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
     }]}).to_string())
     };
     let backend = ScriptedBackend::new(vec![Ok(response(&[first]))]);
@@ -495,7 +486,7 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
     let response = text_response(
         serde_json::json!({"candidates":[{
             "subject":good_parent.to_hex(), "predicate":"profile.name", "value":"healthy",
-            "evidence_refs":[{"source_id":good_turn.to_hex(), "byte_range":[0,1]}]
+            "confidence": 0.5, "evidence_refs":[{"source_id":good_turn.to_hex(), "byte_range":[0,1]}]
         }]})
         .to_string(),
     );

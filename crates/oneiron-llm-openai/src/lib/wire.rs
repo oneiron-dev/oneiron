@@ -4,11 +4,11 @@ use super::{
     OpenAiCompatConfig, OpenAiCompatHttpRequest, OpenAiProviderOptions,
     backend::validate_capabilities,
 };
-use oneiron::llm::ReasoningEffort;
+use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
-    ResponseFormat, RetryableLlmError,
+    ModelLocality, ResponseFormat, RetryableLlmError,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use std::collections::BTreeMap;
@@ -55,6 +55,28 @@ pub fn build_openai_chat_request(
                 body.insert("reasoning".into(), JsonValue::Object(options));
             }
             body.insert("reasoning_effort".into(), json!(effort));
+        }
+        // An own server (llama.cpp, vLLM, an exllamav3 server) also reads the
+        // level through its chat template, and llama.cpp reads the thinking
+        // budget per request. A hosted API takes the effort alone and refuses
+        // fields it does not know, so it is sent neither.
+        if request.envelope.locality == ModelLocality::OwnServer {
+            let mut kwargs = match body.remove("chat_template_kwargs") {
+                Some(JsonValue::Object(kwargs)) => kwargs,
+                Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+                None => JsonMap::new(),
+            };
+            kwargs.remove("reasoning_effort");
+            kwargs.remove("enable_thinking");
+            if effort == ReasoningEffort::None {
+                kwargs.insert("enable_thinking".into(), JsonValue::Bool(false));
+                body.remove(REASONING_BUDGET_PARAM);
+            } else {
+                kwargs.insert("reasoning_effort".into(), json!(effort));
+            }
+            body.insert("chat_template_kwargs".into(), JsonValue::Object(kwargs));
+        } else {
+            body.remove(REASONING_BUDGET_PARAM);
         }
     }
     body.insert(

@@ -44,7 +44,7 @@ prefer_local = true                     # false puts the cloud rung first
 [models.providers.exl3]                 # any local OpenAI-compatible server: exllamav3, llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
 kind = "local-openai-compat"
 base_url = "http://127.0.0.1:8080"
-response_format = "none"                # the EXL3 recipe below runs without the schema
+response_format = "none"                # JSON calls go out without a schema, as the EXL3 recipe below runs
 
 [models.providers.router]               # OpenRouter, or any OpenAI-compatible endpoint
 kind = "openai-compat"
@@ -79,10 +79,13 @@ tokens), served by an exllamav3 OpenAI-compatible server with no schema:
 its provider sets `response_format = "none"`, so a JSON call goes out with
 no `response_format`. The fallback is llama.cpp `llama-server` on
 `Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
-(`--spec-type draft-simple --spec-draft-n-max 8`) and the schema, the
-default (`response_format = "schema"`). Either way the engine checks the
-answer against the call's schema, and an answer that breaks it is refused.
-A ladder sends a schema in `response_format` only when every rung declares
+(`--spec-type draft-simple --spec-draft-n-max 8`). The Dreamer's extraction
+call sends no schema on any provider: a grammar built from one can strip the
+claim fields, so the engine checks the answer against the extraction
+contract itself, and an answer that breaks it is refused. Other JSON calls,
+such as the conflict verdict, send their schema unless the provider sets
+`response_format = "none"`; the engine checks the answer against it either
+way. A ladder sends a schema in `response_format` only when every rung declares
 `json_response`. A rung without it, such as the Anthropic-compatible one in
 the DETAILED example, makes the engine put the schema in a system message on
 every rung instead, so keep a schema-constrained llama.cpp fallback in a
@@ -99,7 +102,9 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
-`json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`),
+`json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`;
+a `local-openai-compat` provider declares `streaming`, `json_response` and
+`reasoning` unless the list is written out),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
@@ -192,6 +197,21 @@ without one, a role uses its own `[models.roles.*]` seat when it has one,
 else the Dreamer's (`default = "provider:model"` fills all three with one
 model). Each role's calls go out as the run `dreamer-pass/<role>`, so the
 run receipts (`oneiron::run_receipt` at info) name the role that made them.
+
+Every call of the three roles names its reasoning level; none leaves the
+level to the server, which a local thinking model reads as its highest. With
+no level configured it is `medium` with a 4,096-token thinking budget. A
+level the vault authors for a call's purpose (its seat policy or description
+policy: extraction and narrative under `extraction`, the verdict under
+`consolidation`) replaces that default, and the budget with it. A local
+(`own_server`) OpenAI-compatible server is sent the level as
+`reasoning_effort` and in `chat_template_kwargs`, and the budget as
+`reasoning_budget_tokens` (llama.cpp reads all three per request; an
+exllamav3 server that renders `chat_template_kwargs` gets the level, not the
+budget). A hosted provider gets `reasoning_effort` alone. A model whose
+provider does not declare `reasoning`, or a ladder with a rung that does not,
+takes no reasoning controls, so its calls are pinned to `none`; declare
+`reasoning` on a hosted provider whose model accepts `reasoning_effort`.
 
 The extraction input lists the people, organisations and places the turns
 name that the vault already holds, each with its newest claims, so a model
