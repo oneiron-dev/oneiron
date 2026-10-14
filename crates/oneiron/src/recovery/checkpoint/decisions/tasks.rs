@@ -313,12 +313,14 @@ impl Decision for AgentCeilings {
 /// agent there by a ceiling it no longer holds. Asked of every agent id. A
 /// restored row off its pin refuses the restore whatever the live vault
 /// holds, and a pin that does not read refuses it too: the gate would still
-/// read a readable definition's ceiling past it.
+/// read a readable definition's ceiling past it. So does a restored pin
+/// looser than the live one: the live vault narrowed or took it after the
+/// restore carried the pins (Sol R7 F1).
 pub(super) struct AgentIdPins;
 
 impl Decision for AgentIdPins {
     type Subject = EntityId;
-    type Answer = bool;
+    type Answer = crate::agent_def::AgentIdAnswer;
 
     fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
         let mut ids = BTreeSet::new();
@@ -336,12 +338,12 @@ impl Decision for AgentIdPins {
         let txn = vault.store.env.read_txn()?;
         subjects
             .iter()
-            .map(|id| crate::agent_def::row_within_pin_in_txn(&vault.store, &txn, id).map(Some))
+            .map(|id| crate::agent_def::agent_id_answer_in_txn(&vault.store, &txn, id).map(Some))
             .collect()
     }
 
-    fn loosens(_live: &bool, restored: &bool) -> bool {
-        !*restored
+    fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
+        crate::agent_def::AgentIdAnswer::loosened(live, restored)
     }
 }
 

@@ -247,6 +247,85 @@ pub(crate) fn validate_put_at_seeded_id(
     }
 }
 
+/// Whether `theirs` holds an agent id looser than `ours`: wider, or off a
+/// lineage `ours` has read.
+fn loosens(ours: AgentIdPin, theirs: AgentIdPin) -> bool {
+    theirs.ceiling.widens_beyond(ours.ceiling)
+        || (matches!(ours.lineage, Lineage::Born(_)) && theirs.lineage != ours.lineage)
+}
+
+/// What a restore's decision reads at an agent id: the id's pin, and whether
+/// the row there answers to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AgentIdAnswer {
+    pin: Option<AgentIdPin>,
+    row_within: bool,
+}
+
+impl AgentIdAnswer {
+    /// Whether `restored` holds the agent id looser than `live`: a row off
+    /// its own pin, or a pin the live vault holds missing, wider or off its
+    /// lineage. The pins are live authority, so a live pin narrowed or taken
+    /// after the restore carried them is no looser in the restored vault.
+    pub(crate) fn loosened(live: &Self, restored: &Self) -> bool {
+        !restored.row_within
+            || match (live.pin, restored.pin) {
+                (Some(ours), Some(theirs)) => loosens(ours, theirs),
+                (Some(_), None) => true,
+                (None, _) => false,
+            }
+    }
+}
+
+/// [`AgentIdAnswer`] at `id`.
+///
+/// # Errors
+///
+/// When the id's pin does not read.
+pub(crate) fn agent_id_answer_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<AgentIdAnswer> {
+    Ok(AgentIdAnswer {
+        pin: PIN.get(store, txn, id)?,
+        row_within: row_within_pin_in_txn(store, txn, id)?,
+    })
+}
+
+/// Refuses to publish `replacement`, a restore made for `store`'s place, when
+/// it holds any agent id looser than `store` does now: without the id's pin,
+/// wider, or off the lineage the pin has read. A pin narrowed or taken after
+/// the replacement carried the pins would be lost. Read in `txn`, under
+/// `store`'s writer, before the swap.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] for such a replacement; when a pin does not read.
+pub(crate) fn refuse_loosened_agent_id_pins(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    replacement: &Store,
+) -> Result<()> {
+    let their_txn = replacement.env.read_txn()?;
+    for id in PIN.scan_keys(store, txn, &[])? {
+        let Some(ours) = PIN.get(store, txn, &id)? else {
+            continue;
+        };
+        if PIN
+            .get(replacement, &their_txn, &id)?
+            .is_none_or(|theirs| loosens(ours, theirs))
+        {
+            return Err(Error::InvalidConfig(
+                "this vault narrowed or took an agent id after the restore was prepared; \
+                 prepare it again"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The ceiling a row at `id` may hold at most, when the id is pinned: what
 /// the seeder narrows a seed to before it re-creates a deleted seeded row.
 pub(super) fn pinned_ceiling_in_txn(
@@ -373,11 +452,7 @@ pub(crate) fn pin_stored_row_in_txn(
 /// A definition that does not decode is within, as is a signed authority
 /// entry, which takes its id from any row there: the gate holds either at
 /// `Proposed`.
-pub(crate) fn row_within_pin_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
+fn row_within_pin_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
     let pin = match PIN.get(store, txn, id)? {
         Some(pin) => pin,
         None => match seeded_pin(id)? {

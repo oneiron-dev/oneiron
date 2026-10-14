@@ -915,7 +915,7 @@ fn a_restore_refuses_past_a_pin_it_cannot_read() -> Result<()> {
             .store
             .vault_meta
             .get(txn, &pin_key)?
-            .map(<[u8]>::to_vec);
+            .map(|pin| pin.to_vec());
         vault.store.vault_meta.put(txn, &pin_key, &[3])?;
         Ok(pin)
     })?;
@@ -969,6 +969,67 @@ fn a_restore_names_the_lineage_an_unread_pin_waits_for() -> Result<()> {
         "the fork reborn off the lineage its restore named",
     );
     restored.put_agent_definition(&fork_id, &fork(Some(herald_id)), test_time_range(4, 4), 4)?;
+    Ok(())
+}
+
+/// H215 (Sol R7 F1): an agent id's pin is live authority, so a replacement
+/// prepared before the vault narrowed an agent, or before it took a new agent
+/// id, is not put in the vault's place: it would hold that agent looser than
+/// the vault now does. Prepared again, it goes in.
+#[test]
+fn a_replacement_publishes_no_looser_agent_id_pin() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+
+    let (_dir, vault) = open_test_vault();
+    let (agent_id, agent) = custom_agent(&vault, AgentCeiling::Auto)?;
+    let staging = tempfile::tempdir()?;
+    let prepare = |name: &str| {
+        let image = staging.path().join(format!("{name}-image"));
+        vault.snapshot_checkpoint(&image, 100)?;
+        Vault::restore_checkpoint_replacing(
+            &image,
+            &staging.path().join(name),
+            vault.config.clone(),
+            &vault,
+            1_000,
+        )
+        .map(|(replacement, _)| replacement)
+    };
+    let publishes = |replacement: &Vault| {
+        let mut swapped = false;
+        let published = vault.swap_in_replacement(replacement, || {
+            swapped = true;
+            Ok(())
+        });
+        assert!(swapped || published.is_err());
+        swapped
+    };
+
+    let before_narrowing = prepare("before-narrowing")?;
+    let mut narrowed = agent;
+    narrowed.version = "2".to_owned();
+    narrowed.ceiling = AgentCeiling::Proposed;
+    vault.update_agent_definition(&agent_id, &narrowed, test_time_range(2, 2), 2)?;
+    assert!(
+        !publishes(&before_narrowing),
+        "a replacement from before the narrowing went in"
+    );
+    let before_new_id = prepare("before-new-id")?;
+    let (new_id, _) = custom_agent(&vault, AgentCeiling::Proposed)?;
+    vault.batch().delete(&new_id).commit()?;
+    assert!(
+        !publishes(&before_new_id),
+        "a replacement from before a new agent id went in"
+    );
+    let mut wider = narrowed;
+    wider.version = "3".to_owned();
+    wider.ceiling = AgentCeiling::Auto;
+    refused_by_pin(
+        vault.put_agent_definition(&agent_id, &wider, test_time_range(4, 4), 4),
+        "the narrowed agent wider again",
+    );
+    let current = prepare("current")?;
+    assert!(publishes(&current), "a current replacement was refused");
     Ok(())
 }
 

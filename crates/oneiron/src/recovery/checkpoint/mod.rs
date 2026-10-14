@@ -466,7 +466,8 @@ impl Vault {
     /// Reopen the replacement before it mints or retires a key. A vault that
     /// admitted an agent request, or recovered its proof clock, after the
     /// replacement was made refuses it, and nothing moves: the replacement
-    /// would not know those proofs.
+    /// would not know those proofs; so does one that holds an agent id looser
+    /// than this vault now does (H215).
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,
@@ -474,7 +475,14 @@ impl Vault {
     ) -> Result<()> {
         self.store.swap_out(
             &replacement.store,
-            |txn| crate::authority::refuse_moved_proof_freshness(self, txn, replacement),
+            |txn| {
+                crate::authority::refuse_moved_proof_freshness(self, txn, replacement)?;
+                crate::agent_def::refuse_loosened_agent_id_pins(
+                    &self.store,
+                    txn,
+                    &replacement.store,
+                )
+            },
             swap,
         )
     }
