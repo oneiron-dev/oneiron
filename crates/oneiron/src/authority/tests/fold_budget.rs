@@ -142,10 +142,11 @@ fn a_signers_full_bound_still_folds() {
 /// Substrate invariant (rule 5): a key no slip issuer vouches for, here an
 /// admin the owner admitted, stores up to the `authority_log_signer_bound`
 /// policy row. Its next row waits with a typed error naming it, nothing is
-/// written, and the log raises its typed check. Its removal of a machine
-/// the fold holds live still lands, and its revocation of a key the fold
-/// never held waits. The waiting row lands once the owner cosigns it, and
-/// the owner's own rows never meet the bound.
+/// written, and the log raises its typed check. Its first revocation of a
+/// device the fold holds live lands; a revocation of a key the fold never
+/// held, a second revocation of the same device, and a machine removal the
+/// fold would never apply wait. The waiting row lands once the owner
+/// cosigns it, and the owner's own rows never meet the bound.
 #[test]
 fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
     const BOUND: usize = 8;
@@ -233,23 +234,42 @@ fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
         "{checks:?}"
     );
 
-    let never_held = AuthorityOp::RevokeDevice {
-        revoked_key: authority_key_from_ed(&ed_key(67)),
+    let waits = |entry: AuthorityLogEntry| {
+        let err = host
+            .vault
+            .put_authority_log_entry(&entry, at, 1)
+            .unwrap_err();
+        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
     };
-    let err = host
-        .vault
-        .put_authority_log_entry(&admin_row(BOUND + 1, never_held, false), at, 1)
-        .unwrap_err();
-    assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
+    waits(admin_row(
+        BOUND + 1,
+        AuthorityOp::RevokeDevice {
+            revoked_key: authority_key_from_ed(&ed_key(67)),
+        },
+        false,
+    ));
+    // The fold applies a machine revision only from an owner key, a slip
+    // issuer, so the admin's removal of a live machine restricts nothing
+    // and waits (review round 6, Astra F1).
     let current = fold().machine(request.machine).unwrap().profile.clone();
-    let removal = AuthorityOp::MachineProfile(MachineProfile {
-        role: MachineRole::Removed,
-        revision: current.revision + 1,
-        ..current
-    });
+    waits(admin_row(
+        BOUND + 1,
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::Removed,
+            revision: current.revision + 1,
+            ..current
+        }),
+        false,
+    ));
+    // Its first revocation of a device the fold holds live lands; the same
+    // revocation again waits, whether the fold applied the first or not.
+    let revoke = AuthorityOp::RevokeDevice {
+        revoked_key: host.issuer.public_key(),
+    };
     host.vault
-        .put_authority_log_entry(&admin_row(BOUND + 1, removal, false), at, 1)
+        .put_authority_log_entry(&admin_row(BOUND + 1, revoke.clone(), false), at, 1)
         .unwrap();
+    waits(admin_row(BOUND + 2, revoke, false));
     host.vault
         .put_authority_log_entry(&admin_row(BOUND + 2, confirm_op(BOUND), true), at, 1)
         .unwrap();

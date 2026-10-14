@@ -12,9 +12,10 @@
 //! owner's log gains thousands a year. Any other key stores up to the
 //! `authority_log_signer_bound` policy row; past it, its rows wait, never
 //! refused, a typed check asks the owner, and raising the row lands them on
-//! the next drain. A revocation of something the fold holds live always
-//! lands. A fold handed more than its own bounds fails closed: it holds no
-//! root and reads as a conflicted one, which every authority gate refuses.
+//! the next drain. A key's first revocation of a device or binding the fold
+//! holds live always lands. A fold handed more than its own bounds fails
+//! closed: it holds no root and reads as a conflicted one, which every
+//! authority gate refuses.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -422,6 +423,8 @@ pub(crate) struct AuthorityDoorView {
     structure: AuthorityStructure,
     /// Per signer: its stored rows.
     rows: BTreeMap<AuthorityKey, usize>,
+    /// Each signer's stored revocations, by what they revoke.
+    revocations: BTreeSet<(AuthorityKey, Revoked)>,
     /// The stored rows a fold counts: all but the slip issuers' slip ops.
     counted: usize,
     /// The stored handoffs a slip issuer signed.
@@ -464,9 +467,13 @@ fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<A
         }
         let structure = authority_structure(entries.iter());
         let mut rows = BTreeMap::<AuthorityKey, usize>::new();
+        let mut revocations = BTreeSet::new();
         let (mut counted, mut issuer_handoffs) = (0, 0);
         for entry in &entries {
             *rows.entry(entry.signer_key().clone()).or_default() += 1;
+            if let Some(revoked) = Revoked::of(&entry.op) {
+                revocations.insert((entry.signer_key().clone(), revoked));
+            }
             let issuer = structure.issuers.contains(entry.signer_key());
             counted += usize::from(!(issuer && is_slip_op(&entry.op)));
             issuer_handoffs += usize::from(issuer && is_handoff(entry));
@@ -474,6 +481,7 @@ fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<A
         Ok(AuthorityDoorView {
             structure,
             rows,
+            revocations,
             counted,
             issuer_handoffs,
         })
@@ -505,33 +513,36 @@ pub(crate) fn signer_has_standing(
     Ok(door_view(store, txn)?.structure.stands(signer))
 }
 
-/// A revocation the fold applies with consent: of a device, or of an actor
-/// binding.
-fn only_restricts(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
-        AuthorityOp::RevokeDevice { .. } | AuthorityOp::RevokeActor { .. }
-    ) || super::revoke_proof::removes_machine(op)
+/// What a revocation takes away: a device, or an actor binding. A machine
+/// revision is no revocation here: the fold applies one only from an owner
+/// key, which is a slip issuer, so no other key's removal ever restricts.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Revoked {
+    Device(AuthorityKey),
+    Binding(AuthorityKey),
 }
 
-/// Whether `op` takes away something the local fold holds live: a device, an
-/// actor binding or a machine. A revocation of nothing changes nothing, so
-/// it can wait like any other row.
-fn restricts_live(fold: &AuthorityFold, op: &AuthorityOp) -> bool {
-    match op {
-        AuthorityOp::RevokeDevice { revoked_key } => fold
-            .roster
-            .get(revoked_key)
-            .is_some_and(|device| !device.revoked),
-        AuthorityOp::RevokeActor { authority_key, .. } => fold
-            .actor_bindings
-            .get(authority_key)
-            .is_some_and(|binding| binding.status == ActorBindingStatus::Active),
-        AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed => fold
-            .machines
-            .get(&profile.machine)
-            .is_some_and(|machine| machine.profile.role != MachineRole::Removed),
-        _ => false,
+impl Revoked {
+    fn of(op: &AuthorityOp) -> Option<Self> {
+        match op {
+            AuthorityOp::RevokeDevice { revoked_key } => Some(Self::Device(revoked_key.clone())),
+            AuthorityOp::RevokeActor { authority_key, .. } => {
+                Some(Self::Binding(authority_key.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the local fold holds it live. A revocation of nothing
+    /// changes nothing, so it can wait like any other row.
+    fn is_live(&self, fold: &AuthorityFold) -> bool {
+        match self {
+            Self::Device(key) => fold.roster.get(key).is_some_and(|device| !device.revoked),
+            Self::Binding(key) => fold
+                .actor_bindings
+                .get(key)
+                .is_some_and(|binding| binding.status == ActorBindingStatus::Active),
+        }
     }
 }
 
@@ -554,10 +565,11 @@ pub(crate) enum AuthorityDoor {
 /// replicated. A row already stored always lands. The owner's work, a row a
 /// slip issuer signs or cosigns, always lands, but a handoff only when a
 /// slip issuer signs it. Any other key's row lands while its signer is under
-/// the `authority_log_signer_bound` row, and past it only as a revocation of
-/// something the fold holds live; the rest wait (rule 5: never refused, and
-/// one compromised admin or install key never closes the owner's fold). The
-/// door reads the stored log's structure as the fold's bounds do.
+/// the `authority_log_signer_bound` row, and past it only as its first
+/// revocation of a device or actor binding the fold holds live; the rest
+/// wait (rule 5: never refused). So such a key stores at most its bound and
+/// one row per live thing it revokes, even when the fold refuses them all.
+/// The door reads the stored log's structure as the fold's bounds do.
 pub(crate) fn authority_door(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -589,9 +601,13 @@ pub(crate) fn authority_door(
     {
         return Ok(AuthorityDoor::Lands);
     }
-    if only_restricts(&entry.op) {
+    if let Some(revoked) = Revoked::of(&entry.op)
+        && !view
+            .revocations
+            .contains(&(signer.clone(), revoked.clone()))
+    {
         let fold = authority_view_readonly_for_store_in_txn(store, posture, txn)?;
-        if restricts_live(&fold, &entry.op) {
+        if revoked.is_live(&fold) {
             return Ok(AuthorityDoor::Lands);
         }
     }

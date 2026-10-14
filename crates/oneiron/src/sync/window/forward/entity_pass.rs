@@ -60,14 +60,22 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 };
                 match refusal.retry {
                     RefusalRetry::Terminal => ledger.terminal_quarantines.push(id),
-                    RefusalRetry::Retry => {}
-                    RefusalRetry::DependencyPending => {
+                    // Still owed: no other outcome at this id in the pass, such as a
+                    // refused tombstone naming it, may discharge its marker.
+                    RefusalRetry::Retry | RefusalRetry::DependencyPending => {
                         ledger.pending_entity_dependencies.insert(id);
                     }
                 }
             }
             EntityStep::LocalOnlyCompanion(id) => {
                 companion_scrubs.push(CompanionCrdtScrub::new(key, id));
+            }
+            // A marked delete-protected row already stored byte for byte: the admission
+            // its marker waits for landed (observer B took a later carrier, or a pass
+            // committed it and stopped before settling), so it settles as a terminal
+            // refusal does, clearing only a proven replay marker.
+            EntityStep::Protected { id, wrote: false } if ledger.marked.contains(&id.to_hex()) => {
+                ledger.terminal_quarantines.push(id);
             }
             step => {
                 if let Some(id) = step.written() {
