@@ -1,6 +1,6 @@
 //! Session mode persists; active participant presence belongs only to this process.
 use super::*;
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,15 +38,37 @@ impl Vault {
             active_participant_ids,
         })
     }
+    /// The facet a session's mode names for the writes made in it (owner
+    /// ruling FACET-READ): a credential narrowed to some facets writes there
+    /// when it is one of them. `None` when the mode names none.
+    pub fn session_facet(&self, session: EntityId) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let raw = require_kind(self, &txn, session, ENTITY_TYPE_SESSION)?;
+        let body: serde_json::Value = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        body.get("facet_ref")
+            .map(|facet| {
+                facet
+                    .as_str()
+                    .and_then(|hex| EntityId::from_hex(hex).ok())
+                    .ok_or(invalid("session facet"))
+            })
+            .transpose()
+    }
+    /// Sets the session's mode and the facet it names for the writes made in
+    /// it, a FACET; with none, the mode names no facet.
     pub fn set_session_mode(
         &self,
         session: EntityId,
         mode: SessionMode,
+        facet: Option<EntityId>,
         actor: WriteActor,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
             authorize(self, txn, actor)?;
             let raw = require_kind(self, txn, session, ENTITY_TYPE_SESSION)?;
+            if let Some(facet) = facet {
+                require_kind(self, txn, facet, ENTITY_TYPE_FACET)?;
+            }
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("session header"))?;
             let mut body: serde_json::Value = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?;
@@ -55,6 +77,10 @@ impl Vault {
                 "mode".into(),
                 serde_json::to_value(mode).map_err(|_| invalid("session mode"))?,
             );
+            match facet {
+                Some(facet) => map.insert("facet_ref".into(), facet.to_hex().into()),
+                None => map.remove("facet_ref"),
+            };
             map.remove("active_participant_ids");
             self.batch_in()
                 .put(

@@ -819,14 +819,19 @@ pub(crate) async fn execute_agent_verb_input(
             format!("{tool} input names unknown field `{field}`"),
         ));
     }
-    // A narrowed connector's TASKs are born in its own world and facet.
+    // A narrowed connector's TASKs are born in its own world and in the
+    // facet its writes land in (its session's, or its own write facet).
+    let mut position = actor.scope.birth_position();
+    if let Ok(Some(facet)) = actor.landing {
+        position.facet = Some(facet);
+    }
     let memory = crate::api::credential_memory(
         &server.vault,
         actor.auth.as_ref(),
         actor.actor_ref,
         actor.actor_class,
     )
-    .with_birth_position(actor.scope.birth_position());
+    .with_birth_position(position);
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,

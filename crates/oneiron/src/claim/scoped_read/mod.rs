@@ -22,6 +22,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 mod claim_admission;
 mod context_pack_filter;
 mod diagnostic_reads;
+mod facet_gate;
 mod graph_reads;
 mod note_visibility;
 mod pinned_reads;

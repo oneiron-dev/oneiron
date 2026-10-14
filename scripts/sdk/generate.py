@@ -382,8 +382,13 @@ pub(crate) async fn execute_agent_verb_input(
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
     }
-    // A narrowed connector's TASKs are born in its own world and facet.
-    let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).with_birth_position(actor.scope.birth_position());
+    // A narrowed connector's TASKs are born in its own world and in the
+    // facet its writes land in (its session's, or its own write facet).
+    let mut position = actor.scope.birth_position();
+    if let Ok(Some(facet)) = actor.landing {
+        position.facet = Some(facet);
+    }
+    let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).with_birth_position(position);
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
     match tool {
 '''
@@ -460,6 +465,22 @@ def outputs():
             core += f"pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
         else:
             core += f"pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
+    # A raw door refuses any narrowed record capability; a door that reads only
+    # through the credential's lane serves a facet narrowing (owner ruling
+    # FACET-READ), which the lane applies row by row.
+    # A door that births records lands them in the credential's landing facet,
+    # which the credential must carry.
+    def record_scope_guard(r):
+        admission = r.get('admission', {})
+        if admission.get('born_record_scope'):
+            return 'let position = facade_landing(&server, &headers, &auth)?;'
+        if admission.get('lane_record_scope'):
+            return 'auth.require_lane_record_scope()?;'
+        if admission.get('unrestricted_record_scope'):
+            return 'auth.require_unrestricted_record_scope()?;'
+        # Any other door reads or writes around the lane, so it refuses a facet
+        # narrowing as MCP refuses a narrowed connector there.
+        return 'auth.require_unnarrowed_facets()?;'
     server = HEADER + 'use super::*;\npub(super) fn routes() -> Router<Arc<SyncServer>> { Router::new()\n'
     for r in facade_rows:
         method=r['name'].replace('.','_')
@@ -497,6 +518,8 @@ def outputs():
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
         guard, result = '', f'facade_invoke(&server, &headers, &auth, actor, class, "{r["name"]}", value)?'
+        if r.get('admission', {}).get('born_record_scope'):
+            result = f'facade_invoke_born(&server, &headers, &auth, actor, class, "{r["name"]}", value, position)?'
         readables = r.get('admission', {}).get('readable', [])
         # A room turn refuses an unserved verb before any credential lookup,
         # so the refusal says nothing about the target the lookup would read.
@@ -525,7 +548,7 @@ def outputs():
             validation += "facade_outside_room_turn(&headers, \"describe\")?; return Ok(Json(crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?)); } "
         server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
         auth.require(CoreScope::{r["scope"]})?;
-        {'auth.require_unrestricted_record_scope()?;' if r.get('admission', {}).get('unrestricted_record_scope') else ''}
+        {record_scope_guard(r)}
         let value = facade_json(payload)?;
          {validation}let (actor, class) = facade_actor(&auth)?;{guard}{landed}
         Ok(Json({result}))

@@ -1,0 +1,95 @@
+//! The one facet rule (owner ruling FACET-READ = A). A facet is an opt-in
+//! limit on what an agent's or a room's credential reads, never the owner's:
+//! a credential narrowed to a set of facets reads a row only when the row sits
+//! in one of them. MCP and every read lane judge a row here, so the two never
+//! disagree.
+
+use super::record_scope::{MachineHistoryScope, scope_for_blob};
+use super::{ScopeAxis, ScopeId};
+use crate::batch::EntityMetadataHeader;
+use crate::edge::EdgeKind;
+use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::store::ManifestDbs;
+use crate::{EntityId, Vault};
+
+/// Whether the stored row `id`, with header and body `raw` as `view` holds
+/// it, sits in one of `facets`. A row sits in the facet its record scope
+/// names (a CLAIM's own facet, a NOTE's or ASSET's birth facet, a TASK's birth
+/// stamp), in each facet a `FacetOf` edge of its names, and, for a room and
+/// each MESSAGE or TURN said there, in each facet of the room. A row with
+/// several facets is readable when any one is in the set; a row that names
+/// none sits in no facet. A whole axis reads every row and an empty one reads
+/// none.
+pub(crate) fn facets_admit_in(
+    vault: &Vault,
+    view: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    facets: &ScopeAxis<ScopeId>,
+) -> Result<bool> {
+    let set = match facets {
+        ScopeAxis::All => return Ok(true),
+        ScopeAxis::Some(set) if !set.is_empty() => set,
+        _ => return Ok(false),
+    };
+    if scope_for_blob(view, txn, id, raw)?
+        .is_some_and(|scope| !scope.facets.meet(facets).is_bottom())
+    {
+        return Ok(true);
+    }
+    for edge in view.port_edges(txn, &id, EdgeDirection::Out, Some(EdgeKind::FacetOf), None)? {
+        if set.contains(&ScopeId(edge?.target)) {
+            return Ok(true);
+        }
+    }
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
+    let room = match header.entity_type {
+        ENTITY_TYPE_CONVERSATION => Some(id),
+        ENTITY_TYPE_TURN => out_target(view, txn, id, EdgeKind::ChildOf)?,
+        ENTITY_TYPE_MESSAGE => match out_target(view, txn, id, EdgeKind::BelongsTo)? {
+            Some(room) => Some(room),
+            None => match out_target(view, txn, id, EdgeKind::PartOf)? {
+                Some(turn) => out_target(view, txn, turn, EdgeKind::ChildOf)?,
+                None => None,
+            },
+        },
+        _ => None,
+    };
+    let Some(room) = room else {
+        return Ok(false);
+    };
+    Ok(crate::workspace_roster::room_facets_in(vault, txn, room)?
+        .is_some_and(|room| !room.meet(facets).is_bottom()))
+}
+
+/// The target of `id`'s first outgoing `kind` edge.
+fn out_target(
+    view: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: EdgeKind,
+) -> Result<Option<EntityId>> {
+    view.port_edges(txn, &id, EdgeDirection::Out, Some(kind), None)?
+        .next()
+        .map(|edge| edge.map(|edge| edge.target))
+        .transpose()
+}
+
+impl Vault {
+    /// Whether the row `id` sits in one of `facets`, by the rule every read
+    /// lane applies ([`facets_admit_in`]). A row that is not stored sits in
+    /// none.
+    pub fn row_in_facets(&self, id: &EntityId, facets: &ScopeAxis<ScopeId>) -> Result<bool> {
+        if matches!(facets, ScopeAxis::All) {
+            return Ok(true);
+        }
+        let txn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        facets_admit_in(self, &self.store, &txn, *id, &raw, facets)
+    }
+}

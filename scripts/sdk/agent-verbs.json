@@ -152,7 +152,7 @@
         "spec"
       ],
       "admission": {
-        "unrestricted_record_scope": true
+        "born_record_scope": true
       },
       "mcp_scope": "born",
       "section": true
@@ -245,7 +245,7 @@
       "server_door": "recall_off_runtime",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true,
+        "lane_record_scope": true,
         "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?; crate::memory::caps::check_as_of(input.as_of)?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "section": false,

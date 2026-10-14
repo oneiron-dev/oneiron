@@ -87,7 +87,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     if auth.org_ref().is_some() || !auth.has_scope(crate::auth::CoreScope::Read) {
         return Err(mcp_proof_error());
     }
-    // The legacy registry can represent only all or one world/facet. Refuse
+    // The registry holds all or one world, and all or a set of facets. Refuse
     // a wider registration instead of silently projecting away verifier bounds.
     let axis = |id: Option<oneiron::EntityId>| {
         id.map_or(ScopeAxis::All, |id| {
@@ -95,16 +95,49 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         })
     };
     if !axis(actor.scope.world_ref).is_narrowing_of(&proof.scope().worlds)
-        || !axis(actor.scope.facet_ref).is_narrowing_of(&proof.scope().facets)
+        || !actor.scope.facets.is_narrowing_of(&proof.scope().facets)
     {
         return Err(mcp_proof_error());
     }
     actor.auth = Some(auth);
+    // Where this request's writes land, judged once from the session it
+    // names (owner ruling FACET-READ).
+    let session = crate::api::write_facet::request_session(headers).map_err(|()| {
+        McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
+    })?;
+    let landing = crate::api::write_facet::landing_facet(
+        &server.vault,
+        session,
+        &actor.scope.facets,
+        actor.scope.facet_ref,
+    );
     Ok(McpCallContext {
         actor,
         mode,
         request_id: request_id.to_owned(),
+        landing,
     })
+}
+
+/// A write whose session names a facet the connector does not read, or a
+/// session that does not read, is refused before anything is written.
+fn mcp_landing_refusal(refusal: crate::api::write_facet::LandingRefusal) -> McpGatewayError {
+    use crate::api::write_facet::LandingRefusal;
+    match refusal {
+        LandingRefusal::Session => McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "the session this request names does not read",
+        ),
+        LandingRefusal::OutsideFacets(facet) => McpGatewayError::new(
+            -32020,
+            "mcp_scope_refused",
+            format!(
+                "the session's facet {} is not one this connector reads",
+                facet.to_hex()
+            ),
+        ),
+    }
 }
 
 fn mcp_proof_error() -> McpGatewayError {
@@ -464,8 +497,10 @@ fn mcp_credential_gate(
     };
     let carried = match bounds {
         McpRecordBounds::Filtered => Ok(()),
-        McpRecordBounds::Born => auth
-            .require_record_scope_carried(axis(actor.scope.world_ref), axis(actor.scope.facet_ref)),
+        McpRecordBounds::Born => {
+            let landing = actor.landing.clone().map_err(mcp_landing_refusal)?;
+            auth.require_record_scope_carried(axis(actor.scope.world_ref), axis(landing))
+        }
         McpRecordBounds::Unrestricted => auth.require_unrestricted_record_scope(),
     };
     carried.map_err(|_| {

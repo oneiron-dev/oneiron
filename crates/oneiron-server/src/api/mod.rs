@@ -125,6 +125,7 @@ mod scoped_auth;
 mod search;
 mod surface_events;
 mod vad;
+pub(crate) mod write_facet;
 
 pub(crate) use self::artifacts::*;
 pub(crate) use self::booking::*;

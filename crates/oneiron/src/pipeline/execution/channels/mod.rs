@@ -418,6 +418,7 @@ impl PipelineBuilder<'_> {
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
                     read_suppressed: metadata_cache.countable_suppressed(
+                        self.vault,
                         &self.read,
                         rtxn,
                         authority_filter.credential.as_ref(),
@@ -769,6 +770,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors,
                 claim_gate,
                 read_suppressed: metadata_cache.countable_suppressed(
+                    self.vault,
                     &self.read,
                     rtxn,
                     authority_filter.credential.as_ref(),

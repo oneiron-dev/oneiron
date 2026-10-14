@@ -222,7 +222,10 @@ impl ScopedRead<'_> {
         if !self.audience_readable_raw_in(rtxn, id, raw)? {
             return Ok(false);
         }
-        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
+        if !self.credential_allows_id(id)
+            || !self.proof_live_in(rtxn)?
+            || !self.facets_allow_in(rtxn, id, raw)?
+        {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {

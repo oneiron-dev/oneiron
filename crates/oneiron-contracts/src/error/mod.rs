@@ -298,6 +298,7 @@ pub enum ErrorKind {
     HeadAdvanceOffTrunk,
     InvalidConversationDag,
     InvalidScopeSummary,
+    InvalidPairingScope,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,

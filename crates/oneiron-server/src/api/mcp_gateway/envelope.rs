@@ -105,6 +105,9 @@ pub(crate) struct McpCallContext {
     pub(crate) actor: McpResolvedActor,
     pub(crate) mode: McpSurfaceMode,
     pub(crate) request_id: String,
+    /// Where this request's writes land (`write_facet::landing_facet`),
+    /// judged once from the session it names.
+    pub(crate) landing: Result<Option<oneiron::EntityId>, crate::api::write_facet::LandingRefusal>,
 }
 
 impl std::ops::Deref for McpCallContext {
@@ -124,10 +127,15 @@ impl McpCallContext {
         help: Vec<String>,
         cache: Option<McpCacheHint>,
     ) -> Value {
+        // The facet a write lands in rides the result's scope.
+        let mut scope = self.actor.scope.clone();
+        if let Ok(Some(facet)) = self.landing {
+            scope.facet_ref = Some(facet);
+        }
         McpResultMetadata::new(
             self.request_id.clone(),
             self.mode,
-            self.actor.scope.clone(),
+            scope,
             health,
             page,
             help,
