@@ -49,6 +49,12 @@ pub(super) const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 /// door tokenizes no more than a facade caller may send.
 pub(super) const MAX_QUERY_TEXT_BYTES: usize = crate::memory::caps::MAX_QUERY_BYTES;
 
+/// `query` cut to its first [`MAX_QUERY_TEXT_BYTES`] at a char boundary: the tail of a longer
+/// query is never tokenized.
+pub(super) fn bounded_query(query: &str) -> &str {
+    &query[..query.floor_char_boundary(MAX_QUERY_TEXT_BYTES)]
+}
+
 pub(super) const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
 
 /// Bound term-key reads for any one prefix after the scoped expansion cap.
@@ -166,6 +172,7 @@ pub(crate) fn final_token_exact_posting_matches<F>(
 where
     F: FnMut(&EntityId) -> Result<bool>,
 {
+    let query = bounded_query(query);
     let trimmed_query_end = query.trim_end().len();
     if trimmed_query_end == 0 {
         return Ok(false);
@@ -206,6 +213,7 @@ pub(crate) fn final_token_prefix_expansion_has_scoped_and_rejected_postings<F>(
 where
     F: FnMut(&EntityId) -> Result<PrefixExpansionPostingDecision>,
 {
+    let query = bounded_query(query);
     let trimmed_query_end = query.trim_end().len();
     if trimmed_query_end == 0 {
         return Ok(false);
@@ -451,6 +459,7 @@ where
         return Ok(Vec::new());
     }
 
+    let query = bounded_query(query);
     let mut tokens: Vec<Token> = Vec::new();
     analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
     if tokens.is_empty() {

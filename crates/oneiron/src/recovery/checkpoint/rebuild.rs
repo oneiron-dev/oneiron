@@ -167,8 +167,13 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
             if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?.is_none() {
                 continue;
             }
-            crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields)?;
-            texts += 1;
+            match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields) {
+                Ok(()) => texts += 1,
+                // Text indexed before the per-document ceiling stays unindexed
+                // rather than holding the whole restore: its write door refuses it now.
+                Err(Error::Store(crate::error::StoreError::IndexedTextTooLarge { .. })) => {}
+                Err(error) => return Err(error),
+            }
         }
         let phonetic = INDEX_SOURCE_PHONETIC.scan(&vault.store, txn)?;
         for (id, codes) in phonetic {
