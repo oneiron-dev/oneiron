@@ -270,6 +270,28 @@ fn history_blobs_under_names_rev_list_cannot_pass_on_still_land() {
     }
 }
 
+/// Rule 5 (the owner's rate law): the door holds memory per blob, never per
+/// push, so an authenticated push is never refused for how much it carries in
+/// all. Five files of a million one-character lines, ten MiB together, split
+/// into more lines than the per-push budget H263 set (4Mi): that window was
+/// refused whole; it now scans clean and lands.
+#[cfg(unix)]
+#[test]
+fn a_push_of_many_short_lines_scans_whole_and_lands() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo, _, second) = served_repo(&vault);
+    let source = source.path();
+    let column = "7\n".repeat(1 << 20);
+    for part in 0..4 {
+        commit_file(source, &format!("column-{part}.csv"), &column);
+    }
+    let tip = commit_file(source, "column-4.csv", &column);
+    let report = receive_pack(&vault, source, None, &tip, "refs/heads/bulk", &[&second]);
+    assert_eq!(report.door.verdict, DoorWindowVerdict::Clean);
+    assert!(report.landing.is_some());
+    assert_eq!(git(&repo, &["rev-parse", "refs/heads/bulk"]), tip.as_str());
+}
+
 // The scan caps below are new with the history walk; they have no before.
 
 /// H263 review r2 (Astra F4) and r3 (Sol F2, Astra F8): the byte cap bounds no
