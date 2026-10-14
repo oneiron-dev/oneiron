@@ -2570,7 +2570,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -7581,7 +7581,7 @@
      "path": "src/claim/deferred.rs",
      "purpose": "Local, content-bound destructive proposals",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 4
      }
     },
@@ -7920,7 +7920,7 @@
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -8148,7 +8148,7 @@
      "path": "src/claim/source_trust.rs",
      "purpose": "Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 2,
       "struct": 1
      }
@@ -13892,7 +13892,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -13973,7 +13973,7 @@
      "path": "src/dreamer_consolidation/judge_context.rs",
      "purpose": "Deterministic single-value resolution over an explicitly admitted prior",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -13983,9 +13983,19 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "mod": 2,
-      "re-export": 11
+      "re-export": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/neighbourhood.rs",
+     "purpose": "The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -14021,7 +14031,7 @@
      "path": "src/dreamer_consolidation/persistence.rs",
      "purpose": "Persistent contradiction markers and prior-head context for consolidation",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -14065,7 +14075,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 36,
       "re-export": 1
      }
     },
@@ -14076,7 +14086,7 @@
      "path": "src/dreamer_consolidation/resources/prior.rs",
      "purpose": "Exact stored-head admission and question routing",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -14090,7 +14100,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ScopedConsolidationWrite"
@@ -14098,7 +14108,7 @@
      "path": "src/dreamer_consolidation/resources/write.rs",
      "purpose": "Sealed resource handoff",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 14,
       "fn": 2,
       "struct": 1
      }
@@ -14110,7 +14120,23 @@
      "path": "src/dreamer_consolidation/reviewed.rs",
      "purpose": "Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoleBackend",
+      "RoleBackends",
+      "RoleCall"
+     ],
+     "path": "src/dreamer_consolidation/roles.rs",
+     "purpose": "The Dreamer's model roles, and the backend each one calls out on",
+     "surface": {
+      "const": 4,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -14340,7 +14366,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "struct": 2
      }
     },
@@ -14519,6 +14545,16 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_promotion/corrections.rs",
+     "purpose": "A correction the Dreamer stages, settled in the pass that staged it",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -17830,7 +17866,7 @@
      "path": "src/gate/ceiling.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 41
      }
     },
     {
@@ -18252,7 +18288,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 1
      }
@@ -18264,7 +18300,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 57,
       "re-export": 8
      }
     },
@@ -18320,6 +18356,17 @@
      "surface": {
       "crate-vis": 12,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/policy_upgrade.rs",
+     "purpose": "A vault's untouched seeded policy manifest taking the one this build ships, and the re-gate of every consent…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2
      }
     },
     {
@@ -18435,7 +18482,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 63
+      "crate-vis": 64
      }
     },
     {
@@ -23740,6 +23787,14 @@
      "surface": {
       "crate-vis": 26
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/seeded_upgrade.rs",
+     "purpose": "Engine ruling 2026-10-13: a vault seeded before canon's critical classes shipped takes the shipped manifest…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -39940,7 +39995,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 47,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39961,7 +40016,7 @@
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…"
     },
     "dreamer_promotion": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -40101,7 +40156,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 117,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40262,7 +40317,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 105,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40824,8 +40879,8 @@
    },
    "over_bar": 37,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2476,
-   "test_files": 791
+   "source_files": 2480,
+   "test_files": 792
   },
   "oneiron-android": {
    "files": [
@@ -44484,7 +44539,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -48870,7 +48925,7 @@
      "path": "src/ai_host/policy.rs",
      "purpose": "The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -51216,13 +51271,14 @@
      "notable": [
       "OutputLimitField",
       "ProviderConfig",
-      "ProviderKind"
+      "ProviderKind",
+      "ResponseFormatWire"
      ],
      "path": "src/config/models/provider.rs",
      "purpose": "One provider entry: how to reach a model server, as data",
      "surface": {
       "crate-vis": 3,
-      "enum": 2,
+      "enum": 3,
       "fn": 3,
       "struct": 1
      }
@@ -52623,7 +52679,7 @@
      "path": "src/models/openai.rs",
      "purpose": "The OpenAI-compatible transport: any `/v1/chat/completions` server",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -53600,6 +53656,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/dreamer_binding.rs",
+     "purpose": "A correction a later pass hears binds to the claim an earlier pass wrote (dogfood gate 3, the binding slice…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/dreamer_live.rs",
+     "purpose": "The Dreamer on a real model provider (dogfood gate 3, map gap 13): the consolidation-only live acceptance run",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -53978,7 +54050,7 @@
    "over_bar": 9,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 331,
-   "test_files": 142
+   "test_files": 144
   },
   "oneiron-spawn": {
    "files": [

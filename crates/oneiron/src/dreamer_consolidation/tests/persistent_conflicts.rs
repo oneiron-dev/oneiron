@@ -205,6 +205,7 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
     let mut sink = CapturingSink::default();
     for _ in 0..2 {
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,

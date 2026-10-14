@@ -2,7 +2,9 @@
 use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
-use oneiron::dreamer_consolidation::ScopeSummaryExecutor;
+use oneiron::dreamer_consolidation::{
+    DREAMER_NARRATIVE_ROLE, RoleBackends, RoleCall, ScopeSummaryExecutor,
+};
 use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
@@ -84,6 +86,9 @@ pub struct ConsolidationExecutorFactory {
     model: ModelId,
     binding: HostInferenceBinding,
     extraction_egress: Option<Arc<dyn ExtractionEgressPredicate>>,
+    /// The backend each Dreamer role calls out on; a role it does not name
+    /// calls `backend`.
+    roles: RoleBackends,
     sink: Box<dyn ConsolidationSink>,
     /// CMT-3 (ONE-1540). `None` by DEFAULT, and the wrapper is installed
     /// either way: a tagged commitment event that reached the partition
@@ -119,6 +124,7 @@ impl ConsolidationExecutorFactory {
             model,
             binding,
             extraction_egress,
+            roles: RoleBackends::default(),
             sink,
             commitment_wake_planner: None,
             weave_recipe_runtime: None,
@@ -135,6 +141,14 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_pass_attachment(mut self, source: Box<dyn PassAttachmentSource>) -> Self {
         self.attachment = Some(source);
+        self
+    }
+
+    /// Routes each Dreamer role to its own backend (ARCH-0036 roles); a role
+    /// `roles` does not name keeps this factory's backend.
+    #[must_use]
+    pub fn with_role_backends(mut self, roles: RoleBackends) -> Self {
+        self.roles = roles;
         self
     }
 
@@ -250,6 +264,7 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
                 binding: self.binding.clone(),
                 extraction_egress: self.extraction_egress.as_deref(),
             },
+            roles: self.roles.clone(),
             sink: self.sink.as_mut(),
             scope: None,
         };
@@ -269,16 +284,21 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
         // System-class one — and a tagged event completes as a typed no-planner
         // skip instead of reaching the partition decoder.
         let inner = CommitmentWakeExecutor::new(inner, planner, self.actor)?;
+        let narrative = RoleCall::resolve(
+            &self.roles,
+            DREAMER_NARRATIVE_ROLE,
+            self.backend.as_ref(),
+            &self.model,
+            &self.binding,
+            self.extraction_egress.as_deref(),
+        );
         let inner = ScopeSummaryExecutor::new(
             inner,
-            self.backend.as_ref(),
+            narrative.backend,
             guard,
             self.actor,
-            self.model.clone(),
-            HostInferenceContext {
-                binding: self.binding.clone(),
-                extraction_egress: self.extraction_egress.as_deref(),
-            },
+            narrative.model.clone(),
+            narrative.inference,
             self.summary_instruction.as_deref(),
         );
         let runtime = self.weave_recipe_runtime.as_mut().map(|runtime| {
