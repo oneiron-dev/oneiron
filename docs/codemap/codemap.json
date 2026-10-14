@@ -31035,13 +31035,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_lease/files.rs",
-     "purpose": "T2 file policy, owner-only write, and the armed cleanup guard",
+     "purpose": "T2 file policy, owner-only write, the armed cleanup guard, and teardown",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 21
      }
     },
     {
@@ -31066,7 +31066,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/secret_lease/tests.rs",
@@ -31088,7 +31088,7 @@
      "purpose": "Lease/registration/receipt row types, VaultInstant clock, key prefixes",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 7,
       "re-export": 1,
       "struct": 6
      }
