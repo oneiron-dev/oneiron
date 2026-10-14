@@ -75,7 +75,8 @@ typedef struct OneironVault OneironVault;
  *
  * The caller must release non-empty buffers with `oneiron_buffer_free`. The
  * caller must not pass `ptr` to `free()` and must not call the free function
- * more than once for the same buffer.
+ * more than once for the same buffer. In Rust it moves rather than copies,
+ * like the three array owners, so one value reaches its free function once.
  */
 typedef struct OneironBuffer {
   uint8_t *ptr;
@@ -180,21 +181,41 @@ extern "C" {
  * Passing a null, zero-length buffer is accepted. Passing a mutated buffer,
  * an already-freed buffer, or memory allocated outside this crate is undefined
  * behavior by the C ABI contract.
+ *
+ * # Safety
+ *
+ * `buffer` is the empty value or one this crate returned, unchanged and not
+ * yet freed.
  */
 enum OneironStatus oneiron_buffer_free(struct OneironBuffer buffer);
 
 /**
  * Free a Rust-owned edge array returned by this crate.
+ *
+ * # Safety
+ *
+ * `array` is the empty value or one this crate returned, unchanged and not
+ * yet freed.
  */
 enum OneironStatus oneiron_edge_info_array_free(struct OneironEdgeInfoArray array);
 
 /**
  * Free a Rust-owned scored entity array returned by this crate.
+ *
+ * # Safety
+ *
+ * `array` is the empty value or one this crate returned, unchanged and not
+ * yet freed.
  */
 enum OneironStatus oneiron_scored_entity_array_free(struct OneironScoredEntityArray array);
 
 /**
  * Free a Rust-owned subtree entry array returned by this crate.
+ *
+ * # Safety
+ *
+ * `array` is the empty value or one this crate returned, unchanged and not
+ * yet freed.
  */
 enum OneironStatus oneiron_subtree_entry_array_free(struct OneironSubtreeEntryArray array);
 
@@ -205,6 +226,12 @@ enum OneironStatus oneiron_subtree_entry_array_free(struct OneironSubtreeEntryAr
  * be null only when `dict_search_paths_len == 0`; otherwise it must point to
  * an array of UTF-8 `OneironByteSlice` values. On success `out_vault` receives
  * an opaque handle that must be released exactly once with `oneiron_vault_free`.
+ *
+ * # Safety
+ *
+ * `path_ptr` covers `path_len` readable bytes. A non-null
+ * `dict_search_paths` covers `dict_search_paths_len` slices, each covering
+ * its own readable bytes. A non-null `out_vault` is writable.
  */
 enum OneironStatus oneiron_vault_open(const uint8_t *path_ptr,
                                       size_t path_len,
@@ -215,6 +242,11 @@ enum OneironStatus oneiron_vault_open(const uint8_t *path_ptr,
 
 /**
  * Free an opaque vault handle returned by `oneiron_vault_open`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open` that no other
+ * call is using and that is never used again.
  */
 enum OneironStatus oneiron_vault_free(struct OneironVault *vault);
 
@@ -226,12 +258,24 @@ enum OneironStatus oneiron_vault_free(struct OneironVault *vault);
  * without repairing, rebuilding, or changing on-disk layout. On success,
  * `out_buffer` receives Rust-owned bytes that must be released with
  * `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_health_json(struct OneironVault *vault,
                                              struct OneironBuffer *out_buffer);
 
 /**
  * Store an entity blob.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_put_entity(struct OneironVault *vault,
                                             const uint8_t *id_ptr,
@@ -248,6 +292,12 @@ enum OneironStatus oneiron_vault_put_entity(struct OneironVault *vault,
  *
  * `entities` may be null only when `entities_len == 0`. Each payload pointer
  * inside the array must be non-null for its byte length.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. A non-null `entities` covers `entities_len` inputs, and
+ * each input's `data` covers its own readable bytes, for the whole call.
  */
 enum OneironStatus oneiron_vault_batch_put_entities(struct OneironVault *vault,
                                                     const struct OneironEntityInput *entities,
@@ -259,6 +309,12 @@ enum OneironStatus oneiron_vault_batch_put_entities(struct OneironVault *vault,
  * Returns `OneironStatus::NotFound` if the entity does not exist. On success,
  * `out_buffer` receives Rust-owned bytes that must be released with
  * `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_get_entity(struct OneironVault *vault,
                                             const uint8_t *id_ptr,
@@ -269,6 +325,12 @@ enum OneironStatus oneiron_vault_get_entity(struct OneironVault *vault,
  * Delete an entity by ID.
  *
  * `out_existed` receives `1` if the entity existed and `0` otherwise.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_delete_entity(struct OneironVault *vault,
                                                const uint8_t *id_ptr,
@@ -279,6 +341,12 @@ enum OneironStatus oneiron_vault_delete_entity(struct OneironVault *vault,
  * Check whether an entity exists.
  *
  * `out_exists` receives `1` if the entity exists and `0` otherwise.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_entity_exists(struct OneironVault *vault,
                                                const uint8_t *id_ptr,
@@ -287,6 +355,12 @@ enum OneironStatus oneiron_vault_entity_exists(struct OneironVault *vault,
 
 /**
  * Store a directed edge between two entities.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_put_edge(struct OneironVault *vault,
                                           const uint8_t *src_ptr,
@@ -301,6 +375,12 @@ enum OneironStatus oneiron_vault_put_edge(struct OneironVault *vault,
  *
  * `out_edges` receives a Rust-owned array that must be released with
  * `oneiron_edge_info_array_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_edges_out(struct OneironVault *vault,
                                            const uint8_t *src_ptr,
@@ -312,6 +392,12 @@ enum OneironStatus oneiron_vault_edges_out(struct OneironVault *vault,
  *
  * `out_edges` receives a Rust-owned array that must be released with
  * `oneiron_edge_info_array_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_edges_in(struct OneironVault *vault,
                                           const uint8_t *tgt_ptr,
@@ -324,6 +410,12 @@ enum OneironStatus oneiron_vault_edges_in(struct OneironVault *vault,
  * `query_len` must equal the vault dimensions. `out_results` receives a
  * Rust-owned array that must be released with
  * `oneiron_scored_entity_array_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_search_vector(struct OneironVault *vault,
                                                const double *query_ptr,
@@ -336,6 +428,12 @@ enum OneironStatus oneiron_vault_search_vector(struct OneironVault *vault,
  *
  * `query_len` must be at most 8 KiB. `out_results` receives a Rust-owned
  * array that must be released with `oneiron_scored_entity_array_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_search_text(struct OneironVault *vault,
                                              const uint8_t *query_ptr,
@@ -347,6 +445,12 @@ enum OneironStatus oneiron_vault_search_text(struct OneironVault *vault,
  * Store a vector embedding for an entity.
  *
  * `vector_len` must equal the vault dimensions.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_put_vector(struct OneironVault *vault,
                                             const uint8_t *id_ptr,
@@ -361,6 +465,12 @@ enum OneironStatus oneiron_vault_put_vector(struct OneironVault *vault,
  * null pointer with length 0 to omit. If `limit_is_set == 0`, the default
  * limit of 10 is used; otherwise `limit` must be at most 1000. The returned
  * buffer must be released with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_context_pack(struct OneironVault *vault,
                                               const uint8_t *query_text_ptr,
@@ -377,6 +487,12 @@ enum OneironStatus oneiron_vault_context_pack(struct OneironVault *vault,
  * Return the stored entity type for an entity.
  *
  * Returns `OneironStatus::NotFound` if the entity does not exist.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_get_entity_type(struct OneironVault *vault,
                                                  const uint8_t *id_ptr,
@@ -388,6 +504,12 @@ enum OneironStatus oneiron_vault_get_entity_type(struct OneironVault *vault,
  *
  * `out_ids.len` is the byte length and is always a multiple of 16 on success.
  * Release the buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_entities_by_type(struct OneironVault *vault,
                                                   uint32_t entity_type,
@@ -399,6 +521,12 @@ enum OneironStatus oneiron_vault_entities_by_type(struct OneironVault *vault,
  * If `has_target_type == 0`, `target_type` is ignored. `out_ids.len` is the
  * byte length and is always a multiple of 16 on success. Release the buffer
  * with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_targets(struct OneironVault *vault,
                                          const uint8_t *src_ptr,
@@ -414,6 +542,12 @@ enum OneironStatus oneiron_vault_targets(struct OneironVault *vault,
  * If `has_source_type == 0`, `source_type` is ignored. `out_ids.len` is the
  * byte length and is always a multiple of 16 on success. Release the buffer
  * with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_sources(struct OneironVault *vault,
                                          const uint8_t *tgt_ptr,
@@ -428,6 +562,12 @@ enum OneironStatus oneiron_vault_sources(struct OneironVault *vault,
  *
  * `out_entries` receives a Rust-owned array that must be released with
  * `oneiron_subtree_entry_array_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_subtree(struct OneironVault *vault,
                                          const uint8_t *root_ptr,
@@ -440,6 +580,12 @@ enum OneironStatus oneiron_vault_subtree(struct OneironVault *vault,
  *
  * `out_ids.len` is the byte length and is always a multiple of 16 on success.
  * Release the buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_ancestors(struct OneironVault *vault,
                                            const uint8_t *node_ptr,
@@ -450,6 +596,12 @@ enum OneironStatus oneiron_vault_ancestors(struct OneironVault *vault,
  * Check whether making `target` a parent of `node` would create a cycle.
  *
  * `out_would_cycle` receives `1` for true and `0` for false.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`, not freed
+ * during the call. Each non-null input pointer covers its length in readable
+ * values and each non-null out pointer is writable, for the whole call.
  */
 enum OneironStatus oneiron_vault_would_create_cycle(struct OneironVault *vault,
                                                     const uint8_t *node_ptr,
