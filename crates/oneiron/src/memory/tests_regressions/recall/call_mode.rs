@@ -54,16 +54,20 @@ fn pack_gives(pack: &crate::memory::MemoryPack, said: &str) -> bool {
 /// reaches the month-old message; the temporal channel's now anchor reaches
 /// only the fresh one. A stage that starts past its share (after a stall
 /// that does not yield) is cut at its first candidate, inside the channel,
-/// and its hits are dropped. The check reads the cut from the answer, not
-/// from wall time, which a loaded host stretches past the answer's own
-/// quarter of the budget (4.09 s against 4 s at load 10 on a shared gate
-/// host): the slow channel's own hit is missing, and the other channel's is
-/// there. A slow text stage that did not yield at its share would leave the
-/// temporal stage after it no time to open, and its hit would be missing.
+/// and its hits are dropped.
+///
+/// The deadline reads a still clock that only the slow stage moves, so the
+/// host's speed decides nothing (on the monotonic clock the answer's own
+/// quarter stretched to 4.09 s against 4 s at load 10 on a shared gate
+/// host). The door publishes its empty pack first, as an async server door
+/// does, and a recall past its deadline returns that pack in place of its
+/// own: an answer held past the deadline (a slow stage that does not yield,
+/// or stages that run into the answer's quarter) loses the other channel's
+/// hit.
 #[test]
 fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
     use crate::memory::RecallEffort;
-    use crate::retrieval_depth::SlowRetrievalStage;
+    use crate::retrieval_depth::{SlowRetrievalStage, still_deadline_clock_for_test};
     use crate::store::RetrievalSignal;
     use crate::task_verb::sdk::{RecallDoor, RecallRequest, recall_at_door};
     use std::time::{Duration, Instant};
@@ -85,6 +89,8 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
     assert!(pack_gives(&whole, "aisle seat"));
     assert!(pack_gives(&whole, "harbour lights"));
 
+    let was_still = still_deadline_clock_for_test(true);
+    let published = |_: crate::memory::MemoryPack| {};
     // The stages share three quarters of the budget, and the text stage
     // opens first, with half of it: 1.5 s.
     let (temporal, text) = (RetrievalSignal::Temporal, RetrievalSignal::Text);
@@ -98,7 +104,6 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
             duration: Duration::from_millis(duration_ms),
             yields,
         }));
-        let arrived = Instant::now();
         let pack = recall_at_door(
             &facade,
             RecallRequest {
@@ -112,8 +117,8 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
             },
             |_| None,
             &RecallDoor {
-                arrived,
-                on_cut: None,
+                arrived: Instant::now(),
+                on_cut: Some(&published),
                 rerank: crate::memory::RecallRerank::Required,
             },
         )
@@ -123,6 +128,7 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
         assert!(pack_gives(&pack, kept), "{slow:?} lost {kept}: {pack:?}");
         assert!(!pack_gives(&pack, dropped), "{slow:?} kept {dropped}");
     }
+    still_deadline_clock_for_test(was_still);
 }
 
 /// A deadline that never fires changes nothing: the same fixed queries rank
