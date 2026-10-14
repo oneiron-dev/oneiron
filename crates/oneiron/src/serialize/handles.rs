@@ -39,23 +39,20 @@ impl Handles {
             }
             let name = names.get(entity.id.as_bytes()).map_or("", String::as_str);
             let handle = (entity.short_id.clone(), name.to_owned());
-            aliases.insert(entity.id.to_hex(), handle.clone());
-            let mut mine = vec![entity.id.to_hex()];
-            // An identity key that holds its own short id is no alias. The
-            // own pass below renders an own alias as that short id, a word
-            // whose neighbours are what bounded the alias; so the only own
-            // alias its output can spell again (two abutting renders
-            // included) is one that holds the short id.
-            if let Some(key) = entity
+            let key = entity
                 .fields
                 .as_ref()
                 .and_then(|f| f.get("identity_key"))
                 .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .filter(|key| !key.contains(entity.short_id.as_str()))
-            {
-                aliases.insert(key.into(), handle.clone());
-                mine.push(key.into());
+                .filter(|s| !s.is_empty());
+            // An alias that is its own short id is none: the own pass below
+            // could not render it as anything else.
+            let mine: Vec<String> = std::iter::once(entity.id.to_hex())
+                .chain(key.map(str::to_owned))
+                .filter(|alias| *alias != entity.short_id)
+                .collect();
+            for alias in &mine {
+                aliases.insert(alias.clone(), handle.clone());
             }
             own.insert(*entity.id.as_bytes(), (handle, mine));
         }
@@ -76,9 +73,7 @@ impl Handles {
                     mine.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
                     for (key, value) in &mut row.fields {
                         if !matches!(key.as_str(), "name" | "display_name") {
-                            walk(value, &mut |text| {
-                                substitute(text, &mine, |(id, _)| id.clone())
-                            });
+                            walk(value, &mut |text| own_pass(text, &mine));
                         }
                     }
                 }
@@ -161,6 +156,25 @@ fn walk(value: &mut Value, text: &mut impl FnMut(&str) -> String) {
             }
         }
         _ => {}
+    }
+}
+
+/// `text` with each of its entity's own `aliases` rendered as its short id,
+/// until none stands. A render is the short id, a word whose neighbours are
+/// what bounded the alias, so a later pass finds only an alias that holds
+/// the short id, spelled again by renders (`-as01as01-` from two abutting
+/// ones), which the global pass would render as the entity's name. Such an
+/// alias is longer than the short id, so each later render shortens the
+/// text and this ends. Once no own alias stands, none stands for the global
+/// pass either: it sees each place with the boundaries this pass saw.
+fn own_pass(text: &str, aliases: &[(&String, &(String, String))]) -> String {
+    let mut text = text.to_owned();
+    loop {
+        let next = substitute(&text, aliases, |(id, _)| id.clone());
+        if next == text {
+            return text;
+        }
+        text = next;
     }
 }
 

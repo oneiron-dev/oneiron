@@ -561,11 +561,7 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
     for (identity_key, alias, rendered) in [
         ("zq9", "zq9".to_owned(), "as01"),
         ("as01", id.to_hex(), "as01"),
-        (
-            "-as01as01-",
-            "--as01as01--as01as01--".to_owned(),
-            "--as01as01--as01as01--",
-        ),
+        ("-as01as01-", "--as01as01--as01as01--".to_owned(), "as01"),
     ] {
         let headline = format!("{} {alias}", words[..6].join(" "));
         let body = rmpv::Value::Map(vec![
@@ -627,7 +623,7 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
 #[test]
 fn another_entitys_identity_key_holding_a_short_id_still_becomes_its_name() {
     // Sol R2: the own-alias rule kept every identity key that holds a short
-    // id out of the aliases, another entity's too.
+    // id out of the aliases, another entity's too; Sol R4: or its own.
     let entity = |id: u8, short_id: &str, fields: &[(&str, &str)]| ContextEntity {
         source_revision_ref: None,
         critical: false,
@@ -645,35 +641,34 @@ fn another_entitys_identity_key_holding_a_short_id_still_becomes_its_name() {
         edges: None,
         vector: None,
     };
-    let pack = ContextPack {
-        capabilities: Vec::new(),
-        l2_base: None,
-        retrieval_quality: Default::default(),
-        results: vec![
-            entity(
-                0x97,
-                "as01",
-                &[("name", "Catalog"), ("identity_key", "catalog-as02")],
-            ),
-            entity(0x98, "as02", &[("headline", "see catalog-as02")]),
-        ],
-        neighbors: Vec::new(),
-        stats: empty_stats(),
-        empty: None,
-    };
-    for format in [
-        PackFormat::Json,
-        PackFormat::Yaml,
-        PackFormat::Toon,
-        PackFormat::Markdown,
-        PackFormat::Plaintext,
-    ] {
-        let text = String::from_utf8_lossy(&serialize_pack(
-            &pack,
-            &savings_config(format, FieldProfile::Full),
-        ))
-        .into_owned();
-        assert!(!text.contains("catalog-as02"), "{format:?}: {text}");
-        assert!(text.contains("Catalog (as01)"), "{format:?}: {text}");
+    for key in ["catalog-as02", "catalog-as01b"] {
+        let headline = format!("see {key}");
+        let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
+            retrieval_quality: Default::default(),
+            results: vec![
+                entity(0x97, "as01", &[("name", "Catalog"), ("identity_key", key)]),
+                entity(0x98, "as02", &[("headline", &headline)]),
+            ],
+            neighbors: Vec::new(),
+            stats: empty_stats(),
+            empty: None,
+        };
+        for format in [
+            PackFormat::Json,
+            PackFormat::Yaml,
+            PackFormat::Toon,
+            PackFormat::Markdown,
+            PackFormat::Plaintext,
+        ] {
+            let text = String::from_utf8_lossy(&serialize_pack(
+                &pack,
+                &savings_config(format, FieldProfile::Full),
+            ))
+            .into_owned();
+            assert!(!text.contains(key), "{format:?}: {text}");
+            assert!(text.contains("Catalog (as01)"), "{format:?}: {text}");
+        }
     }
 }

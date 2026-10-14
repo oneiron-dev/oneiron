@@ -18,11 +18,19 @@ pub(super) enum Door {
 }
 
 pub(super) fn blocklisted(text: &str) -> bool {
+    blocklist().any(|entry| text.contains(entry))
+}
+
+/// The longest blocklist entry, in bytes.
+pub(super) fn blocklist_longest() -> usize {
+    blocklist().map(str::len).max().unwrap_or(0)
+}
+
+fn blocklist() -> impl Iterator<Item = &'static str> {
     BLOCKLIST
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .any(|entry| text.contains(entry))
 }
 
 /// BIP39 phrase lengths: 128 to 256 bits of entropy in 32-bit steps.
@@ -599,18 +607,77 @@ pub(super) fn sensitive_assignment(text: &str, door: Door) -> bool {
         let Some((key, value)) = line.split_once(['=', ':']) else {
             return false;
         };
-        let key = key
-            .trim()
-            .trim_start_matches("export ")
-            .trim()
-            .trim_matches(['\"', '\'']);
-        let value = value.trim().trim_matches(['\"', '\'']);
-        sensitive_key(key)
+        let value = assigned_value(value);
+        sensitive_key(assigned_key(key))
             && match door {
                 Door::Write => secret_material(value),
                 Door::Release => !placeholder(value),
             }
     })
+}
+
+/// The name an assignment's key text reads as.
+fn assigned_key(key: &str) -> &str {
+    key.trim()
+        .trim_start_matches("export ")
+        .trim()
+        .trim_matches(['"', '\''])
+}
+
+/// The value an assignment's value text reads as.
+fn assigned_value(value: &str) -> &str {
+    value.trim().trim_matches(['"', '\''])
+}
+
+/// The longest ending [`sensitive_key`] reads, and some.
+const KEY_ENDING: usize = 16;
+
+/// The write door's assignment rule over one line a reader kept in parts,
+/// its middle dropped: its key, or its `head` and end when the key's middle
+/// was dropped, and its value's start (`value_cut`: more of the value was
+/// dropped; else `value` is the whole value). `None` when the parts cannot
+/// tell what the whole line reads as: the key's reading trims through a
+/// part it was cut at (a run of `export `, quotes or blanks), or the value
+/// word a sensitive key's rule reads runs past the cut.
+pub(super) fn cut_assignment(
+    head: Option<&str>,
+    key: &str,
+    value: &str,
+    value_cut: bool,
+) -> Option<bool> {
+    let sensitive = match head {
+        None => sensitive_key(assigned_key(key)),
+        Some(head) => {
+            // A key cut in the middle is longer than any name, so only its
+            // ending can read as one, once its own ends are trimmed as whole.
+            let start = head
+                .trim_start()
+                .trim_start_matches("export ")
+                .trim_start()
+                .trim_start_matches(['"', '\'']);
+            let ending = key.trim_end().trim_end_matches(['"', '\'']);
+            if start.is_empty() || ending.len() < KEY_ENDING {
+                return None;
+            }
+            sensitive_key(ending)
+        }
+    };
+    if !sensitive || !value_cut {
+        return Some(sensitive && secret_material(assigned_value(value)));
+    }
+    // The rule reads the value's first word, and the next after an auth
+    // scheme: each must end, at a blank, before the cut.
+    let read = value.trim_start().trim_start_matches(['"', '\'']);
+    let words: Vec<&str> = read.split_whitespace().take(3).collect();
+    let complete = if words.len() == 3 || read.ends_with(char::is_whitespace) {
+        words.len()
+    } else {
+        words.len().saturating_sub(1)
+    };
+    let scheme = words
+        .first()
+        .is_some_and(|word| AUTH_SCHEMES.contains(&trim_value(word).to_ascii_lowercase().as_str()));
+    (complete > usize::from(scheme)).then(|| secret_material(assigned_value(value)))
 }
 
 /// A string value under a credential field name that the door still treats as

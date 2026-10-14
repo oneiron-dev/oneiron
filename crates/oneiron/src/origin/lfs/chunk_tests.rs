@@ -457,33 +457,68 @@ fn a_phrase_split_at_a_seam_reads_as_the_write_door_reads_it_whole() {
 }
 
 #[test]
-fn a_segment_past_what_a_seam_reads_whole_keeps_its_first_assignment() {
+fn a_segment_past_what_a_seam_reads_whole_reads_as_the_write_door_reads_it() {
     // Sol R3: padding carries a segment past what the seam reads whole, and
     // the first `=` falls where it cut: a key and its value there (refused
     // whole), or the first `=` there and a sensitive one at the end (accepted
-    // whole, for the first `=` holds the key). Chunks as long as a peer sends.
+    // whole, for the first `=` holds the key). Sol R4: a provider prefix
+    // inside a longer token where a cut falls (accepted whole), and a
+    // blocklisted string a chunk edge splits where a cut falls (refused
+    // whole). Wonder R4: quotes past what the seam keeps after a sensitive
+    // key, which its read trims whole (refused whole). Chunks as long as a
+    // peer sends.
     let pad = |units: usize| b"zz  ".repeat(units);
     let value: &[u8] = b"t7Rk2pLq9WzX";
-    let chunked = |parts: [Vec<u8>; 2]| -> Vec<Vec<u8>> {
+    let chunked = |parts: &[Vec<u8>]| -> Vec<Vec<u8>> {
         parts
             .iter()
             .flat_map(|part| part.chunks(LFS_CHUNK_MAX).map(<[u8]>::to_vec))
             .collect()
     };
+    let inset = |at: usize, text: &[u8]| {
+        let mut segment = b"password=changeme ".to_vec();
+        segment.extend(b"zy".repeat((8_454_144 - segment.len()) / 2));
+        segment[at..at + text.len()].copy_from_slice(text);
+        vec![segment]
+    };
+    let blocklisted = include_str!("../../batch/secret_scan/blocklist.txt")
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap();
     seam_reads_as_whole(&[
         (
             true,
-            chunked([
+            chunked(&[
                 [&pad(1_060_000)[..], b"_password="].concat(),
                 [value, b" ", &pad(1_540_000), b"\n"].concat(),
             ]),
         ),
         (
             false,
-            chunked([
+            chunked(&[
                 [&pad(1_060_000)[..], b"=", &pad(1_540_000), b"_password="].concat(),
                 [value, b"\n"].concat(),
             ]),
+        ),
+        (
+            false,
+            chunked(&inset(
+                6_356_992,
+                b"ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+            )),
+        ),
+        (true, chunked(&inset(3_145_712, blocklisted.as_bytes()))),
+        (
+            true,
+            chunked(&[[
+                &b"zz_password"[..],
+                &b"\"'".repeat(4_600_000),
+                b"=",
+                value,
+                b"\n",
+            ]
+            .concat()]),
         ),
     ]);
 }

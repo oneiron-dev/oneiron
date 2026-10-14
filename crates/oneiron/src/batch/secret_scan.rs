@@ -280,6 +280,40 @@ pub(crate) fn scan_write_seam(text: &str) -> Result<()> {
     }
 }
 
+/// [`scan_write_seam`] for a segment a reader kept in parts, its middle
+/// dropped: the assignment rule over its first `=` or `:` alone (see
+/// `shapes::cut_assignment`), for the rules that match anywhere read the
+/// whole stream. Where the parts cannot tell, the door refuses.
+pub(crate) fn scan_cut_seam(
+    head: Option<&str>,
+    key: &str,
+    value: &str,
+    value_cut: bool,
+) -> Result<()> {
+    match shapes::cut_assignment(head, key, value, value_cut) {
+        Some(false) => Ok(()),
+        _ => Err(secret_scan_error("gate.secret_scan.sensitive_env")),
+    }
+}
+
+/// The write door's blocklist over a body read in parts, in order: it finds
+/// what one read of the whole finds, an entry an edge cut included.
+#[derive(Default)]
+pub(crate) struct BlocklistStream(Vec<u8>);
+
+impl BlocklistStream {
+    pub(crate) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+        self.0.extend_from_slice(bytes);
+        if shapes::blocklisted(&String::from_utf8_lossy(&self.0)) {
+            return Err(secret_scan_error("gate.secret_scan.blocklist"));
+        }
+        // What an entry the next part ends could start in.
+        let keep = shapes::blocklist_longest().saturating_sub(1);
+        self.0.drain(..self.0.len().saturating_sub(keep));
+        Ok(())
+    }
+}
+
 /// The write door's recovery-phrase rule over a body's text read in parts,
 /// in order: it finds what one read of the whole text finds.
 #[derive(Default)]
