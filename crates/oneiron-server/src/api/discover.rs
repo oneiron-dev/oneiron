@@ -534,7 +534,7 @@ fn lane_rows(
             if row.entity_type == oneiron::registry::ENTITY_TYPE_CLAIM {
                 let claim = oneiron::claim::decode_claim_body(body, true)
                     .inspect_err(|e| {
-                        tracing::error!(error = %e, id = %row.id.to_hex(), "discover predicate scan failed");
+                        tracing::error!(kind = ?e.kind(), id = %row.id.to_hex(), "discover predicate scan failed");
                     })
                     .map_err(|_| ApiError::internal_server_error("discover predicate scan failed"))?;
                 if let Some(namespace) = claim.predicate.split('.').next() {
