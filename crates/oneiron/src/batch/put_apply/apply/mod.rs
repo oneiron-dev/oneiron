@@ -268,10 +268,23 @@ pub(in crate::batch) fn apply_put(
             check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
                 == AuthorityLogKeyOccupant::CrossTypeSquatter;
         // H72: every store door, local or replicated, keeps the log inside
-        // the fold bounds; a row that only restricts always lands.
-        if crate::authority::door_refuses_past_budget(store, wtxn, posture, &entry, &entry_hash)? {
-            let signer = crate::authority::authority_signer_label(entry.signer_key());
-            return Err(Error::Record(RecordError::AuthorityLogFull { id, signer }));
+        // the fold bounds; a slip issuer's restrictions always land.
+        match crate::authority::authority_door(
+            store,
+            wtxn,
+            posture,
+            &entry,
+            &entry_hash,
+            replicated,
+        )? {
+            crate::authority::AuthorityDoor::Lands => {}
+            crate::authority::AuthorityDoor::AtBound => {
+                let signer = crate::authority::authority_signer_label(entry.signer_key());
+                return Err(Error::Record(RecordError::AuthorityLogFull { id, signer }));
+            }
+            crate::authority::AuthorityDoor::Unowned => {
+                return Err(Error::Record(RecordError::AuthorityLogSignerPending { id }));
+            }
         }
         authority_entry_hash_pin = Some(entry_hash);
         authority_entry_observation = Some(entry);

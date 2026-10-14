@@ -205,8 +205,12 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     let resident = crate::authority::authority_row_resident(store, wtxn, &entry)?;
     // H72: a key no folded row admitted signs no valid row. Its row waits
     // for that enrollment and is never stored before it, so a stranger's
-    // chain never reaches the fold.
-    if !resident && !crate::authority::signer_has_standing(&local_fold, &entry) {
+    // chain never reaches the fold. An owner key a signed rotation named
+    // stands before the handoff that lets the fold admit it.
+    if !resident
+        && !crate::authority::signer_has_standing(&local_fold, &entry)
+        && !crate::authority::signer_is_slip_issuer(store, wtxn, &entry)?
+    {
         return Err(Error::Record(RecordError::AuthorityLogSignerPending {
             id: *id,
         }));

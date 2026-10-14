@@ -141,7 +141,8 @@ fn a_signers_full_bound_still_folds() {
 
 /// Substrate invariant: the store door refuses a signer's row past its bound
 /// with a typed error naming the signer, and writes nothing. A row that only
-/// restricts still lands for that signer, and another signer still writes.
+/// restricts still lands for that signer, the genesis owner and so a slip
+/// issuer, and another signer still writes.
 #[test]
 fn a_signer_at_its_bound_is_refused_but_restrictions_and_other_signers_land() {
     const BOUND: usize = 16;
@@ -359,15 +360,27 @@ fn the_slip_issuers_slip_rows_count_toward_no_fold_bound() {
     });
 }
 
-/// Substrate invariant: the slip issuers are owner keys only. Slip ops
-/// signed by an agent key the host enrolled, or by the key of a machine the
-/// owner holds as theirs, count toward that signer's bound as any other row
-/// does. Its revocation still lands past the bound.
+/// Bug repro: a key that is not a slip issuer stores no more than its bound,
+/// whatever its rows do. An agent key the host enrolled, or the key of a
+/// machine the owner holds as theirs, once stored slip revokes and actor
+/// revocations without end, and the fold counted each one, so past the
+/// fold's row bound the owner's vault failed closed. The fold applies none
+/// of them, so they now count toward that key's bound, as its slip mints
+/// do, and a handoff it signs is refused at once.
 #[test]
-fn agent_and_machine_keys_slip_ops_count_toward_their_bounds() {
-    const BOUND: usize = 4;
+fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
+    const BOUND: usize = 8;
     for machine in [false, true] {
         let host = host();
+        let witness = request_for(host.vault_id, EntityId::now(), &ed_key(71));
+        host.vault
+            .enroll_machine(
+                &host.issuer,
+                &host.owner,
+                &witness,
+                MachineRole::Owned(MachineOwnership::Yours),
+            )
+            .unwrap();
         let signing = ed_key(72);
         let key = authority_key_from_ed(&signing);
         let at = TimeRange { start: 1, end: 1 };
@@ -394,13 +407,20 @@ fn agent_and_machine_keys_slip_ops_count_toward_their_bounds() {
             host.vault.put_authority_log_entry(&enroll, at, 1).unwrap();
         }
         let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
-        let row = |seq: u64, op| {
-            let heads = host.vault.authority_fold().unwrap().append_heads;
+        let mut parent = *host
+            .vault
+            .authority_fold()
+            .unwrap()
+            .append_heads
+            .iter()
+            .next()
+            .unwrap();
+        let row = |seq: usize, parent: AuthorityEntryHash, op| {
             sign_ed(
                 unsigned_entry(
                     Some(host.vault_id),
-                    seq,
-                    heads.into_iter().collect(),
+                    seq as u64,
+                    vec![parent],
                     op,
                     key.clone(),
                     1,
@@ -408,33 +428,62 @@ fn agent_and_machine_keys_slip_ops_count_toward_their_bounds() {
                 &signing,
             )
         };
-        with_rows_per_signer_for_test(BOUND, || {
-            for n in 0..BOUND {
-                let mint = AuthorityOp::SlipMint(SlipMintAction {
-                    claims: claims_numbered(&root.claims, n),
-                });
-                host.vault
-                    .put_authority_log_entry(&row(n as u64 + 1, mint), at, 1)
-                    .unwrap();
-            }
-            let over = AuthorityOp::SlipMint(SlipMintAction {
-                claims: claims_numbered(&root.claims, BOUND),
-            });
-            let err = host
-                .vault
-                .put_authority_log_entry(&row(BOUND as u64 + 1, over), at, 1)
-                .unwrap_err();
+        let assert_full = |err: crate::error::Error| {
             assert_eq!(
                 err.kind(),
                 crate::error::ErrorKind::AuthorityLogFull,
-                "machine {machine}"
+                "machine {machine}: {err}"
             );
             assert!(err.to_string().contains(&authority_signer_label(&key)));
-            let revoke = AuthorityOp::SlipRevoke { slip_id: [3; 32] };
-            host.vault
-                .put_authority_log_entry(&row(BOUND as u64 + 2, revoke), at, 1)
-                .unwrap();
+        };
+        with_rows_per_signer_for_test(BOUND, || {
+            let mut landed = 0;
+            for n in 0..10 * BOUND {
+                let op = match n % 3 {
+                    0 => AuthorityOp::SlipMint(SlipMintAction {
+                        claims: claims_numbered(&root.claims, n),
+                    }),
+                    1 => AuthorityOp::SlipRevoke {
+                        slip_id: claims_numbered(&root.claims, n - 1).slip_id,
+                    },
+                    _ => AuthorityOp::RevokeActor {
+                        authority_key: key.clone(),
+                        epoch: n as u64,
+                    },
+                };
+                let entry = row(n + 1, parent, op);
+                match host.vault.put_authority_log_entry(&entry, at, 1) {
+                    Ok(_) => {
+                        landed += 1;
+                        parent = authority_entry_hash(&entry).unwrap();
+                    }
+                    Err(err) => assert_full(err),
+                }
+            }
+            let fold = host.vault.authority_fold().unwrap();
+            assert!(
+                !fold.authority_log_past_bound(),
+                "machine {machine}: {:?}",
+                fold.authority_log_bound_signer()
+            );
+            assert!(
+                fold.machine(witness.machine)
+                    .is_some_and(FoldedMachine::is_mine)
+            );
+            assert_eq!(landed, BOUND, "machine {machine}");
         });
+        let handoff = AuthorityOp::ReRoot {
+            new_device: device(
+                authority_key_from_ed(&ed_key(73)),
+                ROLE_OWNER,
+                AuthorityTier::Software,
+            ),
+        };
+        let err = host
+            .vault
+            .put_authority_log_entry(&row(10 * BOUND + 1, parent, handoff), at, 1)
+            .unwrap_err();
+        assert_full(err);
     }
 }
 
@@ -461,4 +510,167 @@ fn every_live_owner_a_fold_holds_is_a_slip_issuer() {
         }
     }
     assert!(revoked_owners > 50, "{revoked_owners} revoked owner keys");
+}
+
+fn put_replicated_row(vault: &crate::Vault, entry: &AuthorityLogEntry) -> crate::error::Result<()> {
+    vault
+        .batch()
+        .put_replicated(
+            &authority_log_entity_id(entry)?,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_authority_log_entry_body(entry)?,
+        )
+        .commit()
+}
+
+/// Bug repro (review round 1): a pre-handoff rotation names the key that
+/// signs the handoff. Through sync the rotation lands, but the vault fold
+/// holds the rotated key nowhere until that handoff verifies, so the handoff
+/// waited for its signer for ever. The rotated owner key is a slip issuer by
+/// the log's structure, so the handoff lands and the new host stands.
+#[test]
+fn a_handoff_signed_by_a_rotated_owner_key_lands_through_sync() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let old = ed_key(115);
+    let next = ed_key(116);
+    let host = HostSlipIssuer::from_secret(b"rotated handoff placeholder words").unwrap();
+    let genesis = genesis_entry(115, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let rotation = rotate_entry(id, &genesis, &old, authority_key_from_ed(&old), 116, 1);
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            vec![authority_entry_hash(&rotation).unwrap()],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host.public_key(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&next),
+            3,
+        ),
+        &next,
+    );
+    vault
+        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    put_replicated_row(&vault, &rotation).unwrap();
+    mature_observed_widen(&vault, &rotation);
+    put_replicated_row(&vault, &handoff).unwrap();
+    let fold = vault.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&handoff).unwrap())
+    );
+    assert!(roster_has_live_owner(&fold.roster, &host.public_key()));
+}
+
+/// Bug repro (review round 1): in a pre-handoff line an admin key, with an
+/// agent's cosign for quorum, enrolls an owner, who hands off to the host.
+/// The fold accepts the line, so `require_host` accepts that host; the
+/// issuer set once missed it, because no owner key signed the owner's
+/// enrollment, and counted every one of its slip mints.
+#[test]
+fn a_host_an_admin_admitted_line_hands_off_to_is_a_slip_issuer() {
+    let [owner, admin, agent, second] = [120, 121, 122, 123].map(ed_key);
+    let host = HostSlipIssuer::from_secret(b"admin line host placeholder words").unwrap();
+    let genesis = genesis_entry(120, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let row = |parent: &AuthorityLogEntry,
+               seq,
+               op,
+               signer: &SigningKey,
+               cosigner: Option<&SigningKey>| {
+        let entry = unsigned_entry(
+            Some(id),
+            seq,
+            vec![authority_entry_hash(parent).unwrap()],
+            op,
+            authority_key_from_ed(signer),
+            2,
+        );
+        match cosigner {
+            Some(cosigner) => cosign_ed(entry, signer, cosigner),
+            None => sign_ed(entry, signer),
+        }
+    };
+    let enroll = |key: &SigningKey, roles| AuthorityOp::EnrollDevice {
+        device: device(authority_key_from_ed(key), roles, AuthorityTier::Software),
+    };
+    let admitted = row(&genesis, 1, enroll(&admin, ROLE_ADMIN), &owner, None);
+    let enrolled = row(
+        &admitted,
+        2,
+        enroll(&agent, ROLE_AGENT),
+        &owner,
+        Some(&admin),
+    );
+    let promoted = row(
+        &enrolled,
+        1,
+        enroll(&second, ROLE_OWNER | ROLE_ADMIN),
+        &admin,
+        Some(&agent),
+    );
+    let handoff = row(
+        &promoted,
+        1,
+        AuthorityOp::ReRoot {
+            new_device: device(
+                host.public_key(),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        &second,
+        Some(&admin),
+    );
+    let entries = vec![genesis, admitted, enrolled, promoted, handoff.clone()];
+    let fold = fold_authority_log(&entries);
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&handoff).unwrap())
+    );
+    assert!(roster_has_live_owner(&fold.roster, &host.public_key()));
+    let issuers = crate::authority::log_budget::slip_issuers(entries.iter());
+    assert!(issuers.contains(&host.public_key()));
+    assert!(!issuers.contains(&authority_key_from_ed(&admin)));
+}
+
+/// Bug repro (review round 1): a complete signed history imports in any
+/// order. The store door reads the slip issuers from the rows already
+/// staged, so a history given slips first charged the issuer's slip rows
+/// until its genesis was staged, and stopped at the bound. The import now
+/// stages parents first.
+#[test]
+fn a_complete_history_imports_past_the_bound_in_any_order() {
+    const BOUND: usize = 4;
+    let source = host();
+    let root = source.vault.ensure_host_root_slip(&source.issuer).unwrap();
+    for n in 0..10 * BOUND {
+        source
+            .vault
+            .mint_oauth_capability_slip(
+                &source.issuer,
+                claims_numbered(&root.claims, n),
+                3600,
+                None,
+            )
+            .unwrap();
+    }
+    let mut history = source.vault.export_signed_authority_history().unwrap();
+    history.reverse();
+    let dir = tempfile::tempdir().unwrap();
+    let target = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    with_rows_per_signer_for_test(BOUND, || target.import_signed_authority_history(&history))
+        .unwrap();
+    let fold = target.authority_fold().unwrap();
+    assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
+    assert!(fold.slips.mints.len() > 10 * BOUND);
 }

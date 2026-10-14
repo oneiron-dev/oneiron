@@ -1097,6 +1097,91 @@ fn rows_signed_by_an_unenrolled_key_pend_and_are_never_stored() -> Result<()> {
     Ok(())
 }
 
+/// H72 bug repro (review round 1): a key the owner enrolled as an agent has
+/// standing but no consent, so the fold applies no row it signs alone. Its
+/// revocations once landed past every bound and counted toward the fold's,
+/// so an agent could fail the owner's vault closed. The replicated door now
+/// holds a row no owner key signed as dependency-pending and never stores
+/// it; the owner's own row still lands.
+#[cfg(feature = "sync")]
+#[test]
+fn rows_an_enrolled_agent_signs_alone_pend_and_are_never_stored() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(58);
+    let genesis = authority_genesis_fixture(58);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let at = TimeRange { start: 1, end: 1 };
+    vault.put_authority_log_entry(&genesis, at, 1)?;
+    let agent = authority_test_key(59);
+    let agent_key = authority_key_from_signing(&agent);
+    let mut device = authority_test_device(agent_key.clone());
+    device.roles = crate::authority::ROLE_AGENT;
+    let enroll = authority_child_fixture(
+        vault_id,
+        &genesis,
+        &owner,
+        1,
+        59,
+        crate::authority::AuthorityOp::EnrollDevice { device },
+    );
+    vault.put_authority_log_entry(&enroll, at, 1)?;
+    assert!(vault.authority_fold()?.roster.contains_key(&agent_key));
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+
+    let mut parent = enroll.clone();
+    for seq in 1..=3 {
+        let junk = authority_child_fixture(
+            vault_id,
+            &parent,
+            &agent,
+            seq,
+            70 + seq,
+            crate::authority::AuthorityOp::RevokeDevice {
+                revoked_key: authority_key_from_signing(&owner),
+            },
+        );
+        let id = crate::authority::authority_log_entity_id(&junk)?;
+        let blob = authority_log_entity_blob(&junk, seq + 1)?;
+        let step =
+            vault.with_write_txn(|wtxn| ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob))?;
+        let EntityStep::Quarantine(refusal) = step else {
+            panic!("a row no owner key signed must be held, got {step:?}");
+        };
+        assert_eq!(
+            refusal.retry,
+            crate::sync::ingest::RefusalRetry::DependencyPending
+        );
+        assert_eq!(
+            refusal.err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+        assert!(vault.get_raw(&id)?.is_none(), "a held row is never stored");
+        parent = junk;
+    }
+
+    let owned = authority_child_fixture(
+        vault_id,
+        &enroll,
+        &owner,
+        2,
+        80,
+        crate::authority::AuthorityOp::SlipRevoke { slip_id: [7; 32] },
+    );
+    let owned_id = crate::authority::authority_log_entity_id(&owned)?;
+    let blob = authority_log_entity_blob(&owned, 9)?;
+    vault.with_write_txn(|wtxn| {
+        assert!(
+            ingest_peer_blob(&vault, wtxn, &tombstones, &owned_id, &blob)?
+                .written()
+                .is_some()
+        );
+        Ok(())
+    })?;
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)?.len(), 3);
+    Ok(())
+}
+
 /// Index-aligned metas for direct `apply_materialized_edge_ops` calls.
 fn test_metas_for_ops(ops: &[BatchOp]) -> Vec<EdgeOpMeta> {
     ops.iter()

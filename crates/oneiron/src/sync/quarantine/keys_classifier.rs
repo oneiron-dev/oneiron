@@ -227,9 +227,9 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // substrate — quarantine the payload, keep local bytes, continue.
         | ErrorKind::AuthorityLogAppendOnlyViolation
         | ErrorKind::AuthorityLogStoreKeyMismatch
-        // H72: a remote row whose signer no folded row admitted waits for
-        // that enrollment; one past its signer's bound is refused. Both are
-        // judgements of the remote op, never local corruption.
+        // H72: a remote row whose signer no folded row admitted, or that no
+        // owner key signed, is held; one past its signer's bound is refused.
+        // Both are judgements of the remote op, never local corruption.
         | ErrorKind::AuthorityLogSignerPending
         | ErrorKind::AuthorityLogFull
         // ONE-1140: a NEW REDACTION_AUDIT receipt failing the origin predicate —

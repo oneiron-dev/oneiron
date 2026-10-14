@@ -102,9 +102,9 @@ fn rescan_entry_states(
     states
 }
 
-/// A random log over one genesis: confirmations that collide, agent and
-/// retired owner enrollments, re-roots, revocations of agent and owner keys
-/// alone or cosigned, slip withdrawals, rows by a key no one enrolled,
+/// A random log over one genesis: confirmations that collide, agent, admin
+/// and retired owner enrollments, re-roots, revocations of agent and owner
+/// keys alone or cosigned, slip withdrawals, rows by a key no one enrolled,
 /// sequences that repeat, and parents that never arrive.
 pub(super) fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
     let owner = ed_key(40);
@@ -146,7 +146,11 @@ pub(super) fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
             3 => AuthorityOp::EnrollDevice {
                 device: device(
                     authority_key_from_ed(agent),
-                    ROLE_OWNER | ROLE_ADMIN,
+                    if rng.gen_bool(0.3) {
+                        ROLE_ADMIN
+                    } else {
+                        ROLE_OWNER | ROLE_ADMIN
+                    },
                     AuthorityTier::Software,
                 ),
             },
@@ -170,7 +174,7 @@ pub(super) fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
         };
         let signer = match rng.gen_range(0..10) {
             0 => &stranger,
-            1 => agent,
+            1 | 2 => agent,
             _ => &owner,
         };
         let seq = if rng.gen_bool(0.15) { 1 } else { n + 1 };

@@ -117,7 +117,9 @@ impl Vault {
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
         let mut ops = Vec::new();
-        for (hash, bytes, _) in decoded {
+        // Parents first: the store door reads each row's slip issuers from
+        // the rows already staged (H72), whatever order the caller gave.
+        for (hash, bytes, _) in super::log_budget::parents_first(decoded) {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
             ops.push(BatchOp::Put {

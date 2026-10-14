@@ -142,7 +142,8 @@ pub(crate) use claim_write::{
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use log_budget::{
-    authority_signer_label, door_refuses_past_budget, signer_has_standing,
+    AuthorityDoor, authority_door, authority_signer_label, signer_has_standing,
+    signer_is_slip_issuer,
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;

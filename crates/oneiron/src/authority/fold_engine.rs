@@ -524,7 +524,7 @@ fn fold_authority_log_once(
         &mut issues,
         |states, present| {
             let mut losers =
-                below_concurrent_tier_floors(states, &by_hash, &entry_ancestors, present);
+                below_concurrent_tier_floors(states, &by_hash, &entry_ancestors, present, context);
             let fallen = |hash: &AuthorityEntryHash| {
                 losers.contains_key(hash)
                     || entry_ancestors

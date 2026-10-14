@@ -195,19 +195,19 @@ pub enum RecordError {
         id.to_hex()
     )]
     AuthorityLogStoreKeyMismatch { id: EntityId },
-    /// A replicated AUTHORITY_LOG row is signed by a key no folded row has
-    /// admitted (H72). The row waits for its signer's enrollment and is
-    /// never stored before it; replicated doors classify it as
+    /// A replicated AUTHORITY_LOG row the vault cannot apply yet (H72): no
+    /// folded row admitted its signer, or no owner key signed or cosigned it.
+    /// The row is held and never stored; replicated doors classify it as
     /// dependency-pending.
     #[error(
-        "authority log row {} waits for its signer to be enrolled",
+        "authority log row {} is held: its signer is not enrolled here, or no owner key signed it",
         id.to_hex()
     )]
     AuthorityLogSignerPending { id: EntityId },
     /// Storing this AUTHORITY_LOG row would take its signer, or the log's
-    /// handoffs, past the pinned fold bound (H72). Nothing was written; rows
-    /// that only restrict authority, and the slip issuer's slip ops, are
-    /// never refused this way.
+    /// handoffs, past the pinned fold bound (H72). Nothing was written; a
+    /// slip issuer's slip ops, and the rows it signs that only restrict
+    /// authority, are never refused this way.
     #[error(
         "authority log at its bound for signer {signer}; row {} not stored",
         id.to_hex()

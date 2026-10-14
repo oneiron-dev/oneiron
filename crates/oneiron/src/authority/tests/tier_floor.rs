@@ -97,8 +97,11 @@ fn hardware_floor_rejects_software_signer_under_every_arrival_order() {
     let strong = signed(action(2), 3, false);
     let mut entries = vec![genesis, enroll, floor.clone(), weak.clone(), strong.clone()];
     let expected = fold_legacy_authority_log(&entries);
-    // At the Software floor in their own ancestry the software cosigner
-    // still makes quorum, for the floor raise and for the concurrent row.
+    // At the Software floor in its own ancestry the software cosigner still
+    // makes quorum for the floor raise. A row concurrent with the raise is
+    // judged under it, its cosigners too (H71 residual, W2-T8): neither the
+    // software signer's row nor the hardware signer's row, whose second
+    // participant is the software key, stands.
     assert!(
         expected
             .valid_entries
@@ -110,10 +113,13 @@ fn hardware_floor_rejects_software_signer_under_every_arrival_order() {
             .contains(&authority_entry_hash(&weak).unwrap())
     );
     assert!(
-        expected
+        !expected
             .valid_entries
             .contains(&authority_entry_hash(&strong).unwrap())
     );
+    assert!(expected.issues.contains(&AuthorityFoldIssue::MissingQuorum(
+        authority_entry_hash(&strong).unwrap()
+    )));
     assert_eq!(expected.tier_floor, Some(AuthorityTier::Hardware));
     entries.reverse();
     assert_eq!(expected, fold_legacy_authority_log(&entries));

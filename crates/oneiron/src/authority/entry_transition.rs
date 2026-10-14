@@ -340,6 +340,29 @@ pub(super) fn has_authority_consent(
     })
 }
 
+/// The participant rules of [`fold_entry_state`] (consent, peer quorum and
+/// the revocation quorum) for `entry` over its parents' merged `state`, so a
+/// row can be judged again under a floor a concurrent row raised (H71).
+pub(super) fn participant_rules_hold(
+    state: &FoldState,
+    entry: &AuthorityLogEntry,
+    context: FoldContext<'_>,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let hash = authority_entry_hash(entry).unwrap_or([0; 32]);
+    let participants = active_participant_keys(state, entry)?;
+    if !has_authority_consent(state, &participants, context) {
+        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
+    if (entry_requires_peer_cosign(entry)
+        && active_roster_count(state) >= 2
+        && participants.len() < 2)
+        || revoke_would_break_quorum(state, entry, &participants)
+    {
+        return Err(AuthorityFoldIssue::MissingQuorum(hash));
+    }
+    Ok(())
+}
+
 fn state_has_authority_consent(state: &FoldState, context: FoldContext<'_>) -> bool {
     state
         .roster

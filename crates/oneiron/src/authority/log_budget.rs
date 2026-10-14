@@ -4,20 +4,20 @@
 //! The fold indexes every row's whole ancestry and probes each handoff by
 //! folding its line again, so its work grows with the square of the log and
 //! with the number of handoffs. Each signer may store a generous bound of
-//! rows that add or widen authority; rows that only take authority away
-//! always land. The slip issuer's slip ops count toward no bound: every
-//! sign-in mints one, so a busy owner's log gains thousands a year. A fold
-//! handed more than its own bounds fails closed: it holds no root and reads
-//! as a conflicted one, which every authority gate refuses.
+//! rows. The slip issuer's slip ops count toward no bound: every sign-in
+//! mints one, so a busy owner's log gains thousands a year. The rows it
+//! signs that only take authority away always land. A fold handed more than
+//! its own bounds fails closed: it holds no root and reads as a conflicted
+//! one, which every authority gate refuses.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 use crate::store::Store;
 
-/// Most rows that add or widen authority one signer may store. Rows that
-/// only restrict (revocations, burns, machine removals and demotions) and
-/// the slip issuer's slip ops are never refused.
+/// Most rows one signer may store. A slip issuer's slip ops and the rows it
+/// signs that only restrict (revocations, burns, machine removals and
+/// demotions) are never refused.
 pub const MAX_AUTHORITY_ROWS_PER_SIGNER: usize = 2048;
 /// Most handoffs (`ReRoot` rows) one fold holds. The fold probes each one by
 /// folding its line again; a vault re-roots once per host move.
@@ -128,20 +128,21 @@ fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
 /// The slip issuers, read from the log's structure alone, so the fold's
 /// bounds and the store doors judge a row the same way: the genesis owner,
 /// and each owner key named by a signed re-root, rotation or enrollment that
-/// a key already in the set signed or cosigned. It holds owner keys only: a
+/// an admitter signed or cosigned. The admitters are the genesis owner and
+/// each owner or admin key such a row names, the fold's own consent rule. The
+/// set holds owner keys only: an admin key admits but issues nothing, and a
 /// machine, agent or peer key, a stranger, and every signer of a log without
 /// exactly one genesis owner count as any other signer.
 ///
-/// Every key the host-rooted fold holds as a live owner is in the set: the
-/// genesis owner, or a re-root an owner signed. Nothing leaves it, so a
-/// revocation the fold refuses never drops the issuer, and slip rows a door
-/// stored uncounted never come to count against the fold's bounds. An owner
-/// key leaves the roster only by a handoff, and a key a handoff retired
-/// signs nothing new at the replicated door.
+/// Every key the fold holds as a live owner is in the set. Nothing leaves
+/// it, so a revocation the fold refuses never drops the issuer, and slip
+/// rows a door stored uncounted never come to count against the fold's
+/// bounds. An owner key leaves the host-rooted roster only by a handoff, and
+/// a key a handoff retired signs nothing new at the replicated door.
 pub(super) fn slip_issuers<'a>(
     entries: impl Iterator<Item = &'a AuthorityLogEntry>,
 ) -> BTreeSet<AuthorityKey> {
-    let mut admissions = Vec::new();
+    let mut admissions: Vec<&'a AuthorityLogEntry> = Vec::new();
     let mut roots = Vec::new();
     for entry in entries {
         if let AuthorityOp::Genesis { device, .. } = &entry.op {
@@ -151,7 +152,9 @@ pub(super) fn slip_issuers<'a>(
             {
                 roots.push(&device.key);
             }
-        } else if admits_device(&entry.op).is_some_and(|device| device.roles & ROLE_OWNER != 0) {
+        } else if admits_device(&entry.op)
+            .is_some_and(|device| device.roles & (ROLE_OWNER | ROLE_ADMIN) != 0)
+        {
             admissions.push(entry);
         }
     }
@@ -160,21 +163,25 @@ pub(super) fn slip_issuers<'a>(
     let [root] = roots[..] else {
         return BTreeSet::new();
     };
+    let mut admitters = BTreeSet::from([root.clone()]);
     let mut owners = BTreeSet::from([root.clone()]);
     let mut grew = true;
     while grew {
         grew = false;
         admissions.retain(|entry| {
-            let signed_by_owner = std::iter::once(&entry.signer)
+            let signed_by_admitter = std::iter::once(&entry.signer)
                 .chain(&entry.cosigns)
-                .any(|signature| owners.contains(&signature.public_key));
-            if !signed_by_owner {
+                .any(|signature| admitters.contains(&signature.public_key));
+            if !signed_by_admitter {
                 return true;
             }
             if verify_entry_signatures(entry).is_ok()
                 && let Some(device) = admits_device(&entry.op)
             {
-                grew |= owners.insert(device.key.clone());
+                if device.roles & ROLE_OWNER != 0 {
+                    owners.insert(device.key.clone());
+                }
+                grew |= admitters.insert(device.key.clone());
             }
             false
         });
@@ -226,8 +233,74 @@ pub(crate) fn signer_has_standing(fold: &AuthorityFold, entry: &AuthorityLogEntr
     fold.roster.contains_key(signer) || fold.retired_keys.contains(signer)
 }
 
+/// Whether `entry`'s signer is a slip issuer by the stored log's structure,
+/// though the fold may not hold it yet: an owner key a signed rotation
+/// named, in the line a later handoff verifies. Its rows, that handoff
+/// among them, land before the fold can admit it.
+pub(crate) fn signer_is_slip_issuer(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entry: &AuthorityLogEntry,
+) -> crate::error::Result<bool> {
+    let mut admissions = Vec::new();
+    for (_, body) in authority_log_rows_in_txn(store, txn)? {
+        let stored = decode_authority_log_entry_body(&body)?;
+        if matches!(stored.op, AuthorityOp::Genesis { .. }) || admits_device(&stored.op).is_some() {
+            admissions.push(stored);
+        }
+    }
+    Ok(slip_issuers(admissions.iter()).contains(entry.signer_key()))
+}
+
+/// `rows` (hash, body, entry), each after every row among them it names as
+/// a parent, ties in the order given. A store door reads a row's slip
+/// issuers from the rows already staged, so an import stages a complete
+/// history this way whatever order its caller gave.
+pub(super) fn parents_first(
+    rows: Vec<(AuthorityEntryHash, Vec<u8>, AuthorityLogEntry)>,
+) -> Vec<(AuthorityEntryHash, Vec<u8>, AuthorityLogEntry)> {
+    let at: BTreeMap<_, _> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, (hash, ..))| (*hash, index))
+        .collect();
+    let mut waiting = vec![0_usize; rows.len()];
+    let mut children = vec![Vec::new(); rows.len()];
+    for (index, (.., entry)) in rows.iter().enumerate() {
+        for parent in entry
+            .parent_hashes
+            .iter()
+            .filter_map(|parent| at.get(parent))
+        {
+            waiting[index] += 1;
+            children[*parent].push(index);
+        }
+    }
+    let mut ready: BTreeSet<_> = (0..rows.len())
+        .filter(|index| waiting[*index] == 0)
+        .collect();
+    let mut order = Vec::with_capacity(rows.len());
+    while let Some(index) = ready.pop_first() {
+        order.push(index);
+        for child in &children[index] {
+            waiting[*child] -= 1;
+            if waiting[*child] == 0 {
+                ready.insert(*child);
+            }
+        }
+    }
+    // Content addressing leaves no cycle; this only guards the invariant.
+    let placed: BTreeSet<_> = order.iter().copied().collect();
+    order.extend((0..rows.len()).filter(|index| !placed.contains(index)));
+    let mut rows: Vec<_> = rows.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .filter_map(|index| rows[index].take())
+        .collect()
+}
+
 /// A row that only takes authority away: a revocation, a burn, or a machine
-/// removal. It always lands, whatever its signer has stored.
+/// removal. It always lands when a slip issuer signed it.
 fn only_restricts(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::RevokeDevice { .. })
         || super::revoke_proof::restrictive_withdrawal(op)
@@ -247,51 +320,86 @@ fn demotes_machine(fold: &AuthorityFold, op: &AuthorityOp) -> bool {
             .is_some_and(|known| known.profile.role == yours)
 }
 
-/// Whether storing `entry` would take its signer past its bound of rows
-/// that add or widen authority, or the log past
-/// [`MAX_AUTHORITY_FOLD_HANDOFFS`]. A row already stored, one that only
-/// restricts, and a slip issuer's slip op are never refused, and the issuer's
-/// slip ops never count toward its bound. The door reads the issuer from the
-/// log as the fold's bounds do.
-pub(crate) fn door_refuses_past_budget(
+/// What a store door does with an AUTHORITY_LOG row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthorityDoor {
+    Lands,
+    /// The row would take its signer past its bound, or the log past
+    /// [`MAX_AUTHORITY_FOLD_HANDOFFS`].
+    AtBound,
+    /// A replicated row no slip issuer signed or cosigned. The fold applies
+    /// no row without an owner's consent, so the row waits, as a stranger's
+    /// does, instead of growing the log toward the fold's bounds.
+    Unowned,
+}
+
+/// The door's verdict on storing `entry`. A row already stored always
+/// lands. A slip issuer's slip ops and the rows it signs that only restrict
+/// are never refused and count toward no bound, and its demotions land past
+/// the bound. Every row any other key stores counts toward that key's bound,
+/// whatever it does, and a handoff it signs is refused at once: the fold
+/// applies no slip op, restriction or handoff such a key signs. The door
+/// reads the issuers from the log as the fold's bounds do.
+pub(crate) fn authority_door(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     posture: crate::HostingPrivacyPosture,
     entry: &AuthorityLogEntry,
     hash: &AuthorityEntryHash,
-) -> crate::error::Result<bool> {
-    if only_restricts(&entry.op) {
-        return Ok(false);
-    }
+    replicated: bool,
+) -> crate::error::Result<AuthorityDoor> {
     let signer = entry.signer_key();
     let id = authority_log_entity_id_from_hash(hash)?;
     let mut rows = 1;
-    let mut slips = 0;
-    let mut handoffs = usize::from(is_handoff(entry));
+    let mut exempt = 0;
     let mut admissions = vec![entry.clone()];
     for (stored_id, body) in authority_log_rows_in_txn(store, txn)? {
         if stored_id == id {
-            return Ok(false);
+            return Ok(AuthorityDoor::Lands);
         }
         let stored = decode_authority_log_entry_body(&body)?;
-        handoffs += usize::from(is_handoff(&stored));
-        if stored.signer_key() == signer && !only_restricts(&stored.op) {
+        if stored.signer_key() == signer {
             rows += 1;
-            slips += usize::from(is_slip_op(&stored.op));
+            exempt += usize::from(is_slip_op(&stored.op) || only_restricts(&stored.op));
         }
         if matches!(stored.op, AuthorityOp::Genesis { .. }) || admits_device(&stored.op).is_some() {
             admissions.push(stored);
         }
     }
-    if slip_issuers(admissions.iter()).contains(signer) {
-        if is_slip_op(&entry.op) {
-            return Ok(false);
-        }
-        rows -= slips;
+    let issuers = slip_issuers(admissions.iter());
+    let owner_signed = std::iter::once(&entry.signer)
+        .chain(&entry.cosigns)
+        .any(|signature| issuers.contains(&signature.public_key))
+        && verify_entry_signatures(entry).is_ok();
+    if replicated && !owner_signed {
+        return Ok(AuthorityDoor::Unowned);
     }
-    if rows <= rows_per_signer() && !(is_handoff(entry) && handoffs > MAX_AUTHORITY_FOLD_HANDOFFS) {
-        return Ok(false);
+    let issuer = issuers.contains(signer);
+    if issuer {
+        if is_slip_op(&entry.op) || only_restricts(&entry.op) {
+            return Ok(AuthorityDoor::Lands);
+        }
+        rows -= exempt;
+    }
+    if is_handoff(entry) {
+        let handoffs = admissions
+            .iter()
+            .filter(|row| is_handoff(row) && issuers.contains(row.signer_key()))
+            .count();
+        if !issuer || handoffs > MAX_AUTHORITY_FOLD_HANDOFFS {
+            return Ok(AuthorityDoor::AtBound);
+        }
+    }
+    if rows <= rows_per_signer() {
+        return Ok(AuthorityDoor::Lands);
+    }
+    if !issuer {
+        return Ok(AuthorityDoor::AtBound);
     }
     let fold = authority_view_readonly_for_store_in_txn(store, posture, txn)?;
-    Ok(!demotes_machine(&fold, &entry.op))
+    Ok(if demotes_machine(&fold, &entry.op) {
+        AuthorityDoor::Lands
+    } else {
+        AuthorityDoor::AtBound
+    })
 }
