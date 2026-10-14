@@ -285,8 +285,9 @@ fn serve_request(
         } else {
             (request, body)
         };
+    // A body that stalls here ends at the idle limit, as it would mid-exchange.
     let commands = if request.is_receive_pack() {
-        read_command_section(body)?
+        read_command_section(body).map_err(stall_as_idle)?
     } else {
         Vec::new()
     };
