@@ -412,34 +412,44 @@ fn a_claim_whose_source_is_deleted_while_it_is_scored_is_not_served() -> Result<
 /// and their source. The gate's verdict stands only for the body it read; a
 /// row written since, unpinned, has no verdict in this run and is not
 /// served (Sol R14: judging the new body here would serve words that the
-/// rest of the pack's assembly never read).
+/// rest of the pack's assembly never read). Sol and Wonder R16: a body
+/// whose value went from a binary to a string of the same bytes, which are
+/// not UTF-8, encodes as the old one did, and was served as the gate's.
 #[test]
 fn a_claim_rewritten_while_it_is_scored_is_not_served_on_its_old_verdict() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    put_subject(&vault)?;
-    let kept = entity_id(0x7F);
-    vault.put_entity(
-        &kept,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"kept source",
-    )?;
-    let id = entity_id(0x6B);
-    crate::test_util::publish_seeded_revisions(&vault);
-    vault
-        .batch()
-        .put(
-            &id,
-            ENTITY_TYPE_CLAIM,
+    let binary = valued_body(
+        "test.rerank_words",
+        rmpv::Value::Binary(b"lantern\xff".to_vec()),
+        false,
+    );
+    let marker = [&[0xC4_u8, 8][..], &b"lantern\xff"[..]].concat();
+    let at = binary
+        .windows(marker.len())
+        .position(|bytes| bytes == marker.as_slice())
+        .expect("the binary value");
+    let mut string = binary.clone();
+    // str 8 in place of bin 8: the same length, the same bytes.
+    string[at] = 0xD9;
+    let mut served = Vec::new();
+    for (case, old, newer) in [
+        (
+            "to a gone source",
+            cited_body(entity_id(0x7F), "old-words"),
+            cited_body(entity_id(0x7D), "new-words"),
+        ),
+        ("binary to string", binary, string),
+    ] {
+        let (_dir, vault) = open_test_vault();
+        put_subject(&vault)?;
+        vault.put_entity(
+            &entity_id(0x7F),
+            crate::registry::ENTITY_TYPE_PERSON,
             TimeRange { start: 1, end: 1 },
             1,
-            &cited_body(kept, "old-words"),
-        )
-        .text(&id, &[("body", "the brass lantern")])
-        .commit()?;
-    let newer = cited_body(entity_id(0x7D), "new-words");
-    let rewrite = || {
+            b"kept source",
+        )?;
+        let id = entity_id(0x6B);
+        crate::test_util::publish_seeded_revisions(&vault);
         vault
             .batch()
             .put(
@@ -447,22 +457,34 @@ fn a_claim_rewritten_while_it_is_scored_is_not_served_on_its_old_verdict() -> Re
                 ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
-                &newer,
+                &old,
             )
-            .commit()
-    };
-    let reranker = WritingReranker {
-        write: &rewrite,
-        unbound: true,
-    };
+            .text(&id, &[("body", "the brass lantern")])
+            .commit()?;
+        let rewrite = || {
+            vault
+                .batch()
+                .put(
+                    &id,
+                    ENTITY_TYPE_CLAIM,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &newer,
+                )
+                .commit()
+        };
+        let reranker = WritingReranker {
+            write: &rewrite,
+            unbound: true,
+        };
 
-    let pack = scored_pack(&vault, &reranker, ReadMode::Live)?;
+        let pack = scored_pack(&vault, &reranker, ReadMode::Live)?;
 
-    assert!(
-        pack.results.iter().all(|row| row.id != id),
-        "{:?}",
-        pack.results
-    );
+        if pack.results.iter().any(|row| row.id == id) {
+            served.push(format!("{case}: {:?}", pack.results));
+        }
+    }
+    assert!(served.is_empty(), "{served:?}");
     Ok(())
 }
 

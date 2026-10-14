@@ -87,14 +87,50 @@ pub(crate) fn context_entity_matches_read_snapshot(
 }
 
 /// Whether two decoded claim bodies are one body. `ClaimBody`'s derived
-/// equality is not reflexive over a NaN in an opaque value, so bodies that
-/// encode to the same bytes are one too.
+/// equality is not reflexive over a NaN in an opaque value, and takes 0.0
+/// for -0.0, so floats are compared by their bits and every other field as
+/// derived. An encoding is no witness: a string that is not UTF-8 encodes as
+/// a binary of its bytes.
 fn same_claim_body(left: &ClaimBody, right: &ClaimBody) -> bool {
-    left == right
-        || matches!(
-            (crate::claim::encode_claim_body(left), crate::claim::encode_claim_body(right)),
-            (Ok(left), Ok(right)) if left == right
-        )
+    use rmpv::Value;
+    let rest = |body: &ClaimBody| ClaimBody {
+        value: Value::Nil,
+        confidence: 0.0,
+        salience: None,
+        evidence: None,
+        scope: None,
+        ..body.clone()
+    };
+    let same_option = |left: Option<&Value>, right: Option<&Value>| match (left, right) {
+        (Some(left), Some(right)) => same_value(left, right),
+        (left, right) => left.is_none() && right.is_none(),
+    };
+    same_value(&left.value, &right.value)
+        && left.confidence.to_bits() == right.confidence.to_bits()
+        && left.salience.map(f32::to_bits) == right.salience.map(f32::to_bits)
+        && same_option(left.evidence.as_ref(), right.evidence.as_ref())
+        && same_option(left.scope.as_ref(), right.scope.as_ref())
+        && rest(left) == rest(right)
+}
+
+/// [`same_claim_body`] for an opaque value: a float by its bits.
+fn same_value(left: &rmpv::Value, right: &rmpv::Value) -> bool {
+    use rmpv::Value;
+    match (left, right) {
+        (Value::F32(left), Value::F32(right)) => left.to_bits() == right.to_bits(),
+        (Value::F64(left), Value::F64(right)) => left.to_bits() == right.to_bits(),
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len() && left.iter().zip(right).all(|(l, r)| same_value(l, r))
+        }
+        (Value::Map(left), Value::Map(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|((lk, lv), (rk, rv))| same_value(lk, rk) && same_value(lv, rv))
+        }
+        _ => left == right,
+    }
 }
 
 /// Hydrates one entity for the context pack.
