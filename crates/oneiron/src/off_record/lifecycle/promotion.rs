@@ -80,14 +80,14 @@ impl OffRecordSession<'_> {
             if (room.is_none() || state.record.promoted_turns.contains(turn.as_bytes()))
                 && let Some(receipt) = self.vault.off_record_promote_receipt(turn)?
             {
-                // In a room the receipt answers only someone who could save
-                // the turn now: their proof holds, they own this vault, and
+                // The receipt answers only someone who could save the turn
+                // now: their proof holds, they own this vault and, in a room,
                 // their membership shows every moment of it. The room hears
                 // this save as it heard the first; nothing more is kept.
+                let txn = self.vault.store.env.read_txn()?;
+                owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
                 if let Some(room) = room {
                     let times = state.kept_times(*turn);
-                    let txn = self.vault.store.env.read_txn()?;
-                    owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
                     super::room::require_sight_in_txn(
                         self.vault,
                         &txn,
@@ -128,11 +128,9 @@ impl OffRecordSession<'_> {
             let initiator = PromoteInitiator::owner(owner);
             let (mut outcomes, hearing) =
                 self.promote_plans(&mut state, vec![plan], &initiator, |wtxn| {
-                    if room.is_some() {
-                        owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
-                    } else {
-                        owner.revalidate_in_txn(self.vault, wtxn)?;
-                    }
+                    // Alone or in a room, the turn lands in this vault, so
+                    // the proof must show its owner.
+                    owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
                     if let Some(room) = room {
                         super::room::require_sight_in_txn(
                             self.vault,
@@ -220,7 +218,14 @@ impl OffRecordSession<'_> {
                 .map(|plan| {
                     if plan.appends() {
                         floor
-                            .copy_append(self.vault, wtxn, &self.session_ref, plan, promoted_at)
+                            .copy_append(
+                                self.vault,
+                                wtxn,
+                                &self.session_ref,
+                                plan,
+                                initiator,
+                                promoted_at,
+                            )
                             .map(|appended| (appended.outcome, appended.held))
                     } else {
                         floor

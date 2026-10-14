@@ -262,26 +262,33 @@ impl OffRecordSession<'_> {
     }
 
     /// Saves the whole talk so far into this vault for `person`, who is in the
-    /// room and a live owner of this vault, so the vault is theirs. Every
-    /// turn they could see that nobody saved yet lands in ONE transaction,
-    /// which checks again that they own the vault, that `credential` is live,
-    /// that they are in the room and that their membership shows each turn.
-    /// The room hears a `saved_talk` notice. A person this vault does not
-    /// belong to is refused and nothing is written; they keep their copy with
+    /// room and a live owner of this vault, so the vault is theirs, on
+    /// `credential`, their own person's slip. Every turn they could see that
+    /// nobody saved yet lands in ONE transaction, which checks again that
+    /// they own the vault, that `credential` is live, that they are in the
+    /// room and that their membership shows each turn. The room hears a
+    /// `saved_talk` notice. A person this vault does not belong to is refused
+    /// and nothing is written; they keep their copy with
     /// [`Self::export_talk_by`].
+    ///
+    /// A handle names whom it saves for only with that person's slip
+    /// (H203); a caller holding the owner's proof uses [`Self::save_talk_as`]:
+    ///
+    /// ```compile_fail
+    /// fn save(session: &oneiron::off_record::OffRecordSession<'_>, owner: oneiron::EntityId) {
+    ///     let _ = session.save_talk_by(owner, None);
+    /// }
+    /// ```
     ///
     /// # Errors
     ///
-    /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `person` owns
-    /// no part of this vault or `credential` was revoked,
+    /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `credential`
+    /// is not a person's slip naming `person`, when `person` owns no part of
+    /// this vault or when `credential` was revoked or expired,
     /// [`OffRecordError::OffRecordNotInRoom`] when they are not in the room or
     /// their membership stopped showing a turn; otherwise as
     /// [`Self::promote_turn_as`].
-    pub fn save_talk_by(
-        &self,
-        person: EntityId,
-        credential: Option<&VerifiedSlip>,
-    ) -> Result<SavedTurns> {
+    pub fn save_talk_by(&self, person: EntityId, credential: &VerifiedSlip) -> Result<SavedTurns> {
         let room = self.require_in_room(person)?;
         let refused = || {
             Error::OffRecord(OffRecordError::OffRecordPromoteUnauthenticated {
@@ -289,12 +296,17 @@ impl OffRecordSession<'_> {
                 actor_ref: person.to_hex(),
             })
         };
+        // The save names `person` in its receipts, so it runs only on their
+        // own slip: someone else's, or an agent's, saves nothing.
+        let claims = credential.claims();
+        if EntityId::from_hex(&claims.holder_ref).ok() != Some(person)
+            || claims.actor_class.as_deref() != Some("human")
+        {
+            return Err(refused());
+        }
         let authority = |vault: &Vault, txn: &heed::RoTxn<'_>| {
-            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &person)? {
-                return Err(refused());
-            }
-            if let Some(credential) = credential
-                && !vault.capability_slip_is_live_in_txn(txn, credential)?
+            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &person)?
+                || !vault.capability_slip_is_live_in_txn(txn, credential)?
             {
                 return Err(refused());
             }

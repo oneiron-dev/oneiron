@@ -765,6 +765,61 @@ fn promote_refuses_a_turn_whose_author_left_base() -> Result<()> {
     Ok(())
 }
 
+/// A PERSON who speaks in a stretch alone with the owner; nobody's owner.
+fn solo_speaker(vault: &Vault) -> Result<EntityId> {
+    let speaker = EntityId::now();
+    vault.put_entity(
+        &speaker,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"solo speaker",
+    )?;
+    Ok(speaker)
+}
+
+/// Witnesses `content` into `session` as `speaker` at `at`; its turn.
+fn said_alone(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    speaker: EntityId,
+    content: &str,
+    at: u64,
+) -> Result<EntityId> {
+    let receipt = vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness_into_session(
+            session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: None,
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: content.to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: at,
+            },
+            None,
+        )
+        .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
+    EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .ok_or(Error::InvariantViolation("witness receipt names no turn"))?,
+    )
+}
+
+fn base_entities(vault: &Vault) -> Result<u64> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault.store.entities.len(&rtxn)?)
+}
+
 /// H203 (security scan, W2-T6): a stretch alone with its owner goes on
 /// record, and a turn of it into this vault, only on the owner's proof. The
 /// vault door that names a stretch by its ref, which any holder of the string
@@ -784,42 +839,14 @@ fn a_solo_stretch_goes_on_record_and_promotes_only_on_the_owners_proof() -> Resu
     assert_eq!(refused.kind(), ErrorKind::OffRecordPromoteUnauthenticated);
     assert_eq!(session.mode()?, OffRecordMode::OffRecord);
 
-    let speaker = EntityId::now();
-    vault.put_entity(
-        &speaker,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"solo speaker",
+    let speaker = solo_speaker(&vault)?;
+    let turn = said_alone(
+        &vault,
+        &session,
+        speaker,
+        "said alone, off the record",
+        1000,
     )?;
-    let receipt = vault
-        .memory(speaker, EdgeActorClass::Human)
-        .witness_into_session(
-            &session,
-            &crate::memory::WitnessTurn {
-                conversation_ref: String::new(),
-                turn_ref: None,
-                messages: vec![crate::memory::WitnessMessage {
-                    id: None,
-                    author: crate::memory::WitnessAuthor::User,
-                    message_type: "utterance".to_owned(),
-                    content: "said alone, off the record".to_owned(),
-                    metadata: None,
-                    is_visible: true,
-                    order: 0,
-                }],
-                occurred_at: 1000,
-            },
-            None,
-        )
-        .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
-    let turn = EntityId::from_hex(
-        receipt
-            .receipt_ref
-            .strip_prefix("witness:")
-            .ok_or(Error::InvariantViolation("witness receipt names no turn"))?,
-    )?;
-
     let outcome = session.promote_turn_as(&owner, &turn)?;
     let kept = vault
         .off_record_promote_receipt(&turn)?
@@ -834,6 +861,91 @@ fn a_solo_stretch_goes_on_record_and_promotes_only_on_the_owners_proof() -> Resu
     // The owner's own flip puts the stretch on record.
     session.flip_on_record_as(&owner)?;
     assert_eq!(session.mode()?, OffRecordMode::OnRecord);
+    session.close()?;
+    Ok(())
+}
+
+/// H203 (Sol R1 F1): a live person's proof is not the owner's. Alone with
+/// its owner, a stretch's turns land in this vault, so another person's proof
+/// neither promotes a turn, nor reads the answer a promoted turn keeps, nor
+/// puts the stretch on record, and nothing is written. The owner's own proof
+/// still promotes.
+#[test]
+fn a_solo_stretch_refuses_a_proof_that_is_not_the_owners() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-solo-stranger", OffRecordBackendClass::Local)?;
+    let speaker = solo_speaker(&vault)?;
+    let stranger =
+        vault.authenticate_owner(speaker, &speaker.to_hex(), true, GateDecisionId::now())?;
+    let turn = said_alone(
+        &vault,
+        &session,
+        speaker,
+        "said alone, off the record",
+        1000,
+    )?;
+    let entities_before = base_entities(&vault)?;
+
+    let refused = session
+        .promote_turn_as(&stranger, &turn)
+        .expect_err("a stranger's proof promotes nothing");
+    assert_eq!(refused.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+    let refused = session
+        .flip_on_record_as(&stranger)
+        .expect_err("a stranger's proof puts nothing on record");
+    assert_eq!(refused.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    assert!(vault.off_record_promote_receipt(&turn)?.is_none());
+    assert_eq!(base_entities(&vault)?, entities_before);
+
+    let outcome = session.promote_turn_as(&owner, &turn)?;
+    let refused = session
+        .promote_turn_as(&stranger, &turn)
+        .expect_err("a promoted turn's answer is the owner's");
+    assert_eq!(refused.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+    assert_eq!(session.promote_turn_as(&owner, &turn)?, outcome);
+    session.close()?;
+    Ok(())
+}
+
+/// H203 (Sol R1 F2): alone, as in a room, a stretch on record saves into this
+/// vault only while its owner's proof holds. Once the owner is gone, the next
+/// turn stays off record, base takes nothing, and the stretch is off record
+/// again.
+#[test]
+fn a_solo_stretch_on_record_stops_saving_once_its_owners_proof_lapses() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-solo-lapse", OffRecordBackendClass::Local)?;
+    let speaker = solo_speaker(&vault)?;
+    session.flip_on_record_as(&owner)?;
+    let saved = said_alone(&vault, &session, speaker, "said on record", 1000)?;
+    assert!(
+        vault.get_raw(&saved)?.is_some(),
+        "a turn on record lands in base"
+    );
+
+    // A plain delete keeps the PERSON shell; the proof no longer holds.
+    assert!(vault.delete_entity(&owner.actor())?);
+    let entities_before = base_entities(&vault)?;
+    let unsaved = said_alone(
+        &vault,
+        &session,
+        speaker,
+        "said once the owner is gone",
+        2000,
+    )?;
+    assert!(
+        vault.get_raw(&unsaved)?.is_none(),
+        "base took a turn with no saver"
+    );
+    assert_eq!(base_entities(&vault)?, entities_before);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
     session.close()?;
     Ok(())
 }

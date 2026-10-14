@@ -11,6 +11,8 @@ use crate::off_record::{OffRecordBackendClass, OffRecordNoticeAct, OffRecordSess
 struct Room {
     owner: EntityId,
     agent: EntityId,
+    /// The owner's proof, which every save of theirs takes.
+    proof: crate::consent::AuthenticatedOwner,
 }
 
 /// A room off record holding the vault's owner, an agent, and another
@@ -39,7 +41,15 @@ fn room_off_record_seeing(vault: &Vault, history: HistoryChoice) -> (Room, OffRe
         .off_record_session_vault()
         .enter_in_room("deck", OffRecordBackendClass::Local, id, owner)
         .expect("start off record");
-    (Room { owner, agent }, session)
+    let proof = crate::test_util::embedded_owner_proof(vault);
+    (
+        Room {
+            owner,
+            agent,
+            proof,
+        },
+        session,
+    )
 }
 
 /// Every run bound as `room-run` speaks into the same turn.
@@ -88,7 +98,7 @@ fn a_later_save_keeps_once_what_a_run_said_into_a_saved_turn() {
 
     run.dispatch(said(0, "the lighthouse key is under the blue stone"))
         .expect("the run speaks");
-    let saved = session.save_talk_by(room.owner, None).expect("save");
+    let saved = session.save_talk_as(&room.proof).expect("save");
     assert_eq!(saved.len(), 1, "{saved:?}");
     let turn = saved[0].0;
     assert!(saved[0].1.replayed.contains(&first), "{saved:?}");
@@ -96,14 +106,12 @@ fn a_later_save_keeps_once_what_a_run_said_into_a_saved_turn() {
     run.dispatch(said(1, "and the boat is moored at the north pier"))
         .expect("the run speaks on into its turn");
     assert_eq!(exported(&session, &room), vec![0, 1]);
-    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    let saved = session.save_talk_as(&room.proof).expect("save again");
     assert_eq!(saved.len(), 1, "{saved:?}");
     assert_eq!(saved[0].0, turn);
     assert_eq!(saved[0].1.replayed, vec![second]);
 
-    let saved = session
-        .save_talk_by(room.owner, None)
-        .expect("save once more");
+    let saved = session.save_talk_as(&room.proof).expect("save once more");
     assert!(saved.is_empty(), "nothing new to keep: {saved:?}");
     let notices = session
         .record_for(room.owner)
@@ -169,7 +177,7 @@ fn a_message_said_while_a_save_waits_stays_for_the_next_save() {
         speech_at_writer
             .recv()
             .expect("the speech reaches the writer");
-        let save = scope.spawn(|| session.save_talk_by(room.owner, None));
+        let save = scope.spawn(|| session.save_talk_as(&room.proof));
         // The save has cut its plan from a journal without the second
         // message, and holds the session.
         save_planned.recv().expect("the save cuts its plan");
@@ -196,7 +204,7 @@ fn a_message_said_while_a_save_waits_stays_for_the_next_save() {
     assert!(vault.get(&second).expect("read").is_none());
     assert_eq!(exported(&session, &room), vec![0, 1], "the copy keeps it");
 
-    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    let saved = session.save_talk_as(&room.proof).expect("save again");
     assert_eq!(saved.len(), 1, "{saved:?}");
     assert_eq!(saved[0].1.replayed, vec![second]);
     session.close().expect("close");
@@ -215,7 +223,7 @@ fn a_save_copies_nothing_into_a_saved_turn_since_deleted() {
     let run = bind_run(&session, &room);
     run.dispatch(said(0, "the lighthouse key is under the blue stone"))
         .expect("the run speaks");
-    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    let turn = session.save_talk_as(&room.proof).expect("save")[0].0;
     run.dispatch(said(1, "and the boat is moored at the north pier"))
         .expect("the run speaks on into its turn");
     // Deleted as any room door deletes it: a shell keeps its header and edges.
@@ -224,7 +232,7 @@ fn a_save_copies_nothing_into_a_saved_turn_since_deleted() {
         .expect("delete the saved turn");
     assert!(deleted.existed);
 
-    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    let saved = session.save_talk_as(&room.proof).expect("save again");
     assert!(saved.is_empty(), "copied into a deleted turn: {saved:?}");
     assert!(vault.get_raw(&message(1)).expect("read").is_none());
     assert!(
@@ -251,7 +259,7 @@ fn a_save_keeps_nothing_of_a_saved_turn_moved_out_of_sight_while_it_waits() {
     let run = bind_run(&session, &room);
     run.dispatch(said(0, "the lighthouse key is under the blue stone"))
         .expect("the run speaks");
-    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    let turn = session.save_talk_as(&room.proof).expect("save")[0].0;
     run.dispatch(said(1, "and the boat is moored at the north pier"))
         .expect("the run speaks on into its turn");
 
@@ -262,7 +270,7 @@ fn a_save_keeps_nothing_of_a_saved_turn_moved_out_of_sight_while_it_waits() {
         save_go.recv().expect("release the save");
     }));
     let refused = std::thread::scope(|scope| {
-        let save = scope.spawn(|| session.save_talk_by(room.owner, None));
+        let save = scope.spawn(|| session.save_talk_as(&room.proof));
         save_planned.recv().expect("the save cuts its plan");
         // The turn now says it began at 1, before the owner joined.
         let body = vault.get(&turn).expect("read").expect("the saved turn");
@@ -324,7 +332,7 @@ fn a_save_refuses_a_copy_whose_order_the_turn_took_since() {
     let run = bind_run(&session, &room);
     run.dispatch(said(0, "the lighthouse key is under the blue stone"))
         .expect("the run speaks");
-    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    let turn = session.save_talk_as(&room.proof).expect("save")[0].0;
     run.dispatch(said(1, "and the boat is moored at the north pier"))
         .expect("the run speaks on into its turn");
     let shell = vault
@@ -349,7 +357,7 @@ fn a_save_refuses_a_copy_whose_order_the_turn_took_since() {
         .expect("an ordinary witness appends to the saved turn");
     assert_eq!(base_orders(&vault, &turn), vec![0, 1]);
 
-    let refused = session.save_talk_by(room.owner, None).err();
+    let refused = session.save_talk_as(&room.proof).err();
     assert!(
         matches!(
             &refused,
@@ -394,7 +402,7 @@ fn a_save_copies_nothing_into_a_saved_conversation_since_deleted() {
     let run = bind_run(&session, &room);
     run.dispatch(said(0, "the lighthouse key is under the blue stone"))
         .expect("the run speaks");
-    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    let turn = session.save_talk_as(&room.proof).expect("save")[0].0;
     run.dispatch(said(1, "and the boat is moored at the north pier"))
         .expect("the run speaks on into its turn");
     let shell = vault
@@ -406,7 +414,7 @@ fn a_save_copies_nothing_into_a_saved_conversation_since_deleted() {
     assert!(deleted.existed);
     assert!(vault.get(&turn).expect("read").is_some(), "the turn stays");
 
-    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    let saved = session.save_talk_as(&room.proof).expect("save again");
     assert!(
         saved.is_empty(),
         "copied into a deleted conversation: {saved:?}"
@@ -432,7 +440,7 @@ fn a_save_copies_nothing_into_a_saved_turn_whose_speaker_changed() {
     let run = bind_run(&session, &room);
     run.dispatch(said(0, "the lighthouse key is under the blue stone"))
         .expect("the run speaks");
-    let turn = session.save_talk_by(room.owner, None).expect("save")[0].0;
+    let turn = session.save_talk_as(&room.proof).expect("save")[0].0;
     run.dispatch(said(1, "and the boat is moored at the north pier"))
         .expect("the run speaks on into its turn");
     // A native put says the turn is the user's now.
@@ -465,7 +473,7 @@ fn a_save_copies_nothing_into_a_saved_turn_whose_speaker_changed() {
         )
         .expect("restamp the turn");
 
-    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    let saved = session.save_talk_as(&room.proof).expect("save again");
     assert!(
         saved.is_empty(),
         "copied into a turn that speaks as another: {saved:?}"
@@ -491,7 +499,7 @@ fn a_save_copies_nothing_of_a_message_hard_deleted_since() {
     let run = bind_run(&session, &room);
     run.dispatch(said(0, "the lighthouse key is under the blue stone"))
         .expect("the run speaks");
-    session.save_talk_by(room.owner, None).expect("save");
+    session.save_talk_as(&room.proof).expect("save");
     run.dispatch(said(1, "and the boat is moored at the north pier"))
         .expect("the run speaks on into its turn");
     let tombstone = crate::deletion::TombstoneValueV2 {
@@ -503,7 +511,7 @@ fn a_save_copies_nothing_of_a_message_hard_deleted_since() {
         .apply_replayed_tombstone(&message(1), &tombstone.encode())
         .expect("a peer's tombstone names the message");
 
-    let saved = session.save_talk_by(room.owner, None).expect("save again");
+    let saved = session.save_talk_as(&room.proof).expect("save again");
     assert!(
         saved.is_empty(),
         "copied a message deleted for good: {saved:?}"
@@ -514,5 +522,120 @@ fn a_save_copies_nothing_of_a_message_hard_deleted_since() {
             .overlay()
             .contains_entity(&message(1))
             .expect("probe")
+    );
+}
+
+/// A live slip of `class` for `holder`, minted under the test host root,
+/// which the first one roots.
+fn slip(vault: &Vault, holder: EntityId, class: &str, id: u8) -> crate::authority::VerifiedSlip {
+    let issuer = crate::test_support::test_host_issuer();
+    let mut claims = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root")
+        .claims;
+    claims.slip_id = [id; 32];
+    claims.holder_ref = holder.to_hex();
+    claims.actor_class = Some(class.to_owned());
+    let minted = vault
+        .mint_capability_slip(&issuer, claims)
+        .expect("mint the slip");
+    let binding = b"room-save";
+    let signature = issuer
+        .binding_proof(&minted, binding)
+        .expect("binding proof");
+    vault
+        .verify_capability_slip(&issuer.public_key(), &minted, binding, &signature)
+        .expect("a verified slip")
+}
+
+/// H203 (Sol R1 F3): a handle names whom its save is for only with their
+/// own slip. The owner is in the room, but a slip naming someone else, or
+/// naming the owner as an agent, saves nothing and the room hears nothing;
+/// the owner's own slip saves, and the receipt names them.
+#[test]
+fn a_room_save_for_the_owner_takes_their_own_slip() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+
+    for other in [
+        slip(&vault, room.agent, "human", 0xA1),
+        slip(&vault, room.owner, "agent", 0xA2),
+    ] {
+        let refused = session.save_talk_by(room.owner, &other).err();
+        assert!(
+            matches!(
+                &refused,
+                Some(Error::OffRecord(
+                    crate::error::OffRecordError::OffRecordPromoteUnauthenticated { .. }
+                ))
+            ),
+            "a save ran on a slip that is not the owner's: {refused:?}"
+        );
+    }
+    assert!(vault.get_raw(&message(0)).expect("read").is_none());
+    let heard = session
+        .record_for(room.owner)
+        .expect("the record")
+        .notices
+        .iter()
+        .filter(|notice| notice.act == OffRecordNoticeAct::SavedTalk)
+        .count();
+    assert_eq!(heard, 0, "the room heard a refused save");
+
+    let own = slip(&vault, room.owner, "human", 0xA3);
+    let saved = session
+        .save_talk_by(room.owner, &own)
+        .expect("the owner's own slip saves");
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    let kept = vault
+        .off_record_promote_receipt(&saved[0].0)
+        .expect("read")
+        .expect("the turn's receipt");
+    assert_eq!(kept.initiator_ref, room.owner.to_hex());
+    assert_eq!(
+        kept.initiator_kind,
+        crate::off_record::PROMOTE_INITIATOR_ROOM_OWNER
+    );
+}
+
+/// H203 (Sol R1 F4): a later save that copies what a run said into a saved
+/// turn names who saved it in each copy's receipt, as the turn's own receipt
+/// names the save that first kept it.
+#[test]
+fn a_later_save_names_its_saver_in_each_copy() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let turn = session.save_talk_as(&room.proof).expect("save")[0].0;
+    run.dispatch(said(1, "and the boat is moored at the north pier"))
+        .expect("the run speaks on into its turn");
+
+    let own = slip(&vault, room.owner, "human", 0xA4);
+    let saved = session
+        .save_talk_by(room.owner, &own)
+        .expect("save again on the owner's slip");
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    assert_eq!(saved[0].1.replayed, vec![message(1)]);
+    let first = vault
+        .off_record_promote_receipt(&turn)
+        .expect("read")
+        .expect("the turn's receipt");
+    assert_eq!(
+        first.initiator_kind,
+        crate::off_record::PROMOTE_INITIATOR_OWNER
+    );
+    let copied = vault
+        .off_record_copy_receipt(&message(1))
+        .expect("read")
+        .expect("the copy's receipt");
+    assert_eq!(copied.initiator_ref, room.owner.to_hex());
+    assert_eq!(
+        copied.initiator_kind,
+        crate::off_record::PROMOTE_INITIATOR_ROOM_OWNER
     );
 }

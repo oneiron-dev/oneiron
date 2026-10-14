@@ -203,13 +203,16 @@ impl PromoteInitiator {
 /// turn the stretch had already saved, by a later save of its talk. The
 /// turn's [`OffRecordPromoteReceipt`] stays the answer to a retry of its
 /// promotion; this one answers a save that runs again, so the message is
-/// never copied twice. It carries opaque ids only.
+/// never copied twice. It carries opaque ids only, and names who consented
+/// to the save that copied it, as [`OffRecordPromoteReceipt`] does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OffRecordCopyReceipt {
     pub(crate) version: u8,
     pub(crate) session_ref: String,
     pub(crate) turn: [u8; 16],
     pub(crate) copied_at: u64,
+    pub(crate) initiator_ref: String,
+    pub(crate) initiator_kind: String,
 }
 
 /// What one copy into a saved turn did: the outcome of the messages it
@@ -421,6 +424,7 @@ impl FloorWrites<'_> {
         wtxn: &mut RwTxn<'_>,
         session_ref: &str,
         plan: &PromotePlan,
+        initiator: &PromoteInitiator,
         copied_at: u64,
     ) -> Result<Appended> {
         if let Some(record) = self.store.off_record_sessions.record(session_ref) {
@@ -613,6 +617,8 @@ impl FloorWrites<'_> {
                     session_ref: session_ref.to_owned(),
                     turn: *turn.as_bytes(),
                     copied_at,
+                    initiator_ref: initiator.actor.to_hex(),
+                    initiator_kind: initiator.kind.to_owned(),
                 },
             )?;
             held.insert(*id);
@@ -695,6 +701,16 @@ impl Vault {
     ) -> Result<Option<OffRecordPromoteReceipt>> {
         let rtxn = self.store.env.read_txn()?;
         PROMOTE_RECEIPTS.get(&self.store, &rtxn, turn_id)
+    }
+
+    /// The receipt of `message`, copied into a saved turn by a later save.
+    #[cfg(test)]
+    pub(crate) fn off_record_copy_receipt(
+        &self,
+        message: &EntityId,
+    ) -> Result<Option<OffRecordCopyReceipt>> {
+        let rtxn = self.store.env.read_txn()?;
+        COPY_RECEIPTS.get(&self.store, &rtxn, message)
     }
 
     /// How many sync pickup markers name `turn_id`. The marker table is
