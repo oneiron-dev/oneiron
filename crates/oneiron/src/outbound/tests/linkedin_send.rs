@@ -336,7 +336,7 @@ fn a_linkedin_send_with_no_seat_policy_is_held()
                 "Jane Doe\n10:01 AM\nThanks for reaching out.",
             )]),
         )
-        .with_plan(&format!("intent:{intent}"), plan)?;
+        .with_plan(format!("intent:{intent}"), plan)?;
         let mut request = linkedin_send_request(
             actor.clone(),
             &format!("outbound:intent:{intent}"),
