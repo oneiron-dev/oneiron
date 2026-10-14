@@ -1103,9 +1103,12 @@ fn a_failed_swap_keeps_the_vault_live_only_at_its_path() {
 /// C8 review r2 (Sol F1, Astra F1): a replacing restore makes its copy's
 /// directory, then opens the copy there by name. Another vault moved in under
 /// the staging name between the two is never taken for the copy: the restore
-/// is refused before any row is written, and that vault keeps its rows. A
-/// staging directory others may write is refused before anything is made.
-/// Control: with nothing moved, the copy is built in the directory made.
+/// is refused before any row is written, and that vault keeps its rows.
+/// Review r3 (Sol F1-F3, Astra F1-F3): no name check closes a rename by
+/// another user, so every restore is refused, before anything is made, where
+/// another user could move a directory on its path: a directory others may
+/// write, or one above it. Controls: with nothing moved, the copy is built
+/// in the directory made, and a sticky shared directory takes a restore.
 #[cfg(unix)]
 #[test]
 fn a_replacing_restore_writes_only_into_the_directory_it_made() {
@@ -1156,11 +1159,32 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
     drop(moved_in);
 
     let shared = directory("shared", 0o777);
+    let kept = |dir: &Path| {
+        Vault::restore_checkpoint(
+            &image,
+            &dir.join("kept"),
+            VaultConfig::device(),
+            RestoreReason::Restore,
+            120,
+        )
+    };
     assert!(restore(&shared).is_err());
+    assert!(kept(&shared).is_err());
+    let inner = shared.join("inner");
+    std::fs::create_dir(&inner).unwrap();
+    std::fs::set_permissions(&inner, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert!(
-        !shared.join("vault").exists(),
-        "nothing is made where others write"
+        restore(&inner).is_err(),
+        "a shared directory above refuses too"
     );
+    for made in [
+        shared.join("vault"),
+        shared.join("kept"),
+        inner.join("vault"),
+    ] {
+        assert!(!made.exists(), "nothing is made where others can move it");
+    }
+    assert!(kept(&directory("sticky", 0o1777)).is_ok());
 
     let (replacement, _) = restore(&directory("fresh", 0o700)).expect("restore");
     assert!(replacement.get(&claim).unwrap().is_some());

@@ -347,6 +347,11 @@ impl Vault {
     /// from another owner or old model can be served while that queue is rebuilt.
     /// The restored vault takes the image's vault's place and keeps its key
     /// custody; a copy served beside it is [`Vault::restore_checkpoint_beside`].
+    ///
+    /// Every restore is refused where another user could move a directory on
+    /// the way to `destination` (or, replacing a vault, on the way to it): a
+    /// directory not this user's or root's, or one a group or other may write
+    /// without its sticky bit. Nothing is made there.
     pub fn restore_checkpoint(
         path: &Path,
         destination: &Path,
@@ -575,7 +580,7 @@ impl Vault {
             crate::store::refuse_custody_beside(destination)?;
         }
         // Existing content is never replaced or partially restored over.
-        let made = crate::store::MadeDestination::make(destination, home.is_some())?;
+        let made = crate::store::MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
         let vault = Self::open_owned(destination, config.clone())?;
         made.holds(&vault.store)?;

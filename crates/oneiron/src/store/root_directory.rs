@@ -106,37 +106,58 @@ pub(super) fn named_directory_identity(root: &Path) -> Result<Option<FileIdentit
     }
 }
 
+/// Refuses unless no other user can move an entry anywhere on the way to
+/// `dir`, as written and as resolved: each directory is this user's or
+/// root's, and no group or other may write it unless its sticky bit keeps
+/// them to their own entries. Under such a path every name a restore makes
+/// and opens again stays the one it made. Mode bits only: an access-control
+/// list granting another user more is not read.
+pub(super) fn refuse_shared_path(dir: &Path) -> Result<()> {
+    let euid = rustix::process::geteuid().as_raw();
+    let written = std::path::absolute(dir)?;
+    let resolved = dir.canonicalize()?;
+    for ancestor in written.ancestors().chain(resolved.ancestors()) {
+        let metadata = std::fs::metadata(ancestor)?;
+        let owned = metadata.uid() == euid || metadata.uid() == 0;
+        let shielded = metadata.mode() & 0o022 == 0 || metadata.mode() & 0o1000 != 0;
+        if !(owned && shielded) {
+            return Err(Error::InvalidConfig(format!(
+                "restore refused: another user could move entries in {}; make it yours or \
+                 root's with no group or other write (chmod go-w), or sticky (chmod +t)",
+                ancestor.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Makes the directory `path` names, through a descriptor of the directory
 /// holding it, and returns the identity of the one made, read through that
-/// same descriptor. With `private`, that parent must be this user's and
-/// writable by no group or other, so no one else can move an entry in or out
-/// of it: the identity returned stays the one its name there holds.
-pub(super) fn make_directory(path: &Path, private: bool) -> Result<FileIdentity> {
+/// same descriptor.
+pub(super) fn make_directory(path: &Path) -> Result<FileIdentity> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(Error::InvalidConfig(
             "a directory to make needs a parent and a name".to_owned(),
         ));
     };
-    let parent = if parent.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        parent
-    };
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    let parent =
-        File::from(rustix::fs::open(parent, flags, Mode::empty()).map_err(std::io::Error::from)?);
-    if private {
-        let metadata = parent.metadata()?;
-        if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o022 != 0 {
-            return Err(Error::InvalidConfig(
-                "a replacing restore is built only where no one else may write".to_owned(),
-            ));
-        }
-    }
+    let parent = File::from(
+        rustix::fs::open(parent_or_here(parent), flags, Mode::empty())
+            .map_err(std::io::Error::from)?,
+    );
     rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o777)).map_err(std::io::Error::from)?;
     let made = openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty())
         .map_err(std::io::Error::from)?;
     Ok(file_identity(&File::from(made).metadata()?))
+}
+
+/// `parent`, or the working directory when a relative path has none.
+pub(super) fn parent_or_here(parent: &Path) -> &Path {
+    if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    }
 }
 
 /// Removes the directory `path` names, with everything in it, only while
