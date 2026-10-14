@@ -99,6 +99,10 @@ struct Acknowledged {
     /// The signers of the mark taken away. Custody found later on any branch
     /// voids the acknowledgement, as it voids the mark.
     marks: BTreeSet<AuthorityKey>,
+    /// The mark taken away. A divergent revision of the same number found
+    /// later on any branch voids the acknowledgement, as it conflicts the mark
+    /// (Wonder P2 round 3, W2).
+    mark: Option<MachineProfile>,
 }
 
 impl Acknowledgements {
@@ -121,6 +125,20 @@ impl Acknowledgements {
                 .values()
                 .flat_map(|taking| taking.marks.iter().cloned())
                 .collect(),
+            mark: None,
+        }
+    }
+
+    /// Voids every taking whose mark `head` diverges from at its revision.
+    fn void_against(&mut self, head: &FoldedMachine) {
+        for taking in self.taken.values_mut() {
+            if taking
+                .mark
+                .as_ref()
+                .is_some_and(|mark| mark.revision == head.profile.revision && *mark != head.profile)
+            {
+                taking.seen.clear();
+            }
         }
     }
 
@@ -248,6 +266,7 @@ pub(super) fn apply_machine_profile(
                         BTreeSet::new()
                     },
                     marks: BTreeSet::from([chain.head.signer.clone()]),
+                    mark: Some(chain.head.profile.clone()),
                 },
             );
         }
@@ -257,6 +276,7 @@ pub(super) fn apply_machine_profile(
                 Acknowledged {
                     seen: BTreeSet::new(),
                     marks: BTreeSet::new(),
+                    mark: None,
                 },
             );
         }
@@ -388,7 +408,12 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
             (one, other) => one.clone().or_else(|| other.clone()),
         },
-        acknowledged: Acknowledgements::merge(&left.acknowledged, &right.acknowledged),
+        acknowledged: {
+            let mut acknowledged = Acknowledgements::merge(&left.acknowledged, &right.acknowledged);
+            acknowledged.void_against(&left.head);
+            acknowledged.void_against(&right.head);
+            acknowledged
+        },
     }
 }
 
