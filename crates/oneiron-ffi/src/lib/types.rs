@@ -67,9 +67,10 @@ pub struct OneironEntityInput {
 ///
 /// The caller must release non-empty buffers with `oneiron_buffer_free`. The
 /// caller must not pass `ptr` to `free()` and must not call the free function
-/// more than once for the same buffer.
+/// more than once for the same buffer. In Rust it moves rather than copies,
+/// like the three array owners, so one value reaches its free function once.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct OneironBuffer {
     pub ptr: *mut u8,
     pub len: usize,
@@ -103,7 +104,7 @@ pub struct OneironEdgeInfo {
 
 /// Rust-owned edge array. Free with `oneiron_edge_info_array_free`.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct OneironEdgeInfoArray {
     pub ptr: *mut OneironEdgeInfo,
     pub len: usize,
@@ -131,7 +132,7 @@ pub struct OneironScoredEntity {
 /// Rust-owned scored search result array. Free with
 /// `oneiron_scored_entity_array_free`.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct OneironScoredEntityArray {
     pub ptr: *mut OneironScoredEntity,
     pub len: usize,
@@ -159,7 +160,7 @@ pub struct OneironSubtreeEntry {
 /// Rust-owned subtree entry array. Free with
 /// `oneiron_subtree_entry_array_free`.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct OneironSubtreeEntryArray {
     pub ptr: *mut OneironSubtreeEntry,
     pub len: usize,
