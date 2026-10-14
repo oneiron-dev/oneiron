@@ -747,7 +747,10 @@ fn a_room_save_takes_a_core_write_slip_but_no_one_shot() {
     let one_shot = verified(
         &vault,
         &minted_shaped(&vault, room.owner, "human", 0xC1, |claims| {
+            let lifetime = oneiron_authority::credential_door::DOOR_ONE_SHOT_MAX_LIFETIME_SECS;
             claims.single_use = true;
+            claims.expires_at = claims.issued_at + lifetime;
+            claims.ttl_secs = claims.ttl_secs.min(lifetime);
         }),
     );
     let refused = session.save_talk_by(room.owner, &one_shot).err();
