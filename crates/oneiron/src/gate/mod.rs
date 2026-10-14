@@ -145,6 +145,7 @@ use self::dreamer_precommit::{
 };
 pub(crate) use self::effect::{
     ApprovalContext, ExternalEffectGovernance, check_external_effect_policy,
+    record_held_external_effect_policy,
     check_external_effect_policy_pair, counterparty_send_override_in_txn,
     evaluate_external_effect_policy, external_effect_approval_digest,
     hydrate_external_effect_contact, native_mail_cold_approval_digest,

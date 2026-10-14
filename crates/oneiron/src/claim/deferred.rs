@@ -204,6 +204,8 @@ impl Vault {
         precheck: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
         then: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
+        // Read on the calling thread: a grouped commit may run the closure elsewhere.
+        let auto_write_rate = crate::own_rate::auto_write_rate();
         let decision = self.with_write_txn_grouped(|txn| {
             precheck(txn)?;
             let proposal = load(self, txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -216,10 +218,21 @@ impl Vault {
                 .get_claim_in_txn(txn, id)?
                 .ok_or(Error::EntityNotFound)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+            let parked = self.store.pending_gate_consent_in_txn(txn, id)?;
+            // The Dreamer actor that parked this replacement, from the parking
+            // decision it wrote; `None` for anything a Dreamer run did not park.
+            let dreamer_writer = match parked.as_ref() {
+                Some(pending) if pending.dreamer_run_id.is_some() => self
+                    .store
+                    .gate_decision_in_txn(txn, pending.decision_id)?
+                    .and_then(|record| record.actor_ref)
+                    .and_then(|actor| EntityId::from_hex(&actor).ok()),
+                _ => None,
+            };
             if proposal.body_hash != body_hash(&body)?
                 || proposal.frontier != policy.read_frontier_hash()?
                 || old_hash != body_hash(&prior)?
-                || self.store.pending_gate_consent_in_txn(txn, id)?.is_none()
+                || parked.is_none()
             {
                 return Err(Error::Gate(crate::error::GateError::GateConsentStale {
                     claim_id: *id,
@@ -236,6 +249,19 @@ impl Vault {
             )?;
             let closure_decision =
                 self.complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker)?;
+            // A Dreamer replacement granted Auto is an Auto write like any the
+            // Dreamer lands, through whichever door granted it, so it counts on
+            // that actor's own-rate window. The count never holds the grant.
+            if let Some(actor) = dreamer_writer {
+                crate::own_rate::count_in_txn(
+                    &self.store,
+                    txn,
+                    crate::own_rate::OwnRateKind::AutoWrite,
+                    actor,
+                    self.store.clock.now_recorded_at(),
+                    auto_write_rate,
+                )?;
+            }
             then(txn)?;
             Ok((decision, closure_decision))
         })?;

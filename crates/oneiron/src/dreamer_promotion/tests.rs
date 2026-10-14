@@ -669,6 +669,41 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
     Ok(())
 }
 
+// H327: a Dreamer replacement granted Auto through the public deferred door
+// counts on the Dreamer actor's auto-write window, as the scoped pass's grant
+// does. Past the threshold it is still granted Auto.
+#[test]
+fn a_dreamer_replacement_granted_through_the_public_door_counts() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let first = candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]);
+    let old = first.claim_id;
+    let mut second = candidate(&fixture, "profile.name", "Ada Lovelace", vec![fixture.turn]);
+    second.supersedes = Some(old);
+    let new = second.claim_id;
+    crate::own_rate::set_auto_write_threshold_for_test(Some(1));
+    let granted = promote_consolidated_claims(&vault, &fixture.run, vec![first])
+        .and_then(|_| promote_consolidated_claims(&vault, &fixture.run, vec![second]))
+        .and_then(|_| vault.grant_deferred_claim_auto(&new, fixture.run.now_ms + 1));
+    crate::own_rate::set_auto_write_threshold_for_test(None);
+    granted?;
+    assert_eq!(
+        vault.get_claim(&new)?.expect("granted").approval,
+        ClaimApprovalStatus::Auto,
+        "the count never holds the grant"
+    );
+    let check = vault.own_rate_check(
+        fixture.run.agent_actor.entity_ref(),
+        crate::own_rate::OwnRateKind::AutoWrite,
+    )?;
+    assert_eq!(
+        check.map(|check| (check.count, check.threshold)),
+        Some((2, 1)),
+        "FAILBEFORE H327: a replacement granted through the public door was not counted"
+    );
+    Ok(())
+}
+
 #[test]
 fn ordinary_dreamer_replacement_stages_before_closure() -> Result<()> {
     let (_dir, vault) = open_auto_vault();

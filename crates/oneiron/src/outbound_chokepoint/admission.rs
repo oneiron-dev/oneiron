@@ -171,12 +171,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             let effect =
                 vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
             let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-            let (decision_id, decision, _) = gate::check_external_effect_policy(
+            // Held before admission: the owner's approval stays unspent.
+            let (decision_id, decision) = gate::record_held_external_effect_policy(
                 &vault.store,
                 &mut wtxn,
                 &effect,
                 &policy,
-                false,
             )?;
             wtxn.commit().map_err(Error::from)?;
             vault.store.notify_attempt_observers();
