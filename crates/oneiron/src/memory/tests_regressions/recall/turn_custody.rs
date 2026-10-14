@@ -156,6 +156,84 @@ fn a_turn_gives_the_words_of_a_document_message_the_write_door_accepts() {
     turn_doors_serve(&vault, &facade, &turn, &item, &MEANING, kept, "assword");
 }
 
+/// CodeRabbit on #1433, ruled FIX (Engine, 2026-10-15): the rerank door
+/// sends a TURN's words to the host's model, and it judged only the words.
+/// A TURN with a message whose body the write door refuses (Astra's
+/// document body above) went to the host, with its other message's words.
+/// It is set aside, as a row whose body the write door refuses is. Bug
+/// repro: the host was sent the turn.
+#[cfg(feature = "sync")]
+#[test]
+fn the_rerank_door_sends_no_turn_with_a_message_whose_body_the_write_door_refuses() {
+    let (_dir, vault, owner) = scan_off_embedding_vault();
+    let facade = facade_for(&vault, owner);
+    let assignment = length_spelled_assignment();
+    let turn = witness_turn(
+        &facade,
+        0xEA,
+        &[&assignment, "the garden gate creaks"],
+        1_900,
+    );
+    let message = move_first_message_into_its_document(&vault, owner, &turn);
+    assert!(document_body_refused(&vault, &message));
+    let control = witness_turn(&facade, 0xEB, &["the garden shed leans"], 1_900);
+    let sent = std::sync::Mutex::new(Vec::new());
+    let score = |_: usize, text: &str| {
+        sent.lock().unwrap().push(text.to_owned());
+        1.0
+    };
+    let host = ScriptedReranker {
+        lease: crate::BudgetGuard::new(
+            "turn-custody-test",
+            100_000,
+            crate::BudgetExhaustionPolicy::Suspend,
+        )
+        .admit()
+        .expect("a lease")
+        .lease,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::default(),
+        score: &score,
+        during: &|_: usize| {},
+    };
+    let pack = crate::task_verb::sdk::recall_at_door(
+        &facade,
+        crate::task_verb::sdk::RecallRequest {
+            query: "garden".to_owned(),
+            effort: Some(crate::memory::RecallEffort::High),
+            scope: None,
+            limit: Some(10),
+            format: None,
+            as_of: None,
+            deadline_ms: None,
+        },
+        |_| None,
+        &crate::task_verb::sdk::RecallDoor {
+            arrived: std::time::Instant::now(),
+            on_cut: None,
+            rerank: crate::memory::RecallRerank::Host(&host),
+        },
+    )
+    .expect("recall");
+    let seen = host.seen.lock().unwrap();
+    let sent = sent.lock().unwrap();
+    assert!(seen.contains(&control), "{seen:?} {sent:?}");
+    assert!(
+        !seen.contains(&turn),
+        "the host was sent the turn: {sent:?}"
+    );
+    assert!(
+        sent.iter().all(|text| !text.contains("assword")),
+        "{sent:?}"
+    );
+    assert!(
+        pack.items
+            .iter()
+            .all(|item| !item.value_text.contains("assword")),
+        "{pack:?}"
+    );
+}
+
 /// Message text whose MessagePack length header spells `_p` before
 /// `assword=` (Astra on #1433): a str 16 of 0x5f70 bytes, `da 5f 70`. A body
 /// holding it reads as a `_password` assignment, which the write door
