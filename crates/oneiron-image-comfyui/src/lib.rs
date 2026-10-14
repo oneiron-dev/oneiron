@@ -381,7 +381,10 @@ fn check_status(status: StatusCode) -> LlmResult<()> {
     }
     Err(match status.as_u16() {
         401 | 403 => FatalLlmError::Auth.into(),
-        429 => RetryableLlmError::RateLimited { retry_after: None }.into(),
+        429 => RetryableLlmError::RateLimited {
+            retry_after: None,
+            resets_at: Vec::new(),
+        }.into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         _ => FatalLlmError::InvalidRequest.into(),
     })

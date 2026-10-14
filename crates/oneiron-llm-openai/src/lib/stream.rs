@@ -37,6 +37,14 @@ impl OpenAiCompatStreamAccumulator {
         if self.assembly.is_done() {
             return Ok(Vec::new());
         }
+        // A provider that refuses once its stream is open sends the error as
+        // an event: a spent quota there is the refusal a 429 would have been.
+        if chunk
+            .get("error")
+            .is_some_and(|error| error.is_object() || error.is_string())
+        {
+            return Err(classify_openai_status(500, &BTreeMap::new(), &chunk));
+        }
         if let Some(usage) = chunk.get("usage").filter(|v| !v.is_null()) {
             self.usage = Some(parse_openai_usage(usage));
         }
