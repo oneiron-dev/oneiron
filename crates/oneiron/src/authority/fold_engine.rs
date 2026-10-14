@@ -50,19 +50,19 @@ impl FoldContext<'_> {
 }
 
 #[derive(Default, Clone, Copy)]
-struct FoldLocalInputs<'a> {
-    observations: Option<&'a AuthorityLocalObservations>,
+pub(super) struct FoldLocalInputs<'a> {
+    pub(super) observations: Option<&'a AuthorityLocalObservations>,
     retire_device_ops: bool,
-    pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
-    hosted: bool,
-    machine_standing: Option<super::world_privacy::MachineStanding<'a>>,
+    pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    pub(super) hosted: bool,
+    pub(super) machine_standing: Option<super::world_privacy::MachineStanding<'a>>,
     /// The handoffs valid on their own rows; only these settle. None settles
     /// every handoff the fold holds.
-    handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    pub(super) handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldLocalInputs<'_> {
-    const VAULT_DOOR: Self = Self {
+    pub(super) const VAULT_DOOR: Self = Self {
         observations: None,
         retire_device_ops: true,
         pre_handoff_entries: None,
@@ -87,26 +87,6 @@ pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         &peer_consent_roots,
         folded_device_can_authority_consent,
         FoldLocalInputs::VAULT_DOOR,
-    )
-}
-
-/// [`fold_authority_log`] as an install that counts only some of the
-/// machines the roster rule admits.
-#[cfg(test)]
-pub(super) fn fold_authority_log_with_machine_standing(
-    entries: &[AuthorityLogEntry],
-    standing: super::world_privacy::MachineStanding<'_>,
-) -> AuthorityFold {
-    fold_authority_log_inner(
-        entries,
-        &BTreeMap::new(),
-        None,
-        &BTreeMap::new(),
-        folded_device_can_authority_consent,
-        FoldLocalInputs {
-            machine_standing: Some(standing),
-            ..FoldLocalInputs::VAULT_DOOR
-        },
     )
 }
 
@@ -274,7 +254,7 @@ pub(super) fn fold_authority_log_with_local_observations_and_posture(
     )
 }
 
-fn fold_authority_log_inner(
+pub(super) fn fold_authority_log_inner(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
@@ -330,72 +310,14 @@ fn fold_authority_log_inner(
             }
         }
     }
-    let sequence_floors = local
-        .observations
-        .map(|observations| &observations.sequence_floors);
-    let stale_roster_window_secs = local
-        .observations
-        .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
-            local.policy.stale_roster_window_secs
-        });
-    let standing = local
-        .machine_standing
-        .unwrap_or(&super::world_privacy::every_admitted_machine);
-    let context = FoldContext {
-        sequence_floors,
-        entry_ancestors: None,
+    super::install_fold::fold_as_install(
+        entries,
+        first_seen_at_secs,
+        now_secs,
         peer_consent_roots,
         consent_arm,
-        hosted: local.hosted,
-        machine_standing: standing,
-        pre_handoff_entries: local.pre_handoff_entries,
-    };
-    // Staleness is this install's own projection, which the structural fold
-    // never sees, and so is a roster left with no settled root. A machine
-    // stale here, or one such a roster admitted, is one this install does not
-    // count, so fold again without it: its world edits then only narrow. Both
-    // rest on valid entries alone and counting changes no entry's validity, so
-    // the second fold finds the same machines.
-    let mut uncounted = BTreeSet::<crate::EntityId>::new();
-    let mut fold = loop {
-        let counted = |state: &FoldState, machine: &FoldedMachine| {
-            !uncounted.contains(&machine.profile.machine) && standing(state, machine)
-        };
-        let fold = apply_stale_roster_window(
-            entries,
-            fold_authority_log_once(
-                entries,
-                FoldContext {
-                    machine_standing: &counted,
-                    ..context
-                },
-                local.handoff_candidates,
-            ),
-            first_seen_at_secs,
-            now_secs,
-            stale_roster_window_secs,
-        );
-        let now_uncounted: BTreeSet<_> = fold
-            .machines
-            .iter()
-            .filter(|(_, machine)| machine.stale || machine.admitter_unsettled)
-            .map(|(id, _)| *id)
-            .collect();
-        if fold.worlds.is_empty() || now_uncounted.is_subset(&uncounted) {
-            break fold;
-        }
-        uncounted = now_uncounted;
-    };
-    fold.append_heads = super::world_privacy::main_log_heads(entries, &fold.valid_entries);
-    for entry in entries {
-        // Advance beyond even a signed rejected local entry. A new local write
-        // never reuses a sequence, though independently received siblings may.
-        fold.append_sequences
-            .entry(entry.signer.public_key.clone())
-            .and_modify(|seq| *seq = (*seq).max(entry.seq))
-            .or_insert(entry.seq);
-    }
-    fold
+        local,
+    )
 }
 
 /// Probe each signed re-root against its own causal history, and map each
@@ -527,7 +449,7 @@ fn has_re_root_ancestor(
     false
 }
 
-fn fold_authority_log_once(
+pub(super) fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
     handoffs: Option<&BTreeSet<AuthorityEntryHash>>,

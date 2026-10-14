@@ -40,6 +40,7 @@ mod handoff_equivocation;
 mod history_transfer;
 mod host_re_root;
 mod ingest_observation;
+mod install_fold;
 mod machine_enroll;
 mod machine_identity;
 mod machine_profile;

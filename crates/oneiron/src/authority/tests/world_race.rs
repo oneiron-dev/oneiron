@@ -1,6 +1,7 @@
 //! World privacy races: an edit by a machine that lost the owner's standing,
 //! or one this install does not count, only ever narrows a world, however
 //! many such edits chain and in whatever order they arrive.
+use super::super::install_fold::fold_authority_log_with_machine_standing;
 use super::super::slip_vault::next_entry;
 use super::history_transfer::{re_root_entry, store};
 use super::machine_identity::{host, request_for};
