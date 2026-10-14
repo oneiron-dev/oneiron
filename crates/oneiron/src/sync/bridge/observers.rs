@@ -198,7 +198,7 @@ impl OutboundSink {
         if let Err(e) = queue_result {
             tracing::error!(
                 window = %window_key,
-                error = %e,
+                kind = ?e.kind(),
                 "outbound-sink: failed to buffer offline update in sync_queue"
             );
         }
@@ -349,7 +349,7 @@ pub fn register_observer_a(
         if let Err(e) = result {
             tracing::error!(
                 window = %window_key,
-                error = %e,
+                kind = ?e.kind(),
                 "observer-a: CRITICAL — failed to persist update, CRDT committed but LMDB may diverge"
             );
         }

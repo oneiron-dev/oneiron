@@ -9,7 +9,7 @@ use crate::store::{ManifestDbs, Store};
 use super::RetrievalRunId;
 #[cfg(target_os = "linux")]
 use super::run_store::RETRIEVAL_RUN_PROVISIONAL;
-use super::run_store::stage_retrieval_run_delete;
+use super::run_store::{RETRIEVAL_RUN, stage_retrieval_run_delete};
 
 // Base-ledger retention only. Session overlay rows evaporate on close and
 // cannot be evicted while an in-flight room assembly still owns them.
@@ -175,6 +175,28 @@ impl Store {
             wtxn.commit()?;
             Ok(())
         }
+    }
+}
+
+impl Store {
+    /// Deletes every stored retrieval run, with its index rows, in `wtxn`.
+    ///
+    /// The open that mints the vault's retrieval-trace key calls this, so
+    /// every run it finds predates the key: its fork hash is unkeyed, which
+    /// lets a telemetry reader test a guessed query against it, and a run
+    /// stored before the owner ruling of 2026-10-14 (fix 6) may hold its
+    /// pack's bytes. Telemetry is disposable, so none of them stays.
+    pub(crate) fn delete_retrieval_runs_before_trace_key(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+    ) -> Result<()> {
+        let runs = RETRIEVAL_RUN
+            .scan_keys(self, &*wtxn, &[])
+            .map_err(corrupt_key("retrieval run telemetry"))?;
+        for id in runs {
+            stage_retrieval_run_delete(self, wtxn, id)?;
+        }
+        Ok(())
     }
 }
 

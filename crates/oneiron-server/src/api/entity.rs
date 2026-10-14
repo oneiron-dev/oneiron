@@ -118,7 +118,7 @@ pub(crate) async fn get_entity(
     let scoped_read = scoped_read_for_legacy_api(&server, &auth)?;
     let read = scoped_read
         .read(&[oneiron::claim::PointRead::id(id)], None)
-        .inspect_err(|error| tracing::error!(%error,"get entity failed"))
+        .inspect_err(|error| tracing::error!(kind = ?error.kind(), "get entity failed"))
         .map_err(|_| ApiError::internal_server_error("get entity failed"))?
         .single();
     let response = match read
@@ -257,7 +257,7 @@ pub(crate) async fn get_edges(
     let read = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {
-            tracing::error!(error = %e, "get edges failed");
+            tracing::error!(kind = ?e.kind(), "get edges failed");
         })
         .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
     let response = match read.value {

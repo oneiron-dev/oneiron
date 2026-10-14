@@ -78,8 +78,11 @@ pub(super) async fn run_booking_verb(
         BookingLifecycleTurn::Empty => Err(ApiError::invalid_state(Some(
             "booking_attempt_claimed_elsewhere",
         ))),
-        other => {
-            tracing::error!(turn = ?other, "booking lifecycle returned an unknown turn");
+        _ => {
+            tracing::error!(
+                reason = "unknown_booking_turn",
+                "booking lifecycle returned an unknown turn"
+            );
             Err(ApiError::internal_server_error(
                 "booking lifecycle returned an unknown turn",
             ))

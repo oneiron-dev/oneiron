@@ -204,21 +204,24 @@ pub trait FeedbackRedactor {
     fn redact(&self, bundle: FeedbackBundle) -> Result<FeedbackBundle, FeedbackRedactionError>;
 }
 
-/// The redactor that redacts nothing.
+/// No redaction: the bundle leaves exactly as it was built.
 ///
-/// Present so the pipeline is complete and testable without a model. It does
-/// NOT weaken consent: a pass-through bundle still requires the same
-/// per-bundle, per-destination approval as any other.
+/// This is not a redactor and makes nothing safe to send. What keeps world
+/// text out of a bundle is that the engine attaches none (a bundle is a
+/// category, versions, a whitelisted config snapshot and diagnosis
+/// references), and that a note is the owner's own writing, sent only after
+/// they preview and approve these exact bytes for this exact destination.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct PassThroughFeedbackRedactor;
+pub struct UnredactedFeedback;
 
-impl FeedbackRedactor for PassThroughFeedbackRedactor {
+impl FeedbackRedactor for UnredactedFeedback {
     fn redact(&self, bundle: FeedbackBundle) -> Result<FeedbackBundle, FeedbackRedactionError> {
         Ok(bundle)
     }
 }
 
-/// A redacted bundle, its exact encoded bytes, and their digest.
+/// A bundle as the redactor returned it, its exact encoded bytes, and their
+/// digest.
 ///
 /// The three travel together and cannot drift: the bytes are the encoding of
 /// this bundle, and the digest is the digest of those bytes. Consent, dispatch,
@@ -231,7 +234,7 @@ pub struct FeedbackPreview {
 }
 
 impl FeedbackPreview {
-    /// The redacted bundle.
+    /// The bundle as the redactor returned it.
     #[must_use]
     pub const fn bundle(&self) -> &FeedbackBundle {
         &self.bundle
@@ -266,7 +269,7 @@ impl FeedbackPreview {
         feedback_approval_component_id(&self.digest, scope, principal_ref)
     }
 
-    /// Human-readable rendering of the redacted bundle contents.
+    /// Human-readable rendering of the bundle contents.
     ///
     /// This is the CONTENT view: what would be sent. It deliberately carries
     /// no digest and no destination — those are consent facts, and they belong
@@ -277,7 +280,8 @@ impl FeedbackPreview {
     }
 }
 
-/// Redacts a bundle, encodes it once, and digests the result.
+/// Runs a bundle through the redactor, encodes the result once, and digests
+/// it.
 ///
 /// The bundle is validated before redaction and again after, so a redactor
 /// cannot hand back a shape that violates the wire contract.
@@ -303,7 +307,7 @@ where
 ///
 /// Every consent fact a person needs to decide is here: what it is, how big it
 /// is, exactly where it goes, and how far the approval reaches. The content
-/// itself is the redacted bundle render the card places above these lines.
+/// itself is the bundle render the card places above these lines.
 #[must_use]
 pub fn feedback_approval_disclosure(
     preview: &FeedbackPreview,
@@ -335,9 +339,8 @@ pub fn feedback_approval_disclosure(
 
 /// Mints the consent ask for one bundle at one destination.
 ///
-/// The card shows the person exactly two things: the redacted content that
-/// would leave the vault, rendered from the same post-redaction value the
-/// bytes were encoded from, and the consent data lines that say where it goes
+/// The card shows the person exactly two things: the content that would leave
+/// the vault, rendered from the same value the bytes were encoded from, and the consent data lines that say where it goes
 /// and how far the approval reaches. Deciding about content you cannot see is
 /// not consent, so the content view is part of the ask rather than something a
 /// caller has to remember to display.

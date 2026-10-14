@@ -644,7 +644,6 @@ fn permanent_failure_healer_reads_diagnostic_and_emits_case_bound_proposal() -> 
             checkpoint_ref: Some(checkpoint.to_hex()),
         },
         evidence_refs: vec![checkpoint],
-        untrusted_detail: None,
         valid_from: 1,
         valid_to: None,
     };

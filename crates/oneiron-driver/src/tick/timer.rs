@@ -395,7 +395,7 @@ impl<D: DeadlineSource> TimerTick<D> {
         match self.source.next_deadline() {
             Ok(deadline) => deadline,
             Err(error) => {
-                tracing::error!(?error, "commitment-deadline read failed; timer lane quiet");
+                tracing::error!(kind = ?error.kind(), "commitment-deadline read failed; timer lane quiet");
                 None
             }
         }

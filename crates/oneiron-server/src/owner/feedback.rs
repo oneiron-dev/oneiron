@@ -12,7 +12,7 @@ use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::feedback::{
     FEEDBACK_APPROVE_ONCE_ACTION, FeedbackApprovalScope, FeedbackBundle, FeedbackCategory,
-    FeedbackPlatform, FeedbackPreview, PassThroughFeedbackRedactor, feedback_approval_card,
+    FeedbackPlatform, FeedbackPreview, UnredactedFeedback, feedback_approval_card,
     prepare_feedback_preview,
 };
 use oneiron::genui::{
@@ -192,7 +192,7 @@ fn bundle_preview(request: &FeedbackRequest) -> OwnerResult<FeedbackPreview> {
         env!("CARGO_PKG_VERSION"),
         FeedbackPlatform::current(),
     );
-    prepare_feedback_preview(bundle, &PassThroughFeedbackRedactor).map_err(feedback_error)
+    prepare_feedback_preview(bundle, &UnredactedFeedback).map_err(feedback_error)
 }
 
 fn feedback_error(error: oneiron::feedback::FeedbackError) -> OwnerError {

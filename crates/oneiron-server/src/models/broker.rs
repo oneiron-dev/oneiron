@@ -311,8 +311,11 @@ impl BrokerBackend {
         let key = tokio::task::spawn_blocking(move || keys.read(&secret))
             .await
             .map_err(|_| LlmError::from(FatalLlmError::Auth))?
-            .map_err(|error| {
-                tracing::warn!(%error, "the custody door refused a provider key");
+            .map_err(|_| {
+                tracing::warn!(
+                    reason = "key_custody_refused",
+                    "the custody door refused a provider key"
+                );
                 LlmError::from(FatalLlmError::Auth)
             })?;
         connection
@@ -410,8 +413,11 @@ impl SingleRouteBackend for BrokerBackend {
             tracing::warn!(%error, "no credential broker to send through");
             return Err(RetryableLlmError::StreamCut.into());
         }
-        self.keys.check(&self.secret).map_err(|error| {
-            tracing::warn!(%error, "the custody door would refuse a provider key");
+        self.keys.check(&self.secret).map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door would refuse a provider key"
+            );
             LlmError::from(FatalLlmError::Auth)
         })
     }

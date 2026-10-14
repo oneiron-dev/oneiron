@@ -239,3 +239,55 @@ fn native_client_export_projects_the_shared_five_format_verb() {
     drop(client);
     std::fs::remove_dir_all(dir).expect("remove temp vault");
 }
+
+/// Set when `a_panic_after_the_binding_opens_a_vault_prints_no_payload`
+/// starts this test binary as its child.
+const PANIC_CHILD_ENV: &str = "ONEIRON_TEST_NAPI_PANIC_CHILD";
+
+/// The child half of `a_panic_after_the_binding_opens_a_vault_prints_no_payload`:
+/// opens a vault through the binding's embedded client door, then panics with
+/// row text. A no-op unless that check started it.
+#[test]
+fn binding_panic_child() {
+    if std::env::var_os(PANIC_CHILD_ENV).is_none() {
+        return;
+    }
+    let dir = unique_vault_dir("panic-hook");
+    let client = super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None)
+        .expect("embedded native client");
+    let caught =
+        std::panic::catch_unwind(|| panic!("could not parse row: sentinel-world-text-2b7d"));
+    assert!(caught.is_err());
+    drop(client);
+    std::fs::remove_dir_all(dir).expect("remove temp vault");
+    eprintln!("napi panic child: done");
+}
+
+/// Owner ruling 2026-10-14 (fix 6): a process that opened its vault through
+/// this binding prints no panic payload. The hook is process-global and stderr
+/// is the sink, so the panic runs in a child.
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test starts its own binary as a child to read its stderr"
+)]
+fn a_panic_after_the_binding_opens_a_vault_prints_no_payload() {
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "facade::tests::binding_panic_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(PANIC_CHILD_ENV, "1")
+        .output()
+        .expect("the child test runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for shown in [&stdout, &stderr] {
+        assert!(!shown.contains("sentinel-world-text-2b7d"), "{shown}");
+    }
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(stderr.contains("napi panic child: done"), "{stderr}");
+    assert!(stderr.contains("payload withheld"), "{stderr}");
+}

@@ -265,7 +265,7 @@ async fn account_pass_outcome(
             // backlog → redrive after backoff (idempotent for Hybrid).
             *pass_index = pass_index.saturating_add(1);
             report.passes_failed += 1;
-            tracing::error!(?error, "wake pass failed; backing off then re-driving tick");
+            tracing::error!(kind = ?error.kind(), "wake pass failed; backing off then re-driving tick");
             if !wait_backoff(shutdown, backoff.advance()).await {
                 return false;
             }
@@ -276,7 +276,7 @@ async fn account_pass_outcome(
             // keep pass_index; redrive after backoff.
             report.passes_failed += 1;
             tracing::error!(
-                ?error,
+                kind = ?error.kind(),
                 "wake pass failed before admission; backing off then re-driving tick"
             );
             if !wait_backoff(shutdown, backoff.advance()).await {
@@ -478,7 +478,7 @@ where
                                     "wave dispatch pass");
                                 for failure in pass.item_failures {
                                     tracing::warn!(task = ?failure.candidate.task,
-                                        reason = %failure.reason, "wave handoff deferred");
+                                        reason = failure.reason, "wave handoff deferred");
                                 }
                             }
                             Err(WaveQuantumError::Policy(error)) => {
@@ -486,7 +486,7 @@ where
                                 return report;
                             }
                             Err(WaveQuantumError::Pump(error)) => {
-                                tracing::error!(?error, "wave pump pass failed");
+                                tracing::error!(kind = ?error.kind(), "wave pump pass failed");
                             }
                         }
                     }

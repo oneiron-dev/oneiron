@@ -34,7 +34,7 @@ pub(super) fn now_secs() -> Result<u64, ApiError> {
 }
 
 pub(super) fn engine_read_error(error: oneiron::Error) -> ApiError {
-    tracing::error!(error = %error, "booking agent api vault read failed");
+    tracing::error!(kind = ?error.kind(), "booking agent api vault read failed");
     ApiError::internal_server_error("booking storage read failed")
 }
 
@@ -45,8 +45,11 @@ pub(super) fn engine_read_error(error: oneiron::Error) -> ApiError {
 /// session dial is a retry-class state.
 pub(super) fn booking_error(error: BookingError) -> ApiError {
     match error {
-        BookingError::InvalidConfig(detail) => {
-            tracing::error!(detail = %detail, "booking configuration defect");
+        BookingError::InvalidConfig(_) => {
+            tracing::error!(
+                reason = "invalid_booking_config",
+                "booking configuration defect"
+            );
             ApiError::internal_server_error("booking page configuration is unusable")
         }
         BookingError::InvalidConstraint(detail) => ApiError::bad_request(detail, None),
@@ -58,8 +61,11 @@ pub(super) fn booking_error(error: BookingError) -> ApiError {
             tracing::warn!(detail = %detail, "booking oracle refused");
             ApiError::invalid_state(Some("booking_slot_unavailable"))
         }
-        BookingError::Surface(detail) => {
-            tracing::error!(detail = %detail, "booking surface assembly failed");
+        BookingError::Surface(_) => {
+            tracing::error!(
+                reason = "booking_surface_failed",
+                "booking surface assembly failed"
+            );
             ApiError::internal_server_error("booking surface assembly failed")
         }
         BookingError::Boundary(error) => {

@@ -54,7 +54,6 @@ fn diagnostic() -> DiagnosticEvent {
             checkpoint_ref: None,
         },
         evidence_refs: vec![test_id(0x65)],
-        untrusted_detail: None,
         valid_from: 1,
         valid_to: None,
     }

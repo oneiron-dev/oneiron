@@ -20,6 +20,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"retr_run",
                 b"retr_out",
                 b"retr_trace",
+                // The key over stored fork hashes stays with the node, like
+                // the telemetry it keys.
+                b"retrieval_trace_key:",
                 b"tasks.create.rate.",
                 b"vault_cleanup.scan",
                 b"self_heal:signed:",

@@ -173,7 +173,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
                 unapplied.push((id, value.to_vec()));
                 tracing::error!(
                     entity = %id.to_hex(),
-                    error = %err,
+                    kind = ?err.kind(),
                     "forward remat: tombstone replay FAILED — hard-deleted content may still be live (GDPR SLA breach signal)"
                 );
             }

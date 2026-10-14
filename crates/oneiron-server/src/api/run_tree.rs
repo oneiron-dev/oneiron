@@ -429,7 +429,7 @@ pub(crate) async fn core_run_tree_intervene(
     };
     let outcome = result
         .map_err(|error| {
-            tracing::error!(error = %error, attempt_id = %req.attempt_id, "core run tree intervene failed");
+            tracing::error!(kind = ?error.kind(), attempt_id = %req.attempt_id, "core run tree intervene failed");
             core_engine_error("core run tree intervene failed", error)
         })?;
 
@@ -439,7 +439,8 @@ pub(crate) async fn core_run_tree_intervene(
         let adapter = oneiron::RunTreeAdapter::new(&server.vault);
         Some(core_run_tree_response(
             adapter.read_run(run_id).map_err(|error| {
-                tracing::error!(error = %error, run_id, "core run tree intervention snapshot failed");
+                // A run id is free text its proposer chose; the attempt id is not.
+                tracing::error!(kind = ?error.kind(), attempt_id = %response_attempt_id, "core run tree intervention snapshot failed");
                 core_engine_error("core run tree intervention snapshot failed", error)
             })?,
         ))

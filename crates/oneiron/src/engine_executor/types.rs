@@ -41,6 +41,28 @@ pub enum EngineExecutorError {
     HostRefused { code: String },
 }
 
+impl EngineExecutorError {
+    /// The variant, for a log line, which never carries the error's text: an
+    /// engine error's can quote what the vault holds, a model error's a reply
+    /// or a provider's error body, a canonicalization error's the request.
+    pub(crate) fn variant(&self) -> &'static str {
+        match self {
+            Self::Engine(_) => "engine",
+            Self::Llm(_) => "llm",
+            Self::CanonicalRequest(_) => "canonical_request",
+            Self::HostRefused { .. } => "host_refused",
+        }
+    }
+
+    /// An engine error's kind, for the same log line.
+    pub(crate) fn engine_kind(&self) -> Option<crate::ErrorKind> {
+        match self {
+            Self::Engine(error) => Some(error.kind()),
+            _ => None,
+        }
+    }
+}
+
 /// Soft-yield and hard-stop limits for the durable REPL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineExecutorLimits {

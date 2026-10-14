@@ -102,9 +102,12 @@ impl SyncServer {
                 );
             }
             Ok(Err(error)) => {
-                tracing::warn!(error = %error, "gate decision retention pass failed");
+                tracing::warn!(kind = ?error.kind(), "gate decision retention pass failed");
             }
-            Err(error) => tracing::warn!(error = %error, "gate decision retention task failed"),
+            Err(error) => tracing::warn!(
+                panicked = error.is_panic(),
+                "gate decision retention task failed"
+            ),
         }
     }
 
@@ -131,7 +134,7 @@ impl SyncServer {
                 }
             }
             Err(err) => {
-                tracing::error!(error = %err, "lease expiry tick failed");
+                tracing::error!(kind = ?err.kind(), "lease expiry tick failed");
             }
         }
 
@@ -175,7 +178,7 @@ impl SyncServer {
                 }
             }
             Err(err) => {
-                tracing::error!(error = %err, "ra drain tick failed");
+                tracing::error!(kind = ?err.kind(), "ra drain tick failed");
             }
         }
     }

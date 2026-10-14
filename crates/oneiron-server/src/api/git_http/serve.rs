@@ -181,7 +181,7 @@ pub(super) fn serve_failure(
     joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
 ) -> Response {
     if let Ok(Err(error)) = &joined {
-        tracing::warn!(error = %error, "git smart-http worker failed");
+        tracing::warn!(kind = ?error.kind(), "git smart-http worker failed");
     }
     let (status, message) = match joined {
         Ok(Ok(_)) => (

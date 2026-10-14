@@ -52,8 +52,8 @@ fn event_for(scope_ref: &str, observation: &DiagnosticObservation) -> Diagnostic
         actor_ref: Some(observation.source_ref),
         source: DiagnosticSourceKind::Receipt,
         criticality: DiagnosticCriticality::Normal,
-        expected: Value::from("green"),
-        actual: Value::from("red"),
+        expected: Value::from(1_u64),
+        actual: Value::from(0_u64),
         delta: Value::Integer(Integer::from(1_u64)),
         replay: DiagnosticReplayCoordinate {
             content_hash: observation.payload_digest,
@@ -61,7 +61,6 @@ fn event_for(scope_ref: &str, observation: &DiagnosticObservation) -> Diagnostic
             checkpoint_ref: None,
         },
         evidence_refs: vec![observation.source_ref],
-        untrusted_detail: Some("stderr said\tno".to_owned()),
         valid_from: observation.observed_at,
         valid_to: Some(observation.observed_at + 60),
     }
@@ -374,7 +373,7 @@ fn diagnostic_body_decode_fail_closed() {
     ] {
         let mut entries = body_entries(&canonical);
         set_key(&mut entries, "untrusted_detail", Value::from(hidden));
-        assert_rejected(&encode_entries(entries), "control data in untrusted_detail");
+        assert_rejected(&encode_entries(entries), "text in untrusted_detail");
     }
 
     let mut entries = body_entries(&canonical);
@@ -383,7 +382,7 @@ fn diagnostic_body_decode_fail_closed() {
         (Value::from("a"), Value::from(2_u64)),
     ]);
     set_key(&mut entries, "expected", unsorted);
-    assert_rejected(&encode_entries(entries), "an unsorted invariant map");
+    assert_rejected(&encode_entries(entries), "an invariant map");
 
     let mut entries = body_entries(&canonical);
     let raw_bytes = Value::Binary(vec![1, 2, 3]);
@@ -399,23 +398,17 @@ fn diagnostic_body_decode_fail_closed() {
 }
 
 /// Drafts are CANONICALIZED, so two detectors that mean the same thing produce
-/// the same bytes: evidence refs are sorted and deduplicated, and an equivalent
-/// invariant map spelled in a different key order collapses to one body.
+/// the same bytes: evidence refs are sorted and deduplicated, and an
+/// equivalent invariant spelled with a narrower float collapses to one body.
 #[test]
 fn drafts_are_canonicalized_before_addressing() {
     let mut sorted = sample_event();
     sorted.evidence_refs = vec![seed_id(2), seed_id(3)];
-    sorted.expected = Value::Map(vec![
-        (Value::from("a"), Value::from(1_u64)),
-        (Value::from("b"), Value::from(2_u64)),
-    ]);
+    sorted.expected = Value::Array(vec![Value::F64(1.5), Value::from(2_u64)]);
 
     let mut scrambled = sorted.clone();
     scrambled.evidence_refs = vec![seed_id(3), seed_id(2), seed_id(3)];
-    scrambled.expected = Value::Map(vec![
-        (Value::from("b"), Value::from(2_u64)),
-        (Value::from("a"), Value::from(1_u64)),
-    ]);
+    scrambled.expected = Value::Array(vec![Value::F32(1.5), Value::from(2_u64)]);
 
     let left = encode_diagnostic_event_body(&sorted).expect("sorted encodes");
     let right = encode_diagnostic_event_body(&scrambled).expect("scrambled encodes");

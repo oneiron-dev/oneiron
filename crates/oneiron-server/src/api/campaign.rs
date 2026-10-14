@@ -241,7 +241,7 @@ pub(crate) fn surface_error(error: oneiron::MemoryError) -> ApiError {
             error.suggestions,
         ),
         oneiron::MEMORY_CODE_INTERNAL => {
-            tracing::error!(error = %error.message, "campaign surface failed");
+            tracing::error!(code = %error.code, "campaign surface failed");
             ApiError::internal_server_error("campaign surface failed")
         }
         _ => ApiError::new(

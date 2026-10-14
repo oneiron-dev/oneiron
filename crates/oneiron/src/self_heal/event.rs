@@ -47,7 +47,8 @@ pub(super) const DIAGNOSTIC_EVENT_ID_DOMAIN: &[u8] = b"oneiron.self_heal.diagnos
 /// Longest accepted `run_ref` / `checkpoint_ref` / `scope_ref`.
 pub(super) const MAX_REF_LEN: usize = 256;
 
-/// Longest accepted canonical untrusted-detail leaf, AFTER escaping.
+/// Longest accepted canonical untrusted-detail leaf, AFTER escaping. Only code
+/// runs' blocked receipts use the escaper now; a diagnostic carries no detail.
 pub(super) const MAX_UNTRUSTED_DETAIL_LEN: usize = 4096;
 
 /// Most evidence refs one event may cite.
@@ -56,16 +57,13 @@ pub(super) const MAX_EVIDENCE_REFS: usize = 64;
 /// Longest accepted detector id / observation kind token.
 pub(super) const MAX_TOKEN_LEN: usize = 64;
 
-/// Longest accepted string leaf inside `expected` / `actual` / `delta`.
-pub(super) const MAX_INVARIANT_STRING_LEN: usize = 1024;
-
 /// Deepest accepted nesting inside `expected` / `actual` / `delta`.
 pub(super) const MAX_INVARIANT_DEPTH: usize = 8;
 
 /// Most nodes one `expected` / `actual` / `delta` value may contain.
 pub(super) const MAX_INVARIANT_NODES: usize = 256;
 
-/// Widest accepted array / map inside `expected` / `actual` / `delta`.
+/// Widest accepted array inside `expected` / `actual` / `delta`.
 pub(super) const MAX_INVARIANT_WIDTH: usize = 64;
 
 /// Most events one detector run may persist.
@@ -280,7 +278,8 @@ pub struct DiagnosticEvent {
     pub source: DiagnosticSourceKind,
     /// How loudly the event asks to be looked at.
     pub criticality: DiagnosticCriticality,
-    /// Invariant input: what should have been true.
+    /// Invariant input: what should have been true. Numbers, booleans, nil
+    /// and arrays of those; never text.
     pub expected: Value,
     /// Invariant input: what was true instead.
     pub actual: Value,
@@ -291,9 +290,6 @@ pub struct DiagnosticEvent {
     /// Entities this finding is evidenced by. Canonicalized on encode to
     /// strictly ascending order with duplicates removed.
     pub evidence_refs: Vec<EntityId>,
-    /// The ONE leaf untrusted text may enter through. Escaped on encode and
-    /// re-validated on decode, so control data can never ride in on it.
-    pub untrusted_detail: Option<String>,
     /// Bitemporal validity start (unix seconds).
     pub valid_from: u64,
     /// Bitemporal validity end (unix seconds), strictly after `valid_from`.

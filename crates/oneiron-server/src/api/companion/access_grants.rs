@@ -140,7 +140,7 @@ pub(crate) async fn create_companion_access_grant(
         .vault
         .create_access_grant(&grant_id, &grant)
         .map_err(|error| {
-        tracing::error!(error = %error, id = %grant_id.to_hex(), "companion access grant create failed");
+        tracing::error!(kind = ?error.kind(), id = %grant_id.to_hex(), "companion access grant create failed");
             companion_create_error(error)
         })?;
 
@@ -193,7 +193,7 @@ pub(crate) async fn revoke_companion_access_grant(
         .vault
         .revoke_access_grant(&grant_id, revoked_at)
         .map_err(|error| {
-            tracing::error!(error = %error, id = %grant_id.to_hex(), "companion access grant revoke failed");
+            tracing::error!(kind = ?error.kind(), id = %grant_id.to_hex(), "companion access grant revoke failed");
             companion_engine_error("companion access grant revoke failed", error)
         })?;
 

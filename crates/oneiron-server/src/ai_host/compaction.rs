@@ -105,7 +105,7 @@ impl CodeModeCompaction {
             Ok(prompt) => prompt.text,
             Err(error) => {
                 tracing::warn!(
-                    %error,
+                    kind = ?error.kind(),
                     prompt_package = %prompt_package.display(),
                     "code mode's prompt package holds no compaction prompt; runs keep their raw window"
                 );
@@ -126,7 +126,7 @@ impl CodeModeCompaction {
         });
         let mut registry = CompactionBackendRegistry::new();
         if let Err(error) = registry.register(backend) {
-            tracing::error!(%error, "the compaction backend did not register");
+            tracing::error!(kind = ?error.kind(), "the compaction backend did not register");
             return Self::Off(CompactionOff::BackendFailed);
         }
         Self::Live(Arc::new(LiveCompaction {
@@ -183,7 +183,7 @@ impl CodeModeCompaction {
             ),
             Ok(None) => RunCompaction::off(CompactionOff::Disabled),
             Err(error) => {
-                tracing::error!(%error, "a run's compaction driver did not build");
+                tracing::error!(kind = ?error.kind(), "a run's compaction driver did not build");
                 RunCompaction::off(CompactionOff::BackendFailed)
             }
         }

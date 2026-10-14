@@ -340,7 +340,7 @@ impl ManagedState {
         match self.server.expire_leases_once().await {
             Ok(report) => !report.skipped,
             Err(error) => {
-                tracing::error!(%error, "lease table drain failed during prepare_reap");
+                tracing::error!(kind = ?error.kind(), "lease table drain failed during prepare_reap");
                 false
             }
         }
@@ -601,8 +601,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     host.ready()?;
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
 
-    if let Err(error) = state.ledger().push_if_changed(&sync_server).await {
-        tracing::warn!(%error, "initial wake ledger push failed");
+    if let Err(_error) = state.ledger().push_if_changed(&sync_server).await {
+        tracing::warn!(
+            reason = "wake_ledger_export_failed",
+            "initial wake ledger push failed"
+        );
     }
 
     let background = sync_server.spawn_serve_background();
@@ -662,7 +665,10 @@ pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
                 "final wake ledger push complete"
             );
         }
-        Err(error) => tracing::warn!(%error, "final wake ledger export failed"),
+        Err(_) => tracing::warn!(
+            reason = "wake_ledger_export_failed",
+            "final wake ledger export failed"
+        ),
     }
 }
 

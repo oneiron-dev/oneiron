@@ -77,7 +77,10 @@ impl SyncServer {
         tokio::task::spawn_blocking(move || server.embed_query(&text))
             .await
             .unwrap_or_else(|error| {
-                tracing::warn!(%error, "query embedding task failed to join");
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "query embedding task failed to join"
+                );
                 Err(EmbedQueryRefusal::Failed)
             })
     }
@@ -116,17 +119,17 @@ impl SyncServer {
                     if !complained {
                         if error.kind() == oneiron::ErrorKind::EmbeddingTransformChanged {
                             tracing::error!(
-                                ?error,
+                                kind = ?error.kind(),
                                 "the loaded model makes vectors another way than the vault's were made; it fills and answers nothing. Stop the server and run `oneiron-server reembed`, or restore the settings that made the vault"
                             );
                         } else if error.kind() == oneiron::ErrorKind::EmbeddingModelChanged {
                             tracing::error!(
-                                ?error,
+                                kind = ?error.kind(),
                                 "the embedder endpoint serves another model than the vault's; it fills and answers nothing. Serve the vault's model there again, or stop the server and run `oneiron-server reembed`"
                             );
                         } else {
                             tracing::warn!(
-                                ?error,
+                                kind = ?error.kind(),
                                 "embedder is not ready; the vault serves lexical and graph reads and the worker keeps retrying"
                             );
                         }
@@ -212,7 +215,7 @@ impl SyncServer {
                 }
                 Ok(Err(error)) => {
                     if !failing {
-                        tracing::warn!(?error, "embedding reconciliation failed; backing off");
+                        tracing::warn!(kind = ?error.kind(), "embedding reconciliation failed; backing off");
                         failing = true;
                     }
                     self.readmit_embedder().await;
@@ -224,7 +227,10 @@ impl SyncServer {
                 // drive, and a silent exit would leave rows pending with no
                 // trace of why.
                 Err(error) => {
-                    tracing::error!(%error, "embedding reconciliation task ended; worker stopping");
+                    tracing::error!(
+                        panicked = error.is_panic(),
+                        "embedding reconciliation task ended; worker stopping"
+                    );
                     return;
                 }
             }
@@ -247,7 +253,7 @@ impl SyncServer {
         })
         .await;
         if let Ok(Some(Err(error))) = readmitted {
-            tracing::debug!(?error, "embedder not admitted again after a failed pass");
+            tracing::debug!(kind = ?error.kind(), "embedder not admitted again after a failed pass");
         }
     }
 

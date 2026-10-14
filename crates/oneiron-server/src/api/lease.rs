@@ -90,7 +90,7 @@ pub(crate) async fn lease_revoke(
         }
         Ok(None) => Ok(Json(LeaseRevokeResponse { revoked: false })),
         Err(e) => {
-            tracing::error!(error = %e, "lease revoke failed");
+            tracing::error!(kind = ?e.kind(), "lease revoke failed");
             Err(ApiError::internal_server_error("lease revoke failed"))
         }
     }

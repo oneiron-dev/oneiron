@@ -150,7 +150,7 @@ pub(super) fn materialize_entities_with_changes(
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
     {
         tracing::error!(
-            error = %e,
+            kind = ?e.kind(),
             window = %window_key,
             "observer-b: local-only companion CRDT scrub failed after entity batch commit"
         );
@@ -224,7 +224,7 @@ pub(super) fn materialize_entities_with_changes(
             }
         }
         tracing::error!(
-            error = %e,
+            kind = ?e.kind(),
             window = %window_key,
             applied_ops = applied_ops.len(),
             marked,
@@ -269,7 +269,7 @@ pub(super) fn set_remat_marker_logged(vault: &Vault, window_key: &str, id: &Enti
             tracing::error!(
                 entity = %id.to_hex(),
                 window = %window_key,
-                error = %marker_err,
+                kind = ?marker_err.kind(),
                 "observer-b: CRITICAL — failed to set rm: marker after batch commit failure"
             );
             false

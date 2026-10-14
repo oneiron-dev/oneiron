@@ -428,7 +428,7 @@ impl EmbedderSlot {
             return Err(EmbedQueryRefusal::NotReady);
         }
         embedder.embed_query(text).map_err(|error| {
-            tracing::warn!(?error, "query embedding failed");
+            tracing::warn!(kind = ?error.kind(), "query embedding failed");
             EmbedQueryRefusal::Failed
         })
     }
@@ -521,9 +521,10 @@ pub(crate) fn build_slot(
             Ok(endpoint::ProbeOutcome::Ready) => {
                 tracing::info!("endpoint embedder probe succeeded");
             }
-            Ok(endpoint::ProbeOutcome::Unreachable(reason)) => {
+            // The probe's reason is the endpoint's own words; it stays out of the log.
+            Ok(endpoint::ProbeOutcome::Unreachable(_reason)) => {
                 tracing::warn!(
-                    reason,
+                    reason = "endpoint_unreachable",
                     "endpoint embedder is unreachable; starting at rung 0 and retrying in the worker"
                 );
             }

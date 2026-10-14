@@ -397,8 +397,11 @@ async fn idempotent(
     let (parts, body) = request.into_parts();
     let body = match to_bytes(body, IDEMPOTENCY_MAX_REQUEST_BODY_BYTES).await {
         Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to read idempotent request body");
+        Err(_) => {
+            tracing::warn!(
+                reason = "body_read_failed",
+                "failed to read idempotent request body"
+            );
             return StatusCode::PAYLOAD_TOO_LARGE.into_response();
         }
     };
@@ -429,8 +432,11 @@ async fn idempotent(
         }
         Ok(IdempotencyLookup::Conflict) => return conflict_response(&key, is_core_auth_route),
         Ok(IdempotencyLookup::Miss) => {}
-        Err(error) => {
-            tracing::error!(error = %error, "failed to read idempotency cache");
+        Err(_) => {
+            tracing::error!(
+                reason = "idempotency_cache_read_failed",
+                "failed to read idempotency cache"
+            );
             return api_error_response(
                 ApiError::internal_server_error("failed to read idempotency cache"),
                 is_core_auth_route,
@@ -443,8 +449,11 @@ async fn idempotent(
     let (parts, body) = response.into_parts();
     let body = match to_bytes(body, IDEMPOTENCY_MAX_RESPONSE_BODY_BYTES).await {
         Ok(body) => body,
-        Err(error) => {
-            tracing::error!(error = %error, "failed to read idempotent response body");
+        Err(_) => {
+            tracing::error!(
+                reason = "body_read_failed",
+                "failed to read idempotent response body"
+            );
             return api_error_response(
                 ApiError::internal_server_error("failed to read idempotent response body"),
                 is_core_auth_route,
@@ -472,8 +481,11 @@ async fn idempotent(
                 .unwrap_or_default(),
         };
 
-        if let Err(error) = state.store.insert(&store_key, target, request_body, cached) {
-            tracing::error!(error = %error, "failed to persist idempotency response");
+        if let Err(_error) = state.store.insert(&store_key, target, request_body, cached) {
+            tracing::error!(
+                reason = "idempotency_cache_write_failed",
+                "failed to persist idempotency response"
+            );
             return api_error_response(
                 ApiError::internal_server_error("failed to persist idempotency response"),
                 is_core_auth_route,
@@ -509,8 +521,11 @@ pub(crate) async fn idempotency_for_mutating_form(
     let (parts, body) = request.into_parts();
     let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
         Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to read keyed request body");
+        Err(_) => {
+            tracing::warn!(
+                reason = "body_read_failed",
+                "failed to read keyed request body"
+            );
             return StatusCode::PAYLOAD_TOO_LARGE.into_response();
         }
     };
