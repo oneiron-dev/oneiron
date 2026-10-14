@@ -1120,6 +1120,7 @@ fn revoke_records_a_failed_file_removal() {
 // ---------------------------------------------------------------------------
 
 /// A registered T2 file under a live lease, for the substitution checks.
+#[cfg(unix)]
 fn registered_t2() -> (tempfile::TempDir, Vault, PathBuf, EntityId) {
     let (tmp, vault, _declared, path) = t2_vault();
     let lease_id = vault
@@ -1205,7 +1206,7 @@ fn an_ancestor_swapped_before_the_open_refuses_and_redirects_no_byte() {
             std::fs::write(&bait, b"unrelated bytes").expect("bait");
         }
         let (from, to, target) = (parent.clone(), moved.clone(), elsewhere.clone());
-        path_swap_hook::arm(move || {
+        path_swap_hook::arm(path_swap_hook::Stage::BeforeOpen, move || {
             std::fs::rename(&from, &to).expect("move the real directory");
             std::os::unix::fs::symlink(&target, &from).expect("plant the symlink");
         });
@@ -1237,14 +1238,24 @@ fn an_ancestor_swapped_before_the_open_refuses_and_redirects_no_byte() {
 
 #[cfg(unix)]
 #[test]
-fn a_target_that_climbs_with_dot_dot_is_refused() {
+fn a_target_that_climbs_or_names_a_directory_is_refused() {
     // C9 review: `..` asks the held directory for its current parent, which a
-    // rename can change between two steps of the walk.
+    // rename can change between two steps of the walk; a trailing `/` or `/.`
+    // asks for a directory, and the file went one name up instead.
     let (tmp, vault) = temp_vault();
     let (_, path) = declared_target(&tmp);
     let parent = path.parent().expect("parent");
     std::fs::create_dir_all(parent.join("inner")).expect("mkdir");
-    let climbing = parent.join("inner").join("..").join("api.key");
+    let spelled = |suffix: &str| {
+        let mut raw = path.clone().into_os_string();
+        raw.push(suffix);
+        PathBuf::from(raw)
+    };
+    let targets = [
+        parent.join("inner").join("..").join("api.key"),
+        spelled("/"),
+        spelled("/."),
+    ];
     register(
         &vault,
         record(
@@ -1252,7 +1263,10 @@ fn a_target_that_climbs_with_dot_dot_is_refused() {
             CustodyClass::CustodyPortable,
             VALUE_V1,
             vec![binding(EFFECTOR, CustodyTier::T2LocalRegistered)],
-            vec![climbing.to_string_lossy().into_owned()],
+            targets
+                .iter()
+                .map(|target| target.to_string_lossy().into_owned())
+                .collect(),
         ),
     );
     let lease_id = vault
@@ -1260,17 +1274,62 @@ fn a_target_that_climbs_with_dot_dot_is_refused() {
         .expect("lease")
         .lease
         .lease_id;
-    let err = vault
-        .register_secret_local(&lease_id, &climbing, "project-alpha")
-        .expect_err("a climbing target refuses");
-    assert!(
-        matches!(
-            err,
-            Error::Secret(SecretError::SecretLeasePathRefused { .. })
-        ),
-        "got {err:?}"
-    );
-    assert!(!path.exists(), "no byte landed");
+    for target in &targets {
+        let err = vault
+            .register_secret_local(&lease_id, target, "project-alpha")
+            .expect_err("the target refuses");
+        assert!(
+            matches!(
+                err,
+                Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            ),
+            "{}: got {err:?}",
+            target.display()
+        );
+        assert!(!path.exists(), "{}: a byte landed", target.display());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fresh_file_linked_before_its_check_receives_no_byte() {
+    // C9 review: only a replaced file had its link count checked, so a name
+    // linked to a fresh file right after its creation got the value too.
+    for recovery in [false, true] {
+        let (tmp, vault, _declared, path) = t2_vault();
+        let lease_id = vault
+            .materialize_secret_lease("local", EFFECTOR, 3600)
+            .expect("lease")
+            .lease
+            .lease_id;
+        if recovery {
+            vault
+                .register_secret_local(&lease_id, &path, "project-alpha")
+                .expect("registration");
+            std::fs::remove_file(&path).expect("lose the registered file");
+        }
+        let second_name = tmp.path().join("second-name");
+        let (from, to) = (path.clone(), second_name.clone());
+        path_swap_hook::arm(path_swap_hook::Stage::AfterOpen, move || {
+            std::fs::hard_link(&from, &to).expect("link the fresh file");
+        });
+        let err = vault
+            .register_secret_local(&lease_id, &path, "project-alpha")
+            .expect_err("a fresh file with a second name refuses");
+        assert!(
+            matches!(
+                err,
+                Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            ),
+            "recovery={recovery}: got {err:?}"
+        );
+        assert_eq!(
+            std::fs::read(&second_name).expect("second name"),
+            b"",
+            "recovery={recovery}: the value reached the second name"
+        );
+        assert!(!path.exists(), "recovery={recovery}: the fresh file stayed");
+    }
 }
 
 #[cfg(unix)]

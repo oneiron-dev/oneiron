@@ -102,9 +102,9 @@ impl Drop for SecretFileGuard {
 /// `None` for a fresh registration, which creates the file and never clobbers
 /// an occupant; `Some` for same-path re-materialization, which writes only
 /// into that file. A registered file that is gone is created again (S4
-/// recovery) and gets a new identity; an occupant that is not the registered
-/// file, or that file under a second name (a hard link would receive the
-/// value too), is refused before any byte lands.
+/// recovery) and gets a new identity. An occupant that is not the registered
+/// file, and any file with a second name, fresh or registered (a hard link
+/// would receive the value too), is refused before any byte lands.
 ///
 /// Owner-only permissions BEFORE the first byte: creation carries
 /// `mode(0o600)` (the umask can only narrow), and a replace re-asserts the
@@ -123,7 +123,7 @@ pub(super) fn write_secret_file(
 
     let target = written::Target::open(target_path)?;
     #[cfg(test)]
-    path_swap_hook::fire();
+    path_swap_hook::fire(path_swap_hook::Stage::BeforeOpen);
     let (mut file, fresh) = match registered {
         None => match target.create() {
             Ok(file) => (file, true),
@@ -138,10 +138,7 @@ pub(super) fn write_secret_file(
         Some(expected) => match target.open_for_write() {
             Ok(file) => {
                 let metadata = file.metadata()?;
-                if !metadata.is_file()
-                    || FileIdentity::of(&metadata) != expected
-                    || metadata.nlink() != 1
-                {
+                if !metadata.is_file() || FileIdentity::of(&metadata) != expected {
                     return Err(refused(
                         target_path,
                         "target is not the file this lease registered",
@@ -171,13 +168,20 @@ pub(super) fn write_secret_file(
             }
         },
     };
-    let identity = FileIdentity::of(&file.metadata()?);
+    #[cfg(test)]
+    path_swap_hook::fire(path_swap_hook::Stage::AfterOpen);
+    let metadata = file.metadata()?;
     let guard = SecretFileGuard {
         target,
-        identity,
+        identity: FileIdentity::of(&metadata),
         fresh,
         armed: true,
     };
+    // A file with a second name, fresh or replaced, would give the value to
+    // that name too.
+    if metadata.nlink() != 1 {
+        return Err(refused(target_path, "target file has another name"));
+    }
     // The post-open floor: walk the path again. An ancestor moved or swapped
     // since the first walk leaves the held directory off the stored path, so
     // nothing is written there and a file this attempt created goes with the
@@ -261,9 +265,13 @@ mod written {
         /// the walk is refused. A `..` component is refused too: it asks the
         /// held directory for its current parent, which a rename can change.
         pub(super) fn open(target_path: &Path) -> Result<Self> {
-            let leaf = match target_path.file_name() {
-                Some(name) => c_name(target_path, name)?,
-                None => return Err(refused(target_path, "target names no file")),
+            // The leaf as spelled: `Path` drops a trailing `/` or `/.`, which
+            // ask for a directory, so a target ending in one names no file.
+            let spelled = target_path.as_os_str().as_bytes();
+            let last = spelled.rsplit(|byte| *byte == b'/').next();
+            let leaf = match (target_path.file_name(), last) {
+                (Some(name), Some(last)) if name.as_bytes() == last => c_name(target_path, name)?,
+                _ => return Err(refused(target_path, "target names no file")),
             };
             let mut walked = PathBuf::new();
             let mut dir: Option<File> = None;
@@ -514,25 +522,41 @@ pub(super) mod file_write_fault_hook {
 
 #[cfg(all(test, unix))]
 pub(super) mod path_swap_hook {
-    //! One-shot test-only seam between resolving a T2 target's directory and
-    //! opening its file: the window a racing local process would use to swap
-    //! an ancestor for a symlink.
+    //! One-shot test-only seams in a T2 file write, the windows a racing local
+    //! process would use.
 
     use std::cell::RefCell;
+
+    /// Where in the write a seam runs.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(in crate::secret_lease) enum Stage {
+        /// After the target's directory is resolved, before its file opens:
+        /// an ancestor can be swapped here.
+        BeforeOpen,
+        /// After the file opens, before it is checked: it can gain a name here.
+        AfterOpen,
+    }
 
     type Swap = Box<dyn FnOnce()>;
 
     thread_local! {
-        static SWAP: RefCell<Option<Swap>> = const { RefCell::new(None) };
+        static SWAP: RefCell<Option<(Stage, Swap)>> = const { RefCell::new(None) };
     }
 
-    /// Runs `swap` once, at the next T2 file write on this thread.
-    pub(in crate::secret_lease) fn arm(swap: impl FnOnce() + 'static) {
-        SWAP.with_borrow_mut(|armed| *armed = Some(Box::new(swap)));
+    /// Runs `swap` once, at `stage` of the next T2 file write on this thread.
+    pub(in crate::secret_lease) fn arm(stage: Stage, swap: impl FnOnce() + 'static) {
+        SWAP.with_borrow_mut(|armed| *armed = Some((stage, Box::new(swap))));
     }
 
-    pub(super) fn fire() {
-        if let Some(swap) = SWAP.with_borrow_mut(Option::take) {
+    pub(super) fn fire(stage: Stage) {
+        let swap = SWAP.with_borrow_mut(|armed| match armed.take() {
+            Some((at, swap)) if at == stage => Some(swap),
+            other => {
+                *armed = other;
+                None
+            }
+        });
+        if let Some(swap) = swap {
             swap();
         }
     }
