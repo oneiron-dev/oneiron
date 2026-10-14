@@ -11,6 +11,7 @@ mod delete_tombstone;
 mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
+mod seeded_upgrade;
 mod self_grant;
 mod session_witness;
 mod shared_effects;

@@ -138,6 +138,7 @@ fn run_case(case: LateCall) -> Result<()> {
     );
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -217,6 +218,7 @@ fn run_case(case: LateCall) -> Result<()> {
     };
     let mut driver = DreamerWakeDriver::new(&vault, resume_budget, deadline);
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -355,6 +357,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
     );
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -384,6 +387,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
     // what the second wake's frozen source expansion must include.
     let backend = ScriptedBackend::new(vec![Ok(response(&[first, next_turn]))]);
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -504,6 +508,7 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
     );
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

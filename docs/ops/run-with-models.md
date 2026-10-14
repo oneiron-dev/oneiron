@@ -37,13 +37,14 @@ key_env = "CPA_API_KEY"                 # the variable's NAME; never the key its
 ```toml
 # MID: a local stack and a cloud, local first. `local` also fills local_reasoner.
 [models]
-local = "llama:qwen3:8b"
+local = "exl3:qwen3.8-27b"
 cloud = "router:anthropic/claude-sonnet-4.5"
 prefer_local = true                     # false puts the cloud rung first
 
-[models.providers.llama]                # llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
+[models.providers.exl3]                 # any local OpenAI-compatible server: exllamav3, llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
 kind = "local-openai-compat"
 base_url = "http://127.0.0.1:8080"
+response_format = "none"                # the EXL3 recipe below runs without the schema
 
 [models.providers.router]               # OpenRouter, or any OpenAI-compatible endpoint
 kind = "openai-compat"
@@ -56,15 +57,36 @@ key_env = "OPENROUTER_API_KEY"
 # to the next; each rung may carry its own prompt.
 [models.roles.dreamer_current]
 rungs = [
-  { model = "llama:qwen3:8b", prompt_file = "prompts/dreamer-local.md" },
+  { model = "exl3:qwen3.8-27b", prompt_file = "prompts/dreamer-local.md" },
+  { model = "llama:qwen3.8-27b-q4" },   # the fallback recipe, below
   { model = "claude:claude-sonnet-4-5" },
 ]
+
+[models.providers.llama]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"
 
 [models.providers.claude]               # any Anthropic-compatible /v1/messages server
 kind = "anthropic-compat"
 base_url = "https://api.anthropic.com"
 key_env = "ANTHROPIC_API_KEY"
 ```
+
+The local Dreamer model the examples name is the measured recipe for the
+Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
+the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, 7 draft
+tokens), served by an exllamav3 OpenAI-compatible server with no schema:
+its provider sets `response_format = "none"`, so a JSON call goes out with
+no `response_format`. The fallback is llama.cpp `llama-server` on
+`Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
+(`--spec-type draft-simple --spec-draft-n-max 8`) and the schema, the
+default (`response_format = "schema"`). Either way the engine checks the
+answer against the call's schema, and an answer that breaks it is refused.
+A ladder sends a schema in `response_format` only when every rung declares
+`json_response`. A rung without it, such as the Anthropic-compatible one in
+the DETAILED example, makes the engine put the schema in a system message on
+every rung instead, so keep a schema-constrained llama.cpp fallback in a
+ladder of OpenAI-compatible rungs. Typed decisions stay on `vllm-sr/d3-flash`.
 
 Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
 saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
@@ -75,7 +97,8 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `local-openai-compat`, `oneironer`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
-`max_output_tokens`, `output_limit_field`, `capabilities` (`streaming`,
+`max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
+default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
@@ -157,9 +180,35 @@ missing:
 | a rung on `dreamer_current` | `no_model_configured` |
 | `ONEIRON_AUTH_SECRET` set (host root, machine identity) | `no_host_authority` |
 | `extraction_egress = true` under `[models]`, for any model reached over HTTP | `extraction_egress_not_allowed` |
-| vault defaults that route extraction and consolidation to where the Dreamer extracts (the seat's widest rung, or the route of the extraction teacher the vault's model manifest pins): `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
+| vault defaults that route each Dreamer role's purpose to where that role's model is served (extraction and narrative under `extraction`, the conflict verdict under `consolidation`): `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
 | with a model manifest, its extraction teacher served by `[models]` at the vault's route | `extraction_model_not_served` |
+| with a model manifest, its `generative_reasoner` (the conflict verdict) and `dreamer_current` (narrative) models served by `[models]` at the vault's route | `role_model_not_served` |
 | the Dreamer's three policy rows (a fresh vault ships them) | `needs_owner_grant` |
+
+Each pass calls three roles, each on its own model and run: extraction as
+`extraction_teacher`, the conflict verdict as `generative_reasoner`, and
+declared summaries as `dreamer_current`. A vault's model manifest pins each;
+without one, a role uses its own `[models.roles.*]` seat when it has one,
+else the Dreamer's (`default = "provider:model"` fills all three with one
+model). Each role's calls go out as the run `dreamer-pass/<role>`, so the
+run receipts (`oneiron::run_receipt` at info) name the role that made them.
+
+The extraction input lists the people, organisations and places the turns
+name that the vault already holds, each with its newest claims, so a model
+can name the claim a later turn corrects. A correction the Dreamer stages (a
+new value for a claim it already holds) takes its grant in the same pass when
+the vault's policy allows it: the replacement lands Auto, the prior closes
+with a `Supersedes` edge, and an open `core.conflict.open` that named the
+prior closes with a `core.conflict.resolved` claim. One the policy protects (a class a
+manifest rule declares critical, or attributed truth such as a user-stated
+claim) stays Proposed and is listed in the owner's run review (`GET
+/v1/owner/runs`, `oneiron runs pending`). The seeded manifest declares
+`health.`, `safety.`, `legal.` and `boundary.` critical, and `decision.settled`
+exactly; a predicate no rule names defaults critical for legibility only and
+does not hold a correction. A vault whose policy manifest is still the
+untouched seeded one takes a newer build's seeded manifest when it opens, and
+what waited on the old policy is re-gated, never applied; a manifest the owner
+wrote is never touched.
 
 ```bash
 # once, with the server stopped; ONEIRON_AUTH_SECRET set as for serve

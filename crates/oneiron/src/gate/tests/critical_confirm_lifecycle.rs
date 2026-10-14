@@ -685,3 +685,49 @@ fn critical_supersession_closes_only_after_bound_clear_with_companion() -> Resul
     }));
     Ok(())
 }
+
+/// Sol r2 P1: a policy re-gate never binds a critical confirm to a denial.
+/// A confirm waiting on an authored Auto claim whose fresh verdict denies it
+/// (here under a manifest that fails closed) is left on its old frontier,
+/// untouched and counted stale. Before, it was re-bound to the denial with
+/// its ceremony reason, so a Clear could settle what the fresh gate refused.
+#[test]
+fn a_re_gate_that_denies_binds_no_critical_confirm() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x7a);
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.approval = ClaimApprovalStatus::Auto;
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+    vault
+        .batch()
+        .claim_candidate(&claim, candidate, &envelope, test_time(4), 4)
+        .commit()?;
+    let parked = critical_confirm_pending(claim, 40, 100);
+    vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &parked))?;
+    let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::UserStated, 0)]);
+    rewrite_policy_manifest_entries(&mut data, |entries| {
+        entries.retain(|(key, _)| key.as_str() != Some(POLICY_SCHEMA_VERSION_KEY));
+    });
+    put_policy_manifest_bytes(&vault, test_id(0x7b), &data)?;
+    assert!(resolve(&vault)?.is_fail_closed());
+
+    let regate = vault.with_write_txn(|wtxn| {
+        crate::gate::policy_upgrade::regate_pending_consents_in_txn(
+            &vault,
+            wtxn,
+            &parked.read_frontier_hash,
+            500,
+        )
+    })?;
+    assert_eq!(
+        regate,
+        crate::gate::ConsentRegate {
+            rebound: 0,
+            restaged: 0,
+            stale: 1
+        }
+    );
+    let row = vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?;
+    assert_eq!(row, Some(parked), "the waiting row is left as it was");
+    Ok(())
+}

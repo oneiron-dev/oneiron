@@ -241,6 +241,90 @@ fn auto_eligible_upsert_stages_before_closing_prior() {
     );
 }
 
+/// Engine ruling 2026-10-13: under the seeded policy a predicate no manifest
+/// rule names defaults critical for legibility only (ARCH-0003 §Criticality),
+/// so a correction committed on one takes its later grant and closes its
+/// prior. A class a rule declares critical still holds the closure for the
+/// owner. Before, the unnamed default held both.
+#[test]
+fn a_correction_on_an_unregistered_predicate_takes_its_grant() {
+    for declared_critical in [false, true] {
+        let (_dir, vault) = open_vault();
+        if declared_critical {
+            let mut manifest = crate::gate::default_policy_manifest().unwrap();
+            let mut cursor = std::io::Cursor::new(manifest.as_slice());
+            let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode")
+            else {
+                panic!("default policy manifest is a map");
+            };
+            for (key, value) in &mut entries {
+                if key.as_str() == Some("rules") {
+                    let Value::Array(rules) = value else {
+                        panic!("rules are an array");
+                    };
+                    rules.push(Value::Map(vec![
+                        (Value::from("prefix"), Value::from("residence.")),
+                        (
+                            Value::from("axes"),
+                            Value::Map(vec![
+                                (Value::from("criticality"), Value::from("critical")),
+                                (Value::from("sensitivity"), Value::from("normal")),
+                            ]),
+                        ),
+                    ]));
+                }
+            }
+            manifest.clear();
+            rmpv::encode::write_value(&mut manifest, &Value::Map(entries)).expect("encode");
+            crate::test_util::put_policy_manifest_bytes(
+                &vault,
+                crate::gate::default_policy_manifest_id().expect("default manifest id"),
+                &manifest,
+            )
+            .expect("declare residence critical");
+        }
+        let actor = put_person(&vault, 0x75);
+        let subject = put_person(&vault, 0x76);
+        let facade = facade_for(&vault, actor);
+        let first = facade
+            .claim_upsert(&claim_input(
+                "residence.city",
+                &subject,
+                "observed",
+                serde_json::json!("Lisbon"),
+            ))
+            .expect("first revision");
+        let mut input = claim_input(
+            "residence.city",
+            &subject,
+            "observed",
+            serde_json::json!("Porto"),
+        );
+        input.learned_at = Some(200);
+        input.occurred_at = Some(200);
+        let second = facade.claim_upsert(&input).expect("correction");
+        let old = facade.resolve_ref(&first.claim_short_id).unwrap();
+        let new = facade.resolve_ref(&second.claim_short_id).unwrap();
+        assert_eq!(vault.pending_claim_supersession(&new).unwrap(), Some(old));
+        let granted = vault.grant_deferred_claim_auto(&new, 201);
+        let (approval, prior) = if declared_critical {
+            assert!(
+                matches!(
+                    granted,
+                    Err(Error::Gate(GateError::GateWriteRejected { .. }))
+                ),
+                "{granted:?}"
+            );
+            (ClaimApprovalStatus::Proposed, ClaimLifecycleStatus::Active)
+        } else {
+            granted.expect("the later grant");
+            (ClaimApprovalStatus::Auto, ClaimLifecycleStatus::Superseded)
+        };
+        assert_eq!(vault.get_claim(&new).unwrap().unwrap().approval, approval);
+        assert_eq!(vault.get_claim(&old).unwrap().unwrap().lifecycle, prior);
+    }
+}
+
 #[test]
 fn commit_batch_gating_is_per_element() {
     let (_dir, vault) = open_vault();
