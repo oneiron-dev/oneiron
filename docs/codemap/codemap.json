@@ -10686,39 +10686,10 @@
      "path": "src/config/failure_signals.rs",
      "purpose": "Deployment-tier participation is separate from permission to train",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
-      "re-export": 1,
       "struct": 1
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "RedactionKind",
-      "RedactionSpan",
-      "Tier2Redactor",
-      "Tier2Sample"
-     ],
-     "path": "src/config/failure_signals/samples.rs",
-     "purpose": "Vault-local tier-2 sampling",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 2,
-      "struct": 2,
-      "trait": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/config/failure_signals/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -12462,7 +12433,7 @@
      "path": "src/context_pack/telemetry.rs",
      "purpose": "Finalize or discard the retrieval-run row a pack assembly registered",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -15337,7 +15308,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_wake/tests.rs",
@@ -16997,7 +16968,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EngineExecutorConfig",
@@ -17017,7 +16988,7 @@
      "purpose": "Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types",
      "surface": {
       "const": 6,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 6,
       "struct": 8,
@@ -17851,7 +17822,7 @@
      "path": "src/feedback/bundle.rs",
      "purpose": "Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest",
      "surface": {
-      "const": 14,
+      "const": 13,
       "enum": 2,
       "fn": 14,
       "struct": 6
@@ -17867,7 +17838,7 @@
       "FeedbackRedactionError",
       "FeedbackRedactor",
       "FeedbackSendRoute",
-      "PassThroughFeedbackRedactor"
+      "UnredactedFeedback"
      ],
      "path": "src/feedback/consent.rs",
      "purpose": "Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval…",
@@ -17908,7 +17879,7 @@
      "path": "src/feedback/error.rs",
      "purpose": "Feedback error type plus shared validation and framing helpers",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 1
      }
     },
@@ -21719,7 +21690,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 18,
-      "mod": 173,
+      "mod": 174,
       "re-export": 72
      }
     },
@@ -26666,6 +26637,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/panic_report.rs",
+     "purpose": "The content-free panic report a host installs before it opens a vault",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/persona_snapshot/codec.rs",
      "purpose": "Export-body msgpack codec, row-id and fingerprint validators, decode helpers",
      "surface": {
@@ -27187,7 +27169,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/telemetry_trace.rs",
@@ -30906,7 +30888,7 @@
      "path": "src/self_heal/admission.rs",
      "purpose": "Content-address and occurrence binding shared by local and replicated puts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -31009,7 +30991,7 @@
      "purpose": "Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds",
      "surface": {
       "const": 2,
-      "crate-vis": 13,
+      "crate-vis": 12,
       "enum": 3,
       "fn": 7,
       "struct": 4,
@@ -31168,7 +31150,9 @@
      "notable": [],
      "path": "src/self_heal/text_tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -34138,7 +34122,7 @@
      "path": "src/store/retrieval_telemetry/retention.rs",
      "purpose": "Bounded, expirable base-ledger retrieval runs and crash-orphan reconciliation",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -34156,7 +34140,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RetrievalPackOutput",
       "RetrievalReplayInputs",
       "RetrievalState",
       "RetrievalTurn"
@@ -34165,7 +34148,7 @@
      "purpose": "Query-free retrieval context, preserved verbatim for offline replay",
      "surface": {
       "crate-vis": 2,
-      "struct": 4
+      "struct": 3
      }
     },
     {
@@ -37103,13 +37086,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_util/log_capture.rs",
+     "purpose": "Thread-scoped capture of everything `tracing` would write: every event and span at every level, with its…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -37644,7 +37637,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 6,
       "struct": 1
      }
@@ -37702,6 +37695,16 @@
       "crate-vis": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/retrieval_trace_key.rs",
+     "purpose": "The per-vault key over every stored retrieval-trace fork hash",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -40173,7 +40176,7 @@
      "purpose": "Companion task queue and PERSON/FACET persona compilation"
     },
     "config": {
-     "files": 4,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -40711,6 +40714,13 @@
      "layout": "dir",
      "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)"
     },
+    "panic_report": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The content-free panic report a host installs before it opens a vault"
+    },
     "persona_snapshot": {
      "files": 7,
      "impl_vault": true,
@@ -41090,7 +41100,7 @@
      "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…"
     },
     "test_util": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41132,7 +41142,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41197,8 +41207,8 @@
    },
    "over_bar": 38,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2497,
-   "test_files": 802
+   "source_files": 2499,
+   "test_files": 801
   },
   "oneiron-android": {
    "files": [
@@ -47204,7 +47214,7 @@
      "path": "src/facade/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
      }
     },
@@ -50555,7 +50565,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -52342,7 +52352,7 @@
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
       "fn": 1,
-      "mod": 17,
+      "mod": 18,
       "re-export": 1
      }
     },
@@ -52578,6 +52588,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/logging.rs",
+     "purpose": "What the binaries write to their log sinks, and the panic hook",
+     "surface": {
+      "crate-vis": 4,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/logging/tests.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/main.rs",
      "purpose": "—",
      "surface": {}
@@ -52660,6 +52691,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/managed/listener/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/managed/mod.rs",
@@ -52690,7 +52729,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ManagedShutdown",
@@ -54430,10 +54469,17 @@
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
-    "managed": {
-     "files": 11,
+    "logging": {
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "What the binaries write to their log sinks, and the panic hook"
+    },
+    "managed": {
+     "files": 12,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
@@ -54536,10 +54582,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 10,
+   "over_bar": 11,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 338,
-   "test_files": 150
+   "source_files": 339,
+   "test_files": 152
   },
   "oneiron-spawn": {
    "files": [
