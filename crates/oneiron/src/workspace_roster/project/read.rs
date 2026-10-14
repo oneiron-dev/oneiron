@@ -1,7 +1,12 @@
 //! The one read door for PROJECT rows. Replay stores a row after structural
-//! checks only; this fold judges its authority when it is read (ARCH-0040
-//! ONE-AUTHLOG-F2). A row whose authorization fails stays in storage, hidden
-//! from ordinary reads and listed for the owner with its reason.
+//! checks only; this reader judges authority when it is read (ARCH-0040
+//! ONE-AUTHLOG-F2), by folding every signed revision the project ever held
+//! into one frontier (decision 7). The stored row supplies content; the
+//! frontier supplies authority. A project whose frontier serves no authority
+//! stays in storage, hidden from ordinary reads and listed for the owner.
+use super::fold::{ProjectEffective, ProjectFrontier, budget_count, fold_project, reason};
+use super::history_policy::{frozen_frontier, policy_in};
+use super::validity::FoldCx;
 use super::*;
 use crate::HostingPrivacyPosture;
 use crate::authority::{AuthorityFold, CapabilitySlip};
@@ -50,14 +55,14 @@ pub(super) fn bound_by_parents(record: &ProjectRecord) -> bool {
 }
 
 /// The signer a verified proof names and the audience its slip reaches.
-struct Holder {
-    actor: String,
-    audience: ScopeAxis<ScopeId>,
-    attenuated: bool,
+pub(super) struct Holder {
+    pub(super) actor: String,
+    pub(super) audience: ScopeAxis<ScopeId>,
+    pub(super) attenuated: bool,
 }
 
 /// One snapshot-bound fold over every project row. The authority fold is
-/// built once per reader, and each row's verdict is computed once.
+/// built once per reader, and each project's frontier is computed once.
 pub(crate) struct ProjectReader<'a, 't> {
     store: &'a Store,
     txn: &'a heed::RoTxn<'t>,
@@ -65,8 +70,10 @@ pub(crate) struct ProjectReader<'a, 't> {
     kind: u8,
     root: Option<EntityId>,
     fold: RefCell<Option<std::rc::Rc<AuthorityFold>>>,
-    verdicts: RefCell<BTreeMap<EntityId, Option<(ProjectRecord, ProjectVerdict)>>>,
+    frontiers: RefCell<BTreeMap<EntityId, Option<ProjectFrontier>>>,
     open: RefCell<BTreeSet<EntityId>>,
+    /// Whether this snapshot is committed, so its fork evidence may publish.
+    publish: bool,
 }
 
 impl<'a, 't> ProjectReader<'a, 't> {
@@ -86,12 +93,82 @@ impl<'a, 't> ProjectReader<'a, 't> {
             kind,
             root: ROOT.get(store, txn, &())?,
             fold: RefCell::new(None),
-            verdicts: RefCell::new(BTreeMap::new()),
+            frontiers: RefCell::new(BTreeMap::new()),
             open: RefCell::new(BTreeSet::new()),
+            publish: true,
         }))
     }
 
-    /// The project as ordinary readers see it: absent unless the fold accepts it.
+    /// A reader inside a write transaction that may still abort: its folds
+    /// publish no fork evidence.
+    pub(crate) fn uncommitted(mut self) -> Self {
+        self.publish = false;
+        self
+    }
+
+    pub(super) fn store(&self) -> &'a Store {
+        self.store
+    }
+    pub(super) fn txn(&self) -> &'a heed::RoTxn<'t> {
+        self.txn
+    }
+    pub(super) fn root(&self) -> Option<EntityId> {
+        self.root
+    }
+    pub(super) fn kind(&self) -> u8 {
+        self.kind
+    }
+
+    /// The folded view of one project's signed history; `None` when no
+    /// PROJECT row is stored (revisions may still be held).
+    pub(crate) fn frontier(&self, id: EntityId) -> Result<Option<ProjectFrontier>> {
+        if let Some(known) = self.frontiers.borrow().get(&id) {
+            return Ok(known.clone());
+        }
+        let Some(record) = stored(self.store, self.txn, id, self.kind)? else {
+            self.frontiers.borrow_mut().insert(id, None);
+            return Ok(None);
+        };
+        if !self.open.borrow_mut().insert(id) {
+            return Ok(Some(ProjectFrontier {
+                id,
+                disposition: super::fold::ProjectDisposition::unauthorized(reason::CYCLE),
+                witness: None,
+                effective: None,
+            }));
+        }
+        let frontier = self.compute(id, &record);
+        self.open.borrow_mut().remove(&id);
+        let frontier = Some(frontier?);
+        self.frontiers.borrow_mut().insert(id, frontier.clone());
+        Ok(frontier)
+    }
+
+    fn compute(&self, id: EntityId, record: &ProjectRecord) -> Result<ProjectFrontier> {
+        let held = super::revision::held_in_txn(self.store, self.txn, id, self.kind)?;
+        let cx = FoldCx::new(self, id, &held);
+        let count = budget_count(&cx)?;
+        let policy = policy_in(self.store, self.txn)?;
+        if count > policy.max_revisions {
+            return frozen_frontier(self, &cx, count, policy.max_revisions);
+        }
+        let fold = fold_project(&cx, record)?;
+        if self.publish {
+            for fork in fold.forks {
+                self.store.project_forks.record(fork);
+            }
+        }
+        Ok(fold.frontier)
+    }
+
+    /// The effective authority every permission consumer reads.
+    pub(crate) fn effective(&self, id: EntityId) -> Result<Option<ProjectEffective>> {
+        Ok(self.frontier(id)?.and_then(|frontier| frontier.effective))
+    }
+
+    /// The stored row's content when the frontier serves authority. Its
+    /// authority fields are the row's own claim (point B): permission
+    /// consumers read [`Self::effective`].
     pub(crate) fn visible(&self, id: EntityId) -> Result<Option<ProjectRecord>> {
         Ok(match self.read(id)? {
             Some((record, ProjectVerdict::Visible)) => Some(record),
@@ -99,33 +176,46 @@ impl<'a, 't> ProjectReader<'a, 't> {
         })
     }
 
+    /// The content and effective authority of a project.
+    pub(crate) fn visible_with_effective(
+        &self,
+        id: EntityId,
+    ) -> Result<Option<(ProjectRecord, ProjectEffective)>> {
+        let Some(effective) = self.effective(id)? else {
+            return Ok(None);
+        };
+        Ok(stored(self.store, self.txn, id, self.kind)?.map(|record| (record, effective)))
+    }
+
     /// A body read through another view (an off-record session composes its
-    /// overlay over base), judged by this same fold.
-    pub(crate) fn visible_body(&self, id: EntityId, body: &[u8]) -> Result<Option<ProjectRecord>> {
+    /// overlay over base): its content, with the authority the base history
+    /// folds to. A project only the overlay holds is judged as main judges it.
+    pub(crate) fn visible_body(
+        &self,
+        id: EntityId,
+        body: &[u8],
+    ) -> Result<Option<(ProjectRecord, ProjectEffective)>> {
         let record: ProjectRecord = decode(body)?;
-        Ok((self.judge(id, &record)? == ProjectVerdict::Visible).then_some(record))
+        if stored(self.store, self.txn, id, self.kind)?.is_some() {
+            return Ok(self.effective(id)?.map(|effective| (record, effective)));
+        }
+        if self.judge_stored(id, &record)? != ProjectVerdict::Visible {
+            return Ok(None);
+        }
+        let effective = ProjectEffective::of(
+            &record.authority(),
+            record.members().into_iter().collect(),
+            bound_by_parents(&record),
+        );
+        Ok(Some((record, effective)))
     }
 
     /// The stored row with its verdict.
     pub(crate) fn read(&self, id: EntityId) -> Result<Option<(ProjectRecord, ProjectVerdict)>> {
-        if let Some(known) = self.verdicts.borrow().get(&id) {
-            return Ok(known.clone());
-        }
-        let Some(record) = stored(self.store, self.txn, id, self.kind)? else {
-            self.verdicts.borrow_mut().insert(id, None);
+        let Some(frontier) = self.frontier(id)? else {
             return Ok(None);
         };
-        if !self.open.borrow_mut().insert(id) {
-            return Ok(Some((
-                record,
-                ProjectVerdict::Quarantined("project ancestry cycle"),
-            )));
-        }
-        let verdict = self.judge(id, &record);
-        self.open.borrow_mut().remove(&id);
-        let known = Some((record, verdict?));
-        self.verdicts.borrow_mut().insert(id, known.clone());
-        Ok(known)
+        Ok(stored(self.store, self.txn, id, self.kind)?.map(|record| (record, frontier.verdict())))
     }
 
     /// Every stored project with its verdict, in id order.
@@ -148,8 +238,13 @@ impl<'a, 't> ProjectReader<'a, 't> {
         Ok(rows)
     }
 
-    /// The same verdict for a stored row or a body a write door is about to store.
-    pub(crate) fn judge(&self, id: EntityId, record: &ProjectRecord) -> Result<ProjectVerdict> {
+    /// Main's stored-row reader: the verdict of one row on its own anchor
+    /// chain. The fold applies it only when no signed history is held (G).
+    pub(super) fn judge_stored(
+        &self,
+        id: EntityId,
+        record: &ProjectRecord,
+    ) -> Result<ProjectVerdict> {
         let authority = record.authority();
         if authority.parents.is_empty() && Some(id) != self.root {
             return Ok(ProjectVerdict::Quarantined(
@@ -160,24 +255,15 @@ impl<'a, 't> ProjectReader<'a, 't> {
         if verdict != ProjectVerdict::Visible || Some(id) == self.root {
             return Ok(verdict);
         }
-        for parent in &authority.parents {
-            let parent = EntityId::from_hex(parent)
-                .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
-            let parent = match self.read(parent)? {
-                None => return Ok(ProjectVerdict::Pending("parent project not yet received")),
-                Some((_, ProjectVerdict::Pending(_))) => {
-                    return Ok(ProjectVerdict::Pending("parent project pending"));
-                }
-                Some((_, ProjectVerdict::Quarantined(_))) => {
-                    return Ok(ProjectVerdict::Quarantined("parent project is quarantined"));
-                }
-                Some((parent, ProjectVerdict::Visible)) => parent,
-            };
-            if bound_by_parents(record) && !authority.fits_under(&parent.authority()) {
-                return Ok(ProjectVerdict::Quarantined("project slice exceeds parent"));
-            }
-        }
-        Ok(verdict)
+        let effective = ProjectEffective::of(&authority, BTreeSet::new(), bound_by_parents(record));
+        Ok(match super::fold::parent_bounds(self, id, &effective)? {
+            Ok(()) => verdict,
+            Err(verdict) => verdict,
+        })
+    }
+
+    pub(super) fn authority(&self) -> Result<std::rc::Rc<AuthorityFold>> {
+        self.fold()
     }
 
     fn fold(&self) -> Result<std::rc::Rc<AuthorityFold>> {
@@ -231,24 +317,16 @@ impl<'a, 't> ProjectReader<'a, 't> {
             }
             let parent = EntityId::from_hex(&authority.parents[0])
                 .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
-            return Ok(match self.read(parent)? {
-                None => ProjectVerdict::Pending("parent project not yet received"),
-                Some((_, ProjectVerdict::Pending(_))) => {
-                    ProjectVerdict::Pending("parent project pending")
-                }
-                Some((_, ProjectVerdict::Quarantined(_))) => {
-                    ProjectVerdict::Quarantined("parent project is quarantined")
-                }
-                Some((parent_row, ProjectVerdict::Visible)) => {
-                    if parent_row.leader == holder.actor
+            return Ok(match super::validity::parent_view(self, parent)? {
+                Err(verdict) => verdict,
+                Ok(view)
+                    if view.leader == holder.actor
                         && holder.attenuated
-                        && holder.audience.contains(&ScopeId(parent))
-                    {
-                        ProjectVerdict::Visible
-                    } else {
-                        ProjectVerdict::Quarantined("project spawn needs parent leader slip")
-                    }
+                        && holder.audience.contains(&ScopeId(parent)) =>
+                {
+                    ProjectVerdict::Visible
                 }
+                Ok(_) => ProjectVerdict::Quarantined("project spawn needs parent leader slip"),
             });
         };
         // An unsigned earlier state is an owner-door row, whose fields no
@@ -302,13 +380,42 @@ impl<'a, 't> ProjectReader<'a, 't> {
     }
 
     /// Verifies the slip chain and holder signature as of the signed time.
-    fn verify(
+    pub(super) fn verify(
         &self,
         id: EntityId,
         authority: &ProjectAuthority,
         proof: &ProjectWriteProof,
     ) -> Result<std::result::Result<Holder, ProjectVerdict>> {
-        let Ok(slip) = CapabilitySlip::from_token(&proof.slip_wire) else {
+        // A v2 proof over a roster, or a v3 proof without one, signs nothing.
+        let Ok(challenge) =
+            authority.write_challenge(id, proof.version, proof.signed_at, proof.anchor.as_deref())
+        else {
+            return Ok(Err(ProjectVerdict::Quarantined(
+                "invalid project write proof",
+            )));
+        };
+        self.verify_envelope(
+            id,
+            &proof.slip_wire,
+            &challenge,
+            &proof.holder_signature,
+            proof.signed_at,
+            &authority.slice,
+        )
+    }
+
+    /// Verifies a slip's standing at `signed_at`, its holder's signature
+    /// over `challenge`, and a project.write scope over `slice`.
+    pub(super) fn verify_envelope(
+        &self,
+        id: EntityId,
+        slip_wire: &str,
+        challenge: &[u8],
+        holder_signature: &[u8],
+        signed_at: u64,
+        slice: &Scope,
+    ) -> Result<std::result::Result<Holder, ProjectVerdict>> {
+        let Ok(slip) = CapabilitySlip::from_token(slip_wire) else {
             return Ok(Err(ProjectVerdict::Quarantined(
                 "invalid project write slip",
             )));
@@ -324,32 +431,19 @@ impl<'a, 't> ProjectReader<'a, 't> {
         if fold.slips.is_revoked(&slip.claims.slip_id) {
             return Ok(Err(ProjectVerdict::Quarantined("authorizing slip revoked")));
         }
-        // A v2 proof over a roster, or a v3 proof without one, signs nothing.
-        let Ok(challenge) =
-            authority.write_challenge(id, proof.version, proof.signed_at, proof.anchor.as_deref())
+        let Ok(verified) =
+            slip.verify_history(&mint.signer, &fold, signed_at, challenge, holder_signature)
         else {
             return Ok(Err(ProjectVerdict::Quarantined(
                 "invalid project write proof",
             )));
         };
-        let Ok(verified) = slip.verify_history(
-            &mint.signer,
-            &fold,
-            proof.signed_at,
-            &challenge,
-            &proof.holder_signature,
-        ) else {
-            return Ok(Err(ProjectVerdict::Quarantined(
-                "invalid project write proof",
-            )));
-        };
         let scope = verified.scope();
-        let world = ScopeId(authority.slice.world.unwrap_or(id));
+        let world = ScopeId(slice.world.unwrap_or(id));
         if !scope.verbs.contains(&"project.write".to_owned())
             || !scope.bands.contains(&self.kind)
             || !(scope.worlds.contains(&world) || matches!(scope.worlds, ScopeAxis::All))
-            || authority
-                .slice
+            || slice
                 .facet
                 .is_some_and(|facet| !scope.facets.contains(&ScopeId(facet)))
         {

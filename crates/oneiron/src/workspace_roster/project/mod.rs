@@ -9,21 +9,50 @@ mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
 mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
+mod capture;
+mod doors;
+mod fold;
+mod fork_evidence;
+mod history_policy;
 mod leader_chat;
 mod projection;
 mod proof;
 mod read;
+mod refresh;
+mod resolution;
+mod revision;
+mod validity;
 mod widen;
+pub(crate) use capture::{
+    capture_before_tear, capture_project_put, check_revision_put, exportable_revisions_in_txn,
+    projects_touched_by_put, rebuild_project_revision_indexes, refuse_revision_delete,
+    revision_carrier_admissible,
+};
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
 };
+pub use fold::{
+    ProjectDisposition, ProjectEffective, ProjectFrontier, ProjectRank, ProjectWitness,
+};
+pub(crate) use fork_evidence::ProjectForks;
+pub use fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
 pub(crate) use goal::GoalLimits;
 pub use goal::{GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord};
 pub(crate) use goal::{
     admitted_claim_of_project, guard_claim_put as guard_goal_claim_put, guard_goal_delete,
     guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, retire_goal_for_delete,
 };
+pub use history_policy::{
+    DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectHistoryOverBudget, ProjectHistoryPolicy,
+};
+pub(crate) use refresh::refresh_project_frontiers;
+pub use resolution::{ProjectResolution, ProjectSeal};
+pub(crate) use revision::{
+    PROJECT_REVISION_SHORT_ID_PREFIX, decode_revision, is_project_revision_type,
+    project_revision_type,
+};
+pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
 #[cfg(test)]
 mod review_tests;
 pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
@@ -152,6 +181,14 @@ pub struct ProjectRecord {
 const fn default_depth_limit() -> u8 {
     10
 }
+
+/// What dispatch reads of a project: its effective parents and the live
+/// policy depth row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectSpawnView {
+    pub(crate) parents: Vec<String>,
+    pub(crate) depth: u8,
+}
 /// Deepest anchor chain the fold follows before it quarantines the row.
 pub(crate) const MAX_PROJECT_ANCHORS: usize = 64;
 
@@ -257,12 +294,6 @@ impl ProjectAuthority {
                 .map(String::as_str)
                 .collect(),
         }
-    }
-    /// A child never sees more than a parent, and has one level less.
-    pub(crate) fn fits_under(&self, parent: &Self) -> bool {
-        self.depth_limit <= parent.depth_limit
-            && self.depth_remaining < parent.depth_remaining
-            && parent.slice.attenuate(self.slice.clone()).is_ok()
     }
 }
 
@@ -580,9 +611,11 @@ impl Vault {
             .holder_ref;
         let actor = EntityId::from_hex(&holder)?;
         self.with_write_txn_grouped(|txn| {
+            // The parent's effective leader, slice and depth: a rolled-back
+            // stored row grants nothing its signed history does not.
             let parent = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                 .ok_or_else(invalid)?
-                .visible(parent_id)?
+                .effective(parent_id)?
                 .ok_or(RecordError::InvalidProjectBody("missing parent project"))?;
             if parent.leader != actor.to_hex() {
                 return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
@@ -595,9 +628,13 @@ impl Vault {
                 .min(parent.depth_limit)
                 .checked_sub(1)
                 .ok_or(RecordError::InvalidProjectBody("project depth exhausted"))?;
-            parent.slice.attenuate(slice.clone()).map_err(|_| {
-                RecordError::InvalidProjectBody("subproject slice widens its parent")
-            })?;
+            parent
+                .slice
+                .as_ref()
+                .and_then(|parent_slice| parent_slice.attenuate(slice.clone()).ok())
+                .ok_or(RecordError::InvalidProjectBody(
+                    "subproject slice widens its parent",
+                ))?;
             let mut child = ProjectRecord::new(
                 child_id,
                 Some(parent_id),
@@ -713,6 +750,18 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.project_in_txn(&txn, id)
     }
+    /// The stored project's content with the effective authority its signed
+    /// history folds to, when that history serves authority.
+    pub(crate) fn effective_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<(ProjectRecord, ProjectEffective)>> {
+        match ProjectReader::new(&self.store, txn, self.privacy_posture())? {
+            Some(reader) => reader.visible_with_effective(id),
+            None => Ok(None),
+        }
+    }
     /// The stored project if the read fold accepts it, without the depth row.
     pub(crate) fn visible_project_in_txn(
         &self,
@@ -756,10 +805,12 @@ impl Vault {
             return Ok(None);
         };
         let project = EntityId::from_hex(&room.project_id)?;
-        Ok(reader.visible(project)?.map(|project| ProjectRoom {
-            member_ids: project.members(),
-            ..room
-        }))
+        Ok(reader
+            .visible_with_effective(project)?
+            .map(|(project, effective)| ProjectRoom {
+                member_ids: effective.seat_list(project.members()),
+                ..room
+            }))
     }
     /// Owner view of stored project rows the fold hides, each with its reason.
     /// They stay in storage and become visible when their authorization does.
@@ -779,18 +830,34 @@ impl Vault {
             })
             .collect())
     }
-    /// Resolve the root or a named project in the dispatch admission snapshot.
+    /// Resolve the root or a named project in the dispatch admission
+    /// snapshot: its effective parents and its live policy depth.
     pub(crate) fn project_for_spawn_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         requested: Option<EntityId>,
-    ) -> Result<(EntityId, ProjectRecord)> {
+    ) -> Result<(EntityId, ProjectSpawnView)> {
         let id = match requested {
             Some(id) => id,
             None => ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?,
         };
-        let body = self.project_in_txn(txn, id)?.ok_or(Error::EntityNotFound)?;
-        Ok((id, body))
+        let (_, effective) = self
+            .effective_project_in_txn(txn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        let depth = crate::gate::project_depth::resolve_project_depth(
+            &self.store,
+            txn,
+            self.privacy_posture(),
+            id,
+        )?
+        .depth;
+        Ok((
+            id,
+            ProjectSpawnView {
+                parents: effective.parents,
+                depth,
+            },
+        ))
     }
 
     pub fn root_project(&self) -> Result<EntityId> {
@@ -833,6 +900,19 @@ pub(crate) fn root_project_in(
     ROOT.get(store, txn, &())
 }
 
+/// Registers a pack kind under the first free compiled-pack byte.
+fn register_pack_kind(vault: &Vault, prefix: &str) -> Result<u8> {
+    let kind = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
+        ..=crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .find(|byte| {
+            crate::registry::entity_type_registry_entry(*byte).is_none()
+                && vault.structural_kind_registration(*byte).is_none()
+        })
+        .ok_or_else(invalid)?;
+    vault.register_structural_kind(kind, prefix, TypeByteZone::CompiledProduct, PACK)?;
+    Ok(kind)
+}
+
 pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
     let kind = if let Some(kind) = project_type(&vault.store) {
         kind
@@ -840,21 +920,11 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
         if ROOT.contains(&vault.store, &vault.store.env.read_txn()?, &())? {
             return Err(invalid());
         }
-        let kind = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
-            ..=crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
-            .find(|byte| {
-                crate::registry::entity_type_registry_entry(*byte).is_none()
-                    && vault.structural_kind_registration(*byte).is_none()
-            })
-            .ok_or_else(invalid)?;
-        vault.register_structural_kind(
-            kind,
-            PROJECT_SHORT_ID_PREFIX,
-            TypeByteZone::CompiledProduct,
-            PACK,
-        )?;
-        kind
+        register_pack_kind(vault, PROJECT_SHORT_ID_PREFIX)?
     };
+    if revision::project_revision_type(&vault.store).is_none() {
+        register_pack_kind(vault, revision::PROJECT_REVISION_SHORT_ID_PREFIX)?;
+    }
     let (leader, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")?
         .ok_or_else(invalid)?;
@@ -884,5 +954,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
             )
             .apply(txn)?;
         Ok(())
-    })
+    })?;
+    // A vault from before revisions were kept: capture every stored chain once.
+    vault.capture_project_revisions(false)
 }

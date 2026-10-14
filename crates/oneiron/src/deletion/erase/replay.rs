@@ -304,7 +304,11 @@ impl Vault {
         }
         self.store.guard_pack_map_carrier_delete_in_txn(txn, id)?;
         if let Some(header) = self.read_entity_header_in_txn(txn, id)?
-            && crate::registry::is_delete_protected_engine_record(header.entity_type)
+            && (crate::registry::is_delete_protected_engine_record(header.entity_type)
+                || crate::workspace_roster::is_project_revision_type(
+                    &self.store,
+                    header.entity_type,
+                ))
         {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,

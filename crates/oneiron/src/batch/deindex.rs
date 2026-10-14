@@ -32,6 +32,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
     crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
+    crate::workspace_roster::refuse_revision_delete(store, wtxn, id)?;
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(());
     };
@@ -76,6 +77,8 @@ pub(crate) fn deindex_entity(
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
+    // The port's direct delete reaches here without the batch guard.
+    crate::workspace_roster::refuse_revision_delete(store, wtxn, id)?;
     crate::config::failure_signals::purge_tier2_for_source_in_txn(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;

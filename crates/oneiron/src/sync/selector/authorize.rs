@@ -541,7 +541,39 @@ pub(super) fn filter_window_doc(
         });
     }
 
+    // Project revisions (decision 9) never travel on their own scope: each
+    // goes exactly when its PROJECT row does, every one of them whatever
+    // month it was learned in, and none for a withheld project.
+    let mut revision_rows = Vec::new();
+    if let Some(revision_kind) = crate::workspace_roster::project_revision_type(&vault.store) {
+        let mut carriers = BTreeSet::new();
+        map_for_each_value_bytes(&source_entities, |key, blob| {
+            if blob
+                .and_then(EntityMetadataHeader::parse)
+                .is_some_and(|header| header.entity_type == revision_kind)
+                && let Ok(id) = EntityId::from_hex(key)
+            {
+                carriers.insert(id);
+            }
+        });
+        kept.retain(|id| !carriers.contains(id));
+        for project in &kept {
+            if tombstoned.contains(project) {
+                continue;
+            }
+            for companion in
+                crate::workspace_roster::exportable_revisions_in_txn(&vault.store, &rtxn, *project)?
+            {
+                if let Some(raw) = vault.get_raw_in(&rtxn, &companion)? {
+                    revision_rows.push((companion, raw));
+                }
+            }
+        }
+    }
     let out_entities = out.get_map("entities");
+    for (id, raw) in &revision_rows {
+        map_insert_bytes(&out_entities, &id.to_hex(), raw)?;
+    }
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         let Ok(id) = EntityId::from_hex(raw_key) else {

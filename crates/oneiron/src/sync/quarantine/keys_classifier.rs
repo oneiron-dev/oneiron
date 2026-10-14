@@ -165,6 +165,8 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidProjectBody
         | ErrorKind::InvalidProjectRoomBody
         | ErrorKind::ProjectDependencyPending
+        // A remote revision whose derived id another body already holds.
+        | ErrorKind::ProjectRevisionCollision
         | ErrorKind::ResidentOwnerDependencyPending
         | ErrorKind::InvalidPredicate
         | ErrorKind::InvalidEdgeWeight

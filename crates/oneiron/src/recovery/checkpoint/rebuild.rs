@@ -190,6 +190,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
+        crate::workspace_roster::rebuild_project_revision_indexes(&vault.store, txn)?;
         // Runtime budget rows were excluded from the image, not refunded in the billing ledger.
         Ok((rows.len(), texts, embeddings))
     })
@@ -198,6 +199,8 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
 /// Backfills that own their transactions run after the base index transaction.
 pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<()> {
     crate::skill_hub::backfill_content_hash_index_if_needed(vault)?;
+    // Restored PROJECT rows bypassed the staging hook: keep their chains.
+    vault.capture_project_revisions(true)?;
     crate::skill_convert::rebuild_skill_source_index(vault)?;
     crate::edit_distance::routing::rebuild_routing_projection(vault)?;
     crate::edit_distance::reservoir::rebuild_reservoir_index(vault)?;

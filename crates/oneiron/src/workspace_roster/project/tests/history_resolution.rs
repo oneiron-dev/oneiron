@@ -1,0 +1,321 @@
+//! A board fork and its resolution (PR 3 check 6): board holders tie, one
+//! of them signs a resolution naming the tie and a fresh successor, and every
+//! replica installs it in any arrival order.
+use super::super::revision::{ProjectRevision, project_revision_type, revision_entity_id};
+use super::super::*;
+use super::authority::{FIXTURE_HOST, holder_key, replay_authority, replay_project, replay_rows};
+use super::history::{
+    board_signed_s0, copy_of, head_of, ids, open, seats_of, signed_over, without,
+};
+use crate::authority::{CapabilitySlip, HostSlipIssuer, SlipCaveat};
+use ed25519_dalek::Signer;
+
+/// A slip for `holder`, narrowed to `project.write` on `project`.
+pub(super) fn holder_slip(
+    vault: &Vault,
+    holder: EntityId,
+    project: EntityId,
+) -> Result<CapabilitySlip> {
+    let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.binding_key = holder_key(holder).verifying_key().to_bytes();
+    let mut slip = vault.mint_capability_slip(&issuer, claims)?;
+    let mut scope = crate::federation::Scope::top();
+    scope.audience =
+        crate::federation::ScopeAxis::Some(BTreeSet::from([crate::federation::ScopeId(project)]));
+    scope.verbs = crate::federation::ScopeAxis::Some(BTreeSet::from(["project.write".into()]));
+    slip.attenuate(
+        SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        },
+        &holder_key(holder),
+    )?;
+    Ok(slip)
+}
+
+/// A resolution at `anchor` signed by `holder`.
+fn resolution(
+    vault: &Vault,
+    project: EntityId,
+    holder: EntityId,
+    anchor: ProjectRevisionHash,
+    prior: Vec<ProjectRevisionHash>,
+    contenders: Vec<ProjectRevisionHash>,
+    next: ProjectRevisionHash,
+) -> Result<ProjectResolution> {
+    let slip = holder_slip(vault, holder, project)?;
+    let mut resolution = ProjectResolution {
+        anchor,
+        prior,
+        contenders,
+        next,
+        slip_wire: slip.to_token()?,
+        holder_signature: Vec::new(),
+        signed_at: slip.claims.issued_at,
+    };
+    resolution.holder_signature = holder_key(holder)
+        .sign(&slip.binding_transcript(&resolution.challenge(project)?)?)
+        .to_bytes()
+        .to_vec();
+    Ok(resolution)
+}
+
+/// Delivers a revision companion as transport would.
+pub(super) fn put_companion(vault: &Vault, revision: &ProjectRevision, at: u64) -> Result<()> {
+    let kind = project_revision_type(&vault.store).ok_or_else(invalid)?;
+    vault.with_write_txn(|txn| {
+        vault
+            .batch_in()
+            .put_replicated(
+                &revision_entity_id(revision.hash()?)?,
+                kind,
+                TimeRange { start: at, end: at },
+                at,
+                &revision.canonical_bytes()?,
+            )
+            .apply(txn)
+    })
+}
+
+fn envelope(project: EntityId, resolution: ProjectResolution) -> ProjectRevision {
+    ProjectRevision::Resolution {
+        project,
+        resolution,
+    }
+}
+
+fn sorted(mut hashes: Vec<ProjectRevisionHash>) -> Vec<ProjectRevisionHash> {
+    hashes.sort();
+    hashes
+}
+
+fn leader_of(vault: &Vault, id: EntityId) -> Result<Option<String>> {
+    Ok(vault
+        .project_frontier(id)?
+        .and_then(|frontier| frontier.effective)
+        .map(|view| view.leader))
+}
+
+fn verdict_in(
+    vault: &Vault,
+    id: EntityId,
+    hash: ProjectRevisionHash,
+) -> Result<Option<ProjectVerdict>> {
+    Ok(vault
+        .project_revisions(id)?
+        .into_iter()
+        .find_map(|(held, verdict)| (held == hash).then_some(verdict)))
+}
+
+/// Bug repro: board holders B1 and B2 sign competing successors of S0. Main
+/// installs whichever row lands last; the fold ties them until a board
+/// holder's resolution names the tie and a fresh successor N.
+#[cfg(feature = "sync")]
+#[test]
+fn a_board_resolution_settles_a_board_fork_and_conflicting_resolutions_settle_nothing() -> Result<()>
+{
+    let (b1, b2, member, z) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    let origin = tempfile::tempdir()?;
+    let project = board_signed_s0(&open(&origin)?, &[member], &[b1, b2], |_| {})?;
+    let id = project.id;
+    let copies = [copy_of(&origin)?, copy_of(&origin)?, copy_of(&origin)?];
+    let (_crossed_dir, crossed) = copy_of(&origin)?;
+    let vault = open(&origin)?;
+    let s0 = &project.s0;
+    let anchor = head_of(id, s0)?;
+    let (l1, l2, ln) = (EntityId::now(), EntityId::now(), EntityId::now());
+    let c1 = signed_over(&vault, id, s0, b1, |row| {
+        row.leader = l1.to_hex();
+        row.roster.push(l1.to_hex());
+        row.board.push(z.to_hex());
+    })?;
+    vault.put_project(id, &c1, 3)?;
+    let c2 = signed_over(&vault, id, s0, b2, |row| {
+        row.leader = l2.to_hex();
+        row.roster = vec![l2.to_hex(), member.to_hex()];
+    })?;
+    replay_project(&vault, id, &c2, 4)?;
+    assert_eq!(leader_of(&vault, id)?, Some(project.leader.to_hex()));
+    assert_eq!(seats_of(&vault, id), ids(&[member]));
+    // Z sits on C1's board only: its revision over C1 changes nothing.
+    let by_z = signed_over(&vault, id, &c1, z, without(member))?;
+    replay_project(&vault, id, &by_z, 5)?;
+    assert_eq!(seats_of(&vault, id), ids(&[member]));
+    let tied = |vault: &Vault| {
+        vault
+            .project_forks()
+            .into_iter()
+            .filter(|fork| {
+                fork.anchor == anchor
+                    && fork.outcome
+                        == ProjectForkOutcome::Tied {
+                            rank: ProjectRank::Board,
+                        }
+            })
+            .count()
+    };
+    assert_eq!(tied(&vault), 1);
+
+    // B1 settles the tie with a fresh successor N.
+    let n = signed_over(&vault, id, s0, b1, |row| {
+        row.leader = ln.to_hex();
+        row.roster = vec![ln.to_hex(), member.to_hex()];
+    })?;
+    let (h1, h2, hn) = (head_of(id, &c1)?, head_of(id, &c2)?, head_of(id, &n)?);
+    let settle = resolution(&vault, id, b1, anchor, vec![], sorted(vec![h1, h2]), hn)?;
+    let env = envelope(id, settle.clone());
+    vault.resolve_project_fork(id, n.clone(), settle)?;
+    assert_eq!(leader_of(&vault, id)?, Some(ln.to_hex()));
+    let resolved = |vault: &Vault| {
+        vault
+            .project_forks()
+            .into_iter()
+            .filter(|fork| {
+                matches!(fork.outcome, ProjectForkOutcome::Resolved { winner, .. } if winner == hn)
+            })
+            .count()
+    };
+    assert_eq!(resolved(&vault), 1);
+
+    // Every arrival order installs N, the envelope first included.
+    let row_of = |hash| revision_entity_id(hash);
+    let (rc1, rc2, rn, renv) = (row_of(h1)?, row_of(h2)?, row_of(hn)?, row_of(env.hash()?)?);
+    for ((_dir, replica), order) in copies.into_iter().zip([
+        [renv, rc1, rc2, rn],
+        [rn, rc2, renv, rc1],
+        [rc2, rn, rc1, renv],
+    ]) {
+        replay_authority(&vault, &replica)?;
+        for (step, row) in order.iter().enumerate() {
+            replay_rows(&vault, &replica, &[*row])?;
+            if step == 0 && *row == renv {
+                assert!(matches!(
+                    verdict_in(&replica, id, env.hash()?)?,
+                    Some(ProjectVerdict::Pending(_))
+                ));
+            }
+        }
+        assert_eq!(leader_of(&replica, id)?, Some(ln.to_hex()), "{order:?}");
+        assert_eq!(resolved(&replica), 1);
+    }
+
+    // An ordinary revision over N installs live.
+    let after = signed_over(&vault, id, &n, ln, |row| row.depth_remaining -= 1)?;
+    vault.put_project(id, &after, 6)?;
+    assert_eq!(leader_of(&vault, id)?, Some(ln.to_hex()));
+
+    // Refused at admission: unsorted contenders, or fewer than two.
+    let mut unsorted = sorted(vec![h1, h2]);
+    unsorted.reverse();
+    for contenders in [unsorted, vec![h1]] {
+        let bad = resolution(&vault, id, b1, anchor, vec![], contenders, hn)?;
+        assert!(put_companion(&vault, &envelope(id, bad), 7).is_err());
+    }
+    // Quarantined: a contender of another anchor, a signer off S0's board.
+    let stranger = resolution(
+        &vault,
+        id,
+        b1,
+        anchor,
+        vec![],
+        sorted(vec![h1, head_of(id, &by_z)?]),
+        hn,
+    )?;
+    let off_board = resolution(
+        &vault,
+        id,
+        project.leader,
+        anchor,
+        vec![],
+        sorted(vec![h1, h2]),
+        hn,
+    )?;
+    for bad in [stranger, off_board] {
+        let bad = envelope(id, bad);
+        put_companion(&vault, &bad, 8)?;
+        assert!(matches!(
+            verdict_in(&vault, id, bad.hash()?)?,
+            Some(ProjectVerdict::Quarantined(_))
+        ));
+    }
+    assert_eq!(leader_of(&vault, id)?, Some(ln.to_hex()));
+
+    // A late board child nobody named reopens the tie.
+    let c3 = signed_over(&vault, id, s0, b2, |row| row.depth_remaining -= 1)?;
+    replay_project(&vault, id, &c3, 9)?;
+    assert!(matches!(
+        vault.project_frontier(id)?.map(|frontier| frontier.disposition),
+        Some(ProjectDisposition::Fork { rank: ProjectRank::Board, anchor: at, .. }) if at == anchor
+    ));
+
+    // Two resolutions that each name the other's successor settle nothing;
+    // one whose prior names both settles it.
+    replay_authority(&vault, &crossed)?;
+    let n1 = signed_over(&vault, id, s0, b1, |row| {
+        row.leader = l1.to_hex();
+        row.roster.push(l1.to_hex());
+    })?;
+    let n2 = signed_over(&vault, id, s0, b2, |row| {
+        row.leader = l2.to_hex();
+        row.roster.push(l2.to_hex());
+    })?;
+    let (hn1, hn2) = (head_of(id, &n1)?, head_of(id, &n2)?);
+    replay_authority(&vault, &crossed)?;
+    for (at, row) in (10..).zip([&c1, &c2, &n1, &n2]) {
+        replay_project(&crossed, id, row, at)?;
+    }
+    let r1 = resolution(
+        &vault,
+        id,
+        b1,
+        anchor,
+        vec![],
+        sorted(vec![h1, h2, hn2]),
+        hn1,
+    )?;
+    let r2 = resolution(
+        &vault,
+        id,
+        b2,
+        anchor,
+        vec![],
+        sorted(vec![h1, h2, hn1]),
+        hn2,
+    )?;
+    replay_authority(&vault, &crossed)?;
+    let (e1, e2) = (envelope(id, r1), envelope(id, r2));
+    put_companion(&crossed, &e1, 20)?;
+    put_companion(&crossed, &e2, 21)?;
+    assert!(matches!(
+        crossed
+            .project_frontier(id)?
+            .map(|frontier| frontier.disposition),
+        Some(ProjectDisposition::Fork {
+            rank: ProjectRank::Board,
+            ..
+        })
+    ));
+    assert_eq!(seats_of(&crossed, id), ids(&[member]));
+    let r3 = resolution(
+        &vault,
+        id,
+        b1,
+        anchor,
+        sorted(vec![e1.hash()?, e2.hash()?]),
+        sorted(vec![h1, h2, hn2]),
+        hn1,
+    )?;
+    replay_authority(&vault, &crossed)?;
+    put_companion(&crossed, &envelope(id, r3), 22)?;
+    assert_eq!(leader_of(&crossed, id)?, Some(l1.to_hex()));
+    Ok(())
+}

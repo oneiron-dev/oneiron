@@ -194,8 +194,11 @@ impl Vault {
             }
             let source = rooms::room_in(self, txn, room)?;
             let source_project_id = EntityId::from_hex(&source.project_id)?;
-            let source_project: ProjectRecord =
-                record(&self.store, txn, source_project_id, kind)?.ok_or_else(invalid)?;
+            // The source's effective leader and claims scope, as its signed
+            // history folds them.
+            let (_, source_project) = self
+                .effective_project_in_txn(txn, source_project_id)?
+                .ok_or_else(invalid)?;
             // The card's confirmed leader, else the caller's explicit one, is
             // final. Only an unchosen leader falls back to the task holder,
             // then the room host.

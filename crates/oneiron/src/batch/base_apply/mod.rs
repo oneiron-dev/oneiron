@@ -14,61 +14,17 @@ use crate::store::Store;
 
 mod edge;
 mod indexes;
+mod project_history;
+mod replay;
 mod validation;
 
 use self::edge::{apply_edge_op, edge_op_endpoints};
 use self::indexes::{apply_text_index_update, finalize_batch_indexes};
+use self::replay::{ReplayIter, ReplayOps};
 use self::validation::{
     birth_stamp_target, consume_preflight_decisions, mark_unapplied_preflight_decisions,
     take_lapse_decisions, validate_put_type,
 };
-
-// Holds promotion's independent journal clone until apply completes. The
-// iterator retains every unconsumed op on early return; per-op payloads that
-// move into match arms get a Zeroizing owner at the point of consumption.
-struct ReplayOps {
-    ops: Vec<BatchOp>,
-    replay: bool,
-}
-
-impl Drop for ReplayOps {
-    fn drop(&mut self) {
-        if self.replay {
-            for op in &mut self.ops {
-                crate::session_overlay::zeroize_batch_op_payload(op);
-            }
-        }
-    }
-}
-
-impl std::ops::Deref for ReplayOps {
-    type Target = Vec<BatchOp>;
-    fn deref(&self) -> &Self::Target {
-        &self.ops
-    }
-}
-
-struct ReplayIter {
-    remaining: std::vec::IntoIter<BatchOp>,
-    replay: bool,
-}
-
-impl Iterator for ReplayIter {
-    type Item = BatchOp;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.remaining.next()
-    }
-}
-
-impl Drop for ReplayIter {
-    fn drop(&mut self) {
-        if self.replay {
-            for op in self.remaining.as_mut_slice() {
-                crate::session_overlay::zeroize_batch_op_payload(op);
-            }
-        }
-    }
-}
 
 /// Check the decode point while this replay op still owns its buffers. On
 /// pre-match errors no match arm takes ownership, so scrub here before return.
@@ -234,6 +190,7 @@ pub(super) fn apply_ops_with_origin(
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
     let mut project_edge_endpoints = BTreeSet::new();
+    let mut touched_projects = BTreeSet::new();
     let local_chat_turns = super::leader_chat_admission::local_turns(&ops);
     // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
     // inducing type-76 rows are gone, so the full reconciler's
@@ -390,6 +347,24 @@ pub(super) fn apply_ops_with_origin(
                     },
                 )?;
                 consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
+                let revisions = project_history::revision_puts(
+                    store,
+                    (applied.project_revisions.into_iter())
+                        .map(|(revision, bytes)| (revision, bytes, occurred, learned_at)),
+                )?;
+                if !revisions.is_empty() {
+                    apply_ops_with_origin(
+                        store,
+                        config,
+                        analyzer,
+                        wtxn,
+                        revisions,
+                        text_index_trusted,
+                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+                        origin,
+                    )?;
+                }
+                touched_projects.extend(applied.touched_projects);
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
                         store,
@@ -645,6 +620,22 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
+                // Capture before tear (R2-F4): a PROJECT row's signed chain
+                // is kept as revisions before the row goes.
+                let captured = crate::workspace_roster::capture_before_tear(store, wtxn, id)?;
+                let revisions = project_history::revision_puts(store, captured)?;
+                if !revisions.is_empty() {
+                    apply_ops_with_origin(
+                        store,
+                        config,
+                        analyzer,
+                        wtxn,
+                        revisions,
+                        text_index_trusted,
+                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+                        origin,
+                    )?;
+                }
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity_with_machine_history(store, wtxn, &id)?;
                 claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
@@ -699,6 +690,14 @@ pub(super) fn apply_ops_with_origin(
         ));
     }
 
+    // Each touched project's frontier is folded once over the final batch
+    // state, before rooms reconcile against it.
+    crate::workspace_roster::refresh_project_frontiers(
+        store,
+        wtxn,
+        config.privacy.posture,
+        &touched_projects,
+    )?;
     crate::workspace_roster::reconcile_project_rooms(
         store,
         config,

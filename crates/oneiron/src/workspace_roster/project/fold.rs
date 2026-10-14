@@ -1,0 +1,771 @@
+//! The fold over a project's held revisions (decisions 5-7). It is a set
+//! fold: every replica that holds the same revisions and the same folded
+//! authority view reaches the same frontier, whatever order they arrived in.
+//! Rank decides between siblings, the board settles its own ties with a
+//! signed resolution, the owner's seal re-roots the history, and a tie that
+//! stays open seats only the members every contender keeps.
+use super::fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
+use super::history_policy::{ProjectDependencies, ProjectEvidenceSet, ProjectHistoryOverBudget};
+use super::read::{ProjectReader, ProjectVerdict};
+use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin, anchor_of};
+use super::validity::{FoldCx, Step, parent_view};
+use super::*;
+use std::collections::BTreeMap;
+
+/// Why a revision or a project carries no authority. Kept as one list so a
+/// persisted reason maps back to the same static text.
+pub(super) mod reason {
+    pub(crate) const NOT_HELD: &str = "project revision not yet received";
+    pub(crate) const AWAITING_PARENT: &str = "earlier project revision not yet received";
+    pub(crate) const AWAITING_MINT: &str = "authorizing slip not yet received";
+    pub(crate) const FORGED: &str = "project revision signature does not verify";
+    pub(crate) const BOUNDARY_ROSTER: &str = "an unsigned project state carries a roster";
+    pub(crate) const MALFORMED: &str = "project revision authority is malformed";
+    pub(crate) const PARENTLESS: &str = "a parentless project is not this vault's root";
+    pub(crate) const OVER_UNSIGNED: &str = "only the owner may sign over an unsigned project";
+    pub(crate) const AUDIENCE: &str = "project write outside slip audience";
+    pub(crate) const WIDENING: &str = "project widening needs board holder proof";
+    pub(crate) const NOT_LEADER: &str = "only the leader or board may change project authority";
+    pub(crate) const SPAWN: &str = "project spawn needs parent leader slip";
+    pub(crate) const PARENT_MISSING: &str = "parent project not yet received";
+    pub(crate) const PARENT_PENDING: &str = "parent project pending";
+    pub(crate) const PARENT_HIDDEN: &str = "parent project is quarantined";
+    pub(crate) const EXCEEDS_PARENT: &str = "project slice exceeds parent";
+    pub(crate) const CYCLE: &str = "project ancestry cycle";
+    pub(crate) const TOO_DEEP: &str = "project history chain too deep";
+    pub(crate) const NOT_A_STATE: &str = "project envelope names an envelope as a state";
+    pub(crate) const RESOLUTION_SIGNER: &str = "a resolution needs a board holder of its anchor";
+    pub(crate) const RESOLUTION_STRANGER: &str = "a resolution names a revision of another anchor";
+    pub(crate) const RESOLUTION_SUCCESSOR: &str =
+        "a resolution's successor is not a valid board child";
+    pub(crate) const PRIOR_INVALID: &str = "a resolution builds on an invalid resolution";
+    pub(crate) const SEAL_SIGNER: &str = "a seal needs the owner's host slip";
+    pub(crate) const SEAL_SLIP: &str = "a seal and its revision differ in slip";
+    pub(crate) const SEAL_ORDER: &str = "a seal must move forward in time";
+    pub(crate) const SEAL_SUPERSEDES: &str = "a seal supersedes something that is not a seal";
+    pub(crate) const SEAL_NEXT: &str = "a sealed revision is not a valid owner state";
+    pub(crate) const NO_ROOT: &str = "no valid project birth";
+    pub(crate) const NO_RECORD: &str = "project history over budget with no verified frontier";
+    pub(crate) const STALE_RECORD: &str =
+        "project history over budget and its frozen frontier no longer verifies";
+    pub(crate) const UNRESOLVED: &str = "project authority unresolved";
+
+    const ALL: &[&str] = &[
+        NOT_HELD,
+        AWAITING_PARENT,
+        AWAITING_MINT,
+        FORGED,
+        BOUNDARY_ROSTER,
+        MALFORMED,
+        PARENTLESS,
+        OVER_UNSIGNED,
+        AUDIENCE,
+        WIDENING,
+        NOT_LEADER,
+        SPAWN,
+        PARENT_MISSING,
+        PARENT_PENDING,
+        PARENT_HIDDEN,
+        EXCEEDS_PARENT,
+        CYCLE,
+        TOO_DEEP,
+        NOT_A_STATE,
+        RESOLUTION_SIGNER,
+        RESOLUTION_STRANGER,
+        RESOLUTION_SUCCESSOR,
+        PRIOR_INVALID,
+        SEAL_SIGNER,
+        SEAL_SLIP,
+        SEAL_ORDER,
+        SEAL_SUPERSEDES,
+        SEAL_NEXT,
+        NO_ROOT,
+        NO_RECORD,
+        STALE_RECORD,
+        UNRESOLVED,
+    ];
+
+    /// The static text of a persisted reason; a reason this build does not
+    /// know reads as unresolved.
+    pub(crate) fn of(text: &str) -> &'static str {
+        ALL.iter()
+            .find(|known| **known == text)
+            .copied()
+            .unwrap_or(UNRESOLVED)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectRank {
+    /// The parent's leader, not on the parent's board.
+    Leader,
+    /// A board holder at the parent, or the host acting for the owner.
+    Board,
+}
+
+/// The signer's highest role at `parent`, after the signature, slip, scope
+/// and authorization checks; never a role the revision grants itself.
+pub(crate) fn rank_at(parent: &ProjectAuthority, signer: &str) -> Option<ProjectRank> {
+    if signer == "host" || parent.board.iter().any(|holder| holder == signer) {
+        Some(ProjectRank::Board)
+    } else if parent.leader == signer {
+        Some(ProjectRank::Leader)
+    } else {
+        None
+    }
+}
+
+/// What every permission consumer reads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectEffective {
+    pub leader: String,
+    pub board: Vec<String>,
+    pub parents: Vec<String>,
+    pub claims_scope_ref: String,
+    pub seats: BTreeSet<String>,
+    /// `None`: the meet of contradicting slices; nothing fits under it.
+    pub slice: Option<Scope>,
+    pub depth_limit: u8,
+    pub depth_remaining: u8,
+    /// Main's `bound_by_parents` of the witness head: false for an owner
+    /// state (unsigned, or host-signed), which the vault alone caps.
+    pub bound_by_parents: bool,
+}
+
+impl ProjectEffective {
+    pub(super) fn of(
+        authority: &ProjectAuthority,
+        seats: BTreeSet<String>,
+        bound_by_parents: bool,
+    ) -> Self {
+        Self {
+            leader: authority.leader.clone(),
+            board: authority.board.clone(),
+            parents: authority.parents.clone(),
+            claims_scope_ref: authority.claims_scope_ref.clone(),
+            seats,
+            slice: Some(authority.slice.clone()),
+            depth_limit: authority.depth_limit,
+            depth_remaining: authority.depth_remaining,
+            bound_by_parents,
+        }
+    }
+    /// Main's `fits_under` over effective views; a `None` parent slice admits nothing.
+    pub(crate) fn fits_under(&self, parent: &ProjectEffective) -> bool {
+        let Some(parent_slice) = &parent.slice else {
+            return false;
+        };
+        self.depth_limit <= parent.depth_limit
+            && self.depth_remaining < parent.depth_remaining
+            && self
+                .slice
+                .as_ref()
+                .is_none_or(|slice| parent_slice.attenuate(slice.clone()).is_ok())
+    }
+    /// Narrows this view by another state: seats it does not keep leave,
+    /// the slices meet, and the depths take the minimum.
+    pub(super) fn meet(&mut self, other: &ProjectAuthority) {
+        let keep: BTreeSet<&str> = members_of(other);
+        self.seats.retain(|seat| keep.contains(seat.as_str()));
+        self.slice = match &self.slice {
+            Some(slice) => slice_meet(slice, &other.slice),
+            None => None,
+        };
+        self.depth_limit = self.depth_limit.min(other.depth_limit);
+        self.depth_remaining = self.depth_remaining.min(other.depth_remaining);
+    }
+    /// Whether a member sits in the project's home room.
+    pub fn seats(&self, actor: &str) -> bool {
+        self.seats.contains(actor)
+    }
+    /// The seats as a list: in the stored row's order where it agrees, then
+    /// the rest in id order.
+    pub(crate) fn seat_list(&self, stored_order: Vec<String>) -> Vec<String> {
+        let mut seats: Vec<String> = stored_order
+            .into_iter()
+            .filter(|seat| self.seats.contains(seat))
+            .collect();
+        for seat in &self.seats {
+            if !seats.contains(seat) {
+                seats.push(seat.clone());
+            }
+        }
+        seats
+    }
+}
+
+/// The members a state vouches for: its signed roster, else its leader and board.
+pub(super) fn members_of(authority: &ProjectAuthority) -> BTreeSet<&str> {
+    match &authority.roster {
+        Some(roster) => roster.iter().map(String::as_str).collect(),
+        None => std::iter::once(&authority.leader)
+            .chain(&authority.board)
+            .map(String::as_str)
+            .collect(),
+    }
+}
+
+/// Per axis: unconstrained meets constrained, equal values stay, two
+/// different values meet to nothing; resource sets intersect.
+fn slice_meet(a: &Scope, b: &Scope) -> Option<Scope> {
+    fn axis(a: Option<EntityId>, b: Option<EntityId>) -> Option<Option<EntityId>> {
+        match (a, b) {
+            (Some(a), Some(b)) if a != b => None,
+            (a, b) => Some(a.or(b)),
+        }
+    }
+    Some(Scope {
+        world: axis(a.world, b.world)?,
+        facet: axis(a.facet, b.facet)?,
+        relationship: axis(a.relationship, b.relationship)?,
+        project: axis(a.project, b.project)?,
+        readable: a.readable.intersection(&b.readable).cloned().collect(),
+        writable: a.writable.intersection(&b.writable).cloned().collect(),
+    })
+}
+
+/// Whether a signed state fits under a parent project's effective view.
+pub(super) fn authority_fits(authority: &ProjectAuthority, parent: &ProjectEffective) -> bool {
+    ProjectEffective::of(authority, BTreeSet::new(), true).fits_under(parent)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectWitness {
+    pub head: ProjectRevisionHash,
+    /// The head's authority and the proof that signed it, nested anchors
+    /// included: exactly what a new live revision signs over.
+    pub anchor: ProjectAnchor,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectFrontier {
+    pub id: EntityId,
+    pub disposition: ProjectDisposition,
+    /// Present for Unsigned, Settled and Fork, and for OverBudget with a re-checked record.
+    pub witness: Option<ProjectWitness>,
+    pub effective: Option<ProjectEffective>,
+}
+
+impl ProjectFrontier {
+    /// The verdict main's readers see: visible exactly when authority is served.
+    pub(crate) fn verdict(&self) -> ProjectVerdict {
+        if self.effective.is_some() {
+            return ProjectVerdict::Visible;
+        }
+        self.disposition.verdict()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "disposition", rename_all = "snake_case")]
+pub enum ProjectDisposition {
+    /// No signed history with a known mint, and main's stored-row reader accepts the row.
+    Unsigned,
+    Settled,
+    /// Tied top-rank children of `anchor`: none installed.
+    Fork {
+        anchor: ProjectRevisionHash,
+        rank: ProjectRank,
+        contenders: BTreeSet<ProjectRevisionHash>,
+    },
+    /// Signed history exists but its root waits on a mint, parent or parent project.
+    Pending {
+        reason: String,
+    },
+    /// Signed history exists and no valid root survives.
+    Unauthorized {
+        reason: String,
+    },
+    /// Two or more valid births: no leader or board until the owner seals.
+    ConflictingBirths {
+        births: BTreeSet<ProjectRevisionHash>,
+    },
+    ConflictingSeals {
+        seals: BTreeSet<ProjectRevisionHash>,
+    },
+    /// Past the budget: the persisted frozen frontier and the state it froze in.
+    OverBudget {
+        state: ProjectHistoryOverBudget,
+        frozen: Box<ProjectDisposition>,
+    },
+}
+
+impl ProjectDisposition {
+    pub(super) fn pending(reason: &'static str) -> Self {
+        Self::Pending {
+            reason: reason.to_owned(),
+        }
+    }
+    pub(super) fn unauthorized(reason: &'static str) -> Self {
+        Self::Unauthorized {
+            reason: reason.to_owned(),
+        }
+    }
+    /// The verdict of a disposition that serves no authority.
+    pub(crate) fn verdict(&self) -> ProjectVerdict {
+        match self {
+            Self::Pending { reason } => ProjectVerdict::Pending(reason::of(reason)),
+            Self::Unauthorized { reason } => ProjectVerdict::Quarantined(reason::of(reason)),
+            Self::ConflictingBirths { .. } | Self::ConflictingSeals { .. } => {
+                ProjectVerdict::Quarantined(reason::UNRESOLVED)
+            }
+            Self::OverBudget { state, .. } if state.frozen_head.is_none() => {
+                ProjectVerdict::Quarantined(reason::STALE_RECORD)
+            }
+            _ => ProjectVerdict::Quarantined(reason::UNRESOLVED),
+        }
+    }
+    fn of_verdict(verdict: ProjectVerdict) -> Self {
+        match verdict {
+            ProjectVerdict::Pending(reason) => Self::pending(reason),
+            ProjectVerdict::Quarantined(reason) => Self::unauthorized(reason),
+            ProjectVerdict::Visible => Self::unauthorized(reason::UNRESOLVED),
+        }
+    }
+}
+
+pub(crate) struct ProjectFold {
+    pub(crate) frontier: ProjectFrontier,
+    pub(crate) verdicts: BTreeMap<ProjectRevisionHash, ProjectVerdict>,
+    /// Every node the served view relies on.
+    pub(crate) dependencies: ProjectDependencies,
+    pub(crate) forks: Vec<ProjectForkEvidence>,
+    pub(crate) evidence: ProjectEvidenceSet,
+}
+
+/// What one fold settles: the root, the path and where the walk stopped.
+struct Walk {
+    root: ProjectRevisionHash,
+    seal: Option<ProjectRevisionHash>,
+    path: Vec<ProjectRevisionHash>,
+    resolutions: BTreeSet<ProjectRevisionHash>,
+    end: Option<(ProjectRank, BTreeSet<ProjectRevisionHash>)>,
+}
+
+/// Folds one project's held revisions within budget. `stored` is the PROJECT
+/// row; main's stored-row reader judges it when no signed history exists.
+pub(crate) fn fold_project(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> Result<ProjectFold> {
+    let (reader, id, held) = (cx.reader, cx.id, cx.held);
+    let mut fold = ProjectFold {
+        frontier: ProjectFrontier {
+            id,
+            disposition: ProjectDisposition::Settled,
+            witness: None,
+            effective: None,
+        },
+        verdicts: BTreeMap::new(),
+        dependencies: ProjectDependencies::default(),
+        forks: Vec::new(),
+        evidence: ProjectEvidenceSet::default(),
+    };
+    let walk = match root_and_walk(cx, stored)? {
+        Ok(walk) => walk,
+        Err(frontier) => {
+            fold.frontier = frontier;
+            finish(cx, &mut fold, None)?;
+            return Ok(fold);
+        }
+    };
+    let head = *walk.path.last().unwrap_or(&walk.root);
+    let (disposition, witness_head, contenders) = match &walk.end {
+        None => (ProjectDisposition::Settled, head, BTreeSet::new()),
+        Some((rank, contenders)) => (
+            ProjectDisposition::Fork {
+                anchor: head,
+                rank: *rank,
+                contenders: contenders.clone(),
+            },
+            head,
+            contenders.clone(),
+        ),
+    };
+    let Some(head_authority) = cx.authority_of(&witness_head) else {
+        fold.frontier.disposition = ProjectDisposition::unauthorized(reason::NOT_A_STATE);
+        finish(cx, &mut fold, Some(&walk))?;
+        return Ok(fold);
+    };
+    let bound = cx
+        .signer(&witness_head)
+        .is_some_and(|signer| signer != "host");
+    let seats = members_of(head_authority)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let mut effective = ProjectEffective::of(head_authority, seats, bound);
+    for contender in &contenders {
+        if let Some(authority) = cx.authority_of(contender) {
+            effective.meet(authority);
+        }
+    }
+    fold.dependencies = ProjectDependencies {
+        path: walk.path.clone(),
+        contenders: contenders.iter().copied().collect(),
+        resolutions: walk.resolutions.iter().copied().collect(),
+        seal: walk.seal,
+    };
+    let witness = anchor_of(held, witness_head).map(|anchor| ProjectWitness {
+        head: witness_head,
+        anchor,
+    });
+    match parent_bounds(reader, id, &effective)? {
+        Ok(()) => {
+            fold.frontier.disposition = disposition;
+            fold.frontier.witness = witness;
+            fold.frontier.effective = Some(effective);
+        }
+        Err(verdict) => fold.frontier.disposition = ProjectDisposition::of_verdict(verdict),
+    }
+    finish(cx, &mut fold, Some(&walk))?;
+    Ok(fold)
+}
+
+/// Step 4: a view bound by its parents fits under each parent's effective
+/// view, and every parent carries authority.
+pub(super) fn parent_bounds(
+    reader: &ProjectReader<'_, '_>,
+    id: EntityId,
+    effective: &ProjectEffective,
+) -> Result<std::result::Result<(), ProjectVerdict>> {
+    if Some(id) == reader.root() {
+        return Ok(Ok(()));
+    }
+    if effective.parents.is_empty() {
+        return Ok(Err(ProjectVerdict::Quarantined(reason::PARENTLESS)));
+    }
+    for parent in &effective.parents {
+        let parent = EntityId::from_hex(parent)
+            .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
+        match parent_view(reader, parent)? {
+            Err(verdict) => return Ok(Err(verdict)),
+            Ok(view) if effective.bound_by_parents && !effective.fits_under(&view) => {
+                return Ok(Err(ProjectVerdict::Quarantined(reason::EXCEEDS_PARENT)));
+            }
+            Ok(_) => {}
+        }
+    }
+    Ok(Ok(()))
+}
+
+/// Picks the root (a seal tip, else the one birth) and walks to the head.
+/// `Err` carries a frontier with no signed root.
+fn root_and_walk(
+    cx: &FoldCx<'_, '_, '_>,
+    stored: &ProjectRecord,
+) -> Result<std::result::Result<Walk, ProjectFrontier>> {
+    let held = cx.held;
+    let mut seals = BTreeSet::new();
+    let mut births = BTreeSet::new();
+    // Without a root, the first reason in hash order a root candidate waits
+    // or fails for: the same set gives the same reason.
+    let mut pending: Option<&'static str> = None;
+    let mut refused: Option<&'static str> = None;
+    let mut signed_history = false;
+    for (hash, row) in &held.rows {
+        match &row.revision {
+            ProjectRevision::Seal { .. } => match cx.verdict(*hash)? {
+                ProjectVerdict::Visible => {
+                    seals.insert(*hash);
+                }
+                ProjectVerdict::Pending(why) => {
+                    pending.get_or_insert(why);
+                }
+                ProjectVerdict::Quarantined(_) => {}
+            },
+            ProjectRevision::Signed { parent, .. } => {
+                if cx.origin(*hash)? == RevisionOrigin::Authenticated {
+                    signed_history = true;
+                }
+                if parent.is_none() {
+                    match cx.verdict(*hash)? {
+                        ProjectVerdict::Visible => {
+                            births.insert(*hash);
+                        }
+                        ProjectVerdict::Pending(why) => {
+                            pending.get_or_insert(why);
+                        }
+                        ProjectVerdict::Quarantined(why) => {
+                            refused.get_or_insert(why);
+                        }
+                    }
+                }
+            }
+            ProjectRevision::Boundary { .. } => {
+                if cx.verdict(*hash)? == ProjectVerdict::Visible {
+                    let mut built_on = false;
+                    for child in held.children_of(hash) {
+                        match cx.verdict(*child)? {
+                            ProjectVerdict::Visible => built_on = true,
+                            ProjectVerdict::Pending(why) => {
+                                pending.get_or_insert(why);
+                            }
+                            ProjectVerdict::Quarantined(why) => {
+                                refused.get_or_insert(why);
+                            }
+                        }
+                    }
+                    if built_on {
+                        births.insert(*hash);
+                    }
+                }
+            }
+            ProjectRevision::Resolution { .. } => {}
+        }
+    }
+    let (root, seal) = if !seals.is_empty() {
+        let tips = seal_tips(cx)?;
+        let mut only = tips.iter();
+        match (only.next(), only.next()) {
+            (Some(tip), None) => match cx.row(tip) {
+                Some(ProjectRevision::Seal { seal, .. }) => (seal.next, Some(*tip)),
+                _ => return Ok(Err(no_root(cx.id, reason::SEAL_NEXT))),
+            },
+            _ => {
+                return Ok(Err(ProjectFrontier {
+                    id: cx.id,
+                    disposition: ProjectDisposition::ConflictingSeals { seals: tips },
+                    witness: None,
+                    effective: None,
+                }));
+            }
+        }
+    } else {
+        let mut only = births.iter();
+        match (only.next(), only.next()) {
+            (Some(birth), None) => (*birth, None),
+            (Some(_), Some(_)) => {
+                return Ok(Err(ProjectFrontier {
+                    id: cx.id,
+                    disposition: ProjectDisposition::ConflictingBirths { births },
+                    witness: None,
+                    effective: None,
+                }));
+            }
+            (None, _) if !signed_history => return Ok(Err(unsigned(cx, stored)?)),
+            (None, _) => {
+                return Ok(Err(match pending {
+                    Some(why) => ProjectFrontier {
+                        id: cx.id,
+                        disposition: ProjectDisposition::pending(why),
+                        witness: None,
+                        effective: None,
+                    },
+                    None => no_root(cx.id, refused.unwrap_or(reason::NO_ROOT)),
+                }));
+            }
+        }
+    };
+    let mut walk = Walk {
+        root,
+        seal,
+        path: vec![root],
+        resolutions: BTreeSet::new(),
+        end: None,
+    };
+    let mut node = root;
+    loop {
+        let (step, _, settlement) = cx.step(node)?;
+        match step {
+            Step::Head => break,
+            Step::Advance { winner, resolution } => {
+                if resolution.is_some() {
+                    walk.resolutions.extend(settlement.closure.iter().copied());
+                }
+                walk.path.push(winner);
+                node = winner;
+            }
+            Step::Tie { rank, contenders } => {
+                walk.end = Some((rank, contenders));
+                break;
+            }
+        }
+    }
+    Ok(Ok(walk))
+}
+
+fn no_root(id: EntityId, why: &'static str) -> ProjectFrontier {
+    ProjectFrontier {
+        id,
+        disposition: ProjectDisposition::unauthorized(why),
+        witness: None,
+        effective: None,
+    }
+}
+
+/// Main's stored-row verdict, translated: Visible serves the row as main
+/// reads it; Pending and Quarantined serve no authority.
+fn unsigned(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> Result<ProjectFrontier> {
+    let id = cx.id;
+    Ok(match cx.reader.judge_stored(id, stored)? {
+        ProjectVerdict::Visible => {
+            let authority = stored.authority();
+            let head = revision::revisions_of(id, &stored.anchor())?
+                .last()
+                .map(|(hash, _)| *hash);
+            let seats = stored.members().into_iter().collect();
+            ProjectFrontier {
+                id,
+                disposition: ProjectDisposition::Unsigned,
+                witness: head.map(|head| ProjectWitness {
+                    head,
+                    anchor: stored.anchor(),
+                }),
+                effective: Some(ProjectEffective::of(
+                    &authority,
+                    seats,
+                    read::bound_by_parents(stored),
+                )),
+            }
+        }
+        verdict => ProjectFrontier {
+            id,
+            disposition: ProjectDisposition::of_verdict(verdict),
+            witness: None,
+            effective: None,
+        },
+    })
+}
+
+/// Fills the verdicts, the fork evidence over the whole authenticated held
+/// DAG and the evidence set the record keeps.
+fn finish(cx: &FoldCx<'_, '_, '_>, fold: &mut ProjectFold, walk: Option<&Walk>) -> Result<()> {
+    for hash in cx.held.rows.keys() {
+        fold.verdicts.insert(*hash, cx.verdict(*hash)?);
+    }
+    let on_path: BTreeSet<ProjectRevisionHash> = walk
+        .map(|walk| walk.path.iter().copied().collect())
+        .unwrap_or_default();
+    let roots: Vec<ProjectRevisionHash> = match walk {
+        Some(walk) => vec![walk.root],
+        None => cx
+            .held
+            .rows
+            .iter()
+            .filter(|(hash, row)| {
+                matches!(row.revision, ProjectRevision::Boundary { .. })
+                    || matches!(row.revision, ProjectRevision::Signed { parent: None, .. })
+                        && fold.verdicts.get(hash) == Some(&ProjectVerdict::Visible)
+            })
+            .map(|(hash, _)| *hash)
+            .collect(),
+    };
+    let mut seen = BTreeSet::new();
+    let mut todo = roots.clone();
+    while let Some(node) = todo.pop() {
+        if !seen.insert(node) {
+            continue;
+        }
+        let (step, valid, settlement) = cx.step(node)?;
+        todo.extend(valid.iter().copied());
+        if valid.len() < 2 {
+            continue;
+        }
+        let outcome = match step {
+            Step::Head => continue,
+            Step::Advance {
+                winner,
+                resolution: Some(resolution),
+            } if settlement.tip == Some(resolution) => {
+                ProjectForkOutcome::Resolved { resolution, winner }
+            }
+            Step::Advance { winner, .. } => ProjectForkOutcome::Ranked { winner },
+            Step::Tie { rank, .. } => ProjectForkOutcome::Tied { rank },
+        };
+        fold.forks.push(ProjectForkEvidence {
+            project: cx.id,
+            anchor: node,
+            children: valid,
+            outcome,
+            on_path: on_path.contains(&node),
+        });
+    }
+    // The counted set: authenticated signed rows and envelopes reachable
+    // from the root (a seal tip counts what descends from its revision).
+    let mut counted = BTreeSet::new();
+    for node in &seen {
+        if cx.origin(*node)? == RevisionOrigin::Authenticated
+            && matches!(cx.row(node), Some(ProjectRevision::Signed { .. }))
+        {
+            counted.insert(*node);
+        }
+        for envelope in cx.held.resolutions_at(node) {
+            if cx.origin(*envelope)? == RevisionOrigin::Authenticated {
+                counted.insert(*envelope);
+            }
+        }
+    }
+    if let Some(seal) = walk.and_then(|walk| walk.seal) {
+        counted.insert(seal);
+    }
+    fold.evidence = ProjectEvidenceSet::of(walk.map(|walk| walk.root), &counted);
+    Ok(())
+}
+
+/// The valid seals no valid seal supersedes.
+pub(super) fn seal_tips(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevisionHash>> {
+    let mut seals = BTreeMap::new();
+    for hash in &cx.held.seals {
+        if let Some(ProjectRevision::Seal { seal, .. }) = cx.row(hash)
+            && cx.verdict(*hash)? == ProjectVerdict::Visible
+        {
+            seals.insert(*hash, seal);
+        }
+    }
+    let superseded: BTreeSet<ProjectRevisionHash> = seals
+        .values()
+        .flat_map(|seal| seal.supersedes.iter().copied())
+        .collect();
+    Ok(seals
+        .keys()
+        .filter(|hash| !superseded.contains(hash))
+        .copied()
+        .collect())
+}
+
+/// How many revisions the budget counts (point H): authenticated signed rows
+/// and envelopes, read from the index. Under one standing seal the fold
+/// restarts at its revision, so only what descends from it counts.
+pub(super) fn budget_count(cx: &FoldCx<'_, '_, '_>) -> Result<u64> {
+    let tips = seal_tips(cx)?;
+    let mut only = tips.iter();
+    let (Some(tip), None) = (only.next(), only.next()) else {
+        return Ok(cx
+            .held
+            .rows
+            .values()
+            .filter(|row| {
+                row.origin == RevisionOrigin::Authenticated
+                    && !matches!(row.revision, ProjectRevision::Boundary { .. })
+            })
+            .count() as u64);
+    };
+    let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip) else {
+        return Ok(0);
+    };
+    let mut count = 1_u64;
+    let mut seen = BTreeSet::new();
+    let mut todo = vec![seal.next];
+    while let Some(node) = todo.pop() {
+        if !seen.insert(node) {
+            continue;
+        }
+        if cx
+            .held
+            .get(&node)
+            .is_some_and(|row| row.origin == RevisionOrigin::Authenticated)
+        {
+            count += 1;
+        }
+        for envelope in cx.held.resolutions_at(&node) {
+            if cx
+                .held
+                .get(envelope)
+                .is_some_and(|row| row.origin == RevisionOrigin::Authenticated)
+            {
+                count += 1;
+            }
+        }
+        todo.extend(cx.held.children_of(&node).copied());
+    }
+    Ok(count)
+}

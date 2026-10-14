@@ -242,6 +242,9 @@ pub struct StoreCore {
     /// Rows the authority doors refused because a key a handoff this vault
     /// holds retired signed them (OF-166 evidence). Never persisted.
     pub(crate) authority_handoff_equivocations: crate::authority::HandoffEquivocations,
+    /// Forks the project folds over committed snapshots found (decision 10
+    /// evidence). Never persisted.
+    pub(crate) project_forks: crate::workspace_roster::ProjectForks,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,

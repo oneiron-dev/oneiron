@@ -1,4 +1,9 @@
 mod authority;
+mod history;
+mod history_budget;
+mod history_doors;
+mod history_resolution;
+mod history_transport;
 mod support;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::EdgeKind;

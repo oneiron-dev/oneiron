@@ -167,8 +167,9 @@ impl ScopedRead<'_> {
                 if header.entity_type != kind {
                     return Err(Error::CorruptedIndex("weave project kind"));
                 }
-                // A row the project read fold hides never reaches a report.
-                let Some(record) = project_fold
+                // A row the project read fold hides never reaches a report,
+                // and a subject's role is the one its signed history folds to.
+                let Some((record, effective)) = project_fold
                     .as_ref()
                     .map(|fold| fold.visible_body(id, &raw[ENTITY_METADATA_HEADER_LEN..]))
                     .transpose()?
@@ -178,9 +179,9 @@ impl ScopedRead<'_> {
                 };
                 if subject.is_none_or(|id| {
                     let who = id.to_hex();
-                    record.leader == who
-                        || record.roster.contains(&who)
-                        || record.board.contains(&who)
+                    effective.leader == who
+                        || effective.seats.contains(&who)
+                        || effective.board.contains(&who)
                 }) {
                     project_ids.insert(id);
                     projects.push((id, record));

@@ -610,3 +610,11 @@ pub(crate) mod wiped_rows {
         WATCH.with_borrow(|watch| watch.as_ref().map_or(0, |(_, count)| *count))
     }
 }
+
+pub(super) fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+    if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
+        crate::gate::normalize_policy_manifest_scope(data)
+    } else {
+        None
+    }
+}

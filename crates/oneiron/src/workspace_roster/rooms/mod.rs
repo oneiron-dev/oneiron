@@ -51,8 +51,9 @@ pub(super) const THREAD_CHILDREN: SideTable<(EntityId, EntityId, EntityId), Enti
 fn invalid() -> Error {
     Error::InvalidConfig("invalid room operation".into())
 }
-/// The room as its project's proof vouches for it: the stored room must match
-/// the stored project, and its members are the ones that proof authenticates.
+/// The room as its project's signed history vouches for it: the stored room
+/// must match the stored project, and its members and claims scope are the
+/// project's effective seats and scope (decision 7).
 pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<ProjectRoom> {
     let mut room: ProjectRoom = super::project::record(
         &vault.store,
@@ -62,13 +63,14 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     )?
     .ok_or_else(invalid)?;
     let project_id = EntityId::from_hex(&room.project_id)?;
-    let project = vault
-        .visible_project_in_txn(txn, project_id)?
+    let (project, effective) = vault
+        .effective_project_in_txn(txn, project_id)?
         .ok_or_else(invalid)?;
     if project.roster != room.member_ids || project.claims_scope_ref != room.claims_scope_ref {
         return Err(invalid());
     }
-    room.member_ids = project.members();
+    room.member_ids = effective.seat_list(project.members());
+    room.claims_scope_ref = effective.claims_scope_ref;
     Ok(room)
 }
 pub(in crate::workspace_roster) fn require_member(

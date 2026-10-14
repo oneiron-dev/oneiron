@@ -21,19 +21,38 @@ pub(crate) fn deindex_project_room(
             crate::error::RecordError::InvalidProjectBody("cannot delete root project").into(),
         );
     }
-    for row in store.type_index.prefix_iter(txn, &[header.entity_type])? {
-        let (key, _) = row?;
-        let child_id = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project type index"))?,
-        )?;
-        if let Some(child) = record::<ProjectRecord>(store, txn, child_id, header.entity_type)?
-            && child.parents.contains(&id.to_hex())
-        {
-            return Err(
-                crate::error::RecordError::InvalidProjectBody("project has live children").into(),
-            );
+    {
+        // Each child names its parents as its signed history folds them; a
+        // child whose history serves no authority keeps its stored claim.
+        let reader = super::read::ProjectReader::new(store, txn, store.privacy_posture)?
+            .map(super::read::ProjectReader::uncommitted);
+        for row in store.type_index.prefix_iter(txn, &[header.entity_type])? {
+            let (key, _) = row?;
+            let child_id = EntityId::from_bytes(
+                key[1..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("project type index"))?,
+            )?;
+            if child_id == *id {
+                continue;
+            }
+            let effective = match &reader {
+                Some(reader) => reader.effective(child_id)?,
+                None => None,
+            };
+            let parents = match effective {
+                Some(view) => view.parents,
+                None => match record::<ProjectRecord>(store, txn, child_id, header.entity_type)? {
+                    Some(child) => child.parents,
+                    None => continue,
+                },
+            };
+            if parents.contains(&id.to_hex()) {
+                return Err(crate::error::RecordError::InvalidProjectBody(
+                    "project has live children",
+                )
+                .into());
+            }
         }
     }
     origin::deindex_origin(store, txn, *id)?;

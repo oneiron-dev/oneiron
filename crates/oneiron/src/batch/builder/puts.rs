@@ -3,7 +3,6 @@
 
 use super::super::*;
 use super::BatchBuilder;
-#[cfg(any(feature = "sync", test))]
 use super::ops::replicated_put_op;
 
 use crate::Vault;
@@ -370,6 +369,34 @@ impl BatchBuilder<'_> {
         ) {
             self.federated_puts.push(self.ops.len());
         }
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::Replicated(self.ops.len()));
+        }
+        self.ops.push(replicated_put_op(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+        ));
+        self
+    }
+}
+
+impl BatchBuilder<'_> {
+    /// Stages a row of the engine's own signed project history through the
+    /// replicated-shape admission: a captured revision companion (the arm
+    /// re-derives its id from its bytes, decision 8), or a sealed PROJECT row
+    /// the owner's seal door already verified. No public door reaches it.
+    pub(crate) fn put_engine_history(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
         if self.validation_error.is_none() {
             self.commit_checks
                 .push(CommitCheck::Replicated(self.ops.len()));

@@ -165,6 +165,7 @@ impl Store {
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             authority_fold_cache: Mutex::new(None),
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
+            project_forks: crate::workspace_roster::ProjectForks::default(),
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             machine_history_issuer: Mutex::new(None),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
