@@ -288,13 +288,18 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
 }
 
 /// A removal keeps the widening it saw, though the machine was not the
-/// owner's once before: what an earlier "yours" taken away had seen never
-/// narrows what a later one saw (Sol P2 round 5, F1).
+/// owner's once before, for one revision or a run of them: what an earlier
+/// "yours" taken away had seen never narrows what a later one saw (Sol P2
+/// round 5, F1; round 7, F1).
 #[test]
 fn a_removal_keeps_what_it_saw_after_an_earlier_not_mine_period() {
     let yours = MachineRole::Owned(MachineOwnership::Yours);
     let work = MachineRole::Owned(MachineOwnership::WorkSchool);
-    for earlier in [vec![work, yours], vec![yours, work, yours]] {
+    for earlier in [
+        vec![work, yours],
+        vec![yours, work, yours],
+        vec![work, work, yours],
+    ] {
         let host = host();
         let world = world_row(&host);
         let (laptop, laptop_key) = other_machine(&host, 84, earlier[0]);
@@ -1089,11 +1094,11 @@ fn a_custodial_mark_acknowledges_no_widening() {
     assert!(!fold.world_readable_on(world, Destination::Unknown));
 }
 
-/// A removal that takes away a "yours" no longer standing acknowledges
-/// nothing, from the owner's door or crafted: two divergent revisions at one
-/// revision leave the laptop conflicted before it is removed (Wonder P2
-/// round 2, W2), or once a removal signed on one of them meets the other
-/// (round 3, W2).
+/// A widening signed under a "yours" revision that turns out to have a
+/// divergent sibling never counts, whoever removes the machine and whatever
+/// the removal lists: from the owner's door once both siblings are in, crafted
+/// on both, or signed on the widening's own sibling before the other arrives
+/// (Wonder P2 round 2, W2; round 3, W2; Sol P2 round 7, F2).
 #[test]
 fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
     for removal in ["door", "crafted", "on one sibling"] {
@@ -1101,24 +1106,14 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
         let world = world_row(&host);
         let (laptop, laptop_key) =
             other_machine(&host, 86, MachineRole::Owned(MachineOwnership::Yours));
-        land(
-            &host,
-            &[edit_by(
-                &host,
-                laptop,
-                &laptop_key,
-                world,
-                settings(ReadLocation::OneMachine(laptop)),
-            )],
-        );
-        let widen = edit_by(
+        let narrow = edit_by(
             &host,
             laptop,
             &laptop_key,
             world,
-            settings(ReadLocation::Everywhere),
+            settings(ReadLocation::OneMachine(laptop)),
         );
-        let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
+        land(&host, std::slice::from_ref(&narrow));
         let fold = host.vault.authority_fold().unwrap();
         let current = fold.machine(laptop).unwrap().profile.clone();
         let sibling = |seen_world_edits| {
@@ -1129,9 +1124,41 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
             };
             next_entry(&host.issuer, &fold, AuthorityOp::MachineProfile(profile), 3).unwrap()
         };
-        let siblings = [sibling(BTreeSet::new()), sibling(seen.clone())];
+        let siblings = [
+            sibling(BTreeSet::new()),
+            sibling(BTreeSet::from([authority_entry_hash(&narrow).unwrap()])),
+        ];
         land(&host, &siblings);
+        // The laptop widens on one sibling, where it is still the owner's.
+        let mut parents: Vec<_> = [&siblings[0], &narrow]
+            .map(|entry| authority_entry_hash(entry).unwrap())
+            .into();
+        parents.sort();
+        let widen = sign_ed(
+            unsigned_entry(
+                fold.vault_id,
+                2,
+                parents,
+                AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                    world,
+                    owner: host.owner.actor(),
+                    machine: laptop,
+                    settings: settings(ReadLocation::Everywhere),
+                }),
+                authority_key_from_ed(&laptop_key),
+                3,
+            ),
+            &laptop_key,
+        );
+        let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
         land(&host, std::slice::from_ref(&widen));
+        assert!(
+            host.vault
+                .authority_fold()
+                .unwrap()
+                .valid_entries
+                .contains(&authority_entry_hash(&widen).unwrap())
+        );
         assert!(
             host.vault
                 .authority_fold()
@@ -1186,74 +1213,99 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
 
 /// A removal keeps a widening it never saw narrow, though a branch that never
 /// saw the removal marked the machine "yours" again and removed it having
-/// seen the widening: takings on branches that never saw each other compete,
-/// whatever their revisions (Sol P2 round 6, F3).
+/// seen the widening (Sol P2 round 6, F3), after a demotion of its own (round
+/// 7, F4), or though a "yours" text follows the removal (round 7, F3).
 #[test]
 fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
-    let host = host();
-    let world = world_row(&host);
     let yours = MachineRole::Owned(MachineOwnership::Yours);
-    let (laptop, laptop_key) = other_machine(&host, 89, yours);
-    land(
-        &host,
-        &[edit_by(
+    let work = MachineRole::Owned(MachineOwnership::WorkSchool);
+    let removed = MachineRole::Removed;
+    for (roles, marked_again) in [
+        ([yours, yours, removed], false),
+        ([work, yours, removed], false),
+        ([yours, yours, removed], true),
+    ] {
+        let host = host();
+        let world = world_row(&host);
+        let (laptop, laptop_key) = other_machine(&host, 89, yours);
+        land(
+            &host,
+            &[edit_by(
+                &host,
+                laptop,
+                &laptop_key,
+                world,
+                settings(ReadLocation::MyMachines),
+            )],
+        );
+        let before = host.vault.authority_fold().unwrap();
+        let widen = edit_by(
             &host,
             laptop,
             &laptop_key,
             world,
-            settings(ReadLocation::MyMachines),
-        )],
-    );
-    let before = host.vault.authority_fold().unwrap();
-    let widen = edit_by(
-        &host,
-        laptop,
-        &laptop_key,
-        world,
-        settings(ReadLocation::Everywhere),
-    );
-    host.vault
-        .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
-        .unwrap();
-    land(&host, std::slice::from_ref(&widen));
-    assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
-
-    // The other branch, from before the removal.
-    let mut seq = host.vault.authority_fold().unwrap().append_sequences[&host.issuer.public_key()];
-    let mut parents: Vec<_> = before.append_heads.iter().copied().collect();
-    let current = before.machine(laptop).unwrap().profile.clone();
-    let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
-    let mut branch = Vec::new();
-    for (revision, role) in [(2, yours), (3, yours), (4, MachineRole::Removed)] {
-        seq += 1;
-        let profile = MachineProfile {
-            role,
-            revision,
-            seen_world_edits: seen.clone(),
-            ..current.clone()
-        };
-        let entry = host
-            .issuer
-            .sign_entry(
-                before.vault_id,
-                seq,
-                parents,
-                AuthorityOp::MachineProfile(profile),
-                3,
-            )
-            .unwrap();
-        parents = vec![authority_entry_hash(&entry).unwrap()];
-        branch.push(entry);
-    }
-    land(&host, &branch);
-    let fold = host.vault.authority_fold().unwrap();
-    for entry in &branch {
-        assert!(
-            fold.valid_entries
-                .contains(&authority_entry_hash(entry).unwrap())
+            settings(ReadLocation::Everywhere),
         );
+        host.vault
+            .set_machine_role(&host.issuer, &host.owner, laptop, removed)
+            .unwrap();
+        land(&host, std::slice::from_ref(&widen));
+        if marked_again {
+            let fold = host.vault.authority_fold().unwrap();
+            let current = fold.machine(laptop).unwrap().profile.clone();
+            let profile = MachineProfile {
+                role: yours,
+                revision: current.revision + 1,
+                ..current
+            };
+            land(
+                &host,
+                &[
+                    next_entry(&host.issuer, &fold, AuthorityOp::MachineProfile(profile), 3)
+                        .unwrap(),
+                ],
+            );
+        }
+        assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
+
+        // The other branch, from before the removal.
+        let mut seq =
+            host.vault.authority_fold().unwrap().append_sequences[&host.issuer.public_key()];
+        let mut parents: Vec<_> = before.append_heads.iter().copied().collect();
+        let current = before.machine(laptop).unwrap().profile.clone();
+        let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
+        let mut branch = Vec::new();
+        for (revision, role) in (2..).zip(roles) {
+            seq += 1;
+            let profile = MachineProfile {
+                role,
+                revision,
+                seen_world_edits: seen.clone(),
+                ..current.clone()
+            };
+            let entry = host
+                .issuer
+                .sign_entry(
+                    before.vault_id,
+                    seq,
+                    parents,
+                    AuthorityOp::MachineProfile(profile),
+                    3,
+                )
+                .unwrap();
+            parents = vec![authority_entry_hash(&entry).unwrap()];
+            branch.push(entry);
+        }
+        land(&host, &branch);
+        let fold = host.vault.authority_fold().unwrap();
+        for entry in &branch {
+            assert!(
+                fold.valid_entries
+                    .contains(&authority_entry_hash(entry).unwrap())
+            );
+        }
+        assert_eq!(fold.machine(laptop).unwrap().profile.revision, 4);
+        assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
+        assert!(!fold.world_readable_on(world, Destination::Unknown));
     }
-    assert_eq!(fold.machine(laptop).unwrap().profile.revision, 4);
-    assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
-    assert!(!fold.world_readable_on(world, Destination::Unknown));
 }

@@ -15,6 +15,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::entity_id::EntityId;
 
@@ -70,93 +71,17 @@ pub(super) struct MachineChain {
     pub(super) head: FoldedMachine,
     /// The highest revision an owner-held key signed.
     pub(super) owner_held: Option<FoldedMachine>,
-    /// The "yours" marks taken away, and what the revisions that took them
-    /// had seen.
-    pub(super) acknowledged: Acknowledgements,
+    /// Every revision of the machine this history holds. The race rule reads
+    /// the whole set, so no merge order or grouping changes it.
+    pub(super) revisions: BTreeMap<AuthorityEntryHash, Arc<Revision>>,
 }
 
-/// What the revisions that left a machine not the owner's had seen, one
-/// taking per revision. One that took a "yours" mark away records what it saw,
-/// unless the mark did not stand (Wonder P2 round 2, W2); a later one, of a
-/// machine already not the owner's, records only what its state already held
-/// (round 1, W2). A "yours" mark resets the takings its state holds, and a
-/// merge keeps every taking neither side reset: takings on branches that never
-/// saw each other compete, whatever their revisions, so an edit counts only if
-/// every one of them saw it (Sol P2 round 5, F1; round 6, F3).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct Acknowledgements {
-    /// Keyed by the entry that carried the mark taken away, or by the
-    /// revision itself when the machine was already not the owner's: that
-    /// revision holds what the takings before it held, so a run of them keeps
-    /// one taking.
-    taken: BTreeMap<AuthorityEntryHash, Acknowledged>,
-    reset: BTreeSet<AuthorityEntryHash>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Acknowledged {
-    seen: BTreeSet<AuthorityEntryHash>,
-    /// The signers of the mark taken away. Custody found later on any branch
-    /// voids the acknowledgement, as it voids the mark.
-    marks: BTreeSet<AuthorityKey>,
-    /// The mark taken away. A divergent revision of the same number found
-    /// later on any branch voids the acknowledgement, as it conflicts the mark
-    /// (Wonder P2 round 3, W2).
-    mark: Option<MachineProfile>,
-}
-
-impl Acknowledgements {
-    /// What every taking here saw, and every mark they took.
-    fn held(&self) -> Acknowledged {
-        let mut takings = self.taken.values();
-        let seen = takings
-            .next()
-            .map(|first| {
-                takings.fold(first.seen.clone(), |mut seen, taking| {
-                    seen.retain(|hash| taking.seen.contains(hash));
-                    seen
-                })
-            })
-            .unwrap_or_default();
-        Acknowledged {
-            seen,
-            marks: self
-                .taken
-                .values()
-                .flat_map(|taking| taking.marks.iter().cloned())
-                .collect(),
-            mark: None,
-        }
-    }
-
-    /// Voids every taking whose mark `head` diverges from at its revision.
-    fn void_against(&mut self, head: &FoldedMachine) {
-        for taking in self.taken.values_mut() {
-            if taking
-                .mark
-                .as_ref()
-                .is_some_and(|mark| mark.revision == head.profile.revision && *mark != head.profile)
-            {
-                taking.seen.clear();
-            }
-        }
-    }
-
-    fn merge(left: &Self, right: &Self) -> Self {
-        let reset: BTreeSet<_> = left.reset.union(&right.reset).copied().collect();
-        let mut taken = left.taken.clone();
-        for (mark, taking) in &right.taken {
-            taken
-                .entry(*mark)
-                .and_modify(|existing| {
-                    existing.seen.retain(|hash| taking.seen.contains(hash));
-                    existing.marks.extend(taking.marks.iter().cloned());
-                })
-                .or_insert_with(|| taking.clone());
-        }
-        taken.retain(|mark, _| !reset.contains(mark));
-        Self { taken, reset }
-    }
+/// One revision of a machine, as its entry carried it.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct Revision {
+    profile: MachineProfile,
+    signer: AuthorityKey,
+    owner_held: bool,
 }
 
 impl FoldedMachine {
@@ -241,46 +166,6 @@ pub(super) fn apply_machine_profile(
     }
     let chain = roster_chain(state, profile.machine);
     let head = chain.map(|chain| &chain.head);
-    let mut acknowledged = chain
-        .map(|chain| chain.acknowledged.clone())
-        .unwrap_or_default();
-    match chain {
-        _ if profile.says_mine() => {
-            let taken = std::mem::take(&mut acknowledged.taken);
-            acknowledged.reset.extend(taken.into_keys());
-        }
-        // A later revision of a machine already not the owner's adds nothing
-        // it saw, and keeps what its state held against a mark it never saw,
-        // as one taking.
-        Some(chain) if !chain.head.profile.says_mine() => {
-            acknowledged.taken = BTreeMap::from([(hash, acknowledged.held())]);
-        }
-        Some(chain) => {
-            let stood = derived_head(state, profile.machine, chain).is_mine();
-            acknowledged.taken.insert(
-                chain.head.entry,
-                Acknowledged {
-                    seen: if stood {
-                        profile.seen_world_edits.clone()
-                    } else {
-                        BTreeSet::new()
-                    },
-                    marks: BTreeSet::from([chain.head.signer.clone()]),
-                    mark: Some(chain.head.profile.clone()),
-                },
-            );
-        }
-        None => {
-            acknowledged.taken.insert(
-                hash,
-                Acknowledged {
-                    seen: BTreeSet::new(),
-                    marks: BTreeSet::new(),
-                    mark: None,
-                },
-            );
-        }
-    }
     if key_is_authority(state, &profile.machine_key)
         || machine_is_actor(state, profile.machine)
         || !profile.proof_verifies(&state.vault_id)
@@ -288,6 +173,17 @@ pub(super) fn apply_machine_profile(
     {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    let mut revisions = chain
+        .map(|chain| chain.revisions.clone())
+        .unwrap_or_default();
+    revisions.insert(
+        hash,
+        Arc::new(Revision {
+            profile: profile.clone(),
+            signer: signer.clone(),
+            owner_held: signer_class == SignerClass::OwnerHeld,
+        }),
+    );
     let folded = FoldedMachine {
         profile: profile.clone(),
         conflicted: false,
@@ -309,7 +205,7 @@ pub(super) fn apply_machine_profile(
         MachineChain {
             head: folded,
             owner_held,
-            acknowledged,
+            revisions,
         },
     );
     state
@@ -343,22 +239,55 @@ fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
     false
 }
 
-/// Whether every revision that took a "yours" mark of `machine` away had
-/// seen `edit`, and none of those marks turns out to be signed in a host's
-/// custody. False while no revision has taken one away.
-pub(super) fn acknowledges(
+/// The entries of every revision of `machine` this history holds.
+pub(super) fn revision_entries(
+    state: &FoldState,
+    machine: EntityId,
+) -> BTreeSet<AuthorityEntryHash> {
+    roster_chain(state, machine)
+        .map(|chain| chain.revisions.keys().copied().collect())
+        .unwrap_or_default()
+}
+
+/// Whether `edit`, signed under the "yours" revision `mark` by a machine that
+/// is no longer the owner's, keeps its effect. The mark must still stand in
+/// this history: its signer in no host's custody, and no divergent revision
+/// of its number. Every revision this history holds outside the edit's own
+/// past (`prior`) that leaves the machine not the owner's must have been
+/// signed by a key the owner holds and have seen the edit, and there must be
+/// one. A revision that saw nothing, a host's removal, or a mark found later
+/// not to stand narrows the edit; a "yours" text or the order in which
+/// branches meet changes nothing (Sol P2 round 7).
+pub(super) fn acknowledged(
     state: &FoldState,
     machine: EntityId,
     edit: &AuthorityEntryHash,
+    mark: &AuthorityEntryHash,
+    prior: &BTreeSet<AuthorityEntryHash>,
 ) -> bool {
-    roster_chain(state, machine).is_some_and(|chain| {
-        let taken = &chain.acknowledged.taken;
-        !taken.is_empty()
-            && taken.values().all(|taking| {
-                taking.seen.contains(edit)
-                    && !(state.hosted && taking.marks.iter().any(|key| in_host_custody(state, key)))
-            })
-    })
+    let Some(chain) = roster_chain(state, machine) else {
+        return false;
+    };
+    let custodial = |key: &AuthorityKey| state.hosted && in_host_custody(state, key);
+    let Some(marked) = chain.revisions.get(mark) else {
+        return false;
+    };
+    let mark_stands = !custodial(&marked.signer)
+        && !chain.revisions.values().any(|other| {
+            other.profile.revision == marked.profile.revision && other.profile != marked.profile
+        });
+    let mut takers = chain
+        .revisions
+        .iter()
+        .filter(|(hash, revision)| !prior.contains(*hash) && !revision.profile.says_mine())
+        .peekable();
+    mark_stands
+        && takers.peek().is_some()
+        && takers.all(|(_, revision)| {
+            revision.owner_held
+                && !custodial(&revision.signer)
+                && revision.profile.seen_world_edits.contains(edit)
+        })
 }
 
 fn roster_chain(state: &FoldState, machine: EntityId) -> Option<&MachineChain> {
@@ -408,11 +337,15 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
             (one, other) => one.clone().or_else(|| other.clone()),
         },
-        acknowledged: {
-            let mut acknowledged = Acknowledgements::merge(&left.acknowledged, &right.acknowledged);
-            acknowledged.void_against(&left.head);
-            acknowledged.void_against(&right.head);
-            acknowledged
+        revisions: {
+            let mut revisions = left.revisions.clone();
+            revisions.extend(
+                right
+                    .revisions
+                    .iter()
+                    .map(|(hash, revision)| (*hash, Arc::clone(revision))),
+            );
+            revisions
         },
     }
 }

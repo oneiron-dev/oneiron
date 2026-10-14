@@ -49,7 +49,7 @@ use std::sync::Arc;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::machine_profile::{acknowledges, derived_chains, derived_machine};
+use super::machine_profile::{acknowledged, derived_chains, derived_machine, revision_entries};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
@@ -375,6 +375,10 @@ pub(super) struct FrontierEdit {
     replaced: BTreeSet<AuthorityEntryHash>,
     /// This install did not count the machine at the edit's parents.
     narrow_only: bool,
+    /// The machine's "yours" revision the edit was signed under.
+    mark: AuthorityEntryHash,
+    /// The machine's revisions in the edit's own past.
+    prior: Arc<BTreeSet<AuthorityEntryHash>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -409,15 +413,12 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
     derived_machine(state, machine).is_some_and(|folded| folded.is_mine())
 }
 
-/// Full strength while the edit's machine is the owner's, or when every
-/// revision that took "yours" away had seen the edit, and this install
-/// counted the machine when the edit was made. A revision that still says
-/// "yours" took nothing away: when it stops standing for another reason (its
-/// signer found in a host's custody) it acknowledges no edit (Sol P2 round 3,
-/// F2). Nor does a later revision of a machine already not the owner's, such
-/// as a removal after a demotion (Wonder P2 round 1, W2), or one that took
-/// away a mark that did not stand, whenever its custody is found (round 2,
-/// W2).
+/// Full strength while the edit's machine is the owner's, or when the owner
+/// acknowledged it when taking "yours" away (`machine_profile::acknowledged`),
+/// and this install counted the machine when the edit was made. A head that
+/// still says "yours" took nothing away: when it stops standing for another
+/// reason (its signer found in a host's custody) it acknowledges no edit (Sol
+/// P2 round 3, F2).
 fn full_strength(
     state: &FoldState,
     hash: &AuthorityEntryHash,
@@ -429,7 +430,7 @@ fn full_strength(
             folded.is_mine()
                 || (!folded.conflicted
                     && !folded.profile.says_mine()
-                    && acknowledges(state, edit.machine, hash)
+                    && acknowledged(state, edit.machine, hash, &edit.mark, &edit.prior)
                     && (!folded.removed || folded.profile.role == MachineRole::Removed))
         })
 }
@@ -511,11 +512,14 @@ pub(super) fn apply_world_privacy(
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
     let signer = entry.signer_key();
-    if !derived_chains(state, edit.machine).any(|folded| {
-        folded.is_mine() && *signer == AuthorityKey::Ed25519(folded.profile.machine_key)
-    }) {
+    let Some(mark) = derived_chains(state, edit.machine)
+        .find(|folded| {
+            folded.is_mine() && *signer == AuthorityKey::Ed25519(folded.profile.machine_key)
+        })
+        .map(|folded| folded.entry)
+    else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
-    }
+    };
     if state
         .seqs
         .get(signer)
@@ -536,6 +540,7 @@ pub(super) fn apply_world_privacy(
     }
     let narrow_only =
         !derived_machine(state, edit.machine).is_some_and(|folded| standing(state, &folded));
+    let prior = Arc::new(revision_entries(state, edit.machine));
     let frontier = state.worlds.entry(edit.world).or_default();
     let seen = std::mem::take(&mut frontier.live);
     let replaced = seen.keys().copied().collect();
@@ -547,6 +552,8 @@ pub(super) fn apply_world_privacy(
             machine: edit.machine,
             replaced,
             narrow_only,
+            mark,
+            prior,
         }),
     );
     Ok(())
