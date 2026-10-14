@@ -13,16 +13,18 @@ use crate::store::Store;
 /// the type is unknowable, not merely unexpected. A row that exists but whose
 /// header will not parse is a LOCAL defect ([`Error::CorruptedIndex`]), never
 /// an unknowable type: callers must fail closed on it rather than charge it to
-/// a peer.
+/// a peer. The header is read in place: a peer's update names rows by the
+/// thousand, and a copy per name would cost the size of each row (Astra R7 F2
+/// on #1432).
 pub(crate) fn stored_entity_type(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<u8>> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, rtxn, id)? else {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     Ok(Some(header.entity_type))
 }
 

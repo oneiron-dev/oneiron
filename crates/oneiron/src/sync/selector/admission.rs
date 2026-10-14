@@ -23,7 +23,10 @@ use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
-use super::edge::{copy_admitted_edges, hold_stamps, recheck_admitted_stamps, release_stamps};
+use super::edge::{
+    copy_admitted_edges, hold_stamps, recheck_admitted_stamps, refuse_non_binary_edges,
+    release_stamps,
+};
 use crate::error::{RecordError, SyncError};
 
 /// Role carried by a member/guest federation import path.
@@ -112,6 +115,7 @@ fn admit_window_update(
         })
     })?;
 
+    refuse_non_binary_edges(&remote.get_map("edges"))?;
     let released = release_stamps(
         vault,
         lane,

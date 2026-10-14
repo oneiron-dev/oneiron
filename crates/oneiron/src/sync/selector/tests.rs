@@ -1845,6 +1845,7 @@ fn an_edge_value_that_is_not_bytes_is_refused_whether_or_not_its_row_is_stored()
     let window_key = WindowKey::new("2026-05");
     let (_dir, vault, _) = test_vault_with_grant(entity_id(0xD0));
     let [peer, stored, absent, facet] = [1, 2, 3, 4].map(|n| entity_id(0xD0 + n));
+    let role = FederationAdmissionRole::Member;
     put_row(&vault, stored, ENTITY_TYPE_EVENT);
     for kind in [EdgeKind::FacetOf, EdgeKind::AddressedTo] {
         for (name, src) in [("stored", stored), ("absent", absent)] {
@@ -1852,19 +1853,79 @@ fn an_edge_value_that_is_not_bytes_is_refused_whether_or_not_its_row_is_stored()
             insert_malformed_edge(&probe, src, kind, facet);
             probe.commit();
             let update = probe.export(ExportMode::all_updates()).unwrap();
-            let admitted = admit_peer_window_update(
-                &vault,
-                &window_key,
-                &update,
-                FederationAdmissionRole::Member,
-                peer,
-            );
+            let admitted = admit_peer_window_update(&vault, &window_key, &update, role, peer);
             assert!(
                 matches!(admitted, Err(Error::InvalidKey)),
                 "{kind:?} onto the {name} row: {admitted:?}"
             );
         }
     }
+    // Nor does a stamp the peer holds stand in for the value (Astra R7 F1).
+    for (name, src) in [("stored", stored), ("absent", absent)] {
+        let ahead = create_window_doc("federation-peer", &window_key);
+        insert_edge(&ahead, src, EdgeKind::FacetOf, facet);
+        ahead.commit();
+        let ahead = ahead.export(ExportMode::all_updates()).unwrap();
+        admit_peer_window_update(&vault, &window_key, &ahead, role, peer).unwrap();
+        let birth = create_window_doc("federation-peer", &window_key);
+        insert_entity(&birth, src, ENTITY_TYPE_EVENT, b"row");
+        insert_malformed_edge(&birth, src, EdgeKind::FacetOf, facet);
+        birth.commit();
+        let birth = birth.export(ExportMode::all_updates()).unwrap();
+        let admitted = admit_peer_window_update(&vault, &window_key, &birth, role, peer);
+        assert!(
+            matches!(admitted, Err(Error::InvalidKey)),
+            "a held stamp onto the {name} row: {admitted:?}"
+        );
+    }
+}
+
+/// Astra R7 F2 on #1432: release looks up the rows an update brings without
+/// copying a stored one, however many spellings of its key the update carries.
+#[test]
+fn release_copies_no_stored_row_for_the_keys_an_update_names() {
+    const BODY: &[u8] = b"Qx7-release-fixture-body";
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x50));
+    let [peer, row] = [entity_id(0x51), entity_id(0xBC)];
+    vault
+        .put_entity(
+            &row,
+            ENTITY_TYPE_EVENT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            BODY,
+        )
+        .unwrap();
+    let update = create_window_doc("federation-peer", &window_key);
+    let hex = row.to_hex();
+    for upper in 0..hex.len() {
+        let mut alias = hex.clone();
+        alias.replace_range(upper..=upper, &hex[upper..=upper].to_uppercase());
+        map_insert_bytes(&update.get_map("entities"), &alias, b"").unwrap();
+    }
+    update.commit();
+    let update = update.export(ExportMode::all_updates()).unwrap();
+
+    crate::ports::row_copies::watch(BODY);
+    let admitted = admit_peer_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+        peer,
+    );
+    assert!(admitted.is_err(), "a key in another spelling is refused");
+    assert_eq!(
+        crate::ports::row_copies::sites(),
+        Vec::<String>::new(),
+        "the readers that copied the stored row"
+    );
+    assert_eq!(
+        crate::ports::row_copies::wiped_sites(),
+        Vec::<String>::new(),
+        "the readers that copied the stored row into a wiped buffer"
+    );
 }
 
 /// Astra R5 F2 on #1432: each update that brings a row releases every stamp

@@ -81,9 +81,7 @@ pub(super) fn copy_admitted_edges(
         if result.is_err() {
             return;
         }
-        // A value that is not bytes refuses the frame whatever row it names:
-        // judged after the stored endpoints, the outcome would tell the peer
-        // whether they exist (Astra R5 F3 on #1432).
+        // [`refuse_non_binary_edges`] refused the frame for any such value.
         let Some(value) = value else {
             result = Err(Error::InvalidKey);
             return;
@@ -146,6 +144,21 @@ pub(super) fn copy_admitted_edges(
     Ok(held)
 }
 
+/// Refuses the frame for an edge value that is not bytes, whatever rows it
+/// names, before anything reads the vault for it or a release fills its key:
+/// judged after the stored endpoints, the outcome would tell the peer whether
+/// they exist (Astra R5 F3, R7 F1 on #1432).
+#[cfg(feature = "sync")]
+pub(super) fn refuse_non_binary_edges(edges: &loro::LoroMap) -> Result<()> {
+    let mut result = Ok(());
+    map_for_each_value_bytes(edges, |_, value| {
+        if value.is_none() {
+            result = Err(Error::InvalidKey);
+        }
+    });
+    result
+}
+
 /// Holds the facet stamps an update sent ahead of their rows under the
 /// sender's `lane`, out of the admitted document ([`copy_admitted_edges`]).
 #[cfg(feature = "sync")]
@@ -179,9 +192,13 @@ pub(super) fn release_stamps(
     brought: &loro::LoroMap,
     edges: &loro::LoroMap,
 ) -> Result<Vec<(String, Vec<u8>)>> {
+    // Only a row's own spelling, with bytes, can be its birth; the entity
+    // door refuses any other before it lands (Astra R7 F2 on #1432).
     let mut rows = Vec::new();
-    map_for_each_value_bytes(brought, |key, _| {
-        if let Ok(id) = EntityId::from_hex(key) {
+    map_for_each_value_bytes(brought, |key, value| {
+        if let (Some(_), Ok(id)) = (value, EntityId::from_hex(key))
+            && id.to_hex() == key
+        {
             rows.push(id);
         }
     });
