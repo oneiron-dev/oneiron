@@ -15,6 +15,11 @@ use super::*;
 #[derive(Clone, Copy)]
 pub(super) struct FoldContext<'a> {
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
+    /// Rows no floor refuses (a handoff's line, a removal's own branch); one
+    /// past its floor still lands restriction only.
+    pub(super) floor_vouched: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    /// Revisions and world edits held to restriction only (`install_fold::NoVouch`).
+    pub(super) install_held: Option<&'a BTreeSet<AuthorityEntryHash>>,
     pub(super) entry_ancestors:
         Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
     /// Consent roots of every ADMITTED PEER roster, keyed by peer vault id.
@@ -35,6 +40,9 @@ pub(super) struct FoldContext<'a> {
     /// the provider's key. Never inferred from the consent arm: a peer fold's
     /// arm admits cloud roots without saying whose root a key is.
     pub(super) hosted: bool,
+    /// Which machines the roster rule admits as the owner's this install
+    /// counts: a world edit from one it does not count only narrows.
+    pub(super) machine_standing: super::world_privacy::MachineStanding<'a>,
     /// Only verified pre-handoff ancestry can use retired device-key ops.
     /// None is the legacy-only reference fold, never the posture-aware vault door.
     pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
@@ -47,22 +55,24 @@ impl FoldContext<'_> {
 }
 
 #[derive(Default, Clone, Copy)]
-struct FoldLocalInputs<'a> {
-    observations: Option<&'a AuthorityLocalObservations>,
-    retire_device_ops: bool,
-    pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
-    hosted: bool,
+pub(super) struct FoldLocalInputs<'a> {
+    pub(super) observations: Option<&'a AuthorityLocalObservations>,
+    pub(super) retire_device_ops: bool,
+    pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    pub(super) hosted: bool,
+    pub(super) machine_standing: Option<super::world_privacy::MachineStanding<'a>>,
     /// The handoffs valid on their own rows; only these settle. None settles
     /// every handoff the fold holds.
-    handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    pub(super) handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldLocalInputs<'_> {
-    const VAULT_DOOR: Self = Self {
+    pub(super) const VAULT_DOOR: Self = Self {
         observations: None,
         retire_device_ops: true,
         pre_handoff_entries: None,
         hosted: false,
+        machine_standing: None,
         handoff_candidates: None,
     };
 }
@@ -249,7 +259,7 @@ pub(super) fn fold_authority_log_with_local_observations_and_posture(
     )
 }
 
-fn fold_authority_log_inner(
+pub(super) fn fold_authority_log_inner(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
@@ -278,7 +288,7 @@ fn fold_authority_log_inner(
             let lines: BTreeSet<_> = candidates.values().flatten().copied().collect();
             let observations = local
                 .observations
-                .map(|observations| observations.without_floors_on(&lines));
+                .map(|observations| observations.vouching(&lines));
             let result = fold_authority_log_inner(
                 entries,
                 first_seen_at_secs,
@@ -290,6 +300,7 @@ fn fold_authority_log_inner(
                     retire_device_ops: false,
                     pre_handoff_entries: Some(&allowed),
                     hosted: local.hosted,
+                    machine_standing: local.machine_standing,
                     handoff_candidates: Some(&handoffs),
                 },
             );
@@ -304,48 +315,14 @@ fn fold_authority_log_inner(
             }
         }
     }
-    let sequence_floors = local
-        .observations
-        .map(|observations| &observations.sequence_floors);
-    let stale_roster_window_secs = local
-        .observations
-        .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
-            local.policy.stale_roster_window_secs
-        });
-    let fold = fold_authority_log_once(
+    super::install_fold::fold_as_install(
         entries,
-        FoldContext {
-            sequence_floors,
-            entry_ancestors: None,
-            peer_consent_roots,
-            consent_arm,
-            hosted: local.hosted,
-            pre_handoff_entries: local.pre_handoff_entries,
-        },
-        local.handoff_candidates,
-    );
-    let mut fold = apply_stale_roster_window(
-        entries,
-        fold,
         first_seen_at_secs,
         now_secs,
-        stale_roster_window_secs,
-    );
-    fold.append_heads = fold.valid_entries.clone();
-    for entry in entries {
-        // Advance beyond even a signed rejected local entry. A new local write
-        // never reuses a sequence, though independently received siblings may.
-        fold.append_sequences
-            .entry(entry.signer.public_key.clone())
-            .and_modify(|seq| *seq = (*seq).max(entry.seq))
-            .or_insert(entry.seq);
-        if authority_entry_hash(entry).is_ok_and(|hash| fold.valid_entries.contains(&hash)) {
-            for parent in &entry.parent_hashes {
-                fold.append_heads.remove(parent);
-            }
-        }
-    }
-    fold
+        peer_consent_roots,
+        consent_arm,
+        local,
+    )
 }
 
 /// Probe each signed re-root against its own causal history, and map each
@@ -399,7 +376,7 @@ fn verified_handoff_candidates(
             .collect();
         let observations = local
             .observations
-            .map(|observations| observations.without_floors_on(&closure));
+            .map(|observations| observations.vouching(&closure));
         let probe = fold_authority_log_inner(
             &scoped,
             first_seen_at_secs,
@@ -477,7 +454,7 @@ fn has_re_root_ancestor(
     false
 }
 
-fn fold_authority_log_once(
+pub(super) fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
     handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
@@ -492,6 +469,12 @@ fn fold_authority_log_once(
             Ok(hash) => issues.push(AuthorityFoldIssue::InvalidEntry(hash)),
             Err(_) => issues.push(AuthorityFoldIssue::InvalidEntry([0; 32])),
         }
+    }
+    // Before ancestry, floors and restrictive proofs: no fold path may
+    // accept an entry that hangs off another branch's side entry.
+    for hash in super::world_privacy::side_branch_violations(&by_hash) {
+        by_hash.remove(&hash);
+        issues.push(AuthorityFoldIssue::InvalidEntry(hash));
     }
     let entry_ancestors = entry_ancestor_index(&by_hash);
     let causal_floors =
@@ -629,6 +612,13 @@ fn fold_authority_log_once(
             losers
         },
     );
+    super::world_refold::refold_world_edits(
+        &mut states,
+        &by_hash,
+        &entry_ancestors,
+        context,
+        &mut issues,
+    );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
     for state in states.values() {
@@ -663,6 +653,9 @@ fn fold_authority_log_once(
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
             machines: BTreeMap::new(),
+            worlds: BTreeMap::new(),
+            refused_world_edits: BTreeSet::new(),
+            install: InstallBound::default(),
             issues,
         };
     }
@@ -717,6 +710,11 @@ fn fold_authority_log_once(
             &states,
             merged.as_ref(),
             &actor_bindings,
+            |hash| {
+                by_hash
+                    .get(hash)
+                    .is_some_and(|entry| super::world_privacy::side_world(&entry.op).is_none())
+            },
         ),
         revoked_actor_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             state.actor_revocation_hashes.keys().cloned().collect()
@@ -759,6 +757,15 @@ fn fold_authority_log_once(
         machines: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::machine_profile::folded_machines(state, retirements.unsettled())
         }),
+        worlds: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, super::world_privacy::folded_worlds),
+        refused_world_edits: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, |state| state.refused_world_edits.clone()),
+        install: merged
+            .as_ref()
+            .map_or_else(InstallBound::default, super::install_fold::held_back),
         issues,
     }
 }
