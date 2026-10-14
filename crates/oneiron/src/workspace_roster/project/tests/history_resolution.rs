@@ -60,11 +60,22 @@ pub(super) fn resolution(
         holder_signature: Vec::new(),
         signed_at: slip.claims.issued_at,
     };
+    sign_resolution(&slip, project, holder, &mut resolution)?;
+    Ok(resolution)
+}
+
+/// Signs `resolution` as `holder` under `slip`.
+fn sign_resolution(
+    slip: &CapabilitySlip,
+    project: EntityId,
+    holder: EntityId,
+    resolution: &mut ProjectResolution,
+) -> Result<()> {
     resolution.holder_signature = holder_key(holder)
         .sign(&slip.binding_transcript(&resolution.challenge(project)?)?)
         .to_bytes()
         .to_vec();
-    Ok(resolution)
+    Ok(())
 }
 
 /// Delivers a revision companion as transport would.
@@ -652,6 +663,9 @@ fn a_quarantined_resolution_never_opens_a_board_fork_to_an_ordinary_write() -> R
 /// priors (it sorts first) it was refused in one pass and stood in the next,
 /// so the served seats came from W while the witness named N. Each
 /// resolution is judged after its priors now, and the chain settles for N.
+/// One slip signs every link, and the last link's signing time steps until
+/// its hash sorts first: a slip per link made the fixture's own setup
+/// quadratic, since each mint folds the whole authority log.
 #[cfg(feature = "sync")]
 #[test]
 fn a_resolution_chain_past_the_depth_guard_settles_for_its_last_link() -> Result<()> {
@@ -670,15 +684,27 @@ fn a_resolution_chain_past_the_depth_guard_settles_for_its_last_link() -> Result
     replay_project(&vault, id, &w, 2)?;
     replay_project(&vault, id, &n, 3)?;
     let (anchor, hw, hn) = (head_of(id, &birth)?, head_of(id, &w)?, head_of(id, &n)?);
-    let contenders = sorted(vec![hw, hn]);
+    let slip = holder_slip(&vault, holder, id)?;
+    let link = |prior: Vec<ProjectRevisionHash>, next, signed_at| -> Result<ProjectRevision> {
+        let mut resolution = ProjectResolution {
+            anchor,
+            prior,
+            contenders: sorted(vec![hw, hn]),
+            next,
+            slip_wire: slip.to_token()?,
+            holder_signature: Vec::new(),
+            signed_at,
+        };
+        sign_resolution(&slip, id, holder, &mut resolution)?;
+        Ok(envelope(id, resolution))
+    };
     let mut chain: Vec<ProjectRevision> = Vec::new();
     for _ in 0..257 {
         let prior = match chain.last() {
             Some(link) => vec![link.hash()?],
             None => vec![],
         };
-        let link = resolution(&vault, id, holder, anchor, prior, contenders.clone(), hw)?;
-        chain.push(envelope(id, link));
+        chain.push(link(prior, hw, slip.claims.issued_at)?);
     }
     let first = (chain.iter())
         .map(ProjectRevision::hash)
@@ -687,22 +713,13 @@ fn a_resolution_chain_past_the_depth_guard_settles_for_its_last_link() -> Result
         .min()
         .ok_or_else(invalid)?;
     let prior = vec![chain.last().ok_or_else(invalid)?.hash()?];
+    let mut signed_at = slip.claims.issued_at;
     let last = loop {
-        let link = envelope(
-            id,
-            resolution(
-                &vault,
-                id,
-                holder,
-                anchor,
-                prior.clone(),
-                contenders.clone(),
-                hn,
-            )?,
-        );
-        if link.hash()? < first {
-            break link;
+        let last = link(prior.clone(), hn, signed_at)?;
+        if last.hash()? < first {
+            break last;
         }
+        signed_at += 1;
     };
     chain.push(last);
     let kind = project_revision_type(&vault.store).ok_or_else(invalid)?;
