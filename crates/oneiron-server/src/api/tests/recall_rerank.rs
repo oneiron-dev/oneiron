@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Json;
 use axum::extract::State;
-use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt};
+use oneiron::authority::HostSlipIssuer;
+use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunReceiptSink};
 
 use super::*;
 use crate::ai_host::AiHost;
@@ -34,11 +35,13 @@ struct Fake {
     score: Score,
     on_call: OnCall,
     tokens: u64,
+    served_model: Arc<str>,
 }
 
 /// A loopback `/v1/rerank` server. Call `n` (from 1) scores each document
 /// with `score(n, document)`, runs `on_call(n)` first, says
-/// [`SERVED_MODEL`] answered and reports `tokens` used.
+/// [`SERVED_MODEL`] answered (or the name [`FakeReranker::named`] gives) and
+/// reports `tokens` used.
 struct FakeReranker {
     base_url: String,
     fake: Fake,
@@ -53,12 +56,17 @@ impl Drop for FakeReranker {
 
 impl FakeReranker {
     async fn start(score: Score, on_call: OnCall, tokens: u64) -> Self {
+        Self::named(score, on_call, tokens, SERVED_MODEL).await
+    }
+
+    async fn named(score: Score, on_call: OnCall, tokens: u64, served_model: &str) -> Self {
         let fake = Fake {
             calls: Arc::default(),
             seen: Arc::default(),
             score,
             on_call,
             tokens,
+            served_model: served_model.into(),
         };
         let app = axum::Router::new()
             .route("/v1/rerank", axum::routing::post(rerank))
@@ -98,7 +106,7 @@ async fn rerank(State(fake): State<Fake>, Json(body): Json<Value>) -> Json<Value
         })
         .collect();
     Json(json!({
-        "model": SERVED_MODEL,
+        "model": &*fake.served_model,
         "results": results,
         "usage": {"total_tokens": fake.tokens},
     }))
@@ -145,9 +153,18 @@ async fn served(
     AiHost,
     Arc<MemoryReceipts>,
 ) {
+    let receipts = Arc::new(MemoryReceipts::default());
+    let (dir, server, host) = served_with(models, receipts.clone()).await;
+    (dir, server, host, receipts)
+}
+
+/// [`served`], its run receipts written to `receipts`.
+async fn served_with(
+    models: Option<&crate::config::models::ModelsConfig>,
+    receipts: Arc<dyn RunReceiptSink>,
+) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let receipts = Arc::new(MemoryReceipts::default());
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -156,12 +173,22 @@ async fn served(
         },
     )
     .unwrap()
-    .with_run_receipts(receipts.clone());
+    .with_run_receipts(receipts);
     let (server, host) = AiHost::attach(server, models).await;
-    (dir, Arc::new(server), host, receipts)
+    (dir, Arc::new(server), host)
 }
 
 fn remember(vault: &oneiron::Vault, actor: oneiron::EntityId, text: &str) -> oneiron::EntityId {
+    remember_in(vault, actor, None, text)
+}
+
+/// [`remember`] in `world` (base reality when `None`).
+fn remember_in(
+    vault: &oneiron::Vault,
+    actor: oneiron::EntityId,
+    world: Option<oneiron::EntityId>,
+    text: &str,
+) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();
     let mut claim = oneiron::ClaimBody::new(
         "profile.note",
@@ -173,6 +200,7 @@ fn remember(vault: &oneiron::Vault, actor: oneiron::EntityId, text: &str) -> one
     )
     .unwrap();
     claim.source = Some(oneiron::ClaimSource::UserStated);
+    claim.world = world;
     vault
         .put_claim(&id, &claim, oneiron::TimeRange { start: 10, end: 10 }, 10)
         .unwrap();
@@ -197,20 +225,51 @@ async fn recall(
     actor: oneiron::EntityId,
     effort: &str,
 ) -> Result<Value, Value> {
-    let (status, reply) = route_json(
-        server.clone(),
-        mcp_endpoint_call_request(
-            MCP_TOOL_FIRST_PATH,
-            credential,
-            &format!("recall-{effort}"),
-            "recall",
-            mcp_merge_args(
-                mcp_endpoint_envelope(actor, "read_memory"),
-                json!({"arguments": {"spec": {"query": QUERY, "effort": effort, "limit": 10}}}),
-            ),
+    let spec = json!({"query": QUERY, "effort": effort, "limit": 10});
+    recall_spec(server, credential, actor, spec).await
+}
+
+/// One MCP `recall` of `spec` from a caller on this device (a loopback
+/// peer): the pack, or the refusal.
+async fn recall_spec(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor: oneiron::EntityId,
+    spec: Value,
+) -> Result<Value, Value> {
+    recall_spec_from(server, credential, actor, spec, true).await
+}
+
+/// [`recall_spec`] from a loopback peer when `on_device`, else from one off
+/// this device.
+async fn recall_spec_from(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor: oneiron::EntityId,
+    spec: Value,
+    on_device: bool,
+) -> Result<Value, Value> {
+    let mut request = mcp_endpoint_call_request(
+        MCP_TOOL_FIRST_PATH,
+        credential,
+        &format!("recall-{}", spec["effort"]),
+        "recall",
+        mcp_merge_args(
+            mcp_endpoint_envelope(actor, "read_memory"),
+            json!({"arguments": {"spec": spec}}),
         ),
-    )
-    .await;
+    );
+    let peer = if on_device {
+        std::net::Ipv4Addr::LOCALHOST
+    } else {
+        std::net::Ipv4Addr::new(192, 0, 2, 7)
+    };
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            peer, 40100,
+        ))));
+    let (status, reply) = route_json(server.clone(), request).await;
     assert_eq!(status, StatusCode::OK, "{reply}");
     match reply.get("error") {
         Some(_) => Err(reply),
@@ -327,7 +386,9 @@ async fn high_xhigh_and_max_rerank_on_the_models_reranker_through_mcp() {
 /// typed `budget_spent`; it never falls back to an unreranked pack. A call
 /// that went out is settled at what it used, past the line too, so a line
 /// one call overspends refuses the next: here the block changes during the
-/// first call, and the door's second call is the one refused.
+/// first call, and the door's second call is the one refused. The line
+/// covers the first call's payload (W1-2 prices it before it leaves); the
+/// endpoint reports more used than the line held.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
     let vault = Arc::new(Mutex::new(None::<(Arc<oneiron::Vault>, oneiron::EntityId)>));
@@ -339,8 +400,8 @@ async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
             }
         }) as OnCall
     };
-    let fake = FakeReranker::start(prefers_known(), hook, 5_000).await;
-    let models = reranker_models(&fake.base_url, 100);
+    let fake = FakeReranker::start(prefers_known(), hook, 50_000).await;
+    let models = reranker_models(&fake.base_url, 30_000);
     let (_dir, server, _host, receipts) = served(Some(&models)).await;
     let actor = reader(&server, "rerank-spent").await;
     *vault.lock().unwrap() = Some((Arc::clone(server.vault()), actor));
@@ -365,7 +426,7 @@ async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
     assert!(
         settled
             .iter()
-            .all(|(units, error)| *units == 5_000 && error.is_none()),
+            .all(|(units, error)| *units == 50_000 && error.is_none()),
         "{settled:?}"
     );
     // Medium makes no model call, so the spent line does not touch it.
@@ -518,6 +579,436 @@ async fn a_block_that_changes_while_it_is_scored_takes_none_of_the_stale_scores(
             .contains("changed while the reranker scored them"),
         "{refusal}"
     );
+}
+
+/// #1419 Wonder W1-2: a call's words are known before it leaves, so it is
+/// priced on them first. A line that cannot cover the payload refuses the
+/// call unsent, as `budget_spent`; before, the call went out and was settled
+/// past the line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_payload_past_the_line_is_refused_unsent() {
+    let fake = FakeReranker::start(prefers_known(), no_hook(), 1).await;
+    let models = reranker_models(&fake.base_url, 32);
+    let (_dir, server, _host, receipts) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-priced").await;
+
+    let refusal = recall(&server, "rerank-priced", actor, "high")
+        .await
+        .expect_err("a payload past the line is refused");
+
+    assert_eq!(
+        refusal["error"]["data"]["error_code"], "budget_spent",
+        "{refusal}"
+    );
+    assert_eq!(fake.calls(), 0, "nothing was sent");
+    assert!(
+        recall_runs(&receipts)
+            .iter()
+            .all(|row| !matches!(row.event, RunEvent::Dispatched { .. })),
+        "{:?}",
+        recall_runs(&receipts)
+    );
+}
+
+/// A loopback `/v1/rerank` that reads each request and fails it, as a
+/// provider that went down after it took the words. Counts what it took.
+async fn failing_reranker() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    let taken = Arc::new(AtomicUsize::new(0));
+    let app = axum::Router::new()
+        .route(
+            "/v1/rerank",
+            axum::routing::post(
+                |State(taken): State<Arc<AtomicUsize>>, Json(_): Json<Value>| async move {
+                    taken.fetch_add(1, Ordering::SeqCst);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                },
+            ),
+        )
+        .with_state(Arc::clone(&taken));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}"), taken, task)
+}
+
+/// Wonder R1 on this branch (W1-2): a call was priced once, but each rung it
+/// reached sent the whole payload, and a rung that failed after it went out
+/// was charged the line's flat reservation alone, so the fallback rung went
+/// out on a line that no longer covered it. Each rung reserves the payload's
+/// price: the first rung fails, the line cannot cover a second send, and the
+/// recall is refused as `budget_spent` with the fallback unsent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fallback_rung_goes_out_only_while_the_line_covers_its_payload() {
+    let (down_url, taken, down) = failing_reranker().await;
+    let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
+    // A block of 16 to 30 clipped memories (about 545 units each) costs more
+    // than the flat reservation (8000) and less than this line, which the
+    // flat reservation covers twice and the payload's price once.
+    let models = models_toml(&format!(
+        r#"
+[providers.down]
+kind = "local-openai-compat"
+base_url = "{down_url}"
+[providers.rerank]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.reranker]
+rungs = [{{ model = "down:fake-reranker" }}, {{ model = "rerank:fake-reranker" }}]
+[dreamer]
+enabled = false
+[recall]
+rerank_budget_units = 16500
+"#,
+        fake.base_url
+    ));
+    let (_dir, server, _host, _) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-fallback").await;
+    for entry in 0..25 {
+        let words = "the wick was trimmed and the glass was wiped clean ".repeat(12);
+        remember(
+            server.vault(),
+            actor,
+            &format!("lantern repair log {entry}: {words}"),
+        );
+    }
+
+    let refusal = recall(&server, "rerank-fallback", actor, "high")
+        .await
+        .expect_err("the line cannot cover a second send");
+
+    assert_eq!(
+        refusal["error"]["data"]["error_code"], "budget_spent",
+        "{refusal}"
+    );
+    assert_eq!(taken.load(Ordering::SeqCst), 1, "the first rung went out");
+    assert_eq!(fake.calls(), 0, "the fallback rung was not sent");
+    down.abort();
+}
+
+/// A loopback `/v1/rerank` that takes each request, holds it until `go` is
+/// notified, then fails it, as a provider that stalls and goes down.
+/// `taken` yields each request it took.
+struct HeldReranker {
+    base_url: String,
+    taken: tokio::sync::mpsc::UnboundedReceiver<Value>,
+    go: Arc<tokio::sync::Notify>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for HeldReranker {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl HeldReranker {
+    async fn start() -> Self {
+        type Held = (
+            tokio::sync::mpsc::UnboundedSender<Value>,
+            Arc<tokio::sync::Notify>,
+        );
+        let (sender, taken) = tokio::sync::mpsc::unbounded_channel();
+        let go = Arc::new(tokio::sync::Notify::new());
+        let app = axum::Router::new()
+            .route(
+                "/v1/rerank",
+                axum::routing::post(
+                    |State((sender, go)): State<Held>, Json(body): Json<Value>| async move {
+                        let _ = sender.send(body);
+                        go.notified().await;
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                    },
+                ),
+            )
+            .with_state((sender, Arc::clone(&go)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Self {
+            base_url: format!("http://{addr}"),
+            taken,
+            go,
+            task,
+        }
+    }
+}
+
+/// A WORLD row, not flagged, and a claim of `text` by `actor` in it: the
+/// world.
+fn world_with(vault: &oneiron::Vault, actor: oneiron::EntityId, text: &str) -> oneiron::EntityId {
+    let world = oneiron::EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    remember_in(vault, actor, Some(world), text);
+    world
+}
+
+/// A high recall of [`QUERY`] that reads `world` too.
+fn high_in(world: oneiron::EntityId) -> Value {
+    json!({
+        "query": QUERY,
+        "effort": "high",
+        "limit": 10,
+        "scope": {"world_ref": world.to_hex()},
+    })
+}
+
+/// Whether a `/v1/rerank` request sent `text` in one of its documents.
+fn sent(request: &Value, text: &str) -> bool {
+    request["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|document| document.as_str().unwrap().contains(text))
+}
+
+/// Astra on #1426 (F1): the device-only verdict ran once, before the call,
+/// but one call can reach several rungs. A world flagged while the first
+/// rung held the words, then failed, reached the fallback rung with the
+/// words of a row that world keeps. Each rung, the fallback's too, now goes
+/// out only while no world has been flagged since the words were judged: the
+/// fallback is never sent, and the recall ranks by fusion and says why.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_world_flagged_while_a_rung_is_out_reaches_no_fallback_rung() {
+    const KEPT: &str = "the lantern key is under the mat";
+    let mut held = HeldReranker::start().await;
+    let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
+    let models = models_toml(&format!(
+        r#"
+[providers.held]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.rerank]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.reranker]
+rungs = [{{ model = "held:fake-reranker" }}, {{ model = "rerank:fake-reranker" }}]
+[dreamer]
+enabled = false
+[recall]
+rerank_budget_units = 32000
+"#,
+        held.base_url, fake.base_url
+    ));
+    let (_dir, server, _host, _) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-flagged").await;
+    let world = world_with(server.vault(), actor, KEPT);
+
+    let recalling = {
+        let server = Arc::clone(&server);
+        tokio::spawn(
+            async move { recall_spec(&server, "rerank-flagged", actor, high_in(world)).await },
+        )
+    };
+    let first = held.taken.recv().await.expect("the first rung took a call");
+    assert!(sent(&first, KEPT), "the world was not yet flagged: {first}");
+    server
+        .vault()
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
+    held.go.notify_one();
+    let pack = recalling.await.unwrap().unwrap();
+
+    assert_eq!(fake.calls(), 0, "the fallback rung was not sent");
+    assert_eq!(
+        pack["retrieval_meta"]["rerank"],
+        json!({"status": "skipped", "reason": "device_only"}),
+        "{pack}"
+    );
+    assert!(
+        order(&pack).iter().any(|text| text.contains(KEPT)),
+        "the reader's own recall still serves the row: {pack}"
+    );
+}
+
+/// A run receipt sink that flags a world device-only when the recall's
+/// rerank call is admitted, as a flag that commits while admission waits on
+/// the host's receipts. Given its vault, the host root it is rooted under
+/// and the world once they exist. It keeps every receipt.
+#[derive(Default)]
+struct FlagOnAdmission {
+    flag: Mutex<Option<(Arc<oneiron::Vault>, HostSlipIssuer, oneiron::EntityId)>>,
+    receipts: MemoryReceipts,
+}
+
+impl RunReceiptSink for FlagOnAdmission {
+    fn record(&self, receipt: RunReceipt) {
+        if receipt.run.starts_with("recall-rerank:")
+            && matches!(receipt.event, RunEvent::Admitted(_))
+            && let Some((vault, issuer, world)) = self.flag.lock().unwrap().take()
+        {
+            vault
+                .keep_world_on_this_machine_under_for_test(&issuer, world, true)
+                .unwrap();
+        }
+        self.receipts.record(receipt);
+    }
+}
+
+/// Sol R9 on this branch: a rung asked the device-only verdict before its
+/// admission, which waits on the host's receipt sink, and then sent the
+/// words of a row a world flagged meanwhile keeps. It asks again once the
+/// rung is admitted: nothing is sent, and the recall ranks by fusion.
+/// Bugbot on #1426: the admitted rung, never sent, settles for nothing, and
+/// the line's balance is unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_world_flagged_while_a_rung_is_admitted_reaches_no_rung() {
+    const KEPT: &str = "the lantern key is under the mat";
+    // Wonder R18 on this branch, after #1425: a caller off this device was
+    // told `device_only` too, a hint that a row it had just matched became
+    // device-local. It reads the skip of a pack with nothing to rerank.
+    for (on_device, reason) in [(true, "device_only"), (false, "no_candidates")] {
+        let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
+        let models = reranker_models(&fake.base_url, 32_000);
+        let flag = Arc::new(FlagOnAdmission::default());
+        let (_dir, server, _host) = served_with(Some(&models), flag.clone()).await;
+        let actor = reader(&server, "rerank-admitted").await;
+        let world = world_with(server.vault(), actor, KEPT);
+        *flag.flag.lock().unwrap() = Some((
+            Arc::clone(server.vault()),
+            crate::test_credentials::host_issuer(&server),
+            world,
+        ));
+
+        let pack = recall_spec_from(&server, "rerank-admitted", actor, high_in(world), on_device)
+            .await
+            .unwrap();
+
+        assert!(flag.flag.lock().unwrap().is_none(), "the rung was admitted");
+        assert_eq!(fake.calls(), 0, "the rung was not sent");
+        let runs = recall_runs(&flag.receipts);
+        let settled: Vec<_> = runs
+            .iter()
+            .filter_map(|row| match &row.event {
+                RunEvent::Settled {
+                    units,
+                    allocation_units,
+                    error,
+                    ..
+                } => Some((*units, allocation_units.unwrap_or(0), error.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(settled, [(0, 0, None)], "on device {on_device}: {runs:?}");
+        assert!(
+            runs.iter()
+                .all(|row| !matches!(row.event, RunEvent::Dispatched { .. })),
+            "on device {on_device}: {runs:?}"
+        );
+        assert_eq!(
+            pack["retrieval_meta"]["rerank"],
+            json!({"status": "skipped", "reason": reason}),
+            "on device {on_device}: {pack}"
+        );
+    }
+}
+
+/// #1419 Wonder W1-3: the pack repeats the name the endpoint says answered
+/// only when it is a model name: at most 200 printable characters. A name
+/// past that is dropped, as though the endpoint named none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_model_name_past_its_bound_is_not_repeated() {
+    let fake = FakeReranker::named(prefers_known(), no_hook(), 10, &"m".repeat(16 * 1024)).await;
+    let models = reranker_models(&fake.base_url, 32_000);
+    let (_dir, server, _host, _) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-long-name").await;
+
+    let pack = recall(&server, "rerank-long-name", actor, "high")
+        .await
+        .unwrap();
+
+    let rerank = &pack["retrieval_meta"]["rerank"];
+    assert_eq!(rerank["status"], "applied", "{rerank}");
+    assert!(rerank.get("served_model").is_none(), "{rerank}");
+}
+
+/// Bugbot on #1419: the sync door runs high, xhigh and max off its caller's
+/// thread. On a current-thread runtime that is a plain thread with no
+/// runtime, and the rerank door refused a configured reranker there as
+/// `model_unavailable`. A host serving from a current-thread runtime reranks
+/// a high recall over the sync RPC, with a deadline (Sol R1 on this branch:
+/// the deadline's timer was made on the caller's thread, which has no
+/// runtime, and panicked) and without.
+#[test]
+fn high_recall_over_the_sync_rpc_reranks_on_a_current_thread_runtime() {
+    let io = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let fake = io.block_on(FakeReranker::start(prefers_known(), no_hook(), 10));
+    let models = reranker_models(&fake.base_url, 32_000);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let replies = runtime.block_on(async {
+        let (_dir, server, _host, _) = served(Some(&models)).await;
+        let owner = server.vault().ensure_embedded_owner_actor().unwrap();
+        for text in OTHERS.iter().chain([&KNOWN]) {
+            remember(server.vault(), owner, text);
+        }
+        let recipe = format!(
+            "scope=core:read;principal_ref={};actor_class=human",
+            owner.to_hex()
+        );
+        let auth = crate::test_credentials::authenticate(&server, &recipe);
+        [
+            json!({"query": QUERY, "effort": "high", "limit": 10}),
+            json!({"query": QUERY, "effort": "high", "limit": 10, "deadline_ms": 30_000}),
+        ]
+        .into_iter()
+        .map(|params| {
+            let frames = crate::livequery::bound_rpc(
+                &server,
+                &auth,
+                crate::livequery::RpcRequest {
+                    request_id: 7,
+                    method: "recall".to_owned(),
+                    params,
+                },
+            )
+            .unwrap();
+            crate::livequery::test_wire::reply(&frames)
+        })
+        .collect::<Vec<_>>()
+    });
+    runtime.shutdown_background();
+
+    for reply in &replies {
+        assert_eq!(
+            reply["result"]["retrieval_meta"]["rerank"]["status"], "applied",
+            "{reply}"
+        );
+    }
+    assert_eq!(fake.calls(), 2);
+    for seen in fake.seen() {
+        assert!(
+            seen["documents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|document| document.as_str().unwrap().contains(KNOWN)),
+            "{seen}"
+        );
+    }
+    drop(fake);
+    io.shutdown_background();
 }
 
 const PPLX_REPO: &str = "perplexity-ai/pplx-embed-v1-0.6b";
