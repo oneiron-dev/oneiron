@@ -748,7 +748,10 @@ fn a_step_whose_input_fits_the_seat_to_the_token_compacts() {
     let room = crate::compaction::compaction_input_tokens(
         request.turn_start,
         first,
-        &crate::engine_executor::compaction::window_pins(first),
+        &first
+            .iter()
+            .filter_map(|message| crate::engine_executor::compaction::failure_pin(&message.content))
+            .collect::<Vec<_>>(),
         request.summary_token_budget,
     );
 
