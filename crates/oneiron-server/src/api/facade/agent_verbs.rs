@@ -48,13 +48,7 @@ async fn cancel(
     )?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(facade_invoke(
-        &server,
-        &headers,
-        actor,
-        class,
-        auth.locality(),
-        "cancel",
-        value,
+        &server, &headers, &auth, actor, class, "cancel", value,
     )?))
 }
 async fn describe(
@@ -80,7 +74,7 @@ async fn describe(
         &server.vault,
         &auth,
         oneiron::task_verb::sdk::describe(
-            &server.vault.memory(actor, class).at(auth.locality()),
+            &credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality()),
             facade_input(value)?,
         )?,
     )?))
@@ -98,9 +92,9 @@ async fn tasks_create(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "tasks.create",
         value,
     )?))
@@ -124,9 +118,9 @@ async fn tasks_update(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "tasks.update",
         value,
     )?))
@@ -141,15 +135,7 @@ async fn witness(
 
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
-    let output = facade_invoke(
-        &server,
-        &headers,
-        actor,
-        class,
-        auth.locality(),
-        "witness",
-        value,
-    )?;
+    let output = facade_invoke(&server, &headers, &auth, actor, class, "witness", value)?;
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(Json(output))
 }
@@ -166,9 +152,9 @@ async fn claim_upsert(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "claim_upsert",
         value,
     )?))
@@ -263,13 +249,7 @@ async fn receipts(
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
-        &server,
-        &headers,
-        actor,
-        class,
-        auth.locality(),
-        "receipts",
-        value,
+        &server, &headers, &auth, actor, class, "receipts", value,
     )?))
 }
 async fn key_value_get(
@@ -279,15 +259,15 @@ async fn key_value_get(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "key_value_get",
         value,
     )?))
@@ -305,9 +285,9 @@ async fn key_value_put(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "key_value_put",
         value,
     )?))
@@ -325,9 +305,9 @@ async fn key_value_delete(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "key_value_delete",
         value,
     )?))
@@ -339,15 +319,15 @@ async fn key_value_search(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "key_value_search",
         value,
     )?))
@@ -359,15 +339,15 @@ async fn key_value_namespaces(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "key_value_namespaces",
         value,
     )?))
@@ -379,17 +359,11 @@ async fn can(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
-        &server,
-        &headers,
-        actor,
-        class,
-        auth.locality(),
-        "can",
-        value,
+        &server, &headers, &auth, actor, class, "can", value,
     )?))
 }
 async fn peek(
@@ -399,17 +373,11 @@ async fn peek(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
-        &server,
-        &headers,
-        actor,
-        class,
-        auth.locality(),
-        "peek",
-        value,
+        &server, &headers, &auth, actor, class, "peek", value,
     )?))
 }
 async fn tasks_ask(
@@ -425,9 +393,9 @@ async fn tasks_ask(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "tasks.ask",
         value,
     )?))
@@ -445,9 +413,9 @@ async fn tasks_wait(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "tasks.wait",
         value,
     )?))
@@ -465,9 +433,9 @@ async fn tasks_answer(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "tasks.answer",
         value,
     )?))
@@ -479,15 +447,15 @@ async fn tasks_outcomes(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "tasks.outcomes",
         value,
     )?))
@@ -505,9 +473,9 @@ async fn rooms_list(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "rooms.list",
         value,
     )?))
@@ -525,9 +493,9 @@ async fn rooms_messages(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "rooms.messages",
         value,
     )?))
@@ -545,9 +513,9 @@ async fn rooms_render(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "rooms.render",
         value,
     )?))
@@ -565,9 +533,9 @@ async fn rooms_find(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "rooms.find",
         value,
     )?))
@@ -585,9 +553,9 @@ async fn rooms_get(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "rooms.get",
         value,
     )?))
@@ -605,9 +573,9 @@ async fn rooms_trunk(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "rooms.trunk",
         value,
     )?))
@@ -625,9 +593,9 @@ async fn rooms_claim(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
-        auth.locality(),
         "rooms.claim",
         value,
     )?))
@@ -642,15 +610,7 @@ async fn rooms_speak(
 
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
-    let output = facade_invoke(
-        &server,
-        &headers,
-        actor,
-        class,
-        auth.locality(),
-        "rooms.speak",
-        value,
-    )?;
+    let output = facade_invoke(&server, &headers, &auth, actor, class, "rooms.speak", value)?;
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(Json(output))
 }

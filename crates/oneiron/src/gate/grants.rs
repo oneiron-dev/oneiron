@@ -256,6 +256,58 @@ fn scoped_read_scope_matches_claim(
     }
 }
 
+/// Whether `grant` reads claims in `world` (`None` is base reality), as
+/// [`scoped_read_claim_allowed`] judges a claim's world: its canonical Scope
+/// admits a read of some record there (the read verb, the world, and no
+/// axis left at bottom, which no record narrows), retrieval's floor for it
+/// under the reader's `credential` leaves some entity type its selectors,
+/// its bands and the credential's share (a TASK-only grant does), and a
+/// world selector, if it carries one, names that world. A
+/// selector on another axis leaves the world readable; one this matcher does
+/// not know admits no claim, so no world. A grant that needs a receipt or a
+/// budget reads none.
+pub(crate) fn scoped_read_grant_reads_world(
+    grant: &PolicyScopedGrant,
+    world: Option<EntityId>,
+    credential: Option<&crate::federation::Scope>,
+) -> bool {
+    if grant.receipt_required || grant.budget.is_some() {
+        return false;
+    }
+    let scope = &grant.authority_scope;
+    let id = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+    if !scope.verbs.contains(&"read".to_owned())
+        || !scope.worlds.contains(&id)
+        || scope.audience.is_bottom()
+        || !super::retrieval_filter::scoped_read_grant_reads_some_type(grant, credential)
+    {
+        return false;
+    }
+    match grant.scope.as_ref() {
+        None | Some(Value::Nil) => true,
+        Some(Value::Map(entries)) => entries.iter().all(|(key, value)| match key.as_str() {
+            Some("world" | "world_ref" | "worldRef") => {
+                scoped_read_world_matches_claim(value, world)
+            }
+            Some(
+                "claim_scope"
+                | "claimScope"
+                | "scope"
+                | "facet"
+                | "facet_ref"
+                | "facetRef"
+                | "entity_types"
+                | "max_sensitivity_band"
+                | "include_stale"
+                | "min_confidence"
+                | "min_salience",
+            ) => true,
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
 fn scoped_read_world_matches_claim(value: &Value, claim_world: Option<EntityId>) -> bool {
     if matches!(value, Value::Nil) {
         return claim_world.is_none();

@@ -373,7 +373,7 @@
       "output": "Option<crate::memory::KeyValueItem>",
       "call": "memory.key_value_get(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -454,7 +454,7 @@
       "output": "Vec<crate::memory::KeyValueItem>",
       "call": "memory.key_value_search(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -483,7 +483,7 @@
       "output": "Vec<Vec<String>>",
       "call": "memory.key_value_namespaces(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -509,6 +509,7 @@
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -532,6 +533,7 @@
       "mcp_served": "[input.group_ref]",
       "call": "memory.tasks_ask_peek(input)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -594,6 +596,7 @@
       "mcp_served_output": "output.iter().flat_map(|pair| pair.derived_from.iter().copied())",
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {
         "spec": "$"
       },

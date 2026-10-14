@@ -11,14 +11,48 @@ use oneiron::claim::CallerLocality;
 ///
 /// These routes read the whole vault under one actor ref, so they stay a
 /// trust-root surface: scoped `/v1` delegation tokens do not reach them.
-pub(super) fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result<(), ApiError> {
+pub(super) fn check_api_auth(
+    headers: &HeaderMap,
+    server: &SyncServer,
+) -> Result<CoreAuth, ApiError> {
     if server.managed_issuer.is_some() {
-        return CoreAuth::for_server(headers, server).map(drop);
+        return CoreAuth::for_server(headers, server);
     }
-    require_owner_auth(headers, &server.config, server.vault().as_ref()).map(drop)
+    require_owner_auth(headers, &server.config, server.vault().as_ref())
 }
 
 const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
+
+/// The read key a verified credential reads under on every `/v1` door. It is
+/// the engine's one builder, the one the facade's read lane uses: the owner's
+/// live full credential reads as the owner, and any other holder needs a live
+/// grant for relationship data. A credential that grants no read is refused.
+pub(crate) fn credential_read_key(
+    vault: &oneiron::Vault,
+    proof: &oneiron::authority::VerifiedSlip,
+) -> Result<oneiron::claim::ScopedReadActorKey, ApiError> {
+    vault
+        .credential_read_key(proof)
+        .map_err(|error| super::core_engine_error("credential read key failed", error))?
+        .ok_or_else(ApiError::unauthorized)
+}
+
+/// A facade handle that reads as `auth`'s credential does: a verified slip
+/// binds the handle's reads to the same credential key, so a narrower
+/// credential stays bounded by it. A caller with no slip keeps the handle's
+/// own lane.
+pub(crate) fn credential_memory<'a>(
+    vault: &'a oneiron::Vault,
+    auth: Option<&CoreAuth>,
+    actor: oneiron::EntityId,
+    class: oneiron::EdgeActorClass,
+) -> oneiron::memory::Memory<'a> {
+    let memory = vault.memory(actor, class);
+    match auth.and_then(CoreAuth::verified_slip) {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
+    }
+}
 
 /// The read `auth` makes, where its connection sits: a caller off this
 /// device reads no device-local world (DEC-0005).
@@ -27,9 +61,7 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
     auth: &CoreAuth,
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
     if let Some(proof) = auth.verified_slip() {
-        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(proof)
-            .ok_or_else(ApiError::unauthorized)?;
-        return Ok(vault.scoped_read(actor.at(auth.locality())));
+        return Ok(vault.scoped_read(credential_read_key(vault, proof)?.at(auth.locality())));
     }
     let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
     let mut key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
@@ -43,9 +75,25 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
     Ok(vault.scoped_read(key.at(auth.locality())))
 }
 
-/// The legacy routes' read, for a caller whose connection sits at
-/// `locality`.
-pub(super) fn scoped_read_for_legacy_api(
+/// The legacy read lane for the credential [`check_api_auth`] admitted, where
+/// its connection sits. A verified slip reads under its own key, through the
+/// one builder, so an agent's full-scope slip reads a relationship's rows here
+/// only on a grant, as on `/v1`, and every read checks that slip's liveness.
+/// A credential that verifies no slip is the server's own secret and reads as
+/// the host root.
+pub(super) fn scoped_read_for_legacy_api<'a>(
+    server: &'a SyncServer,
+    auth: &CoreAuth,
+) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
+    if let Some(proof) = auth.verified_slip() {
+        let vault = server.vault().as_ref();
+        return Ok(vault.scoped_read(credential_read_key(vault, proof)?.at(auth.locality())));
+    }
+    scoped_read_for_host_root(server, auth.locality())
+}
+
+/// The host root's read, for a caller whose connection sits at `locality`.
+pub(super) fn scoped_read_for_host_root(
     server: &SyncServer,
     locality: CallerLocality,
 ) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
@@ -54,9 +102,7 @@ pub(super) fn scoped_read_for_legacy_api(
         let proof = vault
             .verified_host_root_slip(issuer)
             .map_err(|_| ApiError::unauthorized())?;
-        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof)
-            .ok_or_else(ApiError::unauthorized)?;
-        return Ok(vault.scoped_read(actor.at(locality)));
+        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?.at(locality)));
     }
     if let Some(secret) = server.config.auth_secret.as_deref() {
         let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
@@ -64,9 +110,7 @@ pub(super) fn scoped_read_for_legacy_api(
         let proof = vault
             .verified_host_root_slip(&issuer)
             .map_err(|_| ApiError::unauthorized())?;
-        let actor = oneiron::claim::ScopedReadActorKey::from_verified_slip(&proof)
-            .ok_or_else(ApiError::unauthorized)?;
-        return Ok(vault.scoped_read(actor.at(locality)));
+        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?.at(locality)));
     }
     // Explicit dev mode is not a production root-slip factory.
     let actor_key = oneiron::claim::ScopedReadActorKey::new(LEGACY_SCOPED_READ_ACTOR_REF)

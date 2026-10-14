@@ -6,7 +6,6 @@ mod tests;
 
 use base64::Engine;
 use oneiron::EntityId;
-use oneiron::claim::ScopedReadActorKey;
 use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, WindowIndexEntry, home_search_candidates, index_selection_revision,
     promotion_snapshot, selected_item_blob, window_index_page, window_index_projection,
@@ -183,8 +182,8 @@ fn index(
     let page_limit = input.limit.min(budgets.index_page_limit);
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof)
-        .ok_or_else(AppError::unauthorized)?
+    let actor = crate::api::credential_read_key(&server.vault, proof)
+        .map_err(AppError::from)?
         .at(auth.locality());
     let scoped = server.vault.scoped_read(actor);
     let current_vv = doc.oplog_vv().encode();
@@ -371,8 +370,8 @@ fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer, 
     // A stored grant constrains the selector; the actor's live scoped-read
     // floor must ALSO admit the exact target. Either denial looks missing.
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof)
-        .ok_or_else(AppError::unauthorized)?
+    let actor = crate::api::credential_read_key(&server.vault, proof)
+        .map_err(AppError::from)?
         .at(auth.locality());
     if !server
         .vault
@@ -419,8 +418,8 @@ fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof)
-        .ok_or_else(AppError::unauthorized)?
+    let actor = crate::api::credential_read_key(&server.vault, proof)
+        .map_err(AppError::from)?
         .at(auth.locality());
     let scoped = server.vault.scoped_read(actor);
     if !scoped

@@ -107,7 +107,7 @@ pub(crate) async fn get_entity(
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Standard);
 
@@ -115,7 +115,7 @@ pub(crate) async fn get_entity(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server, locality)?;
+    let scoped_read = scoped_read_for_legacy_api(&server, &auth)?;
     let read = scoped_read
         .read(&[oneiron::claim::PointRead::id(id)], None)
         .inspect_err(|error| tracing::error!(%error,"get entity failed"))
@@ -245,7 +245,7 @@ pub(crate) async fn get_edges(
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -253,7 +253,7 @@ pub(crate) async fn get_edges(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server, locality)?;
+    let scoped_read = scoped_read_for_legacy_api(&server, &auth)?;
     let read = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {

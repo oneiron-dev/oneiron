@@ -109,15 +109,24 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         if call != RunCall::Bridge(SelfEffect::MemorySearch) {
             return Ok(None);
         }
-        self.actor
+        let unauthenticated = || AgentVerbRefusal {
+            code: "mcp_auth_required".to_owned(),
+        };
+        let proof = self
+            .actor
             .auth
             .as_ref()
             .and_then(crate::auth::CoreAuth::verified_slip)
-            .and_then(ScopedReadActorKey::from_verified_slip)
+            .ok_or_else(unauthenticated)?;
+        // The one builder every door's credential key comes from.
+        self.server
+            .vault
+            .credential_read_key(proof)
+            .map_err(|_| AgentVerbRefusal {
+                code: "engine_error".to_owned(),
+            })?
             .map(|reader| Some(reader.at(self.actor.locality())))
-            .ok_or_else(|| AgentVerbRefusal {
-                code: "mcp_auth_required".to_owned(),
-            })
+            .ok_or_else(unauthenticated)
     }
 }
 

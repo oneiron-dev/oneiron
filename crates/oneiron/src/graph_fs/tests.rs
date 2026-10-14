@@ -125,6 +125,68 @@ fn core_read_world_grant(actor_ref: &str, world: EntityId) -> Value {
     ])
 }
 
+/// A `core:read` grant whose canonical Scope reads only `worlds` and admits
+/// only `verb`, and whose selectors, if `selector` names one, read only that
+/// world.
+fn core_read_grant_in(
+    actor_ref: &str,
+    worlds: &[EntityId],
+    selector: Option<EntityId>,
+    verb: &str,
+) -> Value {
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.worlds = worlds
+        .iter()
+        .map(|world| crate::federation::ScopeId(*world))
+        .collect();
+    scope.verbs = [verb.to_owned()].into_iter().collect();
+    let mut grant = vec![
+        (Value::from("actor_ref"), Value::from(actor_ref)),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(&scope).expect("scope fixture"),
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ];
+    if let Some(world) = selector {
+        grant.push((
+            Value::from("selectors"),
+            Value::Map(vec![(
+                Value::from("world_ref"),
+                Value::from(world.to_hex()),
+            )]),
+        ));
+    }
+    Value::Map(grant)
+}
+
+/// A `core:read` grant whose canonical Scope reads only `world` and the
+/// entity types in `bands`, with `selectors` if given.
+fn core_read_grant_typed(
+    actor: EntityId,
+    world: EntityId,
+    bands: crate::federation::ScopeAxis<u8>,
+    selectors: Option<Value>,
+) -> Value {
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.worlds = crate::federation::ScopeAxis::Some(
+        [crate::federation::ScopeId(world)].into_iter().collect(),
+    );
+    scope.bands = bands;
+    let mut grant = vec![
+        (Value::from("actor_ref"), Value::from(actor.to_hex())),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(&scope).expect("scope fixture"),
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ];
+    grant.extend(selectors.map(|selectors| (Value::from("selectors"), selectors)));
+    Value::Map(grant)
+}
+
 // Kept local instead of `test_util`: this exercises `BatchOp::Put` through `apply_ops`.
 fn put_policy_manifest(vault: &crate::Vault, id: EntityId, data: Vec<u8>) -> Result<()> {
     let ops = vec![BatchOp::Put {
@@ -244,6 +306,467 @@ fn worlds_readdir_off_this_device_names_no_device_local_world() -> Result<()> {
     assert!(here.contains(&world.to_hex()), "{here}");
     let away = names(CallerLocality::OffDevice)?;
     assert!(!away.contains(&world.to_hex()), "{away}");
+    Ok(())
+}
+
+/// Astra #1413-004: the world listing took the manifest's read grants for
+/// the whole list of worlds, so the owner's own key, which no manifest
+/// narrows, listed none of them while only an agent held a grant. Worlds are
+/// listed, and a WORLD's path judged, by the reader's own authority now: the
+/// owner walks into every world, the agent only into its grant's, and a
+/// credential no grant names only into the worlds it grants. A grant reads
+/// a world as claim admission judges it (Sol R5-004): by its canonical Scope
+/// and any world selector together, not by the selector's name alone.
+#[test]
+fn worlds_list_under_the_readers_own_authority() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (first, second, subject) = (test_id(0x34), test_id(0x35), test_id(0x36));
+    let (agent, holder) = (test_id(0x37), test_id(0x38));
+    let (scoped, crossed, effect) = (test_id(0x3A), test_id(0x3B), test_id(0x3F));
+    put_entity(&vault, first, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, second, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    put_claim(&vault, test_id(0x44), subject, Some(first), 10)?;
+    put_claim(&vault, test_id(0x45), subject, Some(second), 11)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x91),
+        encode_policy_manifest(vec![
+            core_read_world_grant(&agent.to_hex(), first),
+            core_read_grant_in(&scoped.to_hex(), &[second], None, "read"),
+            core_read_grant_in(&crossed.to_hex(), &[first], Some(second), "read"),
+            core_read_grant_in(&effect.to_hex(), &[second], None, "effect"),
+        ]),
+    )?;
+    let walk = |read: &ScopedRead<'_>| -> Result<(Vec<String>, [bool; 2])> {
+        let fs = resolver(read, 1024);
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = [first, second].map(|world| {
+            fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))
+                .expect("path visibility")
+        });
+        Ok((names.collect(), visible))
+    };
+
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner));
+    assert_eq!(
+        walk(&owner)?,
+        (
+            vec!["base".to_owned(), first.to_hex(), second.to_hex()],
+            [true, true]
+        ),
+        "no manifest grant narrows the owner's worlds"
+    );
+    let agent = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(agent.to_hex()).expect("actor key"));
+    assert_eq!(walk(&agent)?, (vec![first.to_hex()], [true, false]));
+    let scoped = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(scoped.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&scoped)?,
+        (vec![second.to_hex()], [false, true]),
+        "a grant whose Scope reads one world and names no selector"
+    );
+    let crossed = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(crossed.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&crossed)?,
+        (Vec::new(), [false, false]),
+        "a selector outside the grant's Scope reads no world"
+    );
+    let effect = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(effect.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&effect)?,
+        (Vec::new(), [false, false]),
+        "a grant whose Scope admits no read reads no world"
+    );
+
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer)?;
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"one world credential").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.scope.worlds = crate::federation::ScopeAxis::Some(
+        [crate::federation::ScopeId(second)].into_iter().collect(),
+    );
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let tag = b"one-world";
+    let signature = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &signature)?;
+    let narrowed = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("a read key"),
+    );
+    assert_eq!(walk(&narrowed)?, (vec![second.to_hex()], [false, true]));
+    Ok(())
+}
+
+/// Sol R5-001 on #1413: past a run of worlds the reader may not see, the
+/// world listing handed out the last one it scanned as its cursor, naming a
+/// world it withheld. The position is sealed now: no page names a withheld
+/// world, and paging on still reaches the reader's own.
+#[test]
+fn a_world_listing_cursor_names_no_withheld_world() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let mut worlds: Vec<EntityId> = (0..=GRAPH_FS_MAX_PAGE_ENTRIES)
+        .map(|_| EntityId::now())
+        .collect();
+    worlds.sort();
+    for chunk in worlds.chunks(512) {
+        chunk
+            .iter()
+            .fold(vault.batch(), |batch, world| {
+                batch.put(world, ENTITY_TYPE_WORLD, time_range(1), 1, b"entity")
+            })
+            .commit()?;
+    }
+    let (withheld, shown) = worlds.split_at(GRAPH_FS_MAX_PAGE_ENTRIES);
+    let reader = test_id(0x39);
+    put_policy_manifest(
+        &vault,
+        test_id(0x92),
+        encode_policy_manifest(vec![core_read_world_grant(&reader.to_hex(), shown[0])]),
+    )?;
+    let read = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(reader.to_hex()).expect("actor key"));
+    let fs = resolver(&read, 1024);
+    let (mut listed, mut cursor, mut pages) = (Vec::new(), None::<String>, 0);
+    loop {
+        let page = fs.readdir("/worlds/", cursor.as_deref())?;
+        let rendered = String::from_utf8(page.render_bytes()).expect("a page is text");
+        for world in withheld {
+            assert!(
+                !rendered.contains(&world.to_hex()),
+                "page {pages} names withheld world {}",
+                world.to_hex()
+            );
+        }
+        listed.extend(
+            page.entries()
+                .iter()
+                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+                .map(|entry| entry.name().to_owned()),
+        );
+        cursor = page.next_cursor().map(str::to_owned);
+        pages += 1;
+        if cursor.is_none() || pages > 4 {
+            break;
+        }
+    }
+    assert_eq!(listed, vec![shown[0].to_hex()]);
+    Ok(())
+}
+
+/// Sol R5-005 and R6-002 on #1413: the world listing never asked whether the
+/// reader's credential was still live, so the owner's lane, kept past its
+/// slip's revocation with the owner binding untouched, still listed every
+/// world; once that was fixed per world, a vault past one scan of WORLD rows
+/// still handed the dead credential a cursor. The listing judges the
+/// credential once in its own snapshot now and lists nothing, cursor
+/// included, and a WORLD path takes the same verdict.
+#[test]
+fn a_kept_lane_lists_no_world_after_its_credential_is_revoked() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (owner, other) = (test_id(0x3D), test_id(0x3E));
+    let worlds: Vec<EntityId> = (0..=GRAPH_FS_MAX_PAGE_ENTRIES)
+        .map(|_| EntityId::now())
+        .collect();
+    for chunk in worlds.chunks(512) {
+        chunk
+            .iter()
+            .fold(vault.batch(), |batch, world| {
+                batch.put(world, ENTITY_TYPE_WORLD, time_range(1), 1, b"entity")
+            })
+            .commit()?;
+    }
+    put_entity(&vault, owner, ENTITY_TYPE_PERSON)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x93),
+        encode_policy_manifest(vec![core_read_base_grant(&other.to_hex())]),
+    )?;
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer)?;
+    vault.bind_host_owner_for_test(&issuer, owner)?;
+    let slip_id = *blake3::hash(b"the owner's world credential").as_bytes();
+    let mut claims = root.claims;
+    claims.slip_id = slip_id;
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let tag = b"owner-worlds";
+    let signature = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &signature)?;
+    assert!(proof.is_full_vault_owner_grade());
+    let kept = vault.scoped_read(vault.credential_read_key(&proof)?.expect("a read key"));
+    let fs = resolver(&kept, 1024);
+    let walk = || -> Result<(Vec<String>, bool, bool)> {
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = fs.coreutils_path_visible(&format!("/worlds/{}", worlds[0].to_hex()))?;
+        Ok((names.collect(), page.next_cursor().is_some(), visible))
+    };
+    let (names, more, visible) = walk()?;
+    assert_eq!(
+        (names.first().map(String::as_str), more, visible),
+        (Some("base"), true, true),
+        "the owner's live credential"
+    );
+
+    vault.revoke_capability_slip(&issuer, slip_id)?;
+    assert_eq!(
+        walk()?,
+        (Vec::new(), false, false),
+        "the kept lane, past its credential's revocation"
+    );
+    Ok(())
+}
+
+/// A live credential for `holder`, cut from the host root with `scope`, and
+/// its slip id.
+fn mint_credential(
+    vault: &crate::Vault,
+    issuer: &crate::authority::HostSlipIssuer,
+    holder: EntityId,
+    label: &str,
+    scope: crate::federation::Scope,
+) -> Result<(crate::authority::VerifiedSlip, [u8; 32])> {
+    let root = vault.ensure_host_root_slip(issuer)?;
+    let slip_id = *blake3::hash(label.as_bytes()).as_bytes();
+    let mut claims = root.claims;
+    claims.slip_id = slip_id;
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.scope = scope;
+    let slip = vault.mint_capability_slip(issuer, claims)?;
+    let tag = label.as_bytes();
+    let signature = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &signature)?;
+    Ok((proof, slip_id))
+}
+
+/// Sol R5-006 on #1413: a lane serves only rows each peer it conjoins
+/// (`with_peer_reads`) reads too, yet the world listing judged the lane's own
+/// key alone, so the owner's lane with a peer held to one world listed every
+/// world, and still did after the peer's credential was revoked. Every lane
+/// must walk into a world now, and a dead peer lists nothing.
+#[test]
+fn a_world_listing_answers_to_every_peer_read() -> Result<()> {
+    use crate::federation::{ScopeAxis, ScopeId};
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (near, far, agent, other) = (test_id(0x2A), test_id(0x2B), test_id(0x2C), test_id(0x24));
+    put_entity(&vault, near, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, far, ENTITY_TYPE_WORLD)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x94),
+        encode_policy_manifest(vec![core_read_base_grant(&other.to_hex())]),
+    )?;
+    let issuer = crate::test_support::test_host_issuer();
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.worlds = ScopeAxis::Some([ScopeId(near)].into_iter().collect());
+    let (proof, slip_id) = mint_credential(&vault, &issuer, agent, "a peer held to near", scope)?;
+    let peer = crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("a read key");
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let lane = |peers| {
+        vault
+            .scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner))
+            .with_peer_reads(peers)
+    };
+    let walk = |read: &ScopedRead<'_>| -> Result<(Vec<String>, [bool; 2])> {
+        let fs = resolver(read, 1024);
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = [near, far].map(|world| {
+            fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))
+                .expect("path visibility")
+        });
+        Ok((names.collect(), visible))
+    };
+
+    assert_eq!(
+        walk(&lane(Vec::new()))?,
+        (
+            vec!["base".to_owned(), near.to_hex(), far.to_hex()],
+            [true, true]
+        ),
+        "the owner's lane alone"
+    );
+    let shared = lane(vec![peer]);
+    assert_eq!(
+        walk(&shared)?,
+        (vec![near.to_hex()], [true, false]),
+        "the owner's lane with a peer held to one world"
+    );
+    vault.revoke_capability_slip(&issuer, slip_id)?;
+    assert_eq!(
+        walk(&shared)?,
+        (Vec::new(), [false, false]),
+        "past the peer's revocation"
+    );
+    Ok(())
+}
+
+/// Sol R7-003 on #1413: a credential whose bands, audience or sensitivity
+/// sit at bottom reads no row, yet the world listing asked only whether its
+/// Scope named a world, so it listed them and handed out a cursor past
+/// them. A lane whose ordinary reads admit nothing walks no world now and
+/// gets no cursor, while a credential that leaves out base reality still
+/// walks into its own world. Sol R11-001: a credential whose bands share no
+/// type with its grant's reads no row either, though no axis sits at bottom,
+/// and a grant opens a world only where its types meet the credential's.
+#[test]
+fn a_credential_that_reads_no_row_walks_no_world() -> Result<()> {
+    use crate::federation::{Scope, ScopeAxis, ScopeId, SensitivityCeiling};
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (world, second, holder, other) =
+        (test_id(0x2D), test_id(0x2E), test_id(0x2F), test_id(0x24));
+    let (single, typed) = (test_id(0x21), test_id(0x22));
+    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, second, ENTITY_TYPE_WORLD)?;
+    let types = |entity_type: u8| ScopeAxis::Some([entity_type].into_iter().collect());
+    let (claims, tasks) = (
+        crate::registry::ENTITY_TYPE_CLAIM,
+        crate::registry::ENTITY_TYPE_TASK,
+    );
+    put_policy_manifest(
+        &vault,
+        test_id(0x95),
+        encode_policy_manifest(vec![
+            core_read_base_grant(&other.to_hex()),
+            core_read_grant_typed(single, world, types(claims), None),
+            core_read_grant_typed(typed, world, types(claims), None),
+            core_read_grant_typed(typed, second, types(tasks), None),
+        ]),
+    )?;
+    let issuer = crate::test_support::test_host_issuer();
+    // One entry a page: a lane that lists anything gets a cursor too.
+    let walk_as =
+        |holder: EntityId, label: &str, scope: Scope| -> Result<(Vec<String>, bool, bool)> {
+            let (proof, _) = mint_credential(&vault, &issuer, holder, label, scope)?;
+            let read = vault.scoped_read(vault.credential_read_key(&proof)?.expect("a read key"));
+            let fs = read.graph_fs(GraphFsOptions::default().with_max_entries(1));
+            let page = fs.readdir("/worlds/", None)?;
+            let names = page
+                .entries()
+                .iter()
+                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+                .map(|entry| entry.name().to_owned());
+            let visible = fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))?;
+            Ok((names.collect(), page.next_cursor().is_some(), visible))
+        };
+    let walk = |label: &str, scope: Scope| walk_as(holder, label, scope);
+    let banded = |entity_type: u8| {
+        let mut scope = crate::federation::scope_codec::read_preset();
+        scope.bands = types(entity_type);
+        scope
+    };
+
+    let mut own = crate::federation::scope_codec::read_preset();
+    own.worlds = ScopeAxis::Some([ScopeId(world)].into_iter().collect());
+    assert_eq!(
+        walk("its own world", own)?,
+        (vec![world.to_hex()], false, true),
+        "a credential that leaves out base reality"
+    );
+    let preset = crate::federation::scope_codec::read_preset;
+    let no_band = Scope {
+        bands: ScopeAxis::Bottom,
+        ..preset()
+    };
+    let no_audience = Scope {
+        audience: ScopeAxis::Bottom,
+        ..preset()
+    };
+    let no_sensitivity = Scope {
+        sensitivity: SensitivityCeiling::Bottom,
+        ..preset()
+    };
+    for (label, scope) in [
+        ("no band", no_band),
+        ("no audience", no_audience),
+        ("no sensitivity", no_sensitivity),
+    ] {
+        assert_eq!(
+            walk(label, scope)?,
+            (Vec::new(), false, false),
+            "a credential with {label}"
+        );
+    }
+    assert_eq!(
+        walk_as(single, "claims under a claims grant", banded(claims))?,
+        (vec![world.to_hex()], false, true),
+        "a credential whose bands meet its grant's"
+    );
+    assert_eq!(
+        walk_as(single, "tasks under a claims grant", banded(tasks))?,
+        (Vec::new(), false, false),
+        "a credential whose bands share no type with its grant's"
+    );
+    assert_eq!(
+        walk_as(typed, "tasks under two grants", banded(tasks))?,
+        (vec![second.to_hex()], false, false),
+        "a grant whose types miss the credential's opens no world"
+    );
+    Ok(())
+}
+
+/// Sol R7-004 on #1413: retrieval reads a grant whose selectors name no
+/// entity type as reading nothing, yet the world matcher took every selector
+/// it knew for granted, so such a grant still opened its world beside the
+/// reader's valid one. A grant reads a world now only where retrieval's floor
+/// for it leaves an entity type, and a grant held to TASKs still reads the
+/// world it names.
+#[test]
+fn a_grant_that_selects_no_entity_type_reads_no_world() -> Result<()> {
+    use crate::federation::ScopeAxis;
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (empty, kept, tasks) = (test_id(0x26), test_id(0x27), test_id(0x28));
+    let (reader, tasker) = (test_id(0x29), test_id(0x25));
+    for world in [empty, kept, tasks] {
+        put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    }
+    let no_type = Value::Map(vec![(
+        Value::from("entity_types"),
+        Value::Array(Vec::new()),
+    )]);
+    let task_band = ScopeAxis::Some([crate::registry::ENTITY_TYPE_TASK].into_iter().collect());
+    put_policy_manifest(
+        &vault,
+        test_id(0x96),
+        encode_policy_manifest(vec![
+            core_read_grant_typed(reader, empty, ScopeAxis::All, Some(no_type)),
+            core_read_grant_typed(reader, kept, ScopeAxis::All, None),
+            core_read_grant_typed(tasker, tasks, task_band, None),
+        ]),
+    )?;
+    let walk = |actor: EntityId| -> Result<(Vec<String>, [bool; 3])> {
+        let read = vault
+            .scoped_read(crate::claim::ScopedReadActorKey::new(actor.to_hex()).expect("actor key"));
+        let fs = resolver(&read, 1024);
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = [empty, kept, tasks].map(|world| {
+            fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))
+                .expect("path visibility")
+        });
+        Ok((names.collect(), visible))
+    };
+
+    assert_eq!(
+        walk(reader)?,
+        (vec![kept.to_hex()], [false, true, false]),
+        "a grant that selects no entity type, beside a valid one"
+    );
+    assert_eq!(
+        walk(tasker)?,
+        (vec![tasks.to_hex()], [false, false, true]),
+        "a grant held to TASKs"
+    );
     Ok(())
 }
 

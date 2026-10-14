@@ -52,6 +52,8 @@ use oneiron::memory::{
 };
 use oneiron::{EdgeActorClass, EntityId};
 
+use super::credential_memory;
+
 /// Request-body ceiling for the facade nest: 64 MiB.
 ///
 /// Sized for the largest legal blob append (32 MiB raw) once base64 and JSON
@@ -148,17 +150,18 @@ fn facade_room_turn(headers: &HeaderMap) -> Result<Option<EntityId>, FacadeApiEr
         })
 }
 
-/// Runs one SDK verb, inside the named room turn when the request names one.
+/// Runs one SDK verb as the caller's credential reads, inside the named room
+/// turn when the request names one.
 fn facade_invoke(
     server: &SyncServer,
     headers: &HeaderMap,
+    auth: &CoreAuth,
     actor: EntityId,
     class: EdgeActorClass,
-    locality: oneiron::claim::CallerLocality,
     verb: &str,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let memory = server.vault.memory(actor, class).at(locality);
+    let memory = credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
     Ok(match facade_room_turn(headers)? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,

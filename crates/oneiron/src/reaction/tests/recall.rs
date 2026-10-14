@@ -377,3 +377,40 @@ fn reactions_ride_the_packs_disclosure_clamp() {
         Some(serde_json::json!(["👍×2 (Bob, Erin)", "🎉×1 (Bob)"]))
     );
 }
+
+/// Sol R5-002 on #1413: the lane's reaction reads opened a snapshot of their
+/// own but never rechecked an owner lane's binding in it, so a lane kept past
+/// its owner's revocation still read the reactions of members who stayed.
+/// They refuse once the binding is gone, as the lane's other reads do.
+#[test]
+fn a_kept_owner_lane_reads_no_reaction_after_its_revocation() {
+    let room = reacted_room();
+    let issuer = crate::test_support::test_host_issuer();
+    room.vault.ensure_host_root_slip(&issuer).unwrap();
+    room.vault
+        .bind_host_owner_for_test(&issuer, room.alice)
+        .unwrap();
+    let lane = room
+        .vault
+        .scoped_read(crate::claim::ScopedReadActorKey::vault_owner(room.alice));
+    let signals = room.vault.reactions_since(room.alice, 0).unwrap();
+    let pills = |lane: &crate::claim::ScopedRead<'_>| {
+        lane.reaction_pills(&[room.message], room.alice)
+            .map(|pills| {
+                pills
+                    .get(&room.message)
+                    .is_some_and(|pills| !pills.is_empty())
+            })
+    };
+    assert!(
+        pills(&lane).unwrap(),
+        "the bound owner reads Bob's and Erin's"
+    );
+    assert!(lane.is_reaction_signal_readable(&signals[0]).unwrap());
+    assert!(!lane.reaction_lines(&room.message).unwrap().is_empty());
+
+    room.vault.revoke_host_actor_for_test(&issuer).unwrap();
+    assert!(pills(&lane).is_err());
+    assert!(lane.is_reaction_signal_readable(&signals[0]).is_err());
+    assert!(lane.reaction_lines(&room.message).is_err());
+}

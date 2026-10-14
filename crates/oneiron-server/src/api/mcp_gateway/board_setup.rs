@@ -314,12 +314,15 @@ fn mcp_board_sections(
 ) -> Result<(Vec<oneiron::context_board::BoardSection>, McpBoardOmissions), McpGatewayError> {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
-    let rows = server
-        .vault
-        .memory(actor.actor_ref, actor.actor_class)
-        .at(actor.locality())
-        .describe_rows()
-        .map_err(mcp_facade_error)?;
+    let rows = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality())
+    .describe_rows()
+    .map_err(mcp_facade_error)?;
     let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
     // The engine's own footer states the render WINDOW's truncation and
     // whether its scan was exhausted. That is a different fact from the scope

@@ -176,7 +176,7 @@ pub(crate) async fn search_vector(
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let deadline = search_deadline(params.deadline_ms)?;
     let view = params.view.unwrap_or(View::Summary);
@@ -214,7 +214,7 @@ pub(crate) async fn search_vector(
         view,
         count_mode,
         page_limit: params.limit,
-        locality,
+        auth,
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
@@ -321,7 +321,7 @@ pub(crate) async fn search_text(
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let deadline = search_deadline(params.deadline_ms)?;
     let page = SearchPage {
@@ -332,7 +332,7 @@ pub(crate) async fn search_text(
         view: params.view.unwrap_or(View::Summary),
         count_mode: params.count_mode.for_search_response(),
         page_limit: params.limit,
-        locality,
+        auth,
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
@@ -643,7 +643,7 @@ pub(crate) async fn search_semantic(
     body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let arrived = Instant::now();
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let Json(params) = body.map_err(|rejection| {
         ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
     })?;
@@ -671,6 +671,7 @@ pub(crate) async fn search_semantic(
         params.view.unwrap_or(View::Summary),
         params.limit,
     );
+    let page_auth = auth.clone();
     let page = move |embedding, question| SearchPage {
         probe: SearchProbe::Vector {
             embedding,
@@ -683,7 +684,7 @@ pub(crate) async fn search_semantic(
         view,
         count_mode,
         page_limit,
-        locality,
+        auth: page_auth.clone(),
     };
     let question = text.to_owned();
     let page = match deadline {
@@ -705,7 +706,7 @@ pub(crate) async fn search_semantic(
                 arrived,
                 budget,
                 count_mode,
-                locality,
+                auth,
                 move |server, deadline| {
                     let embedding = server.embed_query(&question).map_err(embed_query_error)?;
                     search_page(

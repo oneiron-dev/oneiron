@@ -68,32 +68,17 @@ impl Memory<'_> {
         verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
         let owner = self.is_vault_owner_in_txn(&txn)?;
         if let Some(proof) = &self.read_proof {
-            let key = (proof.claims().holder_ref == self.actor.to_hex())
-                .then(|| ScopedReadActorKey::from_verified_slip(proof))
-                .flatten()
+            // The one key every proof-backed door builds (credential_key.rs).
+            return self
+                .vault
+                .credential_read_key_in_txn(&txn, proof, self.actor, owner)?
                 .ok_or_else(|| {
                     MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
                         "the bound read credential does not grant this actor a read",
                         &["Present a credential minted for this actor that carries the read verb."],
                     )
-                })?;
-            // The owner's own live, unattenuated credential reads as the
-            // owner: a manifest never narrows the person on their own vault
-            // (ARCH-0057). The credential still binds the key, so a read made
-            // after it expires or is revoked reads nothing. A narrower
-            // credential, the owner's too, reads only what it grants.
-            if owner && self.is_full_owner_credential_in_txn(&txn, proof)? {
-                return Ok(ScopedReadActorKey::vault_owner(self.actor).while_live(proof));
-            }
-            // Relationship data needs a participant or an approved grant
-            // (ARCH-0006a), on top of what the credential itself admits. An
-            // unscoped row is the vault's own: the credential alone decides it.
-            return Ok(if owner {
-                key
-            } else {
-                key.require_relationship_grants(self.actor)
-            });
+                });
         }
         let key = if owner {
             ScopedReadActorKey::vault_owner(self.actor)
@@ -110,45 +95,41 @@ impl Memory<'_> {
         Ok(key)
     }
 
+    /// Of `ids`, the ones a handle bound to a read credential reads, each
+    /// judged by the lane's point read in one snapshot, as `get_entity`
+    /// judges it. `None` is a handle bound to no credential: its surfaces
+    /// show what the actor's own verbs do.
+    pub(crate) fn credential_readable_ids(
+        &self,
+        ids: &[EntityId],
+    ) -> MemoryResult<Option<std::collections::BTreeSet<EntityId>>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        let reads: Vec<_> = ids.iter().map(|id| PointRead::id(*id)).collect();
+        let rows = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .read(&reads, None)
+            .map_err(MemoryError::from)?
+            .value;
+        Ok(Some(
+            rows.into_iter()
+                .flatten()
+                .filter(|row| row.body.is_some())
+                .map(|row| row.id)
+                .collect(),
+        ))
+    }
+
     /// Whether the bound actor is the vault owner: the local embedded owner,
     /// or a human whose owner binding verifies.
     pub(super) fn is_vault_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {
-        if self.actor_class == crate::EdgeActorClass::Human
-            && self.actor == crate::vault::embedded_owner_actor_id()?
-        {
-            // The local embedded-owner reader is the host's own-device read lane.
-            // A separately paired authority root does not turn it into a peer.
-            return Ok(true);
-        }
-        match self.verify_owner_in_txn(txn) {
-            Ok(()) => Ok(true),
-            // Not the owner: a human without the binding, or another class.
-            Err(error)
-                if error.code == MEMORY_CODE_OWNER_BINDING_REQUIRED
-                    || error.code == MEMORY_CODE_FORBIDDEN =>
-            {
-                Ok(false)
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    /// Whether `proof` is the bound human actor's own live, full owner-grade
-    /// credential: the whole vault, no records, channels, organisation or
-    /// single use.
-    fn is_full_owner_credential_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        proof: &crate::authority::VerifiedSlip,
-    ) -> MemoryResult<bool> {
-        if !proof.is_full_vault_owner_grade()
-            || proof.claims().holder_ref != self.actor.to_hex()
-            || proof.claims().actor_class.as_deref()
-                != Some(crate::EdgeActorClass::Human.gate_actor_class())
-        {
-            return Ok(false);
-        }
-        Ok(self.vault.capability_slip_is_live_in_txn(txn, proof)?)
+        super::credential_key::actor_is_vault_owner_in_txn(
+            self.vault,
+            txn,
+            self.actor,
+            self.actor_class,
+        )
     }
 
     /// Carries a bound room turn onto a read key, so any lane built from the

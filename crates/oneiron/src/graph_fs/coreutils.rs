@@ -4,8 +4,6 @@ use crate::ports::EntityStoreRead;
 use std::ops::Bound;
 use std::time::Instant;
 
-use rmpv::Value;
-
 use crate::claim::{ScopedReadReceipt, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -298,7 +296,7 @@ impl GraphFsResolver<'_, '_> {
         let mut total = 0;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             reverse: true,
             after: cursor.map(TemporalCursor::port_position),
@@ -369,7 +367,7 @@ impl GraphFsResolver<'_, '_> {
         let mut total = 0;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             start: if cursor.is_some() {
                 Bound::Unbounded
@@ -463,7 +461,7 @@ impl GraphFsResolver<'_, '_> {
     fn coreutils_entity_visible(&self, id: &EntityId) -> Result<bool> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         self.coreutils_entity_visible_in(&rtxn, &policy, id)
     }
 
@@ -481,21 +479,7 @@ impl GraphFsResolver<'_, '_> {
                 .scoped_read
                 .is_entity_readable_with_policy_in(rtxn, policy, id);
         }
-        if policy.diagnostics().loaded_manifest_forces_fail_closed()
-            || (self.scoped_read.off_device()
-                && crate::settings::device_local_keeps_in(
-                    &self.scoped_read.vault().store,
-                    rtxn,
-                    id,
-                )?)
-        {
-            return Ok(false);
-        }
-        if !policy.has_scoped_read_grants() {
-            return Ok(true);
-        }
-        let visible_worlds = self.world_names_from_matching_grants(policy)?;
-        Ok(visible_worlds.iter().any(|world| world == &id.to_hex()))
+        self.world_visible(rtxn, policy, Some(*id))
     }
 
     pub(super) fn coreutils_result_cap(&self) -> usize {
@@ -597,42 +581,6 @@ pub(super) fn read_grant_matches_actor(
         return false;
     }
     true
-}
-
-pub(super) fn grant_scope_world_name(scope: Option<&Value>) -> Option<String> {
-    let Some(scope) = scope else {
-        return Some("base".to_owned());
-    };
-    match scope {
-        Value::Nil => Some("base".to_owned()),
-        Value::Map(entries) if entries.is_empty() => Some("base".to_owned()),
-        Value::Map(entries) => {
-            for (key, value) in entries {
-                let key = key.as_str()?;
-                if !matches!(key, "world" | "world_ref" | "worldRef") {
-                    continue;
-                }
-                if matches!(value, Value::Nil) || value.as_str().is_some_and(|text| text == "base")
-                {
-                    return Some("base".to_owned());
-                }
-                let id = value
-                    .as_str()
-                    .and_then(|text| EntityId::from_hex(text).ok())
-                    .or_else(|| match value {
-                        Value::Binary(bytes) => bytes
-                            .as_slice()
-                            .try_into()
-                            .ok()
-                            .and_then(|bytes| EntityId::from_bytes(bytes).ok()),
-                        _ => None,
-                    })?;
-                return Some(id.to_hex());
-            }
-            None
-        }
-        _ => None,
-    }
 }
 
 pub(super) fn claim_matches_world_in(

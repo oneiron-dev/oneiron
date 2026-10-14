@@ -148,7 +148,7 @@ pub(super) fn thread_tasks_capped(
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
         // Room membership alone never grants TASK visibility.
-        if !scoped.is_entity_readable_now(&id)? {
+        if !scoped.is_entity_readable(&id)? {
             continue;
         }
         let Some(view) = memory.get_entity(&id.to_hex())?.value else {
@@ -219,7 +219,7 @@ pub(super) fn thread_tasks_capped(
         // A visible TASK does not grant a read of its result. The room row
         // and trunk header must not disclose a foreign result ref.
         let delivered = match delivered {
-            Some((result, at)) if scoped.is_entity_readable_now(&result)? => Some((result, at)),
+            Some((result, at)) if scoped.is_entity_readable(&result)? => Some((result, at)),
             _ => None,
         };
         // The thread's counts are derived from this TASK and its result, its
