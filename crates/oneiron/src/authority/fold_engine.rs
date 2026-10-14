@@ -188,7 +188,10 @@ pub(crate) fn fold_own_authority_log(
         None,
         &BTreeMap::new(),
         consent,
-        FoldLocalInputs::VAULT_DOOR,
+        FoldLocalInputs {
+            hosted: posture == crate::HostingPrivacyPosture::Hosted,
+            ..FoldLocalInputs::VAULT_DOOR
+        },
     )
 }
 
