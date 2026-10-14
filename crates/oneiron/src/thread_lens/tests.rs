@@ -43,7 +43,7 @@ fn labelled_values(card: &GeneratedUiCard, label: &str) -> Vec<String> {
                 map.values().for_each(|child| walk(child, label, out));
             }
             serde_json::Value::Array(items) => {
-                items.iter().for_each(|child| walk(child, label, out))
+                items.iter().for_each(|child| walk(child, label, out));
             }
             _ => {}
         }
