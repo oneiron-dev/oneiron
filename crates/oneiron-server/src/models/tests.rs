@@ -901,6 +901,62 @@ async fn a_declared_run_calls_only_its_teachers_and_a_t1_key_only_when_allowed()
     );
 }
 
+/// Owner ruling 2026-10-14 (fix 6), Astra and Sol on #1421: the default
+/// receipt sink logs ids, counts and codes. A declared run's name and its
+/// teachers' purpose are text the host wrote, and every lease id the run's
+/// meter issues begins with the run's name, so an admitted, dispatched,
+/// settled and refused call logs none of it.
+#[tokio::test]
+async fn a_declared_runs_receipt_log_carries_no_run_text() {
+    const SENTINEL: &str = "sentinel-world-text-3d8e";
+    let own = FakeLlm::start(vec![], Some(Reply::text("own"))).await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        "default = \"own:small\"\n[providers.own]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"own:small\" }}, {{ model = \"own:other\" }}]\n",
+        own.base_url
+    ))));
+    let own_id = ModelId::new("own/small@live").unwrap();
+    // Served here, so the refusal is the run's: it did not declare this teacher.
+    let undeclared = ModelId::new("own/other@live").unwrap();
+    let declaration = RunDeclaration::declared(BudgetLine {
+        limit_units: 100_000,
+        reserve_units: 1_000,
+        unit: LeaseUnit::tokens(),
+    })
+    .with_teachers(
+        DeclaredTeachers::new(
+            [own_id.clone()],
+            [],
+            "student",
+            format!("distil {SENTINEL}"),
+        )
+        .unwrap(),
+    );
+    let run = runtime.declared_run(format!("{SENTINEL} nightly digest"), declaration, None);
+    // A callsite registration racing another test can miss one capture; the
+    // settled and refused rows prove this capture saw the run.
+    for _ in 0..3 {
+        let sink = crate::logging::tests::CapturedSink::default();
+        let guard = tracing::dispatcher::set_default(&sink.production_dispatch());
+        run.generate(own_id.as_str(), request(&own_id, "hi"))
+            .await
+            .unwrap();
+        assert!(
+            run.generate(undeclared.as_str(), request(&undeclared, "hi"))
+                .await
+                .is_err()
+        );
+        drop(guard);
+        let written = sink.text();
+        if written.contains("settled") && written.contains("undeclared_teacher") {
+            assert!(!written.contains(SENTINEL), "{written}");
+            assert!(written.contains("admitted"), "{written}");
+            assert!(written.contains("dispatched"), "{written}");
+            return;
+        }
+    }
+    panic!("no receipt row was captured");
+}
+
 /// The `SingleSend` claim on both HTTP transports: one provider call is one
 /// request. A failed or throttled reply is not sent again, and a redirect is
 /// not followed, so a credential never reaches a second origin.

@@ -33,7 +33,7 @@ use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepEffectBinding, StepOutcome,
-    TierPrecedence, call_as_step,
+    TierPrecedence, call_as_step, call_as_step_checked,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
@@ -83,6 +83,11 @@ enum PartitionRun {
     Trapped,
     /// The response was charged but the run must stop before publishing it.
     Checkpoint,
+    /// The reply broke the extraction contract: charged, not memoized, and
+    /// the attempt parks with the reason, to ask again on resume.
+    Refused {
+        reason: String,
+    },
     Held {
         candidates: Vec<VerifiedCandidate>,
         retry_at_ms: u64,
@@ -125,12 +130,21 @@ impl ConsolidationExecutor<'_> {
         if let Some(rules) = &rules {
             rules.bind(Stage::Extraction, &mut request);
         }
-        let request = ctx
+        let mut request = ctx
             .vault
             .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &call.inference)?
             .into_request();
+        // The level is for the model and route the call goes out on.
+        super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
         let step_hash = request.canonical_hash()?;
-        let outcome = call_as_step(&step_ctx, call.backend, self.guard, request).await;
+        let outcome = call_as_step_checked(
+            &step_ctx,
+            call.backend,
+            self.guard,
+            request,
+            &extraction::check_extraction_reply,
+        )
+        .await;
         let (response, failure_policy) = match outcome {
             Ok(StepOutcome::Finished {
                 response,
@@ -145,11 +159,16 @@ impl ConsolidationExecutor<'_> {
                 charges.record_usage(&usage);
                 return Ok(PartitionRun::Checkpoint);
             }
-            Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, .. })
-                if ctx.deadline.expired() =>
-            {
+            // A reply that broke the contract is paid and not memoized: the
+            // attempt parks with its spend and asks again on resume.
+            Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
                 charges.record_usage(&usage);
-                return Ok(PartitionRun::Checkpoint);
+                if ctx.deadline.in_finalize_window() {
+                    return Ok(PartitionRun::Checkpoint);
+                }
+                return Ok(PartitionRun::Refused {
+                    reason: format!("extraction reply refused: {}", errors.join("; ")),
+                });
             }
             Err(error) => return Err(error),
         };
@@ -176,7 +195,7 @@ impl ConsolidationExecutor<'_> {
             )?)?;
         }
         let candidates = if accepted {
-            self.decode_candidates(
+            Self::decode_candidates(
                 &partition,
                 &response,
                 resources,
@@ -317,10 +336,11 @@ impl ConsolidationExecutor<'_> {
             if let Some(rules) = rules {
                 rules.bind(Stage::Conflict, &mut request);
             }
-            let request = ctx
+            let mut request = ctx
                 .vault
                 .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
                 .into_request();
+            super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
             let step_hash = request.canonical_hash()?;
             let outcome = call_as_step(&step_ctx, call.backend, self.guard, request).await;
             let response = match outcome {
@@ -890,6 +910,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 Ok(charges.checkpoint())
             }
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
+            Ok(PartitionRun::Refused { reason }) => Ok(charges.park(&reason)),
             Ok(PartitionRun::Completed { candidates }) => {
                 resources.accept_verified(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Completed {

@@ -582,7 +582,7 @@ pub(crate) async fn submit_core_surface_event(
         .vault
         .enqueue_inbound_surface_event(req.into_engine(), unix_seconds_now())
         .map_err(|error| {
-            tracing::error!(error = %error, "surface event admission failed");
+            tracing::error!(kind = ?error.kind(), "surface event admission failed");
             core_engine_error("surface event admission failed", error)
         })?;
 
@@ -630,7 +630,7 @@ pub(crate) async fn get_core_surface_event(
         .vault
         .surface_event_handoff_status(&correlation_id)
         .map_err(|error| {
-            tracing::error!(error = %error, "surface event status read failed");
+            tracing::error!(kind = ?error.kind(), "surface event status read failed");
             core_engine_error("surface event status read failed", error)
         })?
         .ok_or_else(|| ApiError::not_found("surface_event", Some(&correlation_id)))?;
