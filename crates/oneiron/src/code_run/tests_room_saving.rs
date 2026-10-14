@@ -732,9 +732,8 @@ fn a_room_save_refuses_a_slip_the_owner_handed_on() {
             },
         )
         .expect("narrow the slip");
-    let refused = session
-        .save_talk_by(room.owner, &verified(&vault, &kept))
-        .err();
+    let kept = verified(&vault, &kept);
+    let refused = session.save_talk_by(room.owner, &kept).err();
     assert!(
         matches!(
             &refused,
