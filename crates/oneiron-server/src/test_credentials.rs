@@ -34,6 +34,10 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
         .to_owned();
     let actor_class = fields.get("actor_class").map(ToString::to_string);
     let org_ref = fields.get("org_ref").map(ToString::to_string);
+    let records: BTreeSet<String> = fields
+        .get("records")
+        .map(|records| records.split(',').map(str::to_owned).collect())
+        .unwrap_or_default();
     let mut scope = Scope::top();
     if let Some(scopes) = fields.get("scope") {
         scope.verbs = ScopeAxis::Some(
@@ -59,6 +63,7 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
         );
         assert_eq!(slip.claims.actor_class, actor_class);
         assert_eq!(slip.claims.org_ref, org_ref);
+        assert_eq!(slip.claims.records, records);
         assert_eq!(
             slip.claims.scope, scope,
             "attenuate a slip explicitly instead of reusing an id with new authority"
@@ -74,6 +79,7 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
     claims.binding_key = key.verifying_key().to_bytes();
     claims.actor_class = actor_class;
     claims.org_ref = org_ref;
+    claims.records = records;
     claims.scope = scope;
     let slip = server
         .vault()
