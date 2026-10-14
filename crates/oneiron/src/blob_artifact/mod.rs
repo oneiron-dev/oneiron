@@ -26,6 +26,7 @@
 mod body;
 mod lifecycle;
 mod provenance;
+mod references;
 mod store_keys;
 mod version_codec;
 mod versions;
@@ -38,6 +39,9 @@ pub use self::body::{
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
+pub(crate) use self::references::{
+    project_version_claim, readmit_held_asset_in_txn, remove_version_claim_projection,
+};
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;

@@ -77,6 +77,9 @@ side_tables! {
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.
     BLOB_ARTIFACT_VERSION: VaultMeta b"blob_artifact:version:v1:" Raw;
+    /// The artifact a `blob.version` claim names, under the claim's content hash: which artifacts
+    /// hold which bytes, replicated claims included. Key: bytes32 + id16 (claim); value: id16.
+    BLOB_ARTIFACT_VERSION_CLAIM: VaultMeta b"blob_artifact:version_claim:v1:" Raw;
     /// Revision-ref frontier (16 bytes) a board-selection CLAIM was written under, authenticated on
     /// every read. Key: id16.
     BOARD_HISTORY_CLAIM_FRONTIER: VaultMeta b"board_history:claim_frontier:" Raw;

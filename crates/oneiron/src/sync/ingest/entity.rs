@@ -5,8 +5,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
 use crate::ports::EntityStoreRead;
 use crate::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-    ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
+    ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD,
+    ENTITY_TYPE_REDACTION_AUDIT,
 };
 use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
 use crate::sync::loro_support::TombstoneIndex;
@@ -141,18 +142,20 @@ impl RefusalRetry {
 }
 
 /// A row checked against a sibling row of the same entities map: an ask word or
-/// receipt against its group, a project's derived home room against its project.
+/// receipt against its group, a project's derived home room against its project,
+/// an artifact's version bytes against the version claim that holds them.
 /// Forward remat and observer B visit these after every other row of a pass or
 /// delta, so a sibling carried in the same map is visited first. It lands first
 /// only when its own dependencies are already met.
 pub(in crate::sync) fn waits_for_sibling_row(blob: &[u8]) -> bool {
     crate::task_verb::waits_for_ask_group(blob)
         || EntityMetadataHeader::parse(blob).is_some_and(|header| {
-            header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
-                && crate::workspace_roster::project_room_dependency(
-                    &blob[ENTITY_METADATA_HEADER_LEN..],
-                )
-                .is_some()
+            header.entity_type == ENTITY_TYPE_ASSET
+                || (header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
+                    && crate::workspace_roster::project_room_dependency(
+                        &blob[ENTITY_METADATA_HEADER_LEN..],
+                    )
+                    .is_some())
         })
 }
 
@@ -329,6 +332,16 @@ fn admit(
     }
     let delete_protected = id == crate::dreamer_runner::authority::dreamer_actor_id()?
         || crate::registry::is_delete_protected_engine_record(header.entity_type);
+    // H125: artifact version bytes fenced here when their last artifact went come back once an
+    // artifact live here holds them again. A tombstone naming them still wins.
+    if header.entity_type == ENTITY_TYPE_ASSET && !ctx.tombstones.contains(&id) {
+        crate::blob_artifact::readmit_held_asset_in_txn(
+            &vault.store,
+            wtxn,
+            &id,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+    }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
         return Ok(EntityStep::Skip);
     }
