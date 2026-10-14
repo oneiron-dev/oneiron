@@ -421,6 +421,8 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tombstone_index_tests;
 
 // The flat window.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and

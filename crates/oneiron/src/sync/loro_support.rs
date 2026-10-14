@@ -67,7 +67,7 @@ pub(crate) fn tombstone_map_contains_id(map: &LoroMap, id: &EntityId) -> bool {
     }
     let mut present = false;
     map.for_each(|key, _| {
-        if !present && EntityId::from_hex(key).is_ok_and(|parsed| parsed == *id) {
+        if !present && parse_tombstone_key(key).is_some_and(|parsed| parsed == *id) {
             present = true;
         }
     });
@@ -86,7 +86,7 @@ pub(crate) fn tombstone_values_for_id(map: &LoroMap, id: &EntityId) -> Vec<Vec<u
         values.push(value);
     }
     map.for_each(|key, value| {
-        if key != canonical && EntityId::from_hex(key).is_ok_and(|parsed| parsed == *id) {
+        if key != canonical && parse_tombstone_key(key).is_some_and(|parsed| parsed == *id) {
             values.push(match value {
                 ValueOrContainer::Value(LoroValue::Binary(bytes)) => bytes.to_vec(),
                 _ => Vec::new(),
@@ -94,6 +94,19 @@ pub(crate) fn tombstone_values_for_id(map: &LoroMap, id: &EntityId) -> Vec<Vec<u
         }
     });
     values
+}
+
+fn parse_tombstone_key(key: &str) -> Option<EntityId> {
+    #[cfg(test)]
+    TOMBSTONE_KEY_PARSES.with(|parses| parses.set(parses.get() + 1));
+    EntityId::from_hex(key).ok()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tombstone keys this thread parsed as entity ids: the H15 work pin.
+    pub(crate) static TOMBSTONE_KEY_PARSES: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
 }
 
 pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
