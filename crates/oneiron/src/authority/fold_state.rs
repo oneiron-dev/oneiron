@@ -85,7 +85,11 @@ pub enum ActorBindingRejection {
 /// Deterministic authority fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityFold {
+    /// The heads a new main-log entry names: every main-log head but the rows
+    /// of anchors this install does not pin.
     pub(super) append_heads: BTreeSet<AuthorityEntryHash>,
+    /// Each unpinned anchor's own heads, which only that anchor's rows name.
+    pub(super) anchor_heads: BTreeMap<[u8; 32], BTreeSet<AuthorityEntryHash>>,
     pub(super) append_sequences: BTreeMap<AuthorityKey, u64>,
     /// Historical actor/class pairs affected by a key revocation, including rebind-away.
     pub actor_revocation_affected_writers: BTreeSet<(EntityId, String)>,

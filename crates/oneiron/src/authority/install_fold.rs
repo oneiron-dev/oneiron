@@ -124,7 +124,12 @@ pub(super) fn fold_as_install(
     if let Some(no_vouch) = &no_vouch {
         no_vouch.cap(&mut fold);
     }
-    fold.append_heads = super::world_privacy::main_log_heads(entries, &fold.valid_entries);
+    (fold.append_heads, fold.anchor_heads) = super::world_privacy::main_log_heads(
+        entries,
+        &fold.valid_entries,
+        &fold.anchor_entries,
+        fold.pinned_root.map(|pin| pin.anchor_key),
+    );
     for entry in entries {
         // Advance beyond even a signed rejected local entry. A new local write
         // never reuses a sequence, though independently received siblings may.

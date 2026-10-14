@@ -502,24 +502,50 @@ pub(super) fn side_branch_violations(
 
 /// The heads a new main-log entry takes as parents: the valid main-log
 /// entries no valid main-log entry names. A side entry naming a main-log entry
-/// does not retire it as a head.
+/// does not retire it as a head. The rows of an anchor this install does not
+/// pin are left out and retire nothing, so no door here names them and a
+/// host's own roots never crowd a door's parents past the format bound
+/// (Astra S2-R2 A2-F4). Each such anchor's own heads come back beside, for
+/// the rows that anchor signs.
 pub(super) fn main_log_heads(
     entries: &[AuthorityLogEntry],
     valid: &BTreeSet<AuthorityEntryHash>,
-) -> BTreeSet<AuthorityEntryHash> {
+    anchored: &BTreeSet<AuthorityEntryHash>,
+    pinned_anchor: Option<[u8; 32]>,
+) -> (
+    BTreeSet<AuthorityEntryHash>,
+    BTreeMap<[u8; 32], BTreeSet<AuthorityEntryHash>>,
+) {
     let mut main = BTreeSet::new();
+    let mut foreign: BTreeMap<[u8; 32], BTreeSet<AuthorityEntryHash>> = BTreeMap::new();
     let mut named = BTreeSet::new();
+    let mut named_by_any = BTreeSet::new();
     for entry in entries {
         let Ok(hash) = authority_entry_hash(entry) else {
             continue;
         };
-        if valid.contains(&hash) && side_world(&entry.op).is_none() {
-            main.insert(hash);
-            named.extend(entry.parent_hashes.iter().copied());
+        if !valid.contains(&hash) || side_world(&entry.op).is_some() {
+            continue;
+        }
+        named_by_any.extend(entry.parent_hashes.iter().copied());
+        match &entry.signer.public_key {
+            AuthorityKey::Ed25519(anchor)
+                if anchored.contains(&hash) && pinned_anchor != Some(*anchor) =>
+            {
+                foreign.entry(*anchor).or_default().insert(hash);
+            }
+            _ => {
+                main.insert(hash);
+                named.extend(entry.parent_hashes.iter().copied());
+            }
         }
     }
     main.retain(|hash| !named.contains(hash));
-    main
+    for heads in foreign.values_mut() {
+        heads.retain(|hash| !named_by_any.contains(hash));
+    }
+    foreign.retain(|_, heads| !heads.is_empty());
+    (main, foreign)
 }
 
 /// The live world edits `machine` signed: what a new profile revision lists

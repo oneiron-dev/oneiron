@@ -463,6 +463,7 @@ pub(super) fn fold_authority_log_once(
         }
         return AuthorityFold {
             append_heads: BTreeSet::new(),
+            anchor_heads: BTreeMap::new(),
             append_sequences: BTreeMap::new(),
             actor_revocation_affected_writers: BTreeSet::new(),
             actor_write_frontiers: BTreeMap::new(),
@@ -540,6 +541,7 @@ pub(super) fn fold_authority_log_once(
     });
     AuthorityFold {
         append_heads: BTreeSet::new(),
+        anchor_heads: BTreeMap::new(),
         append_sequences: BTreeMap::new(),
         actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
             &states,

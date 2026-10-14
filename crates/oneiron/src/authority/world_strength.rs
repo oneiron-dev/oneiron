@@ -165,27 +165,47 @@ pub(super) fn full_strength(
         && standing.race(edit.machine, hash, &edit.key, &edit.marks, view)
 }
 
-/// What one live edit contributes in the current state: its own settings at
-/// full strength; otherwise the meet of its settings and of every edit it
-/// replaced, each judged the same way, down to full-strength edits or the
-/// default. Iterative, so a long chain of offline edits cannot exhaust the
-/// stack.
-fn contribution(
+#[cfg(test)]
+thread_local! {
+    /// The edits [`world_meet`] visited on this thread: contract §4's cost
+    /// oracle.
+    pub(super) static WORLD_MEET_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The meet of every live edit's contribution to `world` under `view`. A
+/// live edit contributes its own settings at full strength; otherwise the
+/// meet of its settings and of every edit it replaced, each judged the same
+/// way, down to full-strength edits or the default. The meet is idempotent,
+/// so the edits the live ones share are walked once: one evaluation is
+/// linear in the world's edits however many live edits share an ancestry
+/// (Sol S2-R2 S2-F4, Astra A2-F3). Iterative, so a long chain of offline
+/// edits cannot exhaust the stack.
+pub(super) fn world_meet(
     standing: &Standing<'_>,
-    frontier: &WorldFrontier,
-    hash: AuthorityEntryHash,
-    edit: &FrontierEdit,
+    world: EntityId,
     view: StandingView,
 ) -> PrivacyMeet {
-    let mut meet = PrivacyMeet::of(&edit.settings);
-    if full_strength(standing, &hash, edit, view) {
-        return meet;
+    let default = || PrivacyMeet::of(&WorldPrivacy::default());
+    let Some(frontier) = standing.state().worlds.get(&world) else {
+        return default();
+    };
+    let Some(first) = frontier.live.values().next() else {
+        return default();
+    };
+    let mut meet = PrivacyMeet::of(&first.settings);
+    let mut visited = BTreeSet::new();
+    let mut pending = Vec::new();
+    for (hash, edit) in &frontier.live {
+        #[cfg(test)]
+        WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
+        meet = meet.meet(&PrivacyMeet::of(&edit.settings));
+        if visited.insert(*hash) && !full_strength(standing, hash, edit, view) {
+            pending.push(edit.as_ref());
+        }
     }
-    let mut visited = BTreeSet::from([hash]);
-    let mut pending = vec![edit];
     while let Some(next) = pending.pop() {
         if next.replaced.is_empty() || next.disputed {
-            meet = meet.meet(&PrivacyMeet::of(&WorldPrivacy::default()));
+            meet = meet.meet(&default());
         }
         for replaced in &next.replaced {
             if !visited.insert(*replaced) {
@@ -198,36 +218,15 @@ fn contribution(
             else {
                 continue;
             };
+            #[cfg(test)]
+            WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
             meet = meet.meet(&PrivacyMeet::of(&prior.settings));
             if !full_strength(standing, replaced, prior, view) {
-                pending.push(prior);
+                pending.push(prior.as_ref());
             }
         }
     }
     meet
-}
-
-/// The meet of every live edit's contribution to `world` under `view`.
-pub(super) fn world_meet(
-    standing: &Standing<'_>,
-    world: EntityId,
-    view: StandingView,
-) -> PrivacyMeet {
-    let mut contributions = standing
-        .state()
-        .worlds
-        .get(&world)
-        .into_iter()
-        .flat_map(|frontier| {
-            frontier
-                .live
-                .iter()
-                .map(|(hash, edit)| contribution(standing, frontier, *hash, edit, view))
-        });
-    let first = contributions
-        .next()
-        .unwrap_or_else(|| PrivacyMeet::of(&WorldPrivacy::default()));
-    contributions.fold(first, |meet, next| meet.meet(&next))
 }
 
 /// `read_X(world)`: the read an install trusting exactly `T(admitter)`

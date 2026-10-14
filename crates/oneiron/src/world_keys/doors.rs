@@ -449,6 +449,97 @@ impl Vault {
             wraps.push((*recipient, public));
         }
         chunks.push((parents, wraps));
+        self.put_wrap_records_in_txn(txn, fold, signing, machine, key, &binding, chunks, seq)
+            .map(Ok)
+    }
+
+    /// This machine's own record of `key` when no record names the world's
+    /// whole frontier ([`FrontierWide`]). It wraps the key to `root` and to
+    /// this machine only, whatever the frontier, so a flood can make it wrap
+    /// to no one else. Its parents are the rows this machine's standing rests
+    /// on, the root records, and as many of the world's live edits as one
+    /// record still names; its policy is the revision at those parents. A
+    /// later door here opens the key from it whether or not it counts, so a
+    /// merge and a re-run reach the same key (Engine, 2026-10-15, on Sol
+    /// S2-R2 S2-F3 and Astra A2-F2).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one append: the snapshot, the signer, the key and its two recipients"
+    )]
+    pub(crate) fn append_bridge_wrap_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        signing: &SigningKey,
+        machine: EntityId,
+        key: &WorldKey,
+        owner: EntityId,
+        root: &RootRecipient,
+        own: &HybridPublicKey,
+        seq: &mut SequenceCounter,
+    ) -> Result<AuthorityEntryHash> {
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let mut parents = standing_rows(fold, machine);
+        parents.insert(root.entry);
+        if let Some(pinned) = self.pinned_root_recipient_in_txn(txn, fold)? {
+            parents.insert(pinned.entry);
+        }
+        let room = MAX_PARENTS
+            .checked_sub(parents.len())
+            .ok_or_else(invalid_authority)?;
+        let live: BTreeSet<AuthorityEntryHash> = fold
+            .worlds
+            .get(&key.id().world)
+            .into_iter()
+            .flat_map(|folded| folded.live.keys().copied())
+            .take(room)
+            .collect();
+        let binding = WorldKeyBinding {
+            vault_id,
+            key: *key.id(),
+            owner,
+            policy: PolicyRevision::of(live.iter().copied()),
+            commitment: key.commitment(),
+        };
+        parents.extend(live);
+        let wraps = vec![
+            (WrapRecipient::RecoveryRoot(root.id), &root.key),
+            (WrapRecipient::Machine(machine), own),
+        ];
+        self.put_wrap_records_in_txn(
+            txn,
+            fold,
+            signing,
+            machine,
+            key,
+            &binding,
+            vec![(parents, wraps)],
+            seq,
+        )?
+        .pop()
+        .ok_or_else(invalid_authority)
+    }
+
+    /// Seals `key` to each chunk's recipients under `binding` and appends one
+    /// signed record per chunk, naming that chunk's parents.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one append: the snapshot, the signer, the key and its records"
+    )]
+    fn put_wrap_records_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        signing: &SigningKey,
+        machine: EntityId,
+        key: &WorldKey,
+        binding: &WorldKeyBinding,
+        chunks: Vec<(
+            BTreeSet<AuthorityEntryHash>,
+            Vec<(WrapRecipient, &HybridPublicKey)>,
+        )>,
+        seq: &mut SequenceCounter,
+    ) -> Result<Vec<AuthorityEntryHash>> {
         let now = self.instant_in_txn(txn)?.secs();
         let mut rows: Vec<(AuthorityLogEntry, TimeRange, u64)> = Vec::new();
         let mut hashes = Vec::new();
@@ -456,15 +547,15 @@ impl Vault {
             let wraps = wraps
                 .into_iter()
                 .map(|(recipient, public)| {
-                    seal_world_key(&binding, recipient, public, key)
+                    seal_world_key(binding, recipient, public, key)
                         .map(|envelope| (recipient, envelope.to_bytes()))
                 })
                 .collect::<Result<Vec<_>>>()?;
             let record = WorldKeyWrapsRecord {
                 key: *key.id(),
                 commitment: binding.commitment,
-                owner,
-                policy,
+                owner: binding.owner,
+                policy: binding.policy,
                 machine,
                 wraps,
             };
@@ -487,7 +578,7 @@ impl Vault {
             ));
         }
         self.put_authority_log_entries_in_txn(txn, &rows)?;
-        Ok(Ok(hashes))
+        Ok(hashes)
     }
 
     /// The fold is the judge: every record must count here.

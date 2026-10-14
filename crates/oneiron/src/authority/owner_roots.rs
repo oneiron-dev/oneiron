@@ -133,14 +133,27 @@ pub(crate) fn anchor_signed_entry(
         .map(|seq| seq.checked_add(1).ok_or_else(invalid_authority))
         .transpose()?
         .unwrap_or(0);
-    if fold.vault_id.is_none() || fold.append_heads.is_empty() {
+    // The main log's heads, and this anchor's own: no door names another
+    // anchor's rows (Astra S2-R2 A2-F4).
+    let parents: BTreeSet<_> = fold
+        .append_heads
+        .iter()
+        .chain(
+            fold.anchor_heads
+                .get(&signer.verifying_key().to_bytes())
+                .into_iter()
+                .flatten(),
+        )
+        .copied()
+        .collect();
+    if fold.vault_id.is_none() || parents.is_empty() {
         return Err(invalid_authority());
     }
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: fold.vault_id,
         seq,
-        parent_hashes: fold.append_heads.iter().copied().collect(),
+        parent_hashes: parents.into_iter().collect(),
         op,
         signer: AuthoritySignature {
             suite: AuthoritySignatureSuite::Ed25519,

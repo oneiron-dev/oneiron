@@ -303,8 +303,10 @@ impl Vault {
         };
         let my_public = door.secret.secret.public_key().clone();
         let mut seq = SequenceCounter::new();
-        // Keys whose world outgrew one record: withheld, and the door goes
-        // on (Engine, 2026-10-15).
+        // Keys whose world outgrew one record, in the pre-wrap and in the
+        // wrap step: withheld unless already wrapped, and the door goes on
+        // (Engine, 2026-10-15).
+        let mut pre_wide = BTreeSet::new();
         let mut wide = BTreeSet::new();
         // A key this machine will not read under the new pin is wrapped
         // first on the old pin's rows, to the new root and to itself.
@@ -318,7 +320,7 @@ impl Vault {
             {
                 continue;
             }
-            let Ok(records) = self.append_world_key_wraps_in_txn(
+            let records = match self.append_world_key_wraps_in_txn(
                 txn,
                 &start.old,
                 door.signing,
@@ -330,10 +332,24 @@ impl Vault {
                     (WrapRecipient::Machine(me), my_public.clone()),
                 ],
                 &mut seq,
-            )?
-            else {
-                wide.insert(*id);
-                continue;
+            )? {
+                Ok(records) => records,
+                // The same two wraps on bounded parents, so a later door
+                // here still opens the key from its own record.
+                Err(_) => {
+                    pre_wide.insert(*id);
+                    vec![self.append_bridge_wrap_in_txn(
+                        txn,
+                        &start.old,
+                        door.signing,
+                        me,
+                        key,
+                        reached.owner,
+                        &root,
+                        &my_public,
+                        &mut seq,
+                    )?]
+                }
             };
             let after = self.authority_view_readonly_in_txn(txn)?;
             if !records
@@ -386,8 +402,24 @@ impl Vault {
                 &mut seq,
             )? {
                 Ok(records) => appended.extend(records),
+                // The root's and this machine's wraps go in a bridge record,
+                // which may not count; the other readers wait for a merge.
                 Err(_) => {
                     wide.insert(*id);
+                    let own = WrapRecipient::Machine(me);
+                    if missing.iter().any(|(to, _)| *to == to_root || *to == own) {
+                        self.append_bridge_wrap_in_txn(
+                            txn,
+                            &mid,
+                            door.signing,
+                            me,
+                            key,
+                            reached.owner,
+                            &root,
+                            &my_public,
+                            &mut seq,
+                        )?;
+                    }
                 }
             }
         }
@@ -416,7 +448,7 @@ impl Vault {
                 {
                     Err(Withheld::Conflicted)
                 }
-                Reach::Opened(_) if wide.contains(&id) => Err(Withheld::FrontierWide),
+                Reach::Opened(_) if pre_wide.contains(&id) => Err(Withheld::FrontierWide),
                 Reach::Opened(_) if !mine(&after) => Err(Withheld::NotMine),
                 Reach::Opened(_) if !reads(&after, id.world) => {
                     if door.restore
@@ -440,7 +472,14 @@ impl Vault {
                 held.wraps.contains_key(&to_root)
                     && held.wraps.contains_key(&WrapRecipient::Machine(me))
             });
+            // A key whose root and own wraps already count is rewrapped,
+            // even when another reader's wrap had to wait (Astra S2-R2
+            // A2-F5); its question is raised.
             if !wrapped {
+                if wide.contains(&id) {
+                    finish.report.withheld.push((id, Withheld::FrontierWide));
+                    continue;
+                }
                 return Err(invalid_authority());
             }
             finish.report.rewrapped.push(id);
