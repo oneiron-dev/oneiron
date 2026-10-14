@@ -21,6 +21,7 @@ mod record;
     any(target_os = "linux", target_os = "macos")
 ))]
 mod stack_probe;
+mod stretch;
 mod suite;
 
 pub use crate::envelope::{
@@ -37,6 +38,7 @@ pub use crate::record::{
     CheckpointRef, RecordBody, SigPurpose, SignatureEntry, SignatureRecord, SigningKey,
     VerifyPolicy, VerifyingKey, sign,
 };
+pub use crate::stretch::stretch_passphrase;
 pub use crate::suite::{Suite, SuiteId, SuiteKind, SuiteStatus, suite_table};
 
 /// Upper bound on any identifier field (key id, recipient id, vault id, signer id).
