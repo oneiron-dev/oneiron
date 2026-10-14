@@ -115,6 +115,29 @@ impl Vault {
         }
     }
 
+    /// The level a call outside any seat birth carries for `purpose`: the
+    /// vault's authored default, composed as a birth composes it, else
+    /// `fallback` held under the vault ceiling. A ceiling below `fallback`
+    /// is the vault's own word, so it comes back as authored.
+    pub fn purpose_effort(
+        &self,
+        purpose: &super::CallPurpose,
+        fallback: ReasoningEffort,
+    ) -> Result<PurposeEffort> {
+        let policy = self.seat_policy()?;
+        let composed = policy.compose_defaults(
+            &super::routing::purpose_key(purpose),
+            self.description_policy()?.as_ref(),
+        )?;
+        Ok(match composed {
+            Some(effort) => PurposeEffort::Authored(effort),
+            None if policy::effort_rank(fallback) > policy::effort_rank(policy.vault_ceiling) => {
+                PurposeEffort::Authored(policy.vault_ceiling)
+            }
+            None => PurposeEffort::Fallback(fallback),
+        })
+    }
+
     /// Set a revision-pinned description for a registered MODEL identity.
     pub fn set_model_description(&self, description: &ModelDescription) -> Result<()> {
         description.validate_with(&self.seat_policy()?)?;
@@ -146,6 +169,14 @@ impl Vault {
             })
             .transpose()
     }
+}
+
+/// Where a call's level came from: the vault's policy, or the caller's own
+/// fallback, which a caller may pair with controls of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PurposeEffort {
+    Authored(ReasoningEffort),
+    Fallback(ReasoningEffort),
 }
 
 /// Kind is part of warm-seat eligibility; a follower never borrows a child seat.

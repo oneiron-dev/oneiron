@@ -33,7 +33,7 @@ use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepEffectBinding, StepOutcome,
-    TierPrecedence, call_as_step,
+    TierPrecedence, call_as_step, call_as_step_checked,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
@@ -122,6 +122,7 @@ impl ConsolidationExecutor<'_> {
         let call = self.role(DREAMER_EXTRACTION_ROLE);
         let mut request =
             Self::extraction_request(&call, &partition, &transcript, &resources.request_scope())?;
+        super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
         if let Some(rules) = &rules {
             rules.bind(Stage::Extraction, &mut request);
         }
@@ -130,7 +131,13 @@ impl ConsolidationExecutor<'_> {
             .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &call.inference)?
             .into_request();
         let step_hash = request.canonical_hash()?;
-        let outcome = call_as_step(&step_ctx, call.backend, self.guard, request).await;
+        let check = |response: &LlmResponse| {
+            extraction::extraction_reply(response)
+                .map(drop)
+                .map_err(|error| error.to_string())
+        };
+        let outcome =
+            call_as_step_checked(&step_ctx, call.backend, self.guard, request, &check).await;
         let (response, failure_policy) = match outcome {
             Ok(StepOutcome::Finished {
                 response,
@@ -145,8 +152,10 @@ impl ConsolidationExecutor<'_> {
                 charges.record_usage(&usage);
                 return Ok(PartitionRun::Checkpoint);
             }
+            // A reply that broke the contract is paid and not memoized; a
+            // wake with no room left for another call asks again on resume.
             Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, .. })
-                if ctx.deadline.expired() =>
+                if ctx.deadline.in_finalize_window() =>
             {
                 charges.record_usage(&usage);
                 return Ok(PartitionRun::Checkpoint);
@@ -304,6 +313,7 @@ impl ConsolidationExecutor<'_> {
                 &prior_heads,
                 resources.scope(),
             )?;
+            super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
 
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,

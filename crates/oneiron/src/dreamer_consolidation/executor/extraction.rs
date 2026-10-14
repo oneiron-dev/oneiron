@@ -1,6 +1,7 @@
 //! Extraction request/response projection for one admitted branch.
 
 use super::*;
+use crate::llm::FinishReason;
 
 impl ConsolidationExecutor<'_> {
     pub(super) fn extraction_request(
@@ -12,10 +13,24 @@ impl ConsolidationExecutor<'_> {
         let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
-        let system = r#"Extract durable memory claims from the conversation transcript.
-Respond with JSON: {"candidates":[{"subject":"<32-hex entity id>","predicate":"<dotted.predicate>","value":<json>,"confidence":<0..1>,"evidence_refs":[{"source_id":"<32-hex id>","byte_range":[start,end]}]}]}.
-Each evidence ref names a source id and either a UTF-8 byte range in the displayed turn text (start inclusive, end exclusive) or claim_id. Only claims stated by the user or assistant; never invent evidence refs.
-Lines "entity <id> <label>" before the transcript list entities already in memory, each followed by its newest claims as "claim <id> <predicate> = <value>". Use a listed entity's id as the subject for that entity. When a turn corrects or updates a listed claim, give the new value with "corrects":"<that claim id>"."#;
+        let prompt: ExtractionPrompt = serde_json::from_str(include_str!("extraction_prompt.json"))
+            .map_err(|_| invalid_consolidation("shipped extraction prompt is not readable"))?;
+        let text = |role, text: String| LlmMessage {
+            role,
+            content: vec![ContentPart::Text { text }],
+        };
+        let mut messages = vec![text(LlmMessageRole::System, prompt.system)];
+        for example in prompt.examples {
+            messages.push(text(LlmMessageRole::User, example.user));
+            messages.push(text(LlmMessageRole::Assistant, example.assistant));
+        }
+        messages.push(text(
+            LlmMessageRole::User,
+            format!(
+                "conversation {}\n{transcript}",
+                bytes_to_hex_lower(partition.conversation_ref.as_bytes())
+            ),
+        ));
         Ok(LlmRequest {
             model: call.model.clone(),
             envelope: CallEnvelope {
@@ -34,28 +49,12 @@ Lines "entity <id> <label>" before the transcript list entities already in memor
                     &CallPurpose::Extraction,
                     ModelTierRef("consolidation".into()),
                 ),
-                response_format: ResponseFormat::Json {
-                    schema: super::super::extracted_people::extraction_response_schema(),
-                },
+                // No schema on any wire: a grammar built from one can strip
+                // the claim fields. The reply meets the contract here instead.
+                response_format: ResponseFormat::Text,
                 locality,
             }.with_purpose_defaults(),
-            messages: vec![
-                LlmMessage {
-                    role: LlmMessageRole::System,
-                    content: vec![ContentPart::Text {
-                        text: system.to_owned(),
-                    }],
-                },
-                LlmMessage {
-                    role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text {
-                        text: format!(
-                            "conversation {}\n{transcript}",
-                            bytes_to_hex_lower(partition.conversation_ref.as_bytes())
-                        ),
-                    }],
-                },
-            ],
+            messages,
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
@@ -71,20 +70,8 @@ Lines "entity <id> <label>" before the transcript list entities already in memor
         attempt_id: crate::attempt_queue::AttemptId,
         now_ms: u64,
     ) -> Result<Vec<super::super::evidence::ExtractedCandidate>> {
-        let text: String = response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        let parsed: serde_json::Value = serde_json::from_str(text.trim())
-            .map_err(|_| invalid_consolidation("extraction response must be JSON"))?;
-        let Some(items) = parsed.get("candidates").and_then(|value| value.as_array()) else {
-            return Ok(Vec::new());
-        };
+        let items = extraction_reply(response)?.candidates;
+        let items = items.as_slice();
         // A child hash is not part of the return contract. If a model still
         // reports one, compare it with our pinned source reread only to flag
         // an integrity failure. It never enters dedup or the write envelope.
@@ -154,6 +141,14 @@ Lines "entity <id> <label>" before the transcript list entities already in memor
                     else {
                         continue;
                     };
+                    // The contract's predicate rule is the claim grammar's.
+                    if crate::claim::validate_predicate(predicate, false).is_err() {
+                        tracing::warn!(
+                            target: "oneiron::dreamer",
+                            "extracted candidate's predicate breaks the claim grammar; not written"
+                        );
+                        continue;
+                    }
                     (subject, predicate)
                 }
             };
@@ -275,6 +270,97 @@ Lines "entity <id> <label>" before the transcript list entities already in memor
         }
         Ok(candidates)
     }
+}
+
+/// The shipped extraction prompt, as data: the system text and the worked
+/// examples sent as user and assistant turns before the transcript.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionPrompt {
+    system: String,
+    examples: Vec<WorkedExample>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkedExample {
+    user: String,
+    assistant: String,
+}
+
+/// An extraction reply that meets its contract: an object whose
+/// `candidates`, when present, are objects, and whose `persons`, when
+/// present, each name a 32-hex id, a name and at least one 32-hex turn.
+/// Other keys are outside the contract and read by no one.
+#[derive(serde::Deserialize)]
+pub(in crate::dreamer_consolidation) struct ExtractionReply {
+    #[serde(default, deserialize_with = "objects")]
+    pub(in crate::dreamer_consolidation) candidates: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub(in crate::dreamer_consolidation) persons: Vec<ExtractedPerson>,
+}
+
+#[derive(serde::Deserialize)]
+pub(in crate::dreamer_consolidation) struct ExtractedPerson {
+    pub(in crate::dreamer_consolidation) id: String,
+    pub(in crate::dreamer_consolidation) name: String,
+    pub(in crate::dreamer_consolidation) evidence_turn_refs: Vec<String>,
+}
+
+fn objects<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<serde_json::Value>, D::Error> {
+    let items: Vec<serde_json::Map<String, serde_json::Value>> =
+        serde::Deserialize::deserialize(deserializer)?;
+    Ok(items.into_iter().map(serde_json::Value::Object).collect())
+}
+
+/// `response`'s extraction reply, refused unless it meets the contract.
+///
+/// One narrow repair runs first: a reply that stopped one `}` short (it
+/// parses to the end and ends on the candidates' `]`) gets exactly one `}`
+/// appended, and the result must still parse and meet the contract. No
+/// other text is mended.
+pub(in crate::dreamer_consolidation) fn extraction_reply(
+    response: &LlmResponse,
+) -> Result<ExtractionReply> {
+    let text: String = response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let text = text.trim();
+    let reply = match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(reply) => reply,
+        Err(error)
+            if error.is_eof()
+                && response.finish_reason == FinishReason::Stop
+                && text.starts_with('{')
+                && text.ends_with(']') =>
+        {
+            serde_json::from_str(&format!("{text}}}"))
+                .map_err(|_| invalid_consolidation("extraction response must be JSON"))?
+        }
+        Err(_) => return Err(invalid_consolidation("extraction response must be JSON")),
+    };
+    let reply: ExtractionReply = serde_json::from_value(reply)
+        .map_err(|_| invalid_consolidation("extraction response breaks its contract"))?;
+    let hex = |id: &str| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !reply.persons.iter().all(|person| {
+        hex(&person.id)
+            && !person.name.is_empty()
+            && !person.evidence_turn_refs.is_empty()
+            && person.evidence_turn_refs.iter().all(|turn| hex(turn))
+    }) {
+        return Err(invalid_consolidation(
+            "extraction response breaks its contract",
+        ));
+    }
+    Ok(reply)
 }
 
 /// The question key a stored head was filed under, as its scope map holds it.
