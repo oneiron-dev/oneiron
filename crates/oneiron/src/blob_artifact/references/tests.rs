@@ -317,6 +317,8 @@ fn a_claim_deleted_before_its_artifact_arrives_still_takes_the_bytes() -> Result
 
 /// Bug repro (SOL-R2-002, H125): a claim rewritten to name another artifact for the same bytes
 /// leaves both artifacts holding them, so deleting the first keeps the bytes the second holds.
+/// The put door keeps a stored claim's scope facet, not its subject, so the rewrite keeps the
+/// facet it was first stamped with.
 #[test]
 fn a_claim_rewritten_to_another_artifact_keeps_both_holders() -> Result<()> {
     let origin = Origin::open()?;
@@ -330,18 +332,11 @@ fn a_claim_rewritten_to_another_artifact_keeps_both_holders() -> Result<()> {
         &[origin.person, first, second, asset],
     )?;
     let claim = EntityId::now();
-    put_claim(
-        &replica,
-        &claim,
-        &version_claim(first, VERSION_BYTES[0])?,
-        30,
-    )?;
-    put_claim(
-        &replica,
-        &claim,
-        &version_claim(second, VERSION_BYTES[0])?,
-        31,
-    )?;
+    let stamped = version_claim(first, VERSION_BYTES[0])?;
+    put_claim(&replica, &claim, &stamped, 30)?;
+    let mut rewritten = version_claim(second, VERSION_BYTES[0])?;
+    rewritten.scope_facet = stamped.scope_facet;
+    put_claim(&replica, &claim, &rewritten, 31)?;
 
     replica.delete_entity_with_reason(&first, DeleteReason::UserHardDelete)?;
     assert!(
