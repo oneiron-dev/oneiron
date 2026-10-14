@@ -714,7 +714,8 @@ mod cb_a {
             task_verb::TaskCreateSpec, task_verb::TaskKind, task_verb::TaskTtl,
         };
 
-        let fixture = super::lead_fixture::LeadFixture::open();
+        // The engine's clock sits past every answer the panel run times.
+        let fixture = super::lead_fixture::LeadFixture::open_at(super::LEAD_NOW + 30);
         let vault = &fixture.vault;
         let (lead_ref, _) = vault
             .get_seeded_agent_definition_by_logical_id(super::TEAM_LEAD_LOGICAL_ID)
@@ -2281,8 +2282,18 @@ mod lead_fixture {
 
     impl LeadFixture {
         pub(crate) fn open() -> Self {
-            let dir = tempfile::tempdir().expect("temporary vault directory");
+            Self::open_with(VaultConfig::device())
+        }
+
+        /// The fixture on a vault whose engine clock is pinned at `now`.
+        pub(crate) fn open_at(now: u64) -> Self {
             let mut config = VaultConfig::device();
+            config.store_clock = crate::common::pinned_store_clock(now);
+            Self::open_with(config)
+        }
+
+        fn open_with(mut config: VaultConfig) -> Self {
+            let dir = tempfile::tempdir().expect("temporary vault directory");
             config.map_size = 32 * 1024 * 1024;
             config.dimensions = 4;
             config.embedding_model = None;

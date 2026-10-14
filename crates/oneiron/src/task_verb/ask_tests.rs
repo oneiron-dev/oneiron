@@ -720,7 +720,7 @@ fn consult_result_with_an_option_settles_its_member_task() -> Result<()> {
             option: Some(yes.clone()),
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     fixture
         .vault
@@ -751,7 +751,7 @@ fn consult_result_replay_requires_the_stored_ask_option() -> Result<()> {
             option: Some(TaskAskOptionId::new("yes")?),
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     let first = memory.land_consult_result(task, &input)?;
     assert!(!first.idempotent_replay);
@@ -809,7 +809,7 @@ fn consult_result_without_an_option_on_an_options_ask_is_refused_before_the_writ
             option: None,
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     let refused = fixture
         .vault

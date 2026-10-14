@@ -484,31 +484,51 @@ fn repo_mutation_queue_serializes_concurrent_commits() {
     let vault = Arc::new(vault);
     let barrier = Arc::new(Barrier::new(3));
 
+    // Both writers name the same base. The queue lands one; the other's pin is
+    // stale under the lock, so it is refused and retries at the new HEAD.
     let mut handles = Vec::new();
     for name in ["a", "b"] {
         let vault = Arc::clone(&vault);
         let barrier = Arc::clone(&barrier);
-        let repo_ref = repo_ref(&repo);
+        let pinned = repo_ref(&repo);
+        let root = repo.path().to_path_buf();
         handles.push(thread::spawn(move || {
+            let request = |repo_ref| {
+                RepoMutationRequest::new(
+                    repo_ref,
+                    RepoMutationOperation::CommitFile {
+                        path: format!("{name}.txt"),
+                        content: format!("{name}\n").into_bytes(),
+                        message: format!("commit {name}"),
+                    },
+                )
+            };
             barrier.wait();
-            vault.apply_repo_mutation(RepoMutationRequest::new(
-                repo_ref,
-                RepoMutationOperation::CommitFile {
-                    path: format!("{name}.txt"),
-                    content: format!("{name}\n").into_bytes(),
-                    message: format!("commit {name}"),
-                },
-            ))
+            match vault.apply_repo_mutation(request(pinned)) {
+                Err(error) if error.kind() == ErrorKind::ConcurrentWrite => {
+                    let fresh = RepoRef::LocalFolder {
+                        path: root.to_string_lossy().into_owned(),
+                        commit: current_head_commit(&root).expect("fresh head"),
+                    };
+                    vault
+                        .apply_repo_mutation(request(fresh))
+                        .map(|outcome| (outcome, true))
+                }
+                other => other.map(|outcome| (outcome, false)),
+            }
         }));
     }
 
     barrier.wait();
     let mut seqs = Vec::new();
+    let mut retried = 0;
     for handle in handles {
-        let outcome = handle.join().expect("thread join").expect("commit");
+        let (outcome, stale) = handle.join().expect("thread join").expect("commit");
         assert_eq!(outcome.entry.status, RepoMutationStatus::Applied);
         seqs.push(outcome.entry.seq);
+        retried += usize::from(stale);
     }
+    assert_eq!(retried, 1, "exactly one writer held a stale pin");
     seqs.sort_unstable();
     assert_eq!(seqs, vec![1, 2]);
 
@@ -532,6 +552,68 @@ fn repo_mutation_queue_serializes_concurrent_commits() {
     let commits = String::from_utf8(commits).expect("utf8 log");
     assert!(commits.contains("commit a"));
     assert!(commits.contains("commit b"));
+}
+
+#[test]
+fn a_file_write_names_the_head_it_lands_on() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let write = |repo_ref, path: &str| {
+        vault.apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref,
+            RepoMutationOperation::CommitFile {
+                path: path.to_owned(),
+                content: b"written\n".to_vec(),
+                message: format!("write {path}"),
+            },
+        ))
+    };
+    let old_ref = repo_ref(&repo);
+    write(old_ref.clone(), "first.txt").expect("a fresh pin lands");
+    let head = current_head_commit(repo.path()).expect("head after first");
+
+    let error = write(old_ref, "second.txt").expect_err("a stale pin is refused");
+    assert_eq!(error.kind(), ErrorKind::ConcurrentWrite);
+    assert_eq!(current_head_commit(repo.path()).expect("head after"), head);
+    assert!(!repo.path().join("second.txt").exists());
+    let log = vault.repo_mutation_oplog(&repo_ref(&repo)).expect("oplog");
+    assert_eq!(log.len(), 1, "the refused write leaves no oplog row");
+
+    let landed = write(repo_ref(&repo), "second.txt").expect("the current pin lands");
+    assert_eq!(landed.entry.status, RepoMutationStatus::Applied);
+}
+
+#[test]
+fn a_malformed_pin_writes_no_row_and_leaves_the_oplog_readable() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let outcome = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"mutated\n".to_vec(),
+                message: "mutate readme".to_owned(),
+            },
+        ))
+        .expect("mutate");
+    let before = vault.repo_mutation_oplog(&repo_ref(&repo)).expect("oplog");
+
+    let malformed = RepoRef::LocalFolder {
+        path: repo.path().to_string_lossy().into_owned(),
+        commit: "not-a-commit".to_owned(),
+    };
+    vault
+        .recover_repo_snapshot(&malformed, outcome.entry.pre_action_fork_hash)
+        .expect_err("a malformed pin is refused");
+
+    let after = vault
+        .repo_mutation_oplog(&repo_ref(&repo))
+        .expect("the oplog still reads under a valid ref");
+    assert_eq!(after, before);
+    vault
+        .recover_repo_snapshot(&repo_ref(&repo), outcome.entry.pre_action_fork_hash)
+        .expect("a valid ref still recovers");
 }
 
 #[test]

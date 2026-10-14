@@ -19,6 +19,25 @@ pub(crate) const PINNED_ID_BYTES: [u8; 13] = [
     0x00, 0x11, 0x42, 0x47, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xD7, 0xE1, 0xFF,
 ];
 
+/// A store clock pinned at `now` with fresh ids, for fixtures whose records
+/// carry fixed timestamps that the engine's clock must agree with. Mirror of
+/// `test_util::pinned_store_clock`.
+pub(crate) fn pinned_store_clock(now: u64) -> oneiron::store::ports::StoreClock {
+    struct Pinned(u64);
+    impl oneiron::store::ports::Clock for Pinned {
+        fn now_recorded_at(&self) -> u64 {
+            self.0
+        }
+    }
+    impl oneiron::store::ports::IdGen for Pinned {
+        fn ulid(&self) -> [u8; 16] {
+            uuid::Uuid::now_v7().into_bytes()
+        }
+    }
+    let pinned = std::sync::Arc::new(Pinned(now));
+    oneiron::store::ports::StoreClock::new(pinned.clone(), pinned)
+}
+
 /// Canonical test entity id: `[seed; 16]`. Panics on production-pinned seeds,
 /// including `entity(0)`. See `test_util::entity` for the full contract.
 pub(crate) fn entity(seed: u8) -> EntityId {
