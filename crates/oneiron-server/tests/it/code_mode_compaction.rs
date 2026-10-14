@@ -28,6 +28,13 @@ const WINDOW_TOKENS: u64 = 80_000;
 /// What each step's program adds to the run's request.
 const STEP_TOKENS: u64 = WINDOW_TOKENS / 10;
 const SUMMARY_FACT: &str = "the deploy checklist has four items";
+/// The model context the compaction seat shares with the run.
+const CONTEXT_TOKENS: u64 = 200_000;
+/// NUL characters each step's console prints in the escape-heavy run.
+const NULS: usize = 12_000;
+/// The escape-heavy run's model context: past the reply and the prompt it
+/// holds one step's rendered input, not two.
+const NUL_CONTEXT_TOKENS: u64 = 100_000;
 const FILLER: &str = "alpha beta gamma delta ";
 const CONSOLE_FRAME: &str = "Console after durable step";
 
@@ -82,6 +89,18 @@ fn content(message: &Value) -> String {
 /// call gets a program of [`STEP_TOKENS`] that prints its step; once a
 /// request carries a compacted epoch, the program finishes the run.
 fn answer(body: &Value) -> String {
+    reply(body, "")
+}
+
+/// [`answer`], each step's console also printing [`NULS`] NUL characters.
+fn nul_answer(body: &Value) -> String {
+    reply(body, &format!(" + '\\0'.repeat({NULS})"))
+}
+
+/// The model's reply: a compaction pass's summary, `finish` once a request
+/// carries one, or else the next step, whose console prints its marker and
+/// then `console_tail`.
+fn reply(body: &Value, console_tail: &str) -> String {
     let messages = body["messages"].as_array().cloned().unwrap_or_default();
     let texts: Vec<String> = messages.iter().map(content).collect();
     if texts
@@ -108,7 +127,7 @@ fn answer(body: &Value) -> String {
     let filler = oneiron::count_context_pack_tokens(FILLER).max(1) as u64;
     let repeats = usize::try_from(STEP_TOKENS / filler + 1).unwrap();
     format!(
-        "console.log('step-console-{step}');\n// {}",
+        "console.log('step-console-{step}'{console_tail});\n// {}",
         FILLER.repeat(repeats)
     )
 }
@@ -201,7 +220,7 @@ fn wait_healthy(origin: &str, server: &mut Running, log: &Path) -> Value {
 /// The served run, end to end: returns the health answer, every
 /// `execute_code` result and the server's log lines (its stdout). Blocking;
 /// the fake model runs on the test's runtime.
-fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>, String) {
+fn run_long_task(dir: &Path, model_url: &str, context_tokens: u64) -> (Value, Vec<Value>, String) {
     let vault = dir.join("vault");
     let config = dir.join("oneiron.toml");
     stdout(oneiron(
@@ -216,7 +235,7 @@ fn run_long_task(dir: &Path, model_url: &str) -> (Value, Vec<Value>, String) {
          [models.code_mode]\nprompt_package = {prompts:?}\n\
          [models.code_mode.compaction]\nwindow_tokens = {WINDOW_TOKENS}\nhot_steps = 1\n\
          [models.providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{model_url}\"\n\
-         context_tokens = 200000\n",
+         context_tokens = {context_tokens}\n",
         prompts = prompts.canonicalize().unwrap().display().to_string(),
     );
     std::fs::OpenOptions::new()
@@ -315,9 +334,10 @@ async fn a_long_served_run_compacts_by_itself_and_finishes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().to_owned();
     let url = fake.base_url.clone();
-    let (health, results, log) = tokio::task::spawn_blocking(move || run_long_task(&path, &url))
-        .await
-        .unwrap();
+    let (health, results, log) =
+        tokio::task::spawn_blocking(move || run_long_task(&path, &url, CONTEXT_TOKENS))
+            .await
+            .unwrap();
 
     assert_eq!(health["ai"]["compaction"], "on", "{health:#}");
     let last = results.last().unwrap();
@@ -386,5 +406,59 @@ async fn a_long_served_run_compacts_by_itself_and_finishes() {
                 .chunks(3)
                 .all(|call| call == ["admitted", "dispatched", "settled"]),
         "every compaction call is admitted, dispatched and settled: {events:?}\n{log}"
+    );
+}
+
+/// Bugbot on #1384: a pass's rendered input, not its steps' raw text, must
+/// fit the compaction seat. Each step's console prints NUL characters, which
+/// the input's JSON escapes at several times their raw tokens, so the steps
+/// behind the hot window fit the seat as raw text but not as input. Sized by
+/// the raw text, every pass was refused and the run parked at its window on
+/// every call. Sized by the input, the first pass seals the shorter prefix
+/// the seat holds, and the run finishes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_window_whose_escapes_outgrow_the_seat_compacts_as_a_shorter_prefix() {
+    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(nul_answer)))).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_owned();
+    let url = fake.base_url.clone();
+    let (health, results, _) =
+        tokio::task::spawn_blocking(move || run_long_task(&path, &url, NUL_CONTEXT_TOKENS))
+            .await
+            .unwrap();
+
+    assert_eq!(health["ai"]["compaction"], "on", "{health:#}");
+    let statuses: Vec<&Value> = results
+        .iter()
+        .map(|result| &result["result"]["status"])
+        .collect();
+    assert_eq!(
+        results.last().unwrap()["result"]["status"],
+        "complete",
+        "the run finishes: {statuses:?}\n{:#}",
+        results.last().unwrap()["compaction"]
+    );
+    let passes: Vec<String> = fake
+        .seen()
+        .iter()
+        .map(|request| {
+            request.body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(content)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|text| text.contains("You compact"))
+        .collect();
+    let first = passes.first().expect("a compaction call reached the model");
+    assert!(
+        first.contains("\\u0000"),
+        "the sealed steps carry their NULs"
+    );
+    assert!(
+        first.contains("step-console-0") && !first.contains("step-console-1"),
+        "the first pass seals the one step the seat holds"
     );
 }
