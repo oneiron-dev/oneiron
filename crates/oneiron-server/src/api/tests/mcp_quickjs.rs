@@ -256,7 +256,7 @@ pub(super) fn code_mode_server_with(
             },
         )
         .unwrap()
-        .with_mcp_quickjs_provider(provider)
+        .with_mcp_quickjs_provider(provider, crate::mcp::CodeRunLimits::default())
         // Chosen after the provider is attached: its calls still write here.
         .with_run_receipts(receipts.clone()),
     );
