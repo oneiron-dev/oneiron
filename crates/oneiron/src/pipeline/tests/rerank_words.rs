@@ -269,22 +269,27 @@ fn cited_body(source: EntityId, words: &str) -> Vec<u8> {
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 
-/// Wonder R10 and Sol R11 on this branch: the claim gate judged a claim's
-/// live support in retrieval's snapshot, and the pack, hydrated in a later
-/// one, served the claim without asking again; validation never asks for a
-/// neighbor. The only source the claim cites, deleted while a reranker
+/// Wonder R10, Sol R11 and Wonder R12 on this branch: the claim gate judged
+/// a claim's live support in retrieval's snapshot, and the pack, hydrated in
+/// a later one, served the claim without asking again; validation never asks
+/// for a neighbor. The only source the claim cites, deleted while a reranker
 /// scored the block, left a claim retrieval would now suppress in the pack:
 /// a word-bound hit from the gate's cache, an unbound hit at its indexed pin,
-/// and either one again as a neighbor of a row that cites it. Every claim a
-/// pack serves is held to its live support where the pack is hydrated.
+/// and either one again as a neighbor of a row that points at it. So did an
+/// indexed pin whose own source stays while the live body's is deleted:
+/// retrieval judges the live body. Every claim a pack serves is held to its
+/// live support where the pack is hydrated, and a pinned one to its live
+/// body's too.
 #[test]
 fn a_claim_whose_source_is_deleted_while_it_is_scored_is_not_served() -> Result<()> {
-    // A word-bound hit read live from the gate's cache, and an unbound hit
-    // read at its indexed pin while newer words wait to be published.
+    // A word-bound hit read live from the gate's cache; an unbound hit read
+    // at its indexed pin while newer words wait to be published; and that pin
+    // again, its old words citing a source that stays.
     let mut served = Vec::new();
-    for (unbound, read_mode, newer) in [
-        (false, ReadMode::Live, None),
-        (true, ReadMode::Indexed, Some("new-words")),
+    for (unbound, read_mode, newer, pin_kept) in [
+        (false, ReadMode::Live, None, false),
+        (true, ReadMode::Indexed, Some("new-words"), false),
+        (true, ReadMode::Indexed, Some("new-words"), true),
     ] {
         let (_dir, vault) = open_test_vault();
         put_subject(&vault)?;
@@ -296,8 +301,16 @@ fn a_claim_whose_source_is_deleted_while_it_is_scored_is_not_served() -> Result<
             1,
             b"source",
         )?;
+        let kept = entity_id(0x7F);
+        vault.put_entity(
+            &kept,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"kept source",
+        )?;
         let id = entity_id(0x6E);
-        let old = cited_body(source, "old-words");
+        let old = cited_body(if pin_kept { kept } else { source }, "old-words");
         match newer {
             Some(words) => put_twice(
                 &vault,
@@ -357,7 +370,7 @@ fn a_claim_whose_source_is_deleted_while_it_is_scored_is_not_served() -> Result<
         );
         for (part, rows) in [("results", &pack.results), ("neighbors", &pack.neighbors)] {
             if rows.iter().any(|row| row.id == id) {
-                served.push(format!("unbound {unbound}: in {part}"));
+                served.push(format!("unbound {unbound}, pin kept {pin_kept}: in {part}"));
             }
         }
     }

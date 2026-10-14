@@ -140,10 +140,13 @@ pub(super) fn hydrate_entity(
     else {
         return Ok(None);
     };
-    // A history pin cannot restore a claim inadmissible at the current door.
+    // A history pin cannot restore a claim inadmissible at the current door,
+    // its live support included, as the scoped read lane admits a pin.
     if raw != live_raw && live_raw[0] == ENTITY_TYPE_CLAIM {
         match crate::claim::decode_claim_body(&live_raw[ENTITY_METADATA_HEADER_LEN..], true) {
-            Ok(body) if claim_surfaceable(&body) => {}
+            Ok(body)
+                if claim_surfaceable(&body)
+                    && crate::claim::has_live_support_in_txn(store, rtxn, &body)? => {}
             _ => {
                 *claims_suppressed += 1;
                 return Ok(None);
