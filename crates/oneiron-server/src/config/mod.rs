@@ -6,6 +6,7 @@ mod embedder_shape;
 mod embedder_space;
 mod feedback;
 pub mod import;
+mod limits;
 mod lookup;
 pub mod merge;
 pub mod models;
@@ -14,6 +15,7 @@ mod recall;
 pub mod remote_embedder;
 pub mod serve_args;
 pub mod server_config;
+mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
 pub use embedder::{
@@ -23,6 +25,7 @@ pub use embedder::{
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
 pub use feedback::FeedbackConfig;
 pub use import::ImportConfig;
+pub use limits::LimitsConfig;
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
@@ -35,6 +38,7 @@ pub use oneironer::{
 pub use recall::RecallConfig;
 pub use serve_args::ServeArgs;
 pub use server_config::{ServeConfig, SyncServerConfig};
+pub use trusted_proxy::TrustedProxy;
 
 #[cfg(test)]
 mod embedder_tests;

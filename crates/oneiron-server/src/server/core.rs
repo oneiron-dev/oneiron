@@ -74,6 +74,8 @@ pub struct SyncServer {
     pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
+    /// Permits for git and LFS transfers, sized by `config.limits`.
+    pub(crate) transfers: crate::api::Transfers,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
@@ -253,6 +255,7 @@ impl SyncServer {
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
+            transfers: crate::api::Transfers::new(&config.limits),
             config,
             managed_issuer: None,
             mcp_registry,
@@ -307,13 +310,19 @@ impl SyncServer {
     }
 
     /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes. Missing components or providers keep execute_code unadvertised.
+    /// routes, running at most `runs` at once. Missing components or providers
+    /// keep execute_code unadvertised.
     #[cfg(feature = "code-sandbox-wasmtime")]
     #[must_use]
-    pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+    pub fn with_mcp_quickjs_provider(
+        mut self,
+        provider: crate::mcp::McpQuickJsProvider,
+        runs: crate::mcp::CodeRunLimits,
+    ) -> Self {
         let provider = provider.with_run_receipts(self.run_receipts());
         self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
             Arc::new(provider),
+            runs,
         )));
         self
     }

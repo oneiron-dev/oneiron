@@ -287,6 +287,9 @@ impl SyncClient {
                 Ok(Vec::new())
             }
             window_sub_tags::SELECTOR_DEFERRED => {
+                // The retry resumes a federated selector exchange: the same
+                // door as the selector request builder, with the same refusal.
+                self.require_federation_peer()?;
                 if payload.len() > MAX_DECODED_PAYLOAD_BYTES || payload.len() <= 32 {
                     return Err(TransportError::InvalidPayload(
                         "invalid selector defer response",
