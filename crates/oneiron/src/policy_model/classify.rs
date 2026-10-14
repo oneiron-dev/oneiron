@@ -207,42 +207,26 @@ impl Vault {
         verdict: &PolicyClassifyVerdict,
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
-        if verdict.decision == PolicyClassifyDecision::Allow && verdict.audit.is_none() {
+        #[cfg(test)]
+        BEFORE_BARE_RECEIPT.with(|hook| {
+            if let Some(hook) = hook.take() {
+                hook();
+            }
+        });
+        // F107's window, on the doors F94 and F99 built: the verdict was bound
+        // to a policy frontier, and the door hands it out after a LATER
+        // transaction. The silence rule only drops an Allow that still
+        // answers the policy in force; anything else is settled in the row's
+        // own transaction (see `owner_verdict_in_force_in_txn`).
+        if verdict.decision == PolicyClassifyDecision::Allow
+            && verdict.audit.is_none()
+            && !self.policy_model_verdict_is_stale_with_config(verdict, request, config)?
+        {
             return Ok(verdict.clone());
         }
-        // F107's window, on the doors F94 and F99 built: the verdict was bound
-        // to a policy frontier, and this row is written in a LATER
-        // transaction. A manifest moving in that gap would leave the ledger
-        // asserting an owner-plane verdict against state nobody can
-        // reproduce.
-        //
-        // The owner plane's answer to that is not the hosted plane's answer.
-        // The hosted plane is fail-CLOSED, so it degrades and halts. This
-        // plane is SOVEREIGN and fails OPEN, so a warn, a block or a route
-        // the owner's own policy gave is not overturned by a concurrent edit:
-        // the row is written with the frontier it can reproduce, and says the
-        // frontier moved. An `Allow` is different. It is a claim that the
-        // policy in force permits the content, and the policy in force is not
-        // the one it read, so it becomes the typed skip it really is and the
-        // door returns that instead.
         let mut wtxn = self.store.env.write_txn()?;
-        let policy = gate::resolve_policy_manifest(&self.store, &wtxn)?;
-        let fresh = content_binding(request, &policy, config)?;
-        let moved = fresh != verdict.binding;
-        let recorded = if !moved {
-            verdict.clone()
-        } else if verdict.decision == PolicyClassifyDecision::Allow {
-            PolicyClassifyVerdict::skipped(
-                PolicySkipReason::PolicyMoving,
-                fresh,
-                config,
-                PolicyPlane::OwnerPolicy,
-            )
-        } else {
-            let mut rebound = verdict.clone();
-            rebound.binding = fresh;
-            rebound
-        };
+        let (recorded, moved) =
+            self.owner_verdict_in_force_in_txn(&wtxn, verdict, request, config)?;
         let verdict = &recorded;
         // The vault-egress path is the owner plane by construction, so there
         // is no hosted policy to attribute against.
@@ -544,7 +528,48 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        self.policy_model_verdict_is_stale_in_txn(&rtxn, verdict, request, config)
+    }
+
+    /// The owner-plane verdict a door may hand out from `txn`: `verdict`
+    /// while it answers the policy in force there, and otherwise the plane's
+    /// typed fail-open, [`PolicySkipReason::PolicyMoving`] bound to the
+    /// frontier in force. The flag says the frontier moved.
+    ///
+    /// The owner plane is SOVEREIGN and fails OPEN, so a manifest that moved
+    /// after the pass is not an error. What it never does is hand out a
+    /// decision for a policy no longer in force: not an old Allow, and not an
+    /// old warn or block either, which stamped with the new frontier would
+    /// pass the enforcement door's freshness check as if the new policy had
+    /// reached it.
+    pub(super) fn owner_verdict_in_force_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        verdict: &PolicyClassifyVerdict,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<(PolicyClassifyVerdict, bool)> {
+        if !self.policy_model_verdict_is_stale_in_txn(txn, verdict, request, config)? {
+            return Ok((verdict.clone(), false));
+        }
+        let policy = gate::resolve_policy_manifest(&self.store, txn)?;
+        let moving = PolicyClassifyVerdict::skipped(
+            PolicySkipReason::PolicyMoving,
+            content_binding(request, &policy, config)?,
+            config,
+            PolicyPlane::OwnerPolicy,
+        );
+        Ok((moving, true))
+    }
+
+    fn policy_model_verdict_is_stale_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        verdict: &PolicyClassifyVerdict,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<bool> {
+        let policy = gate::resolve_policy_manifest(&self.store, rtxn)?;
         if policy.diagnostics().loaded_manifest_forces_fail_closed()
             || policy.owner_policy_rows_dropped()
         {
@@ -640,6 +665,14 @@ pub(crate) async fn stateless_owner_classification(
     Err(Error::ConcurrentWrite(
         "anonymous chat policy changed during classification",
     ))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Runs once as a bare door's receipt writer starts: the window between
+    /// a pinned pass and the row that hands it out.
+    pub(super) static BEFORE_BARE_RECEIPT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// What the owner plane concluded. A pass whose model did not get to speak

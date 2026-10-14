@@ -159,9 +159,16 @@ impl Vault {
             ),
         )
         .await;
-        let owner = owner?;
+        let mut owner = owner?;
         let relay = relay?;
-        self.record_owner_plane_receipt(&request, &owner, config)?;
+        // The owner half settled first and then waited on the hosted half,
+        // so the manifest may have moved since it was pinned. Pin it again.
+        if self.policy_model_verdict_is_stale_with_config(&owner.verdict, &request, config)? {
+            owner = self
+                .owner_plane_pass_pinned(&request, config, owner_safeguard)
+                .await?;
+        }
+        let owner = self.record_owner_plane_receipt(&request, owner, config)?;
         let owner_model_skipped = owner.model_skipped();
         Ok(DualPlanePass {
             owner: owner.verdict,
@@ -184,16 +191,26 @@ impl Vault {
     /// model it wanted has nothing to record. A pass whose model did NOT
     /// answer is the opposite — the sovereign plane fell open, and that is
     /// precisely the fact the owner is owed.
+    ///
+    /// Returns the pass the door hands out, settled against the policy in
+    /// force in the row's own transaction, as the bare doors' rows are.
     fn record_owner_plane_receipt(
         &self,
         request: &PolicyClassifyRequest,
-        pass: &OwnerPlanePass,
+        pass: OwnerPlanePass,
         config: &PolicyModelConfig,
-    ) -> Result<()> {
-        let verdict = &pass.verdict;
-        if verdict.decision == PolicyClassifyDecision::Allow && verdict.audit.is_none() {
-            return Ok(());
+    ) -> Result<OwnerPlanePass> {
+        if pass.verdict.decision == PolicyClassifyDecision::Allow
+            && pass.verdict.audit.is_none()
+            && !self.policy_model_verdict_is_stale_with_config(&pass.verdict, request, config)?
+        {
+            return Ok(pass);
         }
+        let mut wtxn = self.store.env.write_txn()?;
+        let (verdict, moved) =
+            self.owner_verdict_in_force_in_txn(&wtxn, &pass.verdict, request, config)?;
+        let pass = OwnerPlanePass { verdict };
+        let verdict = &pass.verdict;
         let mut reason_codes = vec![
             "gate.relay.owner_plane.classify.ran".to_owned(),
             format!(
@@ -204,6 +221,9 @@ impl Vault {
         if pass.model_skipped() {
             reason_codes.push("gate.relay.owner_plane.model_skipped".to_owned());
             reason_codes.push("gate.relay.owner_plane.fail_open".to_owned());
+        }
+        if moved {
+            reason_codes.push("gate.relay.owner_plane.frontier_moved".to_owned());
         }
         reason_codes.extend(policy_model_reason_codes(verdict));
         let mut notices: Vec<_> = policy_notice(verdict.decision, &verdict.category, None, config)
@@ -216,14 +236,16 @@ impl Vault {
             PolicyPlane::OwnerPolicy,
             None,
         ));
-        self.append_policy_model_gate_receipt(
+        self.append_policy_model_gate_receipt_in_txn(
+            &mut wtxn,
             request,
             verdict,
             &format!("owner_plane_{}", verdict.decision.ledger_str()),
             reason_codes,
             notices,
         )?;
-        Ok(())
+        wtxn.commit()?;
+        Ok(pass)
     }
 }
 

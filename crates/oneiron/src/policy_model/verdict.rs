@@ -396,11 +396,23 @@ impl PolicyClassifyVerdict {
         pass: &super::relay::RelayBoundaryPass,
     ) -> Self {
         // Evidence comes only from a pass that ran the hosted plane over a
-        // hosted policy. A BYO path, a trusted replay and a pass with no
-        // hosted policy in play ran nothing a relay could skip on their word.
+        // hosted policy HERE. A BYO path, a trusted replay (either shape: a
+        // replayed Allow or a replayed carrier the relay returns as
+        // `VaultSideDecided`) and a pass with no hosted policy in play ran
+        // nothing a relay could skip on their word. A replay re-minted as
+        // evidence would also drop the degrade the receipt it replayed held.
         let super::relay::RelayBoundaryPass::Classified(ran) = pass else {
             self.hosted_attestation = None;
             return self;
+        };
+        let ran_here = match ran.resolution {
+            super::relay::RelayResolution::PatternDecided
+            | super::relay::RelayResolution::ModelDecided
+            | super::relay::RelayResolution::PatternGatedAllow
+            | super::relay::RelayResolution::LogOnly
+            | super::relay::RelayResolution::Unresolved => true,
+            super::relay::RelayResolution::NoPolicyInPlay
+            | super::relay::RelayResolution::VaultSideDecided => false,
         };
         // A degrade that HALTED the pass left no verdict anyone may reuse:
         // the manifest moved, no output contract, or an outage under `Halt`.
@@ -408,7 +420,8 @@ impl PolicyClassifyVerdict {
         // would let a reuse wave through what this pass stopped. The halt is
         // read from the pass, where it was resolved, never from the posture
         // the caller hands in now. Unattested, a reuse runs its own pass.
-        if !ran.hosted_policy_in_play || (ran.degraded.is_some() && ran.degrade_halts) {
+        if !ran_here || !ran.hosted_policy_in_play || (ran.degraded.is_some() && ran.degrade_halts)
+        {
             self.hosted_attestation = None;
             return self;
         }
@@ -416,7 +429,9 @@ impl PolicyClassifyVerdict {
             plane: PolicyPlane::HostedLegal,
             policy_version: policy.version.clone(),
             policy_hash: policy.policy_hash.clone(),
-            classifier_mode: Some(config.classifier_mode(PolicyPlane::HostedLegal)),
+            // The dial the pass RAN under, never the caller's current one: a
+            // pattern-gated pass is no evidence of a classify-all one.
+            classifier_mode: ran.verdict.classifier_mode,
             // A degraded pass that did not halt proceeded through an outage,
             // which only `ProceedReceipted` tolerates; the posture it records
             // is the one the pass ran under.
