@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
-use crate::off_record::promote::{FloorWrites, PromoteOutcome};
+use crate::off_record::promote::{FloorWrites, PromoteInitiator, PromoteOutcome};
 
 use super::registry::session_entry_state;
 use super::room::{Hearing, post_notice};
@@ -13,7 +13,7 @@ use super::session::OffRecordSession;
 
 impl OffRecordSession<'_> {
     /// Promotes exactly ONE witnessed turn out of the room and into the
-    /// durable vault (ARCH-0052 D4, ONE-1730).
+    /// durable vault (ARCH-0052 D4, ONE-1730), for `owner`.
     ///
     /// This is the ONLY session-overlay-to-base write. It selects the turn's
     /// closure from the TYPED JOURNAL — never from overlay index keys, which
@@ -21,6 +21,11 @@ impl OffRecordSession<'_> {
     /// batch pipeline against current base state, so base indexes, canonical
     /// short ids, counters, validators, gates, and decision receipts are all
     /// re-derived exactly as for any other write.
+    ///
+    /// A promotion publishes what was said off record, so it is the owner's
+    /// act, alone or in a room: `owner`'s proof is rechecked in the
+    /// transaction that replays the turn, so a promotion queued behind a
+    /// revocation writes nothing, and the turn's receipt names them.
     ///
     /// # Locking
     ///
@@ -37,46 +42,32 @@ impl OffRecordSession<'_> {
     /// the committed closure. A crash between the two is safe: the durable
     /// receipt answers the retry, and a crashed process evaporates the stale
     /// overlay outright.
-    pub fn promote_turn(&self, turn: &EntityId) -> Result<PromoteOutcome> {
-        self.promote_turn_bound(turn, None)
-    }
-
-    /// [`Self::promote_turn`] for a transport: `owner`'s proof is rechecked in
-    /// the transaction that replays the turn, so a promotion queued behind a
-    /// revocation writes nothing.
+    ///
+    /// There is no promotion without the proof (H203):
+    ///
+    /// ```compile_fail
+    /// fn promote(session: &oneiron::off_record::OffRecordSession<'_>, turn: &oneiron::EntityId) {
+    ///     let _ = session.promote_turn(turn);
+    /// }
+    /// ```
     ///
     /// # Errors
     ///
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
-    /// when the proof no longer holds; otherwise as [`Self::promote_turn`].
+    /// when the proof no longer holds.
     pub fn promote_turn_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         turn: &EntityId,
     ) -> Result<PromoteOutcome> {
-        self.promote_turn_bound(turn, Some(owner))
-    }
-
-    fn promote_turn_bound(
-        &self,
-        turn: &EntityId,
-        owner: Option<&crate::consent::AuthenticatedOwner>,
-    ) -> Result<PromoteOutcome> {
         // In a room, the owner must be on its roster before anything is
         // answered (read before the state lock, which the roster read takes).
-        if let Some(owner) = owner
-            && self.room()?.is_some()
-        {
+        if self.room()?.is_some() {
             self.require_in_room(owner.actor())?;
         }
         let outcome = {
             let mut state = self.recording_state()?;
-            // A stretch in a room is saved only by someone with a proof, who
-            // is in the room and could see the turn.
             let room = state.record.room.map(EntityId::from_bytes).transpose()?;
-            if room.is_some() && owner.is_none() {
-                return Err(super::room::unbound_in_room(&self.session_ref));
-            }
             // RETRY, ahead of the journal: a promoted turn's closure has
             // already been retired from the overlay, so planning it again would
             // fail with "no journaled turn" for a turn that IS promoted. The
@@ -93,7 +84,7 @@ impl OffRecordSession<'_> {
                 // the turn now: their proof holds, they own this vault, and
                 // their membership shows every moment of it. The room hears
                 // this save as it heard the first; nothing more is kept.
-                if let (Some(room), Some(owner)) = (room, owner) {
+                if let Some(room) = room {
                     let times = state.kept_times(*turn);
                     let txn = self.vault.store.env.read_txn()?;
                     owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
@@ -134,36 +125,33 @@ impl OffRecordSession<'_> {
             let times = super::saving::turn_times(&snapshot, *turn);
             drop(snapshot);
             // Who hears the save is read in the transaction that keeps it.
-            let (mut outcomes, hearing) = self.promote_plans(&mut state, vec![plan], |wtxn| {
-                let Some(owner) = owner else {
-                    return Ok(None);
-                };
-                if room.is_some() {
-                    owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
-                } else {
-                    owner.revalidate_in_txn(self.vault, wtxn)?;
-                }
-                if let Some(room) = room {
-                    super::room::require_sight_in_txn(
-                        self.vault,
-                        wtxn,
-                        &self.session_ref,
-                        room,
-                        owner.actor(),
-                        &times,
-                    )?;
-                }
-                Ok(Some(Hearing::in_txn(self.vault, wtxn, room)))
-            })?;
-            if let (Some(owner), Some(hearing)) = (owner, hearing) {
-                post_notice(
-                    &mut state,
-                    super::types::OffRecordNoticeAct::SavedTurn,
-                    owner.actor(),
-                    hearing,
-                );
-                self.entry.publish_state(&state);
-            }
+            let initiator = PromoteInitiator::owner(owner);
+            let (mut outcomes, hearing) =
+                self.promote_plans(&mut state, vec![plan], &initiator, |wtxn| {
+                    if room.is_some() {
+                        owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
+                    } else {
+                        owner.revalidate_in_txn(self.vault, wtxn)?;
+                    }
+                    if let Some(room) = room {
+                        super::room::require_sight_in_txn(
+                            self.vault,
+                            wtxn,
+                            &self.session_ref,
+                            room,
+                            owner.actor(),
+                            &times,
+                        )?;
+                    }
+                    Ok(Hearing::in_txn(self.vault, wtxn, room))
+                })?;
+            post_notice(
+                &mut state,
+                super::types::OffRecordNoticeAct::SavedTurn,
+                owner.actor(),
+                hearing,
+            );
+            self.entry.publish_state(&state);
             outcomes
                 .pop()
                 .map(|(_, outcome)| outcome)
@@ -220,6 +208,7 @@ impl OffRecordSession<'_> {
         &self,
         state: &mut super::registry::OffRecordSessionEntryState,
         plans: Vec<crate::session_overlay::PromotePlan>,
+        initiator: &PromoteInitiator,
         check: impl FnOnce(&heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(Vec<(EntityId, PromoteOutcome)>, T)> {
         let (landed, checked) = self.vault.with_write_txn_grouped(|wtxn| {
@@ -235,7 +224,14 @@ impl OffRecordSession<'_> {
                             .map(|appended| (appended.outcome, appended.held))
                     } else {
                         floor
-                            .promote(self.vault, wtxn, &self.session_ref, plan, promoted_at)
+                            .promote(
+                                self.vault,
+                                wtxn,
+                                &self.session_ref,
+                                plan,
+                                initiator,
+                                promoted_at,
+                            )
                             .map(|outcome| {
                                 let held: BTreeSet<EntityId> =
                                     outcome.replayed.iter().copied().collect();

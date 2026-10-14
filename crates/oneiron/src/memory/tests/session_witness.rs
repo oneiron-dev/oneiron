@@ -126,6 +126,7 @@ fn session_witness_receipt_carries_session_local_short_ids() {
 #[test]
 fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
     let (_dir, vault) = open_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-witness-flip", 0x54);
     let facade = facade_for(&vault, actor);
 
@@ -143,7 +144,7 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
         .expect("pre-flip witness");
     let overlay_shell = session.overlay_conversation_shell().expect("room shell");
 
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&proof).expect("flip on record");
     let receipt = facade
         .witness_into_session(
             &session,
@@ -190,9 +191,10 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
 #[test]
 fn replay_owned_base_witness_race_is_an_exact_no_op() {
     let (_dir, vault) = open_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-replay-witness-race", 0x57);
     let facade = facade_for(&vault, actor);
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&proof).expect("flip on record");
     let route = session.write_route().expect("mint base route");
     let continuation = session
         .on_record_continuation_shell()
@@ -263,10 +265,11 @@ fn replay_owned_base_witness_race_is_an_exact_no_op() {
 #[test]
 fn a_stale_base_route_session_witness_commits_no_base_rows() {
     let (_dir, vault) = open_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-witness-stale-base", 0x56);
     let facade = facade_for(&vault, actor);
 
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&proof).expect("flip on record");
     let route = session.write_route().expect("mint base route");
     let continuation = session
         .on_record_continuation_shell()
@@ -332,6 +335,7 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
     let (done_tx, done_rx) = std::sync::mpsc::channel::<(usize, usize, bool)>();
     std::thread::spawn(move || {
         let (_dir, vault) = open_vault();
+        let proof = crate::test_util::embedded_owner_proof(&vault);
         let (session, actor) = session_witness_fixture(&vault, "sess-lock-order", 0x57);
         let facade = facade_for(&vault, actor);
         let overlay_shell = session
@@ -375,7 +379,7 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
             });
             scope.spawn(|| {
                 for _ in 0..ROUNDS {
-                    let _ = session.flip_on_record();
+                    let _ = session.flip_on_record_as(&proof);
                     let _ = session.flip_off_record();
                 }
             });
@@ -690,6 +694,7 @@ fn session_witness_turn_carries_the_mint_contract() {
 #[test]
 fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
     let (_dir, vault) = open_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-witness-promote-stamp", 0x5E);
     let facade = facade_for(&vault, actor);
 
@@ -714,7 +719,9 @@ fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
     .expect("turn id");
     let shell = session.overlay_conversation_shell().expect("room shell");
 
-    let outcome = session.promote_turn(&turn_id).expect("promote the turn");
+    let outcome = session
+        .promote_turn_as(&proof, &turn_id)
+        .expect("promote the turn");
     assert_eq!(
         outcome.replayed.len(),
         3,

@@ -119,13 +119,13 @@ impl Vault {
         Ok(self.store.off_record_sessions.record(session_ref))
     }
 
-    /// Flips the session's write-routing mode, in either direction (ARCH-0052
-    /// D5 / K10). Rows already in the room stay in the room across the flip.
+    /// Takes the session back off record (ARCH-0052 D5 / K10). Rows already
+    /// in the room stay in the room across the flip.
     ///
-    /// * `OffRecord -> OnRecord` seals the overlay write path. New writes —
-    ///   telemetry included — route to base ordinarily, under the session's
-    ///   on-record continuation shell; reads stay composed, so the room's
-    ///   earlier turns remain visible in-session.
+    /// * `OffRecord -> OnRecord` is refused here, alone or in a room: on
+    ///   record, later turns land in this vault, which is the owner's consent
+    ///   to give. Only the owner's proof-bound door,
+    ///   [`OffRecordSession::flip_on_record_as`], puts a stretch on record.
     /// * `OnRecord -> OffRecord` REARMS the overlay (`Sealed` -> `Live`). New
     ///   writes route to the overlay again. Pre-flip turns stay overlay-only
     ///   and base-invisible throughout; rearm reopens the write door and
@@ -150,11 +150,16 @@ impl Vault {
         // then failed though the mode never changed). Deadlock-safe:
         // `seal_writes` takes only the overlay's own lock, never `entry.state`.
         let mut state = session_entry_state(&entry)?;
-        // A stretch in a room goes on record only through the owner's
-        // proof-bound door, `OffRecordSession::flip_on_record_as`, which also
-        // tells the room: on record, everyone's later turns land in this vault.
-        if mode == OffRecordMode::OnRecord && state.record.room.is_some() {
-            return Err(super::room::unbound_in_room(session_ref));
+        // A stretch goes on record only through the owner's proof-bound door,
+        // `OffRecordSession::flip_on_record_as`, which also tells a room: on
+        // record, later turns land in this vault (everyone's, in a room).
+        if mode == OffRecordMode::OnRecord {
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordPromoteUnauthenticated {
+                    session_ref: session_ref.to_owned(),
+                    actor_ref: String::new(),
+                },
+            ));
         }
         set_entry_mode(&entry, &mut state, session_ref, mode)
     }

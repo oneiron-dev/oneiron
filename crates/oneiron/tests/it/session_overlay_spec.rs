@@ -125,7 +125,16 @@ fn session_content_is_invisible_to_every_public_base_reader() {
 
     // Flip on record: NEW writes go to base, but the pre-flip turn does not
     // retroactively become visible.
-    session.flip_on_record().expect("flip on record");
+    // The witness actor is the owner here: going on record takes their proof.
+    let owner = vault
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    session.flip_on_record_as(&owner).expect("flip on record");
     assert_eq!(
         vault.get(&turn_id).expect("post-flip base get"),
         None,

@@ -171,6 +171,24 @@ impl<'vault> SessionVault<'vault> {
         Ok(actor)
     }
 
+    /// The owner's proof the room's flip and promote take: the bound witness
+    /// actor's, so a census taken after `bind_actor` gains no row, else the
+    /// embedded owner's.
+    pub(in crate::branch_store_oracle) fn owner_proof(&self) -> crate::consent::AuthenticatedOwner {
+        match self.actor {
+            Some(actor) => self
+                .vault
+                .authenticate_owner(
+                    actor,
+                    &actor.to_hex(),
+                    true,
+                    crate::store::GateDecisionId::now(),
+                )
+                .expect("owner proof for the bound actor"),
+            None => crate::test_util::embedded_owner_proof(self.vault),
+        }
+    }
+
     /// ONE-1727: witness one turn (+ PartOf MESSAGE, DerivedFrom SUMMARY)
     /// through the session handle; rows land in the overlay only.
     /// Returns the ids of (turn, message, summary).
@@ -417,7 +435,7 @@ impl<'vault> SessionVault<'vault> {
 
     /// ONE-1727: mode flip (OffRecord <-> OnRecord).
     pub(crate) fn flip_on_record(&self) -> Result<()> {
-        self.session.flip_on_record()
+        self.session.flip_on_record_as(&self.owner_proof())
     }
 
     /// ONE-1726 test seam: drain leases and drop the overlay. ONE-1727
@@ -487,7 +505,7 @@ impl<'vault> SessionVault<'vault> {
     /// closure (from the TYPED journal) and the temp->canonical short-id
     /// mapping.
     pub(crate) fn promote_turn(&self, turn: &EntityId) -> Result<PromoteOutcome> {
-        self.session.promote_turn(turn)
+        self.session.promote_turn_as(&self.owner_proof(), turn)
     }
 
     /// ONE-1730 ARMED: the fresh conversation shell wrapping a witnessed

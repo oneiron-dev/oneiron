@@ -25,7 +25,7 @@ use crate::conversation::MembershipWindow;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
-use crate::off_record::promote::PromoteOutcome;
+use crate::off_record::promote::{PromoteInitiator, PromoteOutcome};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 use crate::session_overlay::{JournalEntry, JournalRole};
 
@@ -276,7 +276,7 @@ impl OffRecordSession<'_> {
     /// no part of this vault or `credential` was revoked,
     /// [`OffRecordError::OffRecordNotInRoom`] when they are not in the room or
     /// their membership stopped showing a turn; otherwise as
-    /// [`Self::promote_turn`].
+    /// [`Self::promote_turn_as`].
     pub fn save_talk_by(
         &self,
         person: EntityId,
@@ -302,7 +302,7 @@ impl OffRecordSession<'_> {
         };
         // Refused the same way whether or not there is anything to save yet.
         authority(self.vault, &self.vault.store.env.read_txn()?)?;
-        self.save_talk(person, Some(room), authority)
+        self.save_talk(PromoteInitiator::room_owner(person), Some(room), authority)
     }
 
     /// The owner's save of the whole talk so far; `owner`'s proof, and that
@@ -319,7 +319,7 @@ impl OffRecordSession<'_> {
         };
         // Refused the same way whether or not there is anything to save yet.
         authority(self.vault, &self.vault.store.env.read_txn()?)?;
-        self.save_talk(owner.actor(), room, authority)
+        self.save_talk(PromoteInitiator::owner(owner), room, authority)
     }
 
     /// The talk so far, gathered: the messages of this stretch already in
@@ -544,15 +544,6 @@ fn heard_by_another_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId)
 fn heard_unread(error: Error) -> bool {
     tracing::warn!(error = %error, "a room's roster did not read; its notice posts");
     true
-}
-
-/// The refusal of an unbound save or flip on a stretch in a room: there it
-/// takes a proof of who acts.
-pub(super) fn unbound_in_room(session_ref: &str) -> Error {
-    Error::OffRecord(OffRecordError::OffRecordPromoteUnauthenticated {
-        session_ref: session_ref.to_owned(),
-        actor_ref: String::new(),
-    })
 }
 
 /// Refuses unless, in `txn`, `actor` is on `room`'s roster and their

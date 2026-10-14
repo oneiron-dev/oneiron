@@ -117,6 +117,15 @@ impl<'vault> OffRecordSession<'vault> {
     /// every later landing checks again that they own this vault on a live
     /// proof and are still in the room, in the membership they flipped in.
     /// Once they are not, saving stops, and only a new flip starts it again.
+    ///
+    /// Alone or in a room, there is no flip on record without the proof
+    /// (H203):
+    ///
+    /// ```compile_fail
+    /// fn flip(session: &oneiron::off_record::OffRecordSession<'_>) {
+    ///     let _ = session.flip_on_record();
+    /// }
+    /// ```
     pub fn flip_on_record_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<()> {
         let in_room = self.room()?.is_some();
         {

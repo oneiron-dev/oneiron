@@ -14,6 +14,7 @@ use crate::Vault;
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::off_record::promote::PromoteInitiator;
 use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::session_overlay::{JournalRole, OverlaySnapshot, PromotePlan, replayed_subject};
 
@@ -24,16 +25,18 @@ use super::session::OffRecordSession;
 use super::types::OffRecordNoticeAct;
 
 impl OffRecordSession<'_> {
-    /// Saves the talk so far for `by` in ONE transaction that runs
-    /// `authority` again and, in a room, checks that `by` is still there and
-    /// sees every moment of each turn it keeps. The room hears a `saved_talk`
-    /// notice whether or not there was anything new to keep.
+    /// Saves the talk so far for `initiator` in ONE transaction that runs
+    /// `authority` again and, in a room, checks that they are still there and
+    /// see every moment of each turn it keeps. The room hears a `saved_talk`
+    /// notice whether or not there was anything new to keep, and each turn's
+    /// receipt names them.
     pub(super) fn save_talk(
         &self,
-        by: EntityId,
+        initiator: PromoteInitiator,
         room: Option<EntityId>,
         authority: impl FnOnce(&Vault, &heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<SavedTurns> {
+        let by = initiator.actor();
         let windows = room.map(|room| self.vault.windows(room, by)).transpose()?;
         let saved = {
             let mut state = self.recording_state()?;
@@ -108,7 +111,7 @@ impl OffRecordSession<'_> {
             let (saved, hearing) = if plans.is_empty() {
                 (Vec::new(), check(&self.vault.store.env.read_txn()?)?)
             } else {
-                self.promote_plans(&mut state, plans, |wtxn| check(wtxn))?
+                self.promote_plans(&mut state, plans, &initiator, |wtxn| check(wtxn))?
             };
             post_notice(&mut state, OffRecordNoticeAct::SavedTalk, by, hearing);
             self.entry.publish_state(&state);

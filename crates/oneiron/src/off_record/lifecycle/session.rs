@@ -676,18 +676,6 @@ impl OffRecordSession<'_> {
         self.vault.vault_id()
     }
 
-    /// Puts the room on record. A stretch in a room refuses this unbound
-    /// door: flipping saves everyone's later turns into this vault, so only
-    /// [`Self::flip_on_record_as`] may do it there.
-    pub fn flip_on_record(&self) -> Result<()> {
-        if session_entry_state(&self.entry)?.record.room.is_some() {
-            return Err(super::room::unbound_in_room(&self.session_ref));
-        }
-        self.vault
-            .set_off_record_session_mode(&self.session_ref, OffRecordMode::OnRecord)?;
-        Ok(())
-    }
-
     /// Notes the messages of a turn witnessed while the room was on record:
     /// they landed in base, where a copy of the talk reads them.
     pub(crate) fn note_on_record_messages(
