@@ -18,6 +18,8 @@ pub(crate) enum ConsolidationReader {
     ClaimVad,
     /// The coping outcome a turn's VAD delta updates.
     CopingOutcome,
+    /// A turn's VAD annotation that consolidation or coping folds in.
+    VadAnnotation,
     /// The Dreamer's known-claims listing for a subject.
     NewestClaims,
     /// A Dreamer candidate's graph signals: fan-in and new references.
@@ -44,9 +46,10 @@ pub(crate) enum ConsolidationReader {
 
 impl ConsolidationReader {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 13] = [
+    pub(crate) const ALL: [Self; 14] = [
         Self::ClaimVad,
         Self::CopingOutcome,
+        Self::VadAnnotation,
         Self::NewestClaims,
         Self::GraphSignal,
         Self::ExplicitPrior,
@@ -64,6 +67,7 @@ impl ConsolidationReader {
         match self {
             Self::ClaimVad => "claim_vad",
             Self::CopingOutcome => "coping_outcome",
+            Self::VadAnnotation => "vad_annotation",
             Self::NewestClaims => "newest_claims",
             Self::GraphSignal => "graph_signal",
             Self::ExplicitPrior => "explicit_prior",

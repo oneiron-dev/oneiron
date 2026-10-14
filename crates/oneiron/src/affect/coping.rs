@@ -415,13 +415,13 @@ impl Vault {
         confidence: f32,
         now: u64,
     ) -> Result<CopingOutcomeUpdate> {
-        let baseline =
-            self.get_turn_vad_annotation(baseline_turn_id)?
-                .ok_or(Error::InvalidClaimBody(
-                    "baseline turn VAD annotation missing",
-                ))?;
+        let baseline = self
+            .turn_vad_annotation_for_consolidation(baseline_turn_id)?
+            .ok_or(Error::InvalidClaimBody(
+                "baseline turn VAD annotation missing",
+            ))?;
         let later = self
-            .get_turn_vad_annotation(later_turn_id)?
+            .turn_vad_annotation_for_consolidation(later_turn_id)?
             .ok_or(Error::InvalidClaimBody("later turn VAD annotation missing"))?;
         let delta = VadDelta::new(
             later.vad.valence - baseline.vad.valence,
