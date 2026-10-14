@@ -25,6 +25,11 @@ pub(super) fn names(facts: &CandidateFacts, body: &ClaimBody) -> Result<bool> {
         && topic_key(body.scope.as_ref())? == facts.topic)
 }
 
+/// Whether `body` is the claim `candidate` names.
+pub(crate) fn names_candidate(candidate: &PromotionCandidate, body: &ClaimBody) -> Result<bool> {
+    names(&candidate_facts(&candidate.candidate)?, body)
+}
+
 /// Whether the claim at `candidate`'s id is one an earlier pass of this
 /// attempt committed into the owner's review, which still holds it or which
 /// the owner has decided since: a crash before the attempt completed, or a

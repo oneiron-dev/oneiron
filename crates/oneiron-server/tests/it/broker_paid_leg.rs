@@ -13,6 +13,8 @@
 //! - N5: a redirect off the provider's origin gets no second send, and a
 //!   lookalike host gets no request at all.
 //! - N11: a provider that echoes the key gets it back redacted.
+//! - A provider set to `response_format = "none"` sends a JSON call with no
+//!   `response_format`, as the direct transport does.
 //!
 //! Every refusal asserts the five checks: no provider send, no send with the
 //! key, no key read at the door, no change in units used or reserved, and one
@@ -372,7 +374,7 @@ fn fixture_in(mode: Mode) -> Option<Fixture> {
         reads: AtomicUsize::new(0),
     });
     let receipts = Arc::new(MemoryReceipts::default());
-    let runtime = runtime(fake.origin(), &table, &keys, &receipts);
+    let runtime = runtime(fake.origin(), &table, &keys, &receipts, "");
     Some(Fixture {
         key,
         fake,
@@ -407,12 +409,13 @@ fn same_user_table(ca: &Path) -> String {
 }
 
 /// A runtime whose `paid` provider at `base_url` sends through the broker
-/// `table` names.
+/// `table` names, with the extra `provider` lines.
 fn runtime(
     base_url: &str,
     table: &str,
     keys: &Arc<CountingDoor>,
     receipts: &Arc<MemoryReceipts>,
+    provider: &str,
 ) -> ModelRuntime {
     let config = ModelsConfig::from_toml(
         &format!(
@@ -423,7 +426,7 @@ base_url = "{base_url}"
 key_secret = "{HANDLE}"
 revision = "v1"
 timeout_secs = 20
-
+{provider}
 [roles.checker]
 rungs = [{{ model = "paid:teacher-small" }}, {{ model = "paid:teacher-large" }}]
 
@@ -518,6 +521,10 @@ impl Fixture {
     /// A run that declares the small teacher on a line of `limit` units,
     /// reserving 6 per call.
     fn run(&self, name: &str, limit: u64) -> DeclaredRun {
+        self.run_on(&self.runtime, name, limit)
+    }
+
+    fn run_on(&self, runtime: &ModelRuntime, name: &str, limit: u64) -> DeclaredRun {
         let declaration = RunDeclaration::declared(BudgetLine {
             limit_units: limit,
             reserve_units: 6,
@@ -532,7 +539,7 @@ impl Fixture {
             )
             .expect("teachers"),
         );
-        self.runtime.declared_run(name, declaration, None)
+        runtime.declared_run(name, declaration, None)
     }
 
     fn keyed(&self, seen: &[SeenRequest]) -> usize {
@@ -751,7 +758,7 @@ async fn n5_a_redirect_gets_no_second_send_and_a_lookalike_host_gets_nothing() {
     // `localhost` reaches the same fake, whose certificate names only
     // 127.0.0.1: the TLS check fails before any request is written.
     let lookalike = f.fake.origin().replace("127.0.0.1", "localhost");
-    let runtime = runtime(&lookalike, &f.table, &f.keys, &f.receipts);
+    let runtime = runtime(&lookalike, &f.table, &f.keys, &f.receipts, "");
     let run = runtime.declared_run(
         "n5-lookalike",
         RunDeclaration::declared(BudgetLine {
@@ -778,6 +785,30 @@ async fn n5_a_redirect_gets_no_second_send_and_a_lookalike_host_gets_nothing() {
     );
     assert_eq!(f.fake.seen().len(), 1, "and sent it no request");
     f.assert_no_key_in_receipts();
+}
+
+/// Engine ruling 2026-10-14 (NIGHTLY-SWITCH), Sol r3: a `key_secret`
+/// provider set to `response_format = "none"` sends a JSON call through the
+/// broker with no `response_format`; the default still sends the schema.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_provider_set_to_no_schema_sends_no_response_format_through_the_broker() {
+    let Some(f) = fixture() else { return };
+    answer_with_key(&f.fake, &f.key, "{}");
+    for (line, sends) in [("", true), ("response_format = \"none\"", false)] {
+        let runtime = runtime(f.fake.origin(), &f.table, &f.keys, &f.receipts, line);
+        let mut call = request(SMALL, "extract");
+        call.envelope.response_format = ResponseFormat::Json {
+            schema: json!({"type": "object"}),
+        };
+        f.run_on(&runtime, &format!("schema-{sends}"), 20)
+            .generate(SMALL, call)
+            .await
+            .expect("answered through the broker");
+        let seen = f.fake.seen();
+        let body: serde_json::Value =
+            serde_json::from_slice(&seen.last().expect("a send").body).expect("a JSON body");
+        assert_eq!(body.get("response_format").is_some(), sends, "{body}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

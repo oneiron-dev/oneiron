@@ -80,6 +80,9 @@ side_tables! {
     DREAMER_HARNESS_EVAL_BASELINE: VaultMeta b"dreamer:harness:eval-baseline:v1:" LegacyJson;
     /// Elected MACRO-scope home-node designation (node_id, class, elected_at). Key: ().
     DREAMER_HOME_NODE: VaultMeta b"dreamer:home_node_macro:v1" Raw;
+    /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
+    /// lists the same ones. Ids only, never their text. Key: id16.
+    DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap

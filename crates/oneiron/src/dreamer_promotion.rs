@@ -42,6 +42,7 @@
 use rmpv::Value;
 
 mod attempt_sink;
+mod corrections;
 mod scoped;
 /// What the live policy lets the vault's Dreamer do (see
 /// `Vault::dreamer_weave_reach` and the owner's `Vault::grant_dreamer_weave`).

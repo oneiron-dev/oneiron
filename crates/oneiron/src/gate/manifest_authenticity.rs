@@ -61,6 +61,17 @@ pub(crate) fn manifest_is_seeded_default(
         .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
 }
 
+/// Marks the body hashed `hash` at `id` as the engine's seeded default,
+/// untouched by any local re-authoring.
+pub(in crate::gate) fn mark_seeded(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    hash: &[u8; 32],
+) -> Result<()> {
+    SEEDED.put(store, txn, &HexId(*id), hash)
+}
+
 pub(crate) fn stamp_manifest_origin(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

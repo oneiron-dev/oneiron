@@ -166,6 +166,23 @@ impl PolicyPack {
 
         resolved
     }
+
+    /// The axes this pack's rules declare for `predicate`, longest match
+    /// first; `None` when no rule names it and only the pack's defaults
+    /// would apply.
+    pub(super) fn declared_axes(&self, predicate: &str) -> Option<PolicyAxes> {
+        let mut declared: Option<(usize, PolicyAxes)> = None;
+        for rule in self.rules.iter().filter(|rule| rule.matches(predicate)) {
+            declared = match declared {
+                Some((len, axes)) if rule.prefix.len() == len => {
+                    Some((len, axes.restrict(rule.axes)))
+                }
+                Some((len, _)) if rule.prefix.len() < len => declared,
+                _ => Some((rule.prefix.len(), rule.axes)),
+            };
+        }
+        declared.map(|(_, axes)| axes)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

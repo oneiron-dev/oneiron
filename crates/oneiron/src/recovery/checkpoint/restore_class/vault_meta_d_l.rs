@@ -30,6 +30,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_GAP, CONTENT),
     (&t::DREAMER_HARNESS_EVAL_BASELINE, CONTENT),
     (&t::DREAMER_HOME_NODE, CONTENT),
+    (&t::DREAMER_NEIGHBOURHOOD, CONTENT),
     (&t::PREFILTER_CONFIG, LIVE),
     (&t::PREFILTER_MEMBER, CONTENT),
     (&t::PREFILTER_ROUND, CONTENT),

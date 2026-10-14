@@ -121,6 +121,7 @@ fn execute_with_sink(
     sink: &mut dyn ConsolidationSink,
 ) -> Result<DreamerAttemptExecution> {
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend,
         guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

@@ -49,6 +49,7 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

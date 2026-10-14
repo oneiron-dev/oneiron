@@ -11,10 +11,12 @@ use serde_json::Value as JsonValue;
 use super::http::{HttpFailure, ProviderHttp, SseItem};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
+use crate::config::models::ResponseFormatWire;
 
 pub(super) struct OpenAiHttp {
     pub(super) http: ProviderHttp,
     pub(super) cap: OutputCap,
+    pub(super) response_format: ResponseFormatWire,
 }
 
 /// One `.send()` per call over [`ProviderHttp`], which follows no redirect
@@ -43,6 +45,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
         Box::pin(async move {
             let mut body = request.body;
             self.cap.apply(&mut body);
+            send_format(self.response_format, &mut body);
             let mut reply = self
                 .http
                 .post_json(&request.path, &request.headers, &body)
@@ -63,6 +66,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let mut body = request.body;
         self.cap.apply(&mut body);
+        send_format(self.response_format, &mut body);
         let events = self.http.post_sse(&request.path, &request.headers, &body);
         let frames = futures_util::stream::unfold(
             Frames {
@@ -75,6 +79,17 @@ impl OpenAiCompatTransport for OpenAiHttp {
             Frames::next,
         );
         Ok(Box::pin(frames))
+    }
+}
+
+/// A provider set to `response_format = "none"` is sent no
+/// `response_format`; the engine still checks the answer against the call's
+/// schema, as it does when the schema went out.
+pub(super) fn send_format(wire: ResponseFormatWire, body: &mut JsonValue) {
+    if wire == ResponseFormatWire::Omitted
+        && let Some(body) = body.as_object_mut()
+    {
+        body.remove("response_format");
     }
 }
 

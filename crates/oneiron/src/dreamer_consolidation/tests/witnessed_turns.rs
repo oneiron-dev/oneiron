@@ -295,6 +295,7 @@ fn executor<'a>(
     scope: Option<crate::llm::Scope>,
 ) -> Result<ConsolidationExecutor<'a>> {
     Ok(ConsolidationExecutor {
+        roles: Default::default(),
         backend,
         guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

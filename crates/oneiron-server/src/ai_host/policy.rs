@@ -12,9 +12,12 @@
 //! owner's edit of the vault table, through `oneiron dreamer grant
 //! --extraction-route` or `PUT /v1/llm/defaults`; boot only reads it, so a
 //! later owner tightening is never undone by a restart.
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use oneiron::dreamer_consolidation::DREAMER_VERDICT_ROLE;
 use oneiron::llm::ExtractionEgressPredicate;
+use oneiron::llm::manifest::ModelRole;
 use oneiron::{CallPurpose, LlmRequest, ModelId, ModelLocality, Vault};
 
 use super::status::IdleReason;
@@ -38,13 +41,30 @@ const fn rank(locality: ModelLocality) -> u8 {
 /// The Dreamer's purposes: transcript extraction and conflict merges.
 const DREAMER_PURPOSES: [CallPurpose; 2] = [CallPurpose::Extraction, CallPurpose::Consolidation];
 
-/// `locality`: where the model a pass extracts with is served.
+/// The purpose a Dreamer role's calls go out under: the verdict is a
+/// consolidation call; extraction and narrative send transcript text, as an
+/// extraction does.
+pub(super) fn dreamer_role_purpose(role: ModelRole) -> CallPurpose {
+    if role == DREAMER_VERDICT_ROLE {
+        CallPurpose::Consolidation
+    } else {
+        CallPurpose::Extraction
+    }
+}
+
+/// `routes`: each Dreamer role's purpose, and where the model a pass calls
+/// that role on is served. A role off the device needs the owner's egress
+/// and a default for its purpose at its route, within the extraction bound.
 pub(super) fn dreamer_route(
     vault: &Vault,
-    locality: ModelLocality,
+    routes: &[(CallPurpose, ModelLocality)],
     allow_egress: bool,
 ) -> oneiron::Result<DreamerRoute> {
-    if locality == ModelLocality::OnDevice {
+    let remote = routes
+        .iter()
+        .filter(|(_, locality)| *locality != ModelLocality::OnDevice)
+        .collect::<Vec<_>>();
+    if remote.is_empty() {
         return Ok(DreamerRoute::Ready {
             egress: allow_egress,
         });
@@ -55,22 +75,23 @@ pub(super) fn dreamer_route(
         ));
     }
     let table = vault.purpose_default_table()?;
-    let routed = DREAMER_PURPOSES.iter().all(|purpose| {
+    let routed = remote.iter().all(|(purpose, locality)| {
         table
             .purposes
             .get(purpose)
-            .is_some_and(|row| row.locality == locality)
-    }) && rank(table.extraction_max_locality) >= rank(locality);
+            .is_some_and(|row| row.locality == *locality)
+            && rank(table.extraction_max_locality) >= rank(*locality)
+    });
     if !routed {
         return Ok(DreamerRoute::Blocked(IdleReason::ExtractionRouteNotSet));
     }
     Ok(DreamerRoute::Ready { egress: true })
 }
 
-/// One pass's nonlocal-extraction authority: the model that pass selected,
-/// and no other.
-pub(super) fn extraction_egress(model: ModelId) -> Arc<dyn ExtractionEgressPredicate> {
-    Arc::new(move |request: &LlmRequest| request.model == model)
+/// One pass's nonlocal-extraction authority: the models that pass selected
+/// for its roles, and no other.
+pub(super) fn extraction_egress(models: BTreeSet<ModelId>) -> Arc<dyn ExtractionEgressPredicate> {
+    Arc::new(move |request: &LlmRequest| models.contains(&request.model))
 }
 
 /// The owner's edit behind `oneiron dreamer grant --extraction-route`: routes

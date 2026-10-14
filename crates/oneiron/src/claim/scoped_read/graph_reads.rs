@@ -85,6 +85,24 @@ impl ScopedRead<'_> {
 
     /// Edges and both endpoints share one authority snapshot and a mandatory receipt.
     pub fn edges_out(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        self.edges_out_of(id, None)
+    }
+
+    /// [`Self::edges_out`] of one `kind`: an edge of another kind is neither
+    /// read nor counted as withheld.
+    pub(crate) fn edges_out_of_kind(
+        &self,
+        id: &EntityId,
+        kind: EdgeKind,
+    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        self.edges_out_of(id, Some(kind))
+    }
+
+    fn edges_out_of(
+        &self,
+        id: &EntityId,
+        kind: Option<EdgeKind>,
+    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let admitted = self.admitted_edges_in(
@@ -93,7 +111,7 @@ impl ScopedRead<'_> {
             &filter,
             id,
             EdgeDirection::Out,
-            None,
+            kind,
             usize::MAX,
             usize::MAX,
             false,

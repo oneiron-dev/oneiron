@@ -43,6 +43,51 @@ pub(crate) struct ConsolidationFence {
     texts: BTreeMap<EntityId, TurnText>,
     conversation: EntityId,
     rules: crate::dreamer_consolidation::routing::PredicateKeyRules,
+    /// Priors a correction in this same handoff closed with its grant, at
+    /// the revision that grant wrote: the handoff's later writes hold them to
+    /// it instead of their pins.
+    closed: std::sync::Mutex<BTreeMap<EntityId, RowRevision>>,
+    /// Replacements the conflict closes under way rely on, at the revision
+    /// whose standing they checked: each close refuses once one changes or no
+    /// longer reads.
+    standing: std::sync::Mutex<BTreeMap<EntityId, RowRevision>>,
+}
+
+/// A row as it is stored: its type, learned time and document version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RowRevision {
+    entity_type: u8,
+    learned_at: u64,
+    resource: crate::llm::ScopeResource,
+}
+
+impl RowRevision {
+    /// `id`'s revision in `txn`; `None` when it is gone or has no header.
+    pub(crate) fn read_in(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Self>> {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+        else {
+            return Ok(None);
+        };
+        Ok(
+            crate::batch::EntityMetadataHeader::parse(&raw).map(|header| Self {
+                entity_type: header.entity_type,
+                learned_at: header.learned_at,
+                resource: document_version(*id, &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]),
+            }),
+        )
+    }
+
+    fn of_pin(pin: &SourcePin) -> Self {
+        Self {
+            entity_type: pin.entity_type,
+            learned_at: pin.learned_at,
+            resource: pin.resource.clone(),
+        }
+    }
 }
 
 impl ConsolidationFence {
@@ -50,6 +95,31 @@ impl ConsolidationFence {
     /// may promote under (`validate_run` refuses any other).
     pub(crate) fn run_identity(&self) -> (WriteActor, crate::attempt_queue::AttemptId) {
         (self.actor, self.attempt)
+    }
+
+    /// Records a prior this handoff's own granted correction closed, at the
+    /// revision the grant wrote (read inside the grant's transaction). A
+    /// poisoned lock records nothing, and the later writes refuse.
+    pub(crate) fn closed_by_this_write(&self, prior: EntityId, revision: RowRevision) {
+        if let Ok(mut closed) = self.closed.lock() {
+            closed.insert(prior, revision);
+        }
+    }
+
+    /// Records a replacement a conflict close relies on, at the revision
+    /// whose standing the close checked, until [`Self::released`]. A
+    /// poisoned lock fails the later writes' fence.
+    pub(crate) fn relies_on(&self, replacement: EntityId, revision: RowRevision) {
+        if let Ok(mut standing) = self.standing.lock() {
+            standing.insert(replacement, revision);
+        }
+    }
+
+    /// The closes that relied on `replacement` are done.
+    pub(crate) fn released(&self, replacement: EntityId) {
+        if let Ok(mut standing) = self.standing.lock() {
+            standing.remove(&replacement);
+        }
     }
 }
 
@@ -94,6 +164,12 @@ impl BranchResources<'_> {
             }
             if let [(id, true)] = matches.as_slice() {
                 let id = *id;
+                // Nothing attaches to an unvetted head, so a candidate that
+                // restates one is already said; this attempt's own head met
+                // again is its replay.
+                if self.provisional.contains(&id) && id != candidate.claim_id {
+                    continue;
+                }
                 if candidate.evidence_turn_refs.contains(&id) {
                     return Err(invalid_consolidation(
                         "claim evidence cannot support itself",
@@ -126,6 +202,8 @@ impl BranchResources<'_> {
             texts: self.texts.clone(),
             conversation: self.partition.conversation_ref,
             rules: self.rules.clone(),
+            closed: std::sync::Mutex::default(),
+            standing: std::sync::Mutex::default(),
         }
     }
 }
@@ -149,6 +227,9 @@ impl ConsolidationFence {
             self.actor.actor_class().gate_actor_class(),
         )
         .ok_or_else(|| invalid_consolidation("invalid pinned actor"))?;
+        let recorded = vault
+            .scoped_read(actor.clone())
+            .with_claim_status(crate::claim::ClaimReadStatus::Recorded);
         let read = vault.scoped_read(actor);
         let rules: crate::dreamer_consolidation::routing::PredicateKeyRules =
             match crate::dreamer_consolidation::routing::KEY_RULES.get(&vault.store, txn, &())? {
@@ -177,20 +258,43 @@ impl ConsolidationFence {
                 "extraction fallback eligibility revoked",
             ));
         }
+        let closed = self
+            .closed
+            .lock()
+            .map_err(|_| invalid_consolidation("fence closed-prior lock"))?
+            .clone();
         for (id, pin) in &self.sources {
-            if !read.is_entity_readable_with_policy_in(txn, &policy, id)? {
+            // A prior this handoff's own grant closed is held to the revision
+            // that grant wrote, and read on the record lane: a closed claim
+            // never surfaces, and every other read check still applies.
+            let closed_at = closed.get(id);
+            let lane = if closed_at.is_some() {
+                &recorded
+            } else {
+                &read
+            };
+            if !lane.is_entity_readable_with_policy_in(txn, &policy, id)? {
                 return Err(invalid_consolidation("pinned source read revoked"));
             }
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+            let stored = RowRevision::read_in(vault, txn, id)?
                 .ok_or_else(|| invalid_consolidation("pinned source missing"))?;
-            let header = crate::batch::EntityMetadataHeader::parse(&raw)
-                .ok_or_else(|| invalid_consolidation("pinned source header"))?;
-            if header.entity_type != pin.entity_type
-                || header.learned_at != pin.learned_at
-                || document_version(*id, &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-                    != pin.resource
-            {
+            let expected = closed_at
+                .cloned()
+                .unwrap_or_else(|| RowRevision::of_pin(pin));
+            if stored != expected {
                 return Err(invalid_consolidation("pinned source revision changed"));
+            }
+        }
+        let standing = self
+            .standing
+            .lock()
+            .map_err(|_| invalid_consolidation("fence standing lock"))?
+            .clone();
+        for (id, revision) in &standing {
+            if !read.is_entity_readable_with_policy_in(txn, &policy, id)?
+                || RowRevision::read_in(vault, txn, id)?.as_ref() != Some(revision)
+            {
+                return Err(invalid_consolidation("a replacement no longer stands"));
             }
         }
         for turn in &self.turns {

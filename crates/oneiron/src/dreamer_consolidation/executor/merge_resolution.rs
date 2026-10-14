@@ -26,18 +26,27 @@ pub(super) fn decode_merge_resolution(response: &LlmResponse) -> Result<MergeRes
     match parsed.get("resolution").and_then(|value| value.as_str()) {
         // With no prior head in scope, supersede degrades to merge (D7: at
         // most one prior head; the promotion writer owns the supersession).
-        Some("merge" | "supersede") => Ok(MergeResolution::Merge {
-            candidate_ref: parsed
-                .get("candidate_ref")
-                .map(|value| {
-                    value
-                        .as_str()
-                        .and_then(|id| EntityId::from_hex(id).ok())
-                        .ok_or_else(|| invalid_consolidation("invalid merge candidate identity"))
-                })
-                .transpose()?,
-            value: json_to_rmpv(parsed.get("value").unwrap_or(&serde_json::Value::Null)),
-        }),
+        Some("merge" | "supersede") => {
+            // A verdict that names no value writes no claim: it parks as an
+            // open conflict.
+            let Some(value) = parsed.get("value").filter(|value| !value.is_null()) else {
+                return Ok(MergeResolution::Escalate);
+            };
+            Ok(MergeResolution::Merge {
+                candidate_ref: parsed
+                    .get("candidate_ref")
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .and_then(|id| EntityId::from_hex(id).ok())
+                            .ok_or_else(|| {
+                                invalid_consolidation("invalid merge candidate identity")
+                            })
+                    })
+                    .transpose()?,
+                value: json_to_rmpv(value),
+            })
+        }
         Some("accumulate") => Ok(MergeResolution::Accumulate),
         Some("escalate") => Ok(MergeResolution::Escalate),
         _ => Err(invalid_consolidation("unknown merge resolution")),

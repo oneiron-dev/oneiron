@@ -29,6 +29,10 @@ pub enum IdleReason {
     /// The vault's model manifest pins an extraction teacher this server does
     /// not serve at the vault's route: add it to `[models]`, or change the pin.
     ExtractionModelNotServed,
+    /// The vault's model manifest pins a model for the Dreamer's conflict
+    /// verdict or narrative role that this server does not serve at the
+    /// vault's route: add it to `[models]`, or change the pin.
+    RoleModelNotServed,
     /// Turned off in `[models]`.
     Disabled,
     /// The worker failed to start; the server log has the cause.

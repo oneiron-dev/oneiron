@@ -388,6 +388,8 @@ impl<'a> DreamerRunnerStore<'a> {
             crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
                 self.vault, txn, source.id, record.id,
             )?;
+            // The source never runs again; its retry lists afresh.
+            crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, txn, source.id)?;
             ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
             Ok(())
         })

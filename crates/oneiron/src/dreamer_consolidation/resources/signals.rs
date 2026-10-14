@@ -131,7 +131,8 @@ impl BranchResources<'_> {
                 if scope.relationship.is_some() && !pinned {
                     return Ok(false);
                 }
-                let edges = self.read.edges_out(id)?;
+                // Membership is the ChildOf edge alone, as for a branch turn.
+                let edges = self.read.edges_out_of_kind(id, EdgeKind::ChildOf)?;
                 self.fold_read_receipt(&edges.receipt)?;
                 if edges.receipt.suppressed_count != 0 {
                     return Ok(false);
@@ -167,7 +168,7 @@ impl BranchResources<'_> {
     }
 }
 
-pub(in crate::dreamer_consolidation) fn facet(scope: Option<&Value>) -> Result<Option<EntityId>> {
+pub(crate) fn facet(scope: Option<&Value>) -> Result<Option<EntityId>> {
     let Some(Value::Map(entries)) = scope else {
         return Ok(None);
     };

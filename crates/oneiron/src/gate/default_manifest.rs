@@ -530,6 +530,14 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                         ]),
                     ),
                 ]),
+                // ARCH-0003 §Criticality: the classes canon declares critical.
+                // A correction on one waits for the owner; a predicate no rule
+                // names defaults critical for legibility only.
+                critical_class_rule("health.", false),
+                critical_class_rule("safety.", false),
+                critical_class_rule("legal.", false),
+                critical_class_rule("boundary.", false),
+                critical_class_rule("decision.settled", true),
             ]),
         ),
         (
@@ -997,6 +1005,23 @@ pub(crate) fn default_policy_manifest_with_scoped_grants(rows: Vec<Value>) -> Re
     rmpv::encode::write_value(&mut data, &Value::Map(entries))
         .map_err(|_| Error::InvariantViolation("default policy manifest encoding"))?;
     Ok(data)
+}
+
+/// A seeded rule declaring `prefix`'s class critical (an exact predicate when
+/// `exact`). Its sensitivity stays the pack default's.
+fn critical_class_rule(prefix: &str, exact: bool) -> Value {
+    let mut rule = vec![(Value::from(RULE_PREFIX_KEY), Value::from(prefix))];
+    if exact {
+        rule.push((Value::from(RULE_EXACT_KEY), Value::Boolean(true)));
+    }
+    rule.push((
+        Value::from(RULE_AXES_KEY),
+        Value::Map(vec![
+            (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),
+            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+        ]),
+    ));
+    Value::Map(rule)
 }
 
 /// The shipped native-mail dial is one vault row; hosts narrow it with their

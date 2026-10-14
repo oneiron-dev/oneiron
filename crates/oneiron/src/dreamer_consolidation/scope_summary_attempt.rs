@@ -172,11 +172,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         };
         let request = ctx
             .vault
-            .authorize_model_role(
-                crate::llm::manifest::ModelRole::ExtractionTeacher,
-                request,
-                &self.inference,
-            )?
+            .authorize_model_role(super::DREAMER_NARRATIVE_ROLE, request, &self.inference)?
             .into_request();
         let step_hash = request
             .canonical_hash()
