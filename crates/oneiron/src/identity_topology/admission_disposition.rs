@@ -648,6 +648,10 @@ pub(crate) fn sealed_by_key_for_test(
 
 /// A genuine signed producer fact for cross-module sync/batch fixtures. The
 /// test still delivers the core and fact as SEPARATE records in either order.
+/// It is `vault`'s own seal, the one kind that vault counts with no roster
+/// entry (H161), so delivered to `vault` it stands in for a trusted producer.
+/// Whose seals a receiver counts is checked across two vaults in
+/// `sync/bridge/companion_identity_tests.rs`.
 #[cfg(all(test, feature = "sync"))]
 pub(crate) fn signed_validated_row_for_test(
     vault: &Vault,
