@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::paths::DOOR_PRE_RECEIVE_HOOK_NAME;
+use super::paths::{DOOR_MAX_SCAN_BYTES, DOOR_PRE_RECEIVE_HOOK_NAME};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -23,6 +23,15 @@ use crate::error::Result;
 /// `+` all reach the door as the exact bytes the push would make durable. A
 /// blob the hook cannot size or read ends the push right here, under `set -e`,
 /// while the objects are still quarantined.
+///
+/// The tip diff alone would miss what a push carries in between: a blob one
+/// commit adds and a later commit reverts or deletes leaves no trace in the
+/// endpoint diff, yet it stays durable in history. So the hook also walks
+/// every object the new tips reach that no existing ref already reaches, and
+/// frames each blob the tip diffs did not, once, into a second stream the door
+/// scans the same way. Both streams together are capped at
+/// [`DOOR_MAX_SCAN_BYTES`], substituted for `@DOOR_MAX_SCAN_BYTES@` when the
+/// hook is written; a push past it is refused, never scanned in part.
 pub(super) const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 # Vetted door hook (ONE-1908). Repository-supplied hooks never run: every serve
 # invocation pins core.hooksPath in argv to this door-owned directory.
@@ -34,6 +43,11 @@ pub(super) const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 # The blob stream is length-framed: "blob <oid> <bytes> <path>\n" followed by
 # exactly <bytes> raw bytes. Framing rather than patch text is what makes the
 # extraction total -- there is no line shape a blob can carry that hides it.
+#
+# The history stream frames every OTHER blob the new tips reach that no existing
+# ref already reaches, so a blob an intermediate commit adds and a later one
+# reverts or deletes is scanned too. Its records come from cat-file --batch:
+# the same header and bytes, then one "\n".
 #
 # Every git below reads TRUE object bytes: replacement lookup is disabled by the
 # exported GIT_NO_REPLACE_OBJECTS (which reaches any git a git spawns) and again
@@ -48,11 +62,28 @@ req="$dir/pre-receive.request"
 part="$dir/pre-receive.request.part"
 blobs="$dir/pre-receive.blobs"
 blobspart="$dir/pre-receive.blobs.part"
+history="$dir/pre-receive.history"
+historypart="$dir/pre-receive.history.part"
 entries="$dir/pre-receive.entries"
+objects="$dir/pre-receive.objects"
+typed="$dir/pre-receive.typed"
+listed="$dir/pre-receive.listed"
+seen="$dir/pre-receive.seen"
 verdict="$dir/pre-receive.verdict"
+# Both streams together carry at most this many blob bytes. Past it the push is
+# refused whole, never scanned in part.
+max=@DOOR_MAX_SCAN_BYTES@
+total=0
+tips=
+too_large() {
+	echo "oneiron door: this push carries more than $max blob bytes to scan; push its history in smaller parts" >&2
+	exit 1
+}
 tab=$(printf '\t')
 : > "$part"
 : > "$blobspart"
+: > "$historypart"
+: > "$seen"
 printf 'quarantine %s\n' "${GIT_QUARANTINE_PATH-}" >> "$part"
 empty=$(git --no-replace-objects hash-object -t tree /dev/null)
 while read -r old new ref; do
@@ -71,6 +102,7 @@ while read -r old new ref; do
 		*[!0]*) ;;
 		*) continue ;;
 	esac
+	tips="$tips $new"
 	case "$old" in
 		*[!0]*) base=$old ;;
 		*) base=$empty ;;
@@ -96,12 +128,48 @@ while read -r old new ref; do
 			*) continue ;;
 		esac
 		size=$(git --no-replace-objects cat-file -s "$oid")
+		total=$((total + size))
+		[ "$total" -le "$max" ] || too_large
 		printf 'blob %s %s %s\n' "$oid" "$size" "$path" >> "$blobspart"
 		git --no-replace-objects cat-file blob "$oid" >> "$blobspart"
+		printf '%s\n' "$oid" >> "$seen"
 	done < "$entries"
 done
+if [ -n "$tips" ]; then
+	git --no-replace-objects rev-list --objects $tips --not --all > "$objects"
+	git --no-replace-objects cat-file \
+		--batch-check='%(objecttype) %(objectname) %(objectsize) %(rest)' \
+		< "$objects" > "$typed"
+	# Keeps each blob the tip diffs did not frame, once, under the first path
+	# rev-list named it by, made printable: the path only labels a refusal.
+	# Any line that is not a typed object fails the hook.
+	status=0
+	LC_ALL=C awk -v total="$total" -v max="$max" '
+		FILENAME == ARGV[1] { seen[$0] = 1; next }
+		NF < 3 || $1 !~ /^(blob|tree|commit|tag)$/ { exit 4 }
+		$1 != "blob" || ($2 in seen) { next }
+		{
+			seen[$2] = 1
+			total += $3
+			if (total > max) exit 3
+			path = $0
+			sub(/^[^ ]* [^ ]* [^ ]* /, "", path)
+			gsub(/[^ -~]/, "?", path)
+			print $2 " " path
+		}
+	' "$seen" "$typed" > "$listed" || status=$?
+	case "$status" in
+		0) ;;
+		3) too_large ;;
+		*) exit 1 ;;
+	esac
+	git --no-replace-objects cat-file \
+		--batch='blob %(objectname) %(objectsize) %(rest)' \
+		< "$listed" > "$historypart"
+fi
 printf 'end\n' >> "$part"
-rm -f "$entries"
+rm -f "$entries" "$objects" "$typed" "$listed" "$seen"
+mv -f "$historypart" "$history"
 mv -f "$blobspart" "$blobs"
 mv -f "$part" "$req"
 waited=0
@@ -134,10 +202,18 @@ pub struct DoorHooksDir {
 impl DoorHooksDir {
     /// Materializes a fresh door-owned directory under `root`.
     pub fn materialize(root: &Path) -> Result<Self> {
+        Self::materialize_with_scan_cap(root, DOOR_MAX_SCAN_BYTES)
+    }
+
+    /// Materializes the directory with the hook's blob-byte cap set to
+    /// `max_scan_bytes`.
+    pub(super) fn materialize_with_scan_cap(root: &Path, max_scan_bytes: u64) -> Result<Self> {
         let path = root.join(EntityId::now().to_hex());
         fs::create_dir_all(&path)?;
         let hook = path.join(DOOR_PRE_RECEIVE_HOOK_NAME);
-        fs::write(&hook, DOOR_PRE_RECEIVE_HOOK.as_bytes())?;
+        let script =
+            DOOR_PRE_RECEIVE_HOOK.replace("@DOOR_MAX_SCAN_BYTES@", &max_scan_bytes.to_string());
+        fs::write(&hook, script.as_bytes())?;
         set_executable(&hook)?;
         Ok(Self {
             path: path.canonicalize()?,
@@ -158,6 +234,12 @@ impl DoorHooksDir {
     /// the request file it announces.
     pub(super) fn blobs_path(&self) -> PathBuf {
         self.path.join("pre-receive.blobs")
+    }
+
+    /// The framed history stream: the blobs the new tips reach that the tip
+    /// diffs did not frame. Moved into place before the blob stream.
+    pub(super) fn history_path(&self) -> PathBuf {
+        self.path.join("pre-receive.history")
     }
 
     pub(super) fn verdict_path(&self) -> PathBuf {

@@ -102,6 +102,12 @@ pub(super) const DOOR_WINDOW_POLL: Duration = Duration::from_millis(2);
 /// closed. A push whose door window cannot complete is refused, never admitted.
 pub const DOOR_WINDOW_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// The most blob bytes one push may hand the door to scan, across the tip
+/// diffs and the history walk together. The door reads every framed byte into
+/// memory, so a push past this is refused whole by the hook rather than scanned
+/// in part; a long history still lands when pushed in smaller parts.
+pub(super) const DOOR_MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+
 /// The verdict line the vetted hook accepts as an admission.
 pub(super) const DOOR_VERDICT_OK: &str = "ok";
 

@@ -127,7 +127,7 @@ pub(super) fn serve_door_window(
     // empty scan — and rather than an unanswered hook left blocking.
     let (ref_updates, lfs_pointers, quarantine_path, verdict) =
         match door_window_inputs(&request_path, hooks) {
-            Ok((request, blobs)) => {
+            Ok((request, blobs, tip_blobs)) => {
                 // The name rule decides FIRST, and it decides here rather than
                 // at the landing: this is the last moment at which refusing
                 // costs nothing, because the hook is still blocked and the
@@ -153,7 +153,7 @@ pub(super) fn serve_door_window(
                 };
                 (
                     request.ref_updates,
-                    lfs_pushed_pointers(&blobs),
+                    lfs_pushed_pointers(&blobs[..tip_blobs]),
                     request.quarantine_path,
                     verdict,
                 )
@@ -203,17 +203,24 @@ fn lfs_pushed_pointers(blobs: &[PushedBlob]) -> Vec<LfsPushedPointer> {
         .collect()
 }
 
-/// Reads what the hook left behind: the ref list it decided over, and the
-/// complete blob stream it framed. Both are required — the blob stream is moved
-/// into place BEFORE the request file that announces it, so a readable request
+/// Reads what the hook left behind: the ref list it decided over, the
+/// complete blob stream it framed from the tip diffs, and the history stream of
+/// every other new blob. All three are required — both streams are moved into
+/// place BEFORE the request file that announces them, so a readable request
 /// with an unreadable extraction is a fault, never an empty push.
+///
+/// Returns every blob the door scans, tip blobs first, and how many of them
+/// came from the tip diffs: only those carry the tip paths an LFS pointer is
+/// paired with.
 fn door_window_inputs(
     request_path: &Path,
     hooks: &DoorHooksDir,
-) -> Result<(DoorWindowRequest, Vec<PushedBlob>)> {
+) -> Result<(DoorWindowRequest, Vec<PushedBlob>, usize)> {
     let request = parse_door_request(&fs::read(request_path)?)?;
-    let blobs = parse_pushed_blobs(&fs::read(hooks.blobs_path())?)?;
-    Ok((request, blobs))
+    let mut blobs = parse_pushed_blobs(&fs::read(hooks.blobs_path())?)?;
+    let tip_blobs = blobs.len();
+    blobs.extend(parse_history_blobs(&fs::read(hooks.history_path())?)?);
+    Ok((request, blobs, tip_blobs))
 }
 
 /// Runs one bound door through the seam. A scan that cannot run is a refusal,
@@ -387,6 +394,17 @@ fn parse_optional_oid(value: &str) -> Result<Option<GitOid>> {
 /// door's own rejection, and a stream this function cannot read whole is a
 /// refusal at the window — never a silently empty scan.
 pub(super) fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
+    parse_framed_blobs(framed, false)
+}
+
+/// Reads the history stream: the same records as [`parse_pushed_blobs`], each
+/// followed by the one `\n` `git cat-file --batch` writes after an object's
+/// bytes. A record without it is a stream this cannot read whole.
+fn parse_history_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
+    parse_framed_blobs(framed, true)
+}
+
+fn parse_framed_blobs(framed: &[u8], terminated: bool) -> Result<Vec<PushedBlob>> {
     let mut blobs = Vec::new();
     let mut cursor = 0_usize;
     while cursor < framed.len() {
@@ -409,6 +427,12 @@ pub(super) fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
             added_lines: content_lines(&framed[start..stop]),
         });
         cursor = stop;
+        if terminated {
+            if framed.get(stop) != Some(&b'\n') {
+                return Err(serve_failed("door history record is not terminated"));
+            }
+            cursor += 1;
+        }
     }
     Ok(blobs)
 }
