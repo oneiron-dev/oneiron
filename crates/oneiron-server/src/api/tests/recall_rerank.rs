@@ -34,11 +34,13 @@ struct Fake {
     score: Score,
     on_call: OnCall,
     tokens: u64,
+    served_model: Arc<str>,
 }
 
 /// A loopback `/v1/rerank` server. Call `n` (from 1) scores each document
 /// with `score(n, document)`, runs `on_call(n)` first, says
-/// [`SERVED_MODEL`] answered and reports `tokens` used.
+/// [`SERVED_MODEL`] answered (or the name [`FakeReranker::named`] gives) and
+/// reports `tokens` used.
 struct FakeReranker {
     base_url: String,
     fake: Fake,
@@ -53,12 +55,17 @@ impl Drop for FakeReranker {
 
 impl FakeReranker {
     async fn start(score: Score, on_call: OnCall, tokens: u64) -> Self {
+        Self::named(score, on_call, tokens, SERVED_MODEL).await
+    }
+
+    async fn named(score: Score, on_call: OnCall, tokens: u64, served_model: &str) -> Self {
         let fake = Fake {
             calls: Arc::default(),
             seen: Arc::default(),
             score,
             on_call,
             tokens,
+            served_model: served_model.into(),
         };
         let app = axum::Router::new()
             .route("/v1/rerank", axum::routing::post(rerank))
@@ -98,7 +105,7 @@ async fn rerank(State(fake): State<Fake>, Json(body): Json<Value>) -> Json<Value
         })
         .collect();
     Json(json!({
-        "model": SERVED_MODEL,
+        "model": &*fake.served_model,
         "results": results,
         "usage": {"total_tokens": fake.tokens},
     }))
@@ -327,7 +334,9 @@ async fn high_xhigh_and_max_rerank_on_the_models_reranker_through_mcp() {
 /// typed `budget_spent`; it never falls back to an unreranked pack. A call
 /// that went out is settled at what it used, past the line too, so a line
 /// one call overspends refuses the next: here the block changes during the
-/// first call, and the door's second call is the one refused.
+/// first call, and the door's second call is the one refused. The line
+/// covers the first call's payload (W1-2 prices it before it leaves); the
+/// endpoint reports more used than the line held.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
     let vault = Arc::new(Mutex::new(None::<(Arc<oneiron::Vault>, oneiron::EntityId)>));
@@ -340,7 +349,7 @@ async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
         }) as OnCall
     };
     let fake = FakeReranker::start(prefers_known(), hook, 5_000).await;
-    let models = reranker_models(&fake.base_url, 100);
+    let models = reranker_models(&fake.base_url, 2_000);
     let (_dir, server, _host, receipts) = served(Some(&models)).await;
     let actor = reader(&server, "rerank-spent").await;
     *vault.lock().unwrap() = Some((Arc::clone(server.vault()), actor));
@@ -518,6 +527,107 @@ async fn a_block_that_changes_while_it_is_scored_takes_none_of_the_stale_scores(
             .contains("changed while the reranker scored them"),
         "{refusal}"
     );
+}
+
+/// #1419 Wonder W1-2: a call's words are known before it leaves, so it is
+/// priced on them first. A line that cannot cover the payload refuses the
+/// call unsent, as `budget_spent`; before, the call went out and was settled
+/// past the line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_payload_past_the_line_is_refused_unsent() {
+    let fake = FakeReranker::start(prefers_known(), no_hook(), 1).await;
+    let models = reranker_models(&fake.base_url, 32);
+    let (_dir, server, _host, receipts) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-priced").await;
+
+    let refusal = recall(&server, "rerank-priced", actor, "high")
+        .await
+        .expect_err("a payload past the line is refused");
+
+    assert_eq!(
+        refusal["error"]["data"]["error_code"], "budget_spent",
+        "{refusal}"
+    );
+    assert_eq!(fake.calls(), 0, "nothing was sent");
+    assert!(
+        recall_runs(&receipts)
+            .iter()
+            .all(|row| !matches!(row.event, RunEvent::Dispatched { .. })),
+        "{:?}",
+        recall_runs(&receipts)
+    );
+}
+
+/// #1419 Wonder W1-3: the pack repeats the name the endpoint says answered
+/// only when it is a model name: at most 200 printable characters. A name
+/// past that is dropped, as though the endpoint named none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_model_name_past_its_bound_is_not_repeated() {
+    let fake = FakeReranker::named(prefers_known(), no_hook(), 10, &"m".repeat(16 * 1024)).await;
+    let models = reranker_models(&fake.base_url, 32_000);
+    let (_dir, server, _host, _) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-long-name").await;
+
+    let pack = recall(&server, "rerank-long-name", actor, "high")
+        .await
+        .unwrap();
+
+    let rerank = &pack["retrieval_meta"]["rerank"];
+    assert_eq!(rerank["status"], "applied", "{rerank}");
+    assert!(rerank.get("served_model").is_none(), "{rerank}");
+}
+
+/// Bugbot on #1419: the sync door runs high, xhigh and max off its caller's
+/// thread. On a current-thread runtime that is a plain thread with no
+/// runtime, and the rerank door refused a configured reranker there as
+/// `model_unavailable`. A host serving from a current-thread runtime reranks
+/// a high recall over the sync RPC.
+#[test]
+fn high_recall_over_the_sync_rpc_reranks_on_a_current_thread_runtime() {
+    let io = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let fake = io.block_on(FakeReranker::start(prefers_known(), no_hook(), 10));
+    let models = reranker_models(&fake.base_url, 32_000);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let reply = runtime.block_on(async {
+        let (_dir, server, _host, _) = served(Some(&models)).await;
+        let owner = server.vault().ensure_embedded_owner_actor().unwrap();
+        for text in OTHERS.iter().chain([&KNOWN]) {
+            remember(server.vault(), owner, text);
+        }
+        let recipe = format!(
+            "scope=core:read;principal_ref={};actor_class=human",
+            owner.to_hex()
+        );
+        let auth = crate::test_credentials::authenticate(&server, &recipe);
+        let frames = crate::livequery::bound_rpc(
+            &server,
+            &auth,
+            crate::livequery::RpcRequest {
+                request_id: 7,
+                method: "recall".to_owned(),
+                params: json!({"query": QUERY, "effort": "high", "limit": 10}),
+            },
+        )
+        .unwrap();
+        crate::livequery::test_wire::reply(&frames)
+    });
+    runtime.shutdown_background();
+
+    assert_eq!(
+        reply["result"]["retrieval_meta"]["rerank"]["status"], "applied",
+        "{reply}"
+    );
+    assert_eq!(rank_of_known(&reply["result"]), 0, "{reply}");
+    assert_eq!(fake.calls(), 1);
+    drop(fake);
+    io.shutdown_background();
 }
 
 const PPLX_REPO: &str = "perplexity-ai/pplx-embed-v1-0.6b";

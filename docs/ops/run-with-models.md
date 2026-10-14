@@ -334,15 +334,26 @@ Each paid recall runs on a line of its own under the vault's budget policy,
 as a chat turn does. The rerank call is admitted on its own permit, sent
 through the run's gate and settled: the tokens the reranker reports, or the
 call's reservation (one call's 8000 units, or the whole line if smaller) when
-it reports none. Its `Admitted`, `Dispatched` and `Settled` rows go to the
-server's run receipts. If the vault has a model manifest, its binding for the
+it reports none. Before a call leaves it is priced on its words, a unit per
+byte of each document plus the query once per document, and a line that
+cannot cover that refuses the call unsent with `BUDGET_SPENT`. The default
+line covers 50 documents of 500 ASCII characters beside a query of about
+140; longer documents, or text outside ASCII (several bytes a character),
+need a larger `rerank_budget_units`. Its `Admitted`, `Dispatched` and
+`Settled` rows go to the server's run receipts. If the vault has a model manifest, its binding for the
 `reranker` role picks the model, as for chat.
 
 The recall scores exactly the block it would rerank: the candidates the
 reader may read, with each one's text as the reader's own read serves it.
-A message whose words live in its document (a streamed message, the
-server's own chat replies among them, or an edited one) is found but not
-reranked yet: it follows the reranked rows in its first-stage order.
+A row with no revision that holds its words (a message whose words live in
+its document: a streamed message, the server's own chat replies among them,
+or an edited one; or a turn whose messages show none) is found but not
+reranked yet: it follows the reranked rows in its first-stage order. Each
+text is judged by the write door as it would leave, a turn's messages
+joined as the reranker would read them, and one the door refuses is sent
+empty. A block with no text to send makes no call and says `skipped` with
+`no_candidates`. The pack repeats the name the endpoint says answered as
+`served_model` only when it is at most 200 printable characters.
 The model runs outside every vault transaction, and the scores apply only to
 that same block. A block that changed while it was scored (the vault was
 written to) is scored once more; if it changes again the recall is refused

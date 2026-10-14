@@ -1,0 +1,131 @@
+//! A reranker that binds words scores the words a row's pin holds, and the
+//! run serves those words (Sol R31 F1 and F4 on #1419's code). A row whose
+//! index publication waits holds two bodies: the one its pin and postings
+//! name, and a newer live one.
+
+use super::*;
+use crate::registry::ENTITY_TYPE_ASSET_TEXT;
+use crate::vault::ReadMode;
+
+/// A binding reranker that keeps each claim it is handed and leaves the
+/// order as it is.
+#[derive(Default)]
+struct ClaimKeepingReranker {
+    claims: std::sync::Mutex<Vec<rmpv::Value>>,
+}
+
+impl Reranker for ClaimKeepingReranker {
+    fn id(&self) -> &str {
+        "test/reranker-claim-keeping@v1"
+    }
+
+    fn rerank(&self, _query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+        self.claims.lock().unwrap().extend(
+            candidates
+                .iter()
+                .filter_map(|candidate| candidate.claim.map(|claim| claim.value.clone())),
+        );
+        Ok(vec![0.0; candidates.len()])
+    }
+
+    fn binds_words(&self) -> bool {
+        true
+    }
+}
+
+/// A row whose index publication waits: born with `old`, then put again
+/// with `new`, which stays live until the index publishes it.
+fn put_twice(vault: &Vault, id: EntityId, entity_type: u8, old: &[u8], new: &[u8]) -> Result<()> {
+    crate::test_util::publish_seeded_revisions(vault);
+    for body in [old, new] {
+        vault
+            .batch()
+            .put(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, body)
+            .text(&id, &[("body", "the brass lantern")])
+            .commit()?;
+    }
+    Ok(())
+}
+
+fn claim_body(value: &str) -> Vec<u8> {
+    let body = ClaimBody::new(
+        "test.rerank_words",
+        ClaimSubject::Entity(entity_id(0x7C)),
+        rmpv::Value::from(value),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    crate::claim::encode_claim_body(&body).expect("encode claim body")
+}
+
+/// Sol R31 F1: a binding reranker was handed a claim's live body while its
+/// pin, and the bytes the write door judged, were its indexed revision; the
+/// run then served that revision under the score for other words. It is
+/// handed the body its pin holds.
+#[test]
+fn a_binding_reranker_is_handed_the_claim_its_pin_holds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x6A);
+    put_twice(
+        &vault,
+        id,
+        ENTITY_TYPE_CLAIM,
+        &claim_body("old-words"),
+        &claim_body("new-words"),
+    )?;
+    let reranker = ClaimKeepingReranker::default();
+
+    let results = vault
+        .query()
+        .search_text("lantern", 10)
+        .rerank(&reranker, RerankOptions::default())
+        .run()?;
+
+    assert_eq!(results.first().map(|row| row.id), Some(id));
+    assert_eq!(
+        *reranker.claims.lock().unwrap(),
+        [rmpv::Value::from("old-words")]
+    );
+    Ok(())
+}
+
+/// Sol R31 F4: a context pack read live hydrated a row a binding reranker
+/// scored at its pin from the live body, serving other words than were
+/// scored. A scored row is served at its pin whatever mode the pack reads.
+#[test]
+fn a_live_pack_serves_a_scored_row_at_the_words_scored() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x6B);
+    let body = |content: &str| {
+        rmp_serde::to_vec_named(&serde_json::json!({"content": content})).expect("body")
+    };
+    put_twice(
+        &vault,
+        id,
+        ENTITY_TYPE_ASSET_TEXT,
+        &body("old-words"),
+        &body("new-words"),
+    )?;
+    let reranker = ClaimKeepingReranker::default();
+
+    let pack = vault
+        .context_pack()
+        .read_mode(ReadMode::Live)
+        .search_text("lantern", 10)
+        .rerank(&reranker, RerankOptions::default())
+        .run()?;
+
+    let served = pack.results.first().expect("the row");
+    assert_eq!(served.id, id);
+    assert_eq!(
+        served
+            .fields
+            .as_ref()
+            .and_then(|fields| fields.get("content")),
+        Some(&serde_json::json!("old-words")),
+        "{served:?}"
+    );
+    Ok(())
+}

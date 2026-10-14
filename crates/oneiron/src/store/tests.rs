@@ -661,6 +661,7 @@ fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
             stage: RetrievalTraceStage::Final,
             candidates: score_breakdown,
         },
+        fusion_list_length: 80,
     }));
 
     vault
@@ -744,6 +745,7 @@ fn delete_retrieval_run_removes_fork_index_when_run_row_is_corrupt() -> Result<(
             stage: RetrievalTraceStage::Final,
             candidates: score_breakdown,
         },
+        fusion_list_length: 80,
     }));
 
     vault.store.record_retrieval_run(&record)?;

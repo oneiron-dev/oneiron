@@ -847,13 +847,22 @@ impl PipelineBuilder<'_> {
         if skip_ret01_abstain {
             return Ok(capabilities);
         }
+        let floors = self.vault.no_match_floors();
+        let mut metadata_cache = EntityMetadataCache::default();
+        let mut kind_of = |id: &crate::EntityId| -> Result<Option<u8>> {
+            Ok(metadata_cache
+                .get(&self.vault.store, rtxn, id)?
+                .map(|meta| meta.entity_type))
+        };
         if context_pack_evidence_abstains(
             &capabilities,
             signal_components,
             self.text_search.as_ref().map(|(query, _)| query.as_str()),
             self.vector_search.is_some(),
-            self.vault.vector_evidence(),
-        ) {
+            self.vault.evidence_space(),
+            &floors,
+            &mut kind_of,
+        )? {
             capabilities.clear();
         }
 
@@ -869,8 +878,10 @@ impl PipelineBuilder<'_> {
                 signal_components,
                 self.text_search.as_ref().map(|(query, _)| query.as_str()),
                 self.vector_search.is_some(),
-                self.vault.vector_evidence(),
-            )
+                self.vault.evidence_space(),
+                &floors,
+                &mut kind_of,
+            )?
         {
             scores.clear();
             *empty_reason = Some(EmptyReason::BelowThreshold);

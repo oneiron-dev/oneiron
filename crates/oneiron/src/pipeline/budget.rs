@@ -14,7 +14,7 @@ use super::types::{
     CONTEXT_PACK_ANOMALOUS_REPEAT_RUN, CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO,
     CONTEXT_PACK_SCORE_GAP_EPSILON, EntityMetadataCache, ScoredEntity,
 };
-use crate::config::VectorEvidenceFloors;
+use crate::vault::NoMatchFloors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPackBudgetKind {
@@ -176,54 +176,98 @@ fn redistribute_context_pack_budget(
     caps
 }
 
+/// One raw vector score a pack holds: the embedding space it was scored in
+/// and the kind of item, which pick the floors it is judged by.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct VectorEvidence<'a> {
+    pub(super) space: &'a str,
+    /// The item's entity type, looked up only when `space` keys its floors
+    /// by kind.
+    pub(super) kind: Option<u8>,
+    pub(super) score: f32,
+}
+
 /// Returns whether a context pack must withhold every candidate before
 /// hydration. The predicate intentionally reads raw per-channel evidence,
 /// rather than the blended score: blend dimensions can be incomparable or
-/// flat, while cosine scores have a stable similarity meaning.
+/// flat, while cosine scores have a stable similarity meaning in their own
+/// space. Every vector score here was scored in `space` (a vault has one);
+/// `kind_of` reads an item's entity type when that space keys its floors by
+/// kind. A folded MESSAGE's evidence is its TURN's.
 pub(super) fn context_pack_evidence_abstains(
     scores: &[ScoredEntity],
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     text_query: Option<&str>,
     has_vector_query: bool,
-    floors: VectorEvidenceFloors,
-) -> bool {
+    space: &str,
+    floors: &NoMatchFloors,
+    mut kind_of: impl FnMut(&EntityId) -> Result<Option<u8>>,
+) -> Result<bool> {
     if text_query.is_some_and(context_pack_text_is_anomalous) {
-        return true;
+        return Ok(true);
     }
     if scores.is_empty() {
-        return false;
+        return Ok(false);
     }
 
+    let keyed = floors.keys_space(space);
     let mut has_keyword_hit = false;
-    let mut vector_scores = Vec::new();
+    let mut evidence = Vec::new();
     for scored in scores {
         let Some(components) = signal_components.get(&scored.id) else {
             continue;
         };
+        let mut kind = None;
         for component in components {
             match component.signal {
                 RetrievalSignal::Text => has_keyword_hit = true,
                 RetrievalSignal::Vector | RetrievalSignal::Hyde => {
-                    vector_scores.push(component.score);
+                    if keyed && kind.is_none() {
+                        kind = Some(kind_of(&scored.id)?);
+                    }
+                    evidence.push(VectorEvidence {
+                        space,
+                        kind: kind.flatten(),
+                        score: component.score,
+                    });
                 }
                 _ => {}
             }
         }
     }
 
+    Ok(vector_evidence_abstains(
+        text_query.is_some(),
+        has_vector_query,
+        has_keyword_hit,
+        &mut evidence,
+        floors,
+    ))
+}
+
+/// RET-01's two vector tests. No match: with both a text and a vector query
+/// and no surviving keyword hit, every score sits under its own space and
+/// kind's floor. Poor gap: a space's list is uniformly mediocre.
+pub(super) fn vector_evidence_abstains(
+    has_text_query: bool,
+    has_vector_query: bool,
+    has_keyword_hit: bool,
+    evidence: &mut [VectorEvidence<'_>],
+    floors: &NoMatchFloors,
+) -> bool {
     // A semantic-only result is not rejected merely for being below the
     // floor: this branch requires both caller-supplied channels and no
     // surviving keyword evidence, matching the RET-01 dual-signal rule.
-    let absent_keyword_and_low_vector = text_query.is_some()
+    let absent_keyword_and_low_vector = has_text_query
         && has_vector_query
         && !has_keyword_hit
-        && !vector_scores.is_empty()
-        && vector_scores
-            .iter()
-            .all(|score| !score.is_finite() || *score < floors.floor);
+        && !evidence.is_empty()
+        && evidence.iter().all(|scored| {
+            !scored.score.is_finite()
+                || scored.score < floors.resolve(scored.space, scored.kind).floor
+        });
 
-    absent_keyword_and_low_vector
-        || context_pack_vector_score_gap_is_poor(&mut vector_scores, floors.strong)
+    absent_keyword_and_low_vector || vector_score_gaps_are_poor(evidence, floors)
 }
 
 /// RET-01 pack hygiene for malformed or degenerate text input. Newlines and
@@ -256,24 +300,46 @@ fn context_pack_text_is_anomalous(text: &str) -> bool {
     false
 }
 
-/// Score-gap evidence is meaningful only within the same raw vector channel.
-/// The ratio follows `(top1 - top2) / max(top1, epsilon)`; it suppresses
-/// uniformly mediocre results, not a close cluster of strong matches.
-fn context_pack_vector_score_gap_is_poor(vector_scores: &mut [f32], strong: f32) -> bool {
-    if vector_scores.len() < 2 {
-        return false;
+/// Score-gap evidence is meaningful only within one space's raw list, whose
+/// kinds compete in it together (and HyDE's vectors are in the same space as
+/// the query's). The ratio follows `(top1 - top2) / max(top1, epsilon)`; it
+/// suppresses uniformly mediocre results, not a close cluster of strong
+/// matches. A top at or above its own space and kind's strong score passes
+/// its space. The pack abstains when some space is poor and none passes; a
+/// space with one score is neither, unless that score is strong.
+fn vector_score_gaps_are_poor(evidence: &mut [VectorEvidence<'_>], floors: &NoMatchFloors) -> bool {
+    evidence.sort_unstable_by(|left, right| {
+        left.space
+            .cmp(right.space)
+            .then_with(|| right.score.total_cmp(&left.score))
+    });
+    let mut poor = false;
+    for list in evidence.chunk_by(|left, right| left.space == right.space) {
+        match vector_score_gap_is_poor(list, floors) {
+            Some(true) => poor = true,
+            Some(false) => return false,
+            None => {}
+        }
     }
+    poor
+}
 
-    vector_scores.sort_unstable_by(|left, right| right.total_cmp(left));
-    let top = vector_scores[0];
-    let next = vector_scores[1];
+/// One space's verdict over its scores, best first: `Some(true)` poor,
+/// `Some(false)` passes, `None` too few scores to say.
+fn vector_score_gap_is_poor(list: &[VectorEvidence<'_>], floors: &NoMatchFloors) -> Option<bool> {
+    let top = list.first()?;
+    let strong = floors.resolve(top.space, top.kind).strong;
+    let Some(next) = list.get(1) else {
+        return (top.score.is_finite() && top.score >= strong).then_some(false);
+    };
+    let (top, next) = (top.score, next.score);
     if !top.is_finite() || !next.is_finite() || top <= 0.0 {
-        return true;
+        return Some(true);
     }
     if top >= strong {
-        return false;
+        return Some(false);
     }
 
     let gap_ratio = (top - next) / top.max(CONTEXT_PACK_SCORE_GAP_EPSILON);
-    gap_ratio < CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO
+    Some(gap_ratio < CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO)
 }
