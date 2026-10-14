@@ -893,7 +893,7 @@ fn malformed_older_active_default_fails_closed_until_superseded() -> Result<()> 
         assert_matches!(
             super::filters::apply_world_filter(
                 &mut scores,
-                &vault.store,
+                &vault.store.read(),
                 &rtxn,
                 &WorldScope::ActiveSet,
                 None,

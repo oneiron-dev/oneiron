@@ -316,26 +316,15 @@ impl Vault {
         peer_type: Option<u8>,
         overflow_context: &'static str,
     ) -> Result<Vec<EntityId>> {
-        let mut ids = Vec::new();
-        for (scanned, entry) in self
-            .store
-            .port_edges(rtxn, prefix_id, direction, Some(kind), None)?
-            .enumerate()
-        {
-            if scanned >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow(overflow_context));
-            }
-            let peer = entry?.target;
-
-            if let Some(req_type) = peer_type
-                && !self.entity_has_type(rtxn, &peer, req_type)?
-            {
-                continue;
-            }
-
-            ids.push(peer);
-        }
-        Ok(ids)
+        filtered_edge_peers_in(
+            &self.store,
+            rtxn,
+            direction,
+            prefix_id,
+            kind,
+            peer_type,
+            overflow_context,
+        )
     }
 
     fn filtered_edge_peers_page(
@@ -567,4 +556,38 @@ impl Vault {
         }
         Ok(false)
     }
+}
+
+/// [`Vault::filtered_edge_peers`] read through `store`, a room's view
+/// included. A peer that is missing or unreadable counts as another type.
+pub(crate) fn filtered_edge_peers_in(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    direction: EdgeDirection,
+    prefix_id: &EntityId,
+    kind: EdgeKind,
+    peer_type: Option<u8>,
+    overflow_context: &'static str,
+) -> Result<Vec<EntityId>> {
+    let mut ids = Vec::new();
+    for (scanned, entry) in store
+        .port_edges(rtxn, prefix_id, direction, Some(kind), None)?
+        .enumerate()
+    {
+        if scanned >= MAX_EDGE_QUERY_RESULTS {
+            return Err(Error::IndexOverflow(overflow_context));
+        }
+        let peer = entry?.target;
+
+        if let Some(req_type) = peer_type
+            && store
+                .port_entity_record(rtxn, &peer)?
+                .is_none_or(|raw| raw.entity_type != req_type)
+        {
+            continue;
+        }
+
+        ids.push(peer);
+    }
+    Ok(ids)
 }

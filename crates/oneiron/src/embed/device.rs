@@ -116,6 +116,18 @@ pub(crate) fn record_embedding_device_in_txn(
     }
 }
 
+/// Records in `to` the device `from` records for `id`'s vector: a room that
+/// takes base's vector of a row takes the record that describes it.
+pub(crate) fn copy_embedding_device_in_txn(
+    from: &impl ManifestDbs,
+    to: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let provenance = EMBEDDING_DEVICE.get(from, txn, id)?;
+    record_embedding_device_in_txn(to, txn, id, provenance.as_ref())
+}
+
 /// Drops every row with the vectors they described, when the whole vector
 /// table is cleared for a new space.
 pub(crate) fn clear_all_embedding_devices_in_txn(

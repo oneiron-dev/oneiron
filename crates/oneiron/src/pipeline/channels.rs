@@ -7,10 +7,11 @@ use crate::error::{Error, Result};
 use crate::retrieval_depth::RetrievalDeadline;
 
 use crate::ports::{EntityTime, TimeAxis, TimelineQuery};
-use crate::store::Store;
+use crate::store::StoreRead;
 use crate::temporal::TemporalAnchorMode;
 
 use super::filters::pipeline_candidate_matches_filters_and_gate;
+use super::population::{indexed_text_population, indexed_vector_population};
 use super::support::{
     combine_proximity, compute_radius, effective_range_width, interval_distance,
     learned_anchor_range, midpoint, point_interval_distance, resolve_sigma_secs, sigmoid,
@@ -71,7 +72,7 @@ fn checkpoint(deadline: Option<&RetrievalDeadline>) -> Result<()> {
 }
 
 pub(super) fn execute_phonetic(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     codes: &[String],
 ) -> Result<Vec<ScoredEntity>> {
@@ -82,7 +83,7 @@ pub(super) fn execute_phonetic(
 /// metadata it reads, so a stage past its share stops there instead of
 /// finishing a scan that can cover the whole vault.
 pub(super) fn execute_temporal(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
     now: u64,
@@ -102,7 +103,7 @@ pub(super) fn execute_temporal(
 /// for a call that asks for nothing. With a `reader`, only the rows it may
 /// read count toward either stop ([`ReadableRows`]).
 pub(super) fn temporal_window(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
     now: u64,
@@ -247,7 +248,7 @@ pub(super) fn temporal_window(
 }
 
 pub(super) fn collect_temporal_candidates(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
     collection: TemporalCandidateCollectionContext<'_>,
@@ -460,7 +461,7 @@ thread_local! {
 }
 
 fn collect_occurred_candidates(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -489,7 +490,7 @@ fn collect_occurred_candidates(
 }
 
 fn collect_query_occurred_candidates(
-    store: &Store,
+    store: &StoreRead<'_>,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext<'_>,
@@ -572,7 +573,7 @@ fn collect_query_occurred_candidates(
 }
 
 pub(super) fn collect_index_candidates(
-    store: &Store,
+    store: &StoreRead<'_>,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext<'_>,
@@ -669,7 +670,7 @@ where
 }
 
 fn normalize_backward_boundary_bucket(
-    store: &Store,
+    store: &StoreRead<'_>,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     rows: &mut Vec<TemporalIndexRow>,
@@ -729,7 +730,7 @@ fn compare_temporal_index_rows(
 }
 
 pub(super) fn scoped_text_channel_limit(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     requested: usize,
     text_scope_widening_active: bool,
@@ -737,13 +738,11 @@ pub(super) fn scoped_text_channel_limit(
     if !text_scope_widening_active || requested == 0 {
         return Ok(requested);
     }
-    let indexed_docs = usize::try_from(crate::bm25::read_total_docs(store, rtxn)?)
-        .map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
-    Ok(requested.max(indexed_docs))
+    Ok(requested.max(indexed_text_population(store, rtxn)?))
 }
 
 pub(super) fn scoped_vector_channel_limit(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     requested: usize,
     scope_widening_active: bool,
@@ -751,12 +750,12 @@ pub(super) fn scoped_vector_channel_limit(
     if !scope_widening_active || requested == 0 {
         return Ok(requested);
     }
-    Ok(requested.max(crate::hnsw::hnsw_entity_count(store, rtxn)?))
+    Ok(requested.max(indexed_vector_population(store, rtxn)?))
 }
 
 pub(super) fn truncate_widened_channel_results_to_scope(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     requested: usize,
     filters: PipelineFilterConfig<'_>,
