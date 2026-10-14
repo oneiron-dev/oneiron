@@ -1645,7 +1645,7 @@ fn session_speech_run(
     // On record, so the bubbles land in base where an ordinary reader sees
     // them. The route, shell and door are the session's either way.
     session
-        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(vault))
         .expect("flip on record");
 
     let actor = seed_person(vault, run_seed);
@@ -1818,7 +1818,7 @@ fn retry_terminal_speech_after_session_restart(
         .bind("sess-implicit-recovery")
         .expect("rebind session after restart");
     session
-        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(vault))
         .expect("flip rebound session");
     let gated_write = GatedActorWrite::for_off_record_session(
         &session,

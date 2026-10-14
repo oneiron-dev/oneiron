@@ -817,7 +817,7 @@ fn said_alone(
 
 fn base_entities(vault: &Vault) -> Result<u64> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(vault.store.entities.len(&rtxn)?)
+    vault.store.entities.len(&rtxn)
 }
 
 /// H203 (security scan, W2-T6): a stretch alone with its owner goes on

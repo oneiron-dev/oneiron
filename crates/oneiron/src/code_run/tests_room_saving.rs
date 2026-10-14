@@ -536,6 +536,17 @@ fn minted(
     class: &str,
     id: u8,
 ) -> crate::authority::CapabilitySlip {
+    minted_shaped(vault, holder, class, id, |_| {})
+}
+
+/// [`minted`], its claims shaped by `shape` first.
+fn minted_shaped(
+    vault: &Vault,
+    holder: EntityId,
+    class: &str,
+    id: u8,
+    shape: impl FnOnce(&mut crate::authority::SlipClaims),
+) -> crate::authority::CapabilitySlip {
     let issuer = crate::test_support::test_host_issuer();
     let mut claims = vault
         .ensure_host_root_slip(&issuer)
@@ -544,6 +555,7 @@ fn minted(
     claims.slip_id = [id; 32];
     claims.holder_ref = holder.to_hex();
     claims.actor_class = Some(class.to_owned());
+    shape(&mut claims);
     vault
         .mint_capability_slip(&issuer, claims)
         .expect("mint the slip")
@@ -551,13 +563,20 @@ fn minted(
 
 /// [`minted`], as the vault verifies it for the host that holds it.
 fn slip(vault: &Vault, holder: EntityId, class: &str, id: u8) -> crate::authority::VerifiedSlip {
+    verified(vault, &minted(vault, holder, class, id))
+}
+
+/// `minted` as the vault verifies it for the host that holds it.
+fn verified(
+    vault: &Vault,
+    minted: &crate::authority::CapabilitySlip,
+) -> crate::authority::VerifiedSlip {
     let issuer = crate::test_support::test_host_issuer();
-    let minted = minted(vault, holder, class, id);
     let signature = issuer
-        .binding_proof(&minted, BINDING)
+        .binding_proof(minted, BINDING)
         .expect("binding proof");
     vault
-        .verify_capability_slip(&issuer.public_key(), &minted, BINDING, &signature)
+        .verify_capability_slip(&issuer.public_key(), minted, BINDING, &signature)
         .expect("a verified slip")
 }
 
@@ -713,4 +732,46 @@ fn a_room_save_refuses_a_slip_the_owner_handed_on() {
     session
         .save_talk_by(room.owner, &own)
         .expect("the owner's own slip saves");
+}
+
+/// H203 (Sol R3 F2, Astra R3 F1 and F3): the owner's own write slip saves
+/// under either spelling of write the HTTP door reads. A one-shot slip saves
+/// nothing: no save consumes it, so it would save again on the same proof.
+#[test]
+fn a_room_save_takes_a_core_write_slip_but_no_one_shot() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let one_shot = verified(
+        &vault,
+        &minted_shaped(&vault, room.owner, "human", 0xC1, |claims| {
+            claims.single_use = true;
+        }),
+    );
+    let refused = session.save_talk_by(room.owner, &one_shot).err();
+    assert!(
+        matches!(
+            &refused,
+            Some(Error::OffRecord(
+                crate::error::OffRecordError::OffRecordPromoteUnauthenticated { .. }
+            ))
+        ),
+        "a one-shot slip saved the room: {refused:?}"
+    );
+    assert!(vault.get_raw(&message(0)).expect("read").is_none());
+
+    let core_write = verified(
+        &vault,
+        &minted_shaped(&vault, room.owner, "human", 0xC2, |claims| {
+            claims.scope.verbs = crate::federation::ScopeAxis::Some(
+                ["core:read".to_owned(), "core:write".to_owned()].into(),
+            );
+        }),
+    );
+    let saved = session
+        .save_talk_by(room.owner, &core_write)
+        .expect("the owner's core:write slip saves");
+    assert_eq!(saved.len(), 1, "{saved:?}");
 }

@@ -324,12 +324,14 @@ impl OffRecordSession<'_> {
         // The save names `person` in its receipts, so it runs only on their
         // own slip: someone else's, or an agent's, saves nothing. It keeps
         // the whole talk, so a slip bounded to some records keeps none of it.
+        // A save consumes no slip, so a one-shot slip would save again.
         let claims = credential.claims();
         let mut whole = crate::federation::Scope::top();
         whole.verbs = credential.scope().verbs.clone();
         if EntityId::from_hex(&claims.holder_ref).ok() != Some(person)
             || claims.actor_class.as_deref() != Some("human")
-            || !credential.allows_verb("write")
+            || !(credential.allows_verb("write") || credential.allows_verb("core:write"))
+            || claims.single_use
             || !claims.records.is_empty()
             || !claims.channels.is_empty()
             || !whole.is_narrowing_of(credential.scope())

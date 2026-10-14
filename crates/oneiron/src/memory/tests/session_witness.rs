@@ -332,7 +332,8 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
 
     const ROUNDS: usize = 40;
 
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<(usize, usize, bool)>();
+    type Outcome = (usize, usize, bool, std::collections::BTreeSet<String>);
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<Outcome>();
     std::thread::spawn(move || {
         let (_dir, vault) = open_vault();
         let proof = crate::test_util::embedded_owner_proof(&vault);
@@ -344,6 +345,7 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
 
         let witnessed = AtomicUsize::new(0);
         let searched = AtomicUsize::new(0);
+        let search_refusals = std::sync::Mutex::new(std::collections::BTreeSet::new());
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 for round in 0..ROUNDS {
@@ -372,8 +374,16 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
             });
             scope.spawn(|| {
                 for _ in 0..ROUNDS {
-                    if session.search_text("lockorderneedle", 4).is_ok() {
-                        searched.fetch_add(1, AtomicOrdering::Relaxed);
+                    match session.search_text("lockorderneedle", 4) {
+                        Ok(_) => {
+                            searched.fetch_add(1, AtomicOrdering::Relaxed);
+                        }
+                        Err(error) => {
+                            search_refusals
+                                .lock()
+                                .expect("refusals")
+                                .insert(format!("{:?}", error.kind()));
+                        }
                     }
                 }
             });
@@ -393,11 +403,12 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
                 witnessed.load(AtomicOrdering::Relaxed),
                 searched.load(AtomicOrdering::Relaxed),
                 shell_leaked,
+                search_refusals.into_inner().expect("refusals"),
             ))
             .ok();
     });
 
-    let (witnessed, searched, shell_leaked) = match done_rx
+    let (witnessed, searched, shell_leaked, search_refusals) = match done_rx
         .recv_timeout(std::time::Duration::from_secs(90))
     {
         Ok(outcome) => outcome,
@@ -413,7 +424,7 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
     assert!(
         witnessed > 0 && searched > 0,
         "both writers must make real progress, not merely fail fast \
-         (witnessed {witnessed}, searched {searched})"
+         (witnessed {witnessed}, searched {searched}, search refused {search_refusals:?})"
     );
     assert!(
         !shell_leaked,
