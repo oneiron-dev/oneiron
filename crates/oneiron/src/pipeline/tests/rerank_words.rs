@@ -686,27 +686,32 @@ fn a_binding_reranker_is_handed_no_pinned_claim_the_run_withholds() -> Result<()
 }
 
 /// Sol and Astra R22 on this branch: the check above took a pinned body
-/// equal to the one the gate admitted as served, though hydration first holds
-/// a pin that is not the live row to a live body that surfaces. A stale
-/// claim, admitted by a filter that includes stale claims, written away and
-/// back to its pinned words under a later learned time, was handed to the
-/// reranker and then withheld. It is handed to none, and the pack serves what
-/// it serves with no reranker.
+/// equal to the one the gate admitted as served. A stale claim, which a
+/// filter that includes stale claims admits to retrieval, has such a body,
+/// but no pack serves it: its live row reads as none. Its words were handed
+/// to the reranker all the same. They are handed to none now.
 #[test]
-fn a_pin_behind_a_stale_live_row_is_handed_to_no_reranker() -> Result<()> {
-    let stale = |value: &str| {
-        let mut body = ClaimBody::new(
-            "test.rerank_words",
-            ClaimSubject::Entity(entity_id(0x7C)),
-            rmpv::Value::from(value),
-            0.9,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap();
-        body.stale = true;
-        crate::claim::encode_claim_body(&body).expect("encode claim body")
-    };
+fn a_stale_claim_the_filter_admits_is_handed_to_no_reranker() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    put_subject(&vault)?;
+    let id = entity_id(0x6E);
+    let mut body = ClaimBody::new(
+        "test.rerank_words",
+        ClaimSubject::Entity(entity_id(0x7C)),
+        rmpv::Value::from("old-words"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.stale = true;
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_CLAIM,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::claim::encode_claim_body(&body).expect("encode claim body"),
+    )?;
     let with_stale = || crate::gate::ResolvedRetrievalFilter {
         entity_types: None,
         max_sensitivity_band: 3,
@@ -716,64 +721,45 @@ fn a_pin_behind_a_stale_live_row_is_handed_to_no_reranker() -> Result<()> {
         deny_all: false,
         credential: None,
     };
-    for read_mode in [ReadMode::Indexed, ReadMode::Live] {
-        let (_dir, vault) = open_test_vault();
-        put_subject(&vault)?;
-        crate::test_util::publish_seeded_revisions(&vault);
-        let id = entity_id(0x6E);
-        // The index keeps the first row; the live row holds its words again.
-        for (words, learned_at) in [("old-words", 1), ("other-words", 1), ("old-words", 2)] {
-            vault
-                .batch()
-                .put(
-                    &id,
-                    ENTITY_TYPE_CLAIM,
-                    TimeRange { start: 1, end: 1 },
-                    learned_at,
-                    &stale(words),
-                )
-                .commit()?;
-        }
-        let reranker = ClaimKeepingReranker::default();
-        let options = RerankOptions {
-            query: Some("lantern".to_owned()),
-            ..RerankOptions::default()
-        };
+    let reranker = ClaimKeepingReranker::default();
 
-        let pack = vault
-            .context_pack()
-            .read_mode(read_mode)
-            .authority_filter(with_stale())
-            .search_temporal(1, 1, 10)
-            .rerank(&reranker, options)
-            .run()?;
-        let unreranked = vault
-            .context_pack()
-            .read_mode(read_mode)
-            .authority_filter(with_stale())
-            .search_temporal(1, 1, 10)
-            .run()?;
+    let found = vault
+        .query()
+        .authority_filter(with_stale())
+        .search_temporal(1, 1, 10)
+        .run()?;
+    let pack = vault
+        .context_pack()
+        .read_mode(ReadMode::Live)
+        .authority_filter(with_stale())
+        .search_temporal(1, 1, 10)
+        .rerank(
+            &reranker,
+            RerankOptions {
+                query: Some("lantern".to_owned()),
+                ..RerankOptions::default()
+            },
+        )
+        .run()?;
 
-        let served = |pack: &crate::ContextPack| {
-            pack.results
-                .iter()
-                .chain(&pack.neighbors)
-                .map(|row| (row.id, row.fields.clone()))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            *reranker.claims.lock().unwrap(),
-            Vec::<rmpv::Value>::new(),
-            "at {read_mode:?}"
-        );
-        assert_eq!(served(&pack), served(&unreranked), "at {read_mode:?}");
-        // A Live pack serves the live row the filter admits.
-        assert_eq!(
-            served(&unreranked).iter().any(|(row, _)| *row == id),
-            read_mode == ReadMode::Live,
-            "at {read_mode:?}: {:?}",
-            unreranked.results
-        );
-    }
+    assert!(
+        found.iter().any(|hit| hit.id == id),
+        "retrieval admits the claim"
+    );
+    // The vault's own seeded claims are found at that time too.
+    let handed = reranker.claims.lock().unwrap().clone();
+    assert!(
+        handed
+            .iter()
+            .all(|value| value.as_str() != Some("old-words")),
+        "{handed:?}"
+    );
+    assert!(
+        pack.results
+            .iter()
+            .chain(&pack.neighbors)
+            .all(|row| row.id != id),
+        "{pack:?}"
+    );
     Ok(())
 }

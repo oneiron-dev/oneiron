@@ -375,11 +375,11 @@ impl PipelineBuilder<'_> {
 
     /// Whether the run serves claim `id` at its pin, the row `pinned_raw`
     /// whose body is `pinned`, as hydration judges a pin. A pin that is not
-    /// the live row stands only behind a live body the gate admitted that is
-    /// surfaceable, whatever the run's filter admits (the history rule; Sol
-    /// and Astra R22 on this branch: a stale live body equal to the pinned
-    /// one passed). Then the pinned body is the gate's, or one surfaceable
-    /// with live support.
+    /// the live row (a stale row reads as none live) stands only behind a
+    /// live body the gate admitted that is surfaceable, whatever the run's
+    /// filter admits (the history rule; Sol and Astra R22 on this branch: a
+    /// stale body equal to the pinned one passed). Then the pinned body is
+    /// the gate's, or one surfaceable with live support.
     fn pin_served(
         &self,
         rtxn: &heed::RoTxn<'_>,
