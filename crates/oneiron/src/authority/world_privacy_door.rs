@@ -214,17 +214,26 @@ impl Vault {
         // unrelated fenced row into a narrowing of a readable world (Wonder P2
         // round 4, W3); a hold resting on rows none of these carry refuses,
         // and the owner marks this machine again.
+        // A machine's rows are the heads of its chains in this install's
+        // trust set, where the edit's strength is judged, and in the trust
+        // set its standing comes from, where its validity is.
+        let local = fold.local_admitter();
         let heads = |id: EntityId| {
-            judged
-                .machine(id)
-                .map(|folded| {
-                    folded
-                        .trust_chains(&admitter)
-                        .into_iter()
-                        .map(|(_, chain)| chain.entry)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
+            let chain_heads = |judged: &AuthorityFold, admitter: MachineAdmitter| {
+                judged
+                    .machine(id)
+                    .map(|folded| {
+                        folded
+                            .trust_chains(&admitter)
+                            .into_iter()
+                            .map(|(_, chain)| chain.entry)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            };
+            let mut rows = chain_heads(&fold, local);
+            rows.extend(chain_heads(judged, admitter));
+            rows
         };
         let standing_rows: BTreeSet<AuthorityEntryHash> = match standing {
             WorldEditStanding::Holds => {

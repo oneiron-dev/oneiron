@@ -825,11 +825,21 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     let (later, later_key) = other_machine(&host, 71, MachineRole::Owned(MachineOwnership::Yours));
 
     let entries = stored_entries(&host.vault);
-    let (edits, main): (Vec<_>, Vec<_>) = entries
-        .iter()
-        .cloned()
-        .partition(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)));
-    assert_eq!(edits.len(), 2);
+    // The world's side entries: its settings edits, and the key records the
+    // settings door's ensure step signs once this install has a keystore.
+    let (edits, main): (Vec<_>, Vec<_>) = entries.iter().cloned().partition(|entry| {
+        matches!(
+            entry.op,
+            AuthorityOp::WorldPrivacy(_) | AuthorityOp::WorldKeyWraps(_)
+        )
+    });
+    assert_eq!(
+        edits
+            .iter()
+            .filter(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
+            .count(),
+        2
+    );
     let edit_hashes: BTreeSet<_> = edits
         .iter()
         .map(|entry| authority_entry_hash(entry).unwrap())

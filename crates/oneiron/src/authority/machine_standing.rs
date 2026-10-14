@@ -401,8 +401,8 @@ impl<'s> Standing<'s> {
 
     /// P2's race rule under `view`, per chain of its trust set. The edit passes
     /// while its machine is mine there now. Otherwise every chain of the trust
-    /// set that admitted it at the edit's parents (`marks`), or that blocks it
-    /// now, is a reason, and there must be one. Each reason must be a removal
+    /// set that no longer admits it, having admitted it at the edit's parents
+    /// (`marks`) or blocking it now, is a reason, and there must be one. Each reason must be a removal
     /// or a demotion at its head, signed for the edit's key, neither
     /// conflicted nor held, that acknowledged the edit. Poison and keys that
     /// disagree across the set never acknowledge, nor does a chain that
@@ -435,10 +435,12 @@ impl<'s> Standing<'s> {
         }
         let mut reasons = false;
         for (chain_admitter, head) in chains {
-            let mark = marks.get(&chain_admitter);
-            if mark.is_none() && head.says_yours() {
+            // A chain that still admits the machine is no reason it is not
+            // mine, and lifts nothing on its own.
+            if head.says_yours() {
                 continue;
             }
+            let mark = marks.get(&chain_admitter);
             reasons = true;
             let lifts = &head.profile.machine_key == key
                 && !head.conflicted
