@@ -192,6 +192,23 @@ unauthenticated development mode is not a production credential.
 
 Every paired slip carries a slip id, its identity. Two pairings of identical claims produce two distinct slips, so one can be revoked without touching the other. A slip without its connection key authenticates nothing: the holder proof, not the slip, is what each request spends.
 
+**Adding a physical machine.** The owner adds a machine to the vault while pairing it.
+- **The link.** The owner sends `"machine": "yours" | "work_school" | "rented"` on `POST /v1/core/pairing/links`. This needs owner auth.
+  - Only `yours` makes the machine one of the owner's.
+  - Rented and work/school machines, hosted nodes and engine writers are never the owner's.
+- **The redeem.** Redeeming such a link at `POST /v1/core/pairing/redeem` must carry the joining machine's enrolment. A plain link must carry none.
+  - Enrolment fields:
+    - `"vault_id"`: 64 hex;
+    - `"machine"`: the 32-hex MACHINE id;
+    - `"machine_key"`: 64 hex, the install's Ed25519 key;
+    - `"encryption_suite"`: 257, which is hybrid ML-KEM-1024 + X25519;
+    - `"encryption_key"`: base64 of 1600 bytes;
+    - `"machine_proof"`: 128 hex.
+  - The proof is the install key's signature over `b"oneiron/machine-profile/v1\0" || vault_id || machine || machine_key || suite (u16 BE) || encryption_key`.
+- **Naming the machine on later requests.** A request names its machine with `x-oneiron-machine: {"machine": "<32 hex>", "signature": "<128 hex>"}`. The signature is the install key's, over `b"oneiron/machine-proof/v1\0" || vault_id || machine || BLAKE3(slip token) || binding timestamp (u64 BE) || binding nonce UTF-8`.
+  - The header rides the request's own `x-oneiron-binding` proof, so it is single-use with it.
+  - A missing, malformed or unverifiable header never refuses the request. The peer is then an unknown machine.
+
 **Revoking one slip.** `oneiron token revoke --jti <hex64>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
 
 **Rotating credentials.** Rotate or revoke the logged slips. The issuer key is not a bearer token; replacing it alone is not a device-lease rotation ceremony. Receipt-attestation device keys remain verification records, not access credentials (ONE-2294 tracks slip-backed receipt attestation).
