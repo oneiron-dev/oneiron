@@ -82,6 +82,27 @@ pub(super) fn attenuate_mcp_credential(
     token
 }
 
+/// The holder of `from` hands a copy of its paired credential, narrowed by
+/// `caveat`, to the key `to` names (`attenuate_to`); `to` then presents it.
+pub(super) fn transfer_mcp_credential(
+    server: &SyncServer,
+    from: &str,
+    to: &str,
+    caveat: oneiron::authority::SlipCaveat,
+) {
+    let mut slip = CapabilitySlip::from_token(&mcp_registered_credential(server, from)).unwrap();
+    slip.attenuate_to(
+        caveat,
+        &holder_key(from),
+        holder_key(to).verifying_key().to_bytes(),
+    )
+    .unwrap();
+    server
+        .vault()
+        .sync_state_put(&cache_key(to), slip.to_token().unwrap().as_bytes())
+        .unwrap();
+}
+
 pub(super) fn mcp_registered_credential(server: &SyncServer, label: &str) -> String {
     server
         .vault()
