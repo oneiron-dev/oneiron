@@ -19,6 +19,10 @@ use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideKey, SideTable};
+#[cfg(unix)]
+use crate::store::root_directory::{
+    FileIdentity, file_identity, named_directory_identity, remove_held_directory,
+};
 use crate::store::{Store, read_existing_vault_meta};
 
 use super::keys::GATE_DECISION_KEY_PREFIX;
@@ -149,18 +153,63 @@ fn vault_meta_rows(env: &Env, txn: &RoTxn<'_>, prefixes: &[&[u8]]) -> Result<Row
     Ok(rows)
 }
 
-/// The device and inode of the directory at `path`.
+/// The directory `store`'s environment was opened on, by its bound root
+/// descriptor: the same directory wherever any name of it now points.
 #[cfg(unix)]
-fn directory_identity(path: &Path) -> std::io::Result<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::metadata(path)?;
-    Ok((metadata.dev(), metadata.ino()))
+fn opened_directory(store: &Store) -> Result<FileIdentity> {
+    let root = store
+        .owner
+        .env
+        ._bound_root_dir
+        .as_ref()
+        .ok_or(Error::InvariantViolation("vault root descriptor missing"))?;
+    Ok(file_identity(&root.metadata()?))
 }
 
 /// No directory identity here; nothing is archived to check it for.
 #[cfg(not(unix))]
-fn directory_identity(_: &Path) -> std::io::Result<()> {
+fn opened_directory(_: &Store) -> Result<()> {
     Ok(())
+}
+
+/// Whether `path` itself, not a link at it, names the directory `opened`.
+#[cfg(unix)]
+fn names(path: &Path, opened: &FileIdentity) -> Result<bool> {
+    Ok(named_directory_identity(path)?.as_ref() == Some(opened))
+}
+
+#[cfg(not(unix))]
+fn names(_: &Path, (): &()) -> Result<bool> {
+    Ok(true)
+}
+
+/// Drops `vault`, the copy a refused restore made at `destination`, and
+/// removes the directory it made there: the one the copy had open, never a
+/// directory moved in under that name since, which is left as it is.
+pub(crate) fn discard_restored_copy(vault: crate::Vault, destination: &Path) {
+    #[cfg(unix)]
+    {
+        let held = vault
+            .store
+            .owner
+            .env
+            ._bound_root_dir
+            .as_ref()
+            .map(std::fs::File::try_clone);
+        drop(vault);
+        let removed = match held {
+            Some(Ok(held)) => remove_held_directory(destination, &held).is_ok(),
+            _ => false,
+        };
+        if !removed {
+            tracing::warn!("a refused restore left the copy it made in place");
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        drop(vault);
+        let _ = std::fs::remove_dir_all(destination);
+    }
 }
 
 /// Syncs the directory holding `path`, so a rename of `path` is on disk.
@@ -347,13 +396,15 @@ impl Store {
     /// this vault's path when it was made, takes that place through `swap`,
     /// which exchanges the two directories, and this vault is archived.
     ///
+    /// The two paths must name the two directories the handles opened, by
+    /// their bound root descriptors, or nothing is marked and nothing moves.
     /// Before the swap this vault gets the same mark, committed under the
     /// writer, and this handle is sealed before any other writer begins. So
     /// whichever of the two sits at the path is the one live vault on the
     /// custody they share, at every instant and after a crash anywhere. A
     /// swap that fails lifts the mark again and changes nothing; one that
-    /// returns without the replacement's own directory found at this vault's
-    /// path is refused and leaves both marks as they are. Once the
+    /// returns without each directory found at the other's path is refused
+    /// and leaves both marks as they are. Once the
     /// swap is on disk, this vault is archived wherever it goes and the
     /// replacement's mark is lifted; a failure there is only logged, both
     /// marks already saying the same, and the replacement keeps its mark,
@@ -380,7 +431,17 @@ impl Store {
                 "the replacement was not restored for this vault's place".into(),
             ));
         }
-        let replacement_dir = directory_identity(replacement.env.path())?;
+        // Each path must name the directory its handle opened, before any
+        // mark: a directory moved under either name refuses, nothing changed.
+        let live_dir = opened_directory(self)?;
+        let replacement_dir = opened_directory(replacement)?;
+        let in_place =
+            names(self.env.path(), &live_dir)? && names(replacement.env.path(), &replacement_dir)?;
+        if !in_place {
+            return Err(Error::InvalidConfig(
+                "a vault directory no longer sits at its path".into(),
+            ));
+        }
         let mut wtxn = self.env.write_txn()?;
         fence(&wtxn)?;
         ARCHIVED.put(self, &mut wtxn, &(), &mark)?;
@@ -392,9 +453,11 @@ impl Store {
             }
             return Err(err.into());
         }
-        if directory_identity(self.env.path())? != replacement_dir {
+        let exchanged =
+            names(self.env.path(), &replacement_dir)? && names(replacement.env.path(), &live_dir)?;
+        if !exchanged {
             return Err(Error::InvalidConfig(
-                "the swap did not put the replacement in this vault's place".into(),
+                "the swap did not exchange the two vault directories".into(),
             ));
         }
         // Neither mark stops depending on where its vault sits before the

@@ -217,6 +217,61 @@ fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
     person(&vault, b"the vault in place is live");
 }
 
+/// C8: a swap that fails removes the staging directory the restore made,
+/// and only it. A directory, or a link to one, put under the staging name
+/// while the swap ran is not the restore's: it is left whole, and so is the
+/// staging directory it displaced.
+#[cfg(unix)]
+#[test]
+fn a_failed_swap_removes_only_the_staging_directory_it_made() {
+    for occupant in ["directory", "link"] {
+        let root = tempfile::tempdir().unwrap();
+        let vault_path = root.path().join("vault");
+        let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+        let outcome = take(&vault, &plan(root.path(), 7)).unwrap();
+        let later = person(&vault, b"after the backup");
+        drop(vault);
+        let (moved, foreign) = (root.path().join("moved"), root.path().join("foreign"));
+        std::fs::create_dir(&foreign).unwrap();
+        std::fs::write(foreign.join("keep.txt"), b"not the restore's").unwrap();
+        let staging = std::cell::RefCell::new(PathBuf::new());
+
+        let error = restore_over_syncing(
+            &outcome.backup.path,
+            &vault_path,
+            VaultConfig::default(),
+            |restored, _| {
+                let name = restored.parent().unwrap();
+                std::fs::rename(name, &moved)?;
+                if occupant == "link" {
+                    std::os::unix::fs::symlink(&foreign, name)?;
+                } else {
+                    std::fs::rename(&foreign, name)?;
+                }
+                *staging.borrow_mut() = name.to_path_buf();
+                Err(std::io::ErrorKind::Unsupported.into())
+            },
+            |_| Ok(()),
+        )
+        .expect_err("the swap failed");
+        assert!(
+            format!("{error:#}").contains("nothing was changed"),
+            "{occupant}: {error:#}"
+        );
+        let staging = staging.into_inner();
+        let left = std::fs::symlink_metadata(&staging).expect("the occupant is left");
+        assert_eq!(left.file_type().is_symlink(), occupant == "link");
+        assert_eq!(
+            std::fs::read(staging.join("keep.txt")).unwrap(),
+            b"not the restore's"
+        );
+        assert!(moved.join("vault").is_dir(), "{occupant}: the copy is left");
+        let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+        assert!(vault.get(&later).unwrap().is_some());
+        person(&vault, b"the vault in place is live");
+    }
+}
+
 #[test]
 fn restore_refuses_a_running_vault_and_leaves_it_alone() {
     let root = tempfile::tempdir().unwrap();

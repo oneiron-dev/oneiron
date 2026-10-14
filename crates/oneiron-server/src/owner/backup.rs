@@ -319,6 +319,10 @@ fn rehearse_into(
 /// beside it stay inside, and removing it removes only what this call made.
 struct Owned {
     dir: PathBuf,
+    /// The directory itself, held open from its creation: removal goes
+    /// through it, so a directory moved in under its name is never removed.
+    #[cfg(unix)]
+    held: std::fs::File,
 }
 
 impl Owned {
@@ -332,14 +336,35 @@ impl Owned {
         builder
             .create(&dir)
             .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
-        Ok(Self { dir })
+        #[cfg(unix)]
+        let held = {
+            use rustix::fs::{Mode, OFlags};
+            let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+            match rustix::fs::open(&dir, flags, Mode::empty()) {
+                Ok(held) => std::fs::File::from(held),
+                Err(error) => {
+                    let _ = std::fs::remove_dir(&dir);
+                    anyhow::bail!("open {}: {error}", dir.display());
+                }
+            }
+        };
+        Ok(Self {
+            dir,
+            #[cfg(unix)]
+            held,
+        })
     }
 
     fn vault(&self) -> PathBuf {
         self.dir.join("vault")
     }
 
+    /// Removes the directory with everything in it, only while its name still
+    /// holds it; otherwise both are left where they are.
     fn remove(self) {
+        #[cfg(unix)]
+        let _ = oneiron::store::remove_held_directory(&self.dir, &self.held);
+        #[cfg(not(unix))]
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }

@@ -537,10 +537,9 @@ impl Vault {
         if let Err(error) = authority_plane::refuse_new_members(current, &vault)
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
         {
-            drop(vault);
             // This call created the destination; nothing else is in it. The
             // custody it forked goes with it as `forked` drops.
-            let _ = std::fs::remove_dir_all(destination);
+            crate::store::discard_restored_copy(vault, destination);
             return Err(error);
         }
         forked.keep();

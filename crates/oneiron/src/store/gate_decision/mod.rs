@@ -22,7 +22,8 @@ pub(in crate::store) use self::checkpoint_custody::archived_by;
 #[cfg(test)]
 pub(crate) use self::checkpoint_custody::arm_before_activation_fork;
 pub(crate) use self::checkpoint_custody::{
-    LiveCustody, preflight_checkpoint_rows, read_live_custody, refuse_custody_beside,
+    LiveCustody, discard_restored_copy, preflight_checkpoint_rows, read_live_custody,
+    refuse_custody_beside,
 };
 pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,

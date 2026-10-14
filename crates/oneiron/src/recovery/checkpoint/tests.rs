@@ -975,6 +975,82 @@ fn a_swap_that_leaves_the_vault_in_place_is_refused() {
         .expect("the vault in place erases");
 }
 
+/// C8: each path must name the directory its handle opened when the swap
+/// begins. With the vault moved off its path and a directory or a link to it
+/// put there instead, the swap refuses before any mark: the exchange never
+/// runs, and the moved vault still writes.
+#[cfg(unix)]
+#[test]
+fn a_swap_whose_vault_moved_off_its_path_refuses_with_nothing_marked() {
+    for occupant in ["directory", "link"] {
+        let root = tempfile::tempdir().unwrap();
+        let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
+        let (source, replacement, claim, _) = replacement_for(root.path());
+        let moved = root.path().join("moved");
+        std::fs::rename(&vault_path, &moved).unwrap();
+        if occupant == "link" {
+            std::os::unix::fs::symlink(&moved, &vault_path).unwrap();
+        } else {
+            std::fs::create_dir(&vault_path).unwrap();
+        }
+        let exchanged = std::cell::Cell::new(false);
+        let refused = source.swap_in_replacement(&replacement, || {
+            exchanged.set(true);
+            exchange(&vault_path, &staged)
+        });
+        assert!(
+            matches!(refused, Err(Error::InvalidConfig(_))),
+            "{occupant}: {refused:?}"
+        );
+        assert!(!exchanged.get(), "{occupant}: the exchange never runs");
+        source
+            .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+            .expect("the moved vault is not archived");
+        drop((source, replacement));
+        assert!(archived(
+            Vault::open(&staged, VaultConfig::device())
+                .unwrap()
+                .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+        ));
+    }
+}
+
+/// C8: a swap must leave each directory at the other's path. One that puts
+/// the replacement in the vault's place but leaves another directory where
+/// the replacement was, the set-aside vault moved on, is refused with both
+/// marks kept: the vault at the path is the live one, the other archived.
+#[cfg(unix)]
+#[test]
+fn a_swap_that_strands_the_set_aside_vault_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    let moved = root.path().join("moved");
+    let refused = source.swap_in_replacement(&replacement, || {
+        exchange(&vault_path, &staged)?;
+        std::fs::rename(&staged, &moved)?;
+        std::fs::create_dir(&staged)
+    });
+    assert!(
+        matches!(refused, Err(Error::InvalidConfig(_))),
+        "{refused:?}"
+    );
+    drop((source, replacement));
+    assert!(archived(
+        Vault::open(&moved, VaultConfig::device())
+            .unwrap()
+            .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+    ));
+    let live = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+    assert!(
+        live.gate_decisions(100)
+            .expect("the live vault's receipts decrypt")
+            .contains(&receipt)
+    );
+    live.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+        .expect("the vault in place erases");
+}
+
 /// An activation commits only once every receipt it keeps reads under its
 /// forked keys. A key the replacement shreds after the activation checked
 /// the archive's receipts, before the fork, refuses the activation and

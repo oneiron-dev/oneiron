@@ -201,6 +201,57 @@ fn restore_refuses_to_revive_an_owner_deleted_since() {
     assert!(!destination.exists());
 }
 
+/// C8: a refused restore removes the copy it made, and only that. Here the
+/// destination is named through a link that is pointed at another directory
+/// once the copy is open for the last time; the directory found at the
+/// destination then is not the copy, so it stays whole, and so does the copy.
+#[cfg(unix)]
+#[test]
+fn a_refused_restore_removes_only_the_copy_it_made() {
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let owner = live.ensure_embedded_owner_actor().unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    live.delete_entity_with_options(&owner, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
+    let (made, foreign, link) = (
+        root.path().join("made"),
+        root.path().join("foreign"),
+        root.path().join("staged"),
+    );
+    std::fs::create_dir(&made).unwrap();
+    std::fs::create_dir_all(foreign.join("restored")).unwrap();
+    std::fs::write(foreign.join("restored/keep.txt"), b"not the restore's").unwrap();
+    std::os::unix::fs::symlink(&made, &link).unwrap();
+    // The restore opens its copy twice: to fill it, then to rebuild it.
+    let copy = root.path().canonicalize().unwrap().join("made/restored");
+    crate::store::test_hooks::arm_after_create_root_bind(copy.clone(), {
+        let (foreign, link) = (foreign.clone(), link.clone());
+        move |_| {
+            crate::store::test_hooks::arm_after_create_root_bind(copy, move |_| {
+                std::fs::remove_file(&link).unwrap();
+                std::os::unix::fs::symlink(&foreign, &link).unwrap();
+            });
+        }
+    });
+    let Err(error) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &link.join("restored"),
+        VaultConfig::device(),
+        &live,
+        200,
+    ) else {
+        panic!("the restore must be refused");
+    };
+    assert!(error.to_string().contains("vault owner"), "{error}");
+    assert_eq!(
+        std::fs::read(foreign.join("restored/keep.txt")).unwrap(),
+        b"not the restore's"
+    );
+    assert!(made.join("restored/data.mdb").is_file(), "the copy is left");
+}
+
 /// ASTRA-9A-2 F1: the secret-scan switch is live policy. Backed up while
 /// off, switched on, restored: the scan stays on, its receipts stay, and a
 /// credential-shaped write is still refused.
