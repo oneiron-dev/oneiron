@@ -22,12 +22,19 @@ const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
 /// Generic sync diagnostics may not edit the inputs to an authority fold.
 /// Authority-owned writers use their own validated doors and advance the
-/// snapshot generation in the same transaction as their row changes.
+/// snapshot generation in the same transaction as their row changes. Nor may
+/// they edit the record of which identity-topology author carriers this vault
+/// wrote: only the carrier write and its scrub touch it (H161 sidecars).
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
         return Err(Error::InvalidConfig(
             "authority-owned sync_state key requires its authority door".to_owned(),
+        ));
+    }
+    if key.starts_with("it:authored:") {
+        return Err(Error::InvalidConfig(
+            "identity-topology authorship is written only by its carrier".to_owned(),
         ));
     }
     Ok(())

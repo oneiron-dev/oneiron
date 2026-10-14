@@ -5246,6 +5246,52 @@ fn erasing_an_actor_scrubs_every_peer_carrier_naming_it() {
     );
 }
 
+/// The host's generic sync_state door can neither mark a peer's carrier as
+/// one this vault wrote nor unmark this vault's own: only the carrier write
+/// and its scrub touch that record, so admission still reads this vault's
+/// stamp alone.
+#[test]
+fn the_generic_sync_state_door_cannot_mark_a_carrier_as_written_here() {
+    let vault = test_vault();
+    let (loser, survivor, own) = (EntityId::now(), EntityId::now(), EntityId::now());
+    for id in [&loser, &survivor, &own] {
+        put_test_person(&vault, id);
+    }
+    let event = merge_here(&vault, loser, survivor, Some(own));
+    let core = vault.identity_topology_event(&event).unwrap().unwrap();
+    let (peer, blob) = (
+        EntityId::now(),
+        peer_author_carrier(event, &core, EntityId::now()),
+    );
+    deliver_peer_row(&vault, &peer, &blob);
+    let own_marker = vault.sync_state_keys_with_prefix("it:authored:").unwrap();
+    assert_eq!(own_marker.len(), 1, "this vault marked its own stamp alone");
+    let digest = blake3::hash(&blob[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+
+    assert_matches!(
+        vault.sync_state_put(&format!("it:authored:{}", peer.to_hex()), digest.as_bytes()),
+        Err(crate::Error::InvalidConfig(_))
+    );
+    assert_matches!(
+        vault.sync_state_delete(&own_marker[0]),
+        Err(crate::Error::InvalidConfig(_))
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert_eq!(
+        crate::identity_topology::admitted_author_in_txn(&vault.store, &rtxn, event).unwrap(),
+        Some(crate::write_envelope::WriteActor::new(
+            own,
+            EdgeActorClass::Human
+        ))
+    );
+    drop(rtxn);
+    assert!(
+        vault
+            .edge_exists(&loser, crate::edge::EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+}
+
 #[test]
 fn invalid_deferred_participant_erasure_cannot_activate_verified_merge() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
