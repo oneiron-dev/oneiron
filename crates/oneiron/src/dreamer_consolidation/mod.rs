@@ -46,6 +46,7 @@ pub(crate) use failure_rules::{
 };
 mod gap;
 mod judge_context;
+mod neighbourhood;
 mod open_conflict;
 mod partition;
 mod persistence;
@@ -53,6 +54,7 @@ mod provenance;
 pub(crate) mod redirty;
 pub(crate) mod resources;
 pub(crate) mod reviewed;
+mod roles;
 pub mod routing;
 mod scope_summary_attempt;
 pub mod selection;
@@ -68,14 +70,20 @@ mod tests;
 pub use conflict::*;
 pub use executor::*;
 pub use gap::*;
+pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
+pub(crate) use persistence::conflict_close_candidate;
 pub use provenance::*;
 pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators,
 };
 pub use resources::ScopedConsolidationWrite;
+pub use roles::{
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
+    RoleBackend, RoleBackends, RoleCall,
+};
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub use support::*;
 pub(crate) use turn_text::{TurnText, cited_evidence_bytes, live_turn_text_in};

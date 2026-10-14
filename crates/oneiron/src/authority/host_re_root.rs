@@ -3,8 +3,9 @@
 //! The current root signs one ReRoot for the new secret's key, so the vault
 //! keeps its genesis and its id. A ReRoot retires every key on the roster, so
 //! the same transaction carries what the vault needs to keep working under the
-//! new root: its host root slip, the engine writers that were live, and the
-//! MACHINE claim histories that were readable. Every slip the old root minted
+//! new root: its host root slip, the engine writers that were live, the
+//! physical machines' standing, and the MACHINE claim histories that were
+//! readable. Every slip the old root minted
 //! stops verifying (OF-455: "existing slips on the old host fail verification
 //! against the new root"); the holders get new ones from the new root.
 use super::slip_vault::require_host;
@@ -25,6 +26,8 @@ pub struct HostReRoot {
     pub vault_id: AuthorityVaultId,
     /// Engine writers enrolled again under keys the new secret derives.
     pub writers_enrolled: usize,
+    /// Live physical machines whose standing the new root signed again.
+    pub machines_carried: usize,
     /// MACHINE claim histories the new root carried.
     pub histories_carried: usize,
     /// Pinned histories that were not readable before the move and stay so.
@@ -113,6 +116,7 @@ impl Vault {
         for machine in &writers {
             self.enroll_engine_machine_in_txn(&mut txn, next, &vault_id, *machine)?;
         }
+        let machines_carried = self.carry_machine_standing_in_txn(&mut txn, &before, next)?;
         for target in &carried {
             let mut challenge = [0; 32];
             OsRng.fill_bytes(&mut challenge);
@@ -128,6 +132,7 @@ impl Vault {
         Ok(HostReRoot {
             vault_id,
             writers_enrolled: writers.len(),
+            machines_carried,
             histories_carried: carried.len(),
             histories_left,
             retired_slips,

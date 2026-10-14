@@ -3,7 +3,10 @@ use crate::auth::{parse_signature, parse_slip_id};
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::{Json, extract::State, http::HeaderMap};
-use oneiron::authority::{HostSlipIssuer, PairingDescriptor, PairingPrincipal};
+use oneiron::authority::{
+    HostSlipIssuer, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
+    PairingDescriptor, PairingPrincipal,
+};
 use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -18,6 +21,10 @@ pub(super) struct CreateLink {
     lifetime_secs: u64,
     #[serde(default)]
     principal: PairingPrincipal,
+    /// The owner's answer for a machine this link adds: `yours`,
+    /// `work_school` or `rented`. Only `yours` makes it one of the owner's.
+    #[serde(default)]
+    machine: Option<MachineOwnership>,
 }
 pub(super) async fn create_link(
     headers: HeaderMap,
@@ -25,14 +32,32 @@ pub(super) async fn create_link(
     Json(request): Json<CreateLink>,
 ) -> Result<Json<oneiron::authority::PairingLink>, EnvelopedApiError> {
     super::check_api_auth(&headers, &server)?;
-    let link = with_issuer(&server, |issuer| {
-        server.vault().issue_pairing_link_for_principal(
-            issuer,
-            request.scope,
-            request.lifetime_secs,
-            request.principal,
-        )
-    })?;
+    let link = match request.machine {
+        None => with_issuer(&server, |issuer| {
+            server.vault().issue_pairing_link_for_principal(
+                issuer,
+                request.scope,
+                request.lifetime_secs,
+                request.principal,
+            )
+        })?,
+        // Only the owner, in person, answers for a machine.
+        Some(ownership) => {
+            let auth =
+                crate::auth::require_owner_auth(&headers, &server.config, server.vault().as_ref())?;
+            let owner = super::owner_routes::owner(&auth, &server)?;
+            with_issuer(&server, |issuer| {
+                server.vault().issue_machine_pairing_link(
+                    issuer,
+                    &owner,
+                    request.scope,
+                    request.lifetime_secs,
+                    request.principal,
+                    ownership,
+                )
+            })?
+        }
+    };
     Ok(Json(link))
 }
 /// OAuth identity validation is a bootstrap door only. No JWT can read or
@@ -129,6 +154,42 @@ pub(super) struct RedeemLink {
     holder_ref: String,
     binding_key: String,
     signature: String,
+    /// The joining machine's enrolment request; required by, and only by, a
+    /// link that adds a machine.
+    #[serde(default)]
+    machine: Option<MachineEnrolment>,
+}
+/// [`MachineEnrolmentRequest`] on the wire: hex ids and keys, base64 for the
+/// 1600-byte encryption key.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MachineEnrolment {
+    vault_id: String,
+    machine: String,
+    machine_key: String,
+    encryption_suite: u16,
+    encryption_key: String,
+    machine_proof: String,
+}
+impl MachineEnrolment {
+    fn request(&self) -> Result<MachineEnrolmentRequest, ApiError> {
+        use base64::Engine as _;
+        let machine_proof = <[u8; 64]>::try_from(parse_signature(&self.machine_proof)?)
+            .map_err(|_| ApiError::unauthorized())?;
+        Ok(MachineEnrolmentRequest {
+            vault_id: parse_slip_id(&self.vault_id)?,
+            machine: oneiron::EntityId::from_hex(&self.machine)
+                .map_err(|_| ApiError::unauthorized())?,
+            machine_key: parse_slip_id(&self.machine_key)?,
+            encryption_key: MachineEncryptionKey {
+                suite: self.encryption_suite,
+                key: base64::engine::general_purpose::STANDARD
+                    .decode(&self.encryption_key)
+                    .map_err(|_| ApiError::unauthorized())?,
+            },
+            machine_proof,
+        })
+    }
 }
 #[derive(Serialize)]
 pub(super) struct Paired {
@@ -152,14 +213,30 @@ pub(super) async fn redeem(
     }
     let binding_key = parse_slip_id(&request.binding_key)?;
     let signature = parse_signature(&request.signature)?;
-    let slip = with_issuer(&server, |issuer| {
-        server.vault().redeem_pairing_link(
+    let machine = request
+        .machine
+        .as_ref()
+        .map(MachineEnrolment::request)
+        .transpose()?;
+    let slip = with_issuer(&server, |issuer| match &machine {
+        None => server.vault().redeem_pairing_link(
             issuer,
             &request.code,
             &request.holder_ref,
             binding_key,
             &signature,
-        )
+        ),
+        Some(machine) => server
+            .vault()
+            .redeem_machine_pairing_link(
+                issuer,
+                &request.code,
+                &request.holder_ref,
+                binding_key,
+                &signature,
+                machine,
+            )
+            .map(|(slip, _)| slip),
     })?;
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
     // The already redeemed/logged slip is the credential. MCP registration

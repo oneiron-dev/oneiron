@@ -11,6 +11,8 @@ use std::collections::BTreeSet;
 use zeroize::Zeroizing;
 
 const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
+/// The attestation a host's own root roster row carries.
+pub(super) const HOST_ROOT_ATTESTATION: &str = "HostRoot";
 
 /// Cached minted host-root capability-slip token for one host signing key. Key: `:` + hex64.
 const HOST_ROOT_SLIP_CACHE: SideTable<String, String, Raw> =
@@ -57,7 +59,7 @@ impl HostSlipIssuer {
             key: self.public_key(),
             transport_key_binding: self.binding_key(),
             attestation: AuthorityAttestation {
-                kind: "HostRoot".into(),
+                kind: HOST_ROOT_ATTESTATION.into(),
                 evidence: Vec::new(),
             },
             tier: AuthorityTier::Software,
@@ -607,7 +609,7 @@ impl Vault {
         Ok(())
     }
 }
-fn next_entry(
+pub(super) fn next_entry(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,
     op: AuthorityOp,

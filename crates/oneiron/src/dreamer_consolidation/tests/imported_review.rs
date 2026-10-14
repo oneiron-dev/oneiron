@@ -118,6 +118,7 @@ fn run(
     );
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

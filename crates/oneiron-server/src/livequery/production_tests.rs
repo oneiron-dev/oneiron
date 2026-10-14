@@ -489,15 +489,20 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
         .vault()
         .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
     let missing = "ffffffffffffffffffffffffffffffff".to_owned();
+    // High recall on a host with no reranker now runs unreranked, so the
+    // recall case is a scope the engine refuses on both doors.
     let cases = [
         (
             "recall",
-            json!({"query":"solar","effort":"high"}),
+            json!({"query":"solar","effort":"medium","scope":{"kinds":[]}}),
             memory
                 .recall(
                     "solar",
-                    Effort::High,
-                    &RecallScope::default(),
+                    Effort::Medium,
+                    &RecallScope {
+                        kinds: Some(Vec::new()),
+                        ..RecallScope::default()
+                    },
                     10,
                     None,
                     None,
@@ -539,6 +544,26 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
     assert_eq!(body["code"], "FUTURE_ENGINE_REFUSAL");
     assert_eq!(body["message"], "future refusal");
     assert_eq!(body["suggestions"], json!(["retry later"]));
+}
+
+/// Done-means (G1 check 3, on the sync RPC): high recall on a host with no
+/// reranker runs unreranked and says so, where it answered `LEASE_REQUIRED`.
+#[tokio::test]
+async fn rpc_high_recall_without_a_reranker_runs_unreranked_and_says_so() {
+    let (_dir, server) = server();
+    let auth = auth(&server, "human");
+    let reply = rpc(
+        &server,
+        &auth,
+        "recall",
+        json!({"query":"solar","effort":"high"}),
+    );
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert_eq!(
+        reply["result"]["retrieval_meta"]["rerank"],
+        json!({"status":"skipped","reason":"no_reranker"}),
+        "{reply}"
+    );
 }
 
 #[tokio::test]
