@@ -955,4 +955,6 @@ fn parse_allowed_origins(origins: &[String]) -> anyhow::Result<Vec<HeaderValue>>
 #[cfg(test)]
 mod tests;
 #[cfg(all(test, unix))]
+mod unauthenticated_bind_tests;
+#[cfg(all(test, unix))]
 mod writer_lease_tests;

@@ -114,6 +114,7 @@ pub struct ServeArgs {
     pub oauth_resource_indicator: Option<String>,
 
     /// Insecure local/dev escape hatch: allow requests without auth_secret.
+    /// Serve refuses it unless the listener is loopback.
     #[arg(
         long = "insecure-allow-unauthenticated",
         num_args = 0..=1,
