@@ -264,14 +264,22 @@ pub(crate) fn rehearse(
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
-    let scratch = Owned::create(match keep_at {
+    let scratch = match keep_at {
         Some(path) => path.to_path_buf(),
         None => std::env::temp_dir().join(format!(
             "oneiron-rehearse-{}-{}",
             file_stamp(now_unix_ms()),
             oneiron::EntityId::now().to_hex()
         )),
-    })?;
+    };
+    // Checked before the scratch directory is made in it.
+    #[cfg(unix)]
+    oneiron::store::refuse_shared_path(
+        std::path::absolute(&scratch)?
+            .parent()
+            .unwrap_or(Path::new("/")),
+    )?;
+    let scratch = Owned::create(scratch)?;
     let outcome = rehearse_into(backup, config, &scratch.vault(), source);
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
@@ -467,6 +475,10 @@ fn restore_over_syncing(
         "vault {} does not exist; nothing to restore over",
         configured.display()
     );
+    // Before anything is made or opened: no other user may move an entry on
+    // the way to the vault, or in it, or the names below could change.
+    #[cfg(unix)]
+    oneiron::store::refuse_shared_vault_root(&configured)?;
     // The directory itself, not a symlink to it: the exchange below must move
     // the very directory the vault opens from, which the archive marks name.
     let vault_path = &configured.canonicalize()?;

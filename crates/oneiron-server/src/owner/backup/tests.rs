@@ -453,3 +453,41 @@ fn pruning_preserves_contents_of_same_label_malformed_stamp_files() {
         assert_eq!(std::fs::read(path).unwrap(), *contents);
     }
 }
+
+/// C8 review r4 (Sol F2): a restore over a vault whose directory another user
+/// could move an entry in is refused before anything is made or opened: no
+/// staging directory beside it, and the vault is never opened, so its writer
+/// lock is not made again. Control: once no one else may write there, the
+/// same restore goes ahead.
+#[cfg(unix)]
+#[test]
+fn a_restore_where_another_user_could_move_entries_opens_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("shared");
+    std::fs::create_dir(&parent).unwrap();
+    let vault_path = parent.join("vault");
+    let backup = {
+        let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+        take(&vault, &plan(root.path(), 7)).unwrap().backup.path
+    };
+    let lock = vault_path.join(oneiron::VAULT_WRITER_LOCK_FILE);
+    std::fs::remove_file(&lock).unwrap();
+    let set_mode = |mode| {
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    set_mode(0o777);
+    let error = restore_over(&backup, &vault_path, VaultConfig::default()).expect_err("refused");
+    assert!(
+        format!("{error:#}").contains("another user could move entries"),
+        "{error:#}"
+    );
+    assert!(!lock.exists(), "the vault is never opened");
+    let names: Vec<_> = std::fs::read_dir(&parent)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["vault"], "nothing is made beside it");
+    set_mode(0o755);
+    restore_over(&backup, &vault_path, VaultConfig::default()).expect("restore");
+}

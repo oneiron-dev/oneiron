@@ -1108,7 +1108,8 @@ fn a_failed_swap_keeps_the_vault_live_only_at_its_path() {
 /// another user, so every restore is refused, before anything is made, where
 /// another user could move a directory on its path: a directory others may
 /// write, or one above it. Controls: with nothing moved, the copy is built
-/// in the directory made, and a sticky shared directory takes a restore.
+/// in the directory made, owner-only, and a sticky shared directory takes a
+/// restore.
 #[cfg(unix)]
 #[test]
 fn a_replacing_restore_writes_only_into_the_directory_it_made() {
@@ -1177,17 +1178,34 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
         restore(&inner).is_err(),
         "a shared directory above refuses too"
     );
+    // Review r4 (Sol F1): a link of this user's whose target passes through
+    // the shared directory is resolved name by name, and refused there.
+    let private = directory("private", 0o700);
+    std::os::unix::fs::symlink(&private, shared.join("hop")).unwrap();
+    std::os::unix::fs::symlink(shared.join("hop"), root.path().join("link")).unwrap();
+    assert!(
+        kept(&root.path().join("link")).is_err(),
+        "a link through a shared directory refuses"
+    );
     for made in [
         shared.join("vault"),
         shared.join("kept"),
         inner.join("vault"),
+        private.join("kept"),
     ] {
         assert!(!made.exists(), "nothing is made where others can move it");
     }
     assert!(kept(&directory("sticky", 0o1777)).is_ok());
 
-    let (replacement, _) = restore(&directory("fresh", 0o700)).expect("restore");
+    let fresh = directory("fresh", 0o700);
+    let (replacement, _) = restore(&fresh).expect("restore");
     assert!(replacement.get(&claim).unwrap().is_some());
+    // Review r4 (Sol F3): the copy's directory is owner-only whatever the umask.
+    let mode = std::fs::metadata(fresh.join("vault"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o077, 0, "{mode:o}");
 }
 
 /// An activation commits only once every receipt it keeps reads under its

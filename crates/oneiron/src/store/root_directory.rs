@@ -5,7 +5,7 @@ use std::fs::File;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, openat, statat, unlinkat};
 
@@ -107,33 +107,85 @@ pub(super) fn named_directory_identity(root: &Path) -> Result<Option<FileIdentit
 }
 
 /// Refuses unless no other user can move an entry anywhere on the way to
-/// `dir`, as written and as resolved: each directory is this user's or
-/// root's, and no group or other may write it unless its sticky bit keeps
-/// them to their own entries. Under such a path every name a restore makes
-/// and opens again stays the one it made. Mode bits only: an access-control
-/// list granting another user more is not read.
-pub(super) fn refuse_shared_path(dir: &Path) -> Result<()> {
+/// `dir`. The path is resolved here one name at a time from `/`, as the
+/// kernel resolves it, through every link and `..`: each directory passed
+/// is this user's or root's, with no group or other write unless its sticky
+/// bit keeps others to their own entries, and each link followed is this
+/// user's or root's. On such a path every name a restore makes, opens or
+/// exchanges stays the one it checked. Mode bits only: an access-control list
+/// granting another user more is not read.
+pub fn refuse_shared_path(dir: &Path) -> Result<()> {
+    use std::ffi::OsString;
+    use std::path::Component;
     let euid = rustix::process::geteuid().as_raw();
-    let written = std::path::absolute(dir)?;
-    let resolved = dir.canonicalize()?;
-    for ancestor in written.ancestors().chain(resolved.ancestors()) {
-        let metadata = std::fs::metadata(ancestor)?;
-        let owned = metadata.uid() == euid || metadata.uid() == 0;
-        let shielded = metadata.mode() & 0o022 == 0 || metadata.mode() & 0o1000 != 0;
-        if !(owned && shielded) {
-            return Err(Error::InvalidConfig(format!(
-                "restore refused: another user could move entries in {}; make it yours or \
-                 root's with no group or other write (chmod go-w), or sticky (chmod +t)",
-                ancestor.display()
-            )));
+    let ours = |metadata: &std::fs::Metadata| metadata.uid() == euid || metadata.uid() == 0;
+    let refuse = |at: &Path| {
+        Error::InvalidConfig(format!(
+            "restore refused: another user could move entries in {}; make it and the \
+             directories above it yours or root's with no group or other write (chmod go-w), \
+             or sticky (chmod +t)",
+            at.display()
+        ))
+    };
+    // Names still to resolve, the next one last; `None` is the root.
+    let mut names: Vec<Option<OsString>> = Vec::new();
+    let push = |names: &mut Vec<Option<OsString>>, path: &Path| {
+        for component in path.components().rev() {
+            names.push(match component {
+                Component::RootDir | Component::Prefix(_) => None,
+                Component::CurDir => continue,
+                Component::ParentDir => Some(OsString::from("..")),
+                Component::Normal(name) => Some(name.to_owned()),
+            });
         }
+    };
+    push(&mut names, &std::path::absolute(dir)?);
+    let mut at = PathBuf::from("/");
+    let mut links = 0;
+    while let Some(name) = names.pop() {
+        let next = match name {
+            None => PathBuf::from("/"),
+            Some(name) if name == ".." => {
+                at.pop();
+                continue;
+            }
+            Some(name) => at.join(name),
+        };
+        let metadata = std::fs::symlink_metadata(&next)?;
+        if metadata.file_type().is_symlink() {
+            links += 1;
+            if links > 40 || !ours(&metadata) {
+                return Err(refuse(&next));
+            }
+            push(&mut names, &std::fs::read_link(&next)?);
+            continue;
+        }
+        let shielded = metadata.mode() & 0o022 == 0 || metadata.mode() & 0o1000 != 0;
+        if !(metadata.is_dir() && ours(&metadata) && shielded) {
+            return Err(refuse(&next));
+        }
+        at = next;
     }
     Ok(())
 }
 
-/// Makes the directory `path` names, through a descriptor of the directory
-/// holding it, and returns the identity of the one made, read through that
-/// same descriptor.
+/// [`refuse_shared_path`] for a vault's own directory, which must also be
+/// writable by no group or other, sticky or not: the vault open makes and
+/// opens names inside it.
+pub fn refuse_shared_vault_root(root: &Path) -> Result<()> {
+    refuse_shared_path(root)?;
+    if std::fs::metadata(root)?.mode() & 0o022 != 0 {
+        return Err(Error::InvalidConfig(format!(
+            "restore refused: another user could change entries in the vault {}; chmod go-w it",
+            root.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Makes the directory `path` names, owner-only whatever the umask, through
+/// a descriptor of the directory holding it, and returns the identity of the
+/// one made, read through that same descriptor.
 pub(super) fn make_directory(path: &Path) -> Result<FileIdentity> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(Error::InvalidConfig(
@@ -145,7 +197,7 @@ pub(super) fn make_directory(path: &Path) -> Result<FileIdentity> {
         rustix::fs::open(parent_or_here(parent), flags, Mode::empty())
             .map_err(std::io::Error::from)?,
     );
-    rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o777)).map_err(std::io::Error::from)?;
+    rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o700)).map_err(std::io::Error::from)?;
     let made = openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty())
         .map_err(std::io::Error::from)?;
     Ok(file_identity(&File::from(made).metadata()?))

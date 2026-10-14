@@ -158,7 +158,7 @@ pub(in crate::store) use pending_embedding::*;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 #[cfg(unix)]
-pub use root_directory::remove_held_directory;
+pub use root_directory::{refuse_shared_path, refuse_shared_vault_root, remove_held_directory};
 pub use short_id_alias::*;
 use structural_kind_registry::*;
 #[cfg(test)]

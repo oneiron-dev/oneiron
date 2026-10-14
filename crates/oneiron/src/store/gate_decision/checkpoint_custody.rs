@@ -22,7 +22,7 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 #[cfg(unix)]
 use crate::store::root_directory::{
     FileIdentity, file_identity, make_directory, named_directory_identity, parent_or_here,
-    refuse_shared_path, remove_held_directory,
+    refuse_shared_path, refuse_shared_vault_root, remove_held_directory,
 };
 use crate::store::{Store, read_existing_vault_meta};
 
@@ -194,16 +194,17 @@ pub(crate) struct MadeDestination {
 }
 
 impl MadeDestination {
-    /// Makes `destination`, which must not exist yet. It is refused unless
-    /// no other user can move a directory on the way to it, or, for a copy
-    /// that will replace the live vault at `home`, on the way there: on such
-    /// a path no name this restore makes, opens or exchanges can be changed
-    /// under it.
+    /// Makes `destination`, which must not exist yet, owner-only. It is
+    /// refused unless no other user can move an entry on the way to it, or,
+    /// for a copy that will replace the live vault at `home`, on the way to
+    /// that vault or inside it: on such a path no name this restore makes,
+    /// opens or exchanges can be changed under it.
     pub(crate) fn make(destination: &Path, home: Option<&Path>) -> Result<Self> {
         #[cfg(unix)]
         let made = {
-            for path in std::iter::once(destination).chain(home) {
-                refuse_shared_path(parent_or_here(path.parent().unwrap_or(path)))?;
+            refuse_shared_path(parent_or_here(destination.parent().unwrap_or(destination)))?;
+            if let Some(home) = home {
+                refuse_shared_vault_root(home)?;
             }
             make_directory(destination)?
         };
